@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>jellyfin-mpv</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: oklch(17% 0.018 273);
+      --panel: oklch(23% 0.022 273);
+      --panel-2: oklch(28% 0.028 273);
+      --text: oklch(91% 0.012 273);
+      --muted: oklch(70% 0.025 273);
+      --accent: oklch(70% 0.18 225);
+      --accent-strong: oklch(67% 0.2 295);
+      --danger: oklch(68% 0.17 25);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: clamp(24px, 5vw, 72px);
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 12%, oklch(48% 0.18 295 / 0.35), transparent 34rem),
+        radial-gradient(circle at 80% 78%, oklch(58% 0.16 225 / 0.28), transparent 28rem),
+        linear-gradient(145deg, oklch(13% 0.018 273), var(--bg));
+    }
+
+    main {
+      width: min(100%, 540px);
+      animation: enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 34px;
+    }
+
+    .mark {
+      width: 62px;
+      height: 62px;
+      flex: 0 0 auto;
+      filter: drop-shadow(0 18px 40px oklch(55% 0.19 285 / 0.42));
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 6vw, 3.7rem);
+      line-height: .96;
+      letter-spacing: -0.055em;
+      font-weight: 760;
+    }
+
+    .kicker {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    form {
+      padding: 24px;
+      border: 1px solid oklch(100% 0 0 / 0.08);
+      border-radius: 24px;
+      background: linear-gradient(180deg, oklch(26% 0.028 273 / 0.94), oklch(20% 0.02 273 / 0.94));
+      box-shadow: 0 26px 80px oklch(0% 0 0 / 0.34);
+    }
+
+    .field { margin-top: 18px; }
+    .field:first-child { margin-top: 0; }
+
+    label {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--text);
+      font-size: 0.92rem;
+      font-weight: 680;
+      letter-spacing: .01em;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    input {
+      min-width: 0;
+      height: 48px;
+      border: 1px solid oklch(100% 0 0 / 0.09);
+      border-radius: 14px;
+      padding: 0 15px;
+      color: var(--text);
+      background: var(--panel);
+      font: inherit;
+      outline: none;
+      transition: border-color 160ms ease-out, background 160ms ease-out, box-shadow 160ms ease-out;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      background: var(--panel-2);
+      box-shadow: 0 0 0 4px oklch(70% 0.18 225 / 0.16);
+    }
+
+    input::placeholder { color: oklch(62% 0.02 273); }
+
+    button {
+      height: 48px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 18px;
+      color: oklch(98% 0.006 240);
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      font: inherit;
+      font-weight: 760;
+      cursor: pointer;
+      transition: transform 160ms cubic-bezier(.16, 1, .3, 1), filter 160ms ease-out, opacity 160ms ease-out;
+    }
+
+    button.secondary {
+      color: var(--text);
+      background: oklch(34% 0.032 273);
+      border: 1px solid oklch(100% 0 0 / 0.08);
+    }
+
+    button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.04); }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled { cursor: default; opacity: .55; transform: none; filter: none; }
+
+    .hint {
+      margin: 10px 2px 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .error {
+      display: none;
+      margin: 14px 2px 0;
+      color: var(--danger);
+      font-size: 0.9rem;
+      font-weight: 620;
+    }
+
+    .footer {
+      margin-top: 18px;
+      color: oklch(62% 0.023 273);
+      font-size: 0.82rem;
+      text-align: center;
+    }
+
+    @media (max-width: 560px) {
+      .row { grid-template-columns: 1fr; }
+      button { width: 100%; }
+      form { padding: 18px; border-radius: 20px; }
+      .brand { align-items: flex-start; }
+    }
+
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(14px) scale(.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="brand" aria-label="jellyfin-mpv">
+      <svg class="mark" viewBox="0 0 128 128" role="img" aria-label="Jellyfin logo mark">
+        <defs>
+          <linearGradient id="g" x1="10" x2="118" y1="118" y2="10" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#00a4dc"/>
+            <stop offset="1" stop-color="#aa5cff"/>
+          </linearGradient>
+        </defs>
+        <path fill="url(#g)" d="M64 6 122 64 64 122 6 64 64 6Zm0 28L34 64l30 30 30-30-30-30Zm0 18 12 12-12 12-12-12 12-12Z"/>
+      </svg>
+      <div>
+        <h1>jellyfin-mpv</h1>
+        <div class="kicker">Connect Jellyfin and choose the mpv player.</div>
+      </div>
+    </section>
+
+    <form id="connect-form" autocomplete="on">
+      <div class="field">
+        <label for="server-url">Jellyfin server</label>
+        <input id="server-url" name="server-url" type="text" inputmode="url" spellcheck="false" autocomplete="url" placeholder="localhost:8096" value="{{saved_url}}" autofocus>
+        <p class="hint">Use a local address such as <strong>localhost:8096</strong>, or a full HTTPS URL.</p>
+      </div>
+
+      <div class="field">
+        <label for="mpv-path">mpv.exe</label>
+        <div class="row">
+          <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" placeholder="C:\Program Files\mpv\mpv.exe" value="{{saved_mpv}}">
+          <button id="browse-mpv" class="secondary" type="button">Browse</button>
+        </div>
+        <p class="hint">This path is saved and used later when playback is handed off to mpv.</p>
+      </div>
+
+      <p class="error" id="error">Enter a Jellyfin server URL and select mpv.exe.</p>
+      <div class="field">
+        <button id="connect" type="submit" {{connect_disabled}}>Save and connect</button>
+      </div>
+    </form>
+
+    <div class="footer">Config is stored in Roaming\jellyfin-mpv.</div>
+  </main>
+
+  <script>
+    const form = document.getElementById('connect-form');
+    const serverInput = document.getElementById('server-url');
+    const mpvInput = document.getElementById('mpv-path');
+    const browseButton = document.getElementById('browse-mpv');
+    const connectButton = document.getElementById('connect');
+    const error = document.getElementById('error');
+
+    function hasRequiredValues() {
+      return serverInput.value.trim().length > 0 && mpvInput.value.trim().length > 0;
+    }
+
+    function updateButtonState() {
+      connectButton.disabled = !hasRequiredValues();
+      error.style.display = 'none';
+    }
+
+    function setBusy(isBusy) {
+      connectButton.disabled = isBusy || !hasRequiredValues();
+      browseButton.disabled = isBusy;
+      serverInput.disabled = isBusy;
+      mpvInput.disabled = isBusy;
+      connectButton.textContent = isBusy ? 'Saving' : 'Save and connect';
+    }
+
+    window.__jellyfinMpvSetBusy = setBusy;
+    window.__jellyfinMpvSetMpvPath = path => {
+      mpvInput.value = path || '';
+      setBusy(false);
+      updateButtonState();
+      mpvInput.focus();
+    };
+    window.__jellyfinMpvSaveFailed = message => {
+      error.textContent = message || 'Could not save settings.';
+      error.style.display = 'block';
+      setBusy(false);
+    };
+
+    serverInput.addEventListener('input', updateButtonState);
+    mpvInput.addEventListener('input', updateButtonState);
+
+    browseButton.addEventListener('click', () => {
+      setBusy(true);
+      window.location.href = 'jellyfin-mpv://select-mpv';
+    });
+
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      if (!hasRequiredValues()) {
+        error.style.display = 'block';
+        return;
+      }
+      setBusy(true);
+      const query = new URLSearchParams({
+        server: serverInput.value.trim(),
+        mpv: mpvInput.value.trim(),
+      });
+      window.location.href = `jellyfin-mpv://save?${query.toString()}`;
+    });
+
+    updateButtonState();
+  </script>
+</body>
+</html>
