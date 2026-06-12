@@ -109,17 +109,7 @@ pub fn launch_from_stream_url(url: &str, headers: Vec<HttpHeader>) -> Option<Mpv
 }
 
 pub fn redact_url_secrets(url: &str) -> String {
-    redact_url_query_value(
-        url,
-        &[
-            "api_key",
-            "apikey",
-            "access_token",
-            "accesstoken",
-            "x-emby-token",
-            "x-mediabrowser-token",
-        ],
-    )
+    crate::logger::redact_url_secrets(url)
 }
 
 fn is_direct_stream_url(url: &str) -> bool {
@@ -185,35 +175,6 @@ fn same_non_empty(left: Option<&str>, right: Option<&str>) -> bool {
         return false;
     };
     left.eq_ignore_ascii_case(right)
-}
-
-fn redact_url_query_value(url: &str, keys: &[&str]) -> String {
-    let Some((before_query, rest)) = url.split_once('?') else {
-        return url.to_string();
-    };
-    let (query, fragment) = rest
-        .split_once('#')
-        .map(|(query, fragment)| (query, Some(fragment)))
-        .unwrap_or((rest, None));
-    let redacted = query
-        .split('&')
-        .map(|pair| {
-            let Some((raw_key, _raw_value)) = pair.split_once('=') else {
-                return pair.to_string();
-            };
-            let decoded_key = percent_decode(raw_key);
-            if keys.iter().any(|key| decoded_key.eq_ignore_ascii_case(key)) {
-                format!("{raw_key}=REDACTED")
-            } else {
-                pair.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("&");
-    match fragment {
-        Some(fragment) => format!("{before_query}?{redacted}#{fragment}"),
-        None => format!("{before_query}?{redacted}"),
-    }
 }
 
 fn percent_decode(input: &str) -> String {

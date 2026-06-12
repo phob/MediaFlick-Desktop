@@ -22,7 +22,7 @@ impl AppSettings {
                 settings
             }
             Err(error) => {
-                eprintln!("Failed to read {}: {error}", path.display());
+                tracing::warn!("failed to read {}: {error}", path.display());
                 Self::default()
             }
         }

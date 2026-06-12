@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::external_mpv::{ExternalMpv, HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge;
+use crate::logger;
 use crate::playback_reporter::{
     MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
 };
@@ -51,6 +52,7 @@ struct ControllerState {
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
     last_state: MpvPlaybackState,
+    last_position_log_bucket: Option<i64>,
     recent_loads: VecDeque<RecentLoad>,
 }
 
@@ -73,6 +75,27 @@ struct MpvEvent {
     reason: Option<String>,
     property: Option<String>,
     data: Option<Value>,
+    raw: Value,
+}
+
+impl MpvEvent {
+    fn summary(&self) -> String {
+        match self.name.as_str() {
+            "property-change" => format!(
+                "property-change name={} data={}",
+                self.property.as_deref().unwrap_or("unknown"),
+                self.data
+                    .as_ref()
+                    .map(logger::redacted_json)
+                    .unwrap_or_else(|| "null".to_string())
+            ),
+            "end-file" => format!(
+                "end-file reason={}",
+                self.reason.as_deref().unwrap_or("unknown")
+            ),
+            name => name.to_string(),
+        }
+    }
 }
 
 struct IpcWorker {
@@ -113,20 +136,27 @@ impl ControllerState {
                 volume: Some(100),
                 ..Default::default()
             },
+            last_position_log_bucket: None,
             recent_loads: VecDeque::new(),
         }
     }
 
     fn run(mut self) {
+        tracing::debug!(target: "playback", "mpv controller thread started");
         loop {
             match self.rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(ControllerMessage::Load { mpv_path, launch }) => self.load(mpv_path, *launch),
+                Ok(ControllerMessage::Load { mpv_path, launch }) => {
+                    tracing::debug!(target: "playback", "received playback load request");
+                    self.load(mpv_path, *launch);
+                }
                 Ok(ControllerMessage::Shutdown) => {
+                    tracing::debug!(target: "playback", "received playback shutdown request");
                     self.shutdown();
                     return;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    tracing::debug!(target: "playback", "controller channel disconnected");
                     self.shutdown();
                     return;
                 }
@@ -141,25 +171,47 @@ impl ControllerState {
 
     fn load(&mut self, mpv_path: String, launch: MpvLaunch) {
         let key = launch.dedupe_key();
+        tracing::debug!(
+            target: "playback",
+            dedupe_key = %key,
+            launch = %logger::launch_summary(&launch),
+            "handling playback load"
+        );
         if self.is_duplicate(&key) {
+            tracing::debug!(
+                target: "playback",
+                dedupe_key = %key,
+                "ignored duplicate playback load"
+            );
             return;
         }
 
         if !self.ensure_mpv(&mpv_path) {
+            tracing::warn!(
+                target: "playback",
+                mpv_path = %mpv_path,
+                "cannot load playback because mpv is unavailable"
+            );
             return;
         };
 
         let reporter = PlaybackReporter::from_launch(&launch);
         if let Some(active) = self.active.take() {
+            tracing::info!(
+                target: "playback",
+                state = %self.last_state,
+                "stopping previous active playback before loading replacement"
+            );
             active.reporter.report_stopped(&self.last_state, false);
         }
 
         match self.send_mpv_command(loadfile_command(&launch)) {
             Ok(()) => {
-                eprintln!(
-                    "Loaded Jellyfin stream in mpv: item={} url={}",
-                    launch.item_id.as_deref().unwrap_or("unknown"),
-                    jellyfin_bridge::redact_url_secrets(&launch.media_url)
+                tracing::info!(
+                    target: "playback",
+                    item_id = %launch.item_id.as_deref().unwrap_or("unknown"),
+                    url = %jellyfin_bridge::redact_url_secrets(&launch.media_url),
+                    "loaded Jellyfin stream in mpv"
                 );
                 self.recent_loads.push_back(RecentLoad {
                     key: key.clone(),
@@ -173,7 +225,7 @@ impl ControllerState {
                 });
             }
             Err(error) => {
-                eprintln!("Failed to send mpv loadfile command: {error}");
+                tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command: {error}");
                 self.reset_mpv();
             }
         }
@@ -181,18 +233,30 @@ impl ControllerState {
 
     fn ensure_mpv(&mut self, mpv_path: &str) -> bool {
         if self.child_is_alive() {
+            tracing::trace!(
+                target: "mpv.ipc",
+                connected = self.ipc_worker.is_some(),
+                "reusing existing mpv process"
+            );
             return self.ipc_worker.is_some();
         }
 
         self.reset_mpv();
         let ipc_path = make_mpv_ipc_path();
         let mpv = ExternalMpv::new(PathBuf::from(mpv_path));
+        tracing::info!(
+            target: "mpv.ipc",
+            executable = %mpv.executable().display(),
+            ipc_path = %ipc_path,
+            "starting idle mpv process"
+        );
         let child = match mpv.command_for_idle_with_ipc(&ipc_path).spawn() {
             Ok(child) => child,
             Err(error) => {
-                eprintln!(
-                    "Failed to launch mpv for Jellyfin stream ({}): {error}",
-                    mpv.executable().display()
+                tracing::warn!(
+                    target: "mpv.ipc",
+                    executable = %mpv.executable().display(),
+                    "failed to launch mpv for Jellyfin stream: {error}"
                 );
                 cleanup_ipc_path(&ipc_path);
                 return false;
@@ -202,7 +266,7 @@ impl ControllerState {
         let (ipc_worker, event_rx) = match start_ipc_worker(&ipc_path, IPC_CONNECT_TIMEOUT) {
             Ok(worker) => worker,
             Err(error) => {
-                eprintln!("Failed to connect mpv IPC: {error}");
+                tracing::warn!(target: "mpv.ipc", ipc_path = %ipc_path, "failed to connect mpv IPC: {error}");
                 let mut child = child;
                 let _ = child.kill();
                 cleanup_ipc_path(&ipc_path);
@@ -213,6 +277,7 @@ impl ControllerState {
         self.ipc_path = Some(ipc_path.clone());
         self.ipc_worker = Some(ipc_worker);
         self.event_rx = Some(event_rx);
+        tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, "mpv IPC connected");
         true
     }
 
@@ -223,12 +288,21 @@ impl ControllerState {
                 events.push(event);
             }
         }
+        if !events.is_empty() {
+            tracing::trace!(target: "mpv.ipc", count = events.len(), "drained mpv events");
+        }
         for event in events {
             self.handle_event(event);
         }
     }
 
     fn handle_event(&mut self, event: MpvEvent) {
+        tracing::debug!(target: "mpv.ipc", event = %event.summary(), "received mpv event");
+        tracing::trace!(
+            target: "mpv.ipc",
+            event = %logger::redacted_json(&event.raw),
+            "received raw mpv event"
+        );
         match event.name.as_str() {
             "file-loaded" => self.activate_pending(),
             "end-file" => self.finish_active(event.reason.as_deref()),
@@ -237,14 +311,22 @@ impl ControllerState {
                 self.reset_mpv();
             }
             "property-change" => self.apply_property(event.property.as_deref(), event.data),
-            _ => {}
+            _ => tracing::trace!(target: "mpv.ipc", name = %event.name, "ignored mpv event"),
         }
     }
 
     fn activate_pending(&mut self) {
         let Some(pending) = self.pending.take() else {
+            tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
             return;
         };
+        tracing::info!(
+            target: "playback",
+            dedupe_key = %pending.key,
+            launch = %logger::launch_summary(&pending.launch),
+            state = %self.last_state,
+            "activating pending playback"
+        );
         self.last_state.position_ticks = self.last_state.position_ticks.max(
             pending
                 .launch
@@ -259,21 +341,38 @@ impl ControllerState {
                 last_progress_sent: Instant::now(),
                 last_pause: self.last_state.pause,
             });
+        } else {
+            tracing::debug!(
+                target: "jellyfin.playstate",
+                "activated playback without Jellyfin reporter"
+            );
         }
     }
 
     fn finish_active(&mut self, reason: Option<&str>) {
+        tracing::debug!(
+            target: "playback",
+            reason = reason.unwrap_or("unknown"),
+            state = %self.last_state,
+            "finishing playback"
+        );
         if self.pending.is_some() {
             let failed = matches!(reason, Some("error"));
             if failed
                 && let Some(pending) = self.pending.take()
                 && let Some(reporter) = pending.reporter
             {
+                tracing::warn!(
+                    target: "playback",
+                    reason = reason.unwrap_or("unknown"),
+                    "pending playback failed before activation"
+                );
                 reporter.report_stopped(&self.last_state, true);
             }
         }
 
         let Some(active) = self.active.take() else {
+            tracing::trace!(target: "playback", "no active playback to finish");
             return;
         };
         let failed = matches!(reason, Some("error"));
@@ -282,47 +381,141 @@ impl ControllerState {
         {
             self.last_state.position_ticks = duration;
         }
+        tracing::info!(
+            target: "playback",
+            failed,
+            reason = reason.unwrap_or("unknown"),
+            state = %self.last_state,
+            "reporting active playback stopped"
+        );
         active.reporter.report_stopped(&self.last_state, failed);
     }
 
     fn apply_property(&mut self, property: Option<&str>, data: Option<Value>) {
+        tracing::trace!(
+            target: "mpv.ipc",
+            property = property.unwrap_or("unknown"),
+            data = %data
+                .as_ref()
+                .map(logger::redacted_json)
+                .unwrap_or_else(|| "null".to_string()),
+            "applying mpv property"
+        );
         match property {
             Some("time-pos") | Some("playback-time") => {
                 if let Some(ticks) = data
-                    .and_then(|value| value.as_f64())
+                    .as_ref()
+                    .and_then(Value::as_f64)
                     .and_then(seconds_to_ticks)
                 {
+                    let previous = self.last_state.position_ticks;
                     self.last_state.position_ticks = ticks;
+                    self.log_position_change(property.unwrap_or("time"), previous, ticks);
                 }
             }
             Some("pause") => {
-                if let Some(value) = data.and_then(|value| value.as_bool()) {
+                if let Some(value) = data.as_ref().and_then(Value::as_bool) {
+                    let previous = self.last_state.pause;
                     self.last_state.pause = value;
+                    if previous != value {
+                        tracing::debug!(
+                            target: "playback",
+                            previous,
+                            current = value,
+                            state = %self.last_state,
+                            "mpv pause state changed"
+                        );
+                    }
                 }
             }
             Some("duration") => {
                 self.last_state.duration_ticks = data
-                    .and_then(|value| value.as_f64())
+                    .as_ref()
+                    .and_then(Value::as_f64)
                     .and_then(seconds_to_ticks);
+                tracing::debug!(
+                    target: "playback",
+                    state = %self.last_state,
+                    "mpv duration changed"
+                );
             }
             Some("volume") => {
+                let previous = self.last_state.volume;
                 self.last_state.volume = data
+                    .as_ref()
                     .and_then(|value| value.as_f64())
                     .map(|value| value.round() as i64);
+                if previous != self.last_state.volume {
+                    tracing::debug!(
+                        target: "playback",
+                        previous = ?previous,
+                        current = ?self.last_state.volume,
+                        state = %self.last_state,
+                        "mpv volume changed"
+                    );
+                }
             }
             Some("mute") => {
-                self.last_state.mute = data.and_then(|value| value.as_bool());
+                let previous = self.last_state.mute;
+                self.last_state.mute = data.as_ref().and_then(Value::as_bool);
+                if previous != self.last_state.mute {
+                    tracing::debug!(
+                        target: "playback",
+                        previous = ?previous,
+                        current = ?self.last_state.mute,
+                        state = %self.last_state,
+                        "mpv mute state changed"
+                    );
+                }
             }
             Some("eof-reached") => {
+                let previous = self.last_state.eof_reached;
                 self.last_state.eof_reached =
-                    data.and_then(|value| value.as_bool()).unwrap_or(false);
+                    data.as_ref().and_then(Value::as_bool).unwrap_or(false);
+                if previous != self.last_state.eof_reached {
+                    tracing::debug!(
+                        target: "playback",
+                        previous,
+                        current = self.last_state.eof_reached,
+                        state = %self.last_state,
+                        "mpv eof state changed"
+                    );
+                }
             }
             Some("playback-abort") => {
-                if data.and_then(|value| value.as_bool()).unwrap_or(false) {
+                if data.as_ref().and_then(Value::as_bool).unwrap_or(false) {
+                    tracing::warn!(target: "playback", state = %self.last_state, "mpv playback aborted");
                     self.finish_active(Some("error"));
                 }
             }
-            _ => {}
+            Some(other) => {
+                tracing::trace!(target: "mpv.ipc", property = other, "ignored mpv property")
+            }
+            None => tracing::trace!(target: "mpv.ipc", "ignored mpv property with no name"),
+        }
+    }
+
+    fn log_position_change(&mut self, property: &str, previous: i64, current: i64) {
+        tracing::trace!(
+            target: "playback",
+            property,
+            previous_ticks = previous,
+            current_ticks = current,
+            state = %self.last_state,
+            "mpv playback position changed"
+        );
+
+        let bucket = current / 100_000_000;
+        if self.last_position_log_bucket != Some(bucket) {
+            self.last_position_log_bucket = Some(bucket);
+            tracing::debug!(
+                target: "playback",
+                property,
+                previous_ticks = previous,
+                current_ticks = current,
+                state = %self.last_state,
+                "mpv playback position sample"
+            );
         }
     }
 
@@ -333,6 +526,13 @@ impl ControllerState {
         let now = Instant::now();
         let due = now.saturating_duration_since(active.last_progress_sent) >= PROGRESS_INTERVAL;
         if due || active.last_pause != self.last_state.pause {
+            tracing::debug!(
+                target: "jellyfin.playstate",
+                due,
+                pause_changed = active.last_pause != self.last_state.pause,
+                state = %self.last_state,
+                "Jellyfin playback progress report due"
+            );
             active.reporter.report_progress(&self.last_state);
             active.last_progress_sent = now;
             active.last_pause = self.last_state.pause;
@@ -343,9 +543,16 @@ impl ControllerState {
         let Some(child) = &mut self.child else {
             return;
         };
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            self.finish_active(Some("quit"));
-            self.reset_mpv();
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                tracing::info!(target: "mpv.ipc", %status, "mpv process exited");
+                self.finish_active(Some("quit"));
+                self.reset_mpv();
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(target: "mpv.ipc", "failed to poll mpv process: {error}");
+            }
         }
     }
 
@@ -380,14 +587,22 @@ impl ControllerState {
             .as_ref()
             .is_some_and(|pending| pending.requested_at.elapsed() > IPC_CONNECT_TIMEOUT)
         {
+            tracing::warn!(
+                target: "playback",
+                timeout_ms = IPC_CONNECT_TIMEOUT.as_millis(),
+                "pending playback timed out waiting for mpv file-loaded"
+            );
             self.finish_active(Some("error"));
             self.pending = None;
         }
     }
 
     fn shutdown(&mut self) {
+        tracing::debug!(target: "playback", state = %self.last_state, "shutting down mpv controller");
         self.finish_active(Some("quit"));
-        let _ = self.send_mpv_command(json!({ "command": ["quit"] }));
+        if let Err(error) = self.send_mpv_command(json!({ "command": ["quit"] })) {
+            tracing::debug!(target: "mpv.ipc", "failed to send mpv quit during shutdown: {error}");
+        }
         let deadline = Instant::now() + SHUTDOWN_WAIT;
         while Instant::now() < deadline {
             if !self.child_is_alive() {
@@ -397,35 +612,60 @@ impl ControllerState {
         }
         let still_alive = self.child_is_alive();
         if still_alive && let Some(child) = &mut self.child {
+            tracing::warn!(target: "mpv.ipc", "mpv did not exit before shutdown deadline; killing process");
             let _ = child.kill();
         }
         self.reset_mpv();
     }
 
     fn reset_mpv(&mut self) {
+        tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         if let Some(mut child) = self.child.take() {
             if matches!(child.try_wait(), Ok(None)) {
+                tracing::debug!(target: "mpv.ipc", "killing live mpv process during reset");
                 let _ = child.kill();
             }
             let _ = child.wait();
         }
         if let Some(path) = self.ipc_path.take() {
+            tracing::trace!(target: "mpv.ipc", ipc_path = %path, "cleaning mpv IPC path");
             cleanup_ipc_path(&path);
         }
         self.event_rx = None;
         if let Some(worker) = self.ipc_worker.take() {
             worker.shutdown();
         }
+        self.last_position_log_bucket = None;
     }
 
     fn send_mpv_command(&self, command: Value) -> io::Result<()> {
         let Some(worker) = &self.ipc_worker else {
+            tracing::warn!(
+                target: "mpv.ipc",
+                command = %logger::mpv_command_summary(&command),
+                "cannot send mpv command because IPC worker is not connected"
+            );
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "mpv IPC worker is not connected",
             ));
         };
-        worker.send(command)
+        tracing::debug!(
+            target: "mpv.ipc",
+            command = %logger::mpv_command_summary(&command),
+            "sending mpv command"
+        );
+        tracing::trace!(
+            target: "mpv.ipc",
+            command = %logger::redacted_json(&command),
+            "sending raw mpv command"
+        );
+        let result = worker.send(command);
+        match &result {
+            Ok(()) => tracing::debug!(target: "mpv.ipc", "sent mpv command"),
+            Err(error) => tracing::warn!(target: "mpv.ipc", "mpv command send failed: {error}"),
+        }
+        result
     }
 }
 
@@ -464,6 +704,7 @@ fn next_request_id() -> i64 {
 
 impl IpcWorker {
     fn start(path: &str) -> io::Result<(Self, Receiver<MpvEvent>)> {
+        tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC reader");
         let mut reader = connect_ipc(path)?;
         write_observe_commands(&mut reader)?;
 
@@ -496,6 +737,7 @@ impl IpcWorker {
     }
 
     fn shutdown(self) {
+        tracing::trace!(target: "mpv.ipc", ipc_path = %self.path, "joining mpv IPC reader thread");
         let _ = self.reader_thread.join();
     }
 }
@@ -515,6 +757,12 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
             "command": ["observe_property", next_request_id(), property],
             "request_id": next_request_id(),
         });
+        tracing::debug!(target: "mpv.ipc", property, "registering mpv property observer");
+        tracing::trace!(
+            target: "mpv.ipc",
+            command = %logger::redacted_json(&command),
+            "sending mpv observe_property command"
+        );
         serde_json::to_writer(&mut *stream, &command)?;
         stream.write_all(b"\n")?;
     }
@@ -522,6 +770,12 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
 }
 
 fn write_command_to_new_connection(path: &str, command: Value) -> io::Result<()> {
+    tracing::trace!(
+        target: "mpv.ipc",
+        ipc_path = path,
+        command = %logger::mpv_command_summary(&command),
+        "opening mpv IPC command connection"
+    );
     let mut stream = connect_ipc(path)?;
     serde_json::to_writer(&mut stream, &command)?;
     stream.write_all(b"\n")?;
@@ -537,9 +791,19 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
             Ok(0) => break,
             Ok(_) => {
                 let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                    tracing::trace!(
+                        target: "mpv.ipc",
+                        line = %logger::redact_text(&line),
+                        "ignored malformed mpv IPC line"
+                    );
                     continue;
                 };
                 let Some(name) = value.get("event").and_then(Value::as_str) else {
+                    tracing::trace!(
+                        target: "mpv.ipc",
+                        value = %logger::redacted_json(&value),
+                        "ignored mpv IPC reply without event name"
+                    );
                     continue;
                 };
                 let event = MpvEvent {
@@ -553,23 +817,38 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     data: value.get("data").cloned(),
+                    raw: value,
                 };
                 if tx.send(event).is_err() {
+                    tracing::trace!(target: "mpv.ipc", "mpv event receiver dropped");
                     break;
                 }
             }
-            Err(_) => break,
+            Err(error) => {
+                tracing::trace!(target: "mpv.ipc", "mpv IPC read failed: {error}");
+                break;
+            }
         }
     }
+    tracing::trace!(target: "mpv.ipc", "mpv IPC reader stopped");
 }
 
 fn start_ipc_worker(path: &str, timeout: Duration) -> io::Result<(IpcWorker, Receiver<MpvEvent>)> {
     let deadline = Instant::now() + timeout;
     let mut last_error = None;
+    tracing::debug!(
+        target: "mpv.ipc",
+        ipc_path = path,
+        timeout_ms = timeout.as_millis(),
+        "waiting for mpv IPC"
+    );
     while Instant::now() < deadline {
         match IpcWorker::start(path) {
             Ok(worker) => return Ok(worker),
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                tracing::trace!(target: "mpv.ipc", ipc_path = path, "mpv IPC not ready yet: {error}");
+                last_error = Some(error);
+            }
         }
         thread::sleep(Duration::from_millis(50));
     }

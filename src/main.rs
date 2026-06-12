@@ -2,6 +2,7 @@ mod cef_shell;
 mod cli;
 mod external_mpv;
 mod jellyfin_bridge;
+mod logger;
 mod mpv_controller;
 mod playback_reporter;
 mod settings;
@@ -26,6 +27,13 @@ fn main() {
     }
 
     let cli = Cli::parse();
+    let log_file = cli
+        .log_file
+        .clone()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(logger::default_log_file_path);
+    let _log_guard = logger::init(log_file, &cli.log_level);
+
     let mut settings = AppSettings::load();
     let mut should_save_settings = false;
 
@@ -40,7 +48,7 @@ fn main() {
     settings.sanitize();
 
     if should_save_settings && let Err(error) = settings.save() {
-        eprintln!("Failed to save jellyfin-mpv config: {error}");
+        tracing::warn!(target: "main", "failed to save jellyfin-mpv config: {error}");
     }
 
     let mpv = ExternalMpv::new(
@@ -54,7 +62,8 @@ fn main() {
     } else {
         "welcome screen"
     };
-    eprintln!(
+    tracing::info!(
+        target: "main",
         "Starting jellyfin-mpv: target={}, external mpv={}",
         target,
         mpv.executable().display()
