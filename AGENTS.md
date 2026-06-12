@@ -7,6 +7,12 @@ When working in this repository, look up both projects for reference:
 - Use `D:\users\pho\Documents\Source\jellyfin-mpv-shim` as the reference for the external mpv implementation.
 - Use `D:\users\pho\Documents\Source\jellyfin-desktop` as the reference for the CEF integration.
 
+# Playback Regression Guard
+
+Before changing playback startup, resume behavior, Jellyfin playstate reporting, or mpv IPC code, read `docs/playback-regression-invariants.md`.
+
+The resume/startup fix documented there is a known-good behavior from real Jellyfin Web and external mpv logs. Do not replace it with mpv `loadfile` `start`, URL `#t=` resume starts, per-command Windows pipe opens after `file-loaded`, cloned event-pipe command writes, or startup `pause=false` commands unless you are intentionally re-debugging that regression with logs.
+
 # Commands
 
 Use `just` for linting and testing. Configured commands:

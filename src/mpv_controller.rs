@@ -22,6 +22,9 @@ const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
+const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
+const STARTUP_SEEK_POSITION_TOLERANCE: i64 = 30_000_000;
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 
@@ -75,6 +78,7 @@ struct ControllerState {
     event_rx: Option<Receiver<MpvEvent>>,
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
+    startup_seek: Option<StartupSeek>,
     last_state: MpvPlaybackState,
     last_position_log_bucket: Option<i64>,
     recent_loads: VecDeque<RecentLoad>,
@@ -91,6 +95,13 @@ struct ActivePlayback {
     reporter: PlaybackReporter,
     last_progress_sent: Instant,
     last_pause: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StartupSeek {
+    position_ms: f64,
+    due_at: Instant,
+    sent_at: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -124,7 +135,15 @@ impl MpvEvent {
 
 struct IpcWorker {
     path: String,
+    command_tx: Sender<IpcCommand>,
     reader_thread: thread::JoinHandle<()>,
+    writer_thread: thread::JoinHandle<()>,
+}
+
+type IpcCommand = (Value, Sender<io::Result<()>>);
+
+struct IpcCommandWriter {
+    stream: IpcConnection,
 }
 
 impl MpvController {
@@ -170,6 +189,7 @@ impl ControllerState {
             event_rx: None,
             active: None,
             pending: None,
+            startup_seek: None,
             last_state: MpvPlaybackState {
                 volume: Some(100),
                 ..Default::default()
@@ -205,6 +225,7 @@ impl ControllerState {
             }
 
             self.drain_events();
+            self.maybe_send_startup_seek();
             self.poll_child();
             self.maybe_report_progress();
             self.prune_recent_loads();
@@ -221,18 +242,65 @@ impl ControllerState {
         }
     }
 
-    fn kick_start_playback(&self, launch: &MpvLaunch) {
-        if let Some(start_ms) = launch.start_seconds().map(|seconds| seconds * 1000.0)
-            && let Some(command) = control_command(MpvControlCommand::SeekMilliseconds(start_ms))
-            && let Err(error) = self.send_mpv_command(command)
+    fn kick_start_playback(&mut self, launch: &MpvLaunch) {
+        // Regression guard: resumed Jellyfin streams must not use mpv's
+        // load-time `start` option. On Windows external mpv can show a still
+        // frame until a later seek when opened directly at the resume offset.
+        // Match shim's safer shape: load normally, then seek after file-loaded.
+        if let Some(position_ms) = launch
+            .start_seconds()
+            .map(|seconds| seconds * 1000.0)
+            .filter(|position_ms| position_ms.is_finite() && *position_ms > 0.0)
         {
-            tracing::warn!(target: "mpv.ipc", "failed to send mpv startup seek command: {error}");
+            tracing::debug!(
+                target: "playback",
+                position_ms,
+                delay_ms = STARTUP_SEEK_DELAY.as_millis(),
+                "queued mpv startup seek after file load"
+            );
+            self.startup_seek = Some(StartupSeek {
+                position_ms,
+                due_at: Instant::now() + STARTUP_SEEK_DELAY,
+                sent_at: None,
+            });
+            return;
         }
 
-        if let Some(command) = control_command(MpvControlCommand::SetPause(false))
-            && let Err(error) = self.send_mpv_command(command)
-        {
-            tracing::warn!(target: "mpv.ipc", "failed to send mpv startup unpause command: {error}");
+        self.startup_seek = None;
+    }
+
+    fn maybe_send_startup_seek(&mut self) {
+        let Some(startup_seek) = self.startup_seek else {
+            return;
+        };
+        let now = Instant::now();
+        if now < startup_seek.due_at {
+            return;
+        }
+
+        tracing::debug!(
+            target: "playback",
+            position_ms = startup_seek.position_ms,
+            retry = startup_seek.sent_at.is_some(),
+            "sending delayed mpv startup seek"
+        );
+        if let Some(command) = control_command(MpvControlCommand::SeekMilliseconds(
+            startup_seek.position_ms,
+        )) {
+            match self.send_mpv_command(command) {
+                Ok(()) => {
+                    if let Some(startup_seek) = &mut self.startup_seek {
+                        startup_seek.sent_at = Some(now);
+                        startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "mpv.ipc", "failed to send mpv startup seek command: {error}");
+                    if let Some(startup_seek) = &mut self.startup_seek {
+                        startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;
+                    }
+                }
+            }
         }
     }
 
@@ -281,6 +349,7 @@ impl ControllerState {
         };
 
         let reporter = PlaybackReporter::from_launch(&launch);
+        self.startup_seek = None;
         if let Some(active) = self.active.take() {
             tracing::info!(
                 target: "playback",
@@ -445,6 +514,7 @@ impl ControllerState {
             state = %self.last_state,
             "finishing playback"
         );
+        self.startup_seek = None;
         if self.pending.is_some() {
             let failed = matches!(reason, Some("error"));
             if failed
@@ -498,6 +568,9 @@ impl ControllerState {
                     .and_then(Value::as_f64)
                     .and_then(seconds_to_ticks)
                 {
+                    if self.defer_startup_position_update(ticks) {
+                        return;
+                    }
                     let previous = self.last_state.position_ticks;
                     self.last_state.position_ticks = ticks;
                     self.log_position_change(property.unwrap_or("time"), previous, ticks);
@@ -593,6 +666,36 @@ impl ControllerState {
             }
             None => tracing::trace!(target: "mpv.ipc", "ignored mpv property with no name"),
         }
+    }
+
+    fn defer_startup_position_update(&mut self, ticks: i64) -> bool {
+        let Some(startup_seek) = self.startup_seek else {
+            return false;
+        };
+        // mpv reports 0.0 immediately after file-loaded even for resumed media.
+        // Do not let that transient sample overwrite Jellyfin/Web's resume
+        // position before the delayed startup seek has landed.
+        let target_ticks = seconds_to_ticks(startup_seek.position_ms / 1000.0).unwrap_or_default();
+        let minimum_resume_tick = target_ticks.saturating_sub(STARTUP_SEEK_POSITION_TOLERANCE);
+        if target_ticks > 0 && ticks < minimum_resume_tick {
+            tracing::trace!(
+                target: "playback",
+                current_ticks = ticks,
+                target_ticks,
+                "holding Jellyfin position while mpv startup seek is pending"
+            );
+            return true;
+        }
+
+        tracing::debug!(
+            target: "playback",
+            current_ticks = ticks,
+            target_ticks,
+            seek_sent = startup_seek.sent_at.is_some(),
+            "mpv startup seek reached resume range"
+        );
+        self.startup_seek = None;
+        false
     }
 
     fn log_position_change(&mut self, property: &str, previous: i64, current: i64) {
@@ -720,6 +823,7 @@ impl ControllerState {
 
     fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
+        self.startup_seek = None;
         if let Some(mut child) = self.child.take() {
             if matches!(child.try_wait(), Ok(None)) {
                 tracing::debug!(target: "mpv.ipc", "killing live mpv process during reset");
@@ -772,9 +876,8 @@ impl ControllerState {
 
 pub fn loadfile_command(launch: &MpvLaunch) -> Value {
     let mut options = Map::new();
-    if let Some(start_seconds) = launch.start_seconds() {
-        options.insert("start".to_string(), json!(format!("{start_seconds:.3}")));
-    }
+    // Intentionally do not set mpv's `start` option here. Resume is performed
+    // by a delayed absolute seek after file-loaded; see kick_start_playback.
     if let Some(title) = non_empty(launch.title.as_deref()) {
         options.insert(
             "force-media-title".to_string(),
@@ -848,13 +951,25 @@ impl IpcWorker {
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC reader");
         let mut reader = connect_ipc(path)?;
         write_observe_commands(&mut reader)?;
+        // Keep command writes on a dedicated pipe opened while mpv is still idle.
+        // Opening fresh command pipes after load can hang on Windows, and writing
+        // commands through a clone of the event reader can prevent loadfile from
+        // reaching mpv. The separate persistent writer is the known-good shape.
+        tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC command writer");
+        let writer = IpcCommandWriter {
+            stream: connect_ipc_for_commands(path)?,
+        };
 
         let (event_tx, event_rx) = mpsc::channel();
+        let (command_tx, command_rx) = mpsc::channel();
         let reader_thread = thread::spawn(move || read_events(reader, event_tx));
+        let writer_thread = thread::spawn(move || writer.write_commands(command_rx));
         Ok((
             Self {
                 path: path.to_string(),
+                command_tx,
                 reader_thread,
+                writer_thread,
             },
             event_rx,
         ))
@@ -862,11 +977,9 @@ impl IpcWorker {
 
     fn send(&self, command: Value) -> io::Result<()> {
         let (ack, ack_rx) = mpsc::channel();
-        let path = self.path.clone();
-        thread::spawn(move || {
-            let result = write_command_to_new_connection(&path, command);
-            let _ = ack.send(result);
-        });
+        self.command_tx
+            .send((command, ack))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "mpv IPC writer stopped"))?;
         ack_rx
             .recv_timeout(IPC_COMMAND_TIMEOUT)
             .unwrap_or_else(|_| {
@@ -878,8 +991,35 @@ impl IpcWorker {
     }
 
     fn shutdown(self) {
-        tracing::trace!(target: "mpv.ipc", ipc_path = %self.path, "joining mpv IPC reader thread");
-        let _ = self.reader_thread.join();
+        let Self {
+            path,
+            command_tx,
+            reader_thread,
+            writer_thread,
+        } = self;
+        tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
+        drop(command_tx);
+        let _ = writer_thread.join();
+        let _ = reader_thread.join();
+    }
+}
+
+impl IpcCommandWriter {
+    fn write_commands(mut self, rx: Receiver<IpcCommand>) {
+        while let Ok((command, ack)) = rx.recv() {
+            tracing::trace!(
+                target: "mpv.ipc",
+                command = %logger::mpv_command_summary(&command),
+                "writing mpv IPC command"
+            );
+            let result = write_command(&mut self.stream, &command);
+            let failed = result.is_err();
+            let _ = ack.send(result);
+            if failed {
+                break;
+            }
+        }
+        tracing::trace!(target: "mpv.ipc", "mpv IPC writer stopped");
     }
 }
 
@@ -910,15 +1050,8 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
     stream.flush()
 }
 
-fn write_command_to_new_connection(path: &str, command: Value) -> io::Result<()> {
-    tracing::trace!(
-        target: "mpv.ipc",
-        ipc_path = path,
-        command = %logger::mpv_command_summary(&command),
-        "opening mpv IPC command connection"
-    );
-    let mut stream = connect_ipc(path)?;
-    serde_json::to_writer(&mut stream, &command)?;
+fn write_command<W: Write>(stream: &mut W, command: &Value) -> io::Result<()> {
+    serde_json::to_writer(&mut *stream, command)?;
     stream.write_all(b"\n")?;
     stream.flush()
 }
@@ -1008,6 +1141,11 @@ fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
         .open(path)
 }
 
+#[cfg(target_os = "windows")]
+fn connect_ipc_for_commands(path: &str) -> io::Result<IpcConnection> {
+    std::fs::OpenOptions::new().write(true).open(path)
+}
+
 #[cfg(all(unix, not(target_os = "windows")))]
 type IpcConnection = std::os::unix::net::UnixStream;
 
@@ -1017,6 +1155,11 @@ fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     Ok(stream)
+}
+
+#[cfg(all(unix, not(target_os = "windows")))]
+fn connect_ipc_for_commands(path: &str) -> io::Result<IpcConnection> {
+    connect_ipc(path)
 }
 
 fn mpv_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
@@ -1184,7 +1327,7 @@ mod tests {
         assert_eq!(args[2], "replace");
         assert_eq!(args[3], -1);
         assert!(command["request_id"].as_i64().is_some());
-        assert_eq!(args[4]["start"], "2.000");
+        assert!(args[4].get("start").is_none());
         assert_eq!(args[4]["force-media-title"], "A Movie");
     }
 
@@ -1232,7 +1375,7 @@ mod tests {
             command["command"][1],
             "https://example.test/video.mkv?ApiKey=secret"
         );
-        assert_eq!(command["command"][4]["start"], "30.000");
+        assert!(command["command"][4].get("start").is_none());
     }
 
     #[test]
@@ -1267,7 +1410,39 @@ mod tests {
         assert!(state.pending.is_some());
         state.activate_pending();
         assert!(state.pending.is_none());
+        assert_eq!(
+            state.startup_seek.map(|seek| seek.position_ms),
+            Some(2000.0)
+        );
         assert_eq!(state.last_state.position_ticks, 20_000_000);
+    }
+
+    #[test]
+    fn zero_start_does_not_queue_startup_seek() {
+        let mut state = controller_with_pending_load(None);
+
+        state.activate_pending();
+
+        assert!(state.pending.is_none());
+        assert!(state.startup_seek.is_none());
+        assert_eq!(state.last_state.position_ticks, 0);
+    }
+
+    #[test]
+    fn startup_seek_holds_resume_position_until_mpv_reaches_resume_range() {
+        let mut state = controller_with_pending_load(Some(1_000_000_000));
+
+        state.activate_pending();
+        assert_eq!(state.last_state.position_ticks, 1_000_000_000);
+        assert!(state.startup_seek.is_some());
+
+        state.apply_property(Some("time-pos"), Some(json!(0.0)));
+        assert_eq!(state.last_state.position_ticks, 1_000_000_000);
+        assert!(state.startup_seek.is_some());
+
+        state.apply_property(Some("time-pos"), Some(json!(98.0)));
+        assert_eq!(state.last_state.position_ticks, 980_000_000);
+        assert!(state.startup_seek.is_none());
     }
 
     #[test]
