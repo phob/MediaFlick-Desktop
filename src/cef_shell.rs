@@ -8,7 +8,7 @@ use cef::*;
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
 use crate::logger;
-use crate::mpv_controller::MpvController;
+use crate::mpv_controller::{MpvControlCommand, MpvController};
 use crate::settings::{AppSettings, normalize_server_url};
 
 #[derive(Debug, Clone)]
@@ -31,17 +31,17 @@ pub fn run(config: AppConfig) -> i32 {
 
     let type_switch = CefString::from("type");
     let is_browser_process = command_line.has_switch(Some(&type_switch)) != 1;
+    let mut app = JellyfinApp::new(config.clone());
 
     if !is_browser_process {
         let exit_code = execute_process(
             Some(args.as_main_args()),
-            None::<&mut App>,
+            Some(&mut app),
             std::ptr::null_mut(),
         );
         return exit_code.max(0);
     }
 
-    let mut app = JellyfinApp::new(config.clone());
     let exit_code = execute_process(
         Some(args.as_main_args()),
         Some(&mut app),
@@ -220,6 +220,39 @@ wrap_app! {
                 RefCell::new(None),
                 self.config.clone(),
             ))
+        }
+
+        fn render_process_handler(&self) -> Option<RenderProcessHandler> {
+            Some(JellyfinRenderProcessHandler::new())
+        }
+    }
+}
+
+wrap_render_process_handler! {
+    struct JellyfinRenderProcessHandler;
+
+    impl RenderProcessHandler {
+        fn on_context_created(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _context: Option<&mut V8Context>,
+        ) {
+            let Some(frame) = frame else {
+                return;
+            };
+            if frame.is_main() == 0 {
+                return;
+            }
+            let frame_url = CefString::from(&frame.url()).to_string();
+            if frame_url.starts_with("data:") || frame_url.starts_with("jellyfin-mpv://") {
+                return;
+            }
+            frame.execute_java_script(
+                Some(&CefString::from(jellyfin_bridge::bridge_script())),
+                Some(&CefString::from("jellyfin-mpv://bridge.js")),
+                0,
+            );
         }
     }
 }
@@ -632,6 +665,11 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if let Some(query) = bridge_action_query(&request_url, "player-command") {
+                handle_player_command(query, &self.state);
+                return 1;
+            }
+
             1
         }
 
@@ -704,6 +742,12 @@ fn handle_bridge_resource_request(request_url: &str, state: &BrowserState) -> bo
     if let Some(query) = bridge_action_query(request_url, "play") {
         tracing::trace!(target: "bridge", "handling play bridge resource request");
         spawn_mpv_from_bridge_payload(query, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "player-command") {
+        tracing::trace!(target: "bridge", "handling player-command bridge resource request");
+        handle_player_command(query, state);
         return true;
     }
 
@@ -795,6 +839,53 @@ fn spawn_mpv_from_bridge_payload(query: &str, state: &BrowserState) {
         "launch payload ready for mpv handoff"
     );
     let _ = hand_off_to_mpv(state, launch);
+}
+
+fn handle_player_command(query: &str, state: &BrowserState) {
+    let payload = match jellyfin_bridge::parse_player_command_payload(query) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(target: "bridge", "failed to parse player command payload: {error}");
+            return;
+        }
+    };
+    let Some(command) = player_command_from_payload(&payload) else {
+        tracing::debug!(
+            target: "bridge",
+            command = %payload.command,
+            "ignored unsupported player command payload"
+        );
+        return;
+    };
+    let Ok(state) = state.lock() else {
+        tracing::warn!(target: "bridge", "failed to lock browser state while handling player command");
+        return;
+    };
+    tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
+    state.mpv_controller.control(command);
+}
+
+fn player_command_from_payload(
+    payload: &jellyfin_bridge::PlayerCommandPayload,
+) -> Option<MpvControlCommand> {
+    match payload.command.as_str() {
+        "set-pause" => payload.pause.map(MpvControlCommand::SetPause),
+        "seek" => payload
+            .position_ms
+            .filter(|value| value.is_finite())
+            .map(MpvControlCommand::SeekMilliseconds),
+        "set-volume" => payload
+            .volume
+            .filter(|value| value.is_finite())
+            .map(MpvControlCommand::SetVolume),
+        "set-mute" => payload.mute.map(MpvControlCommand::SetMute),
+        "set-playback-rate" => payload
+            .rate
+            .filter(|value| value.is_finite())
+            .map(MpvControlCommand::SetPlaybackRate),
+        "stop" => Some(MpvControlCommand::Stop),
+        _ => None,
+    }
 }
 
 fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -> Option<u8> {
