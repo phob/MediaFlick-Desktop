@@ -16,6 +16,7 @@
   const CONTEXT_TTL_MS = 15 * 60 * 1000;
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
   const MAX_BITRATE = 1000000000;
+  const PLAYER_PLUGIN_NAME = 'jellyfinMpvPlayer';
   const nativeFetch = window.fetch;
 
   const MPV_DEVICE_PROFILE = {
@@ -238,8 +239,10 @@
     setTimeout(() => {
       const state = syntheticStateFor(element);
       if (!state) return;
+      dispatchMediaEvent(element, 'loadstart');
       dispatchMediaEvent(element, 'loadedmetadata');
       dispatchMediaEvent(element, 'durationchange');
+      dispatchMediaEvent(element, 'loadeddata');
       dispatchMediaEvent(element, 'canplay');
       dispatchMediaEvent(element, 'canplaythrough');
     }, 0);
@@ -284,9 +287,12 @@
     state.paused = false;
     state.ended = false;
     state.context.externalizedAt = Date.now();
+    dispatchMediaEvent(element, 'loadstart');
     dispatchMediaEvent(element, 'loadedmetadata');
     dispatchMediaEvent(element, 'durationchange');
+    dispatchMediaEvent(element, 'loadeddata');
     dispatchMediaEvent(element, 'canplay');
+    dispatchMediaEvent(element, 'canplaythrough');
     dispatchMediaEvent(element, 'play');
     dispatchMediaEvent(element, 'playing');
     dispatchMediaEvent(element, 'timeupdate');
@@ -478,6 +484,14 @@
     }
   }
 
+  function sendPlayerCommand(payload) {
+    try {
+      sendBridgeRequest('player-command', payload);
+    } catch (error) {
+      console.debug('[jellyfin-mpv] bridge player command send failed', error);
+    }
+  }
+
   function sendBridgeRequest(action, payload) {
     const url = 'jellyfin-mpv://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
     if (typeof nativeFetch === 'function') {
@@ -585,6 +599,528 @@
     return null;
   }
 
+  function externalizedContextForNode(node) {
+    if (!node) return null;
+    let context = null;
+    if (node instanceof HTMLMediaElement) {
+      context = externalizedMedia.get(node) || null;
+    } else if (typeof HTMLSourceElement !== 'undefined' && node instanceof HTMLSourceElement) {
+      context = externalizedSources.get(node) || null;
+    }
+    if (!context) return null;
+    if (contextWasExternalized(context)) return context;
+    if (node instanceof HTMLMediaElement) {
+      externalizedMedia.delete(node);
+      clearSyntheticMediaState(node);
+    } else if (typeof HTMLSourceElement !== 'undefined' && node instanceof HTMLSourceElement) {
+      externalizedSources.delete(node);
+    }
+    return null;
+  }
+
+  function canPlayExternally(type) {
+    const value = String(type || '').toLowerCase();
+    if (!value) return false;
+    return /^(audio|video)\//.test(value)
+      || value.includes('matroska')
+      || value.includes('mkv')
+      || value.includes('ogg')
+      || value.includes('mpegurl')
+      || value.includes('dash+xml')
+      || value.includes('octet-stream');
+  }
+
+  function ticksToMilliseconds(value) {
+    const number = numberish(value);
+    return number && number > 0 ? Math.round(number / 10000) : null;
+  }
+
+  function cssUrl(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  }
+
+  function contextFromPlayOptions(options) {
+    const rawUrl = options?.url || '';
+    const mediaUrl = rawUrl ? absoluteUrl(rawUrl) : '';
+    const mediaSource = options?.mediaSource || {};
+    const item = options?.item || {};
+    const startTimeTicks = numberish(
+      options?.playerStartPositionTicks
+        ?? options?.startTimeTicks
+        ?? options?.StartTimeTicks
+        ?? mediaSource.StartTimeTicks
+    );
+    const context = mediaUrl && isDirectStreamUrl(mediaUrl)
+      ? streamContext(mediaUrl)
+      : { mediaUrl, title: document.title || '' };
+
+    return mergeContext(context, {
+      mediaUrl,
+      itemId: item.Id || options?.itemId || context.itemId || '',
+      mediaSourceId: mediaSource.Id || mediaSource.MediaSourceId || options?.mediaSourceId || context.mediaSourceId || '',
+      playSessionId: options?.playSessionId || options?.PlaySessionId || mediaSource.PlaySessionId || context.playSessionId || '',
+      startTimeTicks,
+      runtimeTicks: numberish(mediaSource.RunTimeTicks ?? item.RunTimeTicks ?? context.runtimeTicks),
+      audioStreamIndex: numberish(mediaSource.DefaultAudioStreamIndex ?? options?.audioStreamIndex),
+      subtitleStreamIndex: numberish(mediaSource.DefaultSubtitleStreamIndex ?? options?.subtitleStreamIndex),
+      playMethod: options?.playMethod || context.playMethod || '',
+      playlistItemId: options?.playlistItemId || options?.PlaylistItemId || context.playlistItemId || '',
+      queue: queueItems(options) || context.queue,
+      details: options || context.details,
+      title: item.Name || mediaSource.Name || document.title || context.title || ''
+    });
+  }
+
+  class JellyfinMpvPlayer {
+    constructor(args = {}) {
+      this.events = args.events;
+      this.appHost = args.appHost;
+      this.appSettings = args.appSettings;
+      this.loading = args.loading;
+      this.appRouter = args.appRouter;
+      this.globalize = args.globalize;
+
+      this.name = 'Jellyfin MPV Player';
+      this.type = 'mediaplayer';
+      this.id = 'jellyfinmpvplayer';
+      this.priority = -1;
+      this.syncPlayWrapAs = 'htmlvideoplayer';
+      this.useFullSubtitleUrls = true;
+      this.isLocalPlayer = true;
+      this.isFetching = false;
+
+      this._currentSrc = null;
+      this._currentPlayOptions = null;
+      this._currentTime = null;
+      this._duration = null;
+      this._timeBaseMs = 0;
+      this._timeBaseAt = 0;
+      this._paused = false;
+      this._muted = false;
+      this._volume = this._readSavedVolume();
+      this._playRate = 1;
+      this._timer = 0;
+      this._videoContainer = null;
+      this._currentSubtitleOffset = 0;
+      this._showSubtitleOffset = false;
+      this._currentAspectRatio = 'auto';
+    }
+
+    _readSavedVolume() {
+      try {
+        const saved = Number(this.appSettings?.get?.('volume'));
+        return Number.isFinite(saved) && saved >= 0 ? Math.round(saved * 100) : 100;
+      } catch (_) {
+        return 100;
+      }
+    }
+
+    _saveVolume(value) {
+      try {
+        this.appSettings?.set?.('volume', (value || 100) / 100);
+      } catch (_) {}
+    }
+
+    _trigger(name, detail) {
+      try {
+        if (detail === undefined) {
+          this.events?.trigger?.(this, name);
+        } else {
+          this.events?.trigger?.(this, name, detail);
+        }
+      } catch (error) {
+        console.debug('[jellyfin-mpv] failed to trigger player event', name, error);
+      }
+    }
+
+    _isVideoOptions(options = this._currentPlayOptions) {
+      return String(options?.item?.MediaType || options?.mediaType || '').toLowerCase() !== 'audio';
+    }
+
+    _sampleCurrentTime() {
+      let value = this._currentTime || 0;
+      if (!this._paused && this._timeBaseAt) {
+        value = this._timeBaseMs + (Date.now() - this._timeBaseAt) * (this._playRate || 1);
+      }
+      if (this._duration && this._duration > 0) value = Math.min(value, this._duration);
+      return Math.max(0, value);
+    }
+
+    _commitCurrentTime() {
+      this._currentTime = this._sampleCurrentTime();
+      this._timeBaseMs = this._currentTime;
+      this._timeBaseAt = Date.now();
+      return this._currentTime;
+    }
+
+    _startSyntheticClock() {
+      this._stopSyntheticClock();
+      this._timer = setInterval(() => {
+        if (this._paused || !this._currentSrc) return;
+        this._commitCurrentTime();
+        this._trigger('timeupdate');
+        if (this._duration && this._currentTime >= this._duration) {
+          this.stop(false);
+        }
+      }, 1000);
+    }
+
+    _stopSyntheticClock() {
+      if (this._timer) clearInterval(this._timer);
+      this._timer = 0;
+    }
+
+    _createVideoContainer(options) {
+      if (!this._isVideoOptions(options)) return;
+      let container = document.querySelector('.videoPlayerContainer[data-jellyfin-mpv="true"]');
+      if (!container) {
+        container = document.createElement('div');
+        container.className = 'videoPlayerContainer';
+        container.dataset.jellyfinMpv = 'true';
+        container.style.cssText = [
+          'position:fixed',
+          'top:0',
+          'right:0',
+          'bottom:0',
+          'left:0',
+          'display:flex',
+          'align-items:center',
+          'justify-content:center',
+          'background:#000',
+          'z-index:1000'
+        ].join(';');
+        document.body.insertBefore(container, document.body.firstChild);
+      }
+
+      if (options?.fullscreen) {
+        container.classList.add('videoPlayerContainer-onTop');
+        container.style.zIndex = '1000';
+      }
+      const background = options?.backdropUrl
+        ? "#000 url('" + cssUrl(options.backdropUrl) + "') center/cover no-repeat"
+        : '#000';
+      container.style.background = background;
+      if (options?.fullscreen) document.body.classList.add('hide-scroll');
+      this._videoContainer = container;
+    }
+
+    _removeVideoContainer() {
+      document.body.classList.remove('hide-scroll');
+      const container = this._videoContainer;
+      this._videoContainer = null;
+      if (container?.dataset?.jellyfinMpv === 'true' && container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+    }
+
+    _notifyPlaying(options) {
+      this.loading?.hide?.();
+      if (this._videoContainer) {
+        this._videoContainer.classList.remove('videoPlayerContainer-onTop');
+        this._videoContainer.style.zIndex = 'unset';
+      }
+      this._trigger('unpause');
+      this._trigger('playing');
+      this._trigger('timeupdate');
+      if (this._isVideoOptions(options) && this.appRouter?.showVideoOsd) {
+        Promise.resolve(this.appRouter.showVideoOsd()).catch(() => {});
+      }
+    }
+
+    play(options = {}) {
+      console.debug('[jellyfin-mpv] external player play()', options);
+      this._stopSyntheticClock();
+      this._currentPlayOptions = options;
+
+      const context = contextFromPlayOptions(options);
+      remember(context);
+      markExternalized(context);
+      sendExternalPlayback(context);
+
+      this._currentSrc = context.mediaUrl || absoluteUrl(options.url || '');
+      this._duration = ticksToMilliseconds(context.runtimeTicks);
+      this._currentTime = ticksToMilliseconds(context.startTimeTicks) || 0;
+      this._timeBaseMs = this._currentTime;
+      this._timeBaseAt = Date.now();
+      this._paused = false;
+
+      if (this._isVideoOptions(options)) {
+        this.loading?.show?.();
+        this._createVideoContainer(options);
+      }
+
+      this._startSyntheticClock();
+      setTimeout(() => this._notifyPlaying(options), 0);
+      return Promise.resolve();
+    }
+
+    stop(destroyPlayer) {
+      const previousSrc = this._currentSrc;
+      this._stopSyntheticClock();
+      this._currentSrc = null;
+      this._currentPlayOptions = null;
+      this._currentTime = null;
+      this._duration = null;
+      this._timeBaseMs = 0;
+      this._timeBaseAt = 0;
+      this._paused = false;
+      if (previousSrc) sendPlayerCommand({ command: 'stop' });
+      if (previousSrc) this._trigger('stopped', [{ src: previousSrc }]);
+      if (destroyPlayer) this.destroy();
+      return Promise.resolve();
+    }
+
+    destroy() {
+      this._stopSyntheticClock();
+      this._removeVideoContainer();
+    }
+
+    currentSrc() {
+      return this._currentSrc;
+    }
+
+    getDeviceProfile(item, options) {
+      if (this.appHost?.getDeviceProfile) {
+        return Promise.resolve(this.appHost.getDeviceProfile(item, options));
+      }
+      return Promise.resolve(cloneMpvDeviceProfile());
+    }
+
+    canPlayMediaType(mediaType) {
+      const value = String(mediaType || '').toLowerCase();
+      return value === 'video' || value === 'audio';
+    }
+
+    canPlayItem(item) {
+      return this.canPlayMediaType(item?.MediaType);
+    }
+
+    supportsPlayMethod() {
+      return true;
+    }
+
+    supports(feature) {
+      return ['PlaybackRate', 'SetAspectRatio'].includes(feature);
+    }
+
+    pause() {
+      if (this._paused) return;
+      this._commitCurrentTime();
+      this._paused = true;
+      sendPlayerCommand({ command: 'set-pause', pause: true });
+      this._trigger('pause');
+    }
+
+    resume() {
+      this.unpause();
+    }
+
+    unpause() {
+      if (!this._paused) return;
+      this._paused = false;
+      this._timeBaseMs = this._currentTime || 0;
+      this._timeBaseAt = Date.now();
+      sendPlayerCommand({ command: 'set-pause', pause: false });
+      this._trigger('unpause');
+      this._trigger('playing');
+    }
+
+    paused() {
+      return this._paused;
+    }
+
+    currentTime(value) {
+      if (value != null) {
+        const next = Math.max(0, Number(value) || 0);
+        this._currentTime = this._duration && this._duration > 0 ? Math.min(next, this._duration) : next;
+        this._timeBaseMs = this._currentTime;
+        this._timeBaseAt = Date.now();
+        sendPlayerCommand({ command: 'seek', positionMs: this._currentTime });
+        this._trigger('timeupdate');
+        return;
+      }
+      return this._sampleCurrentTime();
+    }
+
+    currentTimeAsync() {
+      return Promise.resolve(this.currentTime());
+    }
+
+    duration() {
+      return this._duration || null;
+    }
+
+    seekable() {
+      return Boolean(this._duration);
+    }
+
+    getBufferedRanges() {
+      return [];
+    }
+
+    setPlaybackRate(value) {
+      this._commitCurrentTime();
+      const rate = Number(value);
+      this._playRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+      sendPlayerCommand({ command: 'set-playback-rate', rate: this._playRate });
+    }
+
+    getPlaybackRate() {
+      return this._playRate || 1;
+    }
+
+    getSupportedPlaybackRates() {
+      return [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4]
+        .map((id) => ({ id, name: id + 'x' }));
+    }
+
+    setVolume(value, save = true) {
+      const next = Number(value);
+      if (!Number.isFinite(next)) return;
+      this._volume = Math.max(0, Math.min(100, next));
+      if (save) this._saveVolume(this._volume);
+      sendPlayerCommand({ command: 'set-volume', volume: this._volume });
+      this._trigger('volumechange');
+    }
+
+    getVolume() {
+      return this._volume;
+    }
+
+    volumeUp() {
+      this.setVolume(Math.min(this._volume + 2, 100));
+    }
+
+    volumeDown() {
+      this.setVolume(Math.max(this._volume - 2, 0));
+    }
+
+    setMute(mute, triggerEvent = true) {
+      this._muted = Boolean(mute);
+      sendPlayerCommand({ command: 'set-mute', mute: this._muted });
+      if (triggerEvent) this._trigger('volumechange');
+    }
+
+    isMuted() {
+      return this._muted;
+    }
+
+    setAudioStreamIndex(index) {
+      if (this._currentPlayOptions?.mediaSource) {
+        this._currentPlayOptions.mediaSource.DefaultAudioStreamIndex = index;
+      }
+    }
+
+    canSetAudioStreamIndex() {
+      return true;
+    }
+
+    setSubtitleStreamIndex(index) {
+      if (this._currentPlayOptions?.mediaSource) {
+        this._currentPlayOptions.mediaSource.DefaultSubtitleStreamIndex = index;
+      }
+    }
+
+    setSecondarySubtitleStreamIndex() {}
+    resetSubtitleOffset() { this._currentSubtitleOffset = 0; this._showSubtitleOffset = false; }
+    enableShowingSubtitleOffset() { this._showSubtitleOffset = true; }
+    disableShowingSubtitleOffset() { this._showSubtitleOffset = false; }
+    isShowingSubtitleOffsetEnabled() { return this._showSubtitleOffset === true; }
+    setSubtitleOffset(value) { this._currentSubtitleOffset = Number(value) || 0; }
+    getSubtitleOffset() { return this._currentSubtitleOffset || 0; }
+    canHandleOffsetOnCurrentSubtitle() { return true; }
+    supportSubtitleOffset() { return true; }
+
+    isFullscreen() { return Boolean(document.fullscreenElement); }
+    toggleFullscreen() {}
+    setPictureInPictureEnabled() {}
+    isPictureInPictureEnabled() { return false; }
+    togglePictureInPicture() {}
+    setAirPlayEnabled() {}
+    isAirPlayEnabled() { return false; }
+    toggleAirPlay() {}
+    setBrightness() {}
+    getBrightness() { return 100; }
+    getStats() { return Promise.resolve({ categories: [] }); }
+    getSupportedAspectRatios() {
+      const translate = (value) => this.globalize?.translate?.(value) || value;
+      return [
+        { id: 'auto', name: translate('Auto') },
+        { id: 'cover', name: translate('AspectRatioCover') },
+        { id: 'fill', name: translate('AspectRatioFill') }
+      ];
+    }
+    getAspectRatio() { return this._currentAspectRatio || 'auto'; }
+    setAspectRatio(value) { this._currentAspectRatio = value || 'auto'; }
+  }
+
+  function existingNativePlugins(nativeShell) {
+    try {
+      const value = nativeShell?.getPlugins?.();
+      return Array.isArray(value) ? value : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function installNativeShellPlugin() {
+    const nativeShell = window.NativeShell && typeof window.NativeShell === 'object'
+      ? window.NativeShell
+      : {};
+    const plugins = Array.from(new Set([...existingNativePlugins(nativeShell), PLAYER_PLUGIN_NAME]));
+    nativeShell.getPlugins = () => plugins.slice();
+
+    if (typeof nativeShell.openUrl !== 'function') {
+      nativeShell.openUrl = (url, target) => window.open(url, target || '_blank', 'noopener');
+    }
+    if (typeof nativeShell.downloadFile !== 'function') {
+      nativeShell.downloadFile = (info) => info?.url && nativeShell.openUrl(info.url);
+    }
+    if (typeof nativeShell.openClientSettings !== 'function') {
+      nativeShell.openClientSettings = () => {};
+    }
+
+    const appHost = nativeShell.AppHost && typeof nativeShell.AppHost === 'object'
+      ? nativeShell.AppHost
+      : {};
+    const defaults = {
+      init: () => Promise.resolve({
+        deviceName: 'jellyfin-mpv',
+        appName: 'jellyfin-mpv',
+        appVersion: '0.1.0'
+      }),
+      getDefaultLayout: () => 'desktop',
+      supports: (command) => [
+        'fileinput',
+        'filedownload',
+        'displaylanguage',
+        'htmlaudioautoplay',
+        'htmlvideoautoplay',
+        'externallinks',
+        'multiserver',
+        'fullscreenchange',
+        'remotevideo',
+        'displaymode'
+      ].includes(String(command || '').toLowerCase()),
+      getDeviceProfile: () => cloneMpvDeviceProfile(),
+      getSyncProfile: () => cloneMpvDeviceProfile(),
+      appName: () => 'jellyfin-mpv',
+      appVersion: () => '0.1.0',
+      deviceName: () => 'jellyfin-mpv'
+    };
+    for (const [key, value] of Object.entries(defaults)) {
+      if (typeof appHost[key] !== 'function') appHost[key] = value;
+    }
+
+    nativeShell.AppHost = appHost;
+    window.NativeShell = nativeShell;
+    window[PLAYER_PLUGIN_NAME] = () => JellyfinMpvPlayer;
+    window.initCompleted = window.initCompleted || Promise.resolve();
+    window.apiPromise = window.apiPromise || Promise.resolve({});
+  }
+
+  installNativeShellPlugin();
+
   if (typeof nativeFetch === 'function') {
     window.fetch = function(input, init) {
       const requestUrl = absoluteUrl(typeof input === 'string' || input instanceof URL ? input : input?.url);
@@ -637,7 +1173,9 @@
     Object.defineProperty(HTMLMediaElement.prototype, 'src', {
       configurable: true,
       enumerable: mediaSrc.enumerable,
-      get: mediaSrc.get,
+      get() {
+        return externalizedContextForNode(this)?.mediaUrl || mediaSrc.get.call(this);
+      },
       set(value) {
         const context = rememberForStream(value);
         if (context) {
@@ -649,6 +1187,23 @@
         return mediaSrc.set.call(this, value);
       }
     });
+  }
+
+  patchMediaProperty('currentSrc', (descriptor) => ({
+    configurable: true,
+    enumerable: descriptor.enumerable,
+    get() {
+      return externalizedContextForNode(this)?.mediaUrl || descriptor.get.call(this);
+    }
+  }));
+
+  const nativeCanPlayType = HTMLMediaElement.prototype.canPlayType;
+  if (typeof nativeCanPlayType === 'function') {
+    HTMLMediaElement.prototype.canPlayType = function(type) {
+      const result = nativeCanPlayType.apply(this, arguments);
+      if (result) return result;
+      return canPlayExternally(type) ? 'probably' : result;
+    };
   }
 
   function patchMediaProperty(name, descriptorFactory) {
@@ -747,6 +1302,21 @@
   }));
 
   const nativeSetAttribute = Element.prototype.setAttribute;
+  const nativeGetAttribute = Element.prototype.getAttribute;
+  const nativeHasAttribute = Element.prototype.hasAttribute;
+  Element.prototype.getAttribute = function(name) {
+    if (String(name).toLowerCase() === 'src') {
+      const context = externalizedContextForNode(this);
+      if (context?.mediaUrl) return context.mediaUrl;
+    }
+    return nativeGetAttribute.apply(this, arguments);
+  };
+  Element.prototype.hasAttribute = function(name) {
+    if (String(name).toLowerCase() === 'src' && externalizedContextForNode(this)?.mediaUrl) {
+      return true;
+    }
+    return nativeHasAttribute.apply(this, arguments);
+  };
   Element.prototype.setAttribute = function(name, value) {
     if (this instanceof HTMLMediaElement && String(name).toLowerCase() === 'src') {
       const context = rememberForStream(value);
@@ -774,7 +1344,9 @@
       Object.defineProperty(HTMLSourceElement.prototype, 'src', {
         configurable: true,
         enumerable: sourceSrc.enumerable,
-        get: sourceSrc.get,
+        get() {
+          return externalizedContextForNode(this)?.mediaUrl || sourceSrc.get.call(this);
+        },
         set(value) {
           const context = rememberForStream(value);
           if (context) {
@@ -797,7 +1369,9 @@
         if (state) {
           dispatchMediaEvent(this, 'loadedmetadata');
           dispatchMediaEvent(this, 'durationchange');
+          dispatchMediaEvent(this, 'loadeddata');
           dispatchMediaEvent(this, 'canplay');
+          dispatchMediaEvent(this, 'canplaythrough');
         }
         return;
       }

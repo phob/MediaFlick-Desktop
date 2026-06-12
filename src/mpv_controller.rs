@@ -29,11 +29,22 @@ pub struct MpvController {
     tx: Sender<ControllerMessage>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MpvControlCommand {
+    SetPause(bool),
+    SeekMilliseconds(f64),
+    SetVolume(f64),
+    SetMute(bool),
+    SetPlaybackRate(f64),
+    Stop,
+}
+
 enum ControllerMessage {
     Load {
         mpv_path: String,
         launch: Box<MpvLaunch>,
     },
+    Control(MpvControlCommand),
     Shutdown,
 }
 
@@ -117,6 +128,10 @@ impl MpvController {
         });
     }
 
+    pub fn control(&self, command: MpvControlCommand) {
+        let _ = self.tx.send(ControllerMessage::Control(command));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.tx.send(ControllerMessage::Shutdown);
     }
@@ -149,6 +164,10 @@ impl ControllerState {
                     tracing::debug!(target: "playback", "received playback load request");
                     self.load(mpv_path, *launch);
                 }
+                Ok(ControllerMessage::Control(command)) => {
+                    tracing::debug!(target: "playback", ?command, "received playback control request");
+                    self.control(command);
+                }
                 Ok(ControllerMessage::Shutdown) => {
                     tracing::debug!(target: "playback", "received playback shutdown request");
                     self.shutdown();
@@ -166,6 +185,16 @@ impl ControllerState {
             self.poll_child();
             self.maybe_report_progress();
             self.prune_recent_loads();
+        }
+    }
+
+    fn control(&mut self, command: MpvControlCommand) {
+        let Some(command_json) = control_command(command) else {
+            tracing::debug!(target: "mpv.ipc", ?command, "ignored invalid mpv control command");
+            return;
+        };
+        if let Err(error) = self.send_mpv_command(command_json) {
+            tracing::warn!(target: "mpv.ipc", ?command, "failed to send mpv control command: {error}");
         }
     }
 
@@ -484,8 +513,13 @@ impl ControllerState {
             }
             Some("playback-abort") => {
                 if data.as_ref().and_then(Value::as_bool).unwrap_or(false) {
-                    tracing::warn!(target: "playback", state = %self.last_state, "mpv playback aborted");
-                    self.finish_active(Some("error"));
+                    tracing::debug!(
+                        target: "playback",
+                        pending = self.pending.is_some(),
+                        active = self.active.is_some(),
+                        state = %self.last_state,
+                        "mpv playback-abort is true; waiting for end-file before finishing playback"
+                    );
                 }
             }
             Some(other) => {
@@ -696,6 +730,42 @@ pub fn loadfile_command(launch: &MpvLaunch) -> Value {
         "command": ["loadfile", launch.media_url, "replace", -1, Value::Object(options)],
         "request_id": next_request_id(),
     })
+}
+
+pub fn control_command(command: MpvControlCommand) -> Option<Value> {
+    let command = match command {
+        MpvControlCommand::SetPause(pause) => {
+            json!(["set_property", "pause", pause])
+        }
+        MpvControlCommand::SeekMilliseconds(position_ms) => {
+            if !position_ms.is_finite() {
+                return None;
+            }
+            let seconds = (position_ms / 1000.0).max(0.0);
+            json!(["seek", seconds, "absolute+exact"])
+        }
+        MpvControlCommand::SetVolume(volume) => {
+            if !volume.is_finite() {
+                return None;
+            }
+            json!(["set_property", "volume", volume.clamp(0.0, 100.0)])
+        }
+        MpvControlCommand::SetMute(mute) => {
+            json!(["set_property", "mute", mute])
+        }
+        MpvControlCommand::SetPlaybackRate(rate) => {
+            if !rate.is_finite() {
+                return None;
+            }
+            json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
+        }
+        MpvControlCommand::Stop => json!(["stop"]),
+    };
+
+    Some(json!({
+        "command": command,
+        "request_id": next_request_id(),
+    }))
 }
 
 fn next_request_id() -> i64 {
@@ -1005,8 +1075,29 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{loadfile_command, mpv_string_list};
+    use super::{
+        ControllerState, MpvControlCommand, PendingPlayback, control_command, loadfile_command,
+        mpv_string_list,
+    };
     use crate::external_mpv::{HttpHeader, MpvLaunch};
+    use serde_json::json;
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
+        let (_tx, rx) = mpsc::channel();
+        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
+        launch.start_time_ticks = start_time_ticks;
+
+        let mut state = ControllerState::new(rx);
+        state.pending = Some(PendingPlayback {
+            key: "test-load".to_string(),
+            launch,
+            reporter: None,
+            requested_at: Instant::now(),
+        });
+        state
+    }
 
     #[test]
     fn loadfile_command_contains_url_replace_options_and_request_id() {
@@ -1065,5 +1156,41 @@ mod tests {
             mpv_string_list(["a,b".to_string(), r"c\d".to_string()]),
             r"a\,b,c\\d"
         );
+    }
+
+    #[test]
+    fn control_commands_map_to_mpv_ipc_commands() {
+        let pause = control_command(MpvControlCommand::SetPause(true)).expect("pause command");
+        assert_eq!(pause["command"], json!(["set_property", "pause", true]));
+
+        let seek =
+            control_command(MpvControlCommand::SeekMilliseconds(12_345.0)).expect("seek command");
+        assert_eq!(seek["command"], json!(["seek", 12.345, "absolute+exact"]));
+
+        let volume = control_command(MpvControlCommand::SetVolume(250.0)).expect("volume command");
+        assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
+
+        assert!(control_command(MpvControlCommand::SetPlaybackRate(f64::NAN)).is_none());
+    }
+
+    #[test]
+    fn playback_abort_snapshot_does_not_fail_pending_load() {
+        let mut state = controller_with_pending_load(Some(20_000_000));
+
+        state.apply_property(Some("playback-abort"), Some(json!(true)));
+
+        assert!(state.pending.is_some());
+        state.activate_pending();
+        assert!(state.pending.is_none());
+        assert_eq!(state.last_state.position_ticks, 20_000_000);
+    }
+
+    #[test]
+    fn end_file_error_still_fails_pending_load() {
+        let mut state = controller_with_pending_load(None);
+
+        state.finish_active(Some("error"));
+
+        assert!(state.pending.is_none());
     }
 }

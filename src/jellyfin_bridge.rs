@@ -25,6 +25,17 @@ pub struct PlaybackContext {
     pub details: Option<Value>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PlayerCommandPayload {
+    pub command: String,
+    pub pause: Option<bool>,
+    pub position_ms: Option<f64>,
+    pub volume: Option<f64>,
+    pub mute: Option<bool>,
+    pub rate: Option<f64>,
+}
+
 impl PlaybackContext {
     pub fn merge_into_launch(&self, launch: &mut MpvLaunch) {
         let context_launch = MpvLaunch {
@@ -82,6 +93,13 @@ pub fn parse_context_payload(query: &str) -> Result<PlaybackContext, serde_json:
 }
 
 pub fn parse_launch_payload(query: &str) -> Result<MpvLaunch, serde_json::Error> {
+    let payload = query_param(query, "payload").unwrap_or_default();
+    serde_json::from_str(&payload)
+}
+
+pub fn parse_player_command_payload(
+    query: &str,
+) -> Result<PlayerCommandPayload, serde_json::Error> {
     let payload = query_param(query, "payload").unwrap_or_default();
     serde_json::from_str(&payload)
 }
