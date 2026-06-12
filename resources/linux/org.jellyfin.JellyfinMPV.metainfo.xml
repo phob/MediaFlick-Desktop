@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.jellyfin.JellyfinMPV</id>
+  <name>Jellyfin MPV</name>
+  <summary>Jellyfin desktop client with external mpv playback</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+  <description>
+    <p>
+      Jellyfin MPV is a lightweight desktop client for Jellyfin media servers.
+      It embeds Jellyfin Web in a native CEF window and hands direct-play media
+      streams to an external mpv process while reporting playback progress back
+      to Jellyfin.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.jellyfin.JellyfinMPV.desktop</launchable>
+  <icon type="stock">org.jellyfin.JellyfinMPV</icon>
+  <url type="homepage">https://jellyfin.org</url>
+  <url type="bugtracker">https://github.com/jellyfin/jellyfin-desktop/issues</url>
+  <url type="help">https://jellyfin.org/docs/</url>
+  <developer id="org.jellyfin">
+    <name>Jellyfin Contributors</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+  </releases>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>Player</category>
+    <category>TV</category>
+  </categories>
+</component>

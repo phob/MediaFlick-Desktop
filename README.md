@@ -15,6 +15,12 @@ A small Rust + CEF Jellyfin shell, based on the shape of `D:/users/pho/Documents
 just build
 ```
 
+For a non-debug build, use:
+
+```sh
+just non-debug
+```
+
 The staged app lands in `build/`:
 
 ```sh
