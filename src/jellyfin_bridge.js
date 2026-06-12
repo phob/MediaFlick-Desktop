@@ -13,9 +13,11 @@
   const externalizedMedia = new WeakMap();
   const externalizedSources = new WeakMap();
   const syntheticMediaState = new WeakMap();
+  const syntheticMediaElements = new Set();
   const playerInstances = new Set();
   const CONTEXT_TTL_MS = 15 * 60 * 1000;
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
+  const MPV_STOP_GRACE_MS = 2000;
   const MAX_BITRATE = 1000000000;
   const PLAYER_PLUGIN_NAME = 'jellyfinMpvPlayer';
   const nativeFetch = window.fetch;
@@ -205,6 +207,7 @@
     const state = syntheticMediaState.get(element);
     if (state?.timer) clearInterval(state.timer);
     syntheticMediaState.delete(element);
+    syntheticMediaElements.delete(element);
   }
 
   function syntheticStateFor(element) {
@@ -227,10 +230,14 @@
         duration: syntheticDuration(context),
         paused: true,
         ended: false,
+        externalPlaybackActive: false,
+        mpvObservedActive: false,
+        mpvStartedAt: 0,
         updatedAt: Date.now(),
         timer: 0
       };
       syntheticMediaState.set(element, state);
+      syntheticMediaElements.add(element);
     } else {
       state.context = mergeContext(state.context, context);
       const duration = syntheticDuration(state.context);
@@ -266,9 +273,12 @@
         current.updatedAt = Date.now();
         current.paused = true;
         current.ended = true;
+        current.externalPlaybackActive = false;
+        current.mpvObservedActive = false;
         clearInterval(current.timer);
         current.timer = 0;
         dispatchMediaEvent(element, 'ended');
+        stopPlayerStatePollingIfIdle();
       }
     }, 1000);
   }
@@ -290,6 +300,9 @@
     setSyntheticCurrentTime(state, syntheticCurrentTime(state));
     state.paused = false;
     state.ended = false;
+    state.externalPlaybackActive = true;
+    state.mpvObservedActive = false;
+    state.mpvStartedAt = Date.now();
     state.context.externalizedAt = Date.now();
     dispatchMediaEvent(element, 'loadstart');
     dispatchMediaEvent(element, 'loadedmetadata');
@@ -301,6 +314,7 @@
     dispatchMediaEvent(element, 'playing');
     dispatchMediaEvent(element, 'timeupdate');
     startSyntheticMediaTimer(element, state);
+    ensurePlayerStatePolling();
   }
 
   function pauseSyntheticPlayback(element) {
@@ -501,7 +515,84 @@
     for (const player of playerInstances) {
       if (player?._currentSrc) count += 1;
     }
+    for (const element of Array.from(syntheticMediaElements)) {
+      const state = syntheticStateFor(element);
+      if (state?.externalPlaybackActive) count += 1;
+    }
     return count;
+  }
+
+  function applyMpvSnapshotToSyntheticMedia(snapshot) {
+    if (!snapshot) return;
+    for (const element of Array.from(syntheticMediaElements)) {
+      const state = syntheticStateFor(element);
+      if (!state?.externalPlaybackActive) continue;
+
+      if (snapshot.active === true) {
+        state.mpvObservedActive = true;
+      } else if (snapshot.active === false && shouldAcceptMpvStop(state)) {
+        finishSyntheticPlaybackFromMpv(element, state, snapshot);
+        continue;
+      }
+
+      const position = Number(snapshot.positionMs);
+      if (Number.isFinite(position) && position >= 0) {
+        const seconds = position / 1000;
+        const previous = syntheticCurrentTime(state);
+        setSyntheticCurrentTime(state, seconds);
+        if (Math.abs(previous - seconds) > 0.25) {
+          dispatchMediaEvent(element, 'timeupdate');
+        }
+      }
+
+      const duration = Number(snapshot.durationMs);
+      if (Number.isFinite(duration) && duration > 0) {
+        state.duration = duration / 1000;
+      }
+
+      if (typeof snapshot.paused === 'boolean' && snapshot.paused !== state.paused) {
+        setSyntheticCurrentTime(state, syntheticCurrentTime(state));
+        state.paused = snapshot.paused;
+        dispatchMediaEvent(element, snapshot.paused ? 'pause' : 'playing');
+      }
+    }
+  }
+
+  function shouldAcceptMpvStop(state) {
+    return state?.mpvObservedActive === true
+      || (state?.mpvStartedAt && Date.now() - state.mpvStartedAt >= MPV_STOP_GRACE_MS);
+  }
+
+  function finishSyntheticPlaybackFromMpv(element, state, snapshot) {
+    const position = Number(snapshot?.positionMs);
+    if (Number.isFinite(position) && position >= 0) {
+      setSyntheticCurrentTime(state, position / 1000);
+    } else {
+      setSyntheticCurrentTime(state, syntheticCurrentTime(state));
+    }
+    if (state.timer) clearInterval(state.timer);
+    state.timer = 0;
+    state.paused = true;
+    state.ended = true;
+    state.externalPlaybackActive = false;
+    state.mpvObservedActive = false;
+    state.mpvStartedAt = 0;
+    dispatchMediaEvent(element, 'pause');
+    dispatchMediaEvent(element, 'timeupdate');
+    dispatchMediaEvent(element, 'ended');
+    stopPlayerStatePollingIfIdle();
+  }
+
+  function stopSyntheticMediaFromMpv(snapshot) {
+    let handled = 0;
+    for (const element of Array.from(syntheticMediaElements)) {
+      const state = syntheticStateFor(element);
+      if (state?.externalPlaybackActive) {
+        finishSyntheticPlaybackFromMpv(element, state, snapshot);
+        handled += 1;
+      }
+    }
+    return handled;
   }
 
   function ensurePlayerStatePolling() {
@@ -550,6 +641,35 @@
         console.debug('[jellyfin-mpv] failed to apply mpv state snapshot', error);
       }
     }
+    try {
+      applyMpvSnapshotToSyntheticMedia(snapshot);
+    } catch (error) {
+      console.debug('[jellyfin-mpv] failed to apply mpv state to synthetic media', error);
+    }
+  };
+
+  window.__jellyfinMpvPlaybackStopped = function(snapshot) {
+    let handledPlayers = 0;
+    let handledSynthetic = 0;
+    for (const player of Array.from(playerInstances)) {
+      try {
+        if (player._handleMpvStopped(snapshot)) handledPlayers += 1;
+      } catch (error) {
+        console.debug('[jellyfin-mpv] failed to handle mpv stopped event', error);
+      }
+    }
+    try {
+      handledSynthetic = stopSyntheticMediaFromMpv(snapshot);
+    } catch (error) {
+      console.debug('[jellyfin-mpv] failed to stop synthetic media after mpv stopped', error);
+    }
+    sendBridgeRequest('playback-stop-ack', {
+      active: snapshot?.active,
+      positionMs: snapshot?.positionMs,
+      handledPlayers,
+      handledSynthetic,
+      activePlayers: activePlayerCount()
+    });
   };
 
   function sendBridgeRequest(action, payload) {
@@ -761,6 +881,8 @@
       this._playRate = 1;
       this._timer = 0;
       this._videoContainer = null;
+      this._mpvObservedActive = false;
+      this._mpvStartedAt = 0;
       this._currentSubtitleOffset = 0;
       this._showSubtitleOffset = false;
       this._currentAspectRatio = 'auto';
@@ -891,6 +1013,12 @@
 
     _applyMpvSnapshot(snapshot) {
       if (!snapshot || !this._currentSrc) return;
+      if (snapshot.active === true) {
+        this._mpvObservedActive = true;
+      } else if (snapshot.active === false && this._shouldAcceptMpvStop()) {
+        this._finishPlayback(false, false);
+        return;
+      }
 
       const position = Number(snapshot.positionMs);
       if (Number.isFinite(position) && position >= 0) {
@@ -929,8 +1057,26 @@
       if (volumeChanged) this._trigger('volumechange');
     }
 
+    _shouldAcceptMpvStop() {
+      return this._mpvObservedActive === true
+        || (this._mpvStartedAt && Date.now() - this._mpvStartedAt >= MPV_STOP_GRACE_MS);
+    }
+
+    _handleMpvStopped(snapshot) {
+      if (!this._currentSrc) return false;
+      const position = Number(snapshot?.positionMs);
+      if (Number.isFinite(position) && position >= 0) {
+        this._currentTime = position;
+        this._timeBaseMs = position;
+        this._timeBaseAt = Date.now();
+      }
+      this._finishPlayback(false, false);
+      return true;
+    }
+
     play(options = {}) {
       console.debug('[jellyfin-mpv] external player play()', options);
+      playerInstances.add(this);
       this._stopSyntheticClock();
       this._currentPlayOptions = options;
 
@@ -940,6 +1086,8 @@
       sendExternalPlayback(context);
 
       this._currentSrc = context.mediaUrl || absoluteUrl(options.url || '');
+      this._mpvObservedActive = false;
+      this._mpvStartedAt = Date.now();
       this._duration = ticksToMilliseconds(context.runtimeTicks);
       this._currentTime = ticksToMilliseconds(context.startTimeTicks) || 0;
       this._timeBaseMs = this._currentTime;
@@ -957,7 +1105,7 @@
       return Promise.resolve();
     }
 
-    stop(destroyPlayer) {
+    _finishPlayback(destroyPlayer, notifyMpv) {
       const previousSrc = this._currentSrc;
       this._stopSyntheticClock();
       this._currentSrc = null;
@@ -967,16 +1115,24 @@
       this._timeBaseMs = 0;
       this._timeBaseAt = 0;
       this._paused = false;
-      if (previousSrc) sendPlayerCommand({ command: 'stop' });
+      this._mpvObservedActive = false;
+      this._mpvStartedAt = 0;
+      if (previousSrc && notifyMpv) sendPlayerCommand({ command: 'stop' });
       if (previousSrc) this._trigger('stopped', [{ src: previousSrc }]);
       if (destroyPlayer) this.destroy();
       stopPlayerStatePollingIfIdle();
       return Promise.resolve();
     }
 
+    stop(destroyPlayer) {
+      return this._finishPlayback(destroyPlayer, true);
+    }
+
     destroy() {
       this._stopSyntheticClock();
       this._removeVideoContainer();
+      this._mpvObservedActive = false;
+      this._mpvStartedAt = 0;
       playerInstances.delete(this);
       stopPlayerStatePollingIfIdle();
     }
