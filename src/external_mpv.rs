@@ -134,6 +134,7 @@ impl ExternalMpv {
     ) -> Command {
         let mut command = Command::new(&self.executable);
         command.arg("--force-window=yes");
+        command.arg("--fullscreen=yes");
         command.arg("--no-terminal");
 
         if let Some(ipc_path) = non_empty(ipc_path) {
@@ -166,6 +167,7 @@ impl ExternalMpv {
     pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
         let mut command = Command::new(&self.executable);
         command.arg("--force-window=yes");
+        command.arg("--fullscreen=yes");
         command.arg("--no-terminal");
         command.arg("--idle=yes");
         command.arg(format!("--input-ipc-server={ipc_path}"));

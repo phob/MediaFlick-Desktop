@@ -10,7 +10,7 @@ use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
 use crate::logger;
 use crate::mpv_controller::{MpvControlCommand, MpvController};
-use crate::settings::{AppSettings, normalize_server_url};
+use crate::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -274,7 +274,7 @@ wrap_browser_process_handler! {
             );
             {
                 let mut client = self.client.borrow_mut();
-                *client = Some(JellyfinClient::new(handler_state));
+                *client = Some(JellyfinClient::new(handler_state.clone()));
             }
 
             let settings = BrowserSettings::default();
@@ -309,6 +309,8 @@ wrap_browser_process_handler! {
 
             let show_state = if self.config.hidden {
                 ShowState::HIDDEN
+            } else if self.config.settings.webui_window.maximized {
+                ShowState::MAXIMIZED
             } else {
                 ShowState::NORMAL
             };
@@ -317,6 +319,8 @@ wrap_browser_process_handler! {
                 runtime_style,
                 show_state,
                 self.config.title.clone(),
+                self.config.settings.webui_window,
+                Some(handler_state),
             );
             window_create_top_level(Some(&mut window_delegate));
         }
@@ -338,14 +342,16 @@ wrap_browser_view_delegate! {
         fn on_popup_browser_view_created(
             &self,
             _browser_view: Option<&mut BrowserView>,
-            popup_browser_view: Option<&mut BrowserView>,
-            _is_devtools: i32,
+                popup_browser_view: Option<&mut BrowserView>,
+                _is_devtools: i32,
         ) -> i32 {
             let mut window_delegate = JellyfinWindowDelegate::new(
                 RefCell::new(popup_browser_view.cloned()),
                 self.runtime_style,
                 ShowState::NORMAL,
                 "jellyfin-mpv".to_string(),
+                WebUiWindowSettings::default(),
+                None,
             );
             window_create_top_level(Some(&mut window_delegate));
             1
@@ -363,13 +369,16 @@ wrap_window_delegate! {
         runtime_style: RuntimeStyle,
         initial_show_state: ShowState,
         title: String,
+        window_settings: WebUiWindowSettings,
+        state: Option<BrowserState>,
     }
 
     impl ViewDelegate {
         fn preferred_size(&self, _view: Option<&mut View>) -> Size {
+            let (width, height) = self.window_settings.size();
             Size {
-                width: 1280,
-                height: 800,
+                width,
+                height,
             }
         }
     }
@@ -391,13 +400,41 @@ wrap_window_delegate! {
             let mut view = View::from(browser_view);
             window.add_child_view(Some(&mut view));
 
+            if self.initial_show_state == ShowState::MAXIMIZED {
+                window.maximize();
+            }
             if self.initial_show_state != ShowState::HIDDEN {
                 window.show();
             }
         }
 
+        fn on_window_closing(&self, window: Option<&mut Window>) {
+            update_webui_window_from_window(self.state.as_ref(), window);
+            save_webui_window_settings(self.state.as_ref());
+        }
+
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
             *self.browser_view.borrow_mut() = None;
+        }
+
+        fn on_window_bounds_changed(
+            &self,
+            window: Option<&mut Window>,
+            new_bounds: Option<&Rect>,
+        ) {
+            update_webui_window_settings(self.state.as_ref(), window, new_bounds);
+        }
+
+        fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
+            1
+        }
+
+        fn can_maximize(&self, _window: Option<&mut Window>) -> i32 {
+            1
+        }
+
+        fn can_minimize(&self, _window: Option<&mut Window>) -> i32 {
+            1
         }
 
         fn can_close(&self, _window: Option<&mut Window>) -> i32 {
@@ -421,6 +458,54 @@ wrap_window_delegate! {
         fn window_runtime_style(&self) -> RuntimeStyle {
             self.runtime_style
         }
+    }
+}
+
+fn update_webui_window_from_window(state: Option<&BrowserState>, window: Option<&mut Window>) {
+    let bounds = window.as_ref().map(|window| window.bounds());
+    update_webui_window_settings(state, window, bounds.as_ref());
+}
+
+fn update_webui_window_settings(
+    state: Option<&BrowserState>,
+    window: Option<&mut Window>,
+    bounds: Option<&Rect>,
+) {
+    let Some(state) = state else {
+        return;
+    };
+    let Some(bounds) = bounds else {
+        return;
+    };
+    let maximized = window
+        .as_ref()
+        .is_some_and(|window| window.is_maximized() != 0);
+    match state.lock() {
+        Ok(mut state) => {
+            state
+                .settings
+                .webui_window
+                .record_bounds(bounds.width, bounds.height, maximized);
+        }
+        Err(error) => {
+            tracing::warn!(target: "config", "failed to update WebUI window settings: {error}");
+        }
+    }
+}
+
+fn save_webui_window_settings(state: Option<&BrowserState>) {
+    let Some(state) = state else {
+        return;
+    };
+    let settings = match state.lock() {
+        Ok(state) => state.settings.clone(),
+        Err(error) => {
+            tracing::warn!(target: "config", "failed to read WebUI window settings: {error}");
+            return;
+        }
+    };
+    if let Err(error) = settings.save() {
+        tracing::warn!(target: "config", "failed to save jellyfin-mpv config on window close: {error}");
     }
 }
 
@@ -1089,9 +1174,14 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
         return;
     };
 
+    let webui_window = state
+        .lock()
+        .map(|state| state.settings.webui_window)
+        .unwrap_or_default();
     let settings = AppSettings {
         jellyfin_url: Some(jellyfin_url.clone()),
         mpv_path: Some(mpv_path),
+        webui_window,
     };
 
     if let Err(error) = settings.save() {

@@ -2,12 +2,65 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+const DEFAULT_WEBUI_WINDOW_WIDTH: i32 = 1280;
+const DEFAULT_WEBUI_WINDOW_HEIGHT: i32 = 800;
+const MIN_WEBUI_WINDOW_WIDTH: i32 = 640;
+const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpv_path: Option<String>,
+    #[serde(default, skip_serializing_if = "WebUiWindowSettings::is_default")]
+    pub webui_window: WebUiWindowSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebUiWindowSettings {
+    #[serde(default = "default_webui_window_width")]
+    pub width: i32,
+    #[serde(default = "default_webui_window_height")]
+    pub height: i32,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+impl Default for WebUiWindowSettings {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_WEBUI_WINDOW_WIDTH,
+            height: DEFAULT_WEBUI_WINDOW_HEIGHT,
+            maximized: false,
+        }
+    }
+}
+
+impl WebUiWindowSettings {
+    pub fn size(self) -> (i32, i32) {
+        (self.width, self.height)
+    }
+
+    pub fn record_bounds(&mut self, width: i32, height: i32, maximized: bool) {
+        self.maximized = maximized;
+        if !maximized {
+            self.width = width;
+            self.height = height;
+            self.sanitize();
+        }
+    }
+
+    fn sanitize(&mut self) {
+        if self.width < MIN_WEBUI_WINDOW_WIDTH || self.height < MIN_WEBUI_WINDOW_HEIGHT {
+            self.width = DEFAULT_WEBUI_WINDOW_WIDTH;
+            self.height = DEFAULT_WEBUI_WINDOW_HEIGHT;
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 impl AppSettings {
@@ -58,7 +111,16 @@ impl AppSettings {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        self.webui_window.sanitize();
     }
+}
+
+fn default_webui_window_width() -> i32 {
+    DEFAULT_WEBUI_WINDOW_WIDTH
+}
+
+fn default_webui_window_height() -> i32 {
+    DEFAULT_WEBUI_WINDOW_HEIGHT
 }
 
 pub fn normalize_server_url(input: &str) -> Option<String> {
@@ -124,7 +186,7 @@ fn roaming_base_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, normalize_server_url};
+    use super::{AppSettings, WebUiWindowSettings, normalize_server_url};
 
     #[test]
     fn leaves_absolute_urls_alone() {
@@ -152,7 +214,43 @@ mod tests {
         let settings = AppSettings {
             jellyfin_url: Some("http://localhost:8096".to_string()),
             mpv_path: Some("C:/mpv/mpv.exe".to_string()),
+            ..Default::default()
         };
         assert!(settings.is_complete());
+    }
+
+    #[test]
+    fn invalid_webui_window_size_falls_back_to_default() {
+        let mut settings = AppSettings {
+            webui_window: WebUiWindowSettings {
+                width: 100,
+                height: 100,
+                maximized: true,
+            },
+            ..Default::default()
+        };
+        settings.sanitize();
+        assert_eq!(settings.webui_window.size(), (1280, 800));
+        assert!(settings.webui_window.maximized);
+    }
+
+    #[test]
+    fn recording_maximized_window_keeps_restored_size() {
+        let mut window = WebUiWindowSettings {
+            width: 1440,
+            height: 900,
+            maximized: false,
+        };
+        window.record_bounds(3840, 2160, true);
+        assert_eq!(window.size(), (1440, 900));
+        assert!(window.maximized);
+    }
+
+    #[test]
+    fn recording_restored_window_updates_size() {
+        let mut window = WebUiWindowSettings::default();
+        window.record_bounds(1600, 900, false);
+        assert_eq!(window.size(), (1600, 900));
+        assert!(!window.maximized);
     }
 }
