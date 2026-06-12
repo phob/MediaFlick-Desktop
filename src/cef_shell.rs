@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use cef::*;
 
-use crate::external_mpv::{ExternalMpv, HttpHeader, MpvLaunch};
+use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
-use crate::playback_reporter;
+use crate::mpv_controller::MpvController;
 use crate::settings::{AppSettings, normalize_server_url};
 
 #[derive(Debug, Clone)]
@@ -200,6 +200,20 @@ wrap_app! {
             }
         }
 
+        fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
+            let Some(registrar) = registrar else {
+                return;
+            };
+            let scheme = CefString::from("jellyfin-mpv");
+            registrar.add_custom_scheme(
+                Some(&scheme),
+                SchemeOptions::STANDARD.get_raw()
+                    | SchemeOptions::SECURE.get_raw()
+                    | SchemeOptions::CORS_ENABLED.get_raw()
+                    | SchemeOptions::FETCH_ENABLED.get_raw(),
+            );
+        }
+
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
             Some(JellyfinBrowserProcessHandler::new(
                 RefCell::new(None),
@@ -380,17 +394,12 @@ struct BrowserStateInner {
     settings: AppSettings,
     browsers: Vec<Browser>,
     playback_contexts: Vec<PendingPlaybackContext>,
-    launched_streams: Vec<LaunchedStream>,
+    mpv_controller: MpvController,
 }
 
 struct PendingPlaybackContext {
     context: PlaybackContext,
     seen_at: Instant,
-}
-
-struct LaunchedStream {
-    key: String,
-    launched_at: Instant,
 }
 
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
@@ -401,7 +410,7 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         settings,
         browsers: Vec::new(),
         playback_contexts: Vec::new(),
-        launched_streams: Vec::new(),
+        mpv_controller: MpvController::new(),
     }))
 }
 
@@ -496,6 +505,9 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
+                if let Ok(state) = self.state.lock() {
+                    state.mpv_controller.shutdown();
+                }
                 quit_message_loop();
             }
         }
@@ -698,8 +710,6 @@ wrap_run_file_dialog_callback! {
 }
 
 const PLAYBACK_CONTEXT_TTL: Duration = Duration::from_secs(15 * 60);
-const LAUNCHED_STREAM_TTL: Duration = Duration::from_secs(60);
-
 fn remember_playback_context(query: &str, state: &BrowserState) {
     let Ok(context) = jellyfin_bridge::parse_context_payload(query) else {
         return;
@@ -752,70 +762,16 @@ fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) {
     }
 }
 
-enum LaunchReservation {
-    Reserved(String),
-    Duplicate,
-    MissingMpvPath,
-}
-
 fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
-    let key = launch.dedupe_key();
-    let mpv_path = match reserve_stream_launch(state, &key) {
-        LaunchReservation::Reserved(mpv_path) => mpv_path,
-        LaunchReservation::Duplicate => return true,
-        LaunchReservation::MissingMpvPath => return false,
-    };
-
-    let mpv = ExternalMpv::new(mpv_path);
-    let ipc_path = playback_reporter::make_mpv_ipc_path();
-    match mpv.spawn_with_ipc(&launch, &ipc_path) {
-        Ok(child) => {
-            eprintln!(
-                "Handed Jellyfin stream to mpv: item={} url={}",
-                launch.item_id.as_deref().unwrap_or("unknown"),
-                jellyfin_bridge::redact_url_secrets(&launch.media_url)
-            );
-            playback_reporter::monitor_mpv_playback(child, launch, ipc_path);
-            true
-        }
-        Err(error) => {
-            release_stream_launch(state, &key);
-            eprintln!(
-                "Failed to launch mpv for Jellyfin stream ({}): {error}",
-                mpv.executable().display()
-            );
-            false
-        }
-    }
-}
-
-fn reserve_stream_launch(state: &BrowserState, key: &str) -> LaunchReservation {
     let Ok(mut state) = state.lock() else {
-        return LaunchReservation::MissingMpvPath;
+        return false;
     };
     prune_playback_state(&mut state);
-    if state
-        .launched_streams
-        .iter()
-        .any(|stream| stream.key == key)
-    {
-        return LaunchReservation::Duplicate;
-    }
     let Some(mpv_path) = state.settings.mpv_path.clone() else {
-        return LaunchReservation::MissingMpvPath;
+        return false;
     };
-    state.launched_streams.push(LaunchedStream {
-        key: key.to_string(),
-        launched_at: Instant::now(),
-    });
-    LaunchReservation::Reserved(mpv_path)
-}
-
-fn release_stream_launch(state: &BrowserState, key: &str) {
-    let Ok(mut state) = state.lock() else {
-        return;
-    };
-    state.launched_streams.retain(|stream| stream.key != key);
+    state.mpv_controller.load(mpv_path, launch);
+    true
 }
 
 fn prune_playback_state(state: &mut BrowserStateInner) {
@@ -823,9 +779,6 @@ fn prune_playback_state(state: &mut BrowserStateInner) {
     state
         .playback_contexts
         .retain(|context| now.saturating_duration_since(context.seen_at) <= PLAYBACK_CONTEXT_TTL);
-    state
-        .launched_streams
-        .retain(|stream| now.saturating_duration_since(stream.launched_at) <= LAUNCHED_STREAM_TTL);
 }
 
 fn request_headers(request: &Request) -> Vec<HttpHeader> {

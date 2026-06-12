@@ -2,6 +2,7 @@ mod cef_shell;
 mod cli;
 mod external_mpv;
 mod jellyfin_bridge;
+mod mpv_controller;
 mod playback_reporter;
 mod settings;
 
