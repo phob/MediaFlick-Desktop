@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use cef::*;
@@ -9,7 +11,7 @@ use serde_json::json;
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
 use crate::logger;
-use crate::mpv_controller::{MpvControlCommand, MpvController};
+use crate::mpv_controller::{MpvControlCommand, MpvController, MpvPlaybackEvent};
 use crate::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
 
 #[derive(Debug, Clone)]
@@ -63,6 +65,7 @@ pub fn run(config: AppConfig) -> i32 {
     let product = format!("jellyfin-mpv/{}", env!("CARGO_PKG_VERSION"));
     let settings = Settings {
         no_sandbox: 1,
+        browser_subprocess_path: cef_string_from_path(paths.browser_subprocess_path.as_ref()),
         cache_path: CefString::from(cache_path.as_ref()),
         root_cache_path: CefString::from(cache_path.as_ref()),
         persist_session_cookies: 1,
@@ -70,7 +73,10 @@ pub fn run(config: AppConfig) -> i32 {
         locale: CefString::from("en-US"),
         log_file: CefString::from(log_file.as_ref()),
         log_severity: LogSeverity::INFO,
+        resources_dir_path: cef_string_from_path(paths.resources_dir_path.as_ref()),
+        locales_dir_path: cef_string_from_path(paths.locales_dir_path.as_ref()),
         remote_debugging_port: config.remote_debugging_port,
+        disable_signal_handlers: 1,
         use_views_default_popup: 1,
         ..Default::default()
     };
@@ -94,14 +100,26 @@ pub fn run(config: AppConfig) -> i32 {
 struct RuntimePaths {
     cache_dir: PathBuf,
     log_file: PathBuf,
+    browser_subprocess_path: Option<PathBuf>,
+    resources_dir_path: Option<PathBuf>,
+    locales_dir_path: Option<PathBuf>,
 }
 
 impl RuntimePaths {
     fn new() -> Self {
         let base = platform_data_dir().join("jellyfin-mpv");
+        let browser_subprocess_path = current_exe_path();
+        let resources_dir_path = browser_subprocess_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(PathBuf::from);
+        let locales_dir_path = resources_dir_path.as_ref().map(|path| path.join("locales"));
         Self {
             cache_dir: base.join("cef-cache"),
             log_file: base.join("cef.log"),
+            browser_subprocess_path,
+            resources_dir_path,
+            locales_dir_path,
         }
     }
 
@@ -112,6 +130,16 @@ impl RuntimePaths {
         }
         Ok(())
     }
+}
+
+fn current_exe_path() -> Option<PathBuf> {
+    let path = std::env::current_exe().ok()?;
+    Some(std::fs::canonicalize(&path).unwrap_or(path))
+}
+
+fn cef_string_from_path(path: Option<&PathBuf>) -> CefString {
+    path.map(|path| CefString::from(path.to_string_lossy().as_ref()))
+        .unwrap_or_default()
 }
 
 fn platform_data_dir() -> PathBuf {
@@ -155,7 +183,7 @@ wrap_app! {
     impl App {
         fn on_before_command_line_processing(
             &self,
-            process_type: Option<&CefStringUtf16>,
+            _process_type: Option<&CefStringUtf16>,
             command_line: Option<&mut CommandLine>,
         ) {
             let Some(command_line) = command_line else {
@@ -191,13 +219,15 @@ wrap_app! {
                 );
             }
 
-            let is_browser_process = process_type
-                .map(|value| value.to_string().is_empty())
-                .unwrap_or(true);
-            if is_browser_process {
+            #[cfg(target_os = "windows")]
+            {
+                // In this windowed Views shell CEF 148 starts the separate GPU
+                // process with GL disabled, which loops through STATUS_BREAKPOINT
+                // exits. Keeping the GPU service in-process avoids that crash loop.
+                command_line.append_switch(Some(&CefString::from("in-process-gpu")));
                 command_line.append_switch_with_value(
-                    Some(&CefString::from("app")),
-                    Some(&CefString::from("jellyfin-mpv")),
+                    Some(&CefString::from("use-angle")),
+                    Some(&CefString::from("d3d11")),
                 );
             }
         }
@@ -288,7 +318,7 @@ wrap_browser_process_handler! {
                 welcome_page_url(&self.config.settings)
             };
             let url = CefString::from(initial_url.as_str());
-            let runtime_style = RuntimeStyle::DEFAULT;
+            let runtime_style = RuntimeStyle::ALLOY;
 
             let mut client = self.default_client();
             let mut browser_delegate = JellyfinBrowserViewDelegate::new(runtime_style);
@@ -525,13 +555,94 @@ struct PendingPlaybackContext {
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
 fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
-    Arc::new(Mutex::new(BrowserStateInner {
+    let (playback_event_tx, playback_event_rx) = mpsc::channel();
+    let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
         browsers: Vec::new(),
         playback_contexts: Vec::new(),
-        mpv_controller: MpvController::new(),
-    }))
+        mpv_controller: MpvController::new(Some(playback_event_tx)),
+    }));
+    start_playback_event_bridge(state.clone(), playback_event_rx);
+    state
+}
+
+fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEvent>) {
+    thread::spawn(move || {
+        while let Ok(event) = rx.recv() {
+            let mut task = PlaybackEventTask::new(state.clone(), event);
+            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+                tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+            }
+        }
+    });
+}
+
+wrap_task! {
+    struct PlaybackEventTask {
+        state: BrowserState,
+        event: MpvPlaybackEvent,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            dispatch_playback_event(&self.state, self.event);
+        }
+    }
+}
+
+fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    if browsers.is_empty() {
+        tracing::debug!(
+            target: "bridge",
+            ?event,
+            "skipped playback event dispatch because no WebUI browsers are registered"
+        );
+        return;
+    }
+
+    let script = playback_event_script(event);
+    let browser_count = browsers.len();
+    let mut frame_count = 0usize;
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            frame_count += 1;
+            frame.execute_java_script(
+                Some(&CefString::from(script.as_str())),
+                Some(&CefString::from("jellyfin-mpv://playback-event")),
+                1,
+            );
+        }
+    }
+    tracing::debug!(
+        target: "bridge",
+        ?event,
+        browser_count,
+        frame_count,
+        "dispatched playback event to WebUI"
+    );
+}
+
+fn playback_event_script(event: MpvPlaybackEvent) -> String {
+    match event {
+        MpvPlaybackEvent::Stopped(snapshot) => {
+            let payload = json!({
+                "active": snapshot.active,
+                "positionMs": snapshot.position_ms,
+                "durationMs": snapshot.duration_ms,
+                "paused": snapshot.paused,
+                "volume": snapshot.volume,
+                "mute": snapshot.mute,
+            });
+            format!(
+                "window.__jellyfinMpvPlaybackStopped&&window.__jellyfinMpvPlaybackStopped({payload});"
+            )
+        }
+    }
 }
 
 wrap_client! {
@@ -756,6 +867,11 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if let Some(query) = bridge_action_query(&request_url, "playback-stop-ack") {
+                log_playback_stop_ack(query);
+                return 1;
+            }
+
             if let Some(query) = bridge_action_query(&request_url, "player-command") {
                 handle_player_command(query, &self.state);
                 return 1;
@@ -787,8 +903,8 @@ wrap_resource_request_handler! {
     impl ResourceRequestHandler {
         fn on_before_resource_load(
             &self,
-            _browser: Option<&mut Browser>,
-            _frame: Option<&mut Frame>,
+            browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
             request: Option<&mut Request>,
             _callback: Option<&mut Callback>,
         ) -> ReturnValue {
@@ -797,7 +913,7 @@ wrap_resource_request_handler! {
             };
 
             let request_url = CefString::from(&request.url()).to_string();
-            if handle_bridge_resource_request(&request_url, &self.state) {
+            if handle_bridge_resource_request(&request_url, browser, frame, &self.state) {
                 return ReturnValue::CANCEL;
             }
 
@@ -823,7 +939,12 @@ wrap_resource_request_handler! {
     }
 }
 
-fn handle_bridge_resource_request(request_url: &str, state: &BrowserState) -> bool {
+fn handle_bridge_resource_request(
+    request_url: &str,
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    state: &BrowserState,
+) -> bool {
     if let Some(query) = bridge_action_query(request_url, "play-context") {
         tracing::trace!(target: "bridge", "handling play-context bridge resource request");
         remember_playback_context(query, state);
@@ -833,6 +954,18 @@ fn handle_bridge_resource_request(request_url: &str, state: &BrowserState) -> bo
     if let Some(query) = bridge_action_query(request_url, "play") {
         tracing::trace!(target: "bridge", "handling play bridge resource request");
         spawn_mpv_from_bridge_payload(query, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "player-state") {
+        tracing::trace!(target: "bridge", "handling player-state bridge resource request");
+        respond_player_state(browser, frame, query, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "playback-stop-ack") {
+        tracing::trace!(target: "bridge", "handling playback-stop-ack bridge resource request");
+        log_playback_stop_ack(query);
         return true;
     }
 
@@ -954,6 +1087,25 @@ fn handle_player_command(query: &str, state: &BrowserState) {
     };
     tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
     state.mpv_controller.control(command);
+}
+
+fn log_playback_stop_ack(query: &str) {
+    let payload = match jellyfin_bridge::parse_playback_stop_ack_payload(query) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(target: "bridge", "failed to parse playback stop ack payload: {error}");
+            return;
+        }
+    };
+    tracing::debug!(
+        target: "bridge",
+        active = ?payload.active,
+        position_ms = ?payload.position_ms,
+        handled_players = payload.handled_players,
+        handled_synthetic = payload.handled_synthetic,
+        active_players = payload.active_players,
+        "WebUI acknowledged mpv playback stopped"
+    );
 }
 
 fn respond_player_state(

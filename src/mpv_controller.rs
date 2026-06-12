@@ -45,6 +45,11 @@ pub struct MpvPlayerSnapshot {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum MpvPlaybackEvent {
+    Stopped(MpvPlayerSnapshot),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum MpvControlCommand {
     SetPause(bool),
     SeekMilliseconds(f64),
@@ -79,9 +84,11 @@ struct ControllerState {
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
     startup_seek: Option<StartupSeek>,
+    mpv_playback_active: bool,
     last_state: MpvPlaybackState,
     last_position_log_bucket: Option<i64>,
     recent_loads: VecDeque<RecentLoad>,
+    event_tx: Option<Sender<MpvPlaybackEvent>>,
 }
 
 struct PendingPlayback {
@@ -147,11 +154,11 @@ struct IpcCommandWriter {
 }
 
 impl MpvController {
-    pub fn new() -> Self {
+    pub fn new(event_tx: Option<Sender<MpvPlaybackEvent>>) -> Self {
         let (tx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(MpvPlayerSnapshot::default()));
         let controller_snapshot = snapshot.clone();
-        thread::spawn(move || ControllerState::new(rx, controller_snapshot).run());
+        thread::spawn(move || ControllerState::new(rx, controller_snapshot, event_tx).run());
         Self { tx, snapshot }
     }
 
@@ -179,7 +186,11 @@ impl MpvController {
 }
 
 impl ControllerState {
-    fn new(rx: Receiver<ControllerMessage>, snapshot: Arc<Mutex<MpvPlayerSnapshot>>) -> Self {
+    fn new(
+        rx: Receiver<ControllerMessage>,
+        snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
+        event_tx: Option<Sender<MpvPlaybackEvent>>,
+    ) -> Self {
         Self {
             rx,
             snapshot,
@@ -190,12 +201,14 @@ impl ControllerState {
             active: None,
             pending: None,
             startup_seek: None,
+            mpv_playback_active: false,
             last_state: MpvPlaybackState {
                 volume: Some(100),
                 ..Default::default()
             },
             last_position_log_bucket: None,
             recent_loads: VecDeque::new(),
+            event_tx,
         }
     }
 
@@ -304,9 +317,9 @@ impl ControllerState {
         }
     }
 
-    fn publish_snapshot(&self) {
+    fn publish_snapshot(&self) -> MpvPlayerSnapshot {
         let snapshot = MpvPlayerSnapshot {
-            active: self.active.is_some() || self.pending.is_some(),
+            active: self.mpv_playback_active || self.active.is_some() || self.pending.is_some(),
             position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
             duration_ms: self
                 .last_state
@@ -319,6 +332,13 @@ impl ControllerState {
         };
         if let Ok(mut target) = self.snapshot.lock() {
             *target = snapshot;
+        }
+        snapshot
+    }
+
+    fn notify_playback_stopped(&self, snapshot: MpvPlayerSnapshot) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(MpvPlaybackEvent::Stopped(snapshot));
         }
     }
 
@@ -371,6 +391,7 @@ impl ControllerState {
                     key: key.clone(),
                     seen_at: Instant::now(),
                 });
+                self.mpv_playback_active = true;
                 self.pending = Some(PendingPlayback {
                     key,
                     launch,
@@ -381,6 +402,7 @@ impl ControllerState {
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command: {error}");
+                self.mpv_playback_active = false;
                 self.reset_mpv();
             }
         }
@@ -503,6 +525,7 @@ impl ControllerState {
                 "activated playback without Jellyfin reporter"
             );
         }
+        self.mpv_playback_active = true;
         self.kick_start_playback(&launch);
         self.publish_snapshot();
     }
@@ -514,27 +537,32 @@ impl ControllerState {
             state = %self.last_state,
             "finishing playback"
         );
+        let had_mpv_playback =
+            self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
         self.startup_seek = None;
-        if self.pending.is_some() {
-            let failed = matches!(reason, Some("error"));
-            if failed
-                && let Some(pending) = self.pending.take()
-                && let Some(reporter) = pending.reporter
-            {
-                tracing::warn!(
-                    target: "playback",
-                    reason = reason.unwrap_or("unknown"),
-                    "pending playback failed before activation"
-                );
-                reporter.report_stopped(&self.last_state, true);
-            }
+        let failed = matches!(reason, Some("error"));
+        if let Some(pending) = self.pending.take()
+            && failed
+            && let Some(reporter) = pending.reporter
+        {
+            tracing::warn!(
+                target: "playback",
+                reason = reason.unwrap_or("unknown"),
+                "pending playback failed before activation"
+            );
+            reporter.report_stopped(&self.last_state, true);
         }
 
         let Some(active) = self.active.take() else {
+            self.mpv_playback_active = false;
+            if had_mpv_playback {
+                let snapshot = self.publish_snapshot();
+                self.notify_playback_stopped(snapshot);
+            }
             tracing::trace!(target: "playback", "no active playback to finish");
             return;
         };
-        let failed = matches!(reason, Some("error"));
+        self.mpv_playback_active = false;
         if matches!(reason, Some("eof"))
             && let Some(duration) = self.last_state.duration_ticks
         {
@@ -548,7 +576,8 @@ impl ControllerState {
             "reporting active playback stopped"
         );
         active.reporter.report_stopped(&self.last_state, failed);
-        self.publish_snapshot();
+        let snapshot = self.publish_snapshot();
+        self.notify_playback_stopped(snapshot);
     }
 
     fn apply_property(&mut self, property: Option<&str>, data: Option<Value>) {
@@ -824,6 +853,9 @@ impl ControllerState {
     fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
+        if self.active.is_none() && self.pending.is_none() {
+            self.mpv_playback_active = false;
+        }
         if let Some(mut child) = self.child.take() {
             if matches!(child.try_wait(), Ok(None)) {
                 tracing::debug!(target: "mpv.ipc", "killing live mpv process during reset");
@@ -1290,8 +1322,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControllerState, MpvControlCommand, PendingPlayback, control_command, loadfile_command,
-        mpv_string_list,
+        ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, control_command,
+        loadfile_command, mpv_string_list,
     };
     use crate::external_mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
@@ -1304,7 +1336,7 @@ mod tests {
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.start_time_ticks = start_time_ticks;
 
-        let mut state = ControllerState::new(rx, Arc::new(Mutex::new(Default::default())));
+        let mut state = ControllerState::new(rx, Arc::new(Mutex::new(Default::default())), None);
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
             launch,
@@ -1312,6 +1344,14 @@ mod tests {
             requested_at: Instant::now(),
         });
         state
+    }
+
+    fn snapshot_active(state: &ControllerState) -> bool {
+        state
+            .snapshot
+            .lock()
+            .map(|snapshot| snapshot.active)
+            .unwrap_or(false)
     }
 
     #[test]
@@ -1426,6 +1466,53 @@ mod tests {
         assert!(state.pending.is_none());
         assert!(state.startup_seek.is_none());
         assert_eq!(state.last_state.position_ticks, 0);
+    }
+
+    #[test]
+    fn activation_without_reporter_still_marks_mpv_snapshot_active() {
+        let mut state = controller_with_pending_load(None);
+
+        state.activate_pending();
+
+        assert!(state.active.is_none());
+        assert!(snapshot_active(&state));
+    }
+
+    #[test]
+    fn finish_without_reporter_marks_mpv_snapshot_inactive() {
+        let mut state = controller_with_pending_load(None);
+
+        state.activate_pending();
+        state.finish_active(Some("quit"));
+
+        assert!(state.active.is_none());
+        assert!(!snapshot_active(&state));
+    }
+
+    #[test]
+    fn finish_without_reporter_emits_stopped_event() {
+        let (_tx, rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
+        launch.item_id = Some("item-1".to_string());
+
+        let mut state =
+            ControllerState::new(rx, Arc::new(Mutex::new(Default::default())), Some(event_tx));
+        state.pending = Some(PendingPlayback {
+            key: "test-load".to_string(),
+            launch,
+            reporter: None,
+            requested_at: Instant::now(),
+        });
+
+        state.activate_pending();
+        state.finish_active(Some("quit"));
+
+        let event = event_rx.try_recv().expect("stopped event");
+        assert!(matches!(
+            event,
+            MpvPlaybackEvent::Stopped(snapshot) if !snapshot.active
+        ));
     }
 
     #[test]
