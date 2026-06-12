@@ -80,6 +80,10 @@ release:
     rm -f build/jellyfin-desktop* build/jellyfin_desktop*
     if [ -d "$CARGO_TARGET_DIR/release/locales" ]; then rm -rf build/locales && cp -R "$CARGO_TARGET_DIR/release/locales" build/locales; fi
 
+# Build and stage a non-debug app into ./build
+[group('build')]
+non-debug: release
+
 # Run the staged app. Example: just run --url http://localhost:8096
 [group('run')]
 [windows]
@@ -90,6 +94,18 @@ run *args: build
 [group('run')]
 [unix]
 run *args: build
+    build/jellyfin-mpv {{args}}
+
+# Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
+[group('run')]
+[windows]
+run-non-debug *args: non-debug
+    & 'build/jellyfin-mpv.exe' {{args}}
+
+# Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
+[group('run')]
+[unix]
+run-non-debug *args: non-debug
     build/jellyfin-mpv {{args}}
 
 # Run the external mpv binary that will be wired into playback later
