@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct ExternalMpv {
@@ -30,6 +31,12 @@ pub struct MpvLaunch {
     pub start_milliseconds: Option<f64>,
     pub runtime_ticks: Option<i64>,
     pub title: Option<String>,
+    pub audio_stream_index: Option<i64>,
+    pub subtitle_stream_index: Option<i64>,
+    pub play_method: Option<String>,
+    pub playlist_item_id: Option<String>,
+    pub queue: Option<Value>,
+    pub details: Option<Value>,
 }
 
 impl MpvLaunch {
@@ -87,6 +94,15 @@ impl MpvLaunch {
         merge_option(&mut self.start_milliseconds, &other.start_milliseconds);
         merge_option(&mut self.runtime_ticks, &other.runtime_ticks);
         merge_option(&mut self.title, &other.title);
+        merge_option(&mut self.audio_stream_index, &other.audio_stream_index);
+        merge_option(
+            &mut self.subtitle_stream_index,
+            &other.subtitle_stream_index,
+        );
+        merge_option(&mut self.play_method, &other.play_method);
+        merge_option(&mut self.playlist_item_id, &other.playlist_item_id);
+        merge_option(&mut self.queue, &other.queue);
+        merge_option(&mut self.details, &other.details);
     }
 }
 
@@ -147,14 +163,18 @@ impl ExternalMpv {
         command
     }
 
+    pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
+        let mut command = Command::new(&self.executable);
+        command.arg("--force-window=yes");
+        command.arg("--no-terminal");
+        command.arg("--idle=yes");
+        command.arg(format!("--input-ipc-server={ipc_path}"));
+        command
+    }
+
     #[allow(dead_code)]
     pub fn spawn(&self, launch: &MpvLaunch) -> std::io::Result<Child> {
         self.command_for_launch(launch).spawn()
-    }
-
-    pub fn spawn_with_ipc(&self, launch: &MpvLaunch, ipc_path: &str) -> std::io::Result<Child> {
-        self.command_for_launch_with_ipc(launch, Some(ipc_path))
-            .spawn()
     }
 }
 

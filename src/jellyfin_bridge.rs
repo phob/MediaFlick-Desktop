@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 
@@ -16,6 +17,12 @@ pub struct PlaybackContext {
     pub start_milliseconds: Option<f64>,
     pub runtime_ticks: Option<i64>,
     pub title: Option<String>,
+    pub audio_stream_index: Option<i64>,
+    pub subtitle_stream_index: Option<i64>,
+    pub play_method: Option<String>,
+    pub playlist_item_id: Option<String>,
+    pub queue: Option<Value>,
+    pub details: Option<Value>,
 }
 
 impl PlaybackContext {
@@ -30,6 +37,12 @@ impl PlaybackContext {
             start_milliseconds: self.start_milliseconds,
             runtime_ticks: self.runtime_ticks,
             title: self.title.clone(),
+            audio_stream_index: self.audio_stream_index,
+            subtitle_stream_index: self.subtitle_stream_index,
+            play_method: self.play_method.clone(),
+            playlist_item_id: self.playlist_item_id.clone(),
+            queue: self.queue.clone(),
+            details: self.details.clone(),
             ..Default::default()
         };
         launch.merge_missing_from(&context_launch);

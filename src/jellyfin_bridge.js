@@ -6,14 +6,17 @@
   const contextsByMediaSource = new Map();
   const contextsByPlaySession = new Map();
   const sentContextKeys = new Map();
+  const sentPlayKeys = new Map();
   const externalizedByItem = new Map();
   const externalizedByMediaSource = new Map();
   const externalizedByPlaySession = new Map();
   const externalizedMedia = new WeakMap();
+  const externalizedSources = new WeakMap();
   const syntheticMediaState = new WeakMap();
   const CONTEXT_TTL_MS = 15 * 60 * 1000;
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
   const MAX_BITRATE = 1000000000;
+  const PLACEHOLDER_MEDIA_URL = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
   const MPV_DEVICE_PROFILE = {
     Name: 'jellyfin-mpv',
@@ -299,6 +302,17 @@
     }
   }
 
+  function markSourceExternalized(source, context) {
+    if (typeof HTMLSourceElement === 'undefined' || !(source instanceof HTMLSourceElement)) return;
+    if (context) {
+      externalizedSources.set(source, context);
+      const media = mediaElementForNode(source);
+      if (media) markMediaExternalized(media, context);
+    } else {
+      externalizedSources.delete(source);
+    }
+  }
+
   function contextWasExternalized(context) {
     if (!context) return false;
     pruneExternalized();
@@ -320,12 +334,25 @@
       clearSyntheticMediaState(element);
     }
     const src = element.currentSrc || element.src || element.getAttribute?.('src') || '';
-    if (!isDirectStreamUrl(src)) return false;
-    const context = streamContext(src);
-    if (!contextWasExternalized(context)) return false;
-    externalizedMedia.set(element, context);
-    ensureSyntheticMediaState(element, context);
-    return true;
+    if (isDirectStreamUrl(src)) {
+      const context = streamContext(src);
+      if (contextWasExternalized(context)) {
+        externalizedMedia.set(element, context);
+        ensureSyntheticMediaState(element, context);
+        return true;
+      }
+    }
+    for (const source of Array.from(element.querySelectorAll?.('source') || [])) {
+      const sourceUrl = source.src || source.getAttribute?.('src') || '';
+      if (!isDirectStreamUrl(sourceUrl)) continue;
+      const context = externalizedSources.get(source) || streamContext(sourceUrl);
+      if (!contextWasExternalized(context)) continue;
+      externalizedSources.set(source, context);
+      externalizedMedia.set(element, context);
+      ensureSyntheticMediaState(element, context);
+      return true;
+    }
+    return false;
   }
 
   function rememberPlaybackInfo(requestUrl, data, requestBody) {
@@ -340,6 +367,12 @@
       playSessionId: data.PlaySessionId || '',
       deviceId: body?.DeviceId || '',
       startTimeTicks: numberish(body?.StartTimeTicks ?? body?.StartPositionTicks),
+      audioStreamIndex: numberish(body?.AudioStreamIndex),
+      subtitleStreamIndex: numberish(body?.SubtitleStreamIndex),
+      playMethod: body?.PlayMethod || '',
+      playlistItemId: body?.PlaylistItemId || '',
+      queue: queueItems(body),
+      details: body || undefined,
       title: document.title || ''
     };
     for (const source of (Array.isArray(data.MediaSources) ? data.MediaSources : [])) {
@@ -347,6 +380,8 @@
         mediaSourceId: source.Id || source.MediaSourceId || '',
         runtimeTicks: numberish(source.RunTimeTicks),
         startTimeTicks: numberish(base.startTimeTicks ?? source.StartTimeTicks),
+        audioStreamIndex: numberish(base.audioStreamIndex ?? source.DefaultAudioStreamIndex),
+        subtitleStreamIndex: numberish(base.subtitleStreamIndex ?? source.DefaultSubtitleStreamIndex),
         title: source.Name || source.Path || base.title
       });
       remember(context);
@@ -358,6 +393,13 @@
     if (value === undefined || value === null || value === '') return undefined;
     const number = Number(value);
     return Number.isFinite(number) ? number : undefined;
+  }
+
+  function queueItems(value) {
+    if (!value || typeof value !== 'object') return undefined;
+    if (Array.isArray(value.NowPlayingQueue)) return value.NowPlayingQueue;
+    if (Array.isArray(value.Queue)) return value.Queue;
+    return undefined;
   }
 
   function cloneMpvDeviceProfile() {
@@ -406,6 +448,26 @@
     }
   }
 
+  function sendExternalPlayback(context) {
+    if (!context || !context.mediaUrl) return;
+    try {
+      const clean = Object.assign({}, context);
+      delete clean.seenAt;
+      delete clean.externalizedAt;
+      const key = [clean.mediaUrl || '', clean.playSessionId || '', clean.mediaSourceId || '', clean.itemId || '', clean.startTimeTicks || ''].join('|');
+      const last = sentPlayKeys.get(key) || 0;
+      if (Date.now() - last < 1000) return;
+      sentPlayKeys.set(key, Date.now());
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = 'jellyfin-mpv://play?payload=' + encodeURIComponent(JSON.stringify(clean));
+      (document.documentElement || document.body || document).appendChild(iframe);
+      setTimeout(() => iframe.remove(), 1000);
+    } catch (error) {
+      console.debug('[jellyfin-mpv] bridge play send failed', error);
+    }
+  }
+
   function pruneContexts() {
     const cutoff = Date.now() - CONTEXT_TTL_MS;
     for (const map of [contextsByItem, contextsByMediaSource, contextsByPlaySession]) {
@@ -442,7 +504,13 @@
     const context = {
       itemId: parsedBody?.ItemId || parsedBody?.itemId || '',
       mediaSourceId: parsedBody?.MediaSourceId || parsedBody?.mediaSourceId || url.searchParams.get('mediaSourceId') || '',
-      playSessionId: parsedBody?.PlaySessionId || parsedBody?.playSessionId || url.searchParams.get('playSessionId') || ''
+      playSessionId: parsedBody?.PlaySessionId || parsedBody?.playSessionId || url.searchParams.get('playSessionId') || '',
+      audioStreamIndex: numberish(parsedBody?.AudioStreamIndex ?? parsedBody?.audioStreamIndex),
+      subtitleStreamIndex: numberish(parsedBody?.SubtitleStreamIndex ?? parsedBody?.subtitleStreamIndex),
+      playMethod: parsedBody?.PlayMethod || parsedBody?.playMethod || '',
+      playlistItemId: parsedBody?.PlaylistItemId || parsedBody?.playlistItemId || '',
+      queue: queueItems(parsedBody) || (Array.isArray(parsedBody?.queue) ? parsedBody.queue : undefined),
+      details: parsedBody || undefined
     };
     if (!context.itemId) {
       const match = url.pathname.match(/\/PlayingItems\/([^/?#]+)/i);
@@ -477,6 +545,14 @@
       xhr.dispatchEvent(new ProgressEvent('load'));
       xhr.dispatchEvent(new ProgressEvent('loadend'));
     }, 0);
+  }
+
+  function mediaElementForNode(node) {
+    if (node instanceof HTMLMediaElement) return node;
+    if (typeof HTMLSourceElement !== 'undefined' && node instanceof HTMLSourceElement) {
+      return node.parentElement instanceof HTMLMediaElement ? node.parentElement : null;
+    }
+    return null;
   }
 
   const nativeFetch = window.fetch;
@@ -535,7 +611,12 @@
       get: mediaSrc.get,
       set(value) {
         const context = rememberForStream(value);
-        markMediaExternalized(this, context);
+        if (context) {
+          markMediaExternalized(this, context);
+          sendExternalPlayback(context);
+          return mediaSrc.set.call(this, PLACEHOLDER_MEDIA_URL);
+        }
+        markMediaExternalized(this, null);
         return mediaSrc.set.call(this, value);
       }
     });
@@ -594,6 +675,30 @@
     }
   }));
 
+  patchMediaProperty('error', (descriptor) => ({
+    configurable: true,
+    enumerable: descriptor.enumerable,
+    get() {
+      return syntheticStateFor(this) ? null : descriptor.get.call(this);
+    }
+  }));
+
+  patchMediaProperty('readyState', (descriptor) => ({
+    configurable: true,
+    enumerable: descriptor.enumerable,
+    get() {
+      return syntheticStateFor(this) ? 4 : descriptor.get.call(this);
+    }
+  }));
+
+  patchMediaProperty('networkState', (descriptor) => ({
+    configurable: true,
+    enumerable: descriptor.enumerable,
+    get() {
+      return syntheticStateFor(this) ? 1 : descriptor.get.call(this);
+    }
+  }));
+
   patchMediaProperty('seekable', (descriptor) => ({
     configurable: true,
     enumerable: descriptor.enumerable,
@@ -615,10 +720,61 @@
   const nativeSetAttribute = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function(name, value) {
     if (this instanceof HTMLMediaElement && String(name).toLowerCase() === 'src') {
-      markMediaExternalized(this, rememberForStream(value));
+      const context = rememberForStream(value);
+      if (context) {
+        markMediaExternalized(this, context);
+        sendExternalPlayback(context);
+        return nativeSetAttribute.call(this, name, PLACEHOLDER_MEDIA_URL);
+      }
+      markMediaExternalized(this, null);
+    } else if (typeof HTMLSourceElement !== 'undefined' && this instanceof HTMLSourceElement && String(name).toLowerCase() === 'src') {
+      const context = rememberForStream(value);
+      if (context) {
+        markSourceExternalized(this, context);
+        sendExternalPlayback(context);
+        return nativeSetAttribute.call(this, name, PLACEHOLDER_MEDIA_URL);
+      }
+      markSourceExternalized(this, null);
     }
     return nativeSetAttribute.apply(this, arguments);
   };
+
+  if (typeof HTMLSourceElement !== 'undefined') {
+    const sourceSrc = Object.getOwnPropertyDescriptor(HTMLSourceElement.prototype, 'src');
+    if (sourceSrc && sourceSrc.set && sourceSrc.get) {
+      Object.defineProperty(HTMLSourceElement.prototype, 'src', {
+        configurable: true,
+        enumerable: sourceSrc.enumerable,
+        get: sourceSrc.get,
+        set(value) {
+          const context = rememberForStream(value);
+          if (context) {
+            markSourceExternalized(this, context);
+            sendExternalPlayback(context);
+            return sourceSrc.set.call(this, PLACEHOLDER_MEDIA_URL);
+          }
+          markSourceExternalized(this, null);
+          return sourceSrc.set.call(this, value);
+        }
+      });
+    }
+  }
+
+  const nativeMediaLoad = HTMLMediaElement.prototype.load;
+  if (typeof nativeMediaLoad === 'function') {
+    HTMLMediaElement.prototype.load = function() {
+      if (mediaWasExternalized(this)) {
+        const state = ensureSyntheticMediaState(this, externalizedMedia.get(this));
+        if (state) {
+          dispatchMediaEvent(this, 'loadedmetadata');
+          dispatchMediaEvent(this, 'durationchange');
+          dispatchMediaEvent(this, 'canplay');
+        }
+        return;
+      }
+      return nativeMediaLoad.apply(this, arguments);
+    };
+  }
 
   const nativeMediaPause = HTMLMediaElement.prototype.pause;
   if (typeof nativeMediaPause === 'function') {
@@ -655,7 +811,8 @@
 
   for (const eventName of ['error', 'abort', 'stalled']) {
     document.addEventListener(eventName, (event) => {
-      if (event.target instanceof HTMLMediaElement && mediaWasExternalized(event.target)) {
+      const media = mediaElementForNode(event.target);
+      if (media && mediaWasExternalized(media)) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }

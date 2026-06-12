@@ -1,39 +1,41 @@
 use std::collections::HashSet;
-use std::io::{self, BufRead, BufReader, Write};
-use std::process::Child;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
-const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
-const START_GRACE: Duration = Duration::from_secs(2);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
-const TICKS_PER_SECOND: f64 = 10_000_000.0;
+pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
 static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
-struct PlaybackSession {
+pub struct PlaybackSession {
     base_url: String,
     item_id: String,
     media_source_id: Option<String>,
     play_session_id: Option<String>,
+    play_method: String,
+    playlist_item_id: Option<String>,
+    audio_stream_index: Option<i64>,
+    subtitle_stream_index: Option<i64>,
     start_position_ticks: i64,
     runtime_ticks: Option<i64>,
     playback_start_time_ticks: i64,
     auth_headers: Vec<HttpHeader>,
+    queue: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-struct MpvStatus {
-    time_pos: Option<f64>,
-    pause: Option<bool>,
-    duration: Option<f64>,
+pub struct MpvPlaybackState {
+    pub position_ticks: i64,
+    pub pause: bool,
+    pub duration_ticks: Option<i64>,
+    pub volume: Option<i64>,
+    pub mute: Option<bool>,
+    pub eof_reached: bool,
 }
 
 pub fn make_mpv_ipc_path() -> String {
@@ -63,97 +65,13 @@ pub fn make_mpv_ipc_path() -> String {
     }
 }
 
-pub fn monitor_mpv_playback(mut child: Child, launch: MpvLaunch, ipc_path: String) {
-    thread::spawn(move || {
-        let Some(session) = PlaybackSession::from_launch(&launch) else {
-            let _ = child.wait();
-            cleanup_ipc_path(&ipc_path);
-            return;
-        };
-
-        let mut reporter = PlaybackReporter::new(session);
-        let process_started = Instant::now();
-        let mut last_position_ticks = reporter.session.start_position_ticks.max(0);
-        let mut last_pause = false;
-        let mut reported_pause = false;
-        let mut started = false;
-        let mut last_progress_sent: Option<Instant> = None;
-
-        loop {
-            let now = Instant::now();
-            if let Ok(Some(_status)) = child.try_wait() {
-                break;
-            }
-
-            if let Ok(status) = query_mpv_status(&ipc_path) {
-                if let Some(position) = status.time_pos.and_then(seconds_to_ticks) {
-                    last_position_ticks = position;
-                }
-                if let Some(paused) = status.pause {
-                    last_pause = paused;
-                }
-                if let Some(duration) = status.duration.and_then(seconds_to_ticks)
-                    && duration > 0
-                    && reporter.session.runtime_ticks.is_none()
-                {
-                    reporter.session.runtime_ticks = Some(duration);
-                }
-            } else if !last_pause {
-                last_position_ticks = estimate_position_ticks(
-                    reporter.session.start_position_ticks,
-                    now.saturating_duration_since(process_started),
-                );
-            }
-
-            if !started && now.saturating_duration_since(process_started) >= START_GRACE {
-                reporter.report_start(last_position_ticks, last_pause);
-                started = true;
-                reported_pause = last_pause;
-                last_progress_sent = Some(now);
-            }
-
-            if started {
-                let should_report_progress = last_progress_sent
-                    .map(|instant| now.saturating_duration_since(instant) >= PROGRESS_INTERVAL)
-                    .unwrap_or(true)
-                    || reported_pause != last_pause;
-
-                if should_report_progress {
-                    reporter.report_progress(last_position_ticks, last_pause);
-                    reported_pause = last_pause;
-                    last_progress_sent = Some(now);
-                }
-            }
-
-            thread::sleep(POLL_INTERVAL);
-        }
-
-        if let Ok(status) = query_mpv_status(&ipc_path) {
-            if let Some(position) = status.time_pos.and_then(seconds_to_ticks) {
-                last_position_ticks = position;
-            }
-            if let Some(paused) = status.pause {
-                last_pause = paused;
-            }
-        }
-
-        if !started {
-            reporter.report_start(last_position_ticks, last_pause);
-        }
-        reporter.report_stopped(last_position_ticks);
-
-        let _ = child.wait();
-        cleanup_ipc_path(&ipc_path);
-    });
-}
-
-struct PlaybackReporter {
-    session: PlaybackSession,
+pub struct PlaybackReporter {
+    pub session: PlaybackSession,
     agent: ureq::Agent,
 }
 
 impl PlaybackReporter {
-    fn new(session: PlaybackSession) -> Self {
+    pub fn new(session: PlaybackSession) -> Self {
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(HTTP_TIMEOUT))
             .user_agent(format!("jellyfin-mpv/{}", env!("CARGO_PKG_VERSION")))
@@ -164,24 +82,28 @@ impl PlaybackReporter {
         }
     }
 
-    fn report_start(&self, position_ticks: i64, is_paused: bool) {
+    pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
+        PlaybackSession::from_launch(launch).map(Self::new)
+    }
+
+    pub fn report_start(&self, state: &MpvPlaybackState) {
         self.post_playstate(
             "Sessions/Playing",
-            playback_progress_body(&self.session, position_ticks, is_paused),
+            playback_progress_body(&self.session, state),
         );
     }
 
-    fn report_progress(&self, position_ticks: i64, is_paused: bool) {
+    pub fn report_progress(&self, state: &MpvPlaybackState) {
         self.post_playstate(
             "Sessions/Playing/Progress",
-            playback_progress_body(&self.session, position_ticks, is_paused),
+            playback_progress_body(&self.session, state),
         );
     }
 
-    fn report_stopped(&self, position_ticks: i64) {
+    pub fn report_stopped(&self, state: &MpvPlaybackState, failed: bool) {
         self.post_playstate(
             "Sessions/Playing/Stopped",
-            playback_stop_body(&self.session, position_ticks),
+            playback_stop_body(&self.session, state, failed),
         );
     }
 
@@ -203,7 +125,7 @@ impl PlaybackReporter {
 }
 
 impl PlaybackSession {
-    fn from_launch(launch: &MpvLaunch) -> Option<Self> {
+    pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
         let item_id = non_empty(launch.item_id.as_deref())?.to_string();
         let base_url = server_base_url(&launch.media_url)?;
         let auth_headers = playback_auth_headers(launch);
@@ -219,6 +141,12 @@ impl PlaybackSession {
             item_id,
             media_source_id: non_empty(launch.media_source_id.as_deref()).map(str::to_string),
             play_session_id: non_empty(launch.play_session_id.as_deref()).map(str::to_string),
+            play_method: non_empty(launch.play_method.as_deref())
+                .unwrap_or("DirectPlay")
+                .to_string(),
+            playlist_item_id: non_empty(launch.playlist_item_id.as_deref()).map(str::to_string),
+            audio_stream_index: launch.audio_stream_index,
+            subtitle_stream_index: launch.subtitle_stream_index,
             start_position_ticks: launch
                 .start_time_ticks
                 .or_else(|| {
@@ -232,65 +160,102 @@ impl PlaybackSession {
             runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
             playback_start_time_ticks: unix_now_ticks(),
             auth_headers,
+            queue: launch
+                .queue
+                .as_ref()
+                .filter(|value| value.is_array())
+                .cloned(),
         })
     }
 }
 
-fn playback_progress_body(
-    session: &PlaybackSession,
-    position_ticks: i64,
-    is_paused: bool,
-) -> Value {
+pub fn playback_progress_body(session: &PlaybackSession, state: &MpvPlaybackState) -> Value {
     let mut body = Map::new();
-    body.insert("ItemId".to_string(), json!(session.item_id));
-    insert_string_opt(
-        &mut body,
-        "MediaSourceId",
-        session.media_source_id.as_deref(),
-    );
-    insert_string_opt(
-        &mut body,
-        "PlaySessionId",
-        session.play_session_id.as_deref(),
-    );
-    body.insert("PositionTicks".to_string(), json!(position_ticks.max(0)));
+    insert_common_body_fields(&mut body, session, state);
     body.insert(
         "PlaybackStartTimeTicks".to_string(),
         json!(session.playback_start_time_ticks),
     );
-    body.insert(
-        "CanSeek".to_string(),
-        json!(session.runtime_ticks.unwrap_or(0) > 0),
-    );
-    body.insert("IsPaused".to_string(), json!(is_paused));
-    body.insert("IsMuted".to_string(), json!(false));
-    body.insert("PlayMethod".to_string(), json!("DirectPlay"));
-    body.insert("VolumeLevel".to_string(), json!(100));
     Value::Object(body)
 }
 
-fn playback_stop_body(session: &PlaybackSession, position_ticks: i64) -> Value {
+pub fn playback_stop_body(
+    session: &PlaybackSession,
+    state: &MpvPlaybackState,
+    failed: bool,
+) -> Value {
     let mut body = Map::new();
-    body.insert("ItemId".to_string(), json!(session.item_id));
-    insert_string_opt(
-        &mut body,
-        "MediaSourceId",
-        session.media_source_id.as_deref(),
-    );
-    insert_string_opt(
-        &mut body,
-        "PlaySessionId",
-        session.play_session_id.as_deref(),
-    );
-    body.insert("PositionTicks".to_string(), json!(position_ticks.max(0)));
-    body.insert("Failed".to_string(), json!(false));
+    insert_stop_body_fields(&mut body, session, state);
+    body.insert("Failed".to_string(), json!(failed));
     Value::Object(body)
+}
+
+fn insert_common_body_fields(
+    body: &mut Map<String, Value>,
+    session: &PlaybackSession,
+    state: &MpvPlaybackState,
+) {
+    body.insert("ItemId".to_string(), json!(session.item_id));
+    insert_string_opt(body, "MediaSourceId", session.media_source_id.as_deref());
+    insert_string_opt(body, "PlaySessionId", session.play_session_id.as_deref());
+    insert_string_opt(body, "PlaylistItemId", session.playlist_item_id.as_deref());
+    insert_i64_opt(body, "AudioStreamIndex", session.audio_stream_index);
+    insert_i64_opt(body, "SubtitleStreamIndex", session.subtitle_stream_index);
+    if let Some(queue) = &session.queue {
+        body.insert("NowPlayingQueue".to_string(), queue.clone());
+    }
+    body.insert(
+        "PositionTicks".to_string(),
+        json!(state.position_ticks.max(0)),
+    );
+    body.insert(
+        "PlaybackStartPositionTicks".to_string(),
+        json!(session.start_position_ticks),
+    );
+    body.insert("CanSeek".to_string(), json!(can_seek(session, state)));
+    body.insert("IsPaused".to_string(), json!(state.pause));
+    body.insert("IsMuted".to_string(), json!(state.mute.unwrap_or(false)));
+    body.insert("PlayMethod".to_string(), json!(session.play_method));
+    body.insert(
+        "VolumeLevel".to_string(),
+        json!(state.volume.unwrap_or(100)),
+    );
+    body.insert("RepeatMode".to_string(), json!("RepeatNone"));
+    body.insert("BufferedRanges".to_string(), json!([]));
+}
+
+fn insert_stop_body_fields(
+    body: &mut Map<String, Value>,
+    session: &PlaybackSession,
+    state: &MpvPlaybackState,
+) {
+    body.insert("ItemId".to_string(), json!(session.item_id));
+    insert_string_opt(body, "MediaSourceId", session.media_source_id.as_deref());
+    insert_string_opt(body, "PlaySessionId", session.play_session_id.as_deref());
+    insert_string_opt(body, "PlaylistItemId", session.playlist_item_id.as_deref());
+    if let Some(queue) = &session.queue {
+        body.insert("NowPlayingQueue".to_string(), queue.clone());
+    }
+    body.insert(
+        "PositionTicks".to_string(),
+        json!(state.position_ticks.max(0)),
+    );
 }
 
 fn insert_string_opt(body: &mut Map<String, Value>, key: &str, value: Option<&str>) {
     if let Some(value) = non_empty(value) {
         body.insert(key.to_string(), json!(value));
     }
+}
+
+fn insert_i64_opt(body: &mut Map<String, Value>, key: &str, value: Option<i64>) {
+    if let Some(value) = value {
+        body.insert(key.to_string(), json!(value));
+    }
+}
+
+fn can_seek(session: &PlaybackSession, state: &MpvPlaybackState) -> bool {
+    state.duration_ticks.unwrap_or(0) > 0 || session.runtime_ticks.unwrap_or(0) > 0
 }
 
 fn playback_auth_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
@@ -457,88 +422,7 @@ fn sanitize_auth_value(value: &str) -> String {
         .collect()
 }
 
-fn query_mpv_status(ipc_path: &str) -> io::Result<MpvStatus> {
-    let mut stream = connect_ipc(ipc_path)?;
-    write_ipc_command(&mut stream, 1, "time-pos")?;
-    write_ipc_command(&mut stream, 2, "pause")?;
-    write_ipc_command(&mut stream, 3, "duration")?;
-    stream.flush()?;
-
-    let mut reader = BufReader::new(stream);
-    let mut status = MpvStatus::default();
-    let mut seen = 0_u8;
-    let mut line = String::new();
-
-    for _ in 0..16 {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        let Some(request_id) = value.get("request_id").and_then(Value::as_i64) else {
-            continue;
-        };
-        match request_id {
-            1 => {
-                status.time_pos = value.get("data").and_then(Value::as_f64);
-                seen |= 0b001;
-            }
-            2 => {
-                status.pause = value.get("data").and_then(Value::as_bool);
-                seen |= 0b010;
-            }
-            3 => {
-                status.duration = value.get("data").and_then(Value::as_f64);
-                seen |= 0b100;
-            }
-            _ => {}
-        }
-        if seen == 0b111 {
-            break;
-        }
-    }
-
-    Ok(status)
-}
-
-fn write_ipc_command<W: Write>(stream: &mut W, request_id: i64, property: &str) -> io::Result<()> {
-    let command = json!({
-        "command": ["get_property", property],
-        "request_id": request_id
-    });
-    serde_json::to_writer(&mut *stream, &command)?;
-    stream.write_all(b"\n")
-}
-
-#[cfg(target_os = "windows")]
-type IpcConnection = std::fs::File;
-
-#[cfg(target_os = "windows")]
-fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
-    std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-}
-
-#[cfg(all(unix, not(target_os = "windows")))]
-type IpcConnection = std::os::unix::net::UnixStream;
-
-#[cfg(all(unix, not(target_os = "windows")))]
-fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
-    let stream = std::os::unix::net::UnixStream::connect(path)?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-    Ok(stream)
-}
-
-fn estimate_position_ticks(start_ticks: i64, elapsed: Duration) -> i64 {
-    start_ticks.saturating_add((elapsed.as_secs_f64() * TICKS_PER_SECOND).round() as i64)
-}
-
-fn seconds_to_ticks(seconds: f64) -> Option<i64> {
+pub fn seconds_to_ticks(seconds: f64) -> Option<i64> {
     seconds
         .is_finite()
         .then(|| (seconds.max(0.0) * TICKS_PER_SECOND).round() as i64)
@@ -628,17 +512,21 @@ fn unix_now_ticks() -> i64 {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn cleanup_ipc_path(path: &str) {
+pub fn cleanup_ipc_path(path: &str) {
     let _ = std::fs::remove_file(path);
 }
 
 #[cfg(target_os = "windows")]
-fn cleanup_ipc_path(_path: &str) {}
+pub fn cleanup_ipc_path(_path: &str) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_parameter, server_base_url, token_from_authorization, token_from_launch};
-    use crate::external_mpv::MpvLaunch;
+    use super::{
+        MpvPlaybackState, PlaybackSession, auth_parameter, playback_progress_body,
+        playback_stop_body, server_base_url, token_from_authorization, token_from_launch,
+    };
+    use crate::external_mpv::{HttpHeader, MpvLaunch};
+    use serde_json::json;
 
     #[test]
     fn extracts_server_base_with_subpath() {
@@ -668,5 +556,86 @@ mod tests {
     fn extracts_token_from_jellyfin_apikey_query() {
         let launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv?ApiKey=secret");
         assert_eq!(token_from_launch(&launch).as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn playback_bodies_include_richer_mpv_and_jellyfin_fields() {
+        let mut launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv");
+        launch.item_id = Some("item".to_string());
+        launch.media_source_id = Some("media".to_string());
+        launch.play_session_id = Some("session".to_string());
+        launch.headers = vec![HttpHeader {
+            name: "X-Emby-Token".to_string(),
+            value: "secret".to_string(),
+        }];
+        launch.audio_stream_index = Some(2);
+        launch.subtitle_stream_index = Some(5);
+        launch.play_method = Some("DirectStream".to_string());
+        launch.runtime_ticks = Some(120_000_000);
+        launch.queue = Some(json!([
+            {
+                "Id": "item",
+                "PlaylistItemId": "playlist-item"
+            }
+        ]));
+        launch.details = Some(json!({ "NotAQueue": true }));
+
+        let session = PlaybackSession::from_launch(&launch).expect("session");
+        let state = MpvPlaybackState {
+            position_ticks: 10_000_000,
+            pause: true,
+            duration_ticks: Some(120_000_000),
+            volume: Some(77),
+            mute: Some(true),
+            eof_reached: false,
+        };
+        let progress = playback_progress_body(&session, &state);
+        assert_eq!(progress["ItemId"], "item");
+        assert_eq!(progress["MediaSourceId"], "media");
+        assert_eq!(progress["PlaySessionId"], "session");
+        assert_eq!(progress["AudioStreamIndex"], 2);
+        assert_eq!(progress["SubtitleStreamIndex"], 5);
+        assert_eq!(progress["PlayMethod"], "DirectStream");
+        assert_eq!(progress["VolumeLevel"], 77);
+        assert_eq!(progress["IsMuted"], true);
+        assert_eq!(progress["IsPaused"], true);
+        assert_eq!(progress["CanSeek"], true);
+        assert_eq!(progress["RepeatMode"], "RepeatNone");
+        assert_eq!(progress["BufferedRanges"].as_array().unwrap().len(), 0);
+        assert_eq!(progress["NowPlayingQueue"].as_array().unwrap().len(), 1);
+
+        let stopped = playback_stop_body(&session, &state, true);
+        assert_eq!(stopped["Failed"], true);
+        assert_eq!(stopped["PositionTicks"], 10_000_000);
+        assert_eq!(stopped["NowPlayingQueue"].as_array().unwrap().len(), 1);
+        assert!(stopped.get("AudioStreamIndex").is_none());
+        assert!(stopped.get("SubtitleStreamIndex").is_none());
+        assert!(stopped.get("CanSeek").is_none());
+        assert!(stopped.get("VolumeLevel").is_none());
+        assert!(stopped.get("NotAQueue").is_none());
+    }
+
+    #[test]
+    fn playback_bodies_drop_invalid_queue_shapes() {
+        let mut launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv");
+        launch.item_id = Some("item".to_string());
+        launch.headers = vec![HttpHeader {
+            name: "X-Emby-Token".to_string(),
+            value: "secret".to_string(),
+        }];
+        launch.queue = Some(json!({ "bad": true }));
+
+        let session = PlaybackSession::from_launch(&launch).expect("session");
+        let state = MpvPlaybackState::default();
+        assert!(
+            playback_progress_body(&session, &state)
+                .get("NowPlayingQueue")
+                .is_none()
+        );
+        assert!(
+            playback_stop_body(&session, &state, false)
+                .get("NowPlayingQueue")
+                .is_none()
+        );
     }
 }
