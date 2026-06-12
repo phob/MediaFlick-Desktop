@@ -16,7 +16,7 @@
   const CONTEXT_TTL_MS = 15 * 60 * 1000;
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
   const MAX_BITRATE = 1000000000;
-  const PLACEHOLDER_MEDIA_URL = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const nativeFetch = window.fetch;
 
   const MPV_DEVICE_PROFILE = {
     Name: 'jellyfin-mpv',
@@ -234,6 +234,17 @@
     return state;
   }
 
+  function signalSyntheticMediaReady(element) {
+    setTimeout(() => {
+      const state = syntheticStateFor(element);
+      if (!state) return;
+      dispatchMediaEvent(element, 'loadedmetadata');
+      dispatchMediaEvent(element, 'durationchange');
+      dispatchMediaEvent(element, 'canplay');
+      dispatchMediaEvent(element, 'canplaythrough');
+    }, 0);
+  }
+
   function startSyntheticMediaTimer(element, state) {
     if (!state || state.timer) return;
     state.timer = setInterval(() => {
@@ -296,6 +307,7 @@
     if (context) {
       externalizedMedia.set(element, context);
       ensureSyntheticMediaState(element, context);
+      signalSyntheticMediaReady(element);
     } else {
       externalizedMedia.delete(element);
       clearSyntheticMediaState(element);
@@ -343,6 +355,12 @@
       }
     }
     for (const source of Array.from(element.querySelectorAll?.('source') || [])) {
+      const stored = externalizedSources.get(source);
+      if (stored && contextWasExternalized(stored)) {
+        externalizedMedia.set(element, stored);
+        ensureSyntheticMediaState(element, stored);
+        return true;
+      }
       const sourceUrl = source.src || source.getAttribute?.('src') || '';
       if (!isDirectStreamUrl(sourceUrl)) continue;
       const context = externalizedSources.get(source) || streamContext(sourceUrl);
@@ -438,11 +456,7 @@
       const last = sentContextKeys.get(key) || 0;
       if (Date.now() - last < 1000) return;
       sentContextKeys.set(key, Date.now());
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = 'jellyfin-mpv://play-context?payload=' + encodeURIComponent(JSON.stringify(clean));
-      (document.documentElement || document.body || document).appendChild(iframe);
-      setTimeout(() => iframe.remove(), 1000);
+      sendBridgeRequest('play-context', clean);
     } catch (error) {
       console.debug('[jellyfin-mpv] bridge context send failed', error);
     }
@@ -458,14 +472,30 @@
       const last = sentPlayKeys.get(key) || 0;
       if (Date.now() - last < 1000) return;
       sentPlayKeys.set(key, Date.now());
-      const iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = 'jellyfin-mpv://play?payload=' + encodeURIComponent(JSON.stringify(clean));
-      (document.documentElement || document.body || document).appendChild(iframe);
-      setTimeout(() => iframe.remove(), 1000);
+      sendBridgeRequest('play', clean);
     } catch (error) {
       console.debug('[jellyfin-mpv] bridge play send failed', error);
     }
+  }
+
+  function sendBridgeRequest(action, payload) {
+    const url = 'jellyfin-mpv://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
+    if (typeof nativeFetch === 'function') {
+      try {
+        nativeFetch.call(window, url, {
+          method: 'GET',
+          mode: 'no-cors',
+          cache: 'no-store',
+          credentials: 'omit',
+          keepalive: true
+        }).catch(() => {});
+      } catch (_) {}
+    }
+    const image = new Image();
+    image.src = url;
+    setTimeout(() => {
+      image.src = '';
+    }, 1000);
   }
 
   function pruneContexts() {
@@ -555,7 +585,6 @@
     return null;
   }
 
-  const nativeFetch = window.fetch;
   if (typeof nativeFetch === 'function') {
     window.fetch = function(input, init) {
       const requestUrl = absoluteUrl(typeof input === 'string' || input instanceof URL ? input : input?.url);
@@ -614,7 +643,7 @@
         if (context) {
           markMediaExternalized(this, context);
           sendExternalPlayback(context);
-          return mediaSrc.set.call(this, PLACEHOLDER_MEDIA_URL);
+          return;
         }
         markMediaExternalized(this, null);
         return mediaSrc.set.call(this, value);
@@ -724,7 +753,7 @@
       if (context) {
         markMediaExternalized(this, context);
         sendExternalPlayback(context);
-        return nativeSetAttribute.call(this, name, PLACEHOLDER_MEDIA_URL);
+        return;
       }
       markMediaExternalized(this, null);
     } else if (typeof HTMLSourceElement !== 'undefined' && this instanceof HTMLSourceElement && String(name).toLowerCase() === 'src') {
@@ -732,7 +761,7 @@
       if (context) {
         markSourceExternalized(this, context);
         sendExternalPlayback(context);
-        return nativeSetAttribute.call(this, name, PLACEHOLDER_MEDIA_URL);
+        return;
       }
       markSourceExternalized(this, null);
     }
@@ -751,7 +780,7 @@
           if (context) {
             markSourceExternalized(this, context);
             sendExternalPlayback(context);
-            return sourceSrc.set.call(this, PLACEHOLDER_MEDIA_URL);
+            return;
           }
           markSourceExternalized(this, null);
           return sourceSrc.set.call(this, value);

@@ -7,6 +7,7 @@ use cef::*;
 
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
+use crate::logger;
 use crate::mpv_controller::MpvController;
 use crate::settings::{AppSettings, normalize_server_url};
 
@@ -616,17 +617,17 @@ wrap_request_handler! {
                 return 1;
             }
 
-            if let Some(query) = request_url.strip_prefix("jellyfin-mpv://save?") {
+            if let Some(query) = bridge_action_query(&request_url, "save") {
                 save_settings_and_open(query, frame, &self.state);
                 return 1;
             }
 
-            if let Some(query) = request_url.strip_prefix("jellyfin-mpv://play-context?") {
+            if let Some(query) = bridge_action_query(&request_url, "play-context") {
                 remember_playback_context(query, &self.state);
                 return 1;
             }
 
-            if let Some(query) = request_url.strip_prefix("jellyfin-mpv://play?") {
+            if let Some(query) = bridge_action_query(&request_url, "play") {
                 spawn_mpv_from_bridge_payload(query, &self.state);
                 return 1;
             }
@@ -667,6 +668,10 @@ wrap_resource_request_handler! {
             };
 
             let request_url = CefString::from(&request.url()).to_string();
+            if handle_bridge_resource_request(&request_url, &self.state) {
+                return ReturnValue::CANCEL;
+            }
+
             let Some(mut launch) = jellyfin_bridge::launch_from_stream_url(
                 &request_url,
                 request_headers(request),
@@ -674,6 +679,11 @@ wrap_resource_request_handler! {
                 return ReturnValue::CONTINUE;
             };
 
+            tracing::debug!(
+                target: "bridge",
+                launch = %logger::launch_summary(&launch),
+                "captured direct stream resource for mpv handoff"
+            );
             merge_recent_playback_context(&self.state, &mut launch);
             if hand_off_to_mpv(&self.state, launch) {
                 ReturnValue::CANCEL
@@ -682,6 +692,32 @@ wrap_resource_request_handler! {
             }
         }
     }
+}
+
+fn handle_bridge_resource_request(request_url: &str, state: &BrowserState) -> bool {
+    if let Some(query) = bridge_action_query(request_url, "play-context") {
+        tracing::trace!(target: "bridge", "handling play-context bridge resource request");
+        remember_playback_context(query, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "play") {
+        tracing::trace!(target: "bridge", "handling play bridge resource request");
+        spawn_mpv_from_bridge_payload(query, state);
+        return true;
+    }
+
+    false
+}
+
+fn bridge_action_query<'a>(request_url: &'a str, action: &str) -> Option<&'a str> {
+    let after_scheme = request_url.strip_prefix("jellyfin-mpv://")?;
+    let query = after_scheme
+        .strip_prefix(action)?
+        .strip_prefix('/')
+        .unwrap_or_else(|| &after_scheme[action.len()..])
+        .strip_prefix('?')?;
+    Some(query)
 }
 
 wrap_run_file_dialog_callback! {
@@ -711,10 +747,20 @@ wrap_run_file_dialog_callback! {
 
 const PLAYBACK_CONTEXT_TTL: Duration = Duration::from_secs(15 * 60);
 fn remember_playback_context(query: &str, state: &BrowserState) {
-    let Ok(context) = jellyfin_bridge::parse_context_payload(query) else {
-        return;
+    let context = match jellyfin_bridge::parse_context_payload(query) {
+        Ok(context) => context,
+        Err(error) => {
+            tracing::warn!(target: "bridge", "failed to parse playback context payload: {error}");
+            return;
+        }
     };
+    tracing::debug!(
+        target: "bridge",
+        context = %playback_context_summary(&context),
+        "remembering playback context from bridge"
+    );
     let Ok(mut state) = state.lock() else {
+        tracing::warn!(target: "bridge", "failed to lock browser state while remembering playback context");
         return;
     };
     prune_playback_state(&mut state);
@@ -725,19 +771,36 @@ fn remember_playback_context(query: &str, state: &BrowserState) {
 }
 
 fn spawn_mpv_from_bridge_payload(query: &str, state: &BrowserState) {
-    let Ok(mut launch) = jellyfin_bridge::parse_launch_payload(query) else {
-        return;
+    let mut launch = match jellyfin_bridge::parse_launch_payload(query) {
+        Ok(launch) => launch,
+        Err(error) => {
+            tracing::warn!(target: "bridge", "failed to parse mpv launch payload: {error}");
+            return;
+        }
     };
     if launch.media_url.trim().is_empty() {
+        tracing::warn!(target: "bridge", "ignored mpv launch payload with empty media URL");
         return;
     }
-    merge_recent_playback_context(state, &mut launch);
+    tracing::debug!(
+        target: "bridge",
+        launch = %logger::launch_summary(&launch),
+        "received mpv launch payload from bridge"
+    );
+    let merge_score = merge_recent_playback_context(state, &mut launch);
+    tracing::debug!(
+        target: "bridge",
+        merge_score = ?merge_score,
+        launch = %logger::launch_summary(&launch),
+        "launch payload ready for mpv handoff"
+    );
     let _ = hand_off_to_mpv(state, launch);
 }
 
-fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) {
+fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -> Option<u8> {
     let Ok(mut state) = state.lock() else {
-        return;
+        tracing::warn!(target: "bridge", "failed to lock browser state while merging playback context");
+        return None;
     };
     prune_playback_state(&mut state);
     let best_context = state
@@ -749,27 +812,53 @@ fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) {
             (score > 0).then_some((score, pending.seen_at, index))
         })
         .max_by_key(|(score, seen_at, _index)| (*score, *seen_at))
-        .and_then(|(_score, _seen_at, index)| {
+        .and_then(|(score, _seen_at, index)| {
             state
                 .playback_contexts
                 .get(index)
-                .map(|pending| pending.context.clone())
+                .map(|pending| (score, pending.context.clone()))
         });
     drop(state);
 
-    if let Some(context) = best_context {
+    if let Some((score, context)) = best_context {
+        tracing::debug!(
+            target: "bridge",
+            score,
+            context = %playback_context_summary(&context),
+            "merged recent playback context into launch"
+        );
         context.merge_into_launch(launch);
+        Some(score)
+    } else {
+        tracing::trace!(
+            target: "bridge",
+            launch = %logger::launch_summary(launch),
+            "no recent playback context matched launch"
+        );
+        None
     }
 }
 
 fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
     let Ok(mut state) = state.lock() else {
+        tracing::warn!(target: "bridge", "failed to lock browser state while handing playback to mpv");
         return false;
     };
     prune_playback_state(&mut state);
     let Some(mpv_path) = state.settings.mpv_path.clone() else {
+        tracing::warn!(
+            target: "bridge",
+            launch = %logger::launch_summary(&launch),
+            "cannot hand playback to mpv because mpv path is not configured"
+        );
         return false;
     };
+    tracing::info!(
+        target: "bridge",
+        mpv_path = %mpv_path,
+        launch = %logger::launch_summary(&launch),
+        "handing playback to mpv controller"
+    );
     state.mpv_controller.load(mpv_path, launch);
     true
 }
@@ -781,17 +870,49 @@ fn prune_playback_state(state: &mut BrowserStateInner) {
         .retain(|context| now.saturating_duration_since(context.seen_at) <= PLAYBACK_CONTEXT_TTL);
 }
 
+fn playback_context_summary(context: &PlaybackContext) -> String {
+    format!(
+        "item={} media_source={} play_session={} start={} url={}",
+        display_opt(context.item_id.as_deref()),
+        display_opt(context.media_source_id.as_deref()),
+        display_opt(context.play_session_id.as_deref()),
+        context
+            .start_time_ticks
+            .map(|ticks| ticks.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        context
+            .media_url
+            .as_deref()
+            .map(logger::redact_url_secrets)
+            .unwrap_or_else(|| "unknown".to_string())
+    )
+}
+
+fn display_opt(value: Option<&str>) -> &str {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+}
+
 fn request_headers(request: &Request) -> Vec<HttpHeader> {
     let mut map = CefStringMultimap::new();
     request.header_map(Some(&mut map));
-    map.into_iter()
+    let headers = map
+        .into_iter()
         .flat_map(|(name, values)| {
             values.into_iter().map(move |value| HttpHeader {
                 name: name.clone(),
                 value,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    tracing::trace!(
+        target: "bridge",
+        headers = %logger::redacted_header_summary(&headers),
+        "captured direct stream request headers"
+    );
+    headers
 }
 
 fn open_mpv_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>, state: &BrowserState) {

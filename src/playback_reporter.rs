@@ -1,10 +1,12 @@
 use std::collections::HashSet;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
 use crate::external_mpv::{HttpHeader, MpvLaunch};
+use crate::logger;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
@@ -36,6 +38,25 @@ pub struct MpvPlaybackState {
     pub volume: Option<i64>,
     pub mute: Option<bool>,
     pub eof_reached: bool,
+}
+
+impl fmt::Display for MpvPlaybackState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "position={} duration={} paused={} volume={} muted={} eof={}",
+            ticks_summary(Some(self.position_ticks.max(0))),
+            ticks_summary(self.duration_ticks),
+            self.pause,
+            self.volume
+                .map(|volume| volume.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            self.mute
+                .map(|mute| mute.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            self.eof_reached
+        )
+    }
 }
 
 pub fn make_mpv_ipc_path() -> String {
@@ -90,6 +111,7 @@ impl PlaybackReporter {
         self.post_playstate(
             "Sessions/Playing",
             playback_progress_body(&self.session, state),
+            state,
         );
     }
 
@@ -97,6 +119,7 @@ impl PlaybackReporter {
         self.post_playstate(
             "Sessions/Playing/Progress",
             playback_progress_body(&self.session, state),
+            state,
         );
     }
 
@@ -104,11 +127,21 @@ impl PlaybackReporter {
         self.post_playstate(
             "Sessions/Playing/Stopped",
             playback_stop_body(&self.session, state, failed),
+            state,
         );
     }
 
-    fn post_playstate(&self, endpoint: &str, body: Value) {
+    fn post_playstate(&self, endpoint: &str, body: Value, state: &MpvPlaybackState) {
         let url = join_api_url(&self.session.base_url, endpoint);
+        tracing::debug!(
+            target: "jellyfin.playstate",
+            endpoint,
+            item_id = %self.session.item_id,
+            play_session_id = %display_opt(self.session.play_session_id.as_deref()),
+            state = %state,
+            body = %logger::redacted_json(&body),
+            "sending Jellyfin playback state"
+        );
         let mut request = self
             .agent
             .post(url.as_str())
@@ -118,8 +151,21 @@ impl PlaybackReporter {
             request = request.header(header.name.as_str(), header.value.as_str());
         }
 
-        if let Err(error) = request.send_json(&body) {
-            eprintln!("Failed to report Jellyfin playback state to {endpoint}: {error}");
+        match request.send_json(&body) {
+            Ok(response) => tracing::debug!(
+                target: "jellyfin.playstate",
+                endpoint,
+                item_id = %self.session.item_id,
+                status = response.status().as_u16(),
+                "sent Jellyfin playback state"
+            ),
+            Err(error) => tracing::warn!(
+                target: "jellyfin.playstate",
+                endpoint,
+                item_id = %self.session.item_id,
+                state = %state,
+                "failed to report Jellyfin playback state: {error}"
+            ),
         }
     }
 }
@@ -130,8 +176,10 @@ impl PlaybackSession {
         let base_url = server_base_url(&launch.media_url)?;
         let auth_headers = playback_auth_headers(launch);
         if auth_headers.is_empty() {
-            eprintln!(
-                "Cannot report Jellyfin playback state for item {item_id}: missing auth token"
+            tracing::warn!(
+                target: "jellyfin.playstate",
+                item_id,
+                "cannot report Jellyfin playback state: missing auth token"
             );
             return None;
         }
@@ -504,6 +552,16 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+fn display_opt(value: Option<&str>) -> &str {
+    non_empty(value).unwrap_or("unknown")
+}
+
+fn ticks_summary(value: Option<i64>) -> String {
+    value
+        .map(|ticks| format!("{ticks} ({:.3}s)", ticks as f64 / TICKS_PER_SECOND))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn unix_now_ticks() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -636,6 +694,22 @@ mod tests {
             playback_stop_body(&session, &state, false)
                 .get("NowPlayingQueue")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn mpv_playback_state_summary_is_stable() {
+        let state = MpvPlaybackState {
+            position_ticks: 10_000_000,
+            pause: true,
+            duration_ticks: Some(120_000_000),
+            volume: Some(77),
+            mute: Some(false),
+            eof_reached: false,
+        };
+        assert_eq!(
+            state.to_string(),
+            "position=10000000 (1.000s) duration=120000000 (12.000s) paused=true volume=77 muted=false eof=false"
         );
     }
 }
