@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,6 +28,17 @@ static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 #[derive(Clone)]
 pub struct MpvController {
     tx: Sender<ControllerMessage>,
+    snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MpvPlayerSnapshot {
+    pub active: bool,
+    pub position_ms: f64,
+    pub duration_ms: Option<f64>,
+    pub paused: bool,
+    pub volume: Option<i64>,
+    pub mute: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +68,7 @@ struct RecentLoad {
 
 struct ControllerState {
     rx: Receiver<ControllerMessage>,
+    snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
     child: Option<Child>,
     ipc_path: Option<String>,
     ipc_worker: Option<IpcWorker>,
@@ -117,8 +130,10 @@ struct IpcWorker {
 impl MpvController {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || ControllerState::new(rx).run());
-        Self { tx }
+        let snapshot = Arc::new(Mutex::new(MpvPlayerSnapshot::default()));
+        let controller_snapshot = snapshot.clone();
+        thread::spawn(move || ControllerState::new(rx, controller_snapshot).run());
+        Self { tx, snapshot }
     }
 
     pub fn load(&self, mpv_path: impl Into<String>, launch: MpvLaunch) {
@@ -132,15 +147,23 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
+    pub fn snapshot(&self) -> MpvPlayerSnapshot {
+        self.snapshot
+            .lock()
+            .map(|snapshot| *snapshot)
+            .unwrap_or_default()
+    }
+
     pub fn shutdown(&self) {
         let _ = self.tx.send(ControllerMessage::Shutdown);
     }
 }
 
 impl ControllerState {
-    fn new(rx: Receiver<ControllerMessage>) -> Self {
+    fn new(rx: Receiver<ControllerMessage>, snapshot: Arc<Mutex<MpvPlayerSnapshot>>) -> Self {
         Self {
             rx,
+            snapshot,
             child: None,
             ipc_path: None,
             ipc_worker: None,
@@ -198,6 +221,39 @@ impl ControllerState {
         }
     }
 
+    fn kick_start_playback(&self, launch: &MpvLaunch) {
+        if let Some(start_ms) = launch.start_seconds().map(|seconds| seconds * 1000.0)
+            && let Some(command) = control_command(MpvControlCommand::SeekMilliseconds(start_ms))
+            && let Err(error) = self.send_mpv_command(command)
+        {
+            tracing::warn!(target: "mpv.ipc", "failed to send mpv startup seek command: {error}");
+        }
+
+        if let Some(command) = control_command(MpvControlCommand::SetPause(false))
+            && let Err(error) = self.send_mpv_command(command)
+        {
+            tracing::warn!(target: "mpv.ipc", "failed to send mpv startup unpause command: {error}");
+        }
+    }
+
+    fn publish_snapshot(&self) {
+        let snapshot = MpvPlayerSnapshot {
+            active: self.active.is_some() || self.pending.is_some(),
+            position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
+            duration_ms: self
+                .last_state
+                .duration_ticks
+                .filter(|ticks| *ticks > 0)
+                .map(|ticks| ticks as f64 / 10_000.0),
+            paused: self.last_state.pause,
+            volume: self.last_state.volume,
+            mute: self.last_state.mute,
+        };
+        if let Ok(mut target) = self.snapshot.lock() {
+            *target = snapshot;
+        }
+    }
+
     fn load(&mut self, mpv_path: String, launch: MpvLaunch) {
         let key = launch.dedupe_key();
         tracing::debug!(
@@ -252,6 +308,7 @@ impl ControllerState {
                     reporter,
                     requested_at: Instant::now(),
                 });
+                self.publish_snapshot();
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command: {error}");
@@ -363,6 +420,7 @@ impl ControllerState {
                 .and_then(seconds_to_ticks)
                 .unwrap_or_default(),
         );
+        let launch = pending.launch.clone();
         if let Some(reporter) = pending.reporter {
             reporter.report_start(&self.last_state);
             self.active = Some(ActivePlayback {
@@ -376,6 +434,8 @@ impl ControllerState {
                 "activated playback without Jellyfin reporter"
             );
         }
+        self.kick_start_playback(&launch);
+        self.publish_snapshot();
     }
 
     fn finish_active(&mut self, reason: Option<&str>) {
@@ -418,6 +478,7 @@ impl ControllerState {
             "reporting active playback stopped"
         );
         active.reporter.report_stopped(&self.last_state, failed);
+        self.publish_snapshot();
     }
 
     fn apply_property(&mut self, property: Option<&str>, data: Option<Value>) {
@@ -440,6 +501,7 @@ impl ControllerState {
                     let previous = self.last_state.position_ticks;
                     self.last_state.position_ticks = ticks;
                     self.log_position_change(property.unwrap_or("time"), previous, ticks);
+                    self.publish_snapshot();
                 }
             }
             Some("pause") => {
@@ -455,6 +517,7 @@ impl ControllerState {
                             "mpv pause state changed"
                         );
                     }
+                    self.publish_snapshot();
                 }
             }
             Some("duration") => {
@@ -467,6 +530,7 @@ impl ControllerState {
                     state = %self.last_state,
                     "mpv duration changed"
                 );
+                self.publish_snapshot();
             }
             Some("volume") => {
                 let previous = self.last_state.volume;
@@ -483,6 +547,7 @@ impl ControllerState {
                         "mpv volume changed"
                     );
                 }
+                self.publish_snapshot();
             }
             Some("mute") => {
                 let previous = self.last_state.mute;
@@ -496,6 +561,7 @@ impl ControllerState {
                         "mpv mute state changed"
                     );
                 }
+                self.publish_snapshot();
             }
             Some("eof-reached") => {
                 let previous = self.last_state.eof_reached;
@@ -670,6 +736,7 @@ impl ControllerState {
             worker.shutdown();
         }
         self.last_position_log_bucket = None;
+        self.publish_snapshot();
     }
 
     fn send_mpv_command(&self, command: Value) -> io::Result<()> {
@@ -727,7 +794,7 @@ pub fn loadfile_command(launch: &MpvLaunch) -> Value {
     }
 
     json!({
-        "command": ["loadfile", launch.media_url, "replace", -1, Value::Object(options)],
+        "command": ["loadfile", media_url_without_fragment(&launch.media_url), "replace", -1, Value::Object(options)],
         "request_id": next_request_id(),
     })
 }
@@ -770,6 +837,10 @@ pub fn control_command(command: MpvControlCommand) -> Option<Value> {
 
 fn next_request_id() -> i64 {
     REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+fn media_url_without_fragment(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
 }
 
 impl IpcWorker {
@@ -1082,6 +1153,7 @@ mod tests {
     use crate::external_mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
     use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
@@ -1089,7 +1161,7 @@ mod tests {
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.start_time_ticks = start_time_ticks;
 
-        let mut state = ControllerState::new(rx);
+        let mut state = ControllerState::new(rx, Arc::new(Mutex::new(Default::default())));
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
             launch,
@@ -1148,6 +1220,19 @@ mod tests {
             .as_str()
             .expect("header list");
         assert_eq!(headers, "X-Emby-Token: secret");
+    }
+
+    #[test]
+    fn loadfile_strips_media_fragment_from_url() {
+        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret#t=30");
+        launch.start_time_ticks = Some(300_000_000);
+
+        let command = loadfile_command(&launch);
+        assert_eq!(
+            command["command"][1],
+            "https://example.test/video.mkv?ApiKey=secret"
+        );
+        assert_eq!(command["command"][4]["start"], "30.000");
     }
 
     #[test]

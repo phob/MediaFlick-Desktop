@@ -13,11 +13,15 @@
   const externalizedMedia = new WeakMap();
   const externalizedSources = new WeakMap();
   const syntheticMediaState = new WeakMap();
+  const playerInstances = new Set();
   const CONTEXT_TTL_MS = 15 * 60 * 1000;
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
   const MAX_BITRATE = 1000000000;
   const PLAYER_PLUGIN_NAME = 'jellyfinMpvPlayer';
   const nativeFetch = window.fetch;
+  let playerStateTimer = 0;
+  let playerStateFrame = null;
+  let playerStateRequestId = 0;
 
   const MPV_DEVICE_PROFILE = {
     Name: 'jellyfin-mpv',
@@ -492,6 +496,62 @@
     }
   }
 
+  function activePlayerCount() {
+    let count = 0;
+    for (const player of playerInstances) {
+      if (player?._currentSrc) count += 1;
+    }
+    return count;
+  }
+
+  function ensurePlayerStatePolling() {
+    if (!playerStateTimer) {
+      playerStateTimer = setInterval(requestPlayerState, 750);
+    }
+    requestPlayerState();
+  }
+
+  function stopPlayerStatePollingIfIdle() {
+    if (activePlayerCount() > 0) return;
+    if (playerStateTimer) clearInterval(playerStateTimer);
+    playerStateTimer = 0;
+    if (playerStateFrame?.parentNode) playerStateFrame.parentNode.removeChild(playerStateFrame);
+    playerStateFrame = null;
+  }
+
+  function requestPlayerState() {
+    if (activePlayerCount() === 0) {
+      stopPlayerStatePollingIfIdle();
+      return;
+    }
+    try {
+      if (!playerStateFrame) {
+        playerStateFrame = document.createElement('iframe');
+        playerStateFrame.tabIndex = -1;
+        playerStateFrame.setAttribute('aria-hidden', 'true');
+        playerStateFrame.style.cssText = 'position:absolute;width:0;height:0;border:0;opacity:0;pointer-events:none;';
+        (document.body || document.documentElement).appendChild(playerStateFrame);
+      }
+      playerStateRequestId += 1;
+      playerStateFrame.src = 'jellyfin-mpv://player-state?requestId='
+        + encodeURIComponent(String(playerStateRequestId))
+        + '&t='
+        + Date.now();
+    } catch (error) {
+      console.debug('[jellyfin-mpv] player state request failed', error);
+    }
+  }
+
+  window.__jellyfinMpvReceivePlayerState = function(snapshot) {
+    for (const player of Array.from(playerInstances)) {
+      try {
+        player._applyMpvSnapshot(snapshot);
+      } catch (error) {
+        console.debug('[jellyfin-mpv] failed to apply mpv state snapshot', error);
+      }
+    }
+  };
+
   function sendBridgeRequest(action, payload) {
     const url = 'jellyfin-mpv://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
     if (typeof nativeFetch === 'function') {
@@ -704,6 +764,8 @@
       this._currentSubtitleOffset = 0;
       this._showSubtitleOffset = false;
       this._currentAspectRatio = 'auto';
+
+      playerInstances.add(this);
     }
 
     _readSavedVolume() {
@@ -827,6 +889,46 @@
       }
     }
 
+    _applyMpvSnapshot(snapshot) {
+      if (!snapshot || !this._currentSrc) return;
+
+      const position = Number(snapshot.positionMs);
+      if (Number.isFinite(position) && position >= 0) {
+        const previous = this._sampleCurrentTime();
+        this._currentTime = position;
+        this._timeBaseMs = position;
+        this._timeBaseAt = Date.now();
+        if (Math.abs(previous - position) > 250) {
+          this._trigger('timeupdate');
+        }
+      }
+
+      const duration = Number(snapshot.durationMs);
+      if (Number.isFinite(duration) && duration > 0) {
+        this._duration = duration;
+      }
+
+      if (typeof snapshot.paused === 'boolean' && snapshot.paused !== this._paused) {
+        this._paused = snapshot.paused;
+        this._timeBaseMs = this._currentTime || 0;
+        this._timeBaseAt = Date.now();
+        this._trigger(snapshot.paused ? 'pause' : 'unpause');
+        if (!snapshot.paused) this._trigger('playing');
+      }
+
+      const volume = Number(snapshot.volume);
+      let volumeChanged = false;
+      if (Number.isFinite(volume) && volume !== this._volume) {
+        this._volume = Math.max(0, Math.min(100, volume));
+        volumeChanged = true;
+      }
+      if (typeof snapshot.mute === 'boolean' && snapshot.mute !== this._muted) {
+        this._muted = snapshot.mute;
+        volumeChanged = true;
+      }
+      if (volumeChanged) this._trigger('volumechange');
+    }
+
     play(options = {}) {
       console.debug('[jellyfin-mpv] external player play()', options);
       this._stopSyntheticClock();
@@ -850,6 +952,7 @@
       }
 
       this._startSyntheticClock();
+      ensurePlayerStatePolling();
       setTimeout(() => this._notifyPlaying(options), 0);
       return Promise.resolve();
     }
@@ -867,12 +970,15 @@
       if (previousSrc) sendPlayerCommand({ command: 'stop' });
       if (previousSrc) this._trigger('stopped', [{ src: previousSrc }]);
       if (destroyPlayer) this.destroy();
+      stopPlayerStatePollingIfIdle();
       return Promise.resolve();
     }
 
     destroy() {
       this._stopSyntheticClock();
       this._removeVideoContainer();
+      playerInstances.delete(this);
+      stopPlayerStatePollingIfIdle();
     }
 
     currentSrc() {

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cef::*;
+use serde_json::json;
 
 use crate::external_mpv::{HttpHeader, MpvLaunch};
 use crate::jellyfin_bridge::{self, PlaybackContext};
@@ -665,6 +666,11 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if let Some(query) = bridge_action_query(&request_url, "player-state") {
+                respond_player_state(browser, frame, query, &self.state);
+                return 1;
+            }
+
             if let Some(query) = bridge_action_query(&request_url, "player-command") {
                 handle_player_command(query, &self.state);
                 return 1;
@@ -863,6 +869,42 @@ fn handle_player_command(query: &str, state: &BrowserState) {
     };
     tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
     state.mpv_controller.control(command);
+}
+
+fn respond_player_state(
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    query: &str,
+    state: &BrowserState,
+) {
+    let snapshot = state
+        .lock()
+        .map(|state| state.mpv_controller.snapshot())
+        .unwrap_or_default();
+    let response = json!({
+        "requestId": query_param(query, "requestId").unwrap_or_default(),
+        "active": snapshot.active,
+        "positionMs": snapshot.position_ms,
+        "durationMs": snapshot.duration_ms,
+        "paused": snapshot.paused,
+        "volume": snapshot.volume,
+        "mute": snapshot.mute,
+    });
+    let script = format!(
+        "window.__jellyfinMpvReceivePlayerState&&window.__jellyfinMpvReceivePlayerState({});",
+        response
+    );
+
+    let target_frame = browser
+        .and_then(|browser| browser.main_frame())
+        .or_else(|| frame.map(|frame| frame.clone()));
+    if let Some(frame) = target_frame {
+        frame.execute_java_script(
+            Some(&CefString::from(script.as_str())),
+            Some(&CefString::from("jellyfin-mpv://player-state")),
+            1,
+        );
+    }
 }
 
 fn player_command_from_payload(
