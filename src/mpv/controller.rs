@@ -15,6 +15,7 @@ use crate::jellyfin::bridge as jellyfin_bridge;
 use crate::jellyfin::playback_reporter::{
     MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
 };
+use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
 
 const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -42,6 +43,7 @@ pub struct MpvPlayerSnapshot {
     pub paused: bool,
     pub volume: Option<i64>,
     pub mute: Option<bool>,
+    pub stop_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,13 +51,16 @@ pub enum MpvPlaybackEvent {
     Stopped(MpvPlayerSnapshot),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MpvControlCommand {
     SetPause(bool),
     SeekMilliseconds(f64),
     SetVolume(f64),
     SetMute(bool),
     SetPlaybackRate(f64),
+    SetAudioTrack(i64),
+    SetSubtitleTrack(Option<i64>),
+    AddSubtitle(String),
     Stop,
 }
 
@@ -100,6 +105,7 @@ struct PendingPlayback {
 
 struct ActivePlayback {
     reporter: PlaybackReporter,
+    runtime_ticks: Option<i64>,
     last_progress_sent: Instant,
     last_pause: bool,
 }
@@ -117,6 +123,7 @@ struct MpvEvent {
     reason: Option<String>,
     property: Option<String>,
     data: Option<Value>,
+    args: Vec<String>,
     raw: Value,
 }
 
@@ -135,6 +142,7 @@ impl MpvEvent {
                 "end-file reason={}",
                 self.reason.as_deref().unwrap_or("unknown")
             ),
+            "client-message" => format!("client-message args={:?}", self.args),
             name => name.to_string(),
         }
     }
@@ -246,7 +254,7 @@ impl ControllerState {
     }
 
     fn control(&mut self, command: MpvControlCommand) {
-        let Some(command_json) = control_command(command) else {
+        let Some(command_json) = control_command(command.clone()) else {
             tracing::debug!(target: "mpv.ipc", ?command, "ignored invalid mpv control command");
             return;
         };
@@ -318,6 +326,13 @@ impl ControllerState {
     }
 
     fn publish_snapshot(&self) -> MpvPlayerSnapshot {
+        self.publish_snapshot_with_stop_reason(None)
+    }
+
+    fn publish_snapshot_with_stop_reason(
+        &self,
+        stop_reason: Option<&'static str>,
+    ) -> MpvPlayerSnapshot {
         let snapshot = MpvPlayerSnapshot {
             active: self.mpv_playback_active || self.active.is_some() || self.pending.is_some(),
             position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
@@ -329,6 +344,7 @@ impl ControllerState {
             paused: self.last_state.pause,
             volume: self.last_state.volume,
             mute: self.last_state.mute,
+            stop_reason,
         };
         if let Ok(mut target) = self.snapshot.lock() {
             *target = snapshot;
@@ -455,7 +471,33 @@ impl ControllerState {
         self.ipc_worker = Some(ipc_worker);
         self.event_rx = Some(event_rx);
         tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, "mpv IPC connected");
+        self.install_input_bindings();
         true
+    }
+
+    fn install_input_bindings(&self) {
+        let bindings = MpvInputBindings::load();
+        let Some(section_contents) = bindings.section_contents() else {
+            tracing::debug!(target: "mpv.ipc", "mpv input bindings disabled");
+            return;
+        };
+
+        let define = json!({
+            "command": ["define-section", INPUT_SECTION_NAME, section_contents, "force"],
+            "request_id": next_request_id(),
+        });
+        if let Err(error) = self.send_mpv_command(define) {
+            tracing::warn!(target: "mpv.ipc", "failed to define mpv input bindings: {error}");
+            return;
+        }
+
+        let enable = json!({
+            "command": ["enable-section", INPUT_SECTION_NAME, "allow-hide-cursor+allow-vo-dragging"],
+            "request_id": next_request_id(),
+        });
+        if let Err(error) = self.send_mpv_command(enable) {
+            tracing::warn!(target: "mpv.ipc", "failed to enable mpv input bindings: {error}");
+        }
     }
 
     fn drain_events(&mut self) {
@@ -488,6 +530,9 @@ impl ControllerState {
                 self.reset_mpv();
             }
             "property-change" => self.apply_property(event.property.as_deref(), event.data),
+            "client-message" if is_mark_watched_next_message(&event.args) => {
+                self.mark_watched_and_play_next();
+            }
             _ => tracing::trace!(target: "mpv.ipc", name = %event.name, "ignored mpv event"),
         }
     }
@@ -516,6 +561,7 @@ impl ControllerState {
             reporter.report_start(&self.last_state);
             self.active = Some(ActivePlayback {
                 reporter,
+                runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
                 last_progress_sent: Instant::now(),
                 last_pause: self.last_state.pause,
             });
@@ -526,8 +572,60 @@ impl ControllerState {
             );
         }
         self.mpv_playback_active = true;
+        self.load_external_subtitle(&launch);
         self.kick_start_playback(&launch);
         self.publish_snapshot();
+    }
+
+    fn load_external_subtitle(&mut self, launch: &MpvLaunch) {
+        let Some(subtitle_url) = non_empty(launch.subtitle_url.as_deref()) else {
+            return;
+        };
+        tracing::debug!(
+            target: "mpv.ipc",
+            subtitle_url = %jellyfin_bridge::redact_url_secrets(subtitle_url),
+            "loading selected external Jellyfin subtitle in mpv"
+        );
+        if let Some(command) =
+            control_command(MpvControlCommand::AddSubtitle(subtitle_url.to_string()))
+            && let Err(error) = self.send_mpv_command(command)
+        {
+            tracing::warn!(target: "mpv.ipc", "failed to load selected external subtitle: {error}");
+        }
+    }
+
+    fn mark_watched_and_play_next(&mut self) {
+        if self.active.is_none() && self.pending.is_none() && !self.mpv_playback_active {
+            tracing::debug!(target: "playback", "ignored mark-watched-next because playback is idle");
+            return;
+        }
+
+        let duration_ticks = self
+            .last_state
+            .duration_ticks
+            .filter(|ticks| *ticks > 0)
+            .or_else(|| self.active.as_ref().and_then(|active| active.runtime_ticks));
+        if let Some(duration_ticks) = duration_ticks {
+            self.last_state.duration_ticks = Some(duration_ticks);
+            self.last_state.position_ticks = duration_ticks;
+        } else {
+            tracing::warn!(
+                target: "playback",
+                "mark-watched-next requested before a duration was known; reporting current position"
+            );
+        }
+
+        tracing::info!(
+            target: "playback",
+            state = %self.last_state,
+            "marking current item watched and requesting next item"
+        );
+        if let Some(command) = control_command(MpvControlCommand::Stop)
+            && let Err(error) = self.send_mpv_command(command)
+        {
+            tracing::warn!(target: "mpv.ipc", "failed to stop mpv for mark-watched-next: {error}");
+        }
+        self.finish_active(Some("watched-next"));
     }
 
     fn finish_active(&mut self, reason: Option<&str>) {
@@ -541,6 +639,7 @@ impl ControllerState {
             self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
         self.startup_seek = None;
         let failed = matches!(reason, Some("error"));
+        let stop_reason = normalized_stop_reason(reason);
         if let Some(pending) = self.pending.take()
             && failed
             && let Some(reporter) = pending.reporter
@@ -556,14 +655,14 @@ impl ControllerState {
         let Some(active) = self.active.take() else {
             self.mpv_playback_active = false;
             if had_mpv_playback {
-                let snapshot = self.publish_snapshot();
+                let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
                 self.notify_playback_stopped(snapshot);
             }
             tracing::trace!(target: "playback", "no active playback to finish");
             return;
         };
         self.mpv_playback_active = false;
-        if matches!(reason, Some("eof"))
+        if is_completion_reason(reason)
             && let Some(duration) = self.last_state.duration_ticks
         {
             self.last_state.position_ticks = duration;
@@ -576,7 +675,7 @@ impl ControllerState {
             "reporting active playback stopped"
         );
         active.reporter.report_stopped(&self.last_state, failed);
-        let snapshot = self.publish_snapshot();
+        let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
         self.notify_playback_stopped(snapshot);
     }
 
@@ -916,6 +1015,22 @@ pub fn loadfile_command(launch: &MpvLaunch) -> Value {
             json!(sanitize_option(title)),
         );
     }
+    if let Some(audio_id) = launch.audio_mpv_id.filter(|id| *id > 0) {
+        options.insert("aid".to_string(), json!(audio_id.to_string()));
+    }
+    if non_empty(launch.subtitle_url.as_deref()).is_some() {
+        // Avoid briefly showing an automatically selected embedded subtitle;
+        // the selected external Jellyfin subtitle is added with `sub-add select`
+        // after mpv reports file-loaded.
+        options.insert("sid".to_string(), json!("no"));
+    } else if let Some(subtitle_id) = launch.subtitle_mpv_id {
+        let value = if subtitle_id > 0 {
+            subtitle_id.to_string()
+        } else {
+            "no".to_string()
+        };
+        options.insert("sid".to_string(), json!(value));
+    }
     let headers = mpv_headers(launch);
     if !headers.is_empty() {
         options.insert(
@@ -960,6 +1075,20 @@ pub fn control_command(command: MpvControlCommand) -> Option<Value> {
                 return None;
             }
             json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
+        }
+        MpvControlCommand::SetAudioTrack(id) => {
+            if id <= 0 {
+                return None;
+            }
+            json!(["set_property", "aid", id])
+        }
+        MpvControlCommand::SetSubtitleTrack(id) => match id.filter(|id| *id > 0) {
+            Some(id) => json!(["set_property", "sid", id]),
+            None => json!(["set_property", "sid", "no"]),
+        },
+        MpvControlCommand::AddSubtitle(url) => {
+            let url = non_empty(Some(url.as_str()))?;
+            json!(["sub-add", url, "select"])
         }
         MpvControlCommand::Stop => json!(["stop"]),
     };
@@ -1123,6 +1252,16 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
                         .and_then(Value::as_str)
                         .map(str::to_string),
                     data: value.get("data").cloned(),
+                    args: value
+                        .get("args")
+                        .and_then(Value::as_array)
+                        .map(|args| {
+                            args.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     raw: value,
                 };
                 if tx.send(event).is_err() {
@@ -1264,6 +1403,34 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+fn normalized_stop_reason(reason: Option<&str>) -> Option<&'static str> {
+    match reason.map(str::trim).filter(|reason| !reason.is_empty()) {
+        Some(reason) if reason.eq_ignore_ascii_case("eof") => Some("eof"),
+        Some(reason) if reason.eq_ignore_ascii_case("watched-next") => Some("watched-next"),
+        Some(reason) if reason.eq_ignore_ascii_case("stop") => Some("stop"),
+        Some(reason) if reason.eq_ignore_ascii_case("quit") => Some("quit"),
+        Some(reason) if reason.eq_ignore_ascii_case("error") => Some("error"),
+        Some(reason) if reason.eq_ignore_ascii_case("redirect") => Some("redirect"),
+        Some(reason) if reason.eq_ignore_ascii_case("shutdown") => Some("shutdown"),
+        Some(_) => Some("unknown"),
+        None => None,
+    }
+}
+
+fn is_completion_reason(reason: Option<&str>) -> bool {
+    reason.is_some_and(|reason| {
+        reason.eq_ignore_ascii_case("eof") || reason.eq_ignore_ascii_case("watched-next")
+    })
+}
+
+fn is_mark_watched_next_message(args: &[String]) -> bool {
+    match args {
+        [command] => command == MARK_WATCHED_NEXT_COMMAND,
+        [target, command, ..] => target == "jellyfin-mpv" && command == MARK_WATCHED_NEXT_COMMAND,
+        _ => false,
+    }
+}
+
 fn query_auth_token(url: &str) -> Option<String> {
     [
         "api_key",
@@ -1372,6 +1539,31 @@ mod tests {
     }
 
     #[test]
+    fn loadfile_command_applies_selected_tracks() {
+        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        launch.audio_stream_index = Some(3);
+        launch.subtitle_stream_index = Some(5);
+        launch.audio_mpv_id = Some(2);
+        launch.subtitle_mpv_id = Some(1);
+
+        let command = loadfile_command(&launch);
+        let options = &command["command"][4];
+        assert_eq!(options["aid"], "2");
+        assert_eq!(options["sid"], "1");
+    }
+
+    #[test]
+    fn loadfile_command_disables_embedded_subtitles_for_external_subtitle() {
+        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        launch.subtitle_stream_index = Some(7);
+        launch.subtitle_url = Some("https://example.test/subtitle.srt".to_string());
+
+        let command = loadfile_command(&launch);
+        let options = &command["command"][4];
+        assert_eq!(options["sid"], "no");
+    }
+
+    #[test]
     fn loadfile_filters_and_escapes_headers_for_mpv_string_list() {
         let mut launch = MpvLaunch::new("https://example.test/video.mkv");
         launch.headers = vec![
@@ -1437,6 +1629,22 @@ mod tests {
 
         let volume = control_command(MpvControlCommand::SetVolume(250.0)).expect("volume command");
         assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
+
+        let audio = control_command(MpvControlCommand::SetAudioTrack(2)).expect("audio command");
+        assert_eq!(audio["command"], json!(["set_property", "aid", 2]));
+
+        let subtitle = control_command(MpvControlCommand::SetSubtitleTrack(None))
+            .expect("subtitle none command");
+        assert_eq!(subtitle["command"], json!(["set_property", "sid", "no"]));
+
+        let external_subtitle = control_command(MpvControlCommand::AddSubtitle(
+            "https://example.test/sub.srt".to_string(),
+        ))
+        .expect("external subtitle command");
+        assert_eq!(
+            external_subtitle["command"],
+            json!(["sub-add", "https://example.test/sub.srt", "select"])
+        );
 
         assert!(control_command(MpvControlCommand::SetPlaybackRate(f64::NAN)).is_none());
     }
@@ -1511,8 +1719,19 @@ mod tests {
         let event = event_rx.try_recv().expect("stopped event");
         assert!(matches!(
             event,
-            MpvPlaybackEvent::Stopped(snapshot) if !snapshot.active
+            MpvPlaybackEvent::Stopped(snapshot) if !snapshot.active && snapshot.stop_reason == Some("quit")
         ));
+    }
+
+    #[test]
+    fn eof_stop_reason_is_preserved_in_snapshot() {
+        let mut state = controller_with_pending_load(None);
+
+        state.activate_pending();
+        state.finish_active(Some("eof"));
+
+        let snapshot = state.snapshot.lock().expect("snapshot");
+        assert_eq!(snapshot.stop_reason, Some("eof"));
     }
 
     #[test]

@@ -51,3 +51,21 @@ just run --url http://localhost:8096 --mpv-path "C:/Program Files/mpv/mpv.exe"
 ```
 
 The app injects a small Jellyfin Web bridge that watches PlaybackInfo/direct-play stream URLs. Direct-play media requests are handed to external `mpv` with captured auth headers, Jellyfin resume position, and item/session metadata. While `mpv` is running, the app reports Jellyfin playback start/progress/stopped events so resume position is saved when playback ends.
+
+mpv input bindings can be customized in:
+
+```text
+%APPDATA%\jellyfin-mpv\input.json
+```
+
+By default, `w` marks the current item watched and starts the next queued item. To change it:
+
+```json
+{
+  "bindings": {
+    "mark_watched_next": "W"
+  }
+}
+```
+
+Set the binding to an empty string to disable it.
