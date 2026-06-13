@@ -1,11 +1,11 @@
 # Project Context
 
-This project is a mix of `D:\users\pho\Documents\Source\jellyfin-desktop` and `D:\users\pho\Documents\Source\jellyfin-mpv-shim`.
+This project is a mix of `C:\Users\pho\Source\jellyfin-desktop` and `C:\Users\pho\Source\jellyfin-mpv-shim`.
 
 When working in this repository, look up both projects for reference:
 
-- Use `D:\users\pho\Documents\Source\jellyfin-mpv-shim` as the reference for the external mpv implementation.
-- Use `D:\users\pho\Documents\Source\jellyfin-desktop` as the reference for the CEF integration.
+- Use `C:\Users\pho\Source\jellyfin-mpv-shim` as the reference for the external mpv implementation.
+- Use `C:\Users\pho\Source\jellyfin-desktop` as the reference for the CEF integration.
 
 # Playback Regression Guard
 

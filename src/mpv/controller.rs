@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::external_mpv::{ExternalMpv, HttpHeader, MpvLaunch};
-use crate::jellyfin_bridge;
-use crate::logger;
-use crate::playback_reporter::{
+use crate::app::logger;
+use crate::jellyfin::bridge as jellyfin_bridge;
+use crate::jellyfin::playback_reporter::{
     MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
 };
+use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
 
 const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1325,7 +1325,7 @@ mod tests {
         ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, control_command,
         loadfile_command, mpv_string_list,
     };
-    use crate::external_mpv::{HttpHeader, MpvLaunch};
+    use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};

@@ -8,11 +8,11 @@ use std::time::{Duration, Instant};
 use cef::*;
 use serde_json::json;
 
-use crate::external_mpv::{HttpHeader, MpvLaunch};
-use crate::jellyfin_bridge::{self, PlaybackContext};
-use crate::logger;
-use crate::mpv_controller::{MpvControlCommand, MpvController, MpvPlaybackEvent};
-use crate::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
+use crate::app::logger;
+use crate::app::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
+use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
+use crate::mpv::{HttpHeader, MpvControlCommand, MpvController, MpvLaunch, MpvPlaybackEvent};
+use crate::windows::set_window_icon;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -421,6 +421,7 @@ wrap_window_delegate! {
                 return;
             };
             window.set_title(Some(&CefString::from(self.title.as_str())));
+            set_window_icon(window);
 
             let browser_view = self.browser_view.borrow();
             let Some(browser_view) = browser_view.as_ref() else {
@@ -1420,7 +1421,7 @@ fn welcome_html(settings: &AppSettings) -> String {
         "disabled"
     };
 
-    include_str!("welcome.html")
+    include_str!("../ui/welcome.html")
         .replace(
             "{{saved_url}}",
             &html_escape(settings.jellyfin_url.as_deref().unwrap_or_default()),
