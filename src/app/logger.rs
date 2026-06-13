@@ -185,13 +185,32 @@ fn backup_path(path: &Path, index: usize) -> PathBuf {
 
 pub fn launch_summary(launch: &MpvLaunch) -> String {
     format!(
-        "item={} media_source={} play_session={} start={} url={} headers=[{}]",
+        "item={} media_source={} play_session={} start={} audio={} subtitle={} url={} headers=[{}]",
         display_opt(launch.item_id.as_deref()),
         display_opt(launch.media_source_id.as_deref()),
         display_opt(launch.play_session_id.as_deref()),
         launch
             .start_seconds()
             .map(|seconds| format!("{seconds:.3}s"))
+            .unwrap_or_else(|| "none".to_string()),
+        launch
+            .audio_stream_index
+            .map(|index| format!("{index}/mpv:{}", display_i64_opt(launch.audio_mpv_id)))
+            .unwrap_or_else(|| "none".to_string()),
+        launch
+            .subtitle_stream_index
+            .map(|index| {
+                if launch
+                    .subtitle_url
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|url| !url.is_empty())
+                {
+                    format!("{index}/external")
+                } else {
+                    format!("{index}/mpv:{}", display_i64_opt(launch.subtitle_mpv_id))
+                }
+            })
             .unwrap_or_else(|| "none".to_string()),
         redact_url_secrets(&launch.media_url),
         header_names(&launch.headers)
@@ -412,6 +431,12 @@ fn redact_after_patterns(input: &str, patterns: &[String], terminators: &str) ->
         }
     }
     output
+}
+
+fn display_i64_opt(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn header_names(headers: &[HttpHeader]) -> String {

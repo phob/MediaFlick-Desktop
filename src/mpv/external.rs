@@ -33,6 +33,9 @@ pub struct MpvLaunch {
     pub title: Option<String>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
+    pub audio_mpv_id: Option<i64>,
+    pub subtitle_mpv_id: Option<i64>,
+    pub subtitle_url: Option<String>,
     pub play_method: Option<String>,
     pub playlist_item_id: Option<String>,
     pub queue: Option<Value>,
@@ -99,6 +102,9 @@ impl MpvLaunch {
             &mut self.subtitle_stream_index,
             &other.subtitle_stream_index,
         );
+        merge_option(&mut self.audio_mpv_id, &other.audio_mpv_id);
+        merge_option(&mut self.subtitle_mpv_id, &other.subtitle_mpv_id);
+        merge_option(&mut self.subtitle_url, &other.subtitle_url);
         merge_option(&mut self.play_method, &other.play_method);
         merge_option(&mut self.playlist_item_id, &other.playlist_item_id);
         merge_option(&mut self.queue, &other.queue);

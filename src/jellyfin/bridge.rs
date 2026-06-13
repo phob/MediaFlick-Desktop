@@ -19,6 +19,9 @@ pub struct PlaybackContext {
     pub title: Option<String>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
+    pub audio_mpv_id: Option<i64>,
+    pub subtitle_mpv_id: Option<i64>,
+    pub subtitle_url: Option<String>,
     pub play_method: Option<String>,
     pub playlist_item_id: Option<String>,
     pub queue: Option<Value>,
@@ -34,6 +37,9 @@ pub struct PlayerCommandPayload {
     pub volume: Option<f64>,
     pub mute: Option<bool>,
     pub rate: Option<f64>,
+    pub audio_mpv_id: Option<i64>,
+    pub subtitle_mpv_id: Option<i64>,
+    pub subtitle_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -41,6 +47,7 @@ pub struct PlayerCommandPayload {
 pub struct PlaybackStopAckPayload {
     pub active: Option<bool>,
     pub position_ms: Option<f64>,
+    pub stop_reason: Option<String>,
     pub handled_players: usize,
     pub handled_synthetic: usize,
     pub active_players: usize,
@@ -60,6 +67,9 @@ impl PlaybackContext {
             title: self.title.clone(),
             audio_stream_index: self.audio_stream_index,
             subtitle_stream_index: self.subtitle_stream_index,
+            audio_mpv_id: self.audio_mpv_id,
+            subtitle_mpv_id: self.subtitle_mpv_id,
+            subtitle_url: self.subtitle_url.clone(),
             play_method: self.play_method.clone(),
             playlist_item_id: self.playlist_item_id.clone(),
             queue: self.queue.clone(),

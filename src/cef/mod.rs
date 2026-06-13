@@ -638,6 +638,7 @@ fn playback_event_script(event: MpvPlaybackEvent) -> String {
                 "paused": snapshot.paused,
                 "volume": snapshot.volume,
                 "mute": snapshot.mute,
+                "stopReason": snapshot.stop_reason,
             });
             format!(
                 "window.__jellyfinMpvPlaybackStopped&&window.__jellyfinMpvPlaybackStopped({payload});"
@@ -1102,6 +1103,7 @@ fn log_playback_stop_ack(query: &str) {
         target: "bridge",
         active = ?payload.active,
         position_ms = ?payload.position_ms,
+        stop_reason = %payload.stop_reason.as_deref().unwrap_or("unknown"),
         handled_players = payload.handled_players,
         handled_synthetic = payload.handled_synthetic,
         active_players = payload.active_players,
@@ -1127,6 +1129,7 @@ fn respond_player_state(
         "paused": snapshot.paused,
         "volume": snapshot.volume,
         "mute": snapshot.mute,
+        "stopReason": snapshot.stop_reason,
     });
     let script = format!(
         "window.__jellyfinMpvReceivePlayerState&&window.__jellyfinMpvReceivePlayerState({});",
@@ -1163,6 +1166,19 @@ fn player_command_from_payload(
             .rate
             .filter(|value| value.is_finite())
             .map(MpvControlCommand::SetPlaybackRate),
+        "set-audio-stream" => payload
+            .audio_mpv_id
+            .filter(|id| *id > 0)
+            .map(MpvControlCommand::SetAudioTrack),
+        "set-subtitle-stream" => payload
+            .subtitle_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(|url| MpvControlCommand::AddSubtitle(url.to_string()))
+            .or(Some(MpvControlCommand::SetSubtitleTrack(
+                payload.subtitle_mpv_id,
+            ))),
         "stop" => Some(MpvControlCommand::Stop),
         _ => None,
     }
