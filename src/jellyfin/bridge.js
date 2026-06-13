@@ -1470,6 +1470,10 @@
       nativeShell.openClientSettings = () => {};
     }
 
+    const exitApplication = () => {
+      window.location.href = 'jellyfin-mpv://app-exit';
+    };
+
     const appHost = nativeShell.AppHost && typeof nativeShell.AppHost === 'object'
       ? nativeShell.AppHost
       : {};
@@ -1490,17 +1494,25 @@
         'multiserver',
         'fullscreenchange',
         'remotevideo',
-        'displaymode'
+        'displaymode',
+        'exitmenu'
       ].includes(String(command || '').toLowerCase()),
       getDeviceProfile: () => cloneMpvDeviceProfile(),
       getSyncProfile: () => cloneMpvDeviceProfile(),
       appName: () => 'jellyfin-mpv',
       appVersion: () => '0.1.0',
-      deviceName: () => 'jellyfin-mpv'
+      deviceName: () => 'jellyfin-mpv',
+      exit: exitApplication
     };
     for (const [key, value] of Object.entries(defaults)) {
       if (typeof appHost[key] !== 'function') appHost[key] = value;
     }
+
+    const previousSupports = appHost.supports.bind(appHost);
+    appHost.supports = (command) => {
+      const feature = String(command || '').toLowerCase();
+      return feature === 'exitmenu' || previousSupports(command);
+    };
 
     nativeShell.AppHost = appHost;
     window.NativeShell = nativeShell;

@@ -1,5 +1,13 @@
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::process::Stdio;
 use std::process::{Child, Command};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+use crate::windows::install_hidden_command_processor_shim;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -138,10 +146,14 @@ impl ExternalMpv {
         launch: &MpvLaunch,
         ipc_path: Option<&str>,
     ) -> Command {
-        let mut command = Command::new(&self.executable);
+        let mut command = self.hidden_command();
         command.arg("--force-window=yes");
         command.arg("--fullscreen=yes");
         command.arg("--no-terminal");
+        // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
+        // Windows `os.execute(...)` console flashes from those scripts are hidden
+        // by the command processor shim installed on the mpv child environment.
+        command.arg("--load-scripts=yes");
 
         if let Some(ipc_path) = non_empty(ipc_path) {
             command.arg(format!("--input-ipc-server={ipc_path}"));
@@ -171,10 +183,14 @@ impl ExternalMpv {
     }
 
     pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
-        let mut command = Command::new(&self.executable);
+        let mut command = self.hidden_command();
         command.arg("--force-window=yes");
         command.arg("--fullscreen=yes");
         command.arg("--no-terminal");
+        // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
+        // Windows `os.execute(...)` console flashes from those scripts are hidden
+        // by the command processor shim installed on the mpv child environment.
+        command.arg("--load-scripts=yes");
         command.arg("--idle=yes");
         command.arg(format!("--input-ipc-server={ipc_path}"));
         command
@@ -184,7 +200,32 @@ impl ExternalMpv {
     pub fn spawn(&self, launch: &MpvLaunch) -> std::io::Result<Child> {
         self.command_for_launch(launch).spawn()
     }
+
+    fn hidden_command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        configure_hidden_child_window(&mut command);
+        command
+    }
 }
+
+#[cfg(windows)]
+fn configure_hidden_child_window(command: &mut Command) {
+    // Windows mpv builds include both mpv.exe and mpv.com. If the user configures
+    // mpv.com, or the bare `mpv` name resolves to that console wrapper, Windows
+    // may allocate a transient console window even though mpv is later run with
+    // `--no-terminal`. CREATE_NO_WINDOW suppresses that console without changing
+    // the mpv window itself.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+    install_hidden_command_processor_shim(command);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+}
+
+#[cfg(not(windows))]
+fn configure_hidden_child_window(_command: &mut Command) {}
 
 impl MpvLaunch {
     fn script_metadata(&self) -> Vec<(&'static str, String)> {
