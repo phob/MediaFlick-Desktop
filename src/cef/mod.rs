@@ -849,6 +849,11 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if request_url.starts_with("jellyfin-mpv://app-exit") {
+                initiate_app_exit(browser, &self.state);
+                return 1;
+            }
+
             if let Some(query) = bridge_action_query(&request_url, "save") {
                 save_settings_and_open(query, frame, &self.state);
                 return 1;
@@ -978,6 +983,35 @@ fn handle_bridge_resource_request(
     }
 
     false
+}
+
+fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
+    tracing::info!(target: "app", "exit requested from Jellyfin Web user menu");
+
+    let mut browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    if browsers.is_empty()
+        && let Some(browser) = browser.cloned()
+    {
+        browsers.push(browser);
+    }
+
+    let mut close_requests = 0usize;
+    for browser in browsers {
+        if let Some(host) = browser.host() {
+            host.close_browser(1);
+            close_requests += 1;
+        }
+    }
+
+    if close_requests == 0 {
+        if let Ok(state) = state.lock() {
+            state.mpv_controller.shutdown();
+        }
+        quit_message_loop();
+    }
 }
 
 fn bridge_action_query<'a>(request_url: &'a str, action: &str) -> Option<&'a str> {

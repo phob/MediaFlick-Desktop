@@ -1,4 +1,4 @@
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod cef;
@@ -15,6 +15,10 @@ use crate::cef::AppConfig;
 use crate::mpv::ExternalMpv;
 
 fn main() {
+    if let Some(exit_code) = windows::run_command_processor_shim() {
+        std::process::exit(exit_code);
+    }
+
     // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
