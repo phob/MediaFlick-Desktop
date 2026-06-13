@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::external_mpv::{HttpHeader, MpvLaunch};
-use crate::logger;
+use crate::app::logger;
+use crate::mpv::{HttpHeader, MpvLaunch};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
@@ -583,7 +583,7 @@ mod tests {
         MpvPlaybackState, PlaybackSession, auth_parameter, playback_progress_body,
         playback_stop_body, server_base_url, token_from_authorization, token_from_launch,
     };
-    use crate::external_mpv::{HttpHeader, MpvLaunch};
+    use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
 
     #[test]

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::external_mpv::{HttpHeader, MpvLaunch};
+use crate::mpv::{HttpHeader, MpvLaunch};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -94,7 +94,7 @@ impl PlaybackContext {
 }
 
 pub fn bridge_script() -> &'static str {
-    include_str!("jellyfin_bridge.js")
+    include_str!("bridge.js")
 }
 
 pub fn parse_context_payload(query: &str) -> Result<PlaybackContext, serde_json::Error> {
@@ -144,7 +144,7 @@ pub fn launch_from_stream_url(url: &str, headers: Vec<HttpHeader>) -> Option<Mpv
 }
 
 pub fn redact_url_secrets(url: &str) -> String {
-    crate::logger::redact_url_secrets(url)
+    crate::app::logger::redact_url_secrets(url)
 }
 
 fn is_direct_stream_url(url: &str) -> bool {

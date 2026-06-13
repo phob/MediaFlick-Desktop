@@ -7,8 +7,8 @@ use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
-use crate::external_mpv::{HttpHeader, MpvLaunch};
-use crate::settings::config_dir;
+use crate::app::settings::config_dir;
+use crate::mpv::{HttpHeader, MpvLaunch};
 
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_BACKUPS: usize = 3;
@@ -460,7 +460,7 @@ mod tests {
     use super::{
         launch_summary, mpv_command_summary, redact_text, redact_url_secrets, redacted_json,
     };
-    use crate::external_mpv::{HttpHeader, MpvLaunch};
+    use crate::mpv::{HttpHeader, MpvLaunch};
 
     #[test]
     fn redacts_query_tokens() {

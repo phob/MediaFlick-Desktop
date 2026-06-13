@@ -1,26 +1,24 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod cef_shell;
-mod cli;
-mod external_mpv;
-mod jellyfin_bridge;
-mod logger;
-mod mpv_controller;
-mod playback_reporter;
-mod settings;
+mod app;
+mod cef;
+mod jellyfin;
+mod mpv;
+mod windows;
 
 use clap::Parser;
 
-use crate::cef_shell::AppConfig;
-use crate::cli::Cli;
-use crate::external_mpv::ExternalMpv;
-use crate::settings::AppSettings;
+use crate::app::cli::Cli;
+use crate::app::logger;
+use crate::app::settings::AppSettings;
+use crate::cef::AppConfig;
+use crate::mpv::ExternalMpv;
 
 fn main() {
     // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
-        std::process::exit(cef_shell::run(AppConfig {
+        std::process::exit(cef::run(AppConfig {
             settings: AppSettings::default(),
             title: "jellyfin-mpv".to_string(),
             remote_debugging_port: 0,
@@ -71,7 +69,7 @@ fn main() {
         mpv.executable().display()
     );
 
-    std::process::exit(cef_shell::run(AppConfig {
+    std::process::exit(cef::run(AppConfig {
         settings,
         title: "jellyfin-mpv".to_string(),
         remote_debugging_port: cli.remote_debugging_port,

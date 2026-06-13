@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::settings::normalize_server_url;
+use crate::app::settings::normalize_server_url;
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "jellyfin-mpv")]

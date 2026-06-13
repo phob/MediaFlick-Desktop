@@ -3,7 +3,7 @@ set windows-shell := ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-NoLogo", "
 
 # Reuse the CEF cache from the upstream jellyfin-desktop checkout when it exists.
 # Override with `CEF_PATH=... just build` to use/download a different CEF cache.
-export JELLYFIN_DESKTOP_ROOT := env_var_or_default("JELLYFIN_DESKTOP_ROOT", "D:/users/pho/Documents/Source/jellyfin-desktop")
+export JELLYFIN_DESKTOP_ROOT := env_var_or_default("JELLYFIN_DESKTOP_ROOT", "C:/Users/pho/Source/jellyfin-desktop")
 export CEF_PATH := env_var_or_default("CEF_PATH", JELLYFIN_DESKTOP_ROOT / ".cache" / "cef")
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "build/cargo-target")
 
