@@ -52,5 +52,5 @@ Releases are changelog-driven and use the `Draft Release` GitHub Actions workflo
 
 1. Run `/cl` on the latest release branch/main commit and make sure `CHANGELOG.md` `[Unreleased]` is complete.
 2. Manually start the `Draft Release` workflow and enter the desired version, with or without a leading `v`.
-3. The workflow promotes `[Unreleased]` to `## [version] - YYYY-MM-DD`, opens a fresh `[Unreleased]` section, updates `Cargo.toml` and `Cargo.lock`, commits `Release vX.Y.Z`, tags that commit, and creates a draft GitHub release using the changelog section as release notes.
+3. The workflow promotes `[Unreleased]` to `## [version] - YYYY-MM-DD`, opens a fresh `[Unreleased]` section, updates `Cargo.toml` and `Cargo.lock`, builds the Windows installer and zip artifacts, commits `Release vX.Y.Z`, tags that commit, and creates a draft GitHub release using the changelog section as release notes with the artifacts attached.
 4. Review the draft release before publishing it.

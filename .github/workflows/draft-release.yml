@@ -11,10 +11,19 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: build/cargo-target
+  CEF_PATH: ${{ github.workspace }}\.cache\cef
+
 jobs:
   draft-release:
     name: Create draft release
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Check out repository
@@ -22,52 +31,108 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo and CEF downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cache/cef
+          key: windows-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            windows-release-
+
+      - name: Install packaging tools
+        run: |
+          choco install ninja innosetup mpvio --yes --no-progress
+
       - name: Prepare release files
         env:
           INPUT_VERSION: ${{ inputs.version }}
-        shell: bash
         run: |
-          set -euo pipefail
-
-          VERSION="${INPUT_VERSION#v}"
-          TAG="v$VERSION"
+          $Version = $env:INPUT_VERSION -replace '^v', ''
+          $Tag = "v$Version"
 
           git fetch --force --tags
-          if git rev-parse --verify --quiet "refs/tags/$TAG"; then
-            echo "Tag $TAG already exists." >&2
-            exit 1
-          fi
+          if (git tag --list $Tag) {
+            Write-Error "Tag $Tag already exists."
+          }
 
-          python3 scripts/prepare-release.py \
-            --version "$VERSION" \
-            --notes-out /tmp/release-notes.md
+          python scripts/prepare-release.py `
+            --version "$Version" `
+            --notes-out "$env:RUNNER_TEMP\release-notes.md"
 
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          "VERSION=$Version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TAG=$Tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build Windows installer and zip
+        run: |
+          cargo build --release --bin jellyfin-mpv
+
+          New-Item -ItemType Directory -Force build | Out-Null
+          Get-ChildItem "$env:CARGO_TARGET_DIR\release" -File | Copy-Item -Destination build -Force
+          Remove-Item -Force -ErrorAction SilentlyContinue build\jellyfin-desktop*, build\jellyfin_desktop*
+          if (Test-Path "$env:CARGO_TARGET_DIR\release\locales") {
+            Copy-Item "$env:CARGO_TARGET_DIR\release\locales" build -Recurse -Force
+          }
+
+          $MpvSearchRoots = @(
+            "C:\ProgramData\chocolatey\lib\mpvio",
+            "C:\ProgramData\chocolatey\lib\mpvio.install",
+            (Join-Path $env:ProgramFiles "mpv"),
+            (Join-Path ${env:ProgramFiles(x86)} "mpv")
+          ) | Where-Object { Test-Path $_ }
+
+          $MpvExe = $MpvSearchRoots |
+            ForEach-Object { Get-ChildItem -Path $_ -Filter mpv.exe -Recurse -File -ErrorAction SilentlyContinue } |
+            Where-Object { $_.FullName -notlike '*\chocolatey\bin\*' } |
+            Sort-Object FullName |
+            Select-Object -First 1
+
+          if (-not $MpvExe) {
+            Write-Error "Could not locate mpv.exe after installing the mpvio Chocolatey package."
+          }
+
+          .\scripts\stage-windows-release.ps1 -MpvSource $MpvExe.FullName
+          .\scripts\build-windows-installer.ps1 -Version $env:VERSION
+
+          $ZipPath = "dist\JellyfinMPV-$env:TAG-windows-x64.zip"
+          Compress-Archive -Path "dist\JellyfinMPV" -DestinationPath $ZipPath -Force
+
+          $InstallerPath = "dist\installer\JellyfinMPV-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $InstallerPath)) {
+            Write-Error "Missing expected installer artifact: $InstallerPath"
+          }
+          if (-not (Test-Path $ZipPath)) {
+            Write-Error "Missing expected zip artifact: $ZipPath"
+          }
+
+          "INSTALLER_PATH=$InstallerPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ZIP_PATH=$ZipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Commit release and push tag
-        shell: bash
         run: |
-          set -euo pipefail
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add Cargo.toml Cargo.lock CHANGELOG.md
-          git commit -m "Release $TAG"
-          git tag -a "$TAG" -m "Release $TAG"
+          git commit -m "Release $env:TAG"
+          git tag -a "$env:TAG" -m "Release $env:TAG"
 
-          git push origin "HEAD:$GITHUB_REF_NAME"
-          git push origin "$TAG"
+          git push origin "HEAD:$env:GITHUB_REF_NAME"
+          git push origin "$env:TAG"
 
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
-          set -euo pipefail
-
-          gh release create "$TAG" \
-            --draft \
-            --title "Jellyfin MPV $TAG" \
-            --notes-file /tmp/release-notes.md
+          gh release create "$env:TAG" `
+            --draft `
+            --verify-tag `
+            --title "Jellyfin MPV $env:TAG" `
+            --notes-file "$env:RUNNER_TEMP\release-notes.md" `
+            "$env:INSTALLER_PATH" `
+            "$env:ZIP_PATH"
