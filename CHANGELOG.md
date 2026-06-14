@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.1] - 2026-06-14
+
+### Added
+
 - Added the initial Jellyfin-MPV desktop app that embeds Jellyfin Web in a CEF window while routing direct-play media to an external mpv player.
 - Added first-run setup for the Jellyfin server URL and mpv executable path, including a native browse action for selecting `mpv.exe` and persisted settings in `%APPDATA%\jellyfin-mpv\config.json`.
 - Added command-line options for launching with a Jellyfin server URL and mpv path.
@@ -47,5 +58,3 @@
 - Fixed watched-next handling to close the current mpv process and let Jellyfin Web's normal autoplay flow decide whether to start the next episode.
 - Fixed unwanted Windows console windows from helper script launches by hiding spawned script consoles.
 - Fixed app shutdown so the external mpv controller is closed when exiting from the Jellyfin Web UI.
-
-### Removed
