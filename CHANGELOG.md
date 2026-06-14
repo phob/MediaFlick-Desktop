@@ -6,7 +6,13 @@
 
 ### Added
 
+- Added an About dialog showing the app version, git version, and creator.
+- Added WebUI fullscreen toggling from the context menu and F11.
+
 ### Changed
+
+- Restyled the About dialog to match jellyfin-desktop's compact dark panel.
+- Replaced Jellyfin-logo-based app artwork with an original gradient jellyfin-mpv icon across app, installer, Linux, macOS, setup screens, and README.
 
 ### Fixed
 
@@ -28,7 +34,6 @@
 - Added rotating app log files with configurable `--log-level`/`--log-file` options and redacted playback diagnostics.
 - Added configurable mpv input bindings in `%APPDATA%\jellyfin-mpv\input.json`, including the default `w` binding to mark the current item watched and start the next queued item.
 - Added an **Exit application** action to the Jellyfin Web user menu for cleanly closing the desktop app and external mpv controller.
-- Added an About dialog showing the app version, git version, and creator.
 - Added persistent Jellyfin Web window sizing between launches.
 - Added platform application resources, including Windows icons/resources, a macOS app icon and `Info.plist` template, and Linux desktop/metainfo/icon files.
 - Added build recipes for debug, release, non-debug run, Windows distribution staging, and Windows installer creation.

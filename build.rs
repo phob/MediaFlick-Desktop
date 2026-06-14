@@ -26,7 +26,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     {
         let mut resource = winresource::WindowsResource::new();
-        resource.set_icon("resources/win/jellyfin.ico");
+        resource.set_icon("resources/win/app.ico");
         resource.set("CompanyName", "Jellyfin");
         resource.set("FileDescription", "Jellyfin MPV");
         resource.set("InternalName", "jellyfin-mpv");

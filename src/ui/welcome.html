@@ -190,14 +190,22 @@
 <body>
   <main>
     <section class="brand" aria-label="jellyfin-mpv">
-      <svg class="mark" viewBox="0 0 128 128" role="img" aria-label="Jellyfin logo mark">
+      <svg class="mark" viewBox="0 0 1024 1024" role="img" aria-label="jellyfin-mpv app mark">
         <defs>
-          <linearGradient id="g" x1="10" x2="118" y1="118" y2="10" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#00a4dc"/>
-            <stop offset="1" stop-color="#aa5cff"/>
+          <linearGradient id="jellyfinMpvWelcomeGradient" x1="268" y1="220" x2="780" y2="804" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#AA5CC3"/>
+            <stop offset="1" stop-color="#00A4DC"/>
+          </linearGradient>
+          <linearGradient id="jellyfinMpvWelcomeSurface" x1="184" y1="112" x2="840" y2="912" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#2A2A38"/>
+            <stop offset="1" stop-color="#1D1D27"/>
           </linearGradient>
         </defs>
-        <path fill="url(#g)" d="M64 6 122 64 64 122 6 64 64 6Zm0 28L34 64l30 30 30-30-30-30Zm0 18 12 12-12 12-12-12 12-12Z"/>
+        <rect x="96" y="96" width="832" height="832" rx="210" fill="url(#jellyfinMpvWelcomeSurface)"/>
+        <rect x="96" y="96" width="832" height="832" rx="210" stroke="#626276" stroke-opacity="0.65" stroke-width="24"/>
+        <path fill="url(#jellyfinMpvWelcomeGradient)" d="M364 292C330 272 288 296 288 336V688C288 728 330 752 364 732L664 556C698 536 698 488 664 468L364 292Z"/>
+        <path fill="url(#jellyfinMpvWelcomeGradient)" fill-opacity="0.88" d="M680 256H796C836 256 868 288 868 328V444H772V352H680V256Z"/>
+        <path fill="#20202B" fill-opacity="0.78" d="M384 404V620L568 512L384 404Z"/>
       </svg>
       <div>
         <h1>jellyfin-mpv</h1>

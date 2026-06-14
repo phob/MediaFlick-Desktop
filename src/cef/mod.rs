@@ -663,6 +663,10 @@ wrap_client! {
             Some(JellyfinDisplayHandler::new(self.state.clone()))
         }
 
+        fn keyboard_handler(&self) -> Option<KeyboardHandler> {
+            Some(JellyfinKeyboardHandler::new())
+        }
+
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(JellyfinLifeSpanHandler::new(self.state.clone()))
         }
@@ -677,7 +681,8 @@ wrap_client! {
     }
 }
 
-const MENU_ID_ABOUT: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
+const MENU_ID_FULLSCREEN: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
+const MENU_ID_ABOUT: i32 = MENU_ID_FULLSCREEN + 1;
 
 wrap_context_menu_handler! {
     struct JellyfinContextMenuHandler;
@@ -696,10 +701,8 @@ wrap_context_menu_handler! {
             if model.count() > 0 {
                 model.add_separator();
             }
-            model.add_item(
-                MENU_ID_ABOUT,
-                Some(&CefString::from("About jellyfin-mpv")),
-            );
+            model.add_item(MENU_ID_FULLSCREEN, Some(&CefString::from("Fullscreen")));
+            model.add_item(MENU_ID_ABOUT, Some(&CefString::from("About")));
         }
 
         fn on_context_menu_command(
@@ -710,13 +713,45 @@ wrap_context_menu_handler! {
             command_id: i32,
             _event_flags: EventFlags,
         ) -> i32 {
-            if command_id != MENU_ID_ABOUT {
-                return 0;
+            match command_id {
+                MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser),
+                MENU_ID_ABOUT => show_about_dialog(browser, frame),
+                _ => return 0,
             }
-            show_about_dialog(browser, frame);
             1
         }
     }
+}
+
+wrap_keyboard_handler! {
+    struct JellyfinKeyboardHandler;
+
+    impl KeyboardHandler {
+        fn on_pre_key_event(
+            &self,
+            browser: Option<&mut Browser>,
+            event: Option<&KeyEvent>,
+            _os_event: Option<&mut sys::MSG>,
+            _is_keyboard_shortcut: Option<&mut i32>,
+        ) -> i32 {
+            let Some(event) = event else {
+                return 0;
+            };
+            if event.windows_key_code == VK_F11 && is_key_down_event(event) {
+                toggle_browser_fullscreen(browser);
+                return 1;
+            }
+            0
+        }
+    }
+}
+
+const VK_F11: i32 = 0x7A;
+
+fn is_key_down_event(event: &KeyEvent) -> bool {
+    let event_type = event.type_.get_raw();
+    event_type == KeyEventType::RAWKEYDOWN.get_raw()
+        || event_type == KeyEventType::KEYDOWN.get_raw()
 }
 
 wrap_display_handler! {
@@ -1043,6 +1078,20 @@ fn handle_bridge_resource_request(
     }
 
     false
+}
+
+fn toggle_browser_fullscreen(browser: Option<&mut Browser>) {
+    let Some(mut browser) = browser.cloned() else {
+        return;
+    };
+    let Some(browser_view) = browser_view_get_for_browser(Some(&mut browser)) else {
+        return;
+    };
+    let Some(window) = browser_view.window() else {
+        return;
+    };
+    let fullscreen = i32::from(window.is_fullscreen() == 0);
+    window.set_fullscreen(fullscreen);
 }
 
 fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
