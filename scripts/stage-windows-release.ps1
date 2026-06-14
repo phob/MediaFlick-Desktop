@@ -1,6 +1,6 @@
 param(
-    [string]$StagingDir = "dist/JellyfinMPV",
-    [string]$MpvSource = $env:JELLYFIN_MPV_PACKAGE_MPV,
+    [string]$StagingDir = "dist/MediaFlickDesktop",
+    [string]$MpvSource = $env:MEDIAFLICK_DESKTOP_PACKAGE_MPV,
     [switch]$AllowMissingMpv
 )
 
@@ -14,8 +14,8 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BuildDir = Join-Path $RepoRoot "build"
 $StagingPath = Join-Path $RepoRoot $StagingDir
 
-if (-not (Test-Path (Join-Path $BuildDir "jellyfin-mpv.exe"))) {
-    throw "Missing build/jellyfin-mpv.exe. Run 'just release' before staging the installer payload."
+if (-not (Test-Path (Join-Path $BuildDir "mediaflick-desktop.exe"))) {
+    throw "Missing build/mediaflick-desktop.exe. Run 'just release' before staging the installer payload."
 }
 
 if (Test-Path $StagingPath) {
@@ -24,7 +24,7 @@ if (Test-Path $StagingPath) {
 New-Item -ItemType Directory -Force $StagingPath | Out-Null
 
 $RequiredFiles = @(
-    "jellyfin-mpv.exe",
+    "mediaflick-desktop.exe",
     "libcef.dll",
     "chrome_elf.dll",
     "icudtl.dat",
@@ -73,7 +73,7 @@ function Resolve-MpvSource {
     $Candidates = @()
     # Environment/explicit inputs win over local developer defaults.
     if ($ExplicitSource) { $Candidates += $ExplicitSource }
-    if ($env:JELLYFIN_MPV_PATH) { $Candidates += $env:JELLYFIN_MPV_PATH }
+    if ($env:MEDIAFLICK_DESKTOP_MPV_PATH) { $Candidates += $env:MEDIAFLICK_DESKTOP_MPV_PATH }
     $Candidates += "C:\mpv"
 
     $Command = Get-Command "mpv.exe" -ErrorAction SilentlyContinue
@@ -97,9 +97,9 @@ function Resolve-MpvSource {
 $ResolvedMpvSource = Resolve-MpvSource $MpvSource
 if (-not $ResolvedMpvSource) {
     if ($AllowMissingMpv) {
-        Write-Warning "No mpv source found; staging app without bundled mpv. Set JELLYFIN_MPV_PACKAGE_MPV or JELLYFIN_MPV_PATH to bundle mpv."
+        Write-Warning "No mpv source found; staging app without bundled mpv. Set MEDIAFLICK_DESKTOP_PACKAGE_MPV or MEDIAFLICK_DESKTOP_MPV_PATH to bundle mpv."
     } else {
-        throw "No mpv source found. Set JELLYFIN_MPV_PACKAGE_MPV to an mpv directory, or JELLYFIN_MPV_PATH to mpv.exe."
+        throw "No mpv source found. Set MEDIAFLICK_DESKTOP_PACKAGE_MPV to an mpv directory, or MEDIAFLICK_DESKTOP_MPV_PATH to mpv.exe."
     }
 } else {
     $MpvSourceItem = Get-Item $ResolvedMpvSource

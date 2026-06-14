@@ -70,11 +70,11 @@ jobs:
 
       - name: Build Windows installer and zip
         run: |
-          cargo build --release --bin jellyfin-mpv
+          cargo build --release --bin mediaflick-desktop
 
           New-Item -ItemType Directory -Force build | Out-Null
           Get-ChildItem "$env:CARGO_TARGET_DIR\release" -File | Copy-Item -Destination build -Force
-          Remove-Item -Force -ErrorAction SilentlyContinue build\jellyfin-desktop*, build\jellyfin_desktop*
+          Remove-Item -Force -ErrorAction SilentlyContinue build\jellyfin-desktop*, build\jellyfin_desktop*, build\*mpv*
           if (Test-Path "$env:CARGO_TARGET_DIR\release\locales") {
             Copy-Item "$env:CARGO_TARGET_DIR\release\locales" build -Recurse -Force
           }
@@ -99,10 +99,10 @@ jobs:
           .\scripts\stage-windows-release.ps1 -MpvSource $MpvExe.FullName
           .\scripts\build-windows-installer.ps1 -Version $env:VERSION
 
-          $ZipPath = "dist\JellyfinMPV-$env:TAG-windows-x64.zip"
-          Compress-Archive -Path "dist\JellyfinMPV" -DestinationPath $ZipPath -Force
+          $ZipPath = "dist\MediaFlickDesktop-$env:TAG-windows-x64.zip"
+          Compress-Archive -Path "dist\MediaFlickDesktop" -DestinationPath $ZipPath -Force
 
-          $InstallerPath = "dist\installer\JellyfinMPV-Setup-$env:VERSION.exe"
+          $InstallerPath = "dist\installer\MediaFlickDesktop-Setup-$env:VERSION.exe"
           if (-not (Test-Path $InstallerPath)) {
             Write-Error "Missing expected installer artifact: $InstallerPath"
           }
@@ -132,7 +132,7 @@ jobs:
           gh release create "$env:TAG" `
             --draft `
             --verify-tag `
-            --title "Jellyfin MPV $env:TAG" `
+            --title "MediaFlick Desktop $env:TAG" `
             --notes-file "$env:RUNNER_TEMP\release-notes.md" `
             "$env:INSTALLER_PATH" `
             "$env:ZIP_PATH"

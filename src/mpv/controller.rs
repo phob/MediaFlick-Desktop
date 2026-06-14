@@ -1450,7 +1450,9 @@ fn is_completion_reason(reason: Option<&str>) -> bool {
 fn is_mark_watched_next_message(args: &[String]) -> bool {
     match args {
         [command] => command == MARK_WATCHED_NEXT_COMMAND,
-        [target, command, ..] => target == "jellyfin-mpv" && command == MARK_WATCHED_NEXT_COMMAND,
+        [target, command, ..] => {
+            target == "mediaflick-desktop" && command == MARK_WATCHED_NEXT_COMMAND
+        }
         _ => false,
     }
 }

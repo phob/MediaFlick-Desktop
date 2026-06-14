@@ -122,13 +122,13 @@ def update_cargo_files(version: str) -> None:
     cargo_lock_path = Path("Cargo.lock")
     cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
     updated_lock, count = re.subn(
-        r'(\[\[package\]\]\s*\nname = "jellyfin-mpv"\s*\nversion = ")[^"]+("\s*\n)',
+        r'(\[\[package\]\]\s*\nname = "mediaflick-desktop"\s*\nversion = ")[^"]+("\s*\n)',
         rf"\g<1>{version}\2",
         cargo_lock,
         count=1,
     )
     if count != 1:
-        raise SystemExit('Cargo.lock is missing the jellyfin-mpv package entry.')
+        raise SystemExit('Cargo.lock is missing the mediaflick-desktop package entry.')
     cargo_lock_path.write_text(updated_lock, encoding="utf-8")
 
 
