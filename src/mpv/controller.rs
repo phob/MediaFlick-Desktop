@@ -146,6 +146,11 @@ impl MpvEvent {
             name => name.to_string(),
         }
     }
+
+    fn is_position_property_change(&self) -> bool {
+        self.name == "property-change"
+            && matches!(self.property.as_deref(), Some("time-pos" | "playback-time"))
+    }
 }
 
 struct IpcWorker {
@@ -516,7 +521,11 @@ impl ControllerState {
     }
 
     fn handle_event(&mut self, event: MpvEvent) {
-        tracing::debug!(target: "mpv.ipc", event = %event.summary(), "received mpv event");
+        if event.is_position_property_change() {
+            tracing::trace!(target: "mpv.ipc", event = %event.summary(), "received mpv position event");
+        } else {
+            tracing::debug!(target: "mpv.ipc", event = %event.summary(), "received mpv event");
+        }
         tracing::trace!(
             target: "mpv.ipc",
             event = %logger::redacted_json(&event.raw),
@@ -620,12 +629,27 @@ impl ControllerState {
             state = %self.last_state,
             "marking current item watched and requesting next item"
         );
-        if let Some(command) = control_command(MpvControlCommand::Stop)
-            && let Err(error) = self.send_mpv_command(command)
-        {
-            tracing::warn!(target: "mpv.ipc", "failed to stop mpv for mark-watched-next: {error}");
-        }
         self.finish_active(Some("watched-next"));
+        self.close_mpv_after_mark_watched_next();
+    }
+
+    fn close_mpv_after_mark_watched_next(&mut self) {
+        if let Err(error) = self.send_mpv_command(json!({ "command": ["quit"] })) {
+            tracing::debug!(target: "mpv.ipc", "failed to send mpv quit after mark-watched-next: {error}");
+        }
+        let deadline = Instant::now() + SHUTDOWN_WAIT;
+        while Instant::now() < deadline {
+            if !self.child_is_alive() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        let still_alive = self.child_is_alive();
+        if still_alive && let Some(child) = &mut self.child {
+            tracing::warn!(target: "mpv.ipc", "mpv did not exit after mark-watched-next; killing process");
+            let _ = child.kill();
+        }
+        self.reset_mpv();
     }
 
     fn finish_active(&mut self, reason: Option<&str>) {
@@ -839,7 +863,7 @@ impl ControllerState {
         let bucket = current / 100_000_000;
         if self.last_position_log_bucket != Some(bucket) {
             self.last_position_log_bucket = Some(bucket);
-            tracing::debug!(
+            tracing::trace!(
                 target: "playback",
                 property,
                 previous_ticks = previous,
