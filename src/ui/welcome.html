@@ -158,6 +158,22 @@
       text-align: center;
     }
 
+    .footer button {
+      height: auto;
+      margin: 0;
+      padding: 0;
+      color: var(--accent);
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .footer button:hover:not(:disabled) { transform: none; filter: brightness(1.12); }
+
     @media (max-width: 560px) {
       .row { grid-template-columns: 1fr; }
       button { width: 100%; }
@@ -211,7 +227,7 @@
       </div>
     </form>
 
-    <div class="footer">Config is stored in Roaming\jellyfin-mpv.</div>
+    <div class="footer">jellyfin-mpv {{app_version}} · Config is stored in Roaming\jellyfin-mpv · <button id="about" type="button">About</button></div>
   </main>
 
   <script>
@@ -221,6 +237,7 @@
     const browseButton = document.getElementById('browse-mpv');
     const connectButton = document.getElementById('connect');
     const error = document.getElementById('error');
+    const aboutButton = document.getElementById('about');
 
     function hasRequiredValues() {
       return serverInput.value.trim().length > 0 && mpvInput.value.trim().length > 0;
@@ -258,6 +275,10 @@
     browseButton.addEventListener('click', () => {
       setBusy(true);
       window.location.href = 'jellyfin-mpv://select-mpv';
+    });
+
+    aboutButton.addEventListener('click', () => {
+      window.location.href = 'jellyfin-mpv://app-about';
     });
 
     form.addEventListener('submit', event => {

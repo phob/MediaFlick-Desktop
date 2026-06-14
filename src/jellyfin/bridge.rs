@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app::about;
 use crate::mpv::{HttpHeader, MpvLaunch};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -103,8 +104,11 @@ impl PlaybackContext {
     }
 }
 
-pub fn bridge_script() -> &'static str {
+pub fn bridge_script() -> String {
     include_str!("bridge.js")
+        .replace("{{app_version}}", about::APP_VERSION)
+        .replace("{{git_version}}", about::GIT_VERSION)
+        .replace("{{created_by}}", about::CREATED_BY)
 }
 
 pub fn parse_context_payload(query: &str) -> Result<PlaybackContext, serde_json::Error> {

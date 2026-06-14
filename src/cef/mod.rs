@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use cef::*;
 use serde_json::json;
 
+use crate::app::about;
 use crate::app::logger;
 use crate::app::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
@@ -279,8 +280,9 @@ wrap_render_process_handler! {
             if frame_url.starts_with("data:") || frame_url.starts_with("jellyfin-mpv://") {
                 return;
             }
+            let script = jellyfin_bridge::bridge_script();
             frame.execute_java_script(
-                Some(&CefString::from(jellyfin_bridge::bridge_script())),
+                Some(&CefString::from(script.as_str())),
                 Some(&CefString::from("jellyfin-mpv://bridge.js")),
                 0,
             );
@@ -653,6 +655,10 @@ wrap_client! {
     }
 
     impl Client {
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(JellyfinContextMenuHandler::new())
+        }
+
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(JellyfinDisplayHandler::new(self.state.clone()))
         }
@@ -667,6 +673,48 @@ wrap_client! {
 
         fn request_handler(&self) -> Option<RequestHandler> {
             Some(JellyfinRequestHandler::new(self.state.clone()))
+        }
+    }
+}
+
+const MENU_ID_ABOUT: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
+
+wrap_context_menu_handler! {
+    struct JellyfinContextMenuHandler;
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            let Some(model) = model else {
+                return;
+            };
+            if model.count() > 0 {
+                model.add_separator();
+            }
+            model.add_item(
+                MENU_ID_ABOUT,
+                Some(&CefString::from("About jellyfin-mpv")),
+            );
+        }
+
+        fn on_context_menu_command(
+            &self,
+            browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            command_id: i32,
+            _event_flags: EventFlags,
+        ) -> i32 {
+            if command_id != MENU_ID_ABOUT {
+                return 0;
+            }
+            show_about_dialog(browser, frame);
+            1
         }
     }
 }
@@ -769,8 +817,9 @@ wrap_load_handler! {
             if frame_url.starts_with("data:") || frame_url.starts_with("jellyfin-mpv://") {
                 return;
             }
+            let script = jellyfin_bridge::bridge_script();
             frame.execute_java_script(
-                Some(&CefString::from(jellyfin_bridge::bridge_script())),
+                Some(&CefString::from(script.as_str())),
                 Some(&CefString::from("jellyfin-mpv://bridge.js")),
                 1,
             );
@@ -846,6 +895,11 @@ wrap_request_handler! {
 
             if request_url.starts_with("jellyfin-mpv://select-mpv") {
                 open_mpv_dialog(browser, frame, &self.state);
+                return 1;
+            }
+
+            if request_url.starts_with("jellyfin-mpv://app-about") {
+                show_about_dialog(browser, frame);
                 return 1;
             }
 
@@ -958,6 +1012,12 @@ fn handle_bridge_resource_request(
         return true;
     }
 
+    if request_url.starts_with("jellyfin-mpv://app-about") {
+        tracing::trace!(target: "bridge", "handling app-about bridge resource request");
+        show_about_dialog(browser, frame);
+        return true;
+    }
+
     if let Some(query) = bridge_action_query(request_url, "play") {
         tracing::trace!(target: "bridge", "handling play bridge resource request");
         spawn_mpv_from_bridge_payload(query, state);
@@ -983,6 +1043,20 @@ fn handle_bridge_resource_request(
     }
 
     false
+}
+
+fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
+    let script = about::dialog_script();
+    let target_frame = browser
+        .and_then(|browser| browser.main_frame())
+        .or_else(|| frame.map(|frame| frame.clone()));
+    if let Some(frame) = target_frame {
+        frame.execute_java_script(
+            Some(&CefString::from(script.as_str())),
+            Some(&CefString::from("jellyfin-mpv://app-about")),
+            1,
+        );
+    }
 }
 
 fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
@@ -1480,6 +1554,7 @@ fn welcome_html(settings: &AppSettings) -> String {
             "{{saved_mpv}}",
             &html_escape(settings.mpv_path.as_deref().unwrap_or_default()),
         )
+        .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{connect_disabled}}", connect_disabled)
 }
 
