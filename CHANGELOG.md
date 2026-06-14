@@ -24,6 +24,7 @@
 - Added an Inno Setup installer definition and packaging script for creating `JellyfinMPV-Setup-<version>.exe`.
 - Added changelog-driven draft release automation that promotes `CHANGELOG.md` `[Unreleased]` entries into the requested version and creates a draft GitHub release from those notes.
 - Added automatic Windows installer and zip artifact builds to the draft release workflow.
+- Added Renovate configuration for automated dependency update proposals.
 - Added project changelog rules and a `/cl` prompt for auditing unreleased entries before release.
 - Added playback regression guard documentation covering the known-good startup/resume behavior.
 - Added user-facing README documentation for installation, first launch, usage, mpv configuration, command-line options, local builds, and release packaging.
