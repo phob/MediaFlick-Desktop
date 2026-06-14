@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.2] - 2026-06-14
+
+### Added
+
 - Added an About dialog showing the app version, git version, and creator.
 - Added WebUI fullscreen toggling from the context menu and F11.
 
@@ -24,7 +35,6 @@
 ### Removed
 
 - Removed Print and View Source from the Jellyfin Web context menu.
-
 ## [0.1.1] - 2026-06-14
 
 ### Added
