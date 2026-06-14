@@ -20,6 +20,12 @@
   const MPV_STOP_GRACE_MS = 2000;
   const MAX_BITRATE = 1000000000;
   const PLAYER_PLUGIN_NAME = 'jellyfinMpvPlayer';
+  const APP_INFO = {
+    appName: 'jellyfin-mpv',
+    appVersion: '{{app_version}}',
+    gitVersion: '{{git_version}}',
+    createdBy: '{{created_by}}'
+  };
   const nativeFetch = window.fetch;
   let playerStateTimer = 0;
   let playerStateFrame = null;
@@ -1459,6 +1465,11 @@
       nativeShell.openClientSettings = () => {};
     }
 
+    nativeShell.getAppInfo = () => Object.assign({}, APP_INFO);
+    nativeShell.openAbout = () => {
+      window.location.href = 'jellyfin-mpv://app-about';
+    };
+
     const exitApplication = () => {
       window.location.href = 'jellyfin-mpv://app-exit';
     };
@@ -1469,8 +1480,8 @@
     const defaults = {
       init: () => Promise.resolve({
         deviceName: 'jellyfin-mpv',
-        appName: 'jellyfin-mpv',
-        appVersion: '0.1.0'
+        appName: APP_INFO.appName,
+        appVersion: APP_INFO.appVersion
       }),
       getDefaultLayout: () => 'desktop',
       supports: (command) => [
@@ -1484,13 +1495,15 @@
         'fullscreenchange',
         'remotevideo',
         'displaymode',
+        'about',
         'exitmenu'
       ].includes(String(command || '').toLowerCase()),
       getDeviceProfile: () => cloneMpvDeviceProfile(),
       getSyncProfile: () => cloneMpvDeviceProfile(),
-      appName: () => 'jellyfin-mpv',
-      appVersion: () => '0.1.0',
+      appName: () => APP_INFO.appName,
+      appVersion: () => APP_INFO.appVersion,
       deviceName: () => 'jellyfin-mpv',
+      openAbout: nativeShell.openAbout,
       exit: exitApplication
     };
     for (const [key, value] of Object.entries(defaults)) {
@@ -1500,7 +1513,7 @@
     const previousSupports = appHost.supports.bind(appHost);
     appHost.supports = (command) => {
       const feature = String(command || '').toLowerCase();
-      return feature === 'exitmenu' || previousSupports(command);
+      return feature === 'about' || feature === 'exitmenu' || previousSupports(command);
     };
 
     nativeShell.AppHost = appHost;
