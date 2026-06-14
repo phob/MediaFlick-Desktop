@@ -684,6 +684,13 @@ wrap_client! {
 const MENU_ID_FULLSCREEN: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
 const MENU_ID_ABOUT: i32 = MENU_ID_FULLSCREEN + 1;
 
+fn remove_trailing_separator(model: &MenuModel) {
+    let count = model.count();
+    if count > 0 && model.type_at(count - 1) == MenuItemType::SEPARATOR {
+        model.remove_at(count - 1);
+    }
+}
+
 wrap_context_menu_handler! {
     struct JellyfinContextMenuHandler;
 
@@ -698,6 +705,9 @@ wrap_context_menu_handler! {
             let Some(model) = model else {
                 return;
             };
+            model.remove(MenuId::PRINT.get_raw());
+            model.remove(MenuId::VIEW_SOURCE.get_raw());
+            remove_trailing_separator(model);
             if model.count() > 0 {
                 model.add_separator();
             }
@@ -788,6 +798,27 @@ wrap_life_span_handler! {
     }
 
     impl LifeSpanHandler {
+        fn on_before_popup(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _popup_id: std::os::raw::c_int,
+            target_url: Option<&CefString>,
+            _target_frame_name: Option<&CefString>,
+            _target_disposition: WindowOpenDisposition,
+            _user_gesture: std::os::raw::c_int,
+            _popup_features: Option<&PopupFeatures>,
+            _window_info: Option<&mut WindowInfo>,
+            _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>,
+            _extra_info: Option<&mut Option<DictionaryValue>>,
+            _no_javascript_access: Option<&mut std::os::raw::c_int>,
+        ) -> std::os::raw::c_int {
+            let url = target_url.map(CefString::to_string).unwrap_or_default();
+            open_external_link(&url);
+            1
+        }
+
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             let Some(browser) = browser.cloned() else {
                 return;
@@ -917,7 +948,7 @@ wrap_request_handler! {
             browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             request: Option<&mut Request>,
-            _user_gesture: i32,
+            user_gesture: i32,
             _is_redirect: i32,
         ) -> i32 {
             let Some(request) = request else {
@@ -925,6 +956,10 @@ wrap_request_handler! {
             };
             let request_url = CefString::from(&request.url()).to_string();
             if !request_url.starts_with("jellyfin-mpv://") {
+                if should_open_navigation_externally(&request_url, frame, user_gesture, &self.state) {
+                    open_external_link(&request_url);
+                    return 1;
+                }
                 return 0;
             }
 
@@ -1078,6 +1113,164 @@ fn handle_bridge_resource_request(
     }
 
     false
+}
+
+fn should_open_navigation_externally(
+    request_url: &str,
+    frame: Option<&mut Frame>,
+    user_gesture: i32,
+    state: &BrowserState,
+) -> bool {
+    if user_gesture == 0 || !is_browser_openable_url(request_url) {
+        return false;
+    }
+
+    let current_url = if let Some(frame) = frame {
+        if frame.is_main() == 0 {
+            return false;
+        }
+        CefString::from(&frame.url()).to_string()
+    } else {
+        String::new()
+    };
+
+    if same_web_origin(request_url, &current_url) {
+        return false;
+    }
+
+    let server_url = state
+        .lock()
+        .ok()
+        .and_then(|state| state.settings.jellyfin_url.clone());
+    if server_url
+        .as_deref()
+        .is_some_and(|server_url| same_web_origin(request_url, server_url))
+    {
+        return false;
+    }
+
+    true
+}
+
+fn open_external_link(url: &str) {
+    if !is_safe_external_link(url) {
+        return;
+    }
+    tracing::info!(target: "app", url, "opening link in default browser");
+    if let Err(error) = open_url_in_default_browser(url) {
+        tracing::warn!(target: "app", url, "failed to open link in default browser: {error}");
+    }
+}
+
+fn is_safe_external_link(url: &str) -> bool {
+    !url.is_empty() && !url.starts_with('-')
+}
+
+fn is_browser_openable_url(url: &str) -> bool {
+    url_scheme(url).is_some_and(|scheme| matches!(scheme.as_str(), "http" | "https" | "mailto"))
+}
+
+fn url_scheme(url: &str) -> Option<String> {
+    let scheme = url.split_once(':')?.0;
+    if scheme.is_empty()
+        || !scheme
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    {
+        return None;
+    }
+    Some(scheme.to_ascii_lowercase())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct UrlOrigin {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+}
+
+fn same_web_origin(left: &str, right: &str) -> bool {
+    let Some(left) = parse_web_origin(left) else {
+        return false;
+    };
+    parse_web_origin(right).is_some_and(|right| left == right)
+}
+
+fn parse_web_origin(url: &str) -> Option<UrlOrigin> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "http" | "https") {
+        return None;
+    }
+
+    let authority = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
+    if authority.is_empty() {
+        return None;
+    }
+
+    let (host, port) = parse_host_port(authority)?;
+    let default_port = match scheme.as_str() {
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    };
+    let port = if port == default_port { None } else { port };
+
+    Some(UrlOrigin { scheme, host, port })
+}
+
+fn parse_host_port(authority: &str) -> Option<(String, Option<u16>)> {
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest.split_once(']')?;
+        let port = suffix
+            .strip_prefix(':')
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse().ok());
+        return Some((format!("[{host}]"), port));
+    }
+
+    let (host, port) = authority
+        .rsplit_once(':')
+        .and_then(|(host, port)| Some((host, port.parse().ok()?)))
+        .map_or((authority, None), |(host, port)| (host, Some(port)));
+    (!host.is_empty()).then(|| (host.to_ascii_lowercase(), port))
+}
+
+#[cfg(target_os = "windows")]
+fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut::<std::ffi::c_void>() as HWND,
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(url).spawn()?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(url).spawn()?;
+    Ok(())
 }
 
 fn toggle_browser_fullscreen(browser: Option<&mut Browser>) {
