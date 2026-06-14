@@ -119,3 +119,15 @@ run-mpv *args:
 [unix]
 run-mpv *args:
     "${JELLYFIN_MPV_PATH:-mpv}" {{args}}
+
+# Stage a Windows release payload with CEF and bundled mpv under ./dist/JellyfinMPV
+[group('package')]
+[windows]
+windows-dist: release
+    & './scripts/stage-windows-release.ps1'
+
+# Build a per-user Windows setup.exe from the staged release payload
+[group('package')]
+[windows]
+windows-installer: windows-dist
+    & './scripts/build-windows-installer.ps1'
