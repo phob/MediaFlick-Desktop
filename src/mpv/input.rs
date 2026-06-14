@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::app::settings::config_dir;
 
-pub const INPUT_SECTION_NAME: &str = "jellyfin_mpv_input";
+pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";
 const DEFAULT_MARK_WATCHED_NEXT_KEY: &str = "w";
 
@@ -46,7 +46,7 @@ impl MpvInputBindings {
     pub fn section_contents(&self) -> Option<String> {
         let key = sanitize_mpv_key(self.mark_watched_next.as_deref()?)?;
         Some(format!(
-            "{key} script-message jellyfin-mpv {MARK_WATCHED_NEXT_COMMAND}"
+            "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
         ))
     }
 }
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(bindings.mark_watched_next.as_deref(), Some("w"));
         assert_eq!(
             bindings.section_contents().as_deref(),
-            Some("w script-message jellyfin-mpv mark-watched-next")
+            Some("w script-message mediaflick-desktop mark-watched-next")
         );
     }
 
