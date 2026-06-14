@@ -11,9 +11,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
-const SHIM_ENABLED_ENV: &str = "JELLYFIN_MPV_COMSPEC_SHIM";
+const SHIM_ENABLED_ENV: &str = "MEDIAFLICK_DESKTOP_COMSPEC_SHIM";
 #[cfg(target_os = "windows")]
-const REAL_COMSPEC_ENV: &str = "JELLYFIN_MPV_REAL_COMSPEC";
+const REAL_COMSPEC_ENV: &str = "MEDIAFLICK_DESKTOP_REAL_COMSPEC";
 
 /// Run this executable as a hidden command processor shim when `system()` from an
 /// mpv script invokes `%COMSPEC% /c ...`.

@@ -5,8 +5,8 @@ use clap::Parser;
 use crate::app::settings::normalize_server_url;
 
 #[derive(Debug, Clone, Parser)]
-#[command(name = "jellyfin-mpv")]
-#[command(about = "Small Rust/CEF Jellyfin shell with an external mpv playback target")]
+#[command(name = "mediaflick-desktop")]
+#[command(about = "External mpv playback for Jellyfin in a Rust/CEF desktop shell")]
 pub struct Cli {
     /// Jellyfin server URL. If omitted, the welcome screen asks for one.
     ///
@@ -15,11 +15,15 @@ pub struct Cli {
     pub url: Option<String>,
 
     /// External mpv executable to save into the app config.
-    #[arg(long, env = "JELLYFIN_MPV_PATH")]
+    #[arg(long, env = "MEDIAFLICK_DESKTOP_MPV_PATH")]
     pub mpv_path: Option<PathBuf>,
 
     /// Enable Chromium remote debugging on this port. Use 0 to disable.
-    #[arg(long, env = "JELLYFIN_REMOTE_DEBUGGING_PORT", default_value_t = 0)]
+    #[arg(
+        long,
+        env = "MEDIAFLICK_DESKTOP_REMOTE_DEBUGGING_PORT",
+        default_value_t = 0
+    )]
     pub remote_debugging_port: i32,
 
     /// Keep the CEF window hidden at startup.
@@ -27,11 +31,11 @@ pub struct Cli {
     pub hidden: bool,
 
     /// Rust app log level/filter. Examples: debug, trace, mpv.ipc=trace,debug.
-    #[arg(long, env = "JELLYFIN_MPV_LOG_LEVEL", default_value = "debug")]
+    #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_LEVEL", default_value = "debug")]
     pub log_level: String,
 
     /// Rust app log file. Defaults to the app config directory.
-    #[arg(long, env = "JELLYFIN_MPV_LOG_FILE")]
+    #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_FILE")]
     pub log_file: Option<PathBuf>,
 }
 

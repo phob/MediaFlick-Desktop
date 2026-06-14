@@ -44,40 +44,40 @@ clippy:
 [group('build')]
 [windows]
 build:
-    cargo build --bin jellyfin-mpv
+    cargo build --bin mediaflick-desktop
     New-Item -ItemType Directory -Force build | Out-Null
     Get-ChildItem "$env:CARGO_TARGET_DIR/debug" -File | Copy-Item -Destination build -Force
-    Remove-Item -Force -ErrorAction SilentlyContinue build/jellyfin-desktop*, build/jellyfin_desktop*
+    Remove-Item -Force -ErrorAction SilentlyContinue build/jellyfin-desktop*, build/jellyfin_desktop*, build/*mpv*
     if (Test-Path "$env:CARGO_TARGET_DIR/debug/locales") { Copy-Item "$env:CARGO_TARGET_DIR/debug/locales" build -Recurse -Force }
 
 # Build and stage the app into ./build
 [group('build')]
 [unix]
 build:
-    cargo build --bin jellyfin-mpv
+    cargo build --bin mediaflick-desktop
     mkdir -p build
     find "$CARGO_TARGET_DIR/debug" -maxdepth 1 -type f -exec cp {} build/ \;
-    rm -f build/jellyfin-desktop* build/jellyfin_desktop*
+    rm -f build/jellyfin-desktop* build/jellyfin_desktop* build/*mpv*
     if [ -d "$CARGO_TARGET_DIR/debug/locales" ]; then rm -rf build/locales && cp -R "$CARGO_TARGET_DIR/debug/locales" build/locales; fi
 
 # Build and stage a release app into ./build
 [group('build')]
 [windows]
 release:
-    cargo build --release --bin jellyfin-mpv
+    cargo build --release --bin mediaflick-desktop
     New-Item -ItemType Directory -Force build | Out-Null
     Get-ChildItem "$env:CARGO_TARGET_DIR/release" -File | Copy-Item -Destination build -Force
-    Remove-Item -Force -ErrorAction SilentlyContinue build/jellyfin-desktop*, build/jellyfin_desktop*
+    Remove-Item -Force -ErrorAction SilentlyContinue build/jellyfin-desktop*, build/jellyfin_desktop*, build/*mpv*
     if (Test-Path "$env:CARGO_TARGET_DIR/release/locales") { Copy-Item "$env:CARGO_TARGET_DIR/release/locales" build -Recurse -Force }
 
 # Build and stage a release app into ./build
 [group('build')]
 [unix]
 release:
-    cargo build --release --bin jellyfin-mpv
+    cargo build --release --bin mediaflick-desktop
     mkdir -p build
     find "$CARGO_TARGET_DIR/release" -maxdepth 1 -type f -exec cp {} build/ \;
-    rm -f build/jellyfin-desktop* build/jellyfin_desktop*
+    rm -f build/jellyfin-desktop* build/jellyfin_desktop* build/*mpv*
     if [ -d "$CARGO_TARGET_DIR/release/locales" ]; then rm -rf build/locales && cp -R "$CARGO_TARGET_DIR/release/locales" build/locales; fi
 
 # Build and stage a non-debug app into ./build
@@ -88,39 +88,39 @@ non-debug: release
 [group('run')]
 [windows]
 run *args: build
-    & 'build/jellyfin-mpv.exe' {{args}}
+    & 'build/mediaflick-desktop.exe' {{args}}
 
 # Run the staged app. Example: just run --url http://localhost:8096
 [group('run')]
 [unix]
 run *args: build
-    build/jellyfin-mpv {{args}}
+    build/mediaflick-desktop {{args}}
 
 # Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
 [group('run')]
 [windows]
 run-non-debug *args: non-debug
-    & 'build/jellyfin-mpv.exe' {{args}}
+    & 'build/mediaflick-desktop.exe' {{args}}
 
 # Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
 [group('run')]
 [unix]
 run-non-debug *args: non-debug
-    build/jellyfin-mpv {{args}}
+    build/mediaflick-desktop {{args}}
 
 # Run the external mpv binary that will be wired into playback later
 [group('run')]
 [windows]
 run-mpv *args:
-    $mpv = if ($env:JELLYFIN_MPV_PATH) { $env:JELLYFIN_MPV_PATH } else { 'mpv' }; & $mpv {{args}}
+    $mpv = if ($env:MEDIAFLICK_DESKTOP_MPV_PATH) { $env:MEDIAFLICK_DESKTOP_MPV_PATH } else { 'mpv' }; & $mpv {{args}}
 
 # Run the external mpv binary that will be wired into playback later
 [group('run')]
 [unix]
 run-mpv *args:
-    "${JELLYFIN_MPV_PATH:-mpv}" {{args}}
+    "${MEDIAFLICK_DESKTOP_MPV_PATH:-mpv}" {{args}}
 
-# Stage a Windows release payload with CEF and bundled mpv under ./dist/JellyfinMPV
+# Stage a Windows release payload with CEF and bundled mpv under ./dist/MediaFlickDesktop
 [group('package')]
 [windows]
 windows-dist: release

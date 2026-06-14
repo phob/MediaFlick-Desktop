@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Jellyfin MPV
-Comment=Jellyfin desktop client with external mpv playback
-Exec=jellyfin-mpv
-Icon=org.jellyfin.JellyfinMPV
-Terminal=false
-Type=Application
-Categories=AudioVideo;Video;Player;TV;
-StartupWMClass=org.jellyfin.JellyfinMPV

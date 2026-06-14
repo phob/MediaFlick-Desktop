@@ -1,26 +1,26 @@
-#define MyAppName "Jellyfin MPV"
-#define MyAppPublisher "Jellyfin"
+#define MyAppName "MediaFlick Desktop"
+#define MyAppPublisher "MediaFlick"
 #ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\..\dist\JellyfinMPV"
+#define SourceDir "..\..\dist\MediaFlickDesktop"
 #endif
 
 [Setup]
-AppId={{8F99048B-150C-47A1-988D-1E5E84F92E46}
+AppId={{8DB8462A-3EBD-4B23-AC80-29A2E4445A58}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\Jellyfin MPV
+DefaultDirName={localappdata}\Programs\MediaFlick Desktop
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\..\dist\installer
-OutputBaseFilename=JellyfinMPV-Setup-{#MyAppVersion}
+OutputBaseFilename=MediaFlickDesktop-Setup-{#MyAppVersion}
 SetupIconFile=..\..\resources\win\app.ico
 WizardImageFile=..\..\resources\win\installer-sidebar.bmp
 WizardSmallImageFile=..\..\resources\win\installer-small.bmp
-UninstallDisplayIcon={app}\jellyfin-mpv.exe
+UninstallDisplayIcon={app}\mediaflick-desktop.exe
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -40,8 +40,8 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\jellyfin-mpv.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\jellyfin-mpv.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\mediaflick-desktop.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\mediaflick-desktop.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\jellyfin-mpv.exe"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\mediaflick-desktop.exe"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
