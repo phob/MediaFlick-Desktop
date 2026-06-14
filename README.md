@@ -74,7 +74,7 @@ Jellyfin-MPV also has its own small input binding file for app-specific actions:
 %APPDATA%\jellyfin-mpv\input.json
 ```
 
-By default, pressing `w` marks the current item watched and starts the next queued item. To change that binding, create or edit `input.json`:
+By default, pressing `w` marks the current item watched, closes the current mpv process, and lets Jellyfin Web's normal autoplay setting decide whether to start the next queued item. To change that binding, create or edit `input.json`:
 
 ```json
 {

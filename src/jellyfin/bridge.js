@@ -640,10 +640,6 @@
     return reason === 'eof' || reason === 'watched-next';
   }
 
-  function shouldForceNextAfterMpvStop(snapshot) {
-    return mpvStopReason(snapshot) === 'watched-next';
-  }
-
   function suppressNextPlaybackAfterManualMpvStop(playbackManager, snapshot) {
     if (shouldTreatMpvStopAsEnded(snapshot)) return;
     if (playbackManager && typeof playbackManager === 'object') {
@@ -748,7 +744,9 @@
       }
     }
     try {
-      handledSynthetic = stopSyntheticMediaFromMpv(snapshot);
+      if (handledPlayers === 0) {
+        handledSynthetic = stopSyntheticMediaFromMpv(snapshot);
+      }
     } catch (error) {
       console.debug('[jellyfin-mpv] failed to stop synthetic media after mpv stopped', error);
     }
@@ -1173,15 +1171,6 @@
         this._currentTime = position;
         this._timeBaseMs = position;
         this._timeBaseAt = Date.now();
-      }
-      if (shouldForceNextAfterMpvStop(snapshot) && this.playbackManager?.nextTrack) {
-        try {
-          this.playbackManager.nextTrack(this);
-        } catch (error) {
-          console.debug('[jellyfin-mpv] failed to force next track after mark watched', error);
-        }
-        if (this._currentSrc) this._finishPlayback(false, false);
-        return true;
       }
       suppressNextPlaybackAfterManualMpvStop(this.playbackManager, snapshot);
       this._finishPlayback(false, false);

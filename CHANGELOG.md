@@ -29,6 +29,7 @@
 
 ### Changed
 
+- Reduced playback log noise by keeping frequent mpv position updates (`time-pos`/`playback-time`) out of default debug logs.
 - Reorganized the Rust and bridge sources into `app`, `cef`, `jellyfin`, `mpv`, `ui`, and `windows` modules.
 - Updated the app to use bundled/default app icons and set the Windows window icon.
 - Expanded the README from developer build notes into end-user installation and packaging documentation.
@@ -38,6 +39,7 @@
 - Fixed resume/startup behavior by waiting for mpv `file-loaded` before seeking to Jellyfin resume positions.
 - Fixed Jellyfin Web playback state getting out of sync when mpv stops or reaches the end of an item.
 - Fixed watched-state and next-item flow by adding explicit mpv stop handling and a watched-next binding path.
+- Fixed watched-next handling to close the current mpv process and let Jellyfin Web's normal autoplay flow decide whether to start the next episode.
 - Fixed unwanted Windows console windows from helper script launches by hiding spawned script consoles.
 - Fixed app shutdown so the external mpv controller is closed when exiting from the Jellyfin Web UI.
 
