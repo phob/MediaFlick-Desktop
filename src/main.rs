@@ -24,7 +24,7 @@ fn main() {
     if is_cef_subprocess() {
         std::process::exit(cef::run(AppConfig {
             settings: AppSettings::default(),
-            title: "jellyfin-mpv".to_string(),
+            title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,
         }));
@@ -56,7 +56,7 @@ fn main() {
     settings.sanitize();
 
     if should_save_settings && let Err(error) = settings.save() {
-        tracing::warn!(target: "main", "failed to save jellyfin-mpv config: {error}");
+        tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
     }
 
     let mpv = ExternalMpv::new(
@@ -72,14 +72,14 @@ fn main() {
     };
     tracing::info!(
         target: "main",
-        "Starting jellyfin-mpv: target={}, external mpv={}",
+        "Starting mediaflick-desktop: target={}, external mpv={}",
         target,
         mpv.executable().display()
     );
 
     std::process::exit(cef::run(AppConfig {
         settings,
-        title: "jellyfin-mpv".to_string(),
+        title: "MediaFlick Desktop".to_string(),
         remote_debugging_port: cli.remote_debugging_port,
         hidden: cli.hidden,
     }));

@@ -11,9 +11,10 @@
 
 ### Changed
 
-- Restyled the About dialog to match jellyfin-desktop's compact dark panel.
-- Replaced Jellyfin-logo-based app artwork with an original gradient jellyfin-mpv icon across app, installer, Linux, macOS, setup screens, and README.
-- Updated Windows installer dialogs to show the jellyfin-mpv logo artwork.
+- Restyled the About dialog to use a compact dark panel.
+- Replaced Jellyfin-logo-based app artwork with original MediaFlick Desktop gradient icon artwork across the app, installer, Linux, macOS, setup screens, and README.
+- Updated Windows installer dialogs to show the MediaFlick Desktop logo artwork.
+- Rebranded the app, package metadata, documentation, release workflow, and Windows artifacts to MediaFlick Desktop.
 - Opened new-window and off-server Jellyfin Web links in the system default browser instead of CEF.
 
 ### Fixed

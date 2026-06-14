@@ -63,7 +63,7 @@ pub fn run(config: AppConfig) -> i32 {
 
     let cache_path = paths.cache_dir.to_string_lossy();
     let log_file = paths.log_file.to_string_lossy();
-    let product = format!("jellyfin-mpv/{}", env!("CARGO_PKG_VERSION"));
+    let product = format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION"));
     let settings = Settings {
         no_sandbox: 1,
         browser_subprocess_path: cef_string_from_path(paths.browser_subprocess_path.as_ref()),
@@ -108,7 +108,7 @@ struct RuntimePaths {
 
 impl RuntimePaths {
     fn new() -> Self {
-        let base = platform_data_dir().join("jellyfin-mpv");
+        let base = platform_data_dir().join("mediaflick-desktop");
         let browser_subprocess_path = current_exe_path();
         let resources_dir_path = browser_subprocess_path
             .as_ref()
@@ -237,7 +237,7 @@ wrap_app! {
             let Some(registrar) = registrar else {
                 return;
             };
-            let scheme = CefString::from("jellyfin-mpv");
+            let scheme = CefString::from("mediaflick-desktop");
             registrar.add_custom_scheme(
                 Some(&scheme),
                 SchemeOptions::STANDARD.get_raw()
@@ -277,13 +277,13 @@ wrap_render_process_handler! {
                 return;
             }
             let frame_url = CefString::from(&frame.url()).to_string();
-            if frame_url.starts_with("data:") || frame_url.starts_with("jellyfin-mpv://") {
+            if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
                 return;
             }
             let script = jellyfin_bridge::bridge_script();
             frame.execute_java_script(
                 Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("jellyfin-mpv://bridge.js")),
+                Some(&CefString::from("mediaflick-desktop://bridge.js")),
                 0,
             );
         }
@@ -381,7 +381,7 @@ wrap_browser_view_delegate! {
                 RefCell::new(popup_browser_view.cloned()),
                 self.runtime_style,
                 ShowState::NORMAL,
-                "jellyfin-mpv".to_string(),
+                "MediaFlick Desktop".to_string(),
                 WebUiWindowSettings::default(),
                 None,
             );
@@ -538,7 +538,7 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
         }
     };
     if let Err(error) = settings.save() {
-        tracing::warn!(target: "config", "failed to save jellyfin-mpv config on window close: {error}");
+        tracing::warn!(target: "config", "failed to save mediaflick-desktop config on window close: {error}");
     }
 }
 
@@ -616,7 +616,7 @@ fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
             frame_count += 1;
             frame.execute_java_script(
                 Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("jellyfin-mpv://playback-event")),
+                Some(&CefString::from("mediaflick-desktop://playback-event")),
                 1,
             );
         }
@@ -643,7 +643,7 @@ fn playback_event_script(event: MpvPlaybackEvent) -> String {
                 "stopReason": snapshot.stop_reason,
             });
             format!(
-                "window.__jellyfinMpvPlaybackStopped&&window.__jellyfinMpvPlaybackStopped({payload});"
+                "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({payload});"
             )
         }
     }
@@ -775,7 +775,7 @@ wrap_display_handler! {
                 .state
                 .lock()
                 .map(|state| state.title.clone())
-                .unwrap_or_else(|_| "jellyfin-mpv".to_string());
+                .unwrap_or_else(|_| "MediaFlick Desktop".to_string());
             let title_string = title
                 .map(CefString::to_string)
                 .filter(|value| !value.is_empty())
@@ -880,13 +880,13 @@ wrap_load_handler! {
                 return;
             }
             let frame_url = CefString::from(&frame.url()).to_string();
-            if frame_url.starts_with("data:") || frame_url.starts_with("jellyfin-mpv://") {
+            if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
                 return;
             }
             let script = jellyfin_bridge::bridge_script();
             frame.execute_java_script(
                 Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("jellyfin-mpv://bridge.js")),
+                Some(&CefString::from("mediaflick-desktop://bridge.js")),
                 1,
             );
         }
@@ -915,7 +915,7 @@ wrap_load_handler! {
                 .state
                 .lock()
                 .map(|state| state.title.clone())
-                .unwrap_or_else(|_| "jellyfin-mpv".to_string());
+                .unwrap_or_else(|_| "MediaFlick Desktop".to_string());
             let failed_url = html_escape(&failed_url.map(CefString::to_string).unwrap_or_default());
             let error_text = html_escape(&error_text.map(CefString::to_string).unwrap_or_default());
             let error_code = raw_error as i32;
@@ -955,7 +955,7 @@ wrap_request_handler! {
                 return 0;
             };
             let request_url = CefString::from(&request.url()).to_string();
-            if !request_url.starts_with("jellyfin-mpv://") {
+            if !request_url.starts_with("mediaflick-desktop://") {
                 if should_open_navigation_externally(&request_url, frame, user_gesture, &self.state) {
                     open_external_link(&request_url);
                     return 1;
@@ -963,17 +963,17 @@ wrap_request_handler! {
                 return 0;
             }
 
-            if request_url.starts_with("jellyfin-mpv://select-mpv") {
+            if request_url.starts_with("mediaflick-desktop://select-mpv") {
                 open_mpv_dialog(browser, frame, &self.state);
                 return 1;
             }
 
-            if request_url.starts_with("jellyfin-mpv://app-about") {
+            if request_url.starts_with("mediaflick-desktop://app-about") {
                 show_about_dialog(browser, frame);
                 return 1;
             }
 
-            if request_url.starts_with("jellyfin-mpv://app-exit") {
+            if request_url.starts_with("mediaflick-desktop://app-exit") {
                 initiate_app_exit(browser, &self.state);
                 return 1;
             }
@@ -1082,7 +1082,7 @@ fn handle_bridge_resource_request(
         return true;
     }
 
-    if request_url.starts_with("jellyfin-mpv://app-about") {
+    if request_url.starts_with("mediaflick-desktop://app-about") {
         tracing::trace!(target: "bridge", "handling app-about bridge resource request");
         show_about_dialog(browser, frame);
         return true;
@@ -1295,7 +1295,7 @@ fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     if let Some(frame) = target_frame {
         frame.execute_java_script(
             Some(&CefString::from(script.as_str())),
-            Some(&CefString::from("jellyfin-mpv://app-about")),
+            Some(&CefString::from("mediaflick-desktop://app-about")),
             1,
         );
     }
@@ -1331,7 +1331,7 @@ fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
 }
 
 fn bridge_action_query<'a>(request_url: &'a str, action: &str) -> Option<&'a str> {
-    let after_scheme = request_url.strip_prefix("jellyfin-mpv://")?;
+    let after_scheme = request_url.strip_prefix("mediaflick-desktop://")?;
     let query = after_scheme
         .strip_prefix(action)?
         .strip_prefix('/')
@@ -1351,13 +1351,13 @@ wrap_run_file_dialog_callback! {
                 return;
             };
             let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
-                execute_welcome_js(frame, "window.__jellyfinMpvSetBusy(false);");
+                execute_welcome_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
                 return;
             };
             execute_welcome_js(
                 frame,
                 &format!(
-                    "window.__jellyfinMpvSetMpvPath({});",
+                    "window.__mediaFlickDesktopSetMpvPath({});",
                     js_string_literal(&path)
                 ),
             );
@@ -1482,7 +1482,7 @@ fn respond_player_state(
         "stopReason": snapshot.stop_reason,
     });
     let script = format!(
-        "window.__jellyfinMpvReceivePlayerState&&window.__jellyfinMpvReceivePlayerState({});",
+        "window.__mediaFlickDesktopReceivePlayerState&&window.__mediaFlickDesktopReceivePlayerState({});",
         response
     );
 
@@ -1492,7 +1492,7 @@ fn respond_player_state(
     if let Some(frame) = target_frame {
         frame.execute_java_script(
             Some(&CefString::from(script.as_str())),
-            Some(&CefString::from("jellyfin-mpv://player-state")),
+            Some(&CefString::from("mediaflick-desktop://player-state")),
             1,
         );
     }
@@ -1719,7 +1719,7 @@ fn notify_save_error(frame: &Frame, message: &str) {
     execute_welcome_js(
         frame,
         &format!(
-            "window.__jellyfinMpvSaveFailed({});",
+            "window.__mediaFlickDesktopSaveFailed({});",
             js_string_literal(message)
         ),
     );
@@ -1728,7 +1728,7 @@ fn notify_save_error(frame: &Frame, message: &str) {
 fn execute_welcome_js(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
-        Some(&CefString::from("jellyfin-mpv://welcome")),
+        Some(&CefString::from("mediaflick-desktop://welcome")),
         1,
     );
 }

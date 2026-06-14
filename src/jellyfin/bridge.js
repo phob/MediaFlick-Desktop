@@ -1,6 +1,6 @@
 (() => {
-  if (window.__jellyfinMpvBridgeInstalled) return;
-  window.__jellyfinMpvBridgeInstalled = true;
+  if (window.__mediaFlickDesktopBridgeInstalled) return;
+  window.__mediaFlickDesktopBridgeInstalled = true;
 
   const contextsByItem = new Map();
   const contextsByMediaSource = new Map();
@@ -19,9 +19,9 @@
   const EXTERNALIZED_TTL_MS = 12 * 60 * 60 * 1000;
   const MPV_STOP_GRACE_MS = 2000;
   const MAX_BITRATE = 1000000000;
-  const PLAYER_PLUGIN_NAME = 'jellyfinMpvPlayer';
+  const PLAYER_PLUGIN_NAME = 'mediaFlickDesktopPlayer';
   const APP_INFO = {
-    appName: 'jellyfin-mpv',
+    appName: 'MediaFlick Desktop',
     appVersion: '{{app_version}}',
     gitVersion: '{{git_version}}',
     createdBy: '{{created_by}}'
@@ -32,7 +32,7 @@
   let playerStateRequestId = 0;
 
   const MPV_DEVICE_PROFILE = {
-    Name: 'jellyfin-mpv',
+    Name: 'MediaFlick Desktop',
     MaxStaticBitrate: MAX_BITRATE,
     MaxStaticMusicBitrate: MAX_BITRATE,
     MaxStreamingBitrate: MAX_BITRATE,
@@ -541,7 +541,7 @@
       dto.EnableTranscoding = false;
       return JSON.stringify(dto);
     } catch (error) {
-      console.debug('[jellyfin-mpv] failed to patch PlaybackInfo profile', error);
+      console.debug('[mediaflick-desktop] failed to patch PlaybackInfo profile', error);
       return body;
     }
   }
@@ -556,7 +556,7 @@
       sentContextKeys.set(key, Date.now());
       sendBridgeRequest('play-context', clean);
     } catch (error) {
-      console.debug('[jellyfin-mpv] bridge context send failed', error);
+      console.debug('[mediaflick-desktop] bridge context send failed', error);
     }
   }
 
@@ -572,7 +572,7 @@
       sentPlayKeys.set(key, Date.now());
       sendBridgeRequest('play', clean);
     } catch (error) {
-      console.debug('[jellyfin-mpv] bridge play send failed', error);
+      console.debug('[mediaflick-desktop] bridge play send failed', error);
     }
   }
 
@@ -580,7 +580,7 @@
     try {
       sendBridgeRequest('player-command', payload);
     } catch (error) {
-      console.debug('[jellyfin-mpv] bridge player command send failed', error);
+      console.debug('[mediaflick-desktop] bridge player command send failed', error);
     }
   }
 
@@ -715,38 +715,38 @@
         (document.body || document.documentElement).appendChild(playerStateFrame);
       }
       playerStateRequestId += 1;
-      playerStateFrame.src = 'jellyfin-mpv://player-state?requestId='
+      playerStateFrame.src = 'mediaflick-desktop://player-state?requestId='
         + encodeURIComponent(String(playerStateRequestId))
         + '&t='
         + Date.now();
     } catch (error) {
-      console.debug('[jellyfin-mpv] player state request failed', error);
+      console.debug('[mediaflick-desktop] player state request failed', error);
     }
   }
 
-  window.__jellyfinMpvReceivePlayerState = function(snapshot) {
+  window.__mediaFlickDesktopReceivePlayerState = function(snapshot) {
     for (const player of Array.from(playerInstances)) {
       try {
         player._applyMpvSnapshot(snapshot);
       } catch (error) {
-        console.debug('[jellyfin-mpv] failed to apply mpv state snapshot', error);
+        console.debug('[mediaflick-desktop] failed to apply mpv state snapshot', error);
       }
     }
     try {
       applyMpvSnapshotToSyntheticMedia(snapshot);
     } catch (error) {
-      console.debug('[jellyfin-mpv] failed to apply mpv state to synthetic media', error);
+      console.debug('[mediaflick-desktop] failed to apply mpv state to synthetic media', error);
     }
   };
 
-  window.__jellyfinMpvPlaybackStopped = function(snapshot) {
+  window.__mediaFlickDesktopPlaybackStopped = function(snapshot) {
     let handledPlayers = 0;
     let handledSynthetic = 0;
     for (const player of Array.from(playerInstances)) {
       try {
         if (player._handleMpvStopped(snapshot)) handledPlayers += 1;
       } catch (error) {
-        console.debug('[jellyfin-mpv] failed to handle mpv stopped event', error);
+        console.debug('[mediaflick-desktop] failed to handle mpv stopped event', error);
       }
     }
     try {
@@ -754,7 +754,7 @@
         handledSynthetic = stopSyntheticMediaFromMpv(snapshot);
       }
     } catch (error) {
-      console.debug('[jellyfin-mpv] failed to stop synthetic media after mpv stopped', error);
+      console.debug('[mediaflick-desktop] failed to stop synthetic media after mpv stopped', error);
     }
     sendBridgeRequest('playback-stop-ack', {
       active: snapshot?.active,
@@ -767,7 +767,7 @@
   };
 
   function sendBridgeRequest(action, payload) {
-    const url = 'jellyfin-mpv://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
+    const url = 'mediaflick-desktop://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
     if (typeof nativeFetch === 'function') {
       try {
         nativeFetch.call(window, url, {
@@ -845,7 +845,7 @@
     return new Response(null, {
       status: 204,
       statusText: 'No Content',
-      headers: { 'X-Jellyfin-Mpv': 'externalized' }
+      headers: { 'X-MediaFlick-Desktop': 'externalized' }
     });
   }
 
@@ -958,7 +958,7 @@
     }, selectedTrackContext(mediaSource, audioStreamIndex, subtitleStreamIndex)));
   }
 
-  class JellyfinMpvPlayer {
+  class MediaFlickDesktopPlayer {
     constructor(args = {}) {
       this.events = args.events;
       this.appHost = args.appHost;
@@ -968,9 +968,9 @@
       this.globalize = args.globalize;
       this.playbackManager = args.playbackManager;
 
-      this.name = 'Jellyfin MPV Player';
+      this.name = 'MediaFlick Desktop Player';
       this.type = 'mediaplayer';
-      this.id = 'jellyfinmpvplayer';
+      this.id = 'mediaflickdesktopplayer';
       this.priority = -1;
       this.syncPlayWrapAs = 'htmlvideoplayer';
       this.useFullSubtitleUrls = true;
@@ -1021,7 +1021,7 @@
           this.events?.trigger?.(this, name, detail);
         }
       } catch (error) {
-        console.debug('[jellyfin-mpv] failed to trigger player event', name, error);
+        console.debug('[mediaflick-desktop] failed to trigger player event', name, error);
       }
     }
 
@@ -1064,11 +1064,11 @@
 
     _createVideoContainer(options) {
       if (!this._isVideoOptions(options)) return;
-      let container = document.querySelector('.videoPlayerContainer[data-jellyfin-mpv="true"]');
+      let container = document.querySelector('.videoPlayerContainer[data-mediaflick-desktop="true"]');
       if (!container) {
         container = document.createElement('div');
         container.className = 'videoPlayerContainer';
-        container.dataset.jellyfinMpv = 'true';
+        container.dataset.mediaFlickDesktop = 'true';
         container.style.cssText = [
           'position:fixed',
           'top:0',
@@ -1100,7 +1100,7 @@
       document.body.classList.remove('hide-scroll');
       const container = this._videoContainer;
       this._videoContainer = null;
-      if (container?.dataset?.jellyfinMpv === 'true' && container.parentNode) {
+      if (container?.dataset?.mediaFlickDesktop === 'true' && container.parentNode) {
         container.parentNode.removeChild(container);
       }
     }
@@ -1184,7 +1184,7 @@
     }
 
     play(options = {}) {
-      console.debug('[jellyfin-mpv] external player play()', options);
+      console.debug('[mediaflick-desktop] external player play()', options);
       playerInstances.add(this);
       this._stopSyntheticClock();
       this._currentPlayOptions = options;
@@ -1467,11 +1467,11 @@
 
     nativeShell.getAppInfo = () => Object.assign({}, APP_INFO);
     nativeShell.openAbout = () => {
-      window.location.href = 'jellyfin-mpv://app-about';
+      window.location.href = 'mediaflick-desktop://app-about';
     };
 
     const exitApplication = () => {
-      window.location.href = 'jellyfin-mpv://app-exit';
+      window.location.href = 'mediaflick-desktop://app-exit';
     };
 
     const appHost = nativeShell.AppHost && typeof nativeShell.AppHost === 'object'
@@ -1479,7 +1479,7 @@
       : {};
     const defaults = {
       init: () => Promise.resolve({
-        deviceName: 'jellyfin-mpv',
+        deviceName: 'MediaFlick Desktop',
         appName: APP_INFO.appName,
         appVersion: APP_INFO.appVersion
       }),
@@ -1502,7 +1502,7 @@
       getSyncProfile: () => cloneMpvDeviceProfile(),
       appName: () => APP_INFO.appName,
       appVersion: () => APP_INFO.appVersion,
-      deviceName: () => 'jellyfin-mpv',
+      deviceName: () => 'MediaFlick Desktop',
       openAbout: nativeShell.openAbout,
       exit: exitApplication
     };
@@ -1518,7 +1518,7 @@
 
     nativeShell.AppHost = appHost;
     window.NativeShell = nativeShell;
-    window[PLAYER_PLUGIN_NAME] = () => JellyfinMpvPlayer;
+    window[PLAYER_PLUGIN_NAME] = () => MediaFlickDesktopPlayer;
     window.initCompleted = window.initCompleted || Promise.resolve();
     window.apiPromise = window.apiPromise || Promise.resolve({});
   }
@@ -1551,21 +1551,21 @@
   const nativeOpen = XMLHttpRequest.prototype.open;
   const nativeSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url) {
-    this.__jellyfinMpvMethod = String(method || 'GET').toUpperCase();
-    this.__jellyfinMpvUrl = absoluteUrl(url);
-    if (isDirectStreamUrl(this.__jellyfinMpvUrl)) rememberForStream(this.__jellyfinMpvUrl);
+    this.__mediaFlickDesktopMethod = String(method || 'GET').toUpperCase();
+    this.__mediaFlickDesktopUrl = absoluteUrl(url);
+    if (isDirectStreamUrl(this.__mediaFlickDesktopUrl)) rememberForStream(this.__mediaFlickDesktopUrl);
     return nativeOpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send = function(body) {
-    let requestBody = patchPlaybackInfoBody(this.__jellyfinMpvUrl, body);
-    if (shouldSuppressPlaystateReport(this.__jellyfinMpvUrl, requestBody)) {
-      completeSyntheticXhr(this, this.__jellyfinMpvUrl);
+    let requestBody = patchPlaybackInfoBody(this.__mediaFlickDesktopUrl, body);
+    if (shouldSuppressPlaystateReport(this.__mediaFlickDesktopUrl, requestBody)) {
+      completeSyntheticXhr(this, this.__mediaFlickDesktopUrl);
       return;
     }
-    if (isPlaybackInfoUrl(this.__jellyfinMpvUrl)) {
+    if (isPlaybackInfoUrl(this.__mediaFlickDesktopUrl)) {
       this.addEventListener('loadend', () => {
         try {
-          rememberPlaybackInfo(this.__jellyfinMpvUrl, JSON.parse(this.responseText), requestBody);
+          rememberPlaybackInfo(this.__mediaFlickDesktopUrl, JSON.parse(this.responseText), requestBody);
         } catch (_) {}
       });
     }
@@ -1826,5 +1826,5 @@
     }, true);
   }
 
-  console.debug('[jellyfin-mpv] Jellyfin Web bridge installed');
+  console.debug('[mediaflick-desktop] Jellyfin Web bridge installed');
 })();

@@ -1,32 +1,31 @@
 <h1 align="center">
-  <img src="resources/app-icon.png" alt="jellyfin-mpv logo" width="240" height="240">
+  <img src="resources/app-icon.png" alt="MediaFlick Desktop logo" width="240" height="240">
   <br>
 </h1>
 
-# Jellyfin MPV
+# MediaFlick Desktop
 
-I’ve always wanted an app that offered the convenience and look of the media player desktop apps provided by developers, but with the ability to enjoy SVP4 and SDR-to-HDR content. Almost all desktop media player apps are partially based on libmpv, without being able to fully utilize all of mpv’s capabilities. While there are the well-known mpv shim applications—which I’ve used for a very long time—the new Jellyfin desktop app, currently still in development, came with the promise that it would fully read the mpv configuration and thus be highly customizable. This is true in many respects, but especially when it comes to technologies like integrating SVP 4 and custom HDR profiles, I believe the limitation of having MPV within the app is the main factor behind many of these restrictions. And so I had the idea to simply write a desktop app for myself that exclusively connects to and controls an external MPV player.
+[![Draft Release](https://github.com/phob/mediaflick-desktop/actions/workflows/draft-release.yml/badge.svg)](https://github.com/phob/mediaflick-desktop/actions/workflows/draft-release.yml)
+[![Latest release](https://img.shields.io/github/v/release/phob/mediaflick-desktop?display_name=tag&sort=semver)](https://github.com/phob/mediaflick-desktop/releases/latest)
 
-The result is Jellyfin-MPV, a desktop app that offers the convenience of Jellyfin Web, with the ability to easily and efficiently connect your own MPV player. This is exactly what I’m now offering for download here. This app is not intended to—and will not—replace Jellyfin Desktop or Jellyfin MPV Shim, nor will it offer the full range of features found in both of those apps. Its primary purpose is to bridge the gap between Jellyfin Web and your own MPV player session.
+External mpv playback for Jellyfin.
 
-## What this app does
+MediaFlick Desktop opens Jellyfin Web in a desktop CEF window, then hands direct-play media streams to an external `mpv` process instead of playing them inside the browser. It is built for people who want the Jellyfin Web experience while keeping their own mpv setup: `mpv.conf`, scripts, shaders, SVP4 workflows, HDR profiles, input bindings, and other custom playback features.
 
-Jellyfin-MPV opens Jellyfin Web in a desktop window, but sends direct-play media to an external `mpv.exe` instead of playing it inside the browser. This lets you use your own mpv setup, including your existing mpv configuration, shaders, scripts, SVP4 workflows, HDR profiles, and other custom playback features.
-
-While mpv is playing, Jellyfin-MPV still talks to your Jellyfin server so playback state works as expected: playback starts, progress is reported, and the resume position is saved when playback stops.
+While mpv is playing, MediaFlick Desktop still reports playstate back to your Jellyfin server so playback starts, progress, watched state, and resume positions continue to work.
 
 ## Install
 
 ### Windows installer
 
-1. Download the latest `JellyfinMPV-Setup-<version>.exe` from the project releases.
+1. Download the latest `MediaFlickDesktop-Setup-<version>.exe` from [GitHub Releases](https://github.com/phob/mediaflick-desktop/releases/latest).
 2. Run the installer.
-3. Launch **Jellyfin MPV** from the Start menu or the optional desktop shortcut.
+3. Launch **MediaFlick Desktop** from the Start menu or the optional desktop shortcut.
 
 The installer installs the app for the current user to:
 
 ```text
-%LOCALAPPDATA%\Programs\Jellyfin MPV
+%LOCALAPPDATA%\Programs\MediaFlick Desktop
 ```
 
 If the release includes a bundled mpv, the app detects it automatically on first launch. In that case, you only need to enter your Jellyfin server URL.
@@ -36,47 +35,47 @@ If the release includes a bundled mpv, the app detects it automatically on first
 If you are using a release zip or a manually staged build:
 
 1. Extract the app folder somewhere permanent.
-2. Make sure `jellyfin-mpv.exe` stays next to the included CEF runtime files and `locales` folder.
-3. Run `jellyfin-mpv.exe`.
+2. Make sure `mediaflick-desktop.exe` stays next to the included CEF runtime files and `locales` folder.
+3. Run `mediaflick-desktop.exe`.
 4. If mpv is not bundled, select your own `mpv.exe` on the welcome screen.
 
 ## First launch
 
-On first launch, Jellyfin-MPV asks for:
+On first launch, MediaFlick Desktop asks for:
 
 - **Jellyfin server URL** — for example `http://localhost:8096` or `https://jellyfin.example.com`
-- **mpv.exe path** — the path to the mpv executable you want Jellyfin-MPV to control
+- **mpv.exe path** — the path to the mpv executable you want MediaFlick Desktop to control
 
 You can use the native **Browse** button to select `mpv.exe`.
 
 The app saves these settings here:
 
 ```text
-%APPDATA%\jellyfin-mpv\config.json
+%APPDATA%\mediaflick-desktop\config.json
 ```
 
-After both values are saved, Jellyfin-MPV skips the welcome screen and opens Jellyfin directly on future launches.
+After both values are saved, MediaFlick Desktop skips the welcome screen and opens Jellyfin directly on future launches.
 
 ## How to use
 
-1. Open Jellyfin-MPV.
+1. Open MediaFlick Desktop.
 2. Log in to your Jellyfin server like you would in Jellyfin Web.
 3. Choose a movie or episode and press play.
-4. Jellyfin-MPV detects the direct-play stream and opens it in your external mpv player.
+4. MediaFlick Desktop detects the direct-play stream and opens it in your external mpv player.
 5. Control playback in mpv as usual.
 
-Jellyfin-MPV reports playback progress back to Jellyfin, so watched state and resume positions should continue to work.
+MediaFlick Desktop reports playback progress back to Jellyfin, so watched state and resume positions should continue to work.
 
 When you open the Jellyfin user menu inside the app, Jellyfin also shows an **Exit application** action. Use it to close the desktop app cleanly, including the external mpv controller.
 
 ## mpv configuration
 
-Jellyfin-MPV uses an external mpv player, so your normal mpv setup can be used. Configure mpv the same way you normally would for your system, such as with `mpv.conf`, scripts, shaders, profiles, and input bindings.
+MediaFlick Desktop uses an external mpv player, so your normal mpv setup can be used. Configure mpv the same way you normally would for your system, such as with `mpv.conf`, scripts, shaders, profiles, and input bindings.
 
-Jellyfin-MPV also has its own small input binding file for app-specific actions:
+MediaFlick Desktop also has its own small input binding file for app-specific actions:
 
 ```text
-%APPDATA%\jellyfin-mpv\input.json
+%APPDATA%\mediaflick-desktop\input.json
 ```
 
 By default, pressing `w` marks the current item watched, closes the current mpv process, and lets Jellyfin Web's normal autoplay setting decide whether to start the next queued item. To change that binding, create or edit `input.json`:
@@ -104,7 +103,7 @@ Set the binding to an empty string to disable it:
 You can also provide the Jellyfin URL and mpv path from the command line:
 
 ```powershell
-jellyfin-mpv.exe --url http://localhost:8096 --mpv-path "C:\Program Files\mpv\mpv.exe"
+mediaflick-desktop.exe --url http://localhost:8096 --mpv-path "C:\Program Files\mpv\mpv.exe"
 ```
 
 This is useful for testing, shortcuts, or quickly switching between servers and mpv installations.
@@ -129,7 +128,7 @@ just build
 The staged app is created in `build/`:
 
 ```text
-build/jellyfin-mpv.exe
+build/mediaflick-desktop.exe
 ```
 
 Run it with:
@@ -149,14 +148,14 @@ just release
 To stage a Windows release payload with the app, CEF runtime files, locales, and a bundled mpv tree:
 
 ```powershell
-$env:JELLYFIN_MPV_PACKAGE_MPV = "C:\path\to\mpv" # directory, or path to mpv.exe
+$env:MEDIAFLICK_DESKTOP_PACKAGE_MPV = "C:\path\to\mpv" # directory, or path to mpv.exe
 just windows-dist
 ```
 
 The staged payload is created in:
 
 ```text
-dist/JellyfinMPV/
+dist/MediaFlickDesktop/
 ```
 
 ### Build the Windows installer
@@ -171,5 +170,5 @@ just windows-installer
 The installer is created in:
 
 ```text
-dist/installer/JellyfinMPV-Setup-<version>.exe
+dist/installer/MediaFlickDesktop-Setup-<version>.exe
 ```

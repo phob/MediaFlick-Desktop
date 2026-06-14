@@ -1,5 +1,5 @@
 param(
-    [string]$StagingDir = "dist/JellyfinMPV",
+    [string]$StagingDir = "dist/MediaFlickDesktop",
     [string]$InnoCompiler = $env:ISCC,
     [string]$Version
 )
@@ -12,9 +12,9 @@ if (-not $IsWindows) {
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $StagingPath = Join-Path $RepoRoot $StagingDir
-$InnoScript = Join-Path $RepoRoot "packaging\windows\jellyfin-mpv.iss"
+$InnoScript = Join-Path $RepoRoot "packaging\windows\mediaflick-desktop.iss"
 
-if (-not (Test-Path (Join-Path $StagingPath "jellyfin-mpv.exe"))) {
+if (-not (Test-Path (Join-Path $StagingPath "mediaflick-desktop.exe"))) {
     throw "Missing staged payload. Run 'just windows-dist' before building the installer."
 }
 
@@ -64,5 +64,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed with exit code $LASTEXITCODE."
 }
 
-$Installer = Join-Path $OutputDir "JellyfinMPV-Setup-$Version.exe"
+$Installer = Join-Path $OutputDir "MediaFlickDesktop-Setup-$Version.exe"
 Write-Host "Created installer: $Installer"

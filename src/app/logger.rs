@@ -50,7 +50,7 @@ pub struct LogGuard {
 }
 
 pub fn default_log_file_path() -> PathBuf {
-    config_dir().join("jellyfin-mpv.log")
+    config_dir().join("mediaflick-desktop.log")
 }
 
 pub fn init(path: PathBuf, filter: &str) -> LogGuard {
@@ -516,14 +516,14 @@ mod tests {
                 "replace",
                 -1,
                 {
-                    "http-header-fields": "Authorization: MediaBrowser Client=\"Jellyfin\"\\, Token=\"secret\",User-Agent: jellyfin-mpv"
+                    "http-header-fields": "Authorization: MediaBrowser Client=\"Jellyfin\"\\, Token=\"secret\",User-Agent: mediaflick-desktop"
                 }
             ],
             "request_id": 1
         });
         let text = redacted_json(&command);
         assert!(text.contains("Authorization: REDACTED"));
-        assert!(text.contains("User-Agent: jellyfin-mpv"));
+        assert!(text.contains("User-Agent: mediaflick-desktop"));
         assert!(!text.contains("secret"));
     }
 

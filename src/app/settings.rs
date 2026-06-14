@@ -148,7 +148,7 @@ pub fn config_file_path() -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
-    roaming_base_dir().join("jellyfin-mpv")
+    roaming_base_dir().join("mediaflick-desktop")
 }
 
 fn roaming_base_dir() -> PathBuf {

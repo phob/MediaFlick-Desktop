@@ -69,7 +69,7 @@ pub fn make_mpv_ipc_path() -> String {
     #[cfg(target_os = "windows")]
     {
         format!(
-            r"\\.\pipe\jellyfin-mpv-{}-{timestamp}-{counter}",
+            r"\\.\pipe\mediaflick-desktop-{}-{timestamp}-{counter}",
             std::process::id()
         )
     }
@@ -78,7 +78,7 @@ pub fn make_mpv_ipc_path() -> String {
     {
         std::env::temp_dir()
             .join(format!(
-                "jellyfin-mpv-{}-{timestamp}-{counter}.sock",
+                "mediaflick-desktop-{}-{timestamp}-{counter}.sock",
                 std::process::id()
             ))
             .to_string_lossy()
@@ -95,7 +95,7 @@ impl PlaybackReporter {
     pub fn new(session: PlaybackSession) -> Self {
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(HTTP_TIMEOUT))
-            .user_agent(format!("jellyfin-mpv/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
             .build();
         Self {
             session,
