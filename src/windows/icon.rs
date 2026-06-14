@@ -7,7 +7,7 @@ pub fn set_window_icon(window: &cef::Window) {
         SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
     };
 
-    // build.rs embeds resources/win/jellyfin.ico in the executable with
+    // build.rs embeds resources/win/app.ico in the executable with
     // winresource's default numeric ID, so load the same icon from the host
     // executable instead of from CEF/libcef.
     const APPLICATION_ICON_RESOURCE_ID: u16 = 1;
