@@ -13,6 +13,7 @@
 
 - Restyled the About dialog to match jellyfin-desktop's compact dark panel.
 - Replaced Jellyfin-logo-based app artwork with an original gradient jellyfin-mpv icon across app, installer, Linux, macOS, setup screens, and README.
+- Updated Windows installer dialogs to show the jellyfin-mpv logo artwork.
 
 ### Fixed
 
