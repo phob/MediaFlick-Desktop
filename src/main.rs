@@ -48,6 +48,10 @@ fn main() {
     if let Some(mpv_path) = &cli.mpv_path {
         settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
         should_save_settings = true;
+    } else if settings.mpv_path.is_none()
+        && let Some(mpv_path) = bundled_mpv_path()
+    {
+        settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
     }
     settings.sanitize();
 
@@ -83,4 +87,17 @@ fn main() {
 
 fn is_cef_subprocess() -> bool {
     std::env::args().any(|arg| arg == "--type" || arg.starts_with("--type="))
+}
+
+fn bundled_mpv_path() -> Option<std::path::PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let app_dir = exe_path.parent()?;
+
+    #[cfg(target_os = "windows")]
+    let candidates = [app_dir.join("mpv").join("mpv.exe"), app_dir.join("mpv.exe")];
+
+    #[cfg(not(target_os = "windows"))]
+    let candidates = [app_dir.join("mpv").join("mpv"), app_dir.join("mpv")];
+
+    candidates.into_iter().find(|path| path.is_file())
 }

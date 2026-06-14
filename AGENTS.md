@@ -27,3 +27,30 @@ Use `just` for linting and testing. Configured commands:
 - `just clean`: remove build artifacts.
 
 There is not currently a dedicated `just` test recipe.
+
+# Changelog
+
+Location: `CHANGELOG.md`.
+
+Sections under `## [Unreleased]`: `### Breaking Changes` (API or behavior changes requiring migration), `### Added`, `### Changed`, `### Fixed`, `### Removed`.
+
+Rules:
+
+- Every code, behavior, packaging, build/release automation, or user-facing documentation change needs a `CHANGELOG.md` entry under `## [Unreleased]` in the same change. Pure changelog edits and release housekeeping are exempt.
+- Read the full `[Unreleased]` section before editing it. Append to existing subsections; never duplicate subsection headings.
+- Released version sections (for example, `## [0.1.0]`) are immutable; never modify them except for an intentional release-note correction requested by the user.
+- Use the project `/cl` prompt before a release to audit commits since the last tag and fill in any missing entries.
+
+Attribution:
+
+- Internal or issue-backed changes: `Fixed foo ([#123](https://github.com/<owner>/<repo>/issues/123))`
+- External contributions: `Added feature X ([#456](https://github.com/<owner>/<repo>/pull/456) by [@username](https://github.com/username))`
+
+# Releasing
+
+Releases are changelog-driven and use the `Draft Release` GitHub Actions workflow.
+
+1. Run `/cl` on the latest release branch/main commit and make sure `CHANGELOG.md` `[Unreleased]` is complete.
+2. Manually start the `Draft Release` workflow and enter the desired version, with or without a leading `v`.
+3. The workflow promotes `[Unreleased]` to `## [version] - YYYY-MM-DD`, opens a fresh `[Unreleased]` section, updates `Cargo.toml` and `Cargo.lock`, commits `Release vX.Y.Z`, tags that commit, and creates a draft GitHub release using the changelog section as release notes.
+4. Review the draft release before publishing it.
