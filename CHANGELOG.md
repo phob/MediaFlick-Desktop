@@ -14,6 +14,7 @@
 - Added native Jellyfin Web player-control integration so play/pause, seeking, and playback state can control and reflect external mpv playback.
 - Added bidirectional playback-state synchronization from mpv back into Jellyfin Web, including progress, pause state, stop/end handling, and saved resume position updates.
 - Added bridge logging and synthetic media-readiness events so intercepted browser playback remains visible and debuggable.
+- Added rotating app log files with configurable `--log-level`/`--log-file` options and redacted playback diagnostics.
 - Added configurable mpv input bindings in `%APPDATA%\jellyfin-mpv\input.json`, including the default `w` binding to mark the current item watched and start the next queued item.
 - Added an **Exit application** action to the Jellyfin Web user menu for cleanly closing the desktop app and external mpv controller.
 - Added persistent Jellyfin Web window sizing between launches.
@@ -37,7 +38,10 @@
 ### Fixed
 
 - Fixed resume/startup behavior by waiting for mpv `file-loaded` before seeking to Jellyfin resume positions.
+- Fixed mpv handoff URLs by stripping browser-only fragments before sending `loadfile` commands while preserving Jellyfin resume seeks.
+- Fixed transient mpv `playback-abort` snapshots so pending loads are not failed before mpv reports `end-file`.
 - Fixed Jellyfin Web playback state getting out of sync when mpv stops or reaches the end of an item.
+- Fixed packaged CEF startup by wiring subprocess, resource, locale, and Windows GPU runtime settings.
 - Fixed watched-state and next-item flow by adding explicit mpv stop handling and a watched-next binding path.
 - Fixed watched-next handling to close the current mpv process and let Jellyfin Web's normal autoplay flow decide whether to start the next episode.
 - Fixed unwanted Windows console windows from helper script launches by hiding spawned script consoles.
