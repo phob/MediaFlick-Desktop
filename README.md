@@ -152,3 +152,19 @@ The installer is created in:
 ```text
 dist/installer/MediaFlickDesktop-Setup-<version>.exe
 ```
+
+### Build Linux and macOS release packages
+
+Linux AppImage packaging requires `appimagetool` or network access so the script can download it:
+
+```sh
+just linux-appimage
+```
+
+macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
+
+```sh
+just macos-dmg
+```
+
+The packages are written to `dist/`.

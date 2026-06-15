@@ -76,6 +76,7 @@ pub fn run(config: AppConfig) -> i32 {
         log_severity: LogSeverity::INFO,
         resources_dir_path: cef_string_from_path(paths.resources_dir_path.as_ref()),
         locales_dir_path: cef_string_from_path(paths.locales_dir_path.as_ref()),
+        framework_dir_path: cef_string_from_path(paths.framework_dir_path.as_ref()),
         remote_debugging_port: config.remote_debugging_port,
         disable_signal_handlers: 1,
         use_views_default_popup: 1,
@@ -104,23 +105,48 @@ struct RuntimePaths {
     browser_subprocess_path: Option<PathBuf>,
     resources_dir_path: Option<PathBuf>,
     locales_dir_path: Option<PathBuf>,
+    framework_dir_path: Option<PathBuf>,
 }
 
 impl RuntimePaths {
     fn new() -> Self {
         let base = platform_data_dir().join("mediaflick-desktop");
         let browser_subprocess_path = current_exe_path();
-        let resources_dir_path = browser_subprocess_path
+        let app_dir = browser_subprocess_path
             .as_ref()
             .and_then(|path| path.parent())
             .map(PathBuf::from);
+
+        #[cfg(target_os = "macos")]
+        let bundle_contents_dir = browser_subprocess_path
+            .as_deref()
+            .and_then(macos_bundle_contents_dir);
+
+        #[cfg(target_os = "macos")]
+        let resources_dir_path = bundle_contents_dir
+            .as_ref()
+            .map(|path| path.join("Resources"))
+            .or_else(|| app_dir.clone());
+        #[cfg(not(target_os = "macos"))]
+        let resources_dir_path = app_dir.clone();
+
         let locales_dir_path = resources_dir_path.as_ref().map(|path| path.join("locales"));
+
+        #[cfg(target_os = "macos")]
+        let framework_dir_path = bundle_contents_dir.map(|path| {
+            path.join("Frameworks")
+                .join("Chromium Embedded Framework.framework")
+        });
+        #[cfg(not(target_os = "macos"))]
+        let framework_dir_path = None;
+
         Self {
             cache_dir: base.join("cef-cache"),
             log_file: base.join("cef.log"),
             browser_subprocess_path,
             resources_dir_path,
             locales_dir_path,
+            framework_dir_path,
         }
     }
 
@@ -131,6 +157,18 @@ impl RuntimePaths {
         }
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_contents_dir(exe_path: &std::path::Path) -> Option<PathBuf> {
+    let macos_dir = exe_path.parent()?;
+    if macos_dir.file_name().and_then(|name| name.to_str()) != Some("MacOS") {
+        return None;
+    }
+
+    let contents_dir = macos_dir.parent()?;
+    (contents_dir.file_name().and_then(|name| name.to_str()) == Some("Contents"))
+        .then(|| contents_dir.to_path_buf())
 }
 
 fn current_exe_path() -> Option<PathBuf> {

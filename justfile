@@ -131,3 +131,15 @@ windows-dist: release
 [windows]
 windows-installer: windows-dist
     & './scripts/build-windows-installer.ps1'
+
+# Build a Linux AppImage from the staged release binary and CEF runtime files
+[group('package')]
+[linux]
+linux-appimage: release
+    ./scripts/build-linux-appimage.sh
+
+# Build a macOS DMG containing a signed .app bundle and CEF framework
+[group('package')]
+[macos]
+macos-dmg: release
+    ./scripts/build-macos-dmg.sh

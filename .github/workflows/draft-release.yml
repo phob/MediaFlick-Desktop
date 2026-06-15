@@ -11,31 +11,86 @@ on:
 permissions:
   contents: write
 
-defaults:
-  run:
-    shell: pwsh
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: build/cargo-target
-  CEF_PATH: ${{ github.workspace }}\.cache\cef
 
 jobs:
-  draft-release:
-    name: Create draft release
-    runs-on: windows-latest
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Prepare release files
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION#v}"
+          tag="v${version}"
+
+          git fetch --force --tags
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists." >&2
+            exit 1
+          fi
+
+          python3 scripts/prepare-release.py \
+            --version "$version" \
+            --notes-out "$RUNNER_TEMP/release-notes.md"
+
+          git diff --binary -- Cargo.toml Cargo.lock CHANGELOG.md > "$RUNNER_TEMP/release.patch"
+          test -s "$RUNNER_TEMP/release.patch"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload prepared release patch and notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-prep
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/release.patch
+            ${{ runner.temp }}/release-notes.md
+
+  build-windows:
+    name: Build Windows installer and zip
+    runs-on: windows-latest
+    needs: prepare
+
+    env:
+      CEF_PATH: ${{ github.workspace }}\.cache\cef
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download prepared release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-prep
+          path: release-prep
+
+      - name: Apply prepared release patch
+        shell: pwsh
+        run: git apply release-prep\release.patch
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo and CEF downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -46,29 +101,15 @@ jobs:
             windows-release-
 
       - name: Install packaging tools
-        run: |
-          choco install ninja innosetup mpvio --yes --no-progress
-
-      - name: Prepare release files
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          $Version = $env:INPUT_VERSION -replace '^v', ''
-          $Tag = "v$Version"
-
-          git fetch --force --tags
-          if (git tag --list $Tag) {
-            Write-Error "Tag $Tag already exists."
-          }
-
-          python scripts/prepare-release.py `
-            --version "$Version" `
-            --notes-out "$env:RUNNER_TEMP\release-notes.md"
-
-          "VERSION=$Version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TAG=$Tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+        run: choco install ninja innosetup mpvio --yes --no-progress
 
       - name: Build Windows installer and zip
+        shell: pwsh
+        env:
+          MEDIAFLICK_DESKTOP_GIT_VERSION: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           cargo build --release --bin mediaflick-desktop
 
@@ -110,29 +151,230 @@ jobs:
             Write-Error "Missing expected zip artifact: $ZipPath"
           }
 
-          "INSTALLER_PATH=$InstallerPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "ZIP_PATH=$ZipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-windows
+          if-no-files-found: error
+          path: |
+            dist/installer/MediaFlickDesktop-Setup-${{ needs.prepare.outputs.version }}.exe
+            dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-windows-x64.zip
+
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-22.04
+    needs: prepare
+
+    env:
+      CEF_PATH: ${{ github.workspace }}/.cache/cef
+      APPIMAGE_ARCH: x86_64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download prepared release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-prep
+          path: release-prep
+
+      - name: Apply prepared release patch
+        run: git apply release-prep/release.patch
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo and CEF downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cache/cef
+          key: linux-x86_64-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            linux-x86_64-release-
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            curl \
+            file \
+            libasound2-dev \
+            libgtk-3-dev \
+            libnss3-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb1-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxdamage-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxtst-dev \
+            ninja-build
+
+      - name: Build Linux AppImage
+        env:
+          MEDIAFLICK_DESKTOP_GIT_VERSION: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          cargo build --release --bin mediaflick-desktop
+          scripts/build-linux-appimage.sh
+
+      - name: Upload Linux release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-linux-x86_64
+          if-no-files-found: error
+          path: dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-linux-x86_64.AppImage
+
+  build-macos:
+    name: Build macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: prepare
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+
+    env:
+      CEF_PATH: ${{ github.workspace }}/.cache/cef
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      MACOS_ARTIFACT_ARCH: ${{ matrix.arch }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download prepared release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-prep
+          path: release-prep
+
+      - name: Apply prepared release patch
+        run: git apply release-prep/release.patch
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo and CEF downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .cache/cef
+          key: macos-${{ matrix.arch }}-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-release-
+
+      - name: Install macOS build dependencies
+        run: brew install cmake ninja
+
+      - name: Build macOS DMG
+        env:
+          MEDIAFLICK_DESKTOP_GIT_VERSION: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          cargo build --release --bin mediaflick-desktop
+          scripts/build-macos-dmg.sh
+
+      - name: Upload macOS release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          path: dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-macos-${{ matrix.arch }}.dmg
+
+  publish:
+    name: Commit, tag, and create draft release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-windows
+      - build-linux
+      - build-macos
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download prepared release patch and notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-prep
+          path: release-prep
+
+      - name: Apply prepared release patch
+        run: git apply release-prep/release.patch
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          path: release-assets
+          merge-multiple: true
 
       - name: Commit release and push tag
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          set -euo pipefail
+          git fetch --force --tags
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists." >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add Cargo.toml Cargo.lock CHANGELOG.md
-          git commit -m "Release $env:TAG"
-          git tag -a "$env:TAG" -m "Release $env:TAG"
+          git commit -m "Release ${TAG}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
 
-          git push origin "HEAD:$env:GITHUB_REF_NAME"
-          git push origin "$env:TAG"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "${TAG}"
 
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          gh release create "$env:TAG" `
-            --draft `
-            --verify-tag `
-            --title "MediaFlick Desktop $env:TAG" `
-            --notes-file "$env:RUNNER_TEMP\release-notes.md" `
-            "$env:INSTALLER_PATH" `
-            "$env:ZIP_PATH"
+          set -euo pipefail
+          mapfile -t assets < <(find release-assets -type f | sort)
+          if [[ "${#assets[@]}" -eq 0 ]]; then
+            echo "No release assets were downloaded." >&2
+            exit 1
+          fi
+
+          printf 'Release assets:\n'
+          printf '  %s\n' "${assets[@]}"
+
+          gh release create "${TAG}" \
+            --draft \
+            --verify-tag \
+            --title "MediaFlick Desktop ${TAG}" \
+            --notes-file release-prep/release-notes.md \
+            "${assets[@]}"
