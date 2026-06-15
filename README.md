@@ -14,6 +14,10 @@ MediaFlick Desktop opens Jellyfin Web in a desktop CEF window, then hands direct
 
 While mpv is playing, MediaFlick Desktop still reports playstate back to your Jellyfin server so playback starts, progress, watched state, and resume positions continue to work.
 
+## Why
+
+I’ve always wanted an app that offered the convenience and look of the media player desktop apps provided by developers, but with the ability to enjoy SVP4 and SDR-to-HDR content. Almost all desktop media player apps are partially based on libmpv, without being able to fully utilize all of mpv’s capabilities. While there are the well-known mpv shim applications—which I’ve used for a very long time. Now the new Jellyfin desktop app, currently still in development, came with the promise that it would fully read the mpv configuration and thus be highly customizable. This is true in many respects, but especially when it comes to technologies like integrating SVP 4 and custom HDR profiles, I believe the limitation of having MPV within the app is the main factor behind many of these restrictions. And so I had the idea to simply write a desktop app for myself that exclusively connects to and controls an external MPV player.
+
 ## Install
 
 ### Windows installer
@@ -54,20 +58,6 @@ The app saves these settings here:
 %APPDATA%\mediaflick-desktop\config.json
 ```
 
-After both values are saved, MediaFlick Desktop skips the welcome screen and opens Jellyfin directly on future launches.
-
-## How to use
-
-1. Open MediaFlick Desktop.
-2. Log in to your Jellyfin server like you would in Jellyfin Web.
-3. Choose a movie or episode and press play.
-4. MediaFlick Desktop detects the direct-play stream and opens it in your external mpv player.
-5. Control playback in mpv as usual.
-
-MediaFlick Desktop reports playback progress back to Jellyfin, so watched state and resume positions should continue to work.
-
-When you open the Jellyfin user menu inside the app, Jellyfin also shows an **Exit application** action. Use it to close the desktop app cleanly, including the external mpv controller.
-
 ## mpv configuration
 
 MediaFlick Desktop uses an external mpv player, so your normal mpv setup can be used. Configure mpv the same way you normally would for your system, such as with `mpv.conf`, scripts, shaders, profiles, and input bindings.
@@ -84,16 +74,6 @@ By default, pressing `w` marks the current item watched, closes the current mpv 
 {
   "bindings": {
     "mark_watched_next": "W"
-  }
-}
-```
-
-Set the binding to an empty string to disable it:
-
-```json
-{
-  "bindings": {
-    "mark_watched_next": ""
   }
 }
 ```

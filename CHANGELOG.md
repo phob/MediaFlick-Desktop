@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Updated README rationale and streamlined usage documentation.
+
 ### Fixed
 
 ### Removed
