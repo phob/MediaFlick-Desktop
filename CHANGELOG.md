@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added Linux AppImage and macOS DMG packaging scripts and release artifacts to the draft release workflow.
+
 ### Changed
 
 - Updated README rationale and streamlined usage documentation.
