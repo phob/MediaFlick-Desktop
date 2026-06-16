@@ -12,6 +12,8 @@ use crate::windows::install_hidden_command_processor_shim;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app::settings::MpvFullscreenBehavior;
+
 #[derive(Debug, Clone)]
 pub struct ExternalMpv {
     executable: PathBuf,
@@ -182,10 +184,19 @@ impl ExternalMpv {
         command
     }
 
+    #[allow(dead_code)]
     pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
+        self.command_for_idle_with_ipc_and_fullscreen(ipc_path, MpvFullscreenBehavior::Fullscreen)
+    }
+
+    pub fn command_for_idle_with_ipc_and_fullscreen(
+        &self,
+        ipc_path: &str,
+        fullscreen: MpvFullscreenBehavior,
+    ) -> Command {
         let mut command = self.hidden_command();
         command.arg("--force-window=yes");
-        command.arg("--fullscreen=yes");
+        command.arg(format!("--fullscreen={}", fullscreen.fullscreen_arg()));
         command.arg("--no-terminal");
         // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
         // Windows `os.execute(...)` console flashes from those scripts are hidden

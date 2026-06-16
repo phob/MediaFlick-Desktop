@@ -31,8 +31,8 @@ pub struct Cli {
     pub hidden: bool,
 
     /// Rust app log level/filter. Examples: debug, trace, mpv.ipc=trace,debug.
-    #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_LEVEL", default_value = "debug")]
-    pub log_level: String,
+    #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_LEVEL")]
+    pub log_level: Option<String>,
 
     /// Rust app log file. Defaults to the app config directory.
     #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_FILE")]
