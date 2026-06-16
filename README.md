@@ -34,6 +34,8 @@ The installer installs the app for the current user to:
 
 If the release includes a bundled mpv, the app detects it automatically on first launch. In that case, you only need to enter your Jellyfin server URL.
 
+MediaFlick Desktop checks GitHub Releases for newer Windows installers. When an update is available, an in-app toast lets you download it, shows progress, then runs the installer quietly and restarts the app into the new version.
+
 ### Portable / manual install
 
 If you are using a release zip or a manually staged build:

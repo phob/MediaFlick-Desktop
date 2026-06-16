@@ -9,9 +9,14 @@ use cef::*;
 use serde_json::json;
 
 use crate::app::about;
+use crate::app::client_settings;
 use crate::app::logger;
-use crate::app::settings::{AppSettings, WebUiWindowSettings, normalize_server_url};
+use crate::app::settings::{
+    AppSettings, CloseBehavior, MpvFullscreenBehavior, WebUiWindowSettings, normalize_server_url,
+};
+use crate::app::updater::{self, UpdateRelease};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
+use crate::mpv::input::MpvInputBindings;
 use crate::mpv::{HttpHeader, MpvControlCommand, MpvController, MpvLaunch, MpvPlaybackEvent};
 use crate::windows::set_window_icon;
 
@@ -246,6 +251,10 @@ wrap_app! {
                 "no-pings",
             ] {
                 command_line.append_switch(Some(&CefString::from(switch)));
+            }
+
+            if !self.config.settings.show_scrollbars {
+                command_line.append_switch(Some(&CefString::from("hide-scrollbars")));
             }
 
             for (name, value) in [
@@ -508,7 +517,17 @@ wrap_window_delegate! {
             1
         }
 
-        fn can_close(&self, _window: Option<&mut Window>) -> i32 {
+        fn can_close(&self, window: Option<&mut Window>) -> i32 {
+            let mut window = window;
+            if should_minimize_instead_of_close(self.state.as_ref()) {
+                update_webui_window_from_window(self.state.as_ref(), window.as_deref_mut());
+                save_webui_window_settings(self.state.as_ref());
+                if let Some(window) = window {
+                    window.minimize();
+                }
+                return 0;
+            }
+
             let browser_view = self.browser_view.borrow();
             let Some(browser_view) = browser_view.as_ref() else {
                 return 1;
@@ -580,12 +599,24 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
     }
 }
 
+fn should_minimize_instead_of_close(state: Option<&BrowserState>) -> bool {
+    state
+        .and_then(|state| state.lock().ok())
+        .is_some_and(|state| {
+            !state.force_close_requested
+                && state.settings.close_behavior == CloseBehavior::MinimizeWindow
+        })
+}
+
 struct BrowserStateInner {
     title: String,
     settings: AppSettings,
     browsers: Vec<Browser>,
     playback_contexts: Vec<PendingPlaybackContext>,
     mpv_controller: MpvController,
+    update_available: Option<UpdateRelease>,
+    update_download_started: bool,
+    force_close_requested: bool,
 }
 
 struct PendingPlaybackContext {
@@ -603,8 +634,12 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         browsers: Vec::new(),
         playback_contexts: Vec::new(),
         mpv_controller: MpvController::new(Some(playback_event_tx)),
+        update_available: None,
+        update_download_started: false,
+        force_close_requested: false,
     }));
     start_playback_event_bridge(state.clone(), playback_event_rx);
+    start_update_check_bridge(state.clone());
     state
 }
 
@@ -619,6 +654,29 @@ fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEven
     });
 }
 
+fn start_update_check_bridge(state: BrowserState) {
+    thread::spawn(move || match updater::check_for_update() {
+        Ok(Some(release)) => post_update_event(state, UpdateEvent::Available(release)),
+        Ok(None) => tracing::debug!(target: "updater", "no supported update available"),
+        Err(error) => tracing::warn!(target: "updater", "failed to check for updates: {error}"),
+    });
+}
+
+fn post_update_event(state: BrowserState, event: UpdateEvent) {
+    let mut task = UpdateEventTask::new(state, event);
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "updater", "failed to post update event to CEF UI thread");
+    }
+}
+
+#[derive(Debug, Clone)]
+enum UpdateEvent {
+    Available(UpdateRelease),
+    DownloadProgress { downloaded: u64, total: Option<u64> },
+    DownloadReady(PathBuf),
+    Error(String),
+}
+
 wrap_task! {
     struct PlaybackEventTask {
         state: BrowserState,
@@ -628,6 +686,19 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             dispatch_playback_event(&self.state, self.event);
+        }
+    }
+}
+
+wrap_task! {
+    struct UpdateEventTask {
+        state: BrowserState,
+        event: UpdateEvent,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            handle_update_event(&self.state, self.event.clone());
         }
     }
 }
@@ -687,6 +758,128 @@ fn playback_event_script(event: MpvPlaybackEvent) -> String {
     }
 }
 
+fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
+    match event {
+        UpdateEvent::Available(release) => {
+            tracing::info!(
+                target: "updater",
+                version = %release.version,
+                asset = %release.asset.name,
+                "update available"
+            );
+            if let Ok(mut state) = state.lock() {
+                state.update_available = Some(release.clone());
+                state.update_download_started = false;
+            }
+            dispatch_update_available(state, &release);
+        }
+        UpdateEvent::DownloadProgress { downloaded, total } => {
+            dispatch_update_progress(
+                state,
+                "downloading",
+                json!({ "downloaded": downloaded, "total": total }),
+            );
+        }
+        UpdateEvent::DownloadReady(path) => {
+            dispatch_update_progress(state, "installing", json!({ "downloaded": 1, "total": 1 }));
+            match updater::start_installer(&path) {
+                Ok(()) => initiate_app_exit(None, state),
+                Err(error) => {
+                    if let Ok(mut state) = state.lock() {
+                        state.update_download_started = false;
+                    }
+                    dispatch_update_progress(
+                        state,
+                        "error",
+                        json!({ "message": error.to_string() }),
+                    );
+                }
+            }
+        }
+        UpdateEvent::Error(message) => {
+            tracing::warn!(target: "updater", "update failed: {message}");
+            if let Ok(mut state) = state.lock() {
+                state.update_download_started = false;
+            }
+            dispatch_update_progress(state, "error", json!({ "message": message }));
+        }
+    }
+}
+
+fn dispatch_update_available(state: &BrowserState, release: &UpdateRelease) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let script = updater::update_available_script(release);
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            execute_update_script(&frame, &script);
+        }
+    }
+}
+
+fn dispatch_update_progress(state: &BrowserState, status: &str, payload: serde_json::Value) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let script = updater::update_progress_script(status, payload);
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            execute_update_script(&frame, &script);
+        }
+    }
+}
+
+fn show_pending_update_to_frame(frame: &Frame, state: &BrowserState) {
+    let pending_update = state.lock().ok().and_then(|state| {
+        (!state.update_download_started)
+            .then(|| state.update_available.clone())
+            .flatten()
+    });
+    if let Some(release) = pending_update {
+        let script = updater::update_available_script(&release);
+        execute_update_script(frame, &script);
+    }
+}
+
+fn apply_scrollbar_settings_to_frame(frame: &Frame, state: &BrowserState) {
+    let show_scrollbars = state
+        .lock()
+        .map(|state| state.settings.show_scrollbars)
+        .unwrap_or(false);
+    let script = format!(
+        r#"(() => {{
+  const id = '__mediaFlickDesktopScrollbarStyle';
+  const existing = document.getElementById(id);
+  if ({show_scrollbars}) {{ existing && existing.remove(); return; }}
+  if (existing) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = `
+    html, body, * {{ scrollbar-width: none !important; -ms-overflow-style: none !important; }}
+    *::-webkit-scrollbar {{ width: 0 !important; height: 0 !important; display: none !important; }}
+  `;
+  (document.head || document.documentElement).appendChild(style);
+}})();"#,
+        show_scrollbars = show_scrollbars
+    );
+    frame.execute_java_script(
+        Some(&CefString::from(script.as_str())),
+        Some(&CefString::from("mediaflick-desktop://scrollbars")),
+        1,
+    );
+}
+
+fn execute_update_script(frame: &Frame, script: &str) {
+    frame.execute_java_script(
+        Some(&CefString::from(script)),
+        Some(&CefString::from("mediaflick-desktop://update-toast")),
+        1,
+    );
+}
+
 wrap_client! {
     struct JellyfinClient {
         state: BrowserState,
@@ -694,7 +887,7 @@ wrap_client! {
 
     impl Client {
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
-            Some(JellyfinContextMenuHandler::new())
+            Some(JellyfinContextMenuHandler::new(self.state.clone()))
         }
 
         fn display_handler(&self) -> Option<DisplayHandler> {
@@ -720,7 +913,8 @@ wrap_client! {
 }
 
 const MENU_ID_FULLSCREEN: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
-const MENU_ID_ABOUT: i32 = MENU_ID_FULLSCREEN + 1;
+const MENU_ID_CLIENT_SETTINGS: i32 = MENU_ID_FULLSCREEN + 1;
+const MENU_ID_ABOUT: i32 = MENU_ID_CLIENT_SETTINGS + 1;
 
 fn remove_trailing_separator(model: &MenuModel) {
     let count = model.count();
@@ -730,7 +924,9 @@ fn remove_trailing_separator(model: &MenuModel) {
 }
 
 wrap_context_menu_handler! {
-    struct JellyfinContextMenuHandler;
+    struct JellyfinContextMenuHandler {
+        state: BrowserState,
+    }
 
     impl ContextMenuHandler {
         fn on_before_context_menu(
@@ -750,6 +946,7 @@ wrap_context_menu_handler! {
                 model.add_separator();
             }
             model.add_item(MENU_ID_FULLSCREEN, Some(&CefString::from("Fullscreen")));
+            model.add_item(MENU_ID_CLIENT_SETTINGS, Some(&CefString::from("Client Settings")));
             model.add_item(MENU_ID_ABOUT, Some(&CefString::from("About")));
         }
 
@@ -763,6 +960,7 @@ wrap_context_menu_handler! {
         ) -> i32 {
             match command_id {
                 MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser),
+                MENU_ID_CLIENT_SETTINGS => show_client_settings_dialog(browser, frame, &self.state),
                 MENU_ID_ABOUT => show_about_dialog(browser, frame),
                 _ => return 0,
             }
@@ -861,8 +1059,14 @@ wrap_life_span_handler! {
             let Some(browser) = browser.cloned() else {
                 return;
             };
-            if let Ok(mut state) = self.state.lock() {
+            let pending_update = if let Ok(mut state) = self.state.lock() {
                 state.browsers.push(browser);
+                state.update_available.clone()
+            } else {
+                None
+            };
+            if let Some(release) = pending_update {
+                dispatch_update_available(&self.state, &release);
             }
         }
 
@@ -918,15 +1122,19 @@ wrap_load_handler! {
                 return;
             }
             let frame_url = CefString::from(&frame.url()).to_string();
-            if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
+            if frame_url.starts_with("mediaflick-desktop://") {
                 return;
             }
-            let script = jellyfin_bridge::bridge_script();
-            frame.execute_java_script(
-                Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("mediaflick-desktop://bridge.js")),
-                1,
-            );
+            if !frame_url.starts_with("data:") {
+                let script = jellyfin_bridge::bridge_script();
+                frame.execute_java_script(
+                    Some(&CefString::from(script.as_str())),
+                    Some(&CefString::from("mediaflick-desktop://bridge.js")),
+                    1,
+                );
+            }
+            apply_scrollbar_settings_to_frame(frame, &self.state);
+            show_pending_update_to_frame(frame, &self.state);
         }
 
         fn on_load_error(
@@ -1011,13 +1219,28 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if is_client_settings_request(&request_url) {
+                show_client_settings_dialog(browser, frame, &self.state);
+                return 1;
+            }
+
             if request_url.starts_with("mediaflick-desktop://app-exit") {
                 initiate_app_exit(browser, &self.state);
                 return 1;
             }
 
+            if let Some(query) = bridge_action_query(&request_url, "update-download") {
+                start_update_download(query, &self.state);
+                return 1;
+            }
+
             if let Some(query) = bridge_action_query(&request_url, "save") {
                 save_settings_and_open(query, frame, &self.state);
+                return 1;
+            }
+
+            if let Some(query) = bridge_action_query(&request_url, "client-settings-save") {
+                save_client_settings(query, browser, frame, &self.state);
                 return 1;
             }
 
@@ -1120,9 +1343,27 @@ fn handle_bridge_resource_request(
         return true;
     }
 
+    if let Some(query) = bridge_action_query(request_url, "update-download") {
+        tracing::trace!(target: "updater", "handling update-download bridge resource request");
+        start_update_download(query, state);
+        return true;
+    }
+
     if request_url.starts_with("mediaflick-desktop://app-about") {
         tracing::trace!(target: "bridge", "handling app-about bridge resource request");
         show_about_dialog(browser, frame);
+        return true;
+    }
+
+    if is_client_settings_request(request_url) {
+        tracing::trace!(target: "bridge", "handling client-settings bridge resource request");
+        show_client_settings_dialog(browser, frame, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "client-settings-save") {
+        tracing::trace!(target: "bridge", "handling client-settings-save bridge resource request");
+        save_client_settings(query, browser, frame, state);
         return true;
     }
 
@@ -1339,12 +1580,38 @@ fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     }
 }
 
+fn show_client_settings_dialog(
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    state: &BrowserState,
+) {
+    let settings = state
+        .lock()
+        .map(|state| state.settings.clone())
+        .unwrap_or_default();
+    let bindings = MpvInputBindings::load();
+    let script = client_settings::dialog_script(&settings, &bindings);
+    let target_frame = browser
+        .and_then(|browser| browser.main_frame())
+        .or_else(|| frame.map(|frame| frame.clone()));
+    if let Some(frame) = target_frame {
+        frame.execute_java_script(
+            Some(&CefString::from(script.as_str())),
+            Some(&CefString::from("mediaflick-desktop://client-settings")),
+            1,
+        );
+    }
+}
+
 fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
     tracing::info!(target: "app", "exit requested from Jellyfin Web user menu");
 
     let mut browsers = state
         .lock()
-        .map(|state| state.browsers.clone())
+        .map(|mut state| {
+            state.force_close_requested = true;
+            state.browsers.clone()
+        })
         .unwrap_or_default();
     if browsers.is_empty()
         && let Some(browser) = browser.cloned()
@@ -1366,6 +1633,65 @@ fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
         }
         quit_message_loop();
     }
+}
+
+fn start_update_download(_query: &str, state: &BrowserState) {
+    let release = match state.lock() {
+        Ok(mut state) => {
+            if state.update_download_started {
+                tracing::debug!(target: "updater", "ignored duplicate update download request");
+                return;
+            }
+            let Some(release) = state.update_available.clone() else {
+                tracing::warn!(target: "updater", "ignored update download request without an available update");
+                return;
+            };
+            state.update_download_started = true;
+            release
+        }
+        Err(error) => {
+            tracing::warn!(target: "updater", "failed to lock browser state for update download: {error}");
+            return;
+        }
+    };
+
+    tracing::info!(
+        target: "updater",
+        version = %release.version,
+        asset = %release.asset.name,
+        "starting update download"
+    );
+    dispatch_update_progress(
+        state,
+        "downloading",
+        json!({
+            "downloaded": 0,
+            "total": release.asset.size,
+        }),
+    );
+
+    let state_for_thread = state.clone();
+    thread::spawn(move || {
+        let progress_state = state_for_thread.clone();
+        let result = updater::download_update(&release, move |downloaded, total| {
+            post_update_event(
+                progress_state.clone(),
+                UpdateEvent::DownloadProgress { downloaded, total },
+            );
+        });
+        match result {
+            Ok(path) => post_update_event(state_for_thread, UpdateEvent::DownloadReady(path)),
+            Err(error) => {
+                post_update_event(state_for_thread, UpdateEvent::Error(error.to_string()))
+            }
+        }
+    });
+}
+
+fn is_client_settings_request(request_url: &str) -> bool {
+    request_url == "mediaflick-desktop://client-settings"
+        || request_url.starts_with("mediaflick-desktop://client-settings?")
+        || request_url.starts_with("mediaflick-desktop://client-settings/")
 }
 
 fn bridge_action_query<'a>(request_url: &'a str, action: &str) -> Option<&'a str> {
@@ -1628,13 +1954,14 @@ fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
         );
         return false;
     };
+    let fullscreen = state.settings.default_fullscreen;
     tracing::info!(
         target: "bridge",
         mpv_path = %mpv_path,
         launch = %logger::launch_summary(&launch),
         "handing playback to mpv controller"
     );
-    state.mpv_controller.load(mpv_path, launch);
+    state.mpv_controller.load(mpv_path, fullscreen, launch);
     true
 }
 
@@ -1731,15 +2058,13 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
         return;
     };
 
-    let webui_window = state
+    let mut settings = state
         .lock()
-        .map(|state| state.settings.webui_window)
+        .map(|state| state.settings.clone())
         .unwrap_or_default();
-    let settings = AppSettings {
-        jellyfin_url: Some(jellyfin_url.clone()),
-        mpv_path: Some(mpv_path),
-        webui_window,
-    };
+    settings.jellyfin_url = Some(jellyfin_url.clone());
+    settings.mpv_path = Some(mpv_path);
+    settings.sanitize();
 
     if let Err(error) = settings.save() {
         notify_save_error(frame, &format!("Could not save config: {error}"));
@@ -1751,6 +2076,93 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
     }
 
     frame.load_url(Some(&CefString::from(jellyfin_url.as_str())));
+}
+
+fn save_client_settings(
+    query: &str,
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    state: &BrowserState,
+) {
+    let target_frame = browser
+        .and_then(|browser| browser.main_frame())
+        .or_else(|| frame.map(|frame| frame.clone()));
+    let Some(frame) = target_frame else {
+        return;
+    };
+
+    let Some(mpv_path) = query_param(query, "mpv")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        notify_client_settings_error(&frame, "Choose an mpv executable.");
+        return;
+    };
+
+    let mut settings = state
+        .lock()
+        .map(|state| state.settings.clone())
+        .unwrap_or_default();
+    settings.mpv_path = Some(mpv_path);
+    if let Some(log_level) = query_param(query, "logLevel")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        settings.log_level = log_level;
+    }
+    settings.default_fullscreen = query_param(query, "defaultFullscreen")
+        .as_deref()
+        .and_then(parse_fullscreen_behavior)
+        .unwrap_or(settings.default_fullscreen);
+    settings.close_behavior = query_param(query, "closeBehavior")
+        .as_deref()
+        .and_then(parse_close_behavior)
+        .unwrap_or(settings.close_behavior);
+    settings.show_scrollbars = query_param(query, "scrollbars")
+        .as_deref()
+        .map(|value| value == "visible")
+        .unwrap_or(settings.show_scrollbars);
+    settings.sanitize();
+
+    let bindings = MpvInputBindings {
+        mark_watched_next: query_param(query, "markWatchedNext")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
+
+    if let Err(error) = settings.save() {
+        notify_client_settings_error(&frame, &format!("Could not save config: {error}"));
+        return;
+    }
+    if let Err(error) = bindings.save() {
+        notify_client_settings_error(&frame, &format!("Could not save input bindings: {error}"));
+        return;
+    }
+
+    if let Ok(mut state) = state.lock() {
+        state.settings = settings;
+    }
+    apply_scrollbar_settings_to_frame(&frame, state);
+    execute_client_settings_js(
+        &frame,
+        "window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved();",
+    );
+}
+
+fn parse_fullscreen_behavior(value: &str) -> Option<MpvFullscreenBehavior> {
+    match value {
+        "fullscreen" => Some(MpvFullscreenBehavior::Fullscreen),
+        "windowed" => Some(MpvFullscreenBehavior::Windowed),
+        _ => None,
+    }
+}
+
+fn parse_close_behavior(value: &str) -> Option<CloseBehavior> {
+    match value {
+        "exit_app" => Some(CloseBehavior::ExitApp),
+        "minimize_window" => Some(CloseBehavior::MinimizeWindow),
+        _ => None,
+    }
 }
 
 fn notify_save_error(frame: &Frame, message: &str) {
@@ -1767,6 +2179,24 @@ fn execute_welcome_js(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
         Some(&CefString::from("mediaflick-desktop://welcome")),
+        1,
+    );
+}
+
+fn notify_client_settings_error(frame: &Frame, message: &str) {
+    execute_client_settings_js(
+        frame,
+        &format!(
+            "window.__mediaFlickDesktopClientSettingsSaveFailed&&window.__mediaFlickDesktopClientSettingsSaveFailed({});",
+            js_string_literal(message)
+        ),
+    );
+}
+
+fn execute_client_settings_js(frame: &Frame, script: &str) {
+    frame.execute_java_script(
+        Some(&CefString::from(script)),
+        Some(&CefString::from("mediaflick-desktop://client-settings")),
         1,
     );
 }

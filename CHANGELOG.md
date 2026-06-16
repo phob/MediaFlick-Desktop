@@ -6,13 +6,24 @@
 
 ### Added
 
+- Added impeccable product and design context based on Jellyfin demo UI references.
+- Added a Client Settings dialog for mpv path browsing, log level, default fullscreen behavior, close behavior, scrollbar visibility, and the mark-watched-next input binding.
+- Added Windows auto-update checks with an in-app update toast, download progress, quiet installer launch, and automatic restart into the updated version.
 - Added Linux AppImage and macOS DMG packaging scripts and release artifacts to the draft release workflow.
 
 ### Changed
 
+- Reduced About and Client Settings dialog copy to keep app-owned surfaces terse.
+- Redesigned the About dialog with MediaFlick brand treatment, clearer product copy, metadata grouping, and improved keyboard focus behavior.
+- Redesigned the Client Settings dialog with grouped controls, Jellyfin-compatible dark styling, stronger focus states, and clearer save/error feedback.
+- Changed draft release automation to build all required platform artifacts before committing and tagging a release.
+- Updated draft release workflow actions to `actions/cache@v5` and `actions/checkout@v6` ([#2](https://github.com/phob/mediaflick-desktop/pull/2), [#3](https://github.com/phob/mediaflick-desktop/pull/3) by [@renovate](https://github.com/apps/renovate)).
 - Updated README rationale and streamlined usage documentation.
 
 ### Fixed
+
+- Fixed Client Settings labels sitting above their controls after terse copy removal.
+- Fixed packaged macOS CEF startup by resolving bundle resource and framework paths from the app bundle layout.
 
 ### Removed
 

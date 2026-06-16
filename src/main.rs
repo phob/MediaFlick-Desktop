@@ -31,14 +31,15 @@ fn main() {
     }
 
     let cli = Cli::parse();
+    let mut settings = AppSettings::load();
     let log_file = cli
         .log_file
         .clone()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(logger::default_log_file_path);
-    let _log_guard = logger::init(log_file, &cli.log_level);
+    let effective_log_level = cli.log_level.as_deref().unwrap_or(&settings.log_level);
+    let _log_guard = logger::init(log_file, effective_log_level);
 
-    let mut settings = AppSettings::load();
     let mut should_save_settings = false;
 
     if let Some(url) = cli.normalized_url() {

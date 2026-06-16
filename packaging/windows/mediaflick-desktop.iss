@@ -45,3 +45,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\mediaflick-desktop.exe"; Wo
 
 [Run]
 Filename: "{app}\mediaflick-desktop.exe"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\mediaflick-desktop.exe"; Flags: nowait skipifnotsilent; Check: AutoStartAfterUpdate
+
+[Code]
+function AutoStartAfterUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:MEDIAFLICKAUTOSTART|0}') = '1';
+end;

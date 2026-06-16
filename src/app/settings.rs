@@ -6,15 +6,76 @@ const DEFAULT_WEBUI_WINDOW_WIDTH: i32 = 1280;
 const DEFAULT_WEBUI_WINDOW_HEIGHT: i32 = 800;
 const MIN_WEBUI_WINDOW_WIDTH: i32 = 640;
 const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
+const DEFAULT_LOG_LEVEL: &str = "debug";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpv_path: Option<String>,
+    #[serde(
+        default = "default_log_level_string",
+        skip_serializing_if = "is_default_log_level"
+    )]
+    pub log_level: String,
+    #[serde(default, skip_serializing_if = "MpvFullscreenBehavior::is_default")]
+    pub default_fullscreen: MpvFullscreenBehavior,
+    #[serde(default, skip_serializing_if = "CloseBehavior::is_default")]
+    pub close_behavior: CloseBehavior,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub show_scrollbars: bool,
     #[serde(default, skip_serializing_if = "WebUiWindowSettings::is_default")]
     pub webui_window: WebUiWindowSettings,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MpvFullscreenBehavior {
+    #[default]
+    Fullscreen,
+    Windowed,
+}
+
+impl MpvFullscreenBehavior {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn fullscreen_arg(self) -> &'static str {
+        match self {
+            Self::Fullscreen => "yes",
+            Self::Windowed => "no",
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fullscreen => "fullscreen",
+            Self::Windowed => "windowed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloseBehavior {
+    #[default]
+    ExitApp,
+    MinimizeWindow,
+}
+
+impl CloseBehavior {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ExitApp => "exit_app",
+            Self::MinimizeWindow => "minimize_window",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +121,20 @@ impl WebUiWindowSettings {
 
     fn is_default(&self) -> bool {
         self == &Self::default()
+    }
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            jellyfin_url: None,
+            mpv_path: None,
+            log_level: DEFAULT_LOG_LEVEL.to_string(),
+            default_fullscreen: MpvFullscreenBehavior::default(),
+            close_behavior: CloseBehavior::default(),
+            show_scrollbars: false,
+            webui_window: WebUiWindowSettings::default(),
+        }
     }
 }
 
@@ -111,8 +186,24 @@ impl AppSettings {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        self.log_level = self.log_level.trim().to_string();
+        if self.log_level.is_empty() {
+            self.log_level = DEFAULT_LOG_LEVEL.to_string();
+        }
         self.webui_window.sanitize();
     }
+}
+
+fn default_log_level_string() -> String {
+    DEFAULT_LOG_LEVEL.to_string()
+}
+
+fn is_default_log_level(value: &str) -> bool {
+    value == DEFAULT_LOG_LEVEL
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_webui_window_width() -> i32 {

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::app::settings::config_dir;
 
@@ -48,6 +48,20 @@ impl MpvInputBindings {
         Some(format!(
             "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
         ))
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = input_file_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let value = json!({
+            "bindings": {
+                "mark_watched_next": self.mark_watched_next.as_deref().unwrap_or("")
+            }
+        });
+        let json = serde_json::to_vec_pretty(&value).map_err(std::io::Error::other)?;
+        std::fs::write(path, json)
     }
 }
 

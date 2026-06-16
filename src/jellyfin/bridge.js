@@ -1461,9 +1461,9 @@
     if (typeof nativeShell.downloadFile !== 'function') {
       nativeShell.downloadFile = (info) => info?.url && nativeShell.openUrl(info.url);
     }
-    if (typeof nativeShell.openClientSettings !== 'function') {
-      nativeShell.openClientSettings = () => {};
-    }
+    nativeShell.openClientSettings = () => {
+      window.location.href = 'mediaflick-desktop://client-settings';
+    };
 
     nativeShell.getAppInfo = () => Object.assign({}, APP_INFO);
     nativeShell.openAbout = () => {
@@ -1496,6 +1496,7 @@
         'remotevideo',
         'displaymode',
         'about',
+        'clientsettings',
         'exitmenu'
       ].includes(String(command || '').toLowerCase()),
       getDeviceProfile: () => cloneMpvDeviceProfile(),
@@ -1504,6 +1505,7 @@
       appVersion: () => APP_INFO.appVersion,
       deviceName: () => 'MediaFlick Desktop',
       openAbout: nativeShell.openAbout,
+      openClientSettings: nativeShell.openClientSettings,
       exit: exitApplication
     };
     for (const [key, value] of Object.entries(defaults)) {
@@ -1513,7 +1515,7 @@
     const previousSupports = appHost.supports.bind(appHost);
     appHost.supports = (command) => {
       const feature = String(command || '').toLowerCase();
-      return feature === 'about' || feature === 'exitmenu' || previousSupports(command);
+      return feature === 'about' || feature === 'clientsettings' || feature === 'exitmenu' || previousSupports(command);
     };
 
     nativeShell.AppHost = appHost;

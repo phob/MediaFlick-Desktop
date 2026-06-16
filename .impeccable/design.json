@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-17T00:00:00Z",
+  "title": "Design System: MediaFlick Desktop",
+  "extensions": {
+    "colorMeta": {
+      "media-black": {
+        "role": "neutral",
+        "displayName": "Media Black",
+        "canonical": "#101010",
+        "tonalRamp": ["#101010", "#1d1d1d", "#292929", "#303030"]
+      },
+      "jellyfin-cyan": {
+        "role": "primary",
+        "displayName": "Jellyfin Cyan",
+        "canonical": "#00a4dc",
+        "tonalRamp": ["#003545", "#006f94", "#00a4dc", "#5fc8ee"]
+      },
+      "mediaflick-violet": {
+        "role": "secondary",
+        "displayName": "MediaFlick Violet",
+        "canonical": "#aa5cc3",
+        "tonalRamp": ["#33203b", "#6d3b82", "#aa5cc3", "#d7a7e5"]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "App-owned dialog and setup titles."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Settings groups, update panels, and section headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Descriptions, help text, and readable copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Buttons, fields, tabs, and compact controls."
+      }
+    },
+    "elevation": {
+      "media-card-rest": "0 1px 4px rgba(0, 0, 0, 0.37)",
+      "dialog-ambient": "0 24px 72px rgba(0, 0, 0, 0.45)",
+      "focus-glow": "0 0 0 3px rgba(0, 164, 220, 0.22)"
+    },
+    "motion": {
+      "duration-fast": "150ms",
+      "duration-normal": "220ms",
+      "ease-out": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "reducedMotion": "Disable non-essential transforms and keep focus, validation, and progress state changes instantaneous."
+    },
+    "rules": [
+      "Cyan means action, progress, selection, or focus.",
+      "The violet-to-cyan gradient is reserved for the MediaFlick mark and rare brand moments.",
+      "Use tonal layering before shadow.",
+      "Do not copy Jellyfin logo assets or imply official Jellyfin ownership.",
+      "Keep app-owned chrome quieter than embedded Jellyfin Web content.",
+      "Keep dialog copy terse; About is identity and version information, not a brochure."
+    ],
+    "antiReferences": [
+      "Unrelated SaaS dashboard",
+      "Generic Electron settings app",
+      "Neon gamer skin",
+      "Decorative glassmorphism",
+      "Heavy purple gradients across surfaces",
+      "Marketing-style hero sections",
+      "Oversized metric cards",
+      "Brochure copy in product dialogs"
+    ]
+  }
+}

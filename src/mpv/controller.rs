@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
+use crate::app::settings::MpvFullscreenBehavior;
 use crate::jellyfin::bridge as jellyfin_bridge;
 use crate::jellyfin::playback_reporter::{
     MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
@@ -67,6 +68,7 @@ pub enum MpvControlCommand {
 enum ControllerMessage {
     Load {
         mpv_path: String,
+        fullscreen: MpvFullscreenBehavior,
         launch: Box<MpvLaunch>,
     },
     Control(MpvControlCommand),
@@ -175,9 +177,15 @@ impl MpvController {
         Self { tx, snapshot }
     }
 
-    pub fn load(&self, mpv_path: impl Into<String>, launch: MpvLaunch) {
+    pub fn load(
+        &self,
+        mpv_path: impl Into<String>,
+        fullscreen: MpvFullscreenBehavior,
+        launch: MpvLaunch,
+    ) {
         let _ = self.tx.send(ControllerMessage::Load {
             mpv_path: mpv_path.into(),
+            fullscreen,
             launch: Box::new(launch),
         });
     }
@@ -229,9 +237,13 @@ impl ControllerState {
         tracing::debug!(target: "playback", "mpv controller thread started");
         loop {
             match self.rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(ControllerMessage::Load { mpv_path, launch }) => {
+                Ok(ControllerMessage::Load {
+                    mpv_path,
+                    fullscreen,
+                    launch,
+                }) => {
                     tracing::debug!(target: "playback", "received playback load request");
-                    self.load(mpv_path, *launch);
+                    self.load(mpv_path, fullscreen, *launch);
                 }
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
@@ -363,7 +375,7 @@ impl ControllerState {
         }
     }
 
-    fn load(&mut self, mpv_path: String, launch: MpvLaunch) {
+    fn load(&mut self, mpv_path: String, fullscreen: MpvFullscreenBehavior, launch: MpvLaunch) {
         let key = launch.dedupe_key();
         tracing::debug!(
             target: "playback",
@@ -380,7 +392,7 @@ impl ControllerState {
             return;
         }
 
-        if !self.ensure_mpv(&mpv_path) {
+        if !self.ensure_mpv(&mpv_path, fullscreen) {
             tracing::warn!(
                 target: "playback",
                 mpv_path = %mpv_path,
@@ -388,6 +400,7 @@ impl ControllerState {
             );
             return;
         };
+        self.apply_default_fullscreen(fullscreen);
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
@@ -429,7 +442,17 @@ impl ControllerState {
         }
     }
 
-    fn ensure_mpv(&mut self, mpv_path: &str) -> bool {
+    fn apply_default_fullscreen(&self, fullscreen: MpvFullscreenBehavior) {
+        let command = json!({
+            "command": ["set_property", "fullscreen", fullscreen == MpvFullscreenBehavior::Fullscreen],
+            "request_id": next_request_id(),
+        });
+        if let Err(error) = self.send_mpv_command(command) {
+            tracing::warn!(target: "mpv.ipc", "failed to apply default fullscreen behavior: {error}");
+        }
+    }
+
+    fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: MpvFullscreenBehavior) -> bool {
         if self.child_is_alive() {
             tracing::trace!(
                 target: "mpv.ipc",
@@ -448,7 +471,10 @@ impl ControllerState {
             ipc_path = %ipc_path,
             "starting idle mpv process"
         );
-        let child = match mpv.command_for_idle_with_ipc(&ipc_path).spawn() {
+        let child = match mpv
+            .command_for_idle_with_ipc_and_fullscreen(&ipc_path, fullscreen)
+            .spawn()
+        {
             Ok(child) => child,
             Err(error) => {
                 tracing::warn!(
