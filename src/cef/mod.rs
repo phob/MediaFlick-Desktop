@@ -285,13 +285,11 @@ wrap_app! {
                 return;
             };
             let scheme = CefString::from("mediaflick-desktop");
-            registrar.add_custom_scheme(
-                Some(&scheme),
-                SchemeOptions::STANDARD.get_raw()
-                    | SchemeOptions::SECURE.get_raw()
-                    | SchemeOptions::CORS_ENABLED.get_raw()
-                    | SchemeOptions::FETCH_ENABLED.get_raw(),
-            );
+            let scheme_options = SchemeOptions::STANDARD.get_raw()
+                | SchemeOptions::SECURE.get_raw()
+                | SchemeOptions::CORS_ENABLED.get_raw()
+                | SchemeOptions::FETCH_ENABLED.get_raw();
+            registrar.add_custom_scheme(Some(&scheme), cef_i32(scheme_options));
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
@@ -916,6 +914,14 @@ const MENU_ID_FULLSCREEN: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
 const MENU_ID_CLIENT_SETTINGS: i32 = MENU_ID_FULLSCREEN + 1;
 const MENU_ID_ABOUT: i32 = MENU_ID_CLIENT_SETTINGS + 1;
 
+fn cef_i32<T>(value: T) -> i32
+where
+    T: TryInto<i32>,
+    T::Error: std::fmt::Debug,
+{
+    value.try_into().expect("CEF enum value fits in i32")
+}
+
 fn remove_trailing_separator(model: &MenuModel) {
     let count = model.count();
     if count > 0 && model.type_at(count - 1) == MenuItemType::SEPARATOR {
@@ -939,8 +945,8 @@ wrap_context_menu_handler! {
             let Some(model) = model else {
                 return;
             };
-            model.remove(MenuId::PRINT.get_raw());
-            model.remove(MenuId::VIEW_SOURCE.get_raw());
+            model.remove(cef_i32(MenuId::PRINT.get_raw()));
+            model.remove(cef_i32(MenuId::VIEW_SOURCE.get_raw()));
             remove_trailing_separator(model);
             if model.count() > 0 {
                 model.add_separator();
@@ -973,6 +979,7 @@ wrap_keyboard_handler! {
     struct JellyfinKeyboardHandler;
 
     impl KeyboardHandler {
+        #[cfg(target_os = "windows")]
         fn on_pre_key_event(
             &self,
             browser: Option<&mut Browser>,
@@ -980,19 +987,45 @@ wrap_keyboard_handler! {
             _os_event: Option<&mut sys::MSG>,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
-            let Some(event) = event else {
-                return 0;
-            };
-            if event.windows_key_code == VK_F11 && is_key_down_event(event) {
-                toggle_browser_fullscreen(browser);
-                return 1;
-            }
-            0
+            handle_pre_key_event(browser, event)
+        }
+
+        #[cfg(target_os = "linux")]
+        fn on_pre_key_event(
+            &self,
+            browser: Option<&mut Browser>,
+            event: Option<&KeyEvent>,
+            _os_event: Option<&mut sys::XEvent>,
+            _is_keyboard_shortcut: Option<&mut i32>,
+        ) -> i32 {
+            handle_pre_key_event(browser, event)
+        }
+
+        #[cfg(target_os = "macos")]
+        fn on_pre_key_event(
+            &self,
+            browser: Option<&mut Browser>,
+            event: Option<&KeyEvent>,
+            _os_event: *mut u8,
+            _is_keyboard_shortcut: Option<&mut i32>,
+        ) -> i32 {
+            handle_pre_key_event(browser, event)
         }
     }
 }
 
 const VK_F11: i32 = 0x7A;
+
+fn handle_pre_key_event(browser: Option<&mut Browser>, event: Option<&KeyEvent>) -> i32 {
+    let Some(event) = event else {
+        return 0;
+    };
+    if event.windows_key_code == VK_F11 && is_key_down_event(event) {
+        toggle_browser_fullscreen(browser);
+        return 1;
+    }
+    0
+}
 
 fn is_key_down_event(event: &KeyEvent) -> bool {
     let event_type = event.type_.get_raw();
