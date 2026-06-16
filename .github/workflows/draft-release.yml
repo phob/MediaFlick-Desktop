@@ -162,7 +162,7 @@ jobs:
 
   build-linux:
     name: Build Linux AppImage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: prepare
 
     env:
