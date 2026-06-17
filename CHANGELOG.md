@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.3] - 2026-06-17
+
+### Added
+
 - Added impeccable product and design context based on Jellyfin demo UI references.
 - Added a Client Settings dialog for mpv path browsing, log level, default fullscreen behavior, close behavior, scrollbar visibility, and the mark-watched-next input binding.
 - Added Windows auto-update checks with an in-app update toast, download progress, quiet installer launch, and automatic restart into the updated version.
@@ -27,10 +38,6 @@
 - Fixed packaged macOS CEF startup by resolving bundle resource and framework paths from the app bundle layout.
 - Fixed non-Windows CEF compilation by matching platform keyboard event types and normalizing CEF enum IDs.
 - Fixed Linux and macOS release builds by compiling the hidden command processor shim only on Windows and making packaging scripts executable.
-
-### Removed
-
-
 ## [0.1.2] - 2026-06-14
 
 ### Added
