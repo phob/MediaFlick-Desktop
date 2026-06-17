@@ -17,7 +17,6 @@
 
 ### Added
 
-- Added impeccable product and design context based on Jellyfin demo UI references.
 - Added a Client Settings dialog for mpv path browsing, log level, default fullscreen behavior, close behavior, scrollbar visibility, and the mark-watched-next input binding.
 - Added Windows auto-update checks with an in-app update toast, download progress, quiet installer launch, and automatic restart into the updated version.
 - Added Linux AppImage and macOS DMG packaging scripts and release artifacts to the draft release workflow.
