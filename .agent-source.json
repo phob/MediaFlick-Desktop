@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "active": "jellyfin-mpv-shim",
+  "sources": {
+    "jellyfin-desktop": {
+      "alias": "jellyfin-desktop",
+      "type": "github",
+      "host": "github.com",
+      "owner": "jellyfin",
+      "repo": "jellyfin-desktop",
+      "remote": "https://github.com/jellyfin/jellyfin-desktop.git",
+      "cachePath": "C:\\Users\\pho\\.repo-cache\\github.com\\jellyfin\\jellyfin-desktop",
+      "requestedAt": "2026-06-17T14:30:40.631Z",
+      "lastFetchedAt": "2026-06-17T14:30:40.631Z",
+      "head": "7ecfcdf816d5221e14a511d10c51d131b7f82249"
+    },
+    "jellyfin-mpv-shim": {
+      "alias": "jellyfin-mpv-shim",
+      "type": "github",
+      "host": "github.com",
+      "owner": "jellyfin",
+      "repo": "jellyfin-mpv-shim",
+      "remote": "https://github.com/jellyfin/jellyfin-mpv-shim.git",
+      "cachePath": "C:\\Users\\pho\\.repo-cache\\github.com\\jellyfin\\jellyfin-mpv-shim",
+      "requestedAt": "2026-06-17T14:30:40.702Z",
+      "lastFetchedAt": "2026-06-17T14:30:40.702Z",
+      "head": "278225b2d5720453cce4e88e7c51b8f0c728a7d7"
+    }
+  }
+}
