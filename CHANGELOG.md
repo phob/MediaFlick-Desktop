@@ -26,6 +26,7 @@
 - Fixed Client Settings labels sitting above their controls after terse copy removal.
 - Fixed packaged macOS CEF startup by resolving bundle resource and framework paths from the app bundle layout.
 - Fixed non-Windows CEF compilation by matching platform keyboard event types and normalizing CEF enum IDs.
+- Fixed Linux and macOS release builds by compiling the hidden command processor shim only on Windows and making packaging scripts executable.
 
 ### Removed
 

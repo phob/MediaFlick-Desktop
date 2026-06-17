@@ -55,9 +55,6 @@ pub fn install_hidden_command_processor_shim(command: &mut Command) {
     command.env("COMSPEC", current_exe);
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn install_hidden_command_processor_shim(_command: &mut std::process::Command) {}
-
 #[cfg(target_os = "windows")]
 fn real_comspec() -> OsString {
     std::env::var_os(REAL_COMSPEC_ENV)
