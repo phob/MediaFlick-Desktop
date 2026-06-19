@@ -35,6 +35,11 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
+# Run Rust tests
+[group('test')]
+test:
+    cargo test --all-targets
+
 # Run clippy
 [group('lint')]
 clippy:
