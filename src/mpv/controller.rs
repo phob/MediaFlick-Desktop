@@ -12,13 +12,12 @@ use serde_json::{Map, Value, json};
 
 use crate::app::logger;
 use crate::app::settings::MpvFullscreenBehavior;
-use crate::jellyfin::bridge as jellyfin_bridge;
+use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
 use crate::jellyfin::playback_reporter::{
     MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
 };
 use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
-use crate::windows::focus_process_window;
 
 #[path = "playback_transition.rs"]
 mod playback_transition;
@@ -28,7 +27,7 @@ const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_COMMAND_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PENDING_FILE_LOADED_TIMEOUT: Duration = Duration::from_secs(60);
 const NEXT_PLAYBACK_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
-const MPV_FOCUS_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
+const MPV_ONTOP_PULSE_DURATION: Duration = Duration::from_millis(1200);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -91,6 +90,7 @@ enum ControllerMessage {
         fullscreen: MpvFullscreenBehavior,
         launch: Box<MpvLaunch>,
     },
+    PlaybackContext(Box<PlaybackContext>),
     Control(MpvControlCommand),
     Shutdown {
         ack: Sender<()>,
@@ -122,7 +122,7 @@ struct ControllerState {
     last_position_log_bucket: Option<i64>,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
-    pending_focus_until: Option<Instant>,
+    pending_ontop_reset_at: Option<Instant>,
     last_session_poll: Instant,
     event_tx: Option<Sender<MpvPlaybackEvent>>,
     shutdown_requested: Arc<AtomicBool>,
@@ -272,6 +272,12 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
+    pub fn update_playback_context(&self, context: PlaybackContext) {
+        let _ = self
+            .tx
+            .send(ControllerMessage::PlaybackContext(Box::new(context)));
+    }
+
     pub fn snapshot(&self) -> MpvPlayerSnapshot {
         self.snapshot
             .lock()
@@ -323,7 +329,7 @@ impl ControllerState {
             last_position_log_bucket: None,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
-            pending_focus_until: None,
+            pending_ontop_reset_at: None,
             last_session_poll: Instant::now(),
             event_tx,
             shutdown_requested,
@@ -349,6 +355,10 @@ impl ControllerState {
                     tracing::debug!(target: "playback", "received playback load request");
                     self.load(mpv_path, fullscreen, *launch);
                 }
+                Ok(ControllerMessage::PlaybackContext(context)) => {
+                    tracing::debug!(target: "playback", "received playback context update");
+                    self.update_active_playback_context(*context);
+                }
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
                     self.control(command);
@@ -371,7 +381,7 @@ impl ControllerState {
             self.maybe_send_startup_seek();
             self.poll_child();
             self.maybe_poll_mpv_session();
-            self.maybe_focus_mpv_window();
+            self.maybe_reset_mpv_ontop();
             self.maybe_report_progress();
             self.prune_recent_loads();
         }
@@ -534,7 +544,8 @@ impl ControllerState {
                     reporter,
                     requested_at: Instant::now(),
                 });
-                self.schedule_mpv_focus("loadfile accepted");
+                self.prepare_pending_playback_state();
+                self.schedule_mpv_raise("loadfile accepted");
                 self.publish_snapshot();
             }
             Err(error) => {
@@ -1070,36 +1081,41 @@ impl ControllerState {
         }
     }
 
-    fn maybe_focus_mpv_window(&mut self) {
-        let Some(deadline) = self.pending_focus_until else {
+    fn schedule_mpv_raise(&mut self, reason: &'static str) {
+        self.pulse_mpv_ontop(reason);
+    }
+
+    fn pulse_mpv_ontop(&mut self, reason: &'static str) {
+        if self.set_mpv_ontop(true, reason) {
+            self.pending_ontop_reset_at = Some(Instant::now() + MPV_ONTOP_PULSE_DURATION);
+        }
+    }
+
+    fn maybe_reset_mpv_ontop(&mut self) {
+        let Some(due_at) = self.pending_ontop_reset_at else {
             return;
         };
-        if Instant::now() > deadline {
-            tracing::debug!(target: "mpv.focus", "stopped retrying mpv focus because the window was not found");
-            self.pending_focus_until = None;
+        if Instant::now() < due_at {
             return;
         }
-        self.try_focus_mpv_window("retry");
+        self.pending_ontop_reset_at = None;
+        self.set_mpv_ontop(false, "ontop pulse elapsed");
     }
 
-    fn schedule_mpv_focus(&mut self, reason: &'static str) {
-        self.pending_focus_until = Some(Instant::now() + MPV_FOCUS_RETRY_TIMEOUT);
-        self.try_focus_mpv_window(reason);
-    }
-
-    fn try_focus_mpv_window(&mut self, reason: &'static str) -> bool {
-        let Some(child) = self.child.as_ref() else {
-            tracing::trace!(target: "mpv.focus", reason, "cannot focus mpv because no process is running");
-            return false;
-        };
-        let process_id = child.id();
-        if focus_process_window(process_id) {
-            tracing::debug!(target: "mpv.focus", reason, process_id, "focused mpv player window");
-            self.pending_focus_until = None;
-            true
-        } else {
-            tracing::trace!(target: "mpv.focus", reason, process_id, "mpv player window is not focusable yet");
-            false
+    fn set_mpv_ontop(&self, enabled: bool, reason: &'static str) -> bool {
+        let command = json!({
+            "command": ["set_property", "ontop", enabled],
+            "request_id": next_request_id(),
+        });
+        match self.send_mpv_command(command) {
+            Ok(()) => {
+                tracing::debug!(target: "mpv.focus", reason, enabled, "set mpv ontop property");
+                true
+            }
+            Err(error) => {
+                tracing::trace!(target: "mpv.focus", reason, enabled, "failed to set mpv ontop property: {error}");
+                false
+            }
         }
     }
 
@@ -1168,7 +1184,7 @@ impl ControllerState {
     fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
-        self.pending_focus_until = None;
+        self.pending_ontop_reset_at = None;
         if self.active.is_none() && self.pending.is_none() {
             self.playback_runtime_ticks = None;
             self.mpv_playback_active = false;
@@ -1809,6 +1825,7 @@ mod tests {
         control_command, loadfile_command, mpv_string_list,
     };
     use crate::app::settings::MpvFullscreenBehavior;
+    use crate::jellyfin::bridge::PlaybackContext;
     use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
     use std::sync::atomic::AtomicBool;
@@ -2015,6 +2032,32 @@ mod tests {
     }
 
     #[test]
+    fn pending_preparation_resets_previous_playback_snapshot_state() {
+        let mut state = controller_with_pending_load(None);
+        state
+            .pending
+            .as_mut()
+            .expect("pending")
+            .launch
+            .runtime_ticks = Some(300_000_000);
+        state.last_state.position_ticks = 120_000_000;
+        state.last_state.duration_ticks = Some(120_000_000);
+        state.last_state.pause = true;
+        state.last_state.eof_reached = true;
+
+        state.prepare_pending_playback_state();
+        let snapshot = state.publish_snapshot();
+
+        assert!(snapshot.active);
+        assert_eq!(snapshot.position_ms, 0.0);
+        assert_eq!(snapshot.duration_ms, Some(30_000.0));
+        assert!(!snapshot.paused);
+        assert_eq!(state.last_state.position_ticks, 0);
+        assert_eq!(state.last_state.duration_ticks, Some(300_000_000));
+        assert!(!state.last_state.eof_reached);
+    }
+
+    #[test]
     fn activation_without_reporter_still_marks_mpv_snapshot_active() {
         let mut state = controller_with_pending_load(None);
 
@@ -2105,6 +2148,40 @@ mod tests {
         state.finish_active(Some("error"));
 
         assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn late_playback_context_updates_active_identity() {
+        let mut state = controller_with_pending_load(None);
+        let pending = state.pending.as_mut().expect("pending");
+        pending.launch.item_id = Some("item-1".to_string());
+        pending.launch.media_source_id = Some("source-1".to_string());
+        pending.identity = PlaybackIdentity::from_launch(1, &pending.launch);
+
+        state.activate_pending();
+        state.update_active_playback_context(PlaybackContext {
+            item_id: Some("item-1".to_string()),
+            media_source_id: Some("source-1".to_string()),
+            play_session_id: Some("session-1".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            state
+                .playback_identity
+                .as_ref()
+                .and_then(|identity| identity.play_session_id.as_deref()),
+            Some("session-1")
+        );
+        assert_eq!(
+            state
+                .snapshot
+                .lock()
+                .expect("snapshot")
+                .play_session_id
+                .as_deref(),
+            Some("session-1")
+        );
     }
 
     #[test]

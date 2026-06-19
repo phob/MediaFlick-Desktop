@@ -12,10 +12,14 @@
 
 - Moved mpv episode transition handling into a dedicated playback transition module.
 - Changed mpv lifecycle management to warm a hidden idle IPC process when an executable is configured and to reuse it until the configured mpv path changes or the app exits.
+- Changed external mpv raise handling to rely on mpv's own `--focus-on=all` support on Linux/macOS plus a temporary IPC `ontop` pulse instead of Win32 window activation.
 - Updated the Rust `cef` crate to v149 ([#10](https://github.com/phob/MediaFlick-Desktop/pull/10) by [@renovate](https://github.com/apps/renovate)).
 
 ### Fixed
 
+- Fixed next-episode handoff snapshots reusing the previous episode's final playback position before the new mpv file finished loading.
+- Fixed late Jellyfin play-session context not being merged into active mpv playback reports after an external-player handoff.
+- Fixed the external-player backdrop remaining above Jellyfin Web after stopping playback from mpv during an auto-started next episode.
 - Fixed stale mpv EOF/mark-watched stop events from ending the newly started next episode by correlating WebUI stop handling with playback IDs and Jellyfin item/session identifiers.
 - Fixed mpv session supervision so the configured idle IPC process is polled, restarted after process or IPC loss, reconnected once before media handoff commands fail, and cancelled cleanly during app shutdown.
 - Fixed cold and slow mpv startup being treated as unavailable too quickly by extending IPC/media readiness waits, logging when mpv exits before creating its IPC pipe, and keeping watched-next handoffs on the existing mpv IPC session while ignoring stale browser stop commands.
