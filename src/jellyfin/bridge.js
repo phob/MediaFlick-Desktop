@@ -239,6 +239,7 @@
         externalPlaybackActive: false,
         mpvObservedActive: false,
         mpvStartedAt: 0,
+        mpvPlaybackId: null,
         updatedAt: Date.now(),
         timer: 0
       };
@@ -281,6 +282,7 @@
         current.ended = true;
         current.externalPlaybackActive = false;
         current.mpvObservedActive = false;
+        current.mpvPlaybackId = null;
         clearInterval(current.timer);
         current.timer = 0;
         dispatchMediaEvent(element, 'ended');
@@ -309,6 +311,7 @@
     state.externalPlaybackActive = true;
     state.mpvObservedActive = false;
     state.mpvStartedAt = Date.now();
+    state.mpvPlaybackId = null;
     state.context.externalizedAt = Date.now();
     dispatchMediaEvent(element, 'loadstart');
     dispatchMediaEvent(element, 'loadedmetadata');
@@ -601,9 +604,11 @@
     for (const element of Array.from(syntheticMediaElements)) {
       const state = syntheticStateFor(element);
       if (!state?.externalPlaybackActive) continue;
+      if (!snapshotMatchesPlaybackTarget(state.mpvPlaybackId, state.context, snapshot)) continue;
 
       if (snapshot.active === true) {
         state.mpvObservedActive = true;
+        rememberSnapshotPlaybackId(state, snapshot);
       } else if (snapshot.active === false && shouldAcceptMpvStop(state)) {
         finishSyntheticPlaybackFromMpv(element, state, snapshot);
         continue;
@@ -646,6 +651,42 @@
     return reason === 'eof' || reason === 'watched-next';
   }
 
+  function cleanPlaybackId(value) {
+    const id = Number(value);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  function cleanIdentityValue(value) {
+    return String(value || '').trim();
+  }
+
+  function snapshotMatchesContext(context, snapshot) {
+    const fields = ['itemId', 'mediaSourceId', 'playSessionId'];
+    let compared = 0;
+    for (const field of fields) {
+      const expected = cleanIdentityValue(context?.[field]);
+      const actual = cleanIdentityValue(snapshot?.[field]);
+      if (!expected || !actual) continue;
+      compared += 1;
+      if (expected !== actual) return false;
+    }
+    return compared > 0 || fields.every((field) => !cleanIdentityValue(snapshot?.[field]));
+  }
+
+  function snapshotMatchesPlaybackTarget(currentPlaybackId, context, snapshot) {
+    const snapshotPlaybackId = cleanPlaybackId(snapshot?.playbackId);
+    const targetPlaybackId = cleanPlaybackId(currentPlaybackId);
+    if (snapshotPlaybackId && targetPlaybackId && snapshotPlaybackId !== targetPlaybackId) {
+      return false;
+    }
+    return snapshotMatchesContext(context, snapshot);
+  }
+
+  function rememberSnapshotPlaybackId(target, snapshot) {
+    const playbackId = cleanPlaybackId(snapshot?.playbackId);
+    if (playbackId) target.mpvPlaybackId = playbackId;
+  }
+
   function suppressNextPlaybackAfterManualMpvStop(playbackManager, snapshot) {
     if (shouldTreatMpvStopAsEnded(snapshot)) return;
     if (playbackManager && typeof playbackManager === 'object') {
@@ -668,6 +709,7 @@
     state.externalPlaybackActive = false;
     state.mpvObservedActive = false;
     state.mpvStartedAt = 0;
+    state.mpvPlaybackId = null;
     dispatchMediaEvent(element, 'pause');
     dispatchMediaEvent(element, 'timeupdate');
     if (ended) dispatchMediaEvent(element, 'ended');
@@ -676,14 +718,18 @@
 
   function stopSyntheticMediaFromMpv(snapshot) {
     let handled = 0;
+    let ignored = 0;
     for (const element of Array.from(syntheticMediaElements)) {
       const state = syntheticStateFor(element);
-      if (state?.externalPlaybackActive) {
-        finishSyntheticPlaybackFromMpv(element, state, snapshot);
-        handled += 1;
+      if (!state?.externalPlaybackActive) continue;
+      if (!snapshotMatchesPlaybackTarget(state.mpvPlaybackId, state.context, snapshot)) {
+        ignored += 1;
+        continue;
       }
+      finishSyntheticPlaybackFromMpv(element, state, snapshot);
+      handled += 1;
     }
-    return handled;
+    return { handled, ignored };
   }
 
   function ensurePlayerStatePolling() {
@@ -741,27 +787,39 @@
 
   window.__mediaFlickDesktopPlaybackStopped = function(snapshot) {
     let handledPlayers = 0;
+    let ignoredPlayers = 0;
     let handledSynthetic = 0;
+    let ignoredSynthetic = 0;
     for (const player of Array.from(playerInstances)) {
       try {
-        if (player._handleMpvStopped(snapshot)) handledPlayers += 1;
+        const result = player._handleMpvStopped(snapshot);
+        if (result === true) handledPlayers += 1;
+        else if (result === 'stale') ignoredPlayers += 1;
       } catch (error) {
         console.debug('[mediaflick-desktop] failed to handle mpv stopped event', error);
       }
     }
     try {
       if (handledPlayers === 0) {
-        handledSynthetic = stopSyntheticMediaFromMpv(snapshot);
+        const synthetic = stopSyntheticMediaFromMpv(snapshot);
+        handledSynthetic = synthetic.handled;
+        ignoredSynthetic = synthetic.ignored;
       }
     } catch (error) {
       console.debug('[mediaflick-desktop] failed to stop synthetic media after mpv stopped', error);
     }
     sendBridgeRequest('playback-stop-ack', {
       active: snapshot?.active,
+      playbackId: snapshot?.playbackId,
+      itemId: snapshot?.itemId,
+      mediaSourceId: snapshot?.mediaSourceId,
+      playSessionId: snapshot?.playSessionId,
       positionMs: snapshot?.positionMs,
       stopReason: snapshot?.stopReason,
       handledPlayers,
       handledSynthetic,
+      ignoredPlayers,
+      ignoredSynthetic,
       activePlayers: activePlayerCount()
     });
   };
@@ -991,6 +1049,8 @@
       this._videoContainer = null;
       this._mpvObservedActive = false;
       this._mpvStartedAt = 0;
+      this._mpvPlaybackId = null;
+      this._currentContext = null;
       this._currentSubtitleOffset = 0;
       this._showSubtitleOffset = false;
       this._currentAspectRatio = 'auto';
@@ -1183,8 +1243,10 @@
 
     _applyMpvSnapshot(snapshot) {
       if (!snapshot || !this._currentSrc) return;
+      if (!snapshotMatchesPlaybackTarget(this._mpvPlaybackId, this._currentContext, snapshot)) return;
       if (snapshot.active === true) {
         this._mpvObservedActive = true;
+        this._mpvPlaybackId = cleanPlaybackId(snapshot.playbackId) || this._mpvPlaybackId;
       } else if (snapshot.active === false && this._shouldAcceptMpvStop()) {
         this._handleMpvStopped(snapshot);
         return;
@@ -1234,6 +1296,19 @@
 
     _handleMpvStopped(snapshot) {
       if (!this._currentSrc) return false;
+      if (!snapshotMatchesPlaybackTarget(this._mpvPlaybackId, this._currentContext, snapshot)) {
+        console.debug('[mediaflick-desktop] ignored stale mpv stopped event', {
+          snapshotPlaybackId: snapshot?.playbackId,
+          playerPlaybackId: this._mpvPlaybackId,
+          snapshotItemId: snapshot?.itemId,
+          playerItemId: this._currentContext?.itemId,
+          snapshotMediaSourceId: snapshot?.mediaSourceId,
+          playerMediaSourceId: this._currentContext?.mediaSourceId,
+          snapshotPlaySessionId: snapshot?.playSessionId,
+          playerPlaySessionId: this._currentContext?.playSessionId
+        });
+        return 'stale';
+      }
       const position = Number(snapshot?.positionMs);
       if (Number.isFinite(position) && position >= 0) {
         this._currentTime = position;
@@ -1257,9 +1332,11 @@
       markExternalized(context);
       sendExternalPlayback(context);
 
+      this._currentContext = context;
       this._currentSrc = context.mediaUrl || absoluteUrl(options.url || '');
       this._mpvObservedActive = false;
       this._mpvStartedAt = Date.now();
+      this._mpvPlaybackId = null;
       this._duration = ticksToMilliseconds(context.runtimeTicks);
       this._currentTime = ticksToMilliseconds(context.startTimeTicks) || 0;
       this._timeBaseMs = this._currentTime;
@@ -1290,6 +1367,7 @@
         this._trigger('stopped', [{ src: previousSrc, ended }]);
       }
       this._currentSrc = null;
+      this._currentContext = null;
       this._currentPlayOptions = null;
       this._currentTime = null;
       this._duration = null;
@@ -1298,6 +1376,7 @@
       this._paused = false;
       this._mpvObservedActive = false;
       this._mpvStartedAt = 0;
+      this._mpvPlaybackId = null;
       if (destroyPlayer) this.destroy();
       stopPlayerStatePollingIfIdle();
       return Promise.resolve();
@@ -1312,6 +1391,8 @@
       this._removeVideoContainer();
       this._mpvObservedActive = false;
       this._mpvStartedAt = 0;
+      this._mpvPlaybackId = null;
+      this._currentContext = null;
       playerInstances.delete(this);
       stopPlayerStatePollingIfIdle();
     }

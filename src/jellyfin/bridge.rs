@@ -47,10 +47,16 @@ pub struct PlayerCommandPayload {
 #[serde(default, rename_all = "camelCase")]
 pub struct PlaybackStopAckPayload {
     pub active: Option<bool>,
+    pub playback_id: Option<i64>,
+    pub item_id: Option<String>,
+    pub media_source_id: Option<String>,
+    pub play_session_id: Option<String>,
     pub position_ms: Option<f64>,
     pub stop_reason: Option<String>,
     pub handled_players: usize,
     pub handled_synthetic: usize,
+    pub ignored_players: usize,
+    pub ignored_synthetic: usize,
     pub active_players: usize,
 }
 
