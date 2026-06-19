@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -20,6 +20,9 @@ use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputB
 use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
 use crate::windows::focus_process_window;
 
+#[path = "playback_transition.rs"]
+mod playback_transition;
+
 const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_COMMAND_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -28,22 +31,30 @@ const NEXT_PLAYBACK_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
 const MPV_FOCUS_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
+const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
+const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(25);
 const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STARTUP_SEEK_POSITION_TOLERANCE: i64 = 30_000_000;
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
+static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 #[derive(Clone)]
 pub struct MpvController {
     tx: Sender<ControllerMessage>,
     snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MpvPlayerSnapshot {
     pub active: bool,
+    pub playback_id: Option<i64>,
+    pub item_id: Option<String>,
+    pub media_source_id: Option<String>,
+    pub play_session_id: Option<String>,
     pub position_ms: f64,
     pub duration_ms: Option<f64>,
     pub paused: bool,
@@ -52,7 +63,7 @@ pub struct MpvPlayerSnapshot {
     pub stop_reason: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MpvPlaybackEvent {
     Stopped(MpvPlayerSnapshot),
 }
@@ -103,6 +114,7 @@ struct ControllerState {
     event_rx: Option<Receiver<MpvEvent>>,
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
+    playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
     mpv_playback_active: bool,
     playback_runtime_ticks: Option<i64>,
@@ -111,7 +123,9 @@ struct ControllerState {
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
     pending_focus_until: Option<Instant>,
+    last_session_poll: Instant,
     event_tx: Option<Sender<MpvPlaybackEvent>>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,14 +134,35 @@ struct ConfiguredMpv {
     fullscreen: MpvFullscreenBehavior,
 }
 
+#[derive(Debug, Clone)]
+struct PlaybackIdentity {
+    playback_id: i64,
+    item_id: Option<String>,
+    media_source_id: Option<String>,
+    play_session_id: Option<String>,
+}
+
+impl PlaybackIdentity {
+    fn from_launch(playback_id: i64, launch: &MpvLaunch) -> Self {
+        Self {
+            playback_id,
+            item_id: launch.item_id.clone(),
+            media_source_id: launch.media_source_id.clone(),
+            play_session_id: launch.play_session_id.clone(),
+        }
+    }
+}
+
 struct PendingPlayback {
     key: String,
+    identity: PlaybackIdentity,
     launch: MpvLaunch,
     reporter: Option<PlaybackReporter>,
     requested_at: Instant,
 }
 
 struct ActivePlayback {
+    identity: PlaybackIdentity,
     reporter: PlaybackReporter,
     runtime_ticks: Option<i64>,
     last_progress_sent: Instant,
@@ -194,9 +229,23 @@ impl MpvController {
     pub fn new(event_tx: Option<Sender<MpvPlaybackEvent>>) -> Self {
         let (tx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(MpvPlayerSnapshot::default()));
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
         let controller_snapshot = snapshot.clone();
-        thread::spawn(move || ControllerState::new(rx, controller_snapshot, event_tx).run());
-        Self { tx, snapshot }
+        let controller_shutdown_requested = shutdown_requested.clone();
+        thread::spawn(move || {
+            ControllerState::new(
+                rx,
+                controller_snapshot,
+                event_tx,
+                controller_shutdown_requested,
+            )
+            .run()
+        });
+        Self {
+            tx,
+            snapshot,
+            shutdown_requested,
+        }
     }
 
     pub fn warm(&self, mpv_path: impl Into<String>, fullscreen: MpvFullscreenBehavior) {
@@ -226,17 +275,18 @@ impl MpvController {
     pub fn snapshot(&self) -> MpvPlayerSnapshot {
         self.snapshot
             .lock()
-            .map(|snapshot| *snapshot)
+            .map(|snapshot| snapshot.clone())
             .unwrap_or_default()
     }
 
     pub fn shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
         let (ack, ack_rx) = mpsc::channel();
         if self.tx.send(ControllerMessage::Shutdown { ack }).is_err() {
             return;
         }
         if ack_rx
-            .recv_timeout(SHUTDOWN_WAIT + Duration::from_secs(1))
+            .recv_timeout(CONTROLLER_SHUTDOWN_ACK_TIMEOUT)
             .is_err()
         {
             tracing::warn!(target: "mpv.ipc", "timed out waiting for mpv controller shutdown acknowledgement");
@@ -249,6 +299,7 @@ impl ControllerState {
         rx: Receiver<ControllerMessage>,
         snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
         event_tx: Option<Sender<MpvPlaybackEvent>>,
+        shutdown_requested: Arc<AtomicBool>,
     ) -> Self {
         Self {
             rx,
@@ -261,6 +312,7 @@ impl ControllerState {
             event_rx: None,
             active: None,
             pending: None,
+            playback_identity: None,
             startup_seek: None,
             mpv_playback_active: false,
             playback_runtime_ticks: None,
@@ -272,7 +324,9 @@ impl ControllerState {
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
             pending_focus_until: None,
+            last_session_poll: Instant::now(),
             event_tx,
+            shutdown_requested,
         }
     }
 
@@ -316,6 +370,7 @@ impl ControllerState {
             self.drain_events();
             self.maybe_send_startup_seek();
             self.poll_child();
+            self.maybe_poll_mpv_session();
             self.maybe_focus_mpv_window();
             self.maybe_report_progress();
             self.prune_recent_loads();
@@ -337,32 +392,15 @@ impl ControllerState {
             tracing::debug!(target: "mpv.ipc", ?command, "ignored invalid mpv control command");
             return;
         };
+
+        if !self.ensure_configured_mpv_running("player control preflight") {
+            tracing::warn!(target: "mpv.ipc", ?command, "cannot send mpv control command because no session is available");
+            return;
+        }
         if let Err(error) = self.send_mpv_command(command_json) {
             tracing::warn!(target: "mpv.ipc", ?command, "failed to send mpv control command: {error}");
+            self.handle_mpv_session_lost("mpv control command failed");
         }
-    }
-
-    fn should_suppress_stop_during_next_playback_handoff(&mut self) -> bool {
-        if self.pending.is_none() {
-            return false;
-        }
-        let Some(deadline) = self.next_playback_handoff_until else {
-            return false;
-        };
-        if Instant::now() <= deadline {
-            return true;
-        }
-        self.next_playback_handoff_until = None;
-        false
-    }
-
-    fn arm_next_playback_handoff(&mut self, reason: &'static str) {
-        self.next_playback_handoff_until = Some(Instant::now() + NEXT_PLAYBACK_HANDOFF_TIMEOUT);
-        tracing::debug!(
-            target: "mpv.ipc",
-            reason,
-            "keeping mpv alive for next playback handoff"
-        );
     }
 
     fn kick_start_playback(&mut self, launch: &MpvLaunch) {
@@ -419,52 +457,19 @@ impl ControllerState {
                 }
                 Err(error) => {
                     tracing::warn!(target: "mpv.ipc", "failed to send mpv startup seek command: {error}");
-                    if let Some(startup_seek) = &mut self.startup_seek {
-                        startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;
-                    }
+                    self.handle_mpv_session_lost("mpv startup seek command failed");
                 }
             }
-        }
-    }
-
-    fn publish_snapshot(&self) -> MpvPlayerSnapshot {
-        self.publish_snapshot_with_stop_reason(None)
-    }
-
-    fn publish_snapshot_with_stop_reason(
-        &self,
-        stop_reason: Option<&'static str>,
-    ) -> MpvPlayerSnapshot {
-        let snapshot = MpvPlayerSnapshot {
-            active: self.mpv_playback_active || self.active.is_some() || self.pending.is_some(),
-            position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
-            duration_ms: self
-                .last_state
-                .duration_ticks
-                .filter(|ticks| *ticks > 0)
-                .map(|ticks| ticks as f64 / 10_000.0),
-            paused: self.last_state.pause,
-            volume: self.last_state.volume,
-            mute: self.last_state.mute,
-            stop_reason,
-        };
-        if let Ok(mut target) = self.snapshot.lock() {
-            *target = snapshot;
-        }
-        snapshot
-    }
-
-    fn notify_playback_stopped(&self, snapshot: MpvPlayerSnapshot) {
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(MpvPlaybackEvent::Stopped(snapshot));
         }
     }
 
     fn load(&mut self, mpv_path: String, fullscreen: MpvFullscreenBehavior, launch: MpvLaunch) {
         self.remember_configured_mpv(&mpv_path, fullscreen);
         let key = launch.dedupe_key();
+        let identity = PlaybackIdentity::from_launch(next_playback_id(), &launch);
         tracing::debug!(
             target: "playback",
+            playback_id = identity.playback_id,
             dedupe_key = %key,
             launch = %logger::launch_summary(&launch),
             "handling playback load"
@@ -508,7 +513,7 @@ impl ControllerState {
             active.reporter.report_stopped(&self.last_state, false);
         }
 
-        match self.send_mpv_command(loadfile_command(&launch)) {
+        match self.send_loadfile_with_reconnect(&mpv_path, fullscreen, &launch) {
             Ok(()) => {
                 tracing::info!(
                     target: "playback",
@@ -521,8 +526,10 @@ impl ControllerState {
                     seen_at: Instant::now(),
                 });
                 self.mpv_playback_active = true;
+                self.playback_identity = Some(identity.clone());
                 self.pending = Some(PendingPlayback {
                     key,
+                    identity,
                     launch,
                     reporter,
                     requested_at: Instant::now(),
@@ -531,10 +538,9 @@ impl ControllerState {
                 self.publish_snapshot();
             }
             Err(error) => {
-                tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command: {error}");
+                tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
-                self.reset_mpv();
-                self.restart_configured_mpv("loadfile command failed");
+                self.handle_mpv_session_lost("loadfile command failed");
             }
         }
     }
@@ -569,7 +575,38 @@ impl ControllerState {
         }
     }
 
+    fn send_loadfile_with_reconnect(
+        &mut self,
+        mpv_path: &str,
+        fullscreen: MpvFullscreenBehavior,
+        launch: &MpvLaunch,
+    ) -> io::Result<()> {
+        match self.send_mpv_command(loadfile_command(launch)) {
+            Ok(()) => Ok(()),
+            Err(first_error) => {
+                tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command; restarting session and retrying once: {first_error}");
+                self.reset_mpv();
+                if !self.ensure_mpv(mpv_path, fullscreen) {
+                    return Err(first_error);
+                }
+                self.apply_default_fullscreen(fullscreen);
+                self.send_mpv_command(loadfile_command(launch))
+                    .map_err(|retry_error| {
+                        io::Error::new(
+                            retry_error.kind(),
+                            format!("initial failure: {first_error}; retry failure: {retry_error}"),
+                        )
+                    })
+            }
+        }
+    }
+
     fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: MpvFullscreenBehavior) -> bool {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::debug!(target: "mpv.ipc", "skipping mpv start because shutdown is requested");
+            return false;
+        }
+
         if self.child_is_alive() {
             if !self.current_mpv_path_matches(mpv_path) {
                 tracing::info!(
@@ -580,13 +617,19 @@ impl ControllerState {
                 );
                 self.finish_active(Some("quit"));
                 self.reset_mpv();
-            } else {
+            } else if self.ipc_worker.is_some() {
                 tracing::trace!(
                     target: "mpv.ipc",
-                    connected = self.ipc_worker.is_some(),
                     "reusing existing mpv process"
                 );
-                return self.ipc_worker.is_some();
+                return true;
+            } else {
+                tracing::warn!(
+                    target: "mpv.ipc",
+                    "restarting mpv because the tracked process has no IPC worker"
+                );
+                self.finish_active(Some("quit"));
+                self.reset_mpv();
             }
         } else {
             self.reset_mpv();
@@ -619,6 +662,7 @@ impl ControllerState {
             &ipc_path,
             IPC_CONNECT_TIMEOUT,
             &mut child,
+            &self.shutdown_requested,
         ) {
             Ok(worker) => worker,
             Err(error) => {
@@ -631,6 +675,15 @@ impl ControllerState {
                 return false;
             }
         };
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::debug!(target: "mpv.ipc", "closing newly connected mpv because shutdown is requested");
+            let _ = child.kill();
+            let _ = child.wait();
+            cleanup_ipc_path(&ipc_path);
+            ipc_worker.shutdown();
+            return false;
+        }
+
         self.child = Some(child);
         self.current_mpv_path = Some(mpv_path.to_string());
         self.ipc_path = Some(ipc_path.clone());
@@ -671,16 +724,29 @@ impl ControllerState {
 
     fn drain_events(&mut self) {
         let mut events = Vec::new();
+        let mut disconnected = false;
         if let Some(rx) = &self.event_rx {
-            while let Ok(event) = rx.try_recv() {
-                events.push(event);
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
             }
         }
         if !events.is_empty() {
             tracing::trace!(target: "mpv.ipc", count = events.len(), "drained mpv events");
         }
+        let saw_shutdown = events.iter().any(|event| event.name == "shutdown");
         for event in events {
             self.handle_event(event);
+        }
+        if disconnected && !saw_shutdown {
+            tracing::warn!(target: "mpv.ipc", "mpv IPC event stream disconnected");
+            self.handle_mpv_session_lost("mpv IPC event stream disconnected");
         }
     }
 
@@ -711,49 +777,6 @@ impl ControllerState {
         }
     }
 
-    fn activate_pending(&mut self) {
-        let Some(pending) = self.pending.take() else {
-            tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
-            return;
-        };
-        tracing::info!(
-            target: "playback",
-            dedupe_key = %pending.key,
-            launch = %logger::launch_summary(&pending.launch),
-            state = %self.last_state,
-            "activating pending playback"
-        );
-        self.last_state.position_ticks = pending
-            .launch
-            .start_seconds()
-            .and_then(seconds_to_ticks)
-            .unwrap_or_default();
-        self.last_state.duration_ticks = None;
-        self.last_state.eof_reached = false;
-        let launch = pending.launch.clone();
-        self.playback_runtime_ticks = launch.runtime_ticks.filter(|ticks| *ticks > 0);
-        if let Some(reporter) = pending.reporter {
-            reporter.report_start(&self.last_state);
-            self.active = Some(ActivePlayback {
-                reporter,
-                runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
-                last_progress_sent: Instant::now(),
-                last_pause: self.last_state.pause,
-            });
-        } else {
-            tracing::debug!(
-                target: "jellyfin.playstate",
-                "activated playback without Jellyfin reporter"
-            );
-        }
-        self.mpv_playback_active = true;
-        self.next_playback_handoff_until = None;
-        self.schedule_mpv_focus("file-loaded");
-        self.load_external_subtitle(&launch);
-        self.kick_start_playback(&launch);
-        self.publish_snapshot();
-    }
-
     fn load_external_subtitle(&mut self, launch: &MpvLaunch) {
         let Some(subtitle_url) = non_empty(launch.subtitle_url.as_deref()) else {
             return;
@@ -769,147 +792,6 @@ impl ControllerState {
         {
             tracing::warn!(target: "mpv.ipc", "failed to load selected external subtitle: {error}");
         }
-    }
-
-    fn mark_watched_and_play_next(&mut self) {
-        if self.active.is_none() && self.pending.is_none() && !self.mpv_playback_active {
-            tracing::debug!(target: "playback", "ignored mark-watched-next because playback is idle");
-            return;
-        }
-
-        let duration_ticks = self
-            .last_state
-            .duration_ticks
-            .filter(|ticks| *ticks > 0)
-            .or(self.playback_runtime_ticks)
-            .or_else(|| self.active.as_ref().and_then(|active| active.runtime_ticks))
-            .or_else(|| {
-                self.pending
-                    .as_ref()
-                    .and_then(|pending| pending.launch.runtime_ticks.filter(|ticks| *ticks > 0))
-            });
-        if let Some(duration_ticks) = duration_ticks {
-            self.last_state.duration_ticks = Some(duration_ticks);
-            self.last_state.position_ticks = duration_ticks;
-        } else {
-            tracing::warn!(
-                target: "playback",
-                "mark-watched-next requested before a duration was known; reporting current position"
-            );
-        }
-
-        tracing::info!(
-            target: "playback",
-            state = %self.last_state,
-            "marking current item watched and requesting next item"
-        );
-        self.finish_active(Some("watched-next"));
-        self.arm_next_playback_handoff("watched-next");
-    }
-
-    fn finish_active(&mut self, reason: Option<&str>) {
-        tracing::debug!(
-            target: "playback",
-            reason = reason.unwrap_or("unknown"),
-            state = %self.last_state,
-            "finishing playback"
-        );
-        let had_mpv_playback =
-            self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
-        self.startup_seek = None;
-        let failed = matches!(reason, Some("error"));
-        let stop_reason = normalized_stop_reason(reason);
-        if self.should_ignore_pending_end_file_during_next_playback_handoff(reason) {
-            tracing::debug!(
-                target: "playback",
-                reason = reason.unwrap_or("unknown"),
-                "ignored old mpv end-file while next playback handoff is pending"
-            );
-            return;
-        }
-        if let Some(pending) = self.pending.take() {
-            self.next_playback_handoff_until = None;
-            if let Some(reporter) = pending.reporter {
-                if failed {
-                    tracing::warn!(
-                        target: "playback",
-                        reason = reason.unwrap_or("unknown"),
-                        "pending playback failed before activation"
-                    );
-                    reporter.report_stopped(&self.last_state, true);
-                } else if is_completion_reason(reason) {
-                    tracing::info!(
-                        target: "playback",
-                        reason = reason.unwrap_or("unknown"),
-                        state = %self.last_state,
-                        "reporting pending playback completed before activation"
-                    );
-                    reporter.report_stopped(&self.last_state, false);
-                }
-            }
-        }
-
-        if is_completion_reason(reason)
-            && let Some(duration) = self.completion_duration_ticks()
-        {
-            self.last_state.duration_ticks = Some(duration);
-            self.last_state.position_ticks = duration;
-        }
-
-        let Some(active) = self.active.take() else {
-            self.mpv_playback_active = false;
-            self.playback_runtime_ticks = None;
-            if had_mpv_playback {
-                let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
-                self.notify_playback_stopped(snapshot);
-                if reason.is_some_and(|reason| reason.eq_ignore_ascii_case("eof")) {
-                    self.arm_next_playback_handoff("eof");
-                }
-            }
-            tracing::trace!(target: "playback", "no active playback to finish");
-            return;
-        };
-        self.mpv_playback_active = false;
-        tracing::info!(
-            target: "playback",
-            failed,
-            reason = reason.unwrap_or("unknown"),
-            state = %self.last_state,
-            "reporting active playback stopped"
-        );
-        active.reporter.report_stopped(&self.last_state, failed);
-        self.playback_runtime_ticks = None;
-        let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
-        self.notify_playback_stopped(snapshot);
-        if reason.is_some_and(|reason| reason.eq_ignore_ascii_case("eof")) {
-            self.arm_next_playback_handoff("eof");
-        }
-    }
-
-    fn completion_duration_ticks(&self) -> Option<i64> {
-        self.last_state
-            .duration_ticks
-            .filter(|ticks| *ticks > 0)
-            .or(self.playback_runtime_ticks)
-            .or_else(|| self.active.as_ref().and_then(|active| active.runtime_ticks))
-            .or_else(|| {
-                self.pending
-                    .as_ref()
-                    .and_then(|pending| pending.launch.runtime_ticks.filter(|ticks| *ticks > 0))
-            })
-    }
-
-    fn should_ignore_pending_end_file_during_next_playback_handoff(
-        &mut self,
-        reason: Option<&str>,
-    ) -> bool {
-        if self.pending.is_none() {
-            return false;
-        }
-        if !matches!(reason, Some("stop" | "redirect")) {
-            return false;
-        }
-        self.should_suppress_stop_during_next_playback_handoff()
     }
 
     fn apply_property(&mut self, property: Option<&str>, data: Option<Value>) {
@@ -1121,7 +1003,58 @@ impl ControllerState {
         }
     }
 
+    fn maybe_poll_mpv_session(&mut self) {
+        let now = Instant::now();
+        if now.saturating_duration_since(self.last_session_poll) < MPV_SESSION_POLL_INTERVAL {
+            return;
+        }
+        self.last_session_poll = now;
+        self.ensure_configured_mpv_running("scheduled mpv session poll");
+    }
+
+    fn ensure_configured_mpv_running(&mut self, reason: &'static str) -> bool {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::trace!(target: "mpv.ipc", reason, "not ensuring mpv session because shutdown is requested");
+            return false;
+        }
+        let Some(config) = self.configured_mpv.clone() else {
+            tracing::trace!(target: "mpv.ipc", reason, "no configured mpv executable to supervise");
+            return false;
+        };
+        if self.configured_mpv_session_ready(&config) {
+            return true;
+        }
+        tracing::info!(
+            target: "mpv.ipc",
+            reason,
+            mpv_path = %config.mpv_path,
+            "ensuring configured mpv session is running"
+        );
+        if self.ensure_mpv(&config.mpv_path, config.fullscreen) {
+            self.apply_default_fullscreen(config.fullscreen);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn configured_mpv_session_ready(&mut self, config: &ConfiguredMpv) -> bool {
+        self.child_is_alive()
+            && self.current_mpv_path_matches(&config.mpv_path)
+            && self.ipc_worker.is_some()
+    }
+
+    fn handle_mpv_session_lost(&mut self, reason: &'static str) {
+        self.finish_active(Some("quit"));
+        self.reset_mpv();
+        self.restart_configured_mpv(reason);
+    }
+
     fn restart_configured_mpv(&mut self, reason: &'static str) {
+        if self.shutdown_requested.load(Ordering::SeqCst) {
+            tracing::debug!(target: "mpv.ipc", reason, "not restarting mpv because shutdown is requested");
+            return;
+        }
         let Some(config) = self.configured_mpv.clone() else {
             tracing::debug!(target: "mpv.ipc", reason, "not restarting mpv because no executable is configured");
             return;
@@ -1389,6 +1322,10 @@ fn next_request_id() -> i64 {
     REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+fn next_playback_id() -> i64 {
+    PLAYBACK_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 fn media_url_without_fragment(url: &str) -> &str {
     url.split('#').next().unwrap_or(url)
 }
@@ -1583,6 +1520,15 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
                     break;
                 }
             }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                tracing::trace!(target: "mpv.ipc", "mpv IPC read timed out while waiting for events");
+                continue;
+            }
             Err(error) => {
                 tracing::trace!(target: "mpv.ipc", "mpv IPC read failed: {error}");
                 break;
@@ -1596,6 +1542,7 @@ fn start_ipc_worker(
     path: &str,
     timeout: Duration,
     child: &mut Child,
+    shutdown_requested: &AtomicBool,
 ) -> io::Result<(IpcWorker, Receiver<MpvEvent>)> {
     let deadline = Instant::now() + timeout;
     let mut last_error = None;
@@ -1606,6 +1553,12 @@ fn start_ipc_worker(
         "waiting for mpv IPC"
     );
     while Instant::now() < deadline {
+        if shutdown_requested.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "mpv IPC wait cancelled by shutdown",
+            ));
+        }
         match IpcWorker::start(path) {
             Ok(worker) => return Ok(worker),
             Err(error) => {
@@ -1852,12 +1805,13 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, control_command,
-        loadfile_command, mpv_string_list,
+        ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, PlaybackIdentity,
+        control_command, loadfile_command, mpv_string_list,
     };
     use crate::app::settings::MpvFullscreenBehavior;
     use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
+    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -1867,9 +1821,15 @@ mod tests {
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.start_time_ticks = start_time_ticks;
 
-        let mut state = ControllerState::new(rx, Arc::new(Mutex::new(Default::default())), None);
+        let mut state = ControllerState::new(
+            rx,
+            Arc::new(Mutex::new(Default::default())),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
+            identity: PlaybackIdentity::from_launch(1, &launch),
             launch,
             reporter: None,
             requested_at: Instant::now(),
@@ -2082,10 +2042,15 @@ mod tests {
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.item_id = Some("item-1".to_string());
 
-        let mut state =
-            ControllerState::new(rx, Arc::new(Mutex::new(Default::default())), Some(event_tx));
+        let mut state = ControllerState::new(
+            rx,
+            Arc::new(Mutex::new(Default::default())),
+            Some(event_tx),
+            Arc::new(AtomicBool::new(false)),
+        );
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
+            identity: PlaybackIdentity::from_launch(1, &launch),
             launch,
             reporter: None,
             requested_at: Instant::now(),
@@ -2097,7 +2062,11 @@ mod tests {
         let event = event_rx.try_recv().expect("stopped event");
         assert!(matches!(
             event,
-            MpvPlaybackEvent::Stopped(snapshot) if !snapshot.active && snapshot.stop_reason == Some("quit")
+            MpvPlaybackEvent::Stopped(snapshot)
+                if !snapshot.active
+                    && snapshot.stop_reason == Some("quit")
+                    && snapshot.playback_id == Some(1)
+                    && snapshot.item_id.as_deref() == Some("item-1")
         ));
     }
 

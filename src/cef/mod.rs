@@ -693,7 +693,7 @@ wrap_task! {
 
     impl Task {
         fn execute(&self) {
-            dispatch_playback_event(&self.state, self.event);
+            dispatch_playback_event(&self.state, self.event.clone());
         }
     }
 }
@@ -725,7 +725,7 @@ fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
         return;
     }
 
-    let script = playback_event_script(event);
+    let script = playback_event_script(&event);
     let browser_count = browsers.len();
     let mut frame_count = 0usize;
     for browser in browsers {
@@ -747,11 +747,15 @@ fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
     );
 }
 
-fn playback_event_script(event: MpvPlaybackEvent) -> String {
+fn playback_event_script(event: &MpvPlaybackEvent) -> String {
     match event {
         MpvPlaybackEvent::Stopped(snapshot) => {
             let payload = json!({
                 "active": snapshot.active,
+                "playbackId": snapshot.playback_id,
+                "itemId": snapshot.item_id,
+                "mediaSourceId": snapshot.media_source_id,
+                "playSessionId": snapshot.play_session_id,
                 "positionMs": snapshot.position_ms,
                 "durationMs": snapshot.duration_ms,
                 "paused": snapshot.paused,
@@ -1859,10 +1863,16 @@ fn log_playback_stop_ack(query: &str) {
     tracing::debug!(
         target: "bridge",
         active = ?payload.active,
+        playback_id = ?payload.playback_id,
+        item_id = %payload.item_id.as_deref().unwrap_or("unknown"),
+        media_source_id = %payload.media_source_id.as_deref().unwrap_or("unknown"),
+        play_session_id = %payload.play_session_id.as_deref().unwrap_or("unknown"),
         position_ms = ?payload.position_ms,
         stop_reason = %payload.stop_reason.as_deref().unwrap_or("unknown"),
         handled_players = payload.handled_players,
         handled_synthetic = payload.handled_synthetic,
+        ignored_players = payload.ignored_players,
+        ignored_synthetic = payload.ignored_synthetic,
         active_players = payload.active_players,
         "WebUI acknowledged mpv playback stopped"
     );
@@ -1881,6 +1891,10 @@ fn respond_player_state(
     let response = json!({
         "requestId": query_param(query, "requestId").unwrap_or_default(),
         "active": snapshot.active,
+        "playbackId": snapshot.playback_id,
+        "itemId": snapshot.item_id,
+        "mediaSourceId": snapshot.media_source_id,
+        "playSessionId": snapshot.play_session_id,
         "positionMs": snapshot.position_ms,
         "durationMs": snapshot.duration_ms,
         "paused": snapshot.paused,
