@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.4] - 2026-06-19
+
+### Added
+
 - Added a `just test` recipe for running the Rust test suite.
 
 ### Changed
@@ -29,10 +40,6 @@
 - Fixed app shutdown so the controller waits for the warm external `mpv.exe` process to quit or be killed before the app exits.
 - Fixed Jellyfin Web playstate synchronization after mpv-driven `q`, `w`, and EOF stops by preserving final player state until Jellyfin handles the stopped event.
 - Fixed the external-player backdrop/white-background layering by keeping the synthetic player backdrop above Jellyfin's page background while placing the video OSD above it.
-
-### Removed
-
-
 ## [0.1.3] - 2026-06-17
 
 ### Added
