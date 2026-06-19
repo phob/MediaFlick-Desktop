@@ -1366,6 +1366,7 @@
         // player during this event.
         this._trigger('stopped', [{ src: previousSrc, ended }]);
       }
+      if (!ended) this._removeVideoContainer();
       this._currentSrc = null;
       this._currentContext = null;
       this._currentPlayOptions = null;
@@ -1378,6 +1379,7 @@
       this._mpvStartedAt = 0;
       this._mpvPlaybackId = null;
       if (destroyPlayer) this.destroy();
+      else playerInstances.delete(this);
       stopPlayerStatePollingIfIdle();
       return Promise.resolve();
     }

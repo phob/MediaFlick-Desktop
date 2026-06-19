@@ -7,6 +7,7 @@
 use std::time::Instant;
 
 use crate::app::logger;
+use crate::jellyfin::bridge::PlaybackContext;
 use crate::jellyfin::playback_reporter::seconds_to_ticks;
 
 use super::{
@@ -100,6 +101,67 @@ impl ControllerState {
         }
     }
 
+    pub(super) fn update_active_playback_context(&mut self, context: PlaybackContext) {
+        let mut updated = false;
+
+        if let Some(pending) = &mut self.pending
+            && identity_matches_context(&pending.identity, &context)
+        {
+            context.merge_into_launch(&mut pending.launch);
+            update_identity_from_context(&mut pending.identity, &context);
+            if let Some(reporter) = &mut pending.reporter {
+                reporter.merge_context(&context);
+            }
+            updated = true;
+        }
+
+        if let Some(active) = &mut self.active
+            && identity_matches_context(&active.identity, &context)
+        {
+            update_identity_from_context(&mut active.identity, &context);
+            active.reporter.merge_context(&context);
+            if active.runtime_ticks.is_none() {
+                active.runtime_ticks = context.runtime_ticks.filter(|ticks| *ticks > 0);
+            }
+            if self.playback_runtime_ticks.is_none() {
+                self.playback_runtime_ticks = active.runtime_ticks;
+            }
+            updated = true;
+        }
+
+        if let Some(identity) = &mut self.playback_identity
+            && identity_matches_context(identity, &context)
+        {
+            update_identity_from_context(identity, &context);
+            updated = true;
+        }
+
+        if updated {
+            tracing::debug!(
+                target: "playback",
+                context = %playback_context_update_summary(&context),
+                "merged playback context into active mpv playback"
+            );
+            self.publish_snapshot();
+        }
+    }
+
+    pub(super) fn prepare_pending_playback_state(&mut self) {
+        let Some(pending) = self.pending.as_ref() else {
+            tracing::debug!(target: "playback", "no pending playback state to prepare");
+            return;
+        };
+        self.last_state.position_ticks = pending
+            .launch
+            .start_seconds()
+            .and_then(seconds_to_ticks)
+            .unwrap_or_default();
+        self.last_state.duration_ticks = pending.launch.runtime_ticks.filter(|ticks| *ticks > 0);
+        self.last_state.pause = false;
+        self.last_state.eof_reached = false;
+        self.last_position_log_bucket = None;
+    }
+
     pub(super) fn activate_pending(&mut self) {
         let Some(pending) = self.pending.take() else {
             tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
@@ -119,7 +181,9 @@ impl ControllerState {
             .and_then(seconds_to_ticks)
             .unwrap_or_default();
         self.last_state.duration_ticks = None;
+        self.last_state.pause = false;
         self.last_state.eof_reached = false;
+        self.last_position_log_bucket = None;
         let launch = pending.launch.clone();
         let identity = pending.identity.clone();
         self.playback_identity = Some(identity.clone());
@@ -141,7 +205,7 @@ impl ControllerState {
         }
         self.mpv_playback_active = true;
         self.next_playback_handoff_until = None;
-        self.schedule_mpv_focus("file-loaded");
+        self.schedule_mpv_raise("file-loaded");
         self.load_external_subtitle(&launch);
         self.kick_start_playback(&launch);
         self.publish_snapshot();
@@ -287,4 +351,67 @@ impl ControllerState {
         }
         self.should_suppress_stop_during_next_playback_handoff()
     }
+}
+
+fn identity_matches_context(identity: &PlaybackIdentity, context: &PlaybackContext) -> bool {
+    let mut matched = false;
+    for (expected, actual) in [
+        (identity.item_id.as_deref(), context.item_id.as_deref()),
+        (
+            identity.media_source_id.as_deref(),
+            context.media_source_id.as_deref(),
+        ),
+        (
+            identity.play_session_id.as_deref(),
+            context.play_session_id.as_deref(),
+        ),
+    ] {
+        let expected = non_empty(expected);
+        let actual = non_empty(actual);
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            continue;
+        };
+        if expected != actual {
+            return false;
+        }
+        matched = true;
+    }
+    matched
+}
+
+fn update_identity_from_context(identity: &mut PlaybackIdentity, context: &PlaybackContext) {
+    fill_string(&mut identity.item_id, context.item_id.as_deref());
+    fill_string(
+        &mut identity.media_source_id,
+        context.media_source_id.as_deref(),
+    );
+    fill_string(
+        &mut identity.play_session_id,
+        context.play_session_id.as_deref(),
+    );
+}
+
+fn fill_string(target: &mut Option<String>, value: Option<&str>) {
+    if non_empty(target.as_deref()).is_none()
+        && let Some(value) = non_empty(value)
+    {
+        *target = Some(value.to_string());
+    }
+}
+
+fn playback_context_update_summary(context: &PlaybackContext) -> String {
+    format!(
+        "item={} media_source={} play_session={} runtime={}",
+        non_empty(context.item_id.as_deref()).unwrap_or("unknown"),
+        non_empty(context.media_source_id.as_deref()).unwrap_or("unknown"),
+        non_empty(context.play_session_id.as_deref()).unwrap_or("unknown"),
+        context
+            .runtime_ticks
+            .map(|ticks| ticks.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    )
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }

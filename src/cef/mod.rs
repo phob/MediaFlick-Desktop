@@ -1795,6 +1795,9 @@ fn remember_playback_context(query: &str, state: &BrowserState) {
         return;
     };
     prune_playback_state(&mut state);
+    state
+        .mpv_controller
+        .update_playback_context(context.clone());
     state.playback_contexts.push(PendingPlaybackContext {
         context,
         seen_at: Instant::now(),

@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
+use crate::jellyfin::bridge::PlaybackContext;
 use crate::mpv::{HttpHeader, MpvLaunch};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -105,6 +106,10 @@ impl PlaybackReporter {
 
     pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
         PlaybackSession::from_launch(launch).map(Self::new)
+    }
+
+    pub fn merge_context(&mut self, context: &PlaybackContext) {
+        self.session.merge_context(context);
     }
 
     pub fn report_start(&self, state: &MpvPlaybackState) {
@@ -214,6 +219,40 @@ impl PlaybackSession {
                 .filter(|value| value.is_array())
                 .cloned(),
         })
+    }
+
+    fn merge_context(&mut self, context: &PlaybackContext) {
+        fill_string(
+            &mut self.media_source_id,
+            context.media_source_id.as_deref(),
+        );
+        fill_string(
+            &mut self.play_session_id,
+            context.play_session_id.as_deref(),
+        );
+        fill_string(
+            &mut self.playlist_item_id,
+            context.playlist_item_id.as_deref(),
+        );
+        if let Some(play_method) = non_empty(context.play_method.as_deref()) {
+            self.play_method = play_method.to_string();
+        }
+        if self.audio_stream_index.is_none() {
+            self.audio_stream_index = context.audio_stream_index;
+        }
+        if self.subtitle_stream_index.is_none() {
+            self.subtitle_stream_index = context.subtitle_stream_index;
+        }
+        if self.runtime_ticks.is_none() {
+            self.runtime_ticks = context.runtime_ticks.filter(|ticks| *ticks > 0);
+        }
+        if self.queue.is_none() {
+            self.queue = context
+                .queue
+                .as_ref()
+                .filter(|value| value.is_array())
+                .cloned();
+        }
     }
 }
 
@@ -545,6 +584,14 @@ fn hex_value(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+fn fill_string(target: &mut Option<String>, value: Option<&str>) {
+    if non_empty(target.as_deref()).is_none()
+        && let Some(value) = non_empty(value)
+    {
+        *target = Some(value.to_string());
     }
 }
 

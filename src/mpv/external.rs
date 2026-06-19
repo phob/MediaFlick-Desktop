@@ -151,6 +151,7 @@ impl ExternalMpv {
         let mut command = self.hidden_command();
         command.arg("--force-window=yes");
         command.arg("--fullscreen=yes");
+        configure_focus_on_file_load(&mut command);
         command.arg("--no-terminal");
         // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
         // Windows `os.execute(...)` console flashes from those scripts are hidden
@@ -197,6 +198,7 @@ impl ExternalMpv {
         let mut command = self.hidden_command();
         command.arg("--force-window=no");
         command.arg(format!("--fullscreen={}", fullscreen.fullscreen_arg()));
+        configure_focus_on_file_load(&mut command);
         command.arg("--no-terminal");
         command.arg("--input-default-bindings=yes");
         command.arg("--input-vo-keyboard=yes");
@@ -239,6 +241,17 @@ fn configure_hidden_child_window(command: &mut Command) {
 
 #[cfg(not(windows))]
 fn configure_hidden_child_window(_command: &mut Command) {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn configure_focus_on_file_load(command: &mut Command) {
+    // Ask mpv to focus/raise its own window when a warm idle process creates
+    // the video output for a loaded file. mpv documents this for X11 and macOS;
+    // on unsupported compositors it is accepted as best-effort/no-op behavior.
+    command.arg("--focus-on=all");
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn configure_focus_on_file_load(_command: &mut Command) {}
 
 impl MpvLaunch {
     fn script_metadata(&self) -> Vec<(&'static str, String)> {
