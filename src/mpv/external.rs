@@ -195,9 +195,11 @@ impl ExternalMpv {
         fullscreen: MpvFullscreenBehavior,
     ) -> Command {
         let mut command = self.hidden_command();
-        command.arg("--force-window=yes");
+        command.arg("--force-window=no");
         command.arg(format!("--fullscreen={}", fullscreen.fullscreen_arg()));
         command.arg("--no-terminal");
+        command.arg("--input-default-bindings=yes");
+        command.arg("--input-vo-keyboard=yes");
         // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
         // Windows `os.execute(...)` console flashes from those scripts are hidden
         // by the command processor shim installed on the mpv child environment.

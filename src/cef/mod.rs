@@ -626,12 +626,14 @@ type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
 fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
+    let mpv_controller = MpvController::new(Some(playback_event_tx));
+    warm_configured_mpv(&mpv_controller, &settings);
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
         browsers: Vec::new(),
         playback_contexts: Vec::new(),
-        mpv_controller: MpvController::new(Some(playback_event_tx)),
+        mpv_controller,
         update_available: None,
         update_download_started: false,
         force_close_requested: false,
@@ -639,6 +641,14 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     start_playback_event_bridge(state.clone(), playback_event_rx);
     start_update_check_bridge(state.clone());
     state
+}
+
+fn warm_configured_mpv(mpv_controller: &MpvController, settings: &AppSettings) {
+    let Some(mpv_path) = settings.mpv_path.clone() else {
+        tracing::debug!(target: "mpv.ipc", "skipped mpv warmup because no executable is configured");
+        return;
+    };
+    mpv_controller.warm(mpv_path, settings.default_fullscreen);
 }
 
 fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEvent>) {
@@ -2106,6 +2116,7 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
 
     if let Ok(mut state) = state.lock() {
         state.settings = settings;
+        warm_configured_mpv(&state.mpv_controller, &state.settings);
     }
 
     frame.load_url(Some(&CefString::from(jellyfin_url.as_str())));
@@ -2174,6 +2185,7 @@ fn save_client_settings(
 
     if let Ok(mut state) = state.lock() {
         state.settings = settings;
+        warm_configured_mpv(&state.mpv_controller, &state.settings);
     }
     apply_scrollbar_settings_to_frame(&frame, state);
     execute_client_settings_js(

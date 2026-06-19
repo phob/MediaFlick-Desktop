@@ -1084,6 +1084,7 @@
         document.body.insertBefore(container, document.body.firstChild);
       }
 
+      container.style.pointerEvents = '';
       if (options?.fullscreen) {
         container.classList.add('videoPlayerContainer-onTop');
         container.style.zIndex = '1000';
@@ -1091,13 +1092,14 @@
       const background = options?.backdropUrl
         ? "#000 url('" + cssUrl(options.backdropUrl) + "') center/cover no-repeat"
         : '#000';
-      container.style.background = background;
+      container.style.setProperty('background', background, 'important');
       if (options?.fullscreen) document.body.classList.add('hide-scroll');
       this._videoContainer = container;
     }
 
     _removeVideoContainer() {
       document.body.classList.remove('hide-scroll');
+      this._resetVideoOsdLayer();
       const container = this._videoContainer;
       this._videoContainer = null;
       if (container?.dataset?.mediaFlickDesktop === 'true' && container.parentNode) {
@@ -1105,18 +1107,78 @@
       }
     }
 
+    _prepareVideoOsdLayer() {
+      try {
+        this.appRouter?.setTransparency?.('full');
+      } catch (_) {}
+
+      try {
+        document.documentElement.classList.add('transparentDocument');
+        document.querySelector('.backgroundContainer')?.classList.add('backgroundContainer-transparent');
+        document.querySelector('.backdropContainer')?.classList.add('hide');
+      } catch (_) {}
+
+      const osdPage = document.querySelector('#videoOsdPage');
+      if (osdPage) {
+        osdPage.dataset.mediaFlickDesktopLayered = 'true';
+        osdPage.style.setProperty('background', 'transparent', 'important');
+        osdPage.style.setProperty('z-index', '1000');
+      }
+
+      const header = document.querySelector('.skinHeader');
+      if (header) {
+        header.dataset.mediaFlickDesktopLayered = 'true';
+        header.style.setProperty('z-index', '1001');
+      }
+    }
+
+    _resetVideoOsdLayer() {
+      const osdPage = document.querySelector('#videoOsdPage[data-media-flick-desktop-layered="true"]');
+      if (osdPage) {
+        osdPage.style.removeProperty('background');
+        osdPage.style.removeProperty('z-index');
+        delete osdPage.dataset.mediaFlickDesktopLayered;
+      }
+
+      const header = document.querySelector('.skinHeader[data-media-flick-desktop-layered="true"]');
+      if (header) {
+        header.style.removeProperty('z-index');
+        delete header.dataset.mediaFlickDesktopLayered;
+      }
+
+      try {
+        this.appRouter?.setTransparency?.('none');
+      } catch (_) {}
+
+      try {
+        document.documentElement.classList.remove('transparentDocument');
+        document.querySelector('.backgroundContainer')?.classList.remove('backgroundContainer-transparent');
+        document.querySelector('.backdropContainer')?.classList.remove('hide');
+      } catch (_) {}
+    }
+
+    _lowerVideoContainerForOsd() {
+      const container = this._videoContainer;
+      if (!container) return;
+      this._prepareVideoOsdLayer();
+      container.classList.remove('videoPlayerContainer-onTop');
+      container.style.setProperty('z-index', '999');
+      container.style.pointerEvents = 'none';
+    }
+
     _notifyPlaying(options) {
       this.loading?.hide?.();
-      if (this._videoContainer) {
-        this._videoContainer.classList.remove('videoPlayerContainer-onTop');
-        this._videoContainer.style.zIndex = 'unset';
+      const showVideoOsd = this._isVideoOptions(options) && this.appRouter?.showVideoOsd;
+      if (showVideoOsd) {
+        Promise.resolve(this.appRouter.showVideoOsd())
+          .then(() => this._lowerVideoContainerForOsd())
+          .catch(() => this._lowerVideoContainerForOsd());
+      } else {
+        this._lowerVideoContainerForOsd();
       }
       this._trigger('unpause');
       this._trigger('playing');
       this._trigger('timeupdate');
-      if (this._isVideoOptions(options) && this.appRouter?.showVideoOsd) {
-        Promise.resolve(this.appRouter.showVideoOsd()).catch(() => {});
-      }
     }
 
     _applyMpvSnapshot(snapshot) {
@@ -1178,8 +1240,9 @@
         this._timeBaseMs = position;
         this._timeBaseAt = Date.now();
       }
+      const ended = shouldTreatMpvStopAsEnded(snapshot);
       suppressNextPlaybackAfterManualMpvStop(this.playbackManager, snapshot);
-      this._finishPlayback(false, false);
+      this._finishPlayback(false, false, { ended });
       return true;
     }
 
@@ -1214,9 +1277,18 @@
       return Promise.resolve();
     }
 
-    _finishPlayback(destroyPlayer, notifyMpv) {
+    _finishPlayback(destroyPlayer, notifyMpv, options = {}) {
       const previousSrc = this._currentSrc;
+      const ended = options?.ended === true;
       this._stopSyntheticClock();
+      if (previousSrc && notifyMpv) sendPlayerCommand({ command: 'stop' });
+      if (previousSrc) {
+        // Match Jellyfin Web's HTML players: keep currentSrc/currentTime
+        // readable while the stopped event is handled. PlaybackManager builds
+        // the final playstate and server stop report synchronously from the
+        // player during this event.
+        this._trigger('stopped', [{ src: previousSrc, ended }]);
+      }
       this._currentSrc = null;
       this._currentPlayOptions = null;
       this._currentTime = null;
@@ -1226,8 +1298,6 @@
       this._paused = false;
       this._mpvObservedActive = false;
       this._mpvStartedAt = 0;
-      if (previousSrc && notifyMpv) sendPlayerCommand({ command: 'stop' });
-      if (previousSrc) this._trigger('stopped', [{ src: previousSrc }]);
       if (destroyPlayer) this.destroy();
       stopPlayerStatePollingIfIdle();
       return Promise.resolve();

@@ -7,6 +7,7 @@ use crate::app::settings::config_dir;
 pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";
 const DEFAULT_MARK_WATCHED_NEXT_KEY: &str = "w";
+const STOP_PLAYBACK_KEYS: &[&str] = &["q", "Q", "CLOSE_WIN", "STOP"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MpvInputBindings {
@@ -43,11 +44,19 @@ impl MpvInputBindings {
         Self { mark_watched_next }
     }
 
-    pub fn section_contents(&self) -> Option<String> {
-        let key = sanitize_mpv_key(self.mark_watched_next.as_deref()?)?;
-        Some(format!(
-            "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
-        ))
+    pub fn section_contents(&self) -> String {
+        let mut lines = STOP_PLAYBACK_KEYS
+            .iter()
+            .map(|key| format!("{key} stop"))
+            .collect::<Vec<_>>();
+
+        if let Some(key) = self.mark_watched_next.as_deref().and_then(sanitize_mpv_key) {
+            lines.push(format!(
+                "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
+            ));
+        }
+
+        lines.join("\n")
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -106,10 +115,13 @@ mod tests {
         let bindings = MpvInputBindings::from_json(&json!({}));
 
         assert_eq!(bindings.mark_watched_next.as_deref(), Some("w"));
-        assert_eq!(
-            bindings.section_contents().as_deref(),
-            Some("w script-message mediaflick-desktop mark-watched-next")
+        assert!(
+            bindings
+                .section_contents()
+                .contains("w script-message mediaflick-desktop mark-watched-next")
         );
+        assert!(bindings.section_contents().contains("q stop"));
+        assert!(bindings.section_contents().contains("Q stop"));
     }
 
     #[test]
@@ -124,7 +136,6 @@ mod tests {
         assert!(
             bindings
                 .section_contents()
-                .unwrap()
                 .contains(MARK_WATCHED_NEXT_COMMAND)
         );
     }
@@ -136,6 +147,7 @@ mod tests {
         }));
 
         assert_eq!(bindings.mark_watched_next, None);
-        assert_eq!(bindings.section_contents(), None);
+        assert!(!bindings.section_contents().contains("mark-watched-next"));
+        assert!(bindings.section_contents().contains("q stop"));
     }
 }
