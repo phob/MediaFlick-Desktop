@@ -23,94 +23,99 @@
         all: initial;
         color-scheme: dark;
         --media-black: oklch(18% .006 260);
-        --chrome: oklch(24% .008 260);
+        --chrome: oklch(20% .01 260);
         --panel: oklch(29% .01 260);
         --raised: oklch(34% .012 260);
         --border: oklch(78% .01 260 / .16);
-        --border-strong: oklch(82% .012 260 / .26);
+        --border-strong: oklch(68% .145 227 / .46);
         --text: oklch(91% .01 260);
         --muted: oklch(73% .012 260);
-        --quiet: oklch(59% .012 260);
         --cyan: oklch(68% .145 227);
         --cyan-hover: oklch(72% .145 227);
-        --cyan-pressed: oklch(61% .145 227);
         --cyan-soft: oklch(68% .145 227 / .18);
         --danger: oklch(66% .18 31);
-        --shadow: oklch(12% .006 260 / .62);
-        font: 14px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        --danger-soft: oklch(66% .18 31 / .18);
+        --shadow: oklch(12% .006 260 / .58);
+        font: 13px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       }
       * { box-sizing: border-box; }
       .toast {
-        width: min(380px, calc(100vw - 36px));
+        position: relative;
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) auto 24px;
+        align-items: center;
+        gap: 10px;
+        width: min(336px, calc(100vw - 36px));
+        min-height: 56px;
         overflow: hidden;
+        padding: 10px;
         border: 1px solid var(--border-strong);
-        border-radius: 12px;
+        border-radius: 999px;
         background: var(--chrome);
         color: var(--text);
-        box-shadow: 0 24px 72px var(--shadow);
+        box-shadow: 0 14px 34px var(--shadow), 0 1px 0 oklch(96% .006 260 / .07) inset;
       }
-      .top { display: flex; gap: 12px; padding: 14px 14px 12px; }
+      .toast.error-state { border-color: oklch(66% .18 31 / .54); }
       .mark {
-        flex: 0 0 32px;
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         display: grid;
         place-items: center;
         border: 1px solid var(--border);
-        border-radius: 4px;
+        border-radius: 999px;
         background: var(--cyan-soft);
         color: var(--cyan);
-        font-size: 18px;
-        font-weight: 700;
+        font-size: 16px;
+        font-weight: 800;
         line-height: 1;
       }
-      .copy { min-width: 0; flex: 1 1 auto; }
+      .toast.error-state .mark { background: var(--danger-soft); color: var(--danger); }
+      .copy { min-width: 0; }
       .title {
-        margin: 0 0 3px;
+        margin: 0;
+        overflow: hidden;
         color: var(--text);
-        font-size: 14px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
         font-weight: 700;
         line-height: 1.25;
         letter-spacing: -.01em;
       }
-      .body { margin: 0; color: var(--muted); }
-      .asset {
-        margin: 5px 0 0;
-        color: var(--quiet);
-        font-size: 12px;
-        line-height: 1.35;
-        word-break: break-all;
+      .body {
+        margin: 1px 0 0;
+        overflow: hidden;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .asset:empty { display: none; }
       .close {
         appearance: none;
-        width: 34px;
-        height: 34px;
-        border: 1px solid transparent;
-        border-radius: 4px;
+        width: 24px;
+        height: 24px;
+        border: 0;
+        border-radius: 999px;
         background: transparent;
         color: var(--muted);
         cursor: pointer;
-        font: 22px/1 "Segoe UI", system-ui, sans-serif;
-        transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+        font: 18px/1 "Segoe UI", system-ui, sans-serif;
+        transition: background-color 160ms ease-out, color 160ms ease-out;
       }
-      .close:hover { background: var(--raised); border-color: var(--border); color: var(--text); }
-      .close:active { background: var(--panel); }
-      .actions { display: flex; align-items: center; gap: 10px; padding: 0 14px 14px 58px; }
+      .close:hover { background: var(--raised); color: var(--text); }
       .primary {
         appearance: none;
-        min-height: 36px;
-        border: 1px solid transparent;
-        border-radius: 4px;
-        padding: 0 13px;
+        min-height: 32px;
+        border: 0;
+        border-radius: 999px;
+        padding: 0 12px;
         background: var(--cyan);
         color: var(--media-black);
         cursor: pointer;
-        font: 700 13px/1 "Noto Sans", "Segoe UI", system-ui, sans-serif;
-        transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+        font: 800 12px/1 "Noto Sans", "Segoe UI", system-ui, sans-serif;
+        white-space: nowrap;
+        transition: background-color 160ms ease-out, color 160ms ease-out;
       }
       .primary:hover { background: var(--cyan-hover); }
-      .primary:active { background: var(--cyan-pressed); }
       .close:focus-visible,
       .primary:focus-visible {
         outline: 2px solid var(--cyan);
@@ -122,27 +127,36 @@
         cursor: default;
         color: var(--muted);
         background: var(--panel);
-        border-color: transparent;
       }
-      .meter { height: 6px; overflow: hidden; border-top: 1px solid var(--border); background: var(--media-black); }
+      .meter {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 4px;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--media-black);
+        pointer-events: none;
+      }
       .bar {
         width: 100%;
         height: 100%;
         transform: scaleX(0);
         transform-origin: left center;
         background: var(--cyan);
-        transition: transform 160ms ease-out;
+        transition: transform 160ms cubic-bezier(.22, 1, .36, 1);
       }
-      .meta { min-height: 17px; color: var(--quiet); font-size: 12px; }
-      .error { color: var(--danger); }
       .toast.clickable { cursor: pointer; }
       .toast.clickable:hover .primary { background: var(--cyan-hover); }
       @media (max-width: 480px) {
-        .toast { width: calc(100vw - 20px); }
-        .top { padding: 14px 12px 12px; }
-        .actions { flex-wrap: wrap; padding: 0 12px 12px 56px; }
-        .primary { min-height: 40px; }
-        .close { width: 40px; height: 40px; }
+        .toast {
+          grid-template-columns: 28px minmax(0, 1fr) auto 28px;
+          width: calc(100vw - 20px);
+          min-height: 60px;
+        }
+        .primary { min-height: 36px; }
+        .close { width: 28px; height: 28px; }
       }
       @media (prefers-reduced-motion: reduce) {
         .bar,
@@ -151,19 +165,13 @@
       }
     </style>
     <div class="toast" role="status" aria-live="polite">
-      <div class="top">
-        <div class="mark">↑</div>
-        <div class="copy">
-          <p class="title"></p>
-          <p class="body"></p>
-          <p class="asset"></p>
-        </div>
-        <button class="close" type="button" aria-label="Dismiss update notification">×</button>
+      <div class="mark">↑</div>
+      <div class="copy">
+        <p class="title"></p>
+        <p class="body"></p>
       </div>
-      <div class="actions">
-        <button class="primary" type="button"></button>
-        <span class="meta"></span>
-      </div>
+      <button class="primary" type="button"></button>
+      <button class="close" type="button" aria-label="Dismiss update notification">×</button>
       <div class="meter" hidden><div class="bar"></div></div>
     </div>`;
 
@@ -171,12 +179,10 @@
   const mark = root.querySelector('.mark');
   const title = root.querySelector('.title');
   const body = root.querySelector('.body');
-  const asset = root.querySelector('.asset');
   const primary = root.querySelector('.primary');
   const close = root.querySelector('.close');
   const meter = root.querySelector('.meter');
   const bar = root.querySelector('.bar');
-  const meta = root.querySelector('.meta');
 
   function bytes(value) {
     const number = Number(value || 0);
@@ -228,26 +234,19 @@
 
   function render() {
     if (dismissed) return;
+    const automaticInstall = canInstallAutomatically();
     toast.classList.toggle('clickable', status === 'available');
+    toast.classList.toggle('error-state', status === 'error');
     close.hidden = status === 'downloading' || status === 'installing';
     meter.hidden = status === 'available' || status === 'error';
-    meta.className = 'meta';
     bar.style.transform = 'scaleX(0)';
-    mark.textContent = status === 'error' ? '!' : canInstallAutomatically() ? '↑' : '↗';
+    mark.textContent = status === 'error' ? '!' : automaticInstall ? '↑' : '↗';
     primary.disabled = false;
 
     if (status === 'available') {
-      title.textContent = `MediaFlick Desktop ${update.version} is available`;
-      if (canInstallAutomatically()) {
-        body.textContent = 'Click to download and install it quietly. The app will restart when setup finishes.';
-        asset.textContent = update.asset?.name || '';
-        primary.textContent = 'Install update';
-      } else {
-        body.textContent = 'Open the latest GitHub release to download the update for this platform.';
-        asset.textContent = update.releasePageUrl || update.htmlUrl || '';
-        primary.textContent = 'Open latest release';
-      }
-      meta.textContent = '';
+      title.textContent = 'Update available';
+      body.textContent = `MediaFlick Desktop ${update.version}`;
+      primary.textContent = automaticInstall ? 'Install' : 'Open release';
       return;
     }
 
@@ -255,36 +254,29 @@
       const downloaded = Number(progressPayload.downloaded || 0);
       const total = Number(progressPayload.total || 0);
       const percent = total > 0 ? Math.max(0, Math.min(100, (downloaded / total) * 100)) : 0;
-      title.textContent = `Downloading MediaFlick Desktop ${update.version}`;
-      body.textContent = 'Keep the app open while the installer is downloaded.';
-      asset.textContent = update.asset?.name || '';
-      primary.textContent = 'Downloading';
+      title.textContent = 'Downloading update';
+      body.textContent = total > 0 ? `${bytes(downloaded)} of ${bytes(total)}` : bytes(downloaded);
+      primary.textContent = total > 0 ? `${Math.round(percent)}%` : 'Working';
       primary.disabled = true;
       mark.textContent = '↓';
       bar.style.transform = `scaleX(${percent / 100})`;
-      meta.textContent = total > 0 ? `${Math.round(percent)}%, ${bytes(downloaded)} of ${bytes(total)}` : bytes(downloaded);
       return;
     }
 
     if (status === 'installing') {
       title.textContent = 'Installing update';
-      body.textContent = 'The app will close now. Setup will run quietly and launch the new version.';
-      asset.textContent = update.asset?.name || '';
-      primary.textContent = 'Installing';
+      body.textContent = 'MediaFlick Desktop will restart.';
+      primary.textContent = 'Ready';
       primary.disabled = true;
       mark.textContent = '✓';
       bar.style.transform = 'scaleX(1)';
-      meta.textContent = 'Ready';
       return;
     }
 
     title.textContent = 'Update failed';
     body.textContent = String(progressPayload.message || 'Could not download or start the installer.');
-    asset.textContent = update.releasePageUrl || update.htmlUrl || '';
-    primary.textContent = 'Try again';
+    primary.textContent = automaticInstall ? 'Try again' : 'Open release';
     meter.hidden = true;
-    meta.className = 'meta error';
-    meta.textContent = 'Error';
   }
 
   primary.addEventListener('click', (event) => {
