@@ -136,7 +136,7 @@ where
 pub fn start_installer(installer_path: &Path) -> UpdaterResult<()> {
     std::process::Command::new(installer_path)
         .args([
-            "/VERYSILENT",
+            "/SILENT",
             "/SUPPRESSMSGBOXES",
             "/NORESTART",
             "/CLOSEAPPLICATIONS",
