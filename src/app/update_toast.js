@@ -19,65 +19,136 @@
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `
     <style>
-      * { box-sizing: border-box; }
-      :host { all: initial; color-scheme: dark; }
-      .toast {
-        width: min(360px, calc(100vw - 36px));
-        border: 1px solid color-mix(in oklch, oklch(72% .13 244) 48%, oklch(25% .02 260));
-        border-radius: 14px;
-        background: linear-gradient(145deg, oklch(24% .026 266), oklch(18% .018 270));
-        box-shadow: 0 18px 44px rgba(5, 8, 18, .48), 0 1px 0 rgba(238, 242, 255, .08) inset;
-        color: oklch(92% .01 260);
-        font: 13px/1.45 Segoe UI, Inter, system-ui, sans-serif;
-        overflow: hidden;
+      :host {
+        all: initial;
+        color-scheme: dark;
+        --media-black: oklch(18% .006 260);
+        --chrome: oklch(24% .008 260);
+        --panel: oklch(29% .01 260);
+        --raised: oklch(34% .012 260);
+        --border: oklch(78% .01 260 / .16);
+        --border-strong: oklch(82% .012 260 / .26);
+        --text: oklch(91% .01 260);
+        --muted: oklch(73% .012 260);
+        --quiet: oklch(59% .012 260);
+        --cyan: oklch(68% .145 227);
+        --cyan-hover: oklch(72% .145 227);
+        --cyan-pressed: oklch(61% .145 227);
+        --cyan-soft: oklch(68% .145 227 / .18);
+        --danger: oklch(66% .18 31);
+        --shadow: oklch(12% .006 260 / .62);
+        font: 14px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       }
-      .top { display: flex; gap: 12px; padding: 15px 15px 13px; }
+      * { box-sizing: border-box; }
+      .toast {
+        width: min(380px, calc(100vw - 36px));
+        overflow: hidden;
+        border: 1px solid var(--border-strong);
+        border-radius: 12px;
+        background: var(--chrome);
+        color: var(--text);
+        box-shadow: 0 24px 72px var(--shadow);
+      }
+      .top { display: flex; gap: 12px; padding: 14px 14px 12px; }
       .mark {
         flex: 0 0 32px;
         width: 32px;
         height: 32px;
         display: grid;
         place-items: center;
-        border-radius: 10px;
-        background: oklch(55% .17 260 / .22);
-        color: oklch(78% .16 235);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--cyan-soft);
+        color: var(--cyan);
         font-size: 18px;
         font-weight: 700;
+        line-height: 1;
       }
       .copy { min-width: 0; flex: 1 1 auto; }
-      .title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 2px; }
-      .body { color: oklch(77% .025 260); margin: 0; }
-      .asset { color: oklch(66% .035 260); margin-top: 4px; word-break: break-all; }
+      .title {
+        margin: 0 0 3px;
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.25;
+        letter-spacing: -.01em;
+      }
+      .body { margin: 0; color: var(--muted); }
+      .asset {
+        margin: 5px 0 0;
+        color: var(--quiet);
+        font-size: 12px;
+        line-height: 1.35;
+        word-break: break-all;
+      }
+      .asset:empty { display: none; }
       .close {
         appearance: none;
-        border: 0;
+        width: 34px;
+        height: 34px;
+        border: 1px solid transparent;
+        border-radius: 4px;
         background: transparent;
-        color: oklch(72% .025 260);
+        color: var(--muted);
         cursor: pointer;
-        font: 18px/1 Segoe UI, system-ui, sans-serif;
-        height: 26px;
-        width: 26px;
-        border-radius: 8px;
+        font: 22px/1 "Segoe UI", system-ui, sans-serif;
+        transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
       }
-      .close:hover, .close:focus-visible { background: oklch(34% .03 260); color: oklch(94% .01 260); outline: none; }
-      .actions { display: flex; align-items: center; gap: 10px; padding: 0 15px 15px 59px; }
+      .close:hover { background: var(--raised); border-color: var(--border); color: var(--text); }
+      .close:active { background: var(--panel); }
+      .actions { display: flex; align-items: center; gap: 10px; padding: 0 14px 14px 58px; }
       .primary {
         appearance: none;
-        border: 0;
-        border-radius: 10px;
-        padding: 8px 12px;
-        background: linear-gradient(135deg, oklch(64% .18 246), oklch(58% .18 292));
-        color: oklch(98% .005 260);
+        min-height: 36px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 0 13px;
+        background: var(--cyan);
+        color: var(--media-black);
         cursor: pointer;
-        font: 700 12px/1 Segoe UI, Inter, system-ui, sans-serif;
+        font: 700 13px/1 "Noto Sans", "Segoe UI", system-ui, sans-serif;
+        transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
       }
-      .primary:hover, .primary:focus-visible { filter: brightness(1.08); outline: none; }
-      .primary[disabled] { cursor: default; filter: saturate(.4) brightness(.75); }
-      .meter { height: 8px; background: oklch(15% .018 270); overflow: hidden; }
-      .bar { height: 100%; width: 0%; background: linear-gradient(90deg, oklch(68% .18 235), oklch(67% .17 292)); transition: width 160ms ease-out; }
-      .meta { color: oklch(68% .035 260); font-size: 12px; min-height: 17px; }
-      .error { color: oklch(78% .14 28); }
+      .primary:hover { background: var(--cyan-hover); }
+      .primary:active { background: var(--cyan-pressed); }
+      .close:focus-visible,
+      .primary:focus-visible {
+        outline: 2px solid var(--cyan);
+        outline-offset: 2px;
+        box-shadow: 0 0 0 3px var(--cyan-soft);
+      }
+      .primary[disabled],
+      .primary[disabled]:hover {
+        cursor: default;
+        color: var(--muted);
+        background: var(--panel);
+        border-color: transparent;
+      }
+      .meter { height: 6px; overflow: hidden; border-top: 1px solid var(--border); background: var(--media-black); }
+      .bar {
+        width: 100%;
+        height: 100%;
+        transform: scaleX(0);
+        transform-origin: left center;
+        background: var(--cyan);
+        transition: transform 160ms ease-out;
+      }
+      .meta { min-height: 17px; color: var(--quiet); font-size: 12px; }
+      .error { color: var(--danger); }
       .toast.clickable { cursor: pointer; }
+      .toast.clickable:hover .primary { background: var(--cyan-hover); }
+      @media (max-width: 480px) {
+        .toast { width: calc(100vw - 20px); }
+        .top { padding: 14px 12px 12px; }
+        .actions { flex-wrap: wrap; padding: 0 12px 12px 56px; }
+        .primary { min-height: 40px; }
+        .close { width: 40px; height: 40px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar,
+        .close,
+        .primary { transition: none; }
+      }
     </style>
     <div class="toast" role="status" aria-live="polite">
       <div class="top">
@@ -97,6 +168,7 @@
     </div>`;
 
   const toast = root.querySelector('.toast');
+  const mark = root.querySelector('.mark');
   const title = root.querySelector('.title');
   const body = root.querySelector('.body');
   const asset = root.querySelector('.asset');
@@ -119,16 +191,34 @@
     return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
   }
 
+  function canInstallAutomatically() {
+    return Boolean(update.automaticInstall && update.asset?.browserDownloadUrl);
+  }
+
+  function sendBridgeAction(action) {
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = `mediaflick-desktop://${action}?version=${encodeURIComponent(update.version || '')}`;
+    document.documentElement.appendChild(frame);
+    setTimeout(() => frame.remove(), 30000);
+  }
+
   function requestDownload() {
     if (status !== 'available' && status !== 'error') return;
     status = 'downloading';
     progressPayload = { downloaded: 0, total: update.asset?.size || 0 };
     render();
-    const frame = document.createElement('iframe');
-    frame.style.display = 'none';
-    frame.src = 'mediaflick-desktop://update-download?version=' + encodeURIComponent(update.version || '');
-    document.documentElement.appendChild(frame);
-    setTimeout(() => frame.remove(), 30000);
+    sendBridgeAction('update-download');
+  }
+
+  function openReleasePage() {
+    if (status !== 'available' && status !== 'error') return;
+    sendBridgeAction('update-release');
+  }
+
+  function activateUpdate() {
+    if (canInstallAutomatically()) requestDownload();
+    else openReleasePage();
   }
 
   function dismiss() {
@@ -142,14 +232,21 @@
     close.hidden = status === 'downloading' || status === 'installing';
     meter.hidden = status === 'available' || status === 'error';
     meta.className = 'meta';
-    bar.style.width = '0%';
+    bar.style.transform = 'scaleX(0)';
+    mark.textContent = status === 'error' ? '!' : canInstallAutomatically() ? '↑' : '↗';
     primary.disabled = false;
 
     if (status === 'available') {
       title.textContent = `MediaFlick Desktop ${update.version} is available`;
-      body.textContent = 'Click to download and install it quietly. The app will restart when setup finishes.';
-      asset.textContent = update.asset?.name || '';
-      primary.textContent = 'Install update';
+      if (canInstallAutomatically()) {
+        body.textContent = 'Click to download and install it quietly. The app will restart when setup finishes.';
+        asset.textContent = update.asset?.name || '';
+        primary.textContent = 'Install update';
+      } else {
+        body.textContent = 'Open the latest GitHub release to download the update for this platform.';
+        asset.textContent = update.releasePageUrl || update.htmlUrl || '';
+        primary.textContent = 'Open latest release';
+      }
       meta.textContent = '';
       return;
     }
@@ -163,7 +260,8 @@
       asset.textContent = update.asset?.name || '';
       primary.textContent = 'Downloading';
       primary.disabled = true;
-      bar.style.width = `${percent}%`;
+      mark.textContent = '↓';
+      bar.style.transform = `scaleX(${percent / 100})`;
       meta.textContent = total > 0 ? `${Math.round(percent)}%, ${bytes(downloaded)} of ${bytes(total)}` : bytes(downloaded);
       return;
     }
@@ -174,14 +272,15 @@
       asset.textContent = update.asset?.name || '';
       primary.textContent = 'Installing';
       primary.disabled = true;
-      bar.style.width = '100%';
+      mark.textContent = '✓';
+      bar.style.transform = 'scaleX(1)';
       meta.textContent = 'Ready';
       return;
     }
 
     title.textContent = 'Update failed';
     body.textContent = String(progressPayload.message || 'Could not download or start the installer.');
-    asset.textContent = update.htmlUrl || '';
+    asset.textContent = update.releasePageUrl || update.htmlUrl || '';
     primary.textContent = 'Try again';
     meter.hidden = true;
     meta.className = 'meta error';
@@ -191,9 +290,9 @@
   primary.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    requestDownload();
+    activateUpdate();
   });
-  toast.addEventListener('click', () => requestDownload());
+  toast.addEventListener('click', () => activateUpdate());
   close.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();

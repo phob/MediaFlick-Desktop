@@ -5,8 +5,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-const GITHUB_LATEST_RELEASE_URL: &str =
+const GITHUB_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/phob/mediaflick-desktop/releases/latest";
+pub const GITHUB_LATEST_RELEASE_PAGE_URL: &str =
+    "https://github.com/phob/mediaflick-desktop/releases/latest";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
 
@@ -18,7 +20,9 @@ pub struct UpdateRelease {
     pub version: String,
     pub tag_name: String,
     pub html_url: String,
-    pub asset: UpdateAsset,
+    pub release_page_url: String,
+    pub automatic_install: bool,
+    pub asset: Option<UpdateAsset>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,13 +48,9 @@ struct GithubAsset {
 }
 
 pub fn check_for_update() -> UpdaterResult<Option<UpdateRelease>> {
-    if !automatic_updates_supported() {
-        return Ok(None);
-    }
-
     let agent = update_agent();
     let mut response = agent
-        .get(GITHUB_LATEST_RELEASE_URL)
+        .get(GITHUB_LATEST_RELEASE_API_URL)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .call()?;
@@ -60,24 +60,28 @@ pub fn check_for_update() -> UpdaterResult<Option<UpdateRelease>> {
         return Ok(None);
     }
 
-    let Some(asset) = select_platform_asset(release.assets) else {
+    let asset = select_platform_asset(release.assets);
+    if automatic_install_supported() && asset.is_none() {
         tracing::warn!(
             target: "updater",
             version,
             "latest release does not contain a supported auto-update asset for this platform"
         );
         return Ok(None);
-    };
+    }
+    let automatic_install = automatic_install_supported() && asset.is_some();
 
     Ok(Some(UpdateRelease {
         version,
         tag_name: release.tag_name,
         html_url: release.html_url,
-        asset: UpdateAsset {
+        release_page_url: GITHUB_LATEST_RELEASE_PAGE_URL.to_string(),
+        automatic_install,
+        asset: asset.map(|asset| UpdateAsset {
             name: asset.name,
             browser_download_url: asset.browser_download_url,
             size: asset.size,
-        },
+        }),
     }))
 }
 
@@ -85,17 +89,21 @@ pub fn download_update<F>(release: &UpdateRelease, mut progress: F) -> UpdaterRe
 where
     F: FnMut(u64, Option<u64>) + Send + 'static,
 {
+    let Some(asset) = &release.asset else {
+        return Err(std::io::Error::other("update release has no downloadable asset").into());
+    };
+
     let download_dir = std::env::temp_dir().join("mediaflick-desktop-updates");
     fs::create_dir_all(&download_dir)?;
-    let installer_path = download_dir.join(safe_file_name(&release.asset.name));
+    let installer_path = download_dir.join(safe_file_name(&asset.name));
     let partial_path = installer_path.with_extension("download");
 
     let agent = update_agent();
     let mut response = agent
-        .get(release.asset.browser_download_url.as_str())
+        .get(asset.browser_download_url.as_str())
         .header("Accept", "application/octet-stream")
         .call()?;
-    let total = content_length(&response).or(release.asset.size);
+    let total = content_length(&response).or(asset.size);
 
     let mut reader = response.body_mut().as_reader();
     let mut file = File::create(&partial_path)?;
@@ -159,7 +167,7 @@ pub fn update_progress_script(state: &str, payload: serde_json::Value) -> String
     )
 }
 
-fn automatic_updates_supported() -> bool {
+fn automatic_install_supported() -> bool {
     cfg!(target_os = "windows")
 }
 
@@ -174,9 +182,19 @@ fn update_agent() -> ureq::Agent {
 fn select_platform_asset(assets: Vec<GithubAsset>) -> Option<GithubAsset> {
     assets.into_iter().find(|asset| {
         let name = asset.name.to_ascii_lowercase();
-        cfg!(target_os = "windows")
-            && name.starts_with("mediaflickdesktop-setup-")
-            && name.ends_with(".exe")
+        if cfg!(target_os = "windows") {
+            name.starts_with("mediaflickdesktop-setup-") && name.ends_with(".exe")
+        } else if cfg!(target_os = "macos") {
+            name.starts_with("mediaflickdesktop-")
+                && name.contains("-macos-")
+                && name.ends_with(".dmg")
+        } else if cfg!(target_os = "linux") {
+            name.starts_with("mediaflickdesktop-")
+                && name.contains("-linux-")
+                && name.ends_with(".appimage")
+        } else {
+            false
+        }
     })
 }
 

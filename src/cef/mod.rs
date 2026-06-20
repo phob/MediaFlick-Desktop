@@ -776,7 +776,7 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
             tracing::info!(
                 target: "updater",
                 version = %release.version,
-                asset = %release.asset.name,
+                asset = release.asset.as_ref().map(|asset| asset.name.as_str()).unwrap_or("none"),
                 "update available"
             );
             if let Ok(mut state) = state.lock() {
@@ -1281,6 +1281,11 @@ wrap_request_handler! {
                 return 1;
             }
 
+            if request_url.starts_with("mediaflick-desktop://update-release") {
+                open_update_release_page();
+                return 1;
+            }
+
             if let Some(query) = bridge_action_query(&request_url, "save") {
                 save_settings_and_open(query, frame, &self.state);
                 return 1;
@@ -1396,6 +1401,12 @@ fn handle_bridge_resource_request(
         return true;
     }
 
+    if request_url.starts_with("mediaflick-desktop://update-release") {
+        tracing::trace!(target: "updater", "handling update-release bridge resource request");
+        open_update_release_page();
+        return true;
+    }
+
     if request_url.starts_with("mediaflick-desktop://app-about") {
         tracing::trace!(target: "bridge", "handling app-about bridge resource request");
         show_about_dialog(browser, frame);
@@ -1486,6 +1497,10 @@ fn open_external_link(url: &str) {
     if let Err(error) = open_url_in_default_browser(url) {
         tracing::warn!(target: "app", url, "failed to open link in default browser: {error}");
     }
+}
+
+fn open_update_release_page() {
+    open_external_link(updater::GITHUB_LATEST_RELEASE_PAGE_URL);
 }
 
 fn is_safe_external_link(url: &str) -> bool {
@@ -1693,6 +1708,10 @@ fn start_update_download(_query: &str, state: &BrowserState) {
                 tracing::warn!(target: "updater", "ignored update download request without an available update");
                 return;
             };
+            if !release.automatic_install || release.asset.is_none() {
+                tracing::debug!(target: "updater", "ignored update download request for a release without automatic installation");
+                return;
+            }
             state.update_download_started = true;
             release
         }
@@ -1705,7 +1724,7 @@ fn start_update_download(_query: &str, state: &BrowserState) {
     tracing::info!(
         target: "updater",
         version = %release.version,
-        asset = %release.asset.name,
+        asset = release.asset.as_ref().map(|asset| asset.name.as_str()).unwrap_or("none"),
         "starting update download"
     );
     dispatch_update_progress(
@@ -1713,7 +1732,7 @@ fn start_update_download(_query: &str, state: &BrowserState) {
         "downloading",
         json!({
             "downloaded": 0,
-            "total": release.asset.size,
+            "total": release.asset.as_ref().and_then(|asset| asset.size),
         }),
     );
 
