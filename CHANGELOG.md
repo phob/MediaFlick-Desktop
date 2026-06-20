@@ -8,7 +8,11 @@
 
 ### Changed
 
+- Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
+
 ### Fixed
+
+- Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.
 
 ### Removed
 
