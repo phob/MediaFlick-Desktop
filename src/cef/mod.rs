@@ -12,7 +12,8 @@ use crate::app::about;
 use crate::app::client_settings;
 use crate::app::logger;
 use crate::app::settings::{
-    AppSettings, CloseBehavior, MpvFullscreenBehavior, WebUiWindowSettings, normalize_server_url,
+    AppSettings, CloseBehavior, MpvFullscreenBehavior, SegmentSkipMode, WebUiWindowSettings,
+    normalize_server_url,
 };
 use crate::app::updater::{self, UpdateRelease};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
@@ -626,7 +627,8 @@ type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
 fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
-    let mpv_controller = MpvController::new(Some(playback_event_tx));
+    let mpv_controller =
+        MpvController::new(Some(playback_event_tx), settings.segment_skip_config());
     warm_configured_mpv(&mpv_controller, &settings);
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
@@ -644,6 +646,7 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
 }
 
 fn warm_configured_mpv(mpv_controller: &MpvController, settings: &AppSettings) {
+    mpv_controller.set_segment_skip_config(settings.segment_skip_config());
     let Some(mpv_path) = settings.mpv_path.clone() else {
         tracing::debug!(target: "mpv.ipc", "skipped mpv warmup because no executable is configured");
         return;
@@ -1209,20 +1212,11 @@ wrap_load_handler! {
                 .lock()
                 .map(|state| state.title.clone())
                 .unwrap_or_else(|_| "MediaFlick Desktop".to_string());
-            let failed_url = html_escape(&failed_url.map(CefString::to_string).unwrap_or_default());
-            let error_text = html_escape(&error_text.map(CefString::to_string).unwrap_or_default());
-            let error_code = raw_error as i32;
-            let html = format!(
-                r#"<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>{title}</title></head>
-<body style="margin:40px;font:16px system-ui;background:#101010;color:#f4f4f4">
-  <h1>Could not load Jellyfin</h1>
-  <p><strong>URL:</strong> {failed_url}</p>
-  <p><strong>Error:</strong> {error_text} ({error_code})</p>
-  <p>Pass a different server with <code>--url http://localhost:8096</code>.</p>
-</body>
-</html>"#,
+            let html = load_error_html(
+                &title,
+                &failed_url.map(CefString::to_string).unwrap_or_default(),
+                &error_text.map(CefString::to_string).unwrap_or_default(),
+                raw_error as i32,
             );
             let uri = data_uri(html.as_bytes(), "text/html");
             frame.load_url(Some(&CefString::from(uri.as_str())));
@@ -2211,6 +2205,14 @@ fn save_client_settings(
         .as_deref()
         .map(|value| value == "visible")
         .unwrap_or(settings.show_scrollbars);
+    settings.skip_intro = query_param(query, "skipIntro")
+        .as_deref()
+        .and_then(parse_segment_skip_mode)
+        .unwrap_or(settings.skip_intro);
+    settings.skip_credits = query_param(query, "skipCredits")
+        .as_deref()
+        .and_then(parse_segment_skip_mode)
+        .unwrap_or(settings.skip_credits);
     settings.sanitize();
 
     let bindings = MpvInputBindings {
@@ -2251,6 +2253,15 @@ fn parse_close_behavior(value: &str) -> Option<CloseBehavior> {
     match value {
         "exit_app" => Some(CloseBehavior::ExitApp),
         "minimize_window" => Some(CloseBehavior::MinimizeWindow),
+        _ => None,
+    }
+}
+
+fn parse_segment_skip_mode(value: &str) -> Option<SegmentSkipMode> {
+    match value {
+        "disabled" => Some(SegmentSkipMode::Disabled),
+        "prompt" => Some(SegmentSkipMode::Prompt),
+        "always" => Some(SegmentSkipMode::Always),
         _ => None,
     }
 }
@@ -2357,6 +2368,14 @@ fn welcome_html(settings: &AppSettings) -> String {
         .replace("{{mpv_placeholder}}", &html_escape(mpv_placeholder()))
         .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{connect_disabled}}", connect_disabled)
+}
+
+fn load_error_html(title: &str, failed_url: &str, error_text: &str, error_code: i32) -> String {
+    include_str!("../ui/load_error.html")
+        .replace("{{title}}", &html_escape(title))
+        .replace("{{failed_url}}", &html_escape(failed_url))
+        .replace("{{error_text}}", &html_escape(error_text))
+        .replace("{{error_code}}", &error_code.to_string())
 }
 
 fn mpv_placeholder() -> &'static str {

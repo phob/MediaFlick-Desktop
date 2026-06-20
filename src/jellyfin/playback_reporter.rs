@@ -221,6 +221,22 @@ impl PlaybackSession {
         })
     }
 
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn item_id(&self) -> &str {
+        &self.item_id
+    }
+
+    pub(crate) fn media_source_id(&self) -> Option<&str> {
+        self.media_source_id.as_deref()
+    }
+
+    pub(crate) fn auth_headers(&self) -> &[HttpHeader] {
+        &self.auth_headers
+    }
+
     fn merge_context(&mut self, context: &PlaybackContext) {
         fill_string(
             &mut self.media_source_id,

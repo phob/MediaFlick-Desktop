@@ -267,6 +267,7 @@ impl ControllerState {
             );
             return;
         }
+        self.clear_skip_segment_state();
         if let Some(pending) = self.pending.take() {
             self.next_playback_handoff_until = None;
             if let Some(reporter) = pending.reporter {
