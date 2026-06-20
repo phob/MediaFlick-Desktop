@@ -8,7 +8,6 @@
 
 - Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
 - Added README disclosure for AI-assisted project work.
-- Added a Codex UI-change hook for design review reminders after UI edits.
 
 ### Changed
 
