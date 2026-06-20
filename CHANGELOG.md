@@ -6,8 +6,13 @@
 
 ### Added
 
+- Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
+- Added README disclosure for AI-assisted project work.
+
 ### Changed
 
+- Moved app-owned dialog and load-error markup templates out of Rust source files.
+- Replaced the About and Client Settings dialog brand marks with the app logo.
 - Polished the About dialog and redesigned the update notification as a compact pill without installer filename copy.
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
 

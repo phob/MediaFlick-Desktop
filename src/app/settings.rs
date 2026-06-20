@@ -27,6 +27,54 @@ pub struct AppSettings {
     pub show_scrollbars: bool,
     #[serde(default, skip_serializing_if = "WebUiWindowSettings::is_default")]
     pub webui_window: WebUiWindowSettings,
+    #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
+    pub skip_intro: SegmentSkipMode,
+    #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
+    pub skip_credits: SegmentSkipMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SegmentSkipMode {
+    Disabled,
+    #[default]
+    Prompt,
+    Always,
+}
+
+impl SegmentSkipMode {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Prompt => "prompt",
+            Self::Always => "always",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SegmentSkipConfig {
+    pub intro: SegmentSkipMode,
+    pub credits: SegmentSkipMode,
+}
+
+impl Default for SegmentSkipConfig {
+    fn default() -> Self {
+        Self {
+            intro: SegmentSkipMode::Prompt,
+            credits: SegmentSkipMode::Prompt,
+        }
+    }
+}
+
+impl SegmentSkipConfig {
+    pub fn all_disabled(self) -> bool {
+        self.intro == SegmentSkipMode::Disabled && self.credits == SegmentSkipMode::Disabled
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +182,8 @@ impl Default for AppSettings {
             close_behavior: CloseBehavior::default(),
             show_scrollbars: false,
             webui_window: WebUiWindowSettings::default(),
+            skip_intro: SegmentSkipMode::default(),
+            skip_credits: SegmentSkipMode::default(),
         }
     }
 }
@@ -176,6 +226,13 @@ impl AppSettings {
                 .mpv_path
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
+    }
+
+    pub fn segment_skip_config(&self) -> SegmentSkipConfig {
+        SegmentSkipConfig {
+            intro: self.skip_intro,
+            credits: self.skip_credits,
+        }
     }
 
     pub fn sanitize(&mut self) {

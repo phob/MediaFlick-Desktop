@@ -11,10 +11,12 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
-use crate::app::settings::MpvFullscreenBehavior;
+use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
+use crate::jellyfin::media_segments::{self, SegmentType, SkipSegment};
 use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, cleanup_ipc_path, make_mpv_ipc_path, seconds_to_ticks,
+    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, cleanup_ipc_path, make_mpv_ipc_path,
+    seconds_to_ticks,
 };
 use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
@@ -36,6 +38,8 @@ const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(25);
 const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STARTUP_SEEK_POSITION_TOLERANCE: i64 = 30_000_000;
+const SEGMENT_SKIP_OSD_DURATION_MS: i64 = 3000;
+const SEGMENT_SKIP_OSD_DEBOUNCE: Duration = Duration::from_secs(3);
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
@@ -92,6 +96,11 @@ enum ControllerMessage {
     },
     PlaybackContext(Box<PlaybackContext>),
     Control(MpvControlCommand),
+    SegmentSkipConfig(SegmentSkipConfig),
+    MediaSegmentsFetched {
+        playback_id: i64,
+        result: Result<Vec<SkipSegment>, String>,
+    },
     Shutdown {
         ack: Sender<()>,
     },
@@ -104,6 +113,7 @@ struct RecentLoad {
 }
 
 struct ControllerState {
+    tx: Sender<ControllerMessage>,
     rx: Receiver<ControllerMessage>,
     snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
     child: Option<Child>,
@@ -120,6 +130,11 @@ struct ControllerState {
     playback_runtime_ticks: Option<i64>,
     last_state: MpvPlaybackState,
     last_position_log_bucket: Option<i64>,
+    skip_segments: Vec<SkipSegment>,
+    current_skip_segment: Option<usize>,
+    last_skip_osd_at: Option<Instant>,
+    seek_started_at_ticks: Option<i64>,
+    segment_skip_config: SegmentSkipConfig,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
     pending_ontop_reset_at: Option<Instant>,
@@ -226,18 +241,24 @@ struct IpcCommandWriter {
 }
 
 impl MpvController {
-    pub fn new(event_tx: Option<Sender<MpvPlaybackEvent>>) -> Self {
+    pub fn new(
+        event_tx: Option<Sender<MpvPlaybackEvent>>,
+        segment_skip_config: SegmentSkipConfig,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(MpvPlayerSnapshot::default()));
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let controller_snapshot = snapshot.clone();
         let controller_shutdown_requested = shutdown_requested.clone();
+        let controller_tx = tx.clone();
         thread::spawn(move || {
             ControllerState::new(
+                controller_tx,
                 rx,
                 controller_snapshot,
                 event_tx,
                 controller_shutdown_requested,
+                segment_skip_config,
             )
             .run()
         });
@@ -272,6 +293,10 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
+    pub fn set_segment_skip_config(&self, config: SegmentSkipConfig) {
+        let _ = self.tx.send(ControllerMessage::SegmentSkipConfig(config));
+    }
+
     pub fn update_playback_context(&self, context: PlaybackContext) {
         let _ = self
             .tx
@@ -302,12 +327,15 @@ impl MpvController {
 
 impl ControllerState {
     fn new(
+        tx: Sender<ControllerMessage>,
         rx: Receiver<ControllerMessage>,
         snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
         event_tx: Option<Sender<MpvPlaybackEvent>>,
         shutdown_requested: Arc<AtomicBool>,
+        segment_skip_config: SegmentSkipConfig,
     ) -> Self {
         Self {
+            tx,
             rx,
             snapshot,
             child: None,
@@ -327,6 +355,11 @@ impl ControllerState {
                 ..Default::default()
             },
             last_position_log_bucket: None,
+            skip_segments: Vec::new(),
+            current_skip_segment: None,
+            last_skip_osd_at: None,
+            seek_started_at_ticks: None,
+            segment_skip_config,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
             pending_ontop_reset_at: None,
@@ -363,6 +396,17 @@ impl ControllerState {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
                     self.control(command);
                 }
+                Ok(ControllerMessage::SegmentSkipConfig(config)) => {
+                    tracing::debug!(target: "playback", ?config, "updated segment skip settings");
+                    self.segment_skip_config = config;
+                    if config.all_disabled() {
+                        self.clear_skip_segment_state();
+                    }
+                }
+                Ok(ControllerMessage::MediaSegmentsFetched {
+                    playback_id,
+                    result,
+                }) => self.handle_media_segments_fetched(playback_id, result),
                 Ok(ControllerMessage::Shutdown { ack }) => {
                     tracing::debug!(target: "playback", "received playback shutdown request");
                     self.shutdown();
@@ -395,6 +439,10 @@ impl ControllerState {
                 target: "playback",
                 "ignored stop control while next playback handoff is waiting for file-loaded"
             );
+            return;
+        }
+
+        if self.handle_prompt_skip_control(&command) {
             return;
         }
 
@@ -535,8 +583,11 @@ impl ControllerState {
                     key: key.clone(),
                     seen_at: Instant::now(),
                 });
+                self.clear_skip_segment_state();
                 self.mpv_playback_active = true;
                 self.playback_identity = Some(identity.clone());
+                let playback_id = identity.playback_id;
+                let pending_launch = launch.clone();
                 self.pending = Some(PendingPlayback {
                     key,
                     identity,
@@ -544,6 +595,7 @@ impl ControllerState {
                     reporter,
                     requested_at: Instant::now(),
                 });
+                self.fetch_media_segments(playback_id, pending_launch);
                 self.prepare_pending_playback_state();
                 self.schedule_mpv_raise("loadfile accepted");
                 self.publish_snapshot();
@@ -828,6 +880,7 @@ impl ControllerState {
                     let previous = self.last_state.position_ticks;
                     self.last_state.position_ticks = ticks;
                     self.log_position_change(property.unwrap_or("time"), previous, ticks);
+                    self.update_skip_segment_state(previous, ticks);
                     self.publish_snapshot();
                 }
             }
@@ -904,6 +957,11 @@ impl ControllerState {
                     );
                 }
             }
+            Some("seeking") => {
+                if let Some(value) = data.as_ref().and_then(Value::as_bool) {
+                    self.handle_seeking_property(value);
+                }
+            }
             Some("playback-abort") => {
                 if data.as_ref().and_then(Value::as_bool).unwrap_or(false) {
                     tracing::debug!(
@@ -919,6 +977,257 @@ impl ControllerState {
                 tracing::trace!(target: "mpv.ipc", property = other, "ignored mpv property")
             }
             None => tracing::trace!(target: "mpv.ipc", "ignored mpv property with no name"),
+        }
+    }
+
+    fn handle_media_segments_fetched(
+        &mut self,
+        playback_id: i64,
+        result: Result<Vec<SkipSegment>, String>,
+    ) {
+        if !self.playback_id_is_current(playback_id) {
+            tracing::debug!(
+                target: "jellyfin.media_segments",
+                playback_id,
+                "ignored stale Jellyfin media segments response"
+            );
+            return;
+        }
+        if self.segment_skip_config.all_disabled() {
+            tracing::debug!(
+                target: "jellyfin.media_segments",
+                playback_id,
+                "ignored Jellyfin media segments because segment skipping is disabled"
+            );
+            return;
+        }
+        match result {
+            Ok(segments) => {
+                tracing::debug!(
+                    target: "jellyfin.media_segments",
+                    playback_id,
+                    count = segments.len(),
+                    "stored Jellyfin media segments"
+                );
+                self.skip_segments = segments;
+                self.current_skip_segment = None;
+                self.last_skip_osd_at = None;
+                self.update_skip_segment_state(
+                    self.last_state.position_ticks,
+                    self.last_state.position_ticks,
+                );
+            }
+            Err(error) => tracing::warn!(
+                target: "jellyfin.media_segments",
+                playback_id,
+                "failed to fetch Jellyfin media segments: {error}"
+            ),
+        }
+    }
+
+    fn fetch_media_segments(&self, playback_id: i64, launch: MpvLaunch) {
+        if self.segment_skip_config.all_disabled() {
+            return;
+        }
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let result = media_segments::fetch_for_launch(&launch);
+            let _ = tx.send(ControllerMessage::MediaSegmentsFetched {
+                playback_id,
+                result,
+            });
+        });
+    }
+
+    fn playback_id_is_current(&self, playback_id: i64) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.identity.playback_id == playback_id)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.identity.playback_id == playback_id)
+            || (self.mpv_playback_active
+                && self
+                    .playback_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.playback_id == playback_id))
+    }
+
+    pub(super) fn clear_skip_segment_state(&mut self) {
+        self.skip_segments.clear();
+        self.current_skip_segment = None;
+        self.last_skip_osd_at = None;
+        self.seek_started_at_ticks = None;
+    }
+
+    fn handle_prompt_skip_control(&mut self, command: &MpvControlCommand) -> bool {
+        let MpvControlCommand::SeekMilliseconds(position_ms) = command else {
+            return false;
+        };
+        let Some(requested_ticks) = seconds_to_ticks(position_ms / 1000.0) else {
+            return false;
+        };
+        let current_ticks = self.last_state.position_ticks;
+        if requested_ticks <= current_ticks {
+            return false;
+        }
+        let Some(index) = self.prompt_segment_index_at(current_ticks) else {
+            return false;
+        };
+        tracing::debug!(
+            target: "playback",
+            current_ticks,
+            requested_ticks,
+            "treating forward seek as segment skip"
+        );
+        self.skip_segment(index, "web forward seek accepted segment skip prompt")
+    }
+
+    fn handle_seeking_property(&mut self, seeking: bool) {
+        if seeking {
+            self.seek_started_at_ticks = Some(self.last_state.position_ticks);
+            return;
+        }
+        let Some(start_ticks) = self.seek_started_at_ticks.take() else {
+            return;
+        };
+        let current_ticks = self.last_state.position_ticks;
+        if current_ticks <= start_ticks {
+            return;
+        }
+        let Some(index) = self.prompt_segment_index_at(start_ticks) else {
+            return;
+        };
+        tracing::debug!(
+            target: "playback",
+            start_ticks,
+            current_ticks,
+            "treating native forward seek as segment skip"
+        );
+        self.skip_segment(index, "native forward seek accepted segment skip prompt");
+    }
+
+    fn update_skip_segment_state(&mut self, _previous_ticks: i64, current_ticks: i64) {
+        if self.skip_segments.is_empty() || self.segment_skip_config.all_disabled() {
+            self.current_skip_segment = None;
+            return;
+        }
+
+        let Some(index) = self.current_segment_index_at(current_ticks) else {
+            self.current_skip_segment = None;
+            return;
+        };
+        let was_current = self.current_skip_segment == Some(index);
+        self.current_skip_segment = Some(index);
+        match self.mode_for_segment(self.skip_segments[index].segment_type) {
+            SegmentSkipMode::Disabled => {}
+            SegmentSkipMode::Prompt => self.maybe_show_skip_prompt(index, !was_current),
+            SegmentSkipMode::Always => {
+                self.skip_segment(index, "automatic segment skip");
+            }
+        }
+    }
+
+    fn maybe_show_skip_prompt(&mut self, index: usize, entered_segment: bool) {
+        let now = Instant::now();
+        if !entered_segment
+            && self.last_skip_osd_at.is_some_and(|shown_at| {
+                now.saturating_duration_since(shown_at) < SEGMENT_SKIP_OSD_DEBOUNCE
+            })
+        {
+            return;
+        }
+        let Some(segment) = self.skip_segments.get(index) else {
+            return;
+        };
+        let text = segment.segment_type.prompt_text();
+        let command = json!({
+            "command": ["show-text", text, SEGMENT_SKIP_OSD_DURATION_MS, 1],
+            "request_id": next_request_id(),
+        });
+        if let Err(error) = self.send_mpv_command(command) {
+            tracing::warn!(target: "mpv.ipc", "failed to show segment skip prompt: {error}");
+            return;
+        }
+        self.last_skip_osd_at = Some(now);
+    }
+
+    fn skip_segment(&mut self, index: usize, reason: &'static str) -> bool {
+        let current_ticks = self.last_state.position_ticks;
+        let Some(segment) = self.skip_segments.get_mut(index) else {
+            return false;
+        };
+        if segment.triggered {
+            return false;
+        }
+        let end_ticks = segment.end_ticks;
+        let segment_type = segment.segment_type;
+        segment.triggered = true;
+        self.current_skip_segment = None;
+        self.last_skip_osd_at = Some(Instant::now());
+        if end_ticks <= current_ticks {
+            tracing::debug!(
+                target: "playback",
+                reason,
+                current_ticks,
+                end_ticks,
+                "segment skip target is behind current position"
+            );
+            return false;
+        }
+
+        let seconds = end_ticks as f64 / TICKS_PER_SECOND;
+        let command = json!({
+            "command": ["seek", seconds, "absolute+exact"],
+            "request_id": next_request_id(),
+        });
+        match self.send_mpv_command(command) {
+            Ok(()) => {
+                tracing::info!(
+                    target: "playback",
+                    reason,
+                    current_ticks,
+                    end_ticks,
+                    "skipped Jellyfin media segment"
+                );
+                let text = segment_type.skipped_text();
+                let command = json!({
+                    "command": ["show-text", text, SEGMENT_SKIP_OSD_DURATION_MS, 1],
+                    "request_id": next_request_id(),
+                });
+                if let Err(error) = self.send_mpv_command(command) {
+                    tracing::warn!(target: "mpv.ipc", "failed to show segment skipped OSD: {error}");
+                }
+                true
+            }
+            Err(error) => {
+                tracing::warn!(target: "mpv.ipc", reason, "failed to skip Jellyfin media segment: {error}");
+                self.handle_mpv_session_lost("segment skip command failed");
+                false
+            }
+        }
+    }
+
+    fn current_segment_index_at(&self, ticks: i64) -> Option<usize> {
+        self.skip_segments.iter().position(|segment| {
+            !segment.triggered && ticks >= segment.start_ticks && ticks < segment.end_ticks
+        })
+    }
+
+    fn prompt_segment_index_at(&self, ticks: i64) -> Option<usize> {
+        self.skip_segments.iter().position(|segment| {
+            !segment.triggered
+                && self.mode_for_segment(segment.segment_type) == SegmentSkipMode::Prompt
+                && ticks >= segment.start_ticks
+                && ticks < segment.end_ticks
+        })
+    }
+
+    fn mode_for_segment(&self, segment_type: SegmentType) -> SegmentSkipMode {
+        match segment_type {
+            SegmentType::Intro => self.segment_skip_config.intro,
+            SegmentType::Outro => self.segment_skip_config.credits,
         }
     }
 
@@ -1185,6 +1494,7 @@ impl ControllerState {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
         self.pending_ontop_reset_at = None;
+        self.clear_skip_segment_state();
         if self.active.is_none() && self.pending.is_none() {
             self.playback_runtime_ticks = None;
             self.mpv_playback_active = false;
@@ -1432,6 +1742,7 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
         "volume",
         "mute",
         "eof-reached",
+        "seeking",
         "playback-abort",
     ] {
         let command = json!({
@@ -1824,7 +2135,7 @@ mod tests {
         ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, PlaybackIdentity,
         control_command, loadfile_command, mpv_string_list,
     };
-    use crate::app::settings::MpvFullscreenBehavior;
+    use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig};
     use crate::jellyfin::bridge::PlaybackContext;
     use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
@@ -1834,15 +2145,17 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
-        let (_tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.start_time_ticks = start_time_ticks;
 
         let mut state = ControllerState::new(
+            tx,
             rx,
             Arc::new(Mutex::new(Default::default())),
             None,
             Arc::new(AtomicBool::new(false)),
+            SegmentSkipConfig::default(),
         );
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
@@ -2080,16 +2393,18 @@ mod tests {
 
     #[test]
     fn finish_without_reporter_emits_stopped_event() {
-        let (_tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
         let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
         launch.item_id = Some("item-1".to_string());
 
         let mut state = ControllerState::new(
+            tx,
             rx,
             Arc::new(Mutex::new(Default::default())),
             Some(event_tx),
             Arc::new(AtomicBool::new(false)),
+            SegmentSkipConfig::default(),
         );
         state.pending = Some(PendingPlayback {
             key: "test-load".to_string(),
