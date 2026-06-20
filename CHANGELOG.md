@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Polished the About dialog and update notification styling, focus states, and progress animation to better match the MediaFlick design system.
+- Polished the About dialog and redesigned the update notification as a compact pill without installer filename copy.
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
 
 ### Fixed
