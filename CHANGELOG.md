@@ -8,10 +8,12 @@
 
 ### Changed
 
+- Polished the About dialog and update notification styling, focus states, and progress animation to better match the MediaFlick design system.
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
 
 ### Fixed
 
+- Fixed Linux and macOS update notifications by linking the updater dialog to the GitHub latest release page instead of offering unsupported automatic installation.
 - Fixed Linux and macOS first launch by auto-detecting a system `mpv` executable and using generic mpv executable wording in app UI.
 - Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.
 

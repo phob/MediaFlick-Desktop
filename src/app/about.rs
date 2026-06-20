@@ -54,7 +54,7 @@ pub fn dialog_script() -> String {
       .bg {{
         position: fixed;
         inset: 0;
-        background: oklch(12% .006 260 / .72);
+        background: color-mix(in oklch, var(--media-black) 72%, transparent);
       }}
       .box {{
         position: fixed;
@@ -62,6 +62,9 @@ pub fn dialog_script() -> String {
         top: 50%;
         transform: translate(-50%, -50%);
         width: min(480px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        display: flex;
+        flex-direction: column;
         overflow: hidden;
         border: 1px solid var(--border-strong);
         border-radius: 12px;
@@ -83,10 +86,10 @@ pub fn dialog_script() -> String {
         position: relative;
         width: 42px;
         height: 42px;
-        border: 1px solid oklch(88% .012 260 / .22);
-        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
         background: linear-gradient(135deg, var(--violet), var(--cyan));
-        box-shadow: 0 1px 0 oklch(95% .006 260 / .12) inset, 0 10px 24px oklch(13% .006 260 / .42);
+        box-shadow: 0 10px 24px var(--shadow);
       }}
       .mark::after {{
         content: "";
@@ -122,11 +125,15 @@ pub fn dialog_script() -> String {
         background: transparent;
         font: 22px/1 "Segoe UI", system-ui, sans-serif;
         cursor: pointer;
+        transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
       }}
       .close:hover {{
         color: var(--text);
         background: var(--raised);
         border-color: var(--border);
+      }}
+      .close:active {{
+        background: var(--panel);
       }}
       .close:focus-visible {{
         outline: 2px solid var(--cyan);
@@ -134,6 +141,8 @@ pub fn dialog_script() -> String {
         box-shadow: 0 0 0 3px oklch(68% .145 227 / .18);
       }}
       .body {{
+        min-height: 0;
+        overflow: auto;
         padding: 18px 22px 20px;
         background: var(--media-black);
       }}
@@ -143,7 +152,7 @@ pub fn dialog_script() -> String {
         gap: 0 18px;
         margin: 0;
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: 4px;
         background: var(--chrome);
         overflow: hidden;
       }}
@@ -151,7 +160,7 @@ pub fn dialog_script() -> String {
       dd {{
         margin: 0;
         padding: 11px 13px;
-        border-top: 1px solid oklch(82% .01 260 / .1);
+        border-top: 1px solid var(--border);
       }}
       dt:nth-of-type(1),
       dd:nth-of-type(1) {{ border-top: 0; }}
@@ -168,13 +177,17 @@ pub fn dialog_script() -> String {
         word-break: break-all;
       }}
       @media (max-width: 480px) {{
-        .box {{ width: calc(100vw - 20px); }}
+        .box {{ width: calc(100vw - 20px); max-height: calc(100vh - 20px); }}
         .head {{ padding: 18px 16px 15px; }}
+        .close {{ width: 40px; height: 40px; }}
         .body {{ padding: 14px 16px 16px; }}
         dl {{ grid-template-columns: 1fr; }}
         dt {{ padding-bottom: 2px; }}
         dd {{ padding-top: 0; border-top: 0; }}
-        dt:not(:first-of-type) {{ border-top: 1px solid oklch(82% .01 260 / .1); }}
+        dt:not(:first-of-type) {{ border-top: 1px solid var(--border); }}
+      }}
+      @media (prefers-reduced-motion: reduce) {{
+        .close {{ transition: none; }}
       }}
     </style>
     <div class="bg"></div>
