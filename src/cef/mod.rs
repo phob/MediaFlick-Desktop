@@ -2092,14 +2092,20 @@ fn open_mpv_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>, sta
         .and_then(|state| state.settings.mpv_path.clone())
         .map(|path| CefString::from(path.as_str()));
     let mut filters = CefStringList::new();
+    #[cfg(target_os = "windows")]
     filters.append(".exe");
-    let title = CefString::from("Select mpv.exe");
+    let filters = if cfg!(target_os = "windows") {
+        Some(&mut filters)
+    } else {
+        None
+    };
+    let title = CefString::from("Select mpv executable");
     let mut callback = MpvFileDialogCallback::new(frame);
     host.run_file_dialog(
         FileDialogMode::OPEN,
         Some(&title),
         default_path.as_ref(),
-        Some(&mut filters),
+        filters,
         Some(&mut callback),
     );
 }
@@ -2114,7 +2120,10 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
         .filter(|value| !value.is_empty());
 
     let (Some(jellyfin_url), Some(mpv_path)) = (server, mpv_path) else {
-        notify_save_error(frame, "Enter a Jellyfin server URL and select mpv.exe.");
+        notify_save_error(
+            frame,
+            "Enter a Jellyfin server URL and choose an mpv executable.",
+        );
         return;
     };
 
@@ -2326,8 +2335,13 @@ fn welcome_html(settings: &AppSettings) -> String {
             "{{saved_mpv}}",
             &html_escape(settings.mpv_path.as_deref().unwrap_or_default()),
         )
+        .replace("{{mpv_placeholder}}", &html_escape(mpv_placeholder()))
         .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{connect_disabled}}", connect_disabled)
+}
+
+fn mpv_placeholder() -> &'static str {
+    "mpv"
 }
 
 fn data_uri(data: &[u8], mime_type: &str) -> String {

@@ -221,15 +221,15 @@
       </div>
 
       <div class="field">
-        <label for="mpv-path">mpv.exe</label>
+        <label for="mpv-path">mpv executable</label>
         <div class="row">
-          <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" placeholder="C:\Program Files\mpv\mpv.exe" value="{{saved_mpv}}">
+          <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" placeholder="{{mpv_placeholder}}" value="{{saved_mpv}}">
           <button id="browse-mpv" class="secondary" type="button">Browse</button>
         </div>
-        <p class="hint">This path is saved and used later when playback is handed off to mpv.</p>
+        <p class="hint">Use the detected mpv, or browse to a different executable.</p>
       </div>
 
-      <p class="error" id="error">Enter a Jellyfin server URL and select mpv.exe.</p>
+      <p class="error" id="error">Enter a Jellyfin server URL and choose an mpv executable.</p>
       <div class="field">
         <button id="connect" type="submit" {{connect_disabled}}>Save and connect</button>
       </div>
