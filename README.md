@@ -37,7 +37,7 @@ The installer installs the app for the current user to:
 %LOCALAPPDATA%\Programs\MediaFlick Desktop
 ```
 
-If the release includes a bundled mpv, the app detects it automatically on first launch. In that case, you only need to enter your Jellyfin server URL.
+If the release includes a bundled mpv, the app detects it automatically on first launch. Linux and macOS builds also look for a system `mpv` in common locations. In those cases, you only need to enter your Jellyfin server URL.
 
 MediaFlick Desktop checks GitHub Releases for newer Windows installers. When an update is available, an in-app toast lets you download it, shows progress, then runs the installer quietly and restarts the app into the new version.
 
@@ -48,16 +48,16 @@ If you are using a release zip or a manually staged build:
 1. Extract the app folder somewhere permanent.
 2. Make sure `mediaflick-desktop.exe` stays next to the included CEF runtime files and `locales` folder.
 3. Run `mediaflick-desktop.exe`.
-4. If mpv is not bundled, select your own `mpv.exe` on the welcome screen.
+4. If mpv is not detected automatically, select your own mpv executable on the welcome screen.
 
 ## First launch
 
 On first launch, MediaFlick Desktop asks for:
 
 - **Jellyfin server URL** — for example `http://localhost:8096` or `https://jellyfin.example.com`
-- **mpv.exe path** — the path to the mpv executable you want MediaFlick Desktop to control
+- **mpv executable** — the mpv executable you want MediaFlick Desktop to control, auto-filled when detected
 
-You can use the native **Browse** button to select `mpv.exe`.
+You can use the native **Browse** button to select a different mpv executable.
 
 The app saves these settings here:
 
@@ -91,6 +91,8 @@ You can also provide the Jellyfin URL and mpv path from the command line:
 
 ```powershell
 mediaflick-desktop.exe --url http://localhost:8096 --mpv-path "C:\Program Files\mpv\mpv.exe"
+# Linux/macOS example:
+mediaflick-desktop --url http://localhost:8096 --mpv-path /usr/bin/mpv
 ```
 
 This is useful for testing, shortcuts, or quickly switching between servers and mpv installations.

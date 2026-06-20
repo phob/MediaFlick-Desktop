@@ -50,7 +50,7 @@ fn main() {
         settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
         should_save_settings = true;
     } else if settings.mpv_path.is_none()
-        && let Some(mpv_path) = bundled_mpv_path()
+        && let Some(mpv_path) = default_mpv_path()
     {
         settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
     }
@@ -90,6 +90,10 @@ fn is_cef_subprocess() -> bool {
     std::env::args().any(|arg| arg == "--type" || arg.starts_with("--type="))
 }
 
+fn default_mpv_path() -> Option<std::path::PathBuf> {
+    bundled_mpv_path().or_else(system_mpv_path)
+}
+
 fn bundled_mpv_path() -> Option<std::path::PathBuf> {
     let exe_path = std::env::current_exe().ok()?;
     let app_dir = exe_path.parent()?;
@@ -101,4 +105,44 @@ fn bundled_mpv_path() -> Option<std::path::PathBuf> {
     let candidates = [app_dir.join("mpv").join("mpv"), app_dir.join("mpv")];
 
     candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn system_mpv_path() -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_mpv_path() -> Option<std::path::PathBuf> {
+    let mut search_dirs = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        search_dirs.extend(std::env::split_paths(&path));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        search_dirs.extend([
+            std::path::PathBuf::from("/opt/homebrew/bin"),
+            std::path::PathBuf::from("/usr/local/bin"),
+            std::path::PathBuf::from("/usr/bin"),
+            std::path::PathBuf::from("/Applications/mpv.app/Contents/MacOS"),
+        ]);
+        if let Some(home) = std::env::var_os("HOME") {
+            search_dirs
+                .push(std::path::PathBuf::from(home).join("Applications/mpv.app/Contents/MacOS"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    search_dirs.extend([
+        std::path::PathBuf::from("/usr/local/bin"),
+        std::path::PathBuf::from("/usr/bin"),
+        std::path::PathBuf::from("/bin"),
+        std::path::PathBuf::from("/snap/bin"),
+    ]);
+
+    search_dirs
+        .into_iter()
+        .map(|dir| dir.join("mpv"))
+        .find(|path| path.is_file())
 }

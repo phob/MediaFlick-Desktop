@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Fixed Linux and macOS first launch by auto-detecting a system `mpv` executable and using generic mpv executable wording in app UI.
 - Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.
 
 ### Removed
