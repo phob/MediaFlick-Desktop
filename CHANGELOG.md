@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Changed automatic intro and credits skipping to show a three-second countdown before seeking.
 - Moved app-owned dialog and load-error markup templates out of Rust source files.
 - Replaced the About and Client Settings dialog brand marks with the app logo.
 - Polished the About dialog and redesigned the update notification as a compact pill without installer filename copy.
@@ -18,6 +19,7 @@
 
 ### Fixed
 
+- Fixed native mpv forward seeks not accepting an active skip-intro/credits prompt when mpv reports the seek event before the `seeking` property.
 - Fixed Linux and macOS update notifications by linking the updater dialog to the GitHub latest release page instead of offering unsupported automatic installation.
 - Fixed Linux and macOS first launch by auto-detecting a system `mpv` executable and using generic mpv executable wording in app UI.
 - Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.
