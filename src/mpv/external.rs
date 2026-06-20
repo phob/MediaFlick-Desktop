@@ -219,6 +219,7 @@ impl ExternalMpv {
     fn hidden_command(&self) -> Command {
         let mut command = Command::new(&self.executable);
         configure_hidden_child_window(&mut command);
+        remove_packaged_cef_preload(&mut command);
         command
     }
 }
@@ -241,6 +242,37 @@ fn configure_hidden_child_window(command: &mut Command) {
 
 #[cfg(not(windows))]
 fn configure_hidden_child_window(_command: &mut Command) {}
+
+#[cfg(target_os = "linux")]
+fn remove_packaged_cef_preload(command: &mut Command) {
+    let Ok(cef_preload) = std::env::var("MEDIAFLICK_DESKTOP_CEF_PRELOAD") else {
+        return;
+    };
+    if cef_preload.is_empty() {
+        return;
+    }
+
+    match cleaned_ld_preload(
+        &std::env::var("LD_PRELOAD").unwrap_or_default(),
+        &cef_preload,
+    ) {
+        Some(ld_preload) => command.env("LD_PRELOAD", ld_preload),
+        None => command.env_remove("LD_PRELOAD"),
+    };
+    command.env_remove("MEDIAFLICK_DESKTOP_CEF_PRELOAD");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn remove_packaged_cef_preload(_command: &mut Command) {}
+
+#[cfg(target_os = "linux")]
+fn cleaned_ld_preload(current: &str, cef_preload: &str) -> Option<String> {
+    let entries = current
+        .split(|ch: char| ch == ':' || ch.is_ascii_whitespace())
+        .filter(|entry| !entry.is_empty() && *entry != cef_preload)
+        .collect::<Vec<_>>();
+    (!entries.is_empty()).then(|| entries.join(" "))
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn configure_focus_on_file_load(command: &mut Command) {
@@ -439,5 +471,26 @@ fn hex_value(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::cleaned_ld_preload;
+
+    #[test]
+    fn removes_packaged_cef_preload_from_ld_preload() {
+        assert_eq!(
+            cleaned_ld_preload("/app/libcef.so /usr/lib/libtrace.so", "/app/libcef.so"),
+            Some("/usr/lib/libtrace.so".to_string())
+        );
+        assert_eq!(
+            cleaned_ld_preload(
+                "/usr/lib/liba.so:/app/libcef.so:/usr/lib/libb.so",
+                "/app/libcef.so"
+            ),
+            Some("/usr/lib/liba.so /usr/lib/libb.so".to_string())
+        );
+        assert_eq!(cleaned_ld_preload("/app/libcef.so", "/app/libcef.so"), None);
     }
 }

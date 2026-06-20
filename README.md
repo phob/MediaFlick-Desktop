@@ -104,7 +104,7 @@ Building is mainly intended for developers and advanced users.
 - Rust toolchain
 - `just`
 - CMake and Ninja, required by `cef-dll-sys`
-- A CEF cache. Set `CEF_PATH=...` to the CEF cache you want to use.
+- A CEF cache. By default, `just` downloads/caches CEF in this checkout at `.cache/cef`; set `CEF_PATH=...` to override it.
 
 ### Build a local debug app
 

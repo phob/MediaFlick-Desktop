@@ -84,7 +84,16 @@ cat > "$appdir/AppRun" <<'SH'
 #!/usr/bin/env sh
 set -eu
 here="$(dirname "$(readlink -f "$0")")"
+cef_lib="$here/usr/bin/libcef.so"
 export LD_LIBRARY_PATH="$here/usr/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [ -f "$cef_lib" ]; then
+    # CEF's Linux close(2) wrapper resolves the real libc symbol with
+    # dlsym(RTLD_NEXT, "close"). Preloading libcef keeps it before libc in the
+    # dynamic link map, avoiding CEF's startup-time "close symbol missing" abort
+    # when the packaged binary's DT_NEEDED order places libc first.
+    export MEDIAFLICK_DESKTOP_CEF_PRELOAD="$cef_lib"
+    export LD_PRELOAD="$cef_lib${LD_PRELOAD:+ $LD_PRELOAD}"
+fi
 exec "$here/usr/bin/mediaflick-desktop" "$@"
 SH
 chmod +x "$appdir/AppRun"
