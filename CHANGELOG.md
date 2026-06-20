@@ -36,7 +36,6 @@
 - Fixed cold and slow mpv startup being treated as unavailable too quickly by extending IPC/media readiness waits, logging when mpv exits before creating its IPC pipe, and keeping watched-next handoffs on the existing mpv IPC session while ignoring stale browser stop commands.
 - Fixed automatic next-episode playback after mpv reaches EOF by keeping the warm mpv handoff protected and emitting Jellyfin Web's stopped player event with ended stop details.
 - Fixed mpv `q`/window-close handling to stop only the current file, keep the warm mpv process alive, and restart the idle process if it exits unexpectedly while the app is running.
-- Fixed external mpv focus after Jellyfin playback loads by retrying window activation as the player window appears.
 - Fixed app shutdown so the controller waits for the warm external `mpv.exe` process to quit or be killed before the app exits.
 - Fixed Jellyfin Web playstate synchronization after mpv-driven `q`, `w`, and EOF stops by preserving final player state until Jellyfin handles the stopped event.
 - Fixed the external-player backdrop/white-background layering by keeping the synthetic player backdrop above Jellyfin's page background while placing the video OSD above it.
