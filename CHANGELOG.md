@@ -16,6 +16,7 @@
 - Replaced the About and Client Settings dialog brand marks with the app logo.
 - Polished the About dialog and redesigned the update notification as a compact pill without installer filename copy.
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
+- Changed the Windows auto-update installer launch to use Inno Setup `/SILENT` instead of `/VERYSILENT`.
 
 ### Fixed
 
