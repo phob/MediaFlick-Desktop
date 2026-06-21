@@ -1258,7 +1258,12 @@ wrap_request_handler! {
                 return 0;
             }
 
-            if !bridge_request_is_trusted(browser.as_deref_mut(), frame.as_deref_mut(), &self.state) {
+            if !bridge_request_is_trusted(
+                &request_url,
+                browser.as_deref_mut(),
+                frame.as_deref_mut(),
+                &self.state,
+            ) {
                 tracing::warn!(
                     target: "bridge",
                     url = %request_url,
@@ -1312,7 +1317,12 @@ wrap_resource_request_handler! {
             if request_url.starts_with("mediaflick-desktop://") {
                 let mut browser = browser;
                 let mut frame = frame;
-                if bridge_request_is_trusted(browser.as_deref_mut(), frame.as_deref_mut(), &self.state) {
+                if bridge_request_is_trusted(
+                    &request_url,
+                    browser.as_deref_mut(),
+                    frame.as_deref_mut(),
+                    &self.state,
+                ) {
                     if !route_bridge_action(&request_url, browser, frame, &self.state) {
                         tracing::warn!(
                             target: "bridge",
@@ -1353,6 +1363,7 @@ wrap_resource_request_handler! {
 }
 
 fn bridge_request_is_trusted(
+    request_url: &str,
     browser: Option<&mut Browser>,
     frame: Option<&mut Frame>,
     state: &BrowserState,
@@ -1373,7 +1384,18 @@ fn bridge_request_is_trusted(
         .lock()
         .ok()
         .and_then(|state| state.settings.jellyfin_url.clone());
-    server_url.is_some_and(|server_url| same_web_origin(&document_url, &server_url))
+    if !server_url.is_some_and(|server_url| same_web_origin(&document_url, &server_url)) {
+        return false;
+    }
+    bridge_token_is_valid(request_url)
+}
+
+fn bridge_token_is_valid(request_url: &str) -> bool {
+    let Some((_, query)) = request_url.split_once('?') else {
+        return false;
+    };
+    let query = query.split('#').next().unwrap_or_default();
+    query_param(query, "token").is_some_and(|token| token == jellyfin_bridge::bridge_token())
 }
 
 fn route_bridge_action(
@@ -2412,4 +2434,173 @@ fn html_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        bridge_token_is_valid, escape_js_line_separators, html_escape, is_browser_openable_url,
+        is_safe_external_link, js_string_literal, percent_decode, same_web_origin, url_scheme,
+    };
+
+    #[test]
+    fn same_origin_matches_identical_urls() {
+        assert!(same_web_origin(
+            "http://192.168.1.10:8096/web/index.html",
+            "http://192.168.1.10:8096"
+        ));
+    }
+
+    #[test]
+    fn same_origin_ignores_scheme_and_host_case() {
+        assert!(same_web_origin(
+            "HTTPS://Jellyfin.Example.COM/web/",
+            "https://jellyfin.example.com"
+        ));
+    }
+
+    #[test]
+    fn same_origin_treats_default_ports_as_implicit() {
+        assert!(same_web_origin("http://host:80/web", "http://host"));
+        assert!(same_web_origin("https://host:443/web", "https://host"));
+    }
+
+    #[test]
+    fn same_origin_distinguishes_explicit_ports() {
+        assert!(!same_web_origin("http://host:8096", "http://host:9096"));
+        assert!(!same_web_origin("http://host:8443", "http://host"));
+    }
+
+    #[test]
+    fn same_origin_distinguishes_scheme() {
+        assert!(!same_web_origin("http://host", "https://host"));
+    }
+
+    #[test]
+    fn same_origin_distinguishes_host() {
+        assert!(!same_web_origin(
+            "http://jellyfin.example.com",
+            "http://attacker.example.com"
+        ));
+    }
+
+    #[test]
+    fn same_origin_strips_userinfo() {
+        assert!(same_web_origin(
+            "http://user:pass@jellyfin.example.com/web",
+            "http://jellyfin.example.com"
+        ));
+    }
+
+    #[test]
+    fn same_origin_matches_ipv6_with_default_port() {
+        assert!(same_web_origin("http://[::1]:80/web", "http://[::1]"));
+        assert!(!same_web_origin("http://[::1]:8096", "http://[::1]:9096"));
+    }
+
+    #[test]
+    fn same_origin_rejects_non_web_schemes() {
+        assert!(!same_web_origin("file:///etc/passwd", "file:///etc/passwd"));
+        assert!(!same_web_origin(
+            "mediaflick-desktop://bridge",
+            "mediaflick-desktop://bridge"
+        ));
+        assert!(!same_web_origin(
+            "data:text/html,evil",
+            "data:text/html,evil"
+        ));
+    }
+
+    #[test]
+    fn same_origin_rejects_unparseable_input() {
+        assert!(!same_web_origin("not-a-url", "http://host"));
+        assert!(!same_web_origin("http://", "http://"));
+    }
+
+    #[test]
+    fn url_scheme_lowercases_known_schemes() {
+        assert_eq!(url_scheme("HTTPS://host").as_deref(), Some("https"));
+        assert_eq!(
+            url_scheme("MailTo:user@example.com").as_deref(),
+            Some("mailto")
+        );
+    }
+
+    #[test]
+    fn url_scheme_rejects_invalid_input() {
+        assert_eq!(url_scheme("no-scheme-here"), None);
+        assert_eq!(url_scheme(":missing"), None);
+        assert_eq!(url_scheme("has space:rest"), None);
+    }
+
+    #[test]
+    fn browser_openable_allows_only_safe_schemes() {
+        assert!(is_browser_openable_url("https://example.com"));
+        assert!(is_browser_openable_url("http://example.com"));
+        assert!(is_browser_openable_url("mailto:user@example.com"));
+        assert!(!is_browser_openable_url("javascript:alert(1)"));
+        assert!(!is_browser_openable_url("file:///etc/passwd"));
+        assert!(!is_browser_openable_url("data:text/html,evil"));
+    }
+
+    #[test]
+    fn safe_external_link_rejects_empty_and_flag_like() {
+        assert!(is_safe_external_link("https://example.com"));
+        assert!(!is_safe_external_link(""));
+        assert!(!is_safe_external_link("--malicious-flag"));
+    }
+
+    #[test]
+    fn escape_js_line_separators_neutralizes_unicode_terminators() {
+        let input = "value\u{2028}with\u{2029}terminators";
+        let escaped = escape_js_line_separators(input);
+        assert_eq!(escaped, "value\\u2028with\\u2029terminators");
+        assert!(!escaped.contains('\u{2028}'));
+        assert!(!escaped.contains('\u{2029}'));
+    }
+
+    #[test]
+    fn escape_js_line_separators_leaves_plain_text_untouched() {
+        assert_eq!(escape_js_line_separators("plain text"), "plain text");
+    }
+
+    #[test]
+    fn js_string_literal_escapes_quotes_and_terminators() {
+        let literal = js_string_literal("say \"hi\"\u{2028}now");
+        assert_eq!(literal, "\"say \\\"hi\\\"\\u2028now\"");
+    }
+
+    #[test]
+    fn html_escape_encodes_all_markup_characters() {
+        assert_eq!(
+            html_escape("<a href=\"x\">'&'</a>"),
+            "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;"
+        );
+    }
+
+    #[test]
+    fn bridge_token_is_valid_accepts_the_session_token() {
+        let token = crate::jellyfin::bridge::bridge_token();
+        let url = format!("mediaflick-desktop://play?token={token}&payload=%7B%7D");
+        assert!(bridge_token_is_valid(&url));
+    }
+
+    #[test]
+    fn bridge_token_is_valid_rejects_wrong_or_missing_token() {
+        assert!(!bridge_token_is_valid(
+            "mediaflick-desktop://play?token=deadbeef&payload=%7B%7D"
+        ));
+        assert!(!bridge_token_is_valid(
+            "mediaflick-desktop://play?payload=%7B%7D"
+        ));
+        assert!(!bridge_token_is_valid("mediaflick-desktop://app-exit"));
+    }
+
+    #[test]
+    fn percent_decode_handles_escapes_plus_and_passthrough() {
+        assert_eq!(percent_decode("a%20b+c"), "a b c");
+        assert_eq!(percent_decode("%2Fpath%2F"), "/path/");
+        assert_eq!(percent_decode("plain"), "plain");
+        assert_eq!(percent_decode("100%"), "100%");
+    }
 }

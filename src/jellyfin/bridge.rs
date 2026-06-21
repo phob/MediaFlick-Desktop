@@ -1,8 +1,13 @@
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app::about;
 use crate::mpv::{HttpHeader, MpvLaunch};
+
+static BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
+const BRIDGE_TOKEN_ENV: &str = "MEDIAFLICK_BRIDGE_TOKEN";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -115,6 +120,51 @@ pub fn bridge_script() -> String {
         .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{git_version}}", about::GIT_VERSION)
         .replace("{{created_by}}", about::CREATED_BY)
+        .replace("{{bridge_token}}", bridge_token())
+}
+
+pub fn ensure_session_token() {
+    BRIDGE_TOKEN.get_or_init(|| {
+        if let Ok(token) = std::env::var(BRIDGE_TOKEN_ENV)
+            && !token.is_empty()
+        {
+            return token;
+        }
+        let token = generate_bridge_token();
+        unsafe {
+            std::env::set_var(BRIDGE_TOKEN_ENV, &token);
+        }
+        token
+    });
+}
+
+pub fn bridge_token() -> &'static str {
+    BRIDGE_TOKEN.get_or_init(|| {
+        std::env::var(BRIDGE_TOKEN_ENV)
+            .ok()
+            .filter(|token| !token.is_empty())
+            .unwrap_or_else(generate_bridge_token)
+    })
+}
+
+fn generate_bridge_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let mut token = String::with_capacity(64);
+    for index in 0..4u64 {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_u64(index);
+        hasher.write_u128(nanos);
+        hasher.write_usize(token.len());
+        token.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    token
 }
 
 pub fn parse_context_payload(query: &str) -> Result<PlaybackContext, serde_json::Error> {
@@ -266,7 +316,24 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{item_id_from_stream_url, launch_from_stream_url, redact_url_secrets};
+    use super::{
+        bridge_token, generate_bridge_token, item_id_from_stream_url, launch_from_stream_url,
+        redact_url_secrets,
+    };
+
+    #[test]
+    fn generated_tokens_are_unique_and_hex() {
+        let first = generate_bridge_token();
+        let second = generate_bridge_token();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn session_bridge_token_is_stable() {
+        assert_eq!(bridge_token(), bridge_token());
+    }
 
     #[test]
     fn extracts_stream_metadata() {
