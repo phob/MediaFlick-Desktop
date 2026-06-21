@@ -767,7 +767,8 @@ fn playback_event_script(event: &MpvPlaybackEvent) -> String {
                 "stopReason": snapshot.stop_reason,
             });
             format!(
-                "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({payload});"
+                "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({});",
+                js_json(&payload)
             )
         }
     }
@@ -1242,79 +1243,36 @@ wrap_request_handler! {
                 return 0;
             };
             let request_url = CefString::from(&request.url()).to_string();
+            let mut browser = browser;
+            let mut frame = frame;
             if !request_url.starts_with("mediaflick-desktop://") {
-                if should_open_navigation_externally(&request_url, frame, user_gesture, &self.state) {
+                if should_open_navigation_externally(
+                    &request_url,
+                    frame.as_deref_mut(),
+                    user_gesture,
+                    &self.state,
+                ) {
                     open_external_link(&request_url);
                     return 1;
                 }
                 return 0;
             }
 
-            if request_url.starts_with("mediaflick-desktop://select-mpv") {
-                open_mpv_dialog(browser, frame, &self.state);
+            if !bridge_request_is_trusted(browser.as_deref_mut(), frame.as_deref_mut(), &self.state) {
+                tracing::warn!(
+                    target: "bridge",
+                    url = %request_url,
+                    "rejected bridge navigation from untrusted frame"
+                );
                 return 1;
             }
-
-            if request_url.starts_with("mediaflick-desktop://app-about") {
-                show_about_dialog(browser, frame);
-                return 1;
+            if !route_bridge_action(&request_url, browser, frame, &self.state) {
+                tracing::warn!(
+                    target: "bridge",
+                    url = %request_url,
+                    "ignored unrecognized bridge navigation"
+                );
             }
-
-            if is_client_settings_request(&request_url) {
-                show_client_settings_dialog(browser, frame, &self.state);
-                return 1;
-            }
-
-            if request_url.starts_with("mediaflick-desktop://app-exit") {
-                initiate_app_exit(browser, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "update-download") {
-                start_update_download(query, &self.state);
-                return 1;
-            }
-
-            if request_url.starts_with("mediaflick-desktop://update-release") {
-                open_update_release_page();
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "save") {
-                save_settings_and_open(query, frame, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "client-settings-save") {
-                save_client_settings(query, browser, frame, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "play-context") {
-                remember_playback_context(query, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "play") {
-                spawn_mpv_from_bridge_payload(query, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "player-state") {
-                respond_player_state(browser, frame, query, &self.state);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "playback-stop-ack") {
-                log_playback_stop_ack(query);
-                return 1;
-            }
-
-            if let Some(query) = bridge_action_query(&request_url, "player-command") {
-                handle_player_command(query, &self.state);
-                return 1;
-            }
-
             1
         }
 
@@ -1351,7 +1309,24 @@ wrap_resource_request_handler! {
             };
 
             let request_url = CefString::from(&request.url()).to_string();
-            if handle_bridge_resource_request(&request_url, browser, frame, &self.state) {
+            if request_url.starts_with("mediaflick-desktop://") {
+                let mut browser = browser;
+                let mut frame = frame;
+                if bridge_request_is_trusted(browser.as_deref_mut(), frame.as_deref_mut(), &self.state) {
+                    if !route_bridge_action(&request_url, browser, frame, &self.state) {
+                        tracing::warn!(
+                            target: "bridge",
+                            url = %request_url,
+                            "ignored unrecognized bridge resource request"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        target: "bridge",
+                        url = %request_url,
+                        "rejected bridge resource request from untrusted frame"
+                    );
+                }
                 return ReturnValue::CANCEL;
             }
 
@@ -1377,68 +1352,97 @@ wrap_resource_request_handler! {
     }
 }
 
-fn handle_bridge_resource_request(
+fn bridge_request_is_trusted(
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    state: &BrowserState,
+) -> bool {
+    let document_url = browser
+        .and_then(|browser| browser.main_frame())
+        .map(|frame| CefString::from(&frame.url()).to_string())
+        .or_else(|| frame.map(|frame| CefString::from(&frame.url()).to_string()))
+        .unwrap_or_default();
+
+    if document_url.is_empty()
+        || document_url.starts_with("data:")
+        || document_url.starts_with("mediaflick-desktop://")
+    {
+        return true;
+    }
+    let server_url = state
+        .lock()
+        .ok()
+        .and_then(|state| state.settings.jellyfin_url.clone());
+    server_url.is_some_and(|server_url| same_web_origin(&document_url, &server_url))
+}
+
+fn route_bridge_action(
     request_url: &str,
     browser: Option<&mut Browser>,
     frame: Option<&mut Frame>,
     state: &BrowserState,
 ) -> bool {
-    if let Some(query) = bridge_action_query(request_url, "play-context") {
-        tracing::trace!(target: "bridge", "handling play-context bridge resource request");
-        remember_playback_context(query, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "update-download") {
-        tracing::trace!(target: "updater", "handling update-download bridge resource request");
-        start_update_download(query, state);
-        return true;
-    }
-
-    if request_url.starts_with("mediaflick-desktop://update-release") {
-        tracing::trace!(target: "updater", "handling update-release bridge resource request");
-        open_update_release_page();
+    if request_url.starts_with("mediaflick-desktop://select-mpv") {
+        open_mpv_dialog(browser, frame, state);
         return true;
     }
 
     if request_url.starts_with("mediaflick-desktop://app-about") {
-        tracing::trace!(target: "bridge", "handling app-about bridge resource request");
         show_about_dialog(browser, frame);
         return true;
     }
 
     if is_client_settings_request(request_url) {
-        tracing::trace!(target: "bridge", "handling client-settings bridge resource request");
         show_client_settings_dialog(browser, frame, state);
         return true;
     }
 
+    if request_url.starts_with("mediaflick-desktop://app-exit") {
+        initiate_app_exit(browser, state);
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "update-download") {
+        start_update_download(query, state);
+        return true;
+    }
+
+    if request_url.starts_with("mediaflick-desktop://update-release") {
+        open_update_release_page();
+        return true;
+    }
+
+    if let Some(query) = bridge_action_query(request_url, "save") {
+        save_settings_and_open(query, frame, state);
+        return true;
+    }
+
     if let Some(query) = bridge_action_query(request_url, "client-settings-save") {
-        tracing::trace!(target: "bridge", "handling client-settings-save bridge resource request");
         save_client_settings(query, browser, frame, state);
         return true;
     }
 
+    if let Some(query) = bridge_action_query(request_url, "play-context") {
+        remember_playback_context(query, state);
+        return true;
+    }
+
     if let Some(query) = bridge_action_query(request_url, "play") {
-        tracing::trace!(target: "bridge", "handling play bridge resource request");
         spawn_mpv_from_bridge_payload(query, state);
         return true;
     }
 
     if let Some(query) = bridge_action_query(request_url, "player-state") {
-        tracing::trace!(target: "bridge", "handling player-state bridge resource request");
         respond_player_state(browser, frame, query, state);
         return true;
     }
 
     if let Some(query) = bridge_action_query(request_url, "playback-stop-ack") {
-        tracing::trace!(target: "bridge", "handling playback-stop-ack bridge resource request");
         log_playback_stop_ack(query);
         return true;
     }
 
     if let Some(query) = bridge_action_query(request_url, "player-command") {
-        tracing::trace!(target: "bridge", "handling player-command bridge resource request");
         handle_player_command(query, state);
         return true;
     }
@@ -1484,7 +1488,7 @@ fn should_open_navigation_externally(
 }
 
 fn open_external_link(url: &str) {
-    if !is_safe_external_link(url) {
+    if !is_safe_external_link(url) || !is_browser_openable_url(url) {
         return;
     }
     tracing::info!(target: "app", url, "opening link in default browser");
@@ -1920,7 +1924,7 @@ fn respond_player_state(
     });
     let script = format!(
         "window.__mediaFlickDesktopReceivePlayerState&&window.__mediaFlickDesktopReceivePlayerState({});",
-        response
+        js_json(&response)
     );
 
     let target_frame = browser
@@ -2342,7 +2346,20 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 fn js_string_literal(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+    escape_js_line_separators(&serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string()))
+}
+
+fn js_json(value: &serde_json::Value) -> String {
+    escape_js_line_separators(&value.to_string())
+}
+
+fn escape_js_line_separators(json: &str) -> String {
+    if json.contains('\u{2028}') || json.contains('\u{2029}') {
+        json.replace('\u{2028}', "\\u2028")
+            .replace('\u{2029}', "\\u2029")
+    } else {
+        json.to_string()
+    }
 }
 
 fn welcome_page_url(settings: &AppSettings) -> String {

@@ -1302,7 +1302,7 @@ impl ControllerState {
 
     fn skip_segment(&mut self, index: usize, reason: &'static str) -> bool {
         let current_ticks = self.last_state.position_ticks;
-        let Some(segment) = self.skip_segments.get_mut(index) else {
+        let Some(segment) = self.skip_segments.get(index) else {
             return false;
         };
         if segment.triggered {
@@ -1310,11 +1310,12 @@ impl ControllerState {
         }
         let end_ticks = segment.end_ticks;
         let segment_type = segment.segment_type;
-        segment.triggered = true;
+
         self.current_skip_segment = None;
         self.pending_auto_skip = None;
         self.last_skip_osd_at = Some(Instant::now());
         if end_ticks <= current_ticks {
+            self.mark_segment_triggered(index);
             tracing::debug!(
                 target: "playback",
                 reason,
@@ -1332,6 +1333,7 @@ impl ControllerState {
         });
         match self.send_mpv_command(command) {
             Ok(()) => {
+                self.mark_segment_triggered(index);
                 tracing::info!(
                     target: "playback",
                     reason,
@@ -1354,6 +1356,12 @@ impl ControllerState {
                 self.handle_mpv_session_lost("segment skip command failed");
                 false
             }
+        }
+    }
+
+    fn mark_segment_triggered(&mut self, index: usize) {
+        if let Some(segment) = self.skip_segments.get_mut(index) {
+            segment.triggered = true;
         }
     }
 
@@ -1943,6 +1951,22 @@ fn connect_ipc_for_commands_with_timeout(
     }))
 }
 
+fn log_command_reply(value: &Value) {
+    match value.get("error").and_then(Value::as_str) {
+        Some("success") | None => tracing::trace!(
+            target: "mpv.ipc",
+            value = %logger::redacted_json(value),
+            "received mpv IPC command reply"
+        ),
+        Some(error) => tracing::warn!(
+            target: "mpv.ipc",
+            request_id = value.get("request_id").and_then(|id| id.as_i64()),
+            error,
+            "mpv rejected command"
+        ),
+    }
+}
+
 fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -1960,11 +1984,7 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
                     continue;
                 };
                 let Some(name) = value.get("event").and_then(Value::as_str) else {
-                    tracing::trace!(
-                        target: "mpv.ipc",
-                        value = %logger::redacted_json(&value),
-                        "ignored mpv IPC reply without event name"
-                    );
+                    log_command_reply(&value);
                     continue;
                 };
                 let event = MpvEvent {
