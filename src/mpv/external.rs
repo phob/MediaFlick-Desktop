@@ -14,6 +14,8 @@ use serde_json::Value;
 
 use crate::app::settings::MpvFullscreenBehavior;
 
+const WINDOWED_AUTOFIT: &str = "70%";
+
 #[derive(Debug, Clone)]
 pub struct ExternalMpv {
     executable: PathBuf,
@@ -151,6 +153,7 @@ impl ExternalMpv {
         let mut command = self.hidden_command();
         command.arg("--force-window=yes");
         command.arg("--fullscreen=yes");
+        command.arg(format!("--autofit={WINDOWED_AUTOFIT}"));
         configure_focus_on_file_load(&mut command);
         command.arg("--no-terminal");
         // Keep user/package mpv scripts available (SVP needs mpvSockets.lua).
@@ -198,6 +201,7 @@ impl ExternalMpv {
         let mut command = self.hidden_command();
         command.arg("--force-window=no");
         command.arg(format!("--fullscreen={}", fullscreen.fullscreen_arg()));
+        command.arg(format!("--autofit={WINDOWED_AUTOFIT}"));
         configure_focus_on_file_load(&mut command);
         command.arg("--no-terminal");
         command.arg("--input-default-bindings=yes");

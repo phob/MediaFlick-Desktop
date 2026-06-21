@@ -93,7 +93,15 @@ where
         return Err(std::io::Error::other("update release has no downloadable asset").into());
     };
 
-    let download_dir = std::env::temp_dir().join("mediaflick-desktop-updates");
+    if !is_trusted_release_url(&asset.browser_download_url) {
+        return Err(std::io::Error::other(format!(
+            "refusing to download update asset from untrusted URL: {}",
+            asset.browser_download_url
+        ))
+        .into());
+    }
+
+    let download_dir = unique_download_dir();
     fs::create_dir_all(&download_dir)?;
     let installer_path = download_dir.join(safe_file_name(&asset.name));
     let partial_path = installer_path.with_extension("download");
@@ -154,7 +162,9 @@ pub fn start_installer(_installer_path: &Path) -> UpdaterResult<()> {
 
 pub fn update_available_script(release: &UpdateRelease) -> String {
     let payload = serde_json::to_string(release).unwrap_or_else(|_| "{}".to_string());
-    include_str!("update_toast.js").replace("{{update_payload}}", &payload)
+    include_str!("update_toast.js")
+        .replace("{{update_payload}}", &payload)
+        .replace("{{bridge_token}}", crate::jellyfin::bridge::bridge_token())
 }
 
 pub fn update_progress_script(state: &str, payload: serde_json::Value) -> String {
@@ -239,6 +249,33 @@ fn content_length(response: &ureq::http::Response<ureq::Body>) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
+fn unique_download_dir() -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir()
+        .join("mediaflick-desktop-updates")
+        .join(format!("{}-{nonce}", std::process::id()))
+}
+
+fn is_trusted_release_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    host == "github.com"
+        || host == "api.github.com"
+        || host == "githubusercontent.com"
+        || host.ends_with(".githubusercontent.com")
+}
+
 fn safe_file_name(name: &str) -> String {
     let sanitized = name
         .chars()
@@ -256,7 +293,7 @@ fn safe_file_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::version_is_newer;
+    use super::{is_trusted_release_url, version_is_newer};
 
     #[test]
     fn compares_release_versions() {
@@ -264,5 +301,30 @@ mod tests {
         assert!(version_is_newer("1.0", "0.9.9"));
         assert!(!version_is_newer("0.1.2", "0.1.2"));
         assert!(!version_is_newer("0.1.1", "0.1.2"));
+    }
+
+    #[test]
+    fn trusts_only_github_https_urls() {
+        assert!(is_trusted_release_url(
+            "https://github.com/phob/mediaflick-desktop/releases/download/v1/setup.exe"
+        ));
+        assert!(is_trusted_release_url(
+            "https://objects.githubusercontent.com/abc/setup.exe"
+        ));
+        assert!(!is_trusted_release_url(
+            "http://github.com/phob/mediaflick-desktop/releases/download/v1/setup.exe"
+        ));
+        assert!(!is_trusted_release_url(
+            "https://evil.example.com/setup.exe"
+        ));
+        assert!(!is_trusted_release_url(
+            "https://github.com.evil.example.com/setup.exe"
+        ));
+        assert!(!is_trusted_release_url(
+            "https://evil.example.com/github.com/setup.exe"
+        ));
+        assert!(!is_trusted_release_url(
+            "https://github.com@evil.example.com/setup.exe"
+        ));
     }
 }

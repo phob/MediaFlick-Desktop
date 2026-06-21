@@ -532,7 +532,11 @@ pub fn seconds_to_ticks(seconds: f64) -> Option<i64> {
 }
 
 fn server_base_url(media_url: &str) -> Option<String> {
-    let scheme_end = media_url.find("://")? + 3;
+    let (scheme, _) = media_url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let scheme_end = scheme.len() + 3;
     let after_scheme = &media_url[scheme_end..];
     let host_end = after_scheme.find('/').unwrap_or(after_scheme.len());
     if host_end == 0 {
