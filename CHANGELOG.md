@@ -8,6 +8,7 @@
 
 - Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
 - Added README disclosure for AI-assisted project work.
+- Added unit tests for the CEF bridge origin allowlist, external-link scheme checks, and U+2028/U+2029, HTML, and percent-encoding escaping helpers, locking in recent security hardening.
 
 ### Changed
 
@@ -16,7 +17,10 @@
 - Replaced the About and Client Settings dialog brand marks with the app logo.
 - Polished the About dialog and redesigned the update notification as a compact pill without installer filename copy.
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
+- Updated the Rust `cef` crate to v149.1.0.
 - Changed the Windows auto-update installer launch to use Inno Setup `/SILENT` instead of `/VERYSILENT`.
+- Changed Windows mpv window raising on file load to pulse the `window-minimized` IPC property so the player window takes focus, instead of the `ontop` pulse which only changed z-order.
+- Scoped the Jellyfin page `fetch` and `XMLHttpRequest` hooks to PlaybackInfo, play-state report, and direct-stream URLs, so unrelated page requests pass straight through to the native implementation.
 
 ### Fixed
 
@@ -33,6 +37,9 @@
 - Fixed Linux and macOS first launch by auto-detecting a system `mpv` executable and using generic mpv executable wording in app UI.
 - Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.
 - Fixed the mpv window staying at full-screen size after leaving fullscreen when playback starts fullscreen, by constraining the windowed size with `--autofit=70%`.
+- Added a Jellyfin Web integration check that logs a clear console error and shows a dismissible banner when the bridge cannot install its required hooks (for example, after an incompatible Jellyfin Web update), instead of silently failing to drive mpv.
+- Required a per-session token on `mediaflick-desktop://` requests originating from the Jellyfin page, so in-origin scripts (such as a rogue Jellyfin plugin or injected content) can no longer forge bridge actions like app exit or playback control.
+- Fixed mpv commands silently failing after a half-open IPC connection by detecting a dead command-writer and restarting the mpv session, instead of waiting for the event stream to also disconnect.
 
 ### Removed
 

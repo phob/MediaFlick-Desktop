@@ -1,5 +1,6 @@
 (() => {
   const update = {{update_payload}};
+  const BRIDGE_TOKEN = '{{bridge_token}}';
   const hostId = '__mediaFlickDesktopUpdateToast';
   const existing = document.getElementById(hostId);
   if (existing && window.__mediaFlickDesktopShowUpdateToast) {
@@ -204,7 +205,7 @@
   function sendBridgeAction(action) {
     const frame = document.createElement('iframe');
     frame.style.display = 'none';
-    frame.src = `mediaflick-desktop://${action}?version=${encodeURIComponent(update.version || '')}`;
+    frame.src = `mediaflick-desktop://${action}?token=${BRIDGE_TOKEN}&version=${encodeURIComponent(update.version || '')}`;
     document.documentElement.appendChild(frame);
     setTimeout(() => frame.remove(), 30000);
   }

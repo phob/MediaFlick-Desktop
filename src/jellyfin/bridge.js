@@ -20,6 +20,7 @@
   const MPV_STOP_GRACE_MS = 2000;
   const MAX_BITRATE = 1000000000;
   const PLAYER_PLUGIN_NAME = 'mediaFlickDesktopPlayer';
+  const BRIDGE_TOKEN = '{{bridge_token}}';
   const APP_INFO = {
     appName: 'MediaFlick Desktop',
     appVersion: '{{app_version}}',
@@ -761,7 +762,9 @@
         (document.body || document.documentElement).appendChild(playerStateFrame);
       }
       playerStateRequestId += 1;
-      playerStateFrame.src = 'mediaflick-desktop://player-state?requestId='
+      playerStateFrame.src = 'mediaflick-desktop://player-state?token='
+        + BRIDGE_TOKEN
+        + '&requestId='
         + encodeURIComponent(String(playerStateRequestId))
         + '&t='
         + Date.now();
@@ -825,7 +828,8 @@
   };
 
   function sendBridgeRequest(action, payload) {
-    const url = 'mediaflick-desktop://' + action + '?payload=' + encodeURIComponent(JSON.stringify(payload));
+    const url = 'mediaflick-desktop://' + action + '?token=' + BRIDGE_TOKEN
+      + '&payload=' + encodeURIComponent(JSON.stringify(payload));
     if (typeof nativeFetch === 'function') {
       try {
         nativeFetch.call(window, url, {
@@ -868,6 +872,10 @@
     const path = url.pathname.toLowerCase();
     return /\/sessions\/playing(?:\/progress|\/stopped)?$/i.test(path)
       || /\/playingitems\/[^/]+(?:\/progress)?$/i.test(path);
+  }
+
+  function isBridgeRelevantUrl(value) {
+    return isPlaybackInfoUrl(value) || isPlaystateReportUrl(value) || isDirectStreamUrl(value);
   }
 
   function playstateContext(requestUrl, body) {
@@ -1615,16 +1623,16 @@
       nativeShell.downloadFile = (info) => info?.url && nativeShell.openUrl(info.url);
     }
     nativeShell.openClientSettings = () => {
-      window.location.href = 'mediaflick-desktop://client-settings';
+      window.location.href = 'mediaflick-desktop://client-settings?token=' + BRIDGE_TOKEN;
     };
 
     nativeShell.getAppInfo = () => Object.assign({}, APP_INFO);
     nativeShell.openAbout = () => {
-      window.location.href = 'mediaflick-desktop://app-about';
+      window.location.href = 'mediaflick-desktop://app-about?token=' + BRIDGE_TOKEN;
     };
 
     const exitApplication = () => {
-      window.location.href = 'mediaflick-desktop://app-exit';
+      window.location.href = 'mediaflick-desktop://app-exit?token=' + BRIDGE_TOKEN;
     };
 
     const appHost = nativeShell.AppHost && typeof nativeShell.AppHost === 'object'
@@ -1683,6 +1691,9 @@
   if (typeof nativeFetch === 'function') {
     window.fetch = function(input, init) {
       const requestUrl = absoluteUrl(typeof input === 'string' || input instanceof URL ? input : input?.url);
+      if (!isBridgeRelevantUrl(requestUrl)) {
+        return nativeFetch.call(this, input, init);
+      }
       let requestBody = init?.body;
       let fetchInit = init;
       const patchedBody = patchPlaybackInfoBody(requestUrl, requestBody);
@@ -1712,6 +1723,9 @@
     return nativeOpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send = function(body) {
+    if (!isBridgeRelevantUrl(this.__mediaFlickDesktopUrl)) {
+      return nativeSend.call(this, body);
+    }
     let requestBody = patchPlaybackInfoBody(this.__mediaFlickDesktopUrl, body);
     if (shouldSuppressPlaystateReport(this.__mediaFlickDesktopUrl, requestBody)) {
       completeSyntheticXhr(this, this.__mediaFlickDesktopUrl);
@@ -1981,5 +1995,79 @@
     }, true);
   }
 
-  console.debug('[mediaflick-desktop] Jellyfin Web bridge installed');
+  function mediaPropertyProblems() {
+    const problems = [];
+    const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+    if (!srcDescriptor || !srcDescriptor.get || !srcDescriptor.set || srcDescriptor.configurable === false) {
+      problems.push('HTMLMediaElement.src is not patchable');
+    }
+    for (const name of ['currentSrc', 'currentTime', 'duration', 'paused', 'ended', 'readyState']) {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
+      if (!descriptor || descriptor.configurable === false) {
+        problems.push('HTMLMediaElement.' + name + ' is not patchable');
+      }
+    }
+    return problems;
+  }
+
+  function bridgeIntegrationProblems() {
+    const problems = [];
+    if (typeof nativeFetch !== 'function') problems.push('window.fetch is unavailable');
+    if (typeof nativeOpen !== 'function' || typeof nativeSend !== 'function') {
+      problems.push('XMLHttpRequest open/send are unavailable');
+    }
+    if (typeof window[PLAYER_PLUGIN_NAME] !== 'function') {
+      problems.push('player plugin factory was not registered');
+    }
+    if (!window.NativeShell || typeof window.NativeShell.getPlugins !== 'function') {
+      problems.push('NativeShell.getPlugins is unavailable');
+    } else if (!existingNativePlugins(window.NativeShell).includes(PLAYER_PLUGIN_NAME)) {
+      problems.push('player plugin is missing from NativeShell.getPlugins()');
+    }
+    problems.push(...mediaPropertyProblems());
+    return problems;
+  }
+
+  function showBridgeIntegrationWarning(problems) {
+    const render = () => {
+      try {
+        const host = document.body || document.documentElement;
+        if (!host) return;
+        const banner = document.createElement('div');
+        banner.setAttribute('role', 'alert');
+        banner.dataset.mediaFlickDesktop = 'integration-warning';
+        banner.style.cssText = [
+          'position:fixed',
+          'top:0',
+          'left:0',
+          'right:0',
+          'z-index:2147483647',
+          'padding:10px 16px',
+          'background:#7f1d1d',
+          'color:#fff',
+          'font:14px/1.4 system-ui,sans-serif',
+          'text-align:center',
+          'box-shadow:0 2px 8px rgba(0,0,0,0.4)'
+        ].join(';');
+        banner.textContent = 'MediaFlick Desktop could not integrate with this Jellyfin Web build; '
+          + 'external mpv playback may not work. See the developer console for details.';
+        const dismiss = document.createElement('button');
+        dismiss.textContent = '×';
+        dismiss.style.cssText = 'margin-left:16px;background:transparent;border:0;color:#fff;font-size:18px;cursor:pointer;';
+        dismiss.addEventListener('click', () => banner.remove());
+        banner.appendChild(dismiss);
+        host.appendChild(banner);
+      } catch (_) {}
+    };
+    if (document.body) render();
+    else document.addEventListener('DOMContentLoaded', render, { once: true });
+  }
+
+  const integrationProblems = bridgeIntegrationProblems();
+  if (integrationProblems.length) {
+    console.error('[mediaflick-desktop] Jellyfin Web integration check failed; the bridge may not work with this Jellyfin Web version:', integrationProblems);
+    showBridgeIntegrationWarning(integrationProblems);
+  } else {
+    console.debug('[mediaflick-desktop] Jellyfin Web bridge installed');
+  }
 })();

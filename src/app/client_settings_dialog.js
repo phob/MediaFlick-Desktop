@@ -1,5 +1,6 @@
 (() => {
   const settings = __MEDIAFLICK_CLIENT_SETTINGS_JSON__;
+  const BRIDGE_TOKEN = '{{bridge_token}}';
   const existing = document.getElementById('__mediaFlickDesktopClientSettings');
   if (existing) {
     existing.dispatchEvent(new CustomEvent('mediaflick-desktop-settings-focus'));
@@ -452,7 +453,7 @@
 
   browse.addEventListener('click', () => {
     setBusy(true, 'Opening file picker...');
-    window.location.href = 'mediaflick-desktop://select-mpv?target=settings';
+    window.location.href = 'mediaflick-desktop://select-mpv?token=' + BRIDGE_TOKEN + '&target=settings';
   });
   form.addEventListener('submit', event => {
     event.preventDefault();
@@ -463,6 +464,7 @@
     }
     setBusy(true, 'Saving settings...');
     const query = new URLSearchParams({
+      token: BRIDGE_TOKEN,
       mpv: mpvPath.value.trim(),
       logLevel: logLevel.value,
       defaultFullscreen: defaultFullscreen.value,

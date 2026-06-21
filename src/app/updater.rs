@@ -162,7 +162,9 @@ pub fn start_installer(_installer_path: &Path) -> UpdaterResult<()> {
 
 pub fn update_available_script(release: &UpdateRelease) -> String {
     let payload = serde_json::to_string(release).unwrap_or_else(|_| "{}".to_string());
-    include_str!("update_toast.js").replace("{{update_payload}}", &payload)
+    include_str!("update_toast.js")
+        .replace("{{update_payload}}", &payload)
+        .replace("{{bridge_token}}", crate::jellyfin::bridge::bridge_token())
 }
 
 pub fn update_progress_script(state: &str, payload: serde_json::Value) -> String {
