@@ -18,5 +18,7 @@ pub fn dialog_script(settings: &AppSettings, bindings: &MpvInputBindings) -> Str
         "markWatchedNext": bindings.mark_watched_next.as_deref().unwrap_or_default(),
     });
 
-    CLIENT_SETTINGS_DIALOG_SCRIPT.replace(CLIENT_SETTINGS_PLACEHOLDER, &data.to_string())
+    CLIENT_SETTINGS_DIALOG_SCRIPT
+        .replace(CLIENT_SETTINGS_PLACEHOLDER, &data.to_string())
+        .replace("{{bridge_token}}", crate::jellyfin::bridge::bridge_token())
 }

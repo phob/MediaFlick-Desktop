@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
 use std::ffi::OsString;
 #[cfg(target_os = "windows")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::{Command, Stdio};
 
@@ -12,8 +12,6 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
 const SHIM_ENABLED_ENV: &str = "MEDIAFLICK_DESKTOP_COMSPEC_SHIM";
-#[cfg(target_os = "windows")]
-const REAL_COMSPEC_ENV: &str = "MEDIAFLICK_DESKTOP_REAL_COMSPEC";
 
 /// Run this executable as a hidden command processor shim when `system()` from an
 /// mpv script invokes `%COMSPEC% /c ...`.
@@ -51,16 +49,17 @@ pub fn install_hidden_command_processor_shim(command: &mut Command) {
     };
 
     command.env(SHIM_ENABLED_ENV, "1");
-    command.env(REAL_COMSPEC_ENV, real_comspec());
     command.env("COMSPEC", current_exe);
 }
 
 #[cfg(target_os = "windows")]
 fn real_comspec() -> OsString {
-    std::env::var_os(REAL_COMSPEC_ENV)
-        .or_else(|| std::env::var_os("COMSPEC"))
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(default_comspec)
+    let candidate = default_comspec();
+    if Path::new(&candidate).is_file() {
+        candidate
+    } else {
+        OsString::from("cmd.exe")
+    }
 }
 
 #[cfg(target_os = "windows")]

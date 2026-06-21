@@ -278,17 +278,26 @@ pub fn normalize_server_url(input: &str) -> Option<String> {
     }
 
     let lower = trimmed.to_ascii_lowercase();
-    let normalized = if lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("file://")
-        || lower.starts_with("data:")
-        || lower == "about:blank"
-    {
-        trimmed.to_string()
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(trimmed.to_string())
+    } else if has_explicit_scheme(trimmed) {
+        None
     } else {
-        format!("http://{trimmed}")
+        Some(format!("http://{trimmed}"))
+    }
+}
+
+fn has_explicit_scheme(value: &str) -> bool {
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return false;
     };
-    Some(normalized)
+    let mut chars = scheme.chars();
+    let valid_scheme = chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'));
+    if !valid_scheme {
+        return false;
+    }
+    !rest.chars().next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 pub fn config_file_path() -> PathBuf {
@@ -350,6 +359,18 @@ mod tests {
             normalize_server_url("localhost:8096"),
             Some("http://localhost:8096".to_string())
         );
+        assert_eq!(
+            normalize_server_url("media.example.com:8920"),
+            Some("http://media.example.com:8920".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        assert_eq!(normalize_server_url("file:///etc/passwd"), None);
+        assert_eq!(normalize_server_url("data:text/html,<h1>x</h1>"), None);
+        assert_eq!(normalize_server_url("about:blank"), None);
+        assert_eq!(normalize_server_url("javascript:alert(1)"), None);
     }
 
     #[test]

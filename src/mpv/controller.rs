@@ -29,7 +29,10 @@ const IPC_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const IPC_COMMAND_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const PENDING_FILE_LOADED_TIMEOUT: Duration = Duration::from_secs(60);
 const NEXT_PLAYBACK_HANDOFF_TIMEOUT: Duration = Duration::from_secs(60);
-const MPV_ONTOP_PULSE_DURATION: Duration = Duration::from_millis(1200);
+#[cfg(windows)]
+const MPV_RAISE_PULSE_DELAY: Duration = Duration::from_millis(150);
+#[cfg(not(windows))]
+const MPV_RAISE_PULSE_DELAY: Duration = Duration::from_millis(1200);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -148,7 +151,7 @@ struct ControllerState {
     segment_skip_config: SegmentSkipConfig,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
-    pending_ontop_reset_at: Option<Instant>,
+    pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
     event_tx: Option<Sender<MpvPlaybackEvent>>,
     shutdown_requested: Arc<AtomicBool>,
@@ -243,12 +246,20 @@ struct IpcWorker {
     command_tx: Sender<IpcCommand>,
     reader_thread: thread::JoinHandle<()>,
     writer_thread: thread::JoinHandle<()>,
+    writer_alive: Arc<AtomicBool>,
 }
 
 type IpcCommand = (Value, Sender<io::Result<()>>);
 
 struct IpcCommandWriter {
     stream: IpcConnection,
+    alive: Arc<AtomicBool>,
+}
+
+impl Drop for IpcCommandWriter {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::SeqCst);
+    }
 }
 
 impl MpvController {
@@ -374,7 +385,7 @@ impl ControllerState {
             segment_skip_config,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
-            pending_ontop_reset_at: None,
+            pending_raise_pulse_reset_at: None,
             last_session_poll: Instant::now(),
             event_tx,
             shutdown_requested,
@@ -443,7 +454,7 @@ impl ControllerState {
             self.maybe_send_startup_seek();
             self.poll_child();
             self.maybe_poll_mpv_session();
-            self.maybe_reset_mpv_ontop();
+            self.maybe_finish_mpv_raise();
             self.maybe_update_auto_skip_countdown();
             self.maybe_report_progress();
             self.prune_recent_loads();
@@ -699,7 +710,11 @@ impl ControllerState {
                 );
                 self.finish_active(Some("quit"));
                 self.reset_mpv();
-            } else if self.ipc_worker.is_some() {
+            } else if self
+                .ipc_worker
+                .as_ref()
+                .is_some_and(IpcWorker::is_writer_alive)
+            {
                 tracing::trace!(
                     target: "mpv.ipc",
                     "reusing existing mpv process"
@@ -708,7 +723,7 @@ impl ControllerState {
             } else {
                 tracing::warn!(
                     target: "mpv.ipc",
-                    "restarting mpv because the tracked process has no IPC worker"
+                    "restarting mpv because the tracked process has no live IPC worker"
                 );
                 self.finish_active(Some("quit"));
                 self.reset_mpv();
@@ -1302,7 +1317,7 @@ impl ControllerState {
 
     fn skip_segment(&mut self, index: usize, reason: &'static str) -> bool {
         let current_ticks = self.last_state.position_ticks;
-        let Some(segment) = self.skip_segments.get_mut(index) else {
+        let Some(segment) = self.skip_segments.get(index) else {
             return false;
         };
         if segment.triggered {
@@ -1310,11 +1325,12 @@ impl ControllerState {
         }
         let end_ticks = segment.end_ticks;
         let segment_type = segment.segment_type;
-        segment.triggered = true;
+
         self.current_skip_segment = None;
         self.pending_auto_skip = None;
         self.last_skip_osd_at = Some(Instant::now());
         if end_ticks <= current_ticks {
+            self.mark_segment_triggered(index);
             tracing::debug!(
                 target: "playback",
                 reason,
@@ -1332,6 +1348,7 @@ impl ControllerState {
         });
         match self.send_mpv_command(command) {
             Ok(()) => {
+                self.mark_segment_triggered(index);
                 tracing::info!(
                     target: "playback",
                     reason,
@@ -1354,6 +1371,12 @@ impl ControllerState {
                 self.handle_mpv_session_lost("segment skip command failed");
                 false
             }
+        }
+    }
+
+    fn mark_segment_triggered(&mut self, index: usize) {
+        if let Some(segment) = self.skip_segments.get_mut(index) {
+            segment.triggered = true;
         }
     }
 
@@ -1509,7 +1532,10 @@ impl ControllerState {
     fn configured_mpv_session_ready(&mut self, config: &ConfiguredMpv) -> bool {
         self.child_is_alive()
             && self.current_mpv_path_matches(&config.mpv_path)
-            && self.ipc_worker.is_some()
+            && self
+                .ipc_worker
+                .as_ref()
+                .is_some_and(IpcWorker::is_writer_alive)
     }
 
     fn handle_mpv_session_lost(&mut self, reason: &'static str) {
@@ -1539,38 +1565,54 @@ impl ControllerState {
     }
 
     fn schedule_mpv_raise(&mut self, reason: &'static str) {
-        self.pulse_mpv_ontop(reason);
-    }
-
-    fn pulse_mpv_ontop(&mut self, reason: &'static str) {
-        if self.set_mpv_ontop(true, reason) {
-            self.pending_ontop_reset_at = Some(Instant::now() + MPV_ONTOP_PULSE_DURATION);
+        if self.begin_mpv_raise(reason) {
+            self.pending_raise_pulse_reset_at = Some(Instant::now() + MPV_RAISE_PULSE_DELAY);
         }
     }
 
-    fn maybe_reset_mpv_ontop(&mut self) {
-        let Some(due_at) = self.pending_ontop_reset_at else {
+    fn maybe_finish_mpv_raise(&mut self) {
+        let Some(due_at) = self.pending_raise_pulse_reset_at else {
             return;
         };
         if Instant::now() < due_at {
             return;
         }
-        self.pending_ontop_reset_at = None;
-        self.set_mpv_ontop(false, "ontop pulse elapsed");
+        self.pending_raise_pulse_reset_at = None;
+        self.finish_mpv_raise();
     }
 
-    fn set_mpv_ontop(&self, enabled: bool, reason: &'static str) -> bool {
+    #[cfg(windows)]
+    fn begin_mpv_raise(&self, reason: &'static str) -> bool {
+        self.set_mpv_bool_property("window-minimized", true, reason)
+    }
+
+    #[cfg(windows)]
+    fn finish_mpv_raise(&self) {
+        self.set_mpv_bool_property("window-minimized", false, "raise pulse restore");
+    }
+
+    #[cfg(not(windows))]
+    fn begin_mpv_raise(&self, reason: &'static str) -> bool {
+        self.set_mpv_bool_property("ontop", true, reason)
+    }
+
+    #[cfg(not(windows))]
+    fn finish_mpv_raise(&self) {
+        self.set_mpv_bool_property("ontop", false, "raise pulse reset");
+    }
+
+    fn set_mpv_bool_property(&self, property: &str, value: bool, reason: &'static str) -> bool {
         let command = json!({
-            "command": ["set_property", "ontop", enabled],
+            "command": ["set_property", property, value],
             "request_id": next_request_id(),
         });
         match self.send_mpv_command(command) {
             Ok(()) => {
-                tracing::debug!(target: "mpv.focus", reason, enabled, "set mpv ontop property");
+                tracing::debug!(target: "mpv.focus", reason, property, value, "set mpv property for window raise");
                 true
             }
             Err(error) => {
-                tracing::trace!(target: "mpv.focus", reason, enabled, "failed to set mpv ontop property: {error}");
+                tracing::trace!(target: "mpv.focus", reason, property, value, "failed to set mpv property for window raise: {error}");
                 false
             }
         }
@@ -1641,7 +1683,7 @@ impl ControllerState {
     fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
-        self.pending_ontop_reset_at = None;
+        self.pending_raise_pulse_reset_at = None;
         self.clear_skip_segment_state();
         if self.active.is_none() && self.pending.is_none() {
             self.playback_runtime_ticks = None;
@@ -1814,8 +1856,10 @@ impl IpcWorker {
         // commands through a clone of the event reader can prevent loadfile from
         // reaching mpv. The separate persistent writer is the known-good shape.
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC command writer");
+        let writer_alive = Arc::new(AtomicBool::new(true));
         let writer = IpcCommandWriter {
             stream: connect_ipc_for_commands_with_timeout(path, IPC_COMMAND_CONNECT_TIMEOUT)?,
+            alive: writer_alive.clone(),
         };
 
         let (event_tx, event_rx) = mpsc::channel();
@@ -1828,9 +1872,14 @@ impl IpcWorker {
                 command_tx,
                 reader_thread,
                 writer_thread,
+                writer_alive,
             },
             event_rx,
         ))
+    }
+
+    fn is_writer_alive(&self) -> bool {
+        self.writer_alive.load(Ordering::SeqCst)
     }
 
     fn send(&self, command: Value) -> io::Result<()> {
@@ -1854,6 +1903,7 @@ impl IpcWorker {
             command_tx,
             reader_thread,
             writer_thread,
+            writer_alive: _,
         } = self;
         tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
         drop(command_tx);
@@ -1943,6 +1993,22 @@ fn connect_ipc_for_commands_with_timeout(
     }))
 }
 
+fn log_command_reply(value: &Value) {
+    match value.get("error").and_then(Value::as_str) {
+        Some("success") | None => tracing::trace!(
+            target: "mpv.ipc",
+            value = %logger::redacted_json(value),
+            "received mpv IPC command reply"
+        ),
+        Some(error) => tracing::warn!(
+            target: "mpv.ipc",
+            request_id = value.get("request_id").and_then(|id| id.as_i64()),
+            error,
+            "mpv rejected command"
+        ),
+    }
+}
+
 fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -1960,11 +2026,7 @@ fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
                     continue;
                 };
                 let Some(name) = value.get("event").and_then(Value::as_str) else {
-                    tracing::trace!(
-                        target: "mpv.ipc",
-                        value = %logger::redacted_json(&value),
-                        "ignored mpv IPC reply without event name"
-                    );
+                    log_command_reply(&value);
                     continue;
                 };
                 let event = MpvEvent {

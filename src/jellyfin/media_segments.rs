@@ -105,7 +105,7 @@ fn fetch_segments(
     let url = format!(
         "{}/MediaSegments/{}?includeSegmentTypes=Intro&includeSegmentTypes=Outro",
         session.base_url().trim_end_matches('/'),
-        item_id
+        encode_path_segment(item_id)
     );
     tracing::debug!(
         target: "jellyfin.media_segments",
@@ -144,4 +144,37 @@ fn fetch_segments(
         "fetched Jellyfin media segments"
     );
     Ok(segments)
+}
+
+fn encode_path_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_path_segment;
+
+    #[test]
+    fn passes_through_guid_item_ids() {
+        let id = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+        assert_eq!(encode_path_segment(id), id);
+    }
+
+    #[test]
+    fn encodes_path_and_query_separators() {
+        assert_eq!(encode_path_segment("../Users"), "..%2FUsers");
+        assert_eq!(
+            encode_path_segment("x?includeSegmentTypes=Outro"),
+            "x%3FincludeSegmentTypes%3DOutro"
+        );
+    }
 }
