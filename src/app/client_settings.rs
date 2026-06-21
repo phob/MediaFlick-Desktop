@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use crate::app::mpv_setup;
 use crate::app::settings::AppSettings;
 use crate::mpv::input::MpvInputBindings;
 
@@ -15,7 +16,12 @@ pub fn dialog_script(settings: &AppSettings, bindings: &MpvInputBindings) -> Str
         "showScrollbars": settings.show_scrollbars,
         "skipIntro": settings.skip_intro.as_str(),
         "skipCredits": settings.skip_credits.as_str(),
+        "skipRecap": settings.skip_recap.as_str(),
+        "skipCommercial": settings.skip_commercial.as_str(),
         "markWatchedNext": bindings.mark_watched_next.as_deref().unwrap_or_default(),
+        "mpvPlatform": mpv_setup::platform_id(),
+        "mpvCanDownload": mpv_setup::supported(),
+        "mpvHelpUrl": mpv_setup::MPV_HELP_URL,
     });
 
     CLIENT_SETTINGS_DIALOG_SCRIPT

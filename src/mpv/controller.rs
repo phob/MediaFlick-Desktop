@@ -46,6 +46,8 @@ const SEGMENT_SKIP_OSD_DEBOUNCE: Duration = Duration::from_secs(3);
 const SEGMENT_AUTO_SKIP_DELAY: Duration = Duration::from_secs(3);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL: Duration = Duration::from_secs(1);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS: i64 = 1200;
+const CHAPTER_MARKER_RETRY_INTERVAL: Duration = Duration::from_millis(1000);
+const CHAPTER_MARKER_MAX_ATTEMPTS: u32 = 15;
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
@@ -146,6 +148,12 @@ struct ControllerState {
     skip_segments: Vec<SkipSegment>,
     current_skip_segment: Option<usize>,
     pending_auto_skip: Option<PendingAutoSkip>,
+    original_chapters: Option<Vec<Value>>,
+    injected_chapter_markers: Vec<Value>,
+    last_sent_chapter_list: Option<Vec<Value>>,
+    pending_chapter_markers: Option<Vec<Value>>,
+    chapter_marker_attempts: u32,
+    chapter_marker_next_attempt_at: Option<Instant>,
     last_skip_osd_at: Option<Instant>,
     seek_started_at_ticks: Option<i64>,
     segment_skip_config: SegmentSkipConfig,
@@ -380,6 +388,12 @@ impl ControllerState {
             skip_segments: Vec::new(),
             current_skip_segment: None,
             pending_auto_skip: None,
+            original_chapters: None,
+            injected_chapter_markers: Vec::new(),
+            last_sent_chapter_list: None,
+            pending_chapter_markers: None,
+            chapter_marker_attempts: 0,
+            chapter_marker_next_attempt_at: None,
             last_skip_osd_at: None,
             seek_started_at_ticks: None,
             segment_skip_config,
@@ -431,6 +445,7 @@ impl ControllerState {
                             self.last_state.position_ticks,
                         );
                     }
+                    self.refresh_chapter_markers();
                 }
                 Ok(ControllerMessage::MediaSegmentsFetched {
                     playback_id,
@@ -455,6 +470,7 @@ impl ControllerState {
             self.poll_child();
             self.maybe_poll_mpv_session();
             self.maybe_finish_mpv_raise();
+            self.maybe_apply_chapter_markers();
             self.maybe_update_auto_skip_countdown();
             self.maybe_report_progress();
             self.prune_recent_loads();
@@ -592,6 +608,7 @@ impl ControllerState {
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
+        self.reset_chapter_markers();
         if let Some(active) = self.active.take() {
             tracing::info!(
                 target: "playback",
@@ -947,6 +964,7 @@ impl ControllerState {
                     state = %self.last_state,
                     "mpv duration changed"
                 );
+                self.refresh_chapter_markers();
                 self.publish_snapshot();
             }
             Some("volume") => {
@@ -997,6 +1015,11 @@ impl ControllerState {
             Some("seeking") => {
                 if let Some(value) = data.as_ref().and_then(Value::as_bool) {
                     self.handle_seeking_property(value);
+                }
+            }
+            Some("chapter-list") => {
+                if let Some(chapters) = data.as_ref().and_then(Value::as_array) {
+                    self.handle_chapter_list_event(chapters.clone());
                 }
             }
             Some("playback-abort") => {
@@ -1053,6 +1076,7 @@ impl ControllerState {
                     self.last_state.position_ticks,
                     self.last_state.position_ticks,
                 );
+                self.refresh_chapter_markers();
             }
             Err(error) => tracing::warn!(
                 target: "jellyfin.media_segments",
@@ -1097,6 +1121,136 @@ impl ControllerState {
         self.pending_auto_skip = None;
         self.last_skip_osd_at = None;
         self.seek_started_at_ticks = None;
+    }
+
+    pub(super) fn reset_chapter_markers(&mut self) {
+        self.original_chapters = None;
+        self.injected_chapter_markers.clear();
+        self.last_sent_chapter_list = None;
+        self.pending_chapter_markers = None;
+        self.chapter_marker_attempts = 0;
+        self.chapter_marker_next_attempt_at = None;
+    }
+
+    pub(super) fn handle_chapter_list_event(&mut self, chapters: Vec<Value>) {
+        if !self.injected_chapter_markers.is_empty()
+            && self
+                .injected_chapter_markers
+                .iter()
+                .all(|marker| chapters.contains(marker))
+        {
+            self.pending_chapter_markers = None;
+            self.chapter_marker_next_attempt_at = None;
+            let base = chapters
+                .iter()
+                .filter(|chapter| !self.injected_chapter_markers.contains(chapter))
+                .cloned()
+                .collect::<Vec<_>>();
+            self.original_chapters = Some(base);
+            self.last_sent_chapter_list = Some(chapters);
+            return;
+        }
+        self.capture_original_chapters(chapters);
+    }
+
+    fn capture_original_chapters(&mut self, chapters: Vec<Value>) {
+        let base = chapters
+            .into_iter()
+            .filter(|chapter| !self.injected_chapter_markers.contains(chapter))
+            .collect::<Vec<_>>();
+        if self.original_chapters.as_deref() == Some(base.as_slice()) {
+            return;
+        }
+        self.original_chapters = Some(base);
+        self.refresh_chapter_markers();
+    }
+
+    pub(super) fn refresh_chapter_markers(&mut self) {
+        if !self.mpv_playback_active {
+            return;
+        }
+        let base = self.original_chapters.clone().unwrap_or_default();
+
+        let markers = if self.skip_segments.is_empty() {
+            Vec::new()
+        } else {
+            let Some(duration_ticks) = self.last_state.duration_ticks.filter(|ticks| *ticks > 0)
+            else {
+                return;
+            };
+            let duration_seconds = duration_ticks as f64 / TICKS_PER_SECOND;
+            build_segment_chapter_markers(&self.skip_segments, duration_seconds)
+        };
+
+        if markers.is_empty() {
+            self.injected_chapter_markers.clear();
+            self.pending_chapter_markers = None;
+            self.chapter_marker_next_attempt_at = None;
+            if self.last_sent_chapter_list.take().is_some() {
+                let _ = self.send_chapter_list(&base);
+            }
+            return;
+        }
+
+        self.injected_chapter_markers = markers.clone();
+        self.queue_chapter_list(merge_chapter_markers(base, markers));
+    }
+
+    fn queue_chapter_list(&mut self, list: Vec<Value>) {
+        if self.pending_chapter_markers.is_none()
+            && self.last_sent_chapter_list.as_ref() == Some(&list)
+        {
+            return;
+        }
+        if self.pending_chapter_markers.as_ref() == Some(&list) {
+            return;
+        }
+        self.pending_chapter_markers = Some(list);
+        self.chapter_marker_attempts = 0;
+        self.chapter_marker_next_attempt_at = Some(Instant::now());
+    }
+
+    pub(super) fn maybe_apply_chapter_markers(&mut self) {
+        let Some(list) = self.pending_chapter_markers.clone() else {
+            return;
+        };
+        if !self.mpv_playback_active {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .chapter_marker_next_attempt_at
+            .is_some_and(|at| now < at)
+        {
+            return;
+        }
+        if self.chapter_marker_attempts >= CHAPTER_MARKER_MAX_ATTEMPTS {
+            tracing::debug!(
+                target: "mpv.ipc",
+                "gave up applying segment chapter markers after {CHAPTER_MARKER_MAX_ATTEMPTS} attempts"
+            );
+            self.pending_chapter_markers = None;
+            self.chapter_marker_next_attempt_at = None;
+            return;
+        }
+        self.chapter_marker_attempts += 1;
+        self.last_sent_chapter_list = Some(list.clone());
+        let _ = self.send_chapter_list(&list);
+        self.chapter_marker_next_attempt_at = Some(now + CHAPTER_MARKER_RETRY_INTERVAL);
+    }
+
+    fn send_chapter_list(&self, chapters: &[Value]) -> bool {
+        let command = json!({
+            "command": ["set_property", "chapter-list", chapters],
+            "request_id": next_request_id(),
+        });
+        match self.send_mpv_command(command) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(target: "mpv.ipc", "failed to set mpv segment chapter markers: {error}");
+                false
+            }
+        }
     }
 
     fn handle_prompt_skip_control(&mut self, command: &MpvControlCommand) -> bool {
@@ -1273,10 +1427,7 @@ impl ControllerState {
         let Some(segment) = self.skip_segments.get(index) else {
             return;
         };
-        let label = match segment.segment_type {
-            SegmentType::Intro => "Intro",
-            SegmentType::Outro => "Credits",
-        };
+        let label = segment.segment_type.countdown_label();
         let command = json!({
             "command": [
                 "show-text",
@@ -1399,6 +1550,8 @@ impl ControllerState {
         match segment_type {
             SegmentType::Intro => self.segment_skip_config.intro,
             SegmentType::Outro => self.segment_skip_config.credits,
+            SegmentType::Recap => self.segment_skip_config.recap,
+            SegmentType::Commercial => self.segment_skip_config.commercial,
         }
     }
 
@@ -1740,6 +1893,42 @@ impl ControllerState {
     }
 }
 
+fn build_segment_chapter_markers(segments: &[SkipSegment], duration_seconds: f64) -> Vec<Value> {
+    let mut markers: Vec<(f64, &'static str)> = Vec::with_capacity(segments.len() * 2);
+    for segment in segments {
+        let start = segment.start_ticks as f64 / TICKS_PER_SECOND;
+        let end = segment.end_ticks as f64 / TICKS_PER_SECOND;
+        markers.push((start, segment.segment_type.marker_start_label()));
+        markers.push((end, segment.segment_type.marker_end_label()));
+    }
+    markers.retain(|(time, _)| *time > 0.0 && *time < duration_seconds);
+    markers.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    markers.dedup_by(|a, b| (a.0 - b.0).abs() < 0.001);
+    markers
+        .into_iter()
+        .map(|(time, title)| json!({ "title": title, "time": (time * 1000.0).round() / 1000.0 }))
+        .collect()
+}
+
+fn merge_chapter_markers(base: Vec<Value>, markers: Vec<Value>) -> Vec<Value> {
+    let mut chapters = base;
+    chapters.extend(markers);
+    chapters.sort_by(|a, b| {
+        chapter_time(a)
+            .partial_cmp(&chapter_time(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    chapters.dedup_by(|a, b| (chapter_time(a) - chapter_time(b)).abs() < 0.001);
+    chapters
+}
+
+fn chapter_time(chapter: &Value) -> f64 {
+    chapter
+        .get("time")
+        .and_then(Value::as_f64)
+        .unwrap_or_default()
+}
+
 pub fn loadfile_command(launch: &MpvLaunch) -> Value {
     let mut options = Map::new();
     // Intentionally do not set mpv's `start` option here. Resume is performed
@@ -1942,6 +2131,7 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
         "eof-reached",
         "seeking",
         "playback-abort",
+        "chapter-list",
     ] {
         let command = json!({
             "command": ["observe_property", next_request_id(), property],
@@ -2343,7 +2533,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, PlaybackIdentity,
-        control_command, loadfile_command, mpv_string_list,
+        build_segment_chapter_markers, control_command, loadfile_command, merge_chapter_markers,
+        mpv_string_list,
     };
     use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
     use crate::jellyfin::bridge::PlaybackContext;
@@ -2393,6 +2584,69 @@ mod tests {
             end_ticks: 200_000_000,
             triggered: false,
         }];
+    }
+
+    #[test]
+    fn segment_chapter_markers_bound_each_segment_and_drop_out_of_range() {
+        let segments = vec![
+            SkipSegment {
+                segment_type: SegmentType::Intro,
+                start_ticks: 100_000_000,
+                end_ticks: 300_000_000,
+                triggered: false,
+            },
+            SkipSegment {
+                segment_type: SegmentType::Outro,
+                start_ticks: 1_400_000_000,
+                end_ticks: 1_500_000_000,
+                triggered: false,
+            },
+        ];
+
+        let markers = build_segment_chapter_markers(&segments, 150.0);
+
+        assert_eq!(
+            markers,
+            vec![
+                json!({ "title": "Intro", "time": 10.0 }),
+                json!({ "title": "Intro End", "time": 30.0 }),
+                json!({ "title": "Credits", "time": 140.0 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_chapter_markers_preserves_embedded_chapters_and_sorts_by_time() {
+        let base = vec![
+            json!({ "title": "Part 1", "time": 0.0 }),
+            json!({ "title": "Part 2", "time": 120.0 }),
+        ];
+        let markers = vec![
+            json!({ "title": "Intro", "time": 10.0 }),
+            json!({ "title": "Intro End", "time": 30.0 }),
+        ];
+
+        let merged = merge_chapter_markers(base, markers);
+
+        assert_eq!(
+            merged,
+            vec![
+                json!({ "title": "Part 1", "time": 0.0 }),
+                json!({ "title": "Intro", "time": 10.0 }),
+                json!({ "title": "Intro End", "time": 30.0 }),
+                json!({ "title": "Part 2", "time": 120.0 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_chapter_markers_drops_marker_coinciding_with_embedded_chapter() {
+        let base = vec![json!({ "title": "Chapter", "time": 10.0 })];
+        let markers = vec![json!({ "title": "Intro", "time": 10.0 })];
+
+        let merged = merge_chapter_markers(base, markers);
+
+        assert_eq!(merged, vec![json!({ "title": "Chapter", "time": 10.0 })]);
     }
 
     #[test]

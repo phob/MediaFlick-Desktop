@@ -93,7 +93,14 @@ fn is_cef_subprocess() -> bool {
 }
 
 fn default_mpv_path() -> Option<std::path::PathBuf> {
-    bundled_mpv_path().or_else(system_mpv_path)
+    bundled_mpv_path()
+        .or_else(downloaded_mpv_path)
+        .or_else(system_mpv_path)
+}
+
+fn downloaded_mpv_path() -> Option<std::path::PathBuf> {
+    let path = crate::app::mpv_setup::installed_mpv_path();
+    path.is_file().then_some(path)
 }
 
 fn bundled_mpv_path() -> Option<std::path::PathBuf> {

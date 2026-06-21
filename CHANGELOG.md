@@ -6,12 +6,17 @@
 
 ### Added
 
+- Added in-app mpv setup: the welcome and Client Settings screens now offer a one-click "Download mpv" on Windows (fetched and extracted from the shinchiro mpv builds) and copyable per-OS install commands on macOS and Linux, plus a link to mpv.io/installation.
 - Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
+- Added Jellyfin recap and commercial segment skipping in mpv with their own prompt/always Client Settings, alongside the existing intro and credits options.
+- Added skip-segment markers on the mpv seek bar by injecting chapter ticks at each segment's boundaries, so the timeline shows where intros, credits, recaps, and commercials are skipped. Existing embedded file chapters are preserved and merged with the markers rather than replaced.
 - Added README disclosure for AI-assisted project work.
 - Added unit tests for the CEF bridge origin allowlist, external-link scheme checks, and U+2028/U+2029, HTML, and percent-encoding escaping helpers, locking in recent security hardening.
 
 ### Changed
 
+- Redesigned the first-run welcome screen to match the app's dark, Jellyfin-compatible design system: removed the marketing-style gradient background, unified colors and typography with the settings dialog, reserved the violet→cyan gradient for the brand mark, and integrated the "get mpv" setup inline instead of as a nested card.
+- Stopped bundling mpv in the Windows installer and zip; the app now downloads mpv on first run or guides the user to install it, producing a much smaller installer.
 - Changed automatic intro and credits skipping to show a three-second countdown before seeking.
 - Moved app-owned dialog and load-error markup templates out of Rust source files.
 - Replaced the About and Client Settings dialog brand marks with the app logo.

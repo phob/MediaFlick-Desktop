@@ -37,7 +37,7 @@ The installer installs the app for the current user to:
 %LOCALAPPDATA%\Programs\MediaFlick Desktop
 ```
 
-If the release includes a bundled mpv, the app detects it automatically on first launch. Linux and macOS builds also look for a system `mpv` in common locations. In those cases, you only need to enter your Jellyfin server URL.
+mpv is not bundled. On first launch the welcome screen offers a one-click **Download mpv** button on Windows, and copyable install commands for macOS (`brew install mpv`) and Linux (`sudo apt install mpv`), with a link to [mpv.io/installation](https://mpv.io/installation/). Linux and macOS also auto-detect a system `mpv` in common locations, so there you usually only need to enter your Jellyfin server URL.
 
 MediaFlick Desktop checks GitHub Releases for newer Windows installers. When an update is available, an in-app toast lets you download it, shows progress, then runs the installer quietly and restarts the app into the new version.
 
@@ -48,7 +48,7 @@ If you are using a release zip or a manually staged build:
 1. Extract the app folder somewhere permanent.
 2. Make sure `mediaflick-desktop.exe` stays next to the included CEF runtime files and `locales` folder.
 3. Run `mediaflick-desktop.exe`.
-4. If mpv is not detected automatically, select your own mpv executable on the welcome screen.
+4. On the welcome screen, use **Download mpv** (Windows) or **Browse** to select your own mpv executable.
 
 ## First launch
 
@@ -57,7 +57,7 @@ On first launch, MediaFlick Desktop asks for:
 - **Jellyfin server URL** — for example `http://localhost:8096` or `https://jellyfin.example.com`
 - **mpv executable** — the mpv executable you want MediaFlick Desktop to control, auto-filled when detected
 
-You can use the native **Browse** button to select a different mpv executable.
+Use **Download mpv** (Windows) to fetch and install mpv automatically, or the native **Browse** button to select an existing mpv executable. macOS and Linux show the install command for your platform.
 
 The app saves these settings here:
 
@@ -134,10 +134,9 @@ just release
 
 ### Build a Windows release package
 
-To stage a Windows release payload with the app, CEF runtime files, locales, and a bundled mpv tree:
+To stage a Windows release payload with the app, CEF runtime files, and locales (mpv is no longer bundled; the app downloads it on first run):
 
 ```powershell
-$env:MEDIAFLICK_DESKTOP_PACKAGE_MPV = "C:\path\to\mpv" # directory, or path to mpv.exe
 just windows-dist
 ```
 
