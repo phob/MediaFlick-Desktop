@@ -31,6 +31,10 @@ pub struct AppSettings {
     pub skip_intro: SegmentSkipMode,
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_credits: SegmentSkipMode,
+    #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
+    pub skip_recap: SegmentSkipMode,
+    #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
+    pub skip_commercial: SegmentSkipMode,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +64,8 @@ impl SegmentSkipMode {
 pub struct SegmentSkipConfig {
     pub intro: SegmentSkipMode,
     pub credits: SegmentSkipMode,
+    pub recap: SegmentSkipMode,
+    pub commercial: SegmentSkipMode,
 }
 
 impl Default for SegmentSkipConfig {
@@ -67,13 +73,18 @@ impl Default for SegmentSkipConfig {
         Self {
             intro: SegmentSkipMode::Prompt,
             credits: SegmentSkipMode::Prompt,
+            recap: SegmentSkipMode::Prompt,
+            commercial: SegmentSkipMode::Prompt,
         }
     }
 }
 
 impl SegmentSkipConfig {
     pub fn all_disabled(self) -> bool {
-        self.intro == SegmentSkipMode::Disabled && self.credits == SegmentSkipMode::Disabled
+        self.intro == SegmentSkipMode::Disabled
+            && self.credits == SegmentSkipMode::Disabled
+            && self.recap == SegmentSkipMode::Disabled
+            && self.commercial == SegmentSkipMode::Disabled
     }
 }
 
@@ -184,6 +195,8 @@ impl Default for AppSettings {
             webui_window: WebUiWindowSettings::default(),
             skip_intro: SegmentSkipMode::default(),
             skip_credits: SegmentSkipMode::default(),
+            skip_recap: SegmentSkipMode::default(),
+            skip_commercial: SegmentSkipMode::default(),
         }
     }
 }
@@ -232,6 +245,8 @@ impl AppSettings {
         SegmentSkipConfig {
             intro: self.skip_intro,
             credits: self.skip_credits,
+            recap: self.skip_recap,
+            commercial: self.skip_commercial,
         }
     }
 

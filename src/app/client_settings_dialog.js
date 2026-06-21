@@ -182,6 +182,31 @@
       input:disabled,
       select:disabled { color: var(--disabled); opacity: .72; }
       datalist { display: none; }
+      .getmpv { display: grid; gap: 10px; }
+      .getmpv #download-mpv { justify-self: start; min-width: 0; }
+      .getmpv .cmd-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .getmpv code {
+        display: block;
+        overflow-x: auto;
+        height: 40px;
+        line-height: 40px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--panel);
+        color: var(--text);
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .getmpv .help { color: var(--cyan); font-weight: 600; text-decoration: none; }
+      .getmpv .help:hover { text-decoration: underline; }
+      .getmpv .status:empty { min-height: 0; }
       .actions {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto auto;
@@ -279,6 +304,18 @@
               </div>
             </div>
             <div class="row">
+              <label for="download-mpv">Get mpv</label>
+              <div class="control getmpv">
+                <button id="download-mpv" class="action secondary" type="button" hidden>Download mpv</button>
+                <div class="cmd-row" id="mpv-cmd-line" hidden>
+                  <code id="mpv-cmd"></code>
+                  <button id="copy-mpv" class="action secondary" type="button">Copy</button>
+                </div>
+                <span class="status" id="mpv-setup-status" aria-live="polite"></span>
+                <a id="mpv-help-link" class="help" href="#">mpv.io/installation</a>
+              </div>
+            </div>
+            <div class="row">
               <label for="default-fullscreen">Default fullscreen</label>
               <div class="control">
                 <select id="default-fullscreen" name="default-fullscreen">
@@ -311,6 +348,26 @@
               <label for="skip-credits">Credits</label>
               <div class="control">
                 <select id="skip-credits" name="skip-credits">
+                  <option value="disabled">Never skip</option>
+                  <option value="prompt">Ask / seek to skip</option>
+                  <option value="always">Always skip</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <label for="skip-recap">Recaps</label>
+              <div class="control">
+                <select id="skip-recap" name="skip-recap">
+                  <option value="disabled">Never skip</option>
+                  <option value="prompt">Ask / seek to skip</option>
+                  <option value="always">Always skip</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <label for="skip-commercial">Commercials</label>
+              <div class="control">
+                <select id="skip-commercial" name="skip-commercial">
                   <option value="disabled">Never skip</option>
                   <option value="prompt">Ask / seek to skip</option>
                   <option value="always">Always skip</option>
@@ -374,10 +431,18 @@
   const scrollbars = root.getElementById('scrollbars');
   const skipIntro = root.getElementById('skip-intro');
   const skipCredits = root.getElementById('skip-credits');
+  const skipRecap = root.getElementById('skip-recap');
+  const skipCommercial = root.getElementById('skip-commercial');
   const markWatchedNext = root.getElementById('mark-watched-next');
   const status = root.getElementById('status');
   const save = root.getElementById('save');
   const browse = root.getElementById('browse');
+  const downloadMpv = root.getElementById('download-mpv');
+  const mpvCmdLine = root.getElementById('mpv-cmd-line');
+  const mpvCmd = root.getElementById('mpv-cmd');
+  const copyMpv = root.getElementById('copy-mpv');
+  const mpvSetupStatus = root.getElementById('mpv-setup-status');
+  const mpvHelpLink = root.getElementById('mpv-help-link');
   const cancel = root.getElementById('cancel');
   const closeButton = root.querySelector('.close');
   const bg = root.querySelector('.bg');
@@ -389,10 +454,12 @@
   scrollbars.value = settings.showScrollbars ? 'visible' : 'hidden';
   skipIntro.value = settings.skipIntro || 'prompt';
   skipCredits.value = settings.skipCredits || 'prompt';
+  skipRecap.value = settings.skipRecap || 'prompt';
+  skipCommercial.value = settings.skipCommercial || 'prompt';
   markWatchedNext.value = settings.markWatchedNext || '';
 
   function focusableControls() {
-    return Array.from(root.querySelectorAll('button, input, select')).filter(element => !element.disabled);
+    return Array.from(root.querySelectorAll('button, input, select')).filter(element => !element.disabled && element.offsetParent !== null);
   }
   function close() {
     document.removeEventListener('keydown', onKeyDown, true);
@@ -400,6 +467,7 @@
     delete window.__mediaFlickDesktopSetMpvPath;
     delete window.__mediaFlickDesktopClientSettingsSaved;
     delete window.__mediaFlickDesktopClientSettingsSaveFailed;
+    delete window.__mediaFlickDesktopMpvSetup;
     host.remove();
   }
   function setStatus(message, kind) {
@@ -451,6 +519,91 @@
     setStatus(message || 'Could not save settings.', 'error');
   };
 
+  const mpvCommands = { macos: 'brew install mpv', linux: 'sudo apt install mpv' };
+  let mpvSetupBusy = false;
+
+  function mpvBytes(value) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number) || number <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let scaled = number;
+    let unit = 0;
+    while (scaled >= 1024 && unit < units.length - 1) { scaled /= 1024; unit += 1; }
+    return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+  }
+
+  function setMpvSetupStatus(message, kind) {
+    mpvSetupStatus.textContent = message || '';
+    mpvSetupStatus.className = kind ? 'status ' + kind : 'status';
+  }
+
+  if (settings.mpvCanDownload) {
+    downloadMpv.hidden = false;
+  } else if (mpvCommands[settings.mpvPlatform]) {
+    mpvCmd.textContent = mpvCommands[settings.mpvPlatform];
+    mpvCmdLine.hidden = false;
+  }
+
+  downloadMpv.addEventListener('click', () => {
+    if (mpvSetupBusy) return;
+    mpvSetupBusy = true;
+    downloadMpv.disabled = true;
+    downloadMpv.textContent = 'Starting';
+    setMpvSetupStatus('Contacting mpv release server…', '');
+    window.location.href = 'mediaflick-desktop://mpv-download?token=' + BRIDGE_TOKEN;
+  });
+
+  copyMpv.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(mpvCmd.textContent);
+    } catch (error) {
+      const range = document.createRange();
+      range.selectNodeContents(mpvCmd);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      try { document.execCommand('copy'); } catch (ignored) {}
+      selection.removeAllRanges();
+    }
+    copyMpv.textContent = 'Copied';
+    setTimeout(() => { copyMpv.textContent = 'Copy'; }, 1500);
+  });
+
+  mpvHelpLink.addEventListener('click', event => {
+    event.preventDefault();
+    window.location.href = 'mediaflick-desktop://mpv-help?token=' + BRIDGE_TOKEN;
+  });
+
+  window.__mediaFlickDesktopMpvSetup = event => {
+    if (!event) return;
+    const state = event.state;
+    const payload = event.payload || {};
+    if (state === 'downloading') {
+      mpvSetupBusy = true;
+      downloadMpv.disabled = true;
+      downloadMpv.textContent = 'Downloading';
+      const downloaded = Number(payload.downloaded || 0);
+      const total = Number(payload.total || 0);
+      setMpvSetupStatus(total > 0
+        ? `Downloading mpv — ${mpvBytes(downloaded)} of ${mpvBytes(total)}`
+        : `Downloading mpv — ${mpvBytes(downloaded)}`, '');
+    } else if (state === 'extracting') {
+      downloadMpv.textContent = 'Installing';
+      setMpvSetupStatus('Installing mpv…', '');
+    } else if (state === 'done') {
+      mpvSetupBusy = false;
+      downloadMpv.disabled = false;
+      downloadMpv.textContent = 'Download mpv';
+      setMpvSetupStatus('mpv installed.', 'saved');
+      if (payload.path) mpvPath.value = payload.path;
+    } else if (state === 'error') {
+      mpvSetupBusy = false;
+      downloadMpv.disabled = false;
+      downloadMpv.textContent = 'Download mpv';
+      setMpvSetupStatus(payload.message || 'Could not download mpv.', 'error');
+    }
+  };
+
   browse.addEventListener('click', () => {
     setBusy(true, 'Opening file picker...');
     window.location.href = 'mediaflick-desktop://select-mpv?token=' + BRIDGE_TOKEN + '&target=settings';
@@ -472,6 +625,8 @@
       scrollbars: scrollbars.value,
       skipIntro: skipIntro.value,
       skipCredits: skipCredits.value,
+      skipRecap: skipRecap.value,
+      skipCommercial: skipCommercial.value,
       markWatchedNext: markWatchedNext.value.trim()
     });
     window.location.href = `mediaflick-desktop://client-settings-save?${query.toString()}`;

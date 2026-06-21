@@ -85,7 +85,7 @@ pub fn check_for_update() -> UpdaterResult<Option<UpdateRelease>> {
     }))
 }
 
-pub fn download_update<F>(release: &UpdateRelease, mut progress: F) -> UpdaterResult<PathBuf>
+pub fn download_update<F>(release: &UpdateRelease, progress: F) -> UpdaterResult<PathBuf>
 where
     F: FnMut(u64, Option<u64>) + Send + 'static,
 {
@@ -104,14 +104,41 @@ where
     let download_dir = unique_download_dir();
     fs::create_dir_all(&download_dir)?;
     let installer_path = download_dir.join(safe_file_name(&asset.name));
-    let partial_path = installer_path.with_extension("download");
 
+    download_to_file(
+        &asset.browser_download_url,
+        asset.size,
+        &installer_path,
+        progress,
+    )?;
+    Ok(installer_path)
+}
+
+/// Streams a trusted GitHub download to `dest`, writing to a `.download` sidecar
+/// first and renaming on success. Reports byte progress as it goes.
+pub(crate) fn download_to_file<F>(
+    url: &str,
+    fallback_size: Option<u64>,
+    dest: &Path,
+    mut progress: F,
+) -> UpdaterResult<()>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    if !is_trusted_release_url(url) {
+        return Err(std::io::Error::other(format!(
+            "refusing to download from untrusted URL: {url}"
+        ))
+        .into());
+    }
+
+    let partial_path = dest.with_extension("download");
     let agent = update_agent();
     let mut response = agent
-        .get(asset.browser_download_url.as_str())
+        .get(url)
         .header("Accept", "application/octet-stream")
         .call()?;
-    let total = content_length(&response).or(asset.size);
+    let total = content_length(&response).or(fallback_size);
 
     let mut reader = response.body_mut().as_reader();
     let mut file = File::create(&partial_path)?;
@@ -134,10 +161,10 @@ where
     }
     file.flush()?;
     drop(file);
-    let _ = fs::remove_file(&installer_path);
-    fs::rename(&partial_path, &installer_path)?;
+    let _ = fs::remove_file(dest);
+    fs::rename(&partial_path, dest)?;
     progress(downloaded, total);
-    Ok(installer_path)
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -181,7 +208,7 @@ fn automatic_install_supported() -> bool {
     cfg!(target_os = "windows")
 }
 
-fn update_agent() -> ureq::Agent {
+pub(crate) fn update_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(HTTP_TIMEOUT))
         .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
@@ -249,7 +276,7 @@ fn content_length(response: &ureq::http::Response<ureq::Body>) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
-fn unique_download_dir() -> PathBuf {
+pub(crate) fn unique_download_dir() -> PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
@@ -276,7 +303,7 @@ fn is_trusted_release_url(url: &str) -> bool {
         || host.ends_with(".githubusercontent.com")
 }
 
-fn safe_file_name(name: &str) -> String {
+pub(crate) fn safe_file_name(name: &str) -> String {
     let sanitized = name
         .chars()
         .map(|ch| match ch {

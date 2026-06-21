@@ -7,183 +7,300 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: oklch(17% 0.018 273);
-      --panel: oklch(23% 0.022 273);
-      --panel-2: oklch(28% 0.028 273);
-      --text: oklch(91% 0.012 273);
-      --muted: oklch(70% 0.025 273);
-      --accent: oklch(70% 0.18 225);
-      --accent-strong: oklch(67% 0.2 295);
-      --danger: oklch(68% 0.17 25);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --room: oklch(13% .006 260);
+      --room-throw: oklch(26% .008 260);
+      --panel: oklch(24% .008 260);
+      --field: oklch(29% .01 260);
+      --raised: oklch(34% .012 260);
+      --border: oklch(80% .01 260 / .14);
+      --border-strong: oklch(82% .012 260 / .26);
+      --text: oklch(91% .01 260);
+      --muted: oklch(73% .012 260);
+      --quiet: oklch(64% .012 260);
+      --cyan: oklch(68% .145 227);
+      --cyan-hover: oklch(73% .145 227);
+      --cyan-press: oklch(61% .145 227);
+      --cyan-soft: oklch(68% .145 227 / .2);
+      --on-cyan: oklch(18% .006 260);
+      --danger: oklch(66% .18 31);
+      --shadow: oklch(0% 0 0 / .5);
+      font-family: "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
 
     body {
       min-height: 100vh;
       margin: 0;
       display: grid;
       place-items: center;
-      padding: clamp(24px, 5vw, 72px);
+      padding: clamp(20px, 4vw, 56px);
       color: var(--text);
       background:
-        radial-gradient(circle at 18% 12%, oklch(48% 0.18 295 / 0.35), transparent 34rem),
-        radial-gradient(circle at 80% 78%, oklch(58% 0.16 225 / 0.28), transparent 28rem),
-        linear-gradient(145deg, oklch(13% 0.018 273), var(--bg));
+        radial-gradient(125% 80% at 50% -12%, var(--room-throw), transparent 62%),
+        var(--room);
     }
 
     main {
-      width: min(100%, 540px);
-      animation: enter 420ms cubic-bezier(.16, 1, .3, 1) both;
+      width: min(100%, 460px);
+      animation: enter 260ms cubic-bezier(.22, 1, .36, 1) both;
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 16px;
-      margin-bottom: 34px;
+      gap: 14px;
+      padding: 0 2px;
     }
 
     .mark {
-      width: 62px;
-      height: 62px;
+      width: 52px;
+      height: 52px;
       flex: 0 0 auto;
-      filter: drop-shadow(0 18px 40px oklch(55% 0.19 285 / 0.42));
+      filter: drop-shadow(0 10px 24px var(--shadow));
     }
 
     h1 {
       margin: 0;
-      font-size: clamp(2rem, 6vw, 3.7rem);
-      line-height: .96;
-      letter-spacing: -0.055em;
-      font-weight: 760;
+      font-size: 1.7rem;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      font-weight: 600;
+      text-wrap: balance;
     }
 
     .kicker {
-      margin-top: 8px;
+      margin-top: 4px;
       color: var(--muted);
-      font-size: 0.95rem;
+      font-size: 0.9rem;
+      line-height: 1.4;
     }
 
     form {
-      padding: 24px;
-      border: 1px solid oklch(100% 0 0 / 0.08);
-      border-radius: 24px;
-      background: linear-gradient(180deg, oklch(26% 0.028 273 / 0.94), oklch(20% 0.02 273 / 0.94));
-      box-shadow: 0 26px 80px oklch(0% 0 0 / 0.34);
+      margin-top: 22px;
+      padding: 22px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 24px 72px var(--shadow);
     }
 
-    .field { margin-top: 18px; }
+    .field { margin-top: 20px; }
     .field:first-child { margin-top: 0; }
 
     label {
       display: block;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       color: var(--text);
-      font-size: 0.92rem;
-      font-weight: 680;
-      letter-spacing: .01em;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
 
     .row {
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
     }
 
     input {
+      width: 100%;
       min-width: 0;
-      height: 48px;
-      border: 1px solid oklch(100% 0 0 / 0.09);
-      border-radius: 14px;
-      padding: 0 15px;
+      height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0 14px;
       color: var(--text);
-      background: var(--panel);
+      background: var(--field);
       font: inherit;
       outline: none;
-      transition: border-color 160ms ease-out, background 160ms ease-out, box-shadow 160ms ease-out;
+      transition: border-color 150ms ease-out, box-shadow 150ms ease-out, background 150ms ease-out;
     }
 
-    input:focus {
-      border-color: var(--accent);
-      background: var(--panel-2);
-      box-shadow: 0 0 0 4px oklch(70% 0.18 225 / 0.16);
-    }
-
-    input::placeholder { color: oklch(62% 0.02 273); }
+    input:hover { border-color: var(--border-strong); }
+    input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-soft); }
+    input::placeholder { color: var(--quiet); }
+    input:disabled { opacity: .6; }
 
     button {
-      height: 48px;
+      height: 44px;
       border: 0;
-      border-radius: 14px;
+      border-radius: 4px;
       padding: 0 18px;
-      color: oklch(98% 0.006 240);
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      color: var(--on-cyan);
+      background: var(--cyan);
       font: inherit;
-      font-weight: 760;
+      font-weight: 650;
       cursor: pointer;
-      transition: transform 160ms cubic-bezier(.16, 1, .3, 1), filter 160ms ease-out, opacity 160ms ease-out;
+      transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, opacity 150ms ease-out;
     }
+
+    button:hover:not(:disabled) { background: var(--cyan-hover); }
+    button:active:not(:disabled) { background: var(--cyan-press); }
+    button:disabled { cursor: default; opacity: .5; }
 
     button.secondary {
       color: var(--text);
-      background: oklch(34% 0.032 273);
-      border: 1px solid oklch(100% 0 0 / 0.08);
+      background: var(--field);
+      border: 1px solid var(--border);
     }
 
-    button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.04); }
-    button:active:not(:disabled) { transform: translateY(0); }
-    button:disabled { cursor: default; opacity: .55; transform: none; filter: none; }
+    button.secondary:hover:not(:disabled) { background: var(--raised); border-color: var(--border-strong); }
+    button.secondary:active:not(:disabled) { background: var(--raised); }
+
+    button.linklike {
+      height: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--cyan);
+      font-weight: 650;
+    }
+
+    button.linklike:hover:not(:disabled) { background: transparent; color: var(--cyan-hover); }
+
+    button:focus-visible,
+    input:focus-visible,
+    a:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+
+    #connect {
+      width: 100%;
+      margin-top: 4px;
+    }
 
     .hint {
-      margin: 10px 2px 0;
+      margin: 8px 2px 0;
       color: var(--muted);
-      font-size: 0.88rem;
+      font-size: 0.82rem;
       line-height: 1.45;
+      text-wrap: pretty;
     }
+
+    .hint strong { color: var(--text); font-weight: 600; }
+
+    .getmpv {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      display: grid;
+      gap: 10px;
+    }
+
+    .getmpv-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .getmpv-title {
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .getmpv #download-mpv { height: 38px; padding: 0 14px; font-size: 0.85rem; }
+
+    .getmpv-cmd {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0;
+    }
+
+    .getmpv-cmd code {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-x: auto;
+      height: 38px;
+      line-height: 38px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--field);
+      color: var(--text);
+      font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    .getmpv-status {
+      margin: 0;
+      min-height: 1.1em;
+      color: var(--muted);
+      font-size: 0.83rem;
+      line-height: 1.4;
+    }
+
+    .getmpv-status:empty { min-height: 0; }
+
+    .getmpv-help {
+      margin: 0;
+      color: var(--quiet);
+      font-size: 0.8rem;
+    }
+
+    .getmpv-help a {
+      color: var(--cyan);
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .getmpv-help a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
     .error {
       display: none;
-      margin: 14px 2px 0;
+      margin: 16px 2px 0;
       color: var(--danger);
-      font-size: 0.9rem;
-      font-weight: 620;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
 
     .footer {
-      margin-top: 18px;
-      color: oklch(62% 0.023 273);
-      font-size: 0.82rem;
+      margin-top: 16px;
+      color: var(--quiet);
+      font-size: 0.78rem;
+      line-height: 1.5;
       text-align: center;
+    }
+
+    .footer code {
+      font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+      font-size: 0.95em;
+      color: var(--muted);
     }
 
     .footer button {
       height: auto;
-      margin: 0;
       padding: 0;
-      color: var(--accent);
       background: transparent;
       border: 0;
-      border-radius: 0;
+      color: var(--cyan);
       font: inherit;
-      font-weight: 700;
+      font-weight: 600;
       text-decoration: underline;
       text-underline-offset: 3px;
     }
 
-    .footer button:hover:not(:disabled) { transform: none; filter: brightness(1.12); }
+    .footer button:hover:not(:disabled) { background: transparent; color: var(--cyan-hover); }
 
-    @media (max-width: 560px) {
+    @media (max-width: 520px) {
       .row { grid-template-columns: 1fr; }
-      button { width: 100%; }
-      form { padding: 18px; border-radius: 20px; }
-      .brand { align-items: flex-start; }
+      .getmpv-bar { flex-direction: column; align-items: stretch; }
+      .getmpv #download-mpv { width: 100%; }
     }
 
     @keyframes enter {
-      from { opacity: 0; transform: translateY(14px) scale(.985); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      main { animation: none; }
+      input, button { transition: none; }
     }
   </style>
 </head>
@@ -209,7 +326,7 @@
       </svg>
       <div>
         <h1>MediaFlick Desktop</h1>
-        <div class="kicker">Connect Jellyfin and choose the mpv player.</div>
+        <div class="kicker">Connect your Jellyfin server and choose mpv.</div>
       </div>
     </section>
 
@@ -217,25 +334,39 @@
       <div class="field">
         <label for="server-url">Jellyfin server</label>
         <input id="server-url" name="server-url" type="text" inputmode="url" spellcheck="false" autocomplete="url" placeholder="localhost:8096" value="{{saved_url}}" autofocus>
-        <p class="hint">Use a local address such as <strong>localhost:8096</strong>, or a full HTTPS URL.</p>
+        <p class="hint">A local address like <strong>localhost:8096</strong>, or a full HTTPS URL.</p>
       </div>
 
       <div class="field">
-        <label for="mpv-path">mpv executable</label>
+        <label for="mpv-path">mpv player</label>
         <div class="row">
           <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" placeholder="{{mpv_placeholder}}" value="{{saved_mpv}}">
           <button id="browse-mpv" class="secondary" type="button">Browse</button>
         </div>
-        <p class="hint">Use the detected mpv, or browse to a different executable.</p>
+        <p class="hint">Point to your mpv executable, or set it up below.</p>
+
+        <div class="getmpv" id="getmpv">
+          <div class="getmpv-bar">
+            <span class="getmpv-title">Don't have mpv?</span>
+            <button id="download-mpv" class="secondary" type="button" hidden>Download mpv</button>
+          </div>
+          <p class="getmpv-cmd" id="mpv-cmd-line" hidden>
+            <code id="mpv-cmd"></code>
+            <button id="copy-mpv" class="linklike" type="button">Copy</button>
+          </p>
+          <p class="getmpv-status" id="mpv-setup-status" aria-live="polite"></p>
+          <p class="getmpv-help">More ways to install at <a id="mpv-help-link" href="#">mpv.io/installation</a>.</p>
+        </div>
       </div>
 
       <p class="error" id="error">Enter a Jellyfin server URL and choose an mpv executable.</p>
+
       <div class="field">
         <button id="connect" type="submit" {{connect_disabled}}>Save and connect</button>
       </div>
     </form>
 
-    <div class="footer">MediaFlick Desktop {{app_version}} · Config is stored in Roaming\mediaflick-desktop · <button id="about" type="button">About</button></div>
+    <div class="footer">MediaFlick Desktop {{app_version}} · Config in <code>Roaming\mediaflick-desktop</code> · <button id="about" type="button">About</button></div>
   </main>
 
   <script>
@@ -288,6 +419,96 @@
     aboutButton.addEventListener('click', () => {
       window.location.href = 'mediaflick-desktop://app-about';
     });
+
+    const mpvSetup = {{mpv_setup_config}};
+    const downloadMpvButton = document.getElementById('download-mpv');
+    const mpvCmdLine = document.getElementById('mpv-cmd-line');
+    const mpvCmd = document.getElementById('mpv-cmd');
+    const copyMpvButton = document.getElementById('copy-mpv');
+    const mpvSetupStatus = document.getElementById('mpv-setup-status');
+    const mpvHelpLink = document.getElementById('mpv-help-link');
+    const mpvCommands = { macos: 'brew install mpv', linux: 'sudo apt install mpv' };
+    let mpvSetupBusy = false;
+
+    function bytes(value) {
+      const number = Number(value || 0);
+      if (!Number.isFinite(number) || number <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let scaled = number;
+      let unit = 0;
+      while (scaled >= 1024 && unit < units.length - 1) { scaled /= 1024; unit += 1; }
+      return `${scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
+    }
+
+    if (mpvSetup.canDownload) {
+      downloadMpvButton.hidden = false;
+    } else if (mpvCommands[mpvSetup.platform]) {
+      mpvCmd.textContent = mpvCommands[mpvSetup.platform];
+      mpvCmdLine.hidden = false;
+    }
+
+    downloadMpvButton.addEventListener('click', () => {
+      if (mpvSetupBusy) return;
+      mpvSetupBusy = true;
+      downloadMpvButton.disabled = true;
+      downloadMpvButton.textContent = 'Starting';
+      mpvSetupStatus.textContent = 'Contacting mpv release server…';
+      window.location.href = 'mediaflick-desktop://mpv-download';
+    });
+
+    copyMpvButton.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(mpvCmd.textContent);
+      } catch (error) {
+        const range = document.createRange();
+        range.selectNodeContents(mpvCmd);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try { document.execCommand('copy'); } catch (ignored) {}
+        selection.removeAllRanges();
+      }
+      copyMpvButton.textContent = 'Copied';
+      setTimeout(() => { copyMpvButton.textContent = 'Copy'; }, 1500);
+    });
+
+    mpvHelpLink.addEventListener('click', event => {
+      event.preventDefault();
+      window.location.href = 'mediaflick-desktop://mpv-help';
+    });
+
+    window.__mediaFlickDesktopMpvSetup = event => {
+      if (!event) return;
+      const state = event.state;
+      const payload = event.payload || {};
+      if (state === 'downloading') {
+        mpvSetupBusy = true;
+        downloadMpvButton.disabled = true;
+        downloadMpvButton.textContent = 'Downloading';
+        const downloaded = Number(payload.downloaded || 0);
+        const total = Number(payload.total || 0);
+        mpvSetupStatus.textContent = total > 0
+          ? `Downloading mpv — ${bytes(downloaded)} of ${bytes(total)}`
+          : `Downloading mpv — ${bytes(downloaded)}`;
+      } else if (state === 'extracting') {
+        downloadMpvButton.textContent = 'Installing';
+        mpvSetupStatus.textContent = 'Installing mpv…';
+      } else if (state === 'done') {
+        mpvSetupBusy = false;
+        downloadMpvButton.disabled = false;
+        downloadMpvButton.textContent = 'Download mpv';
+        mpvSetupStatus.textContent = 'mpv installed.';
+        if (payload.path) {
+          mpvInput.value = payload.path;
+          updateButtonState();
+        }
+      } else if (state === 'error') {
+        mpvSetupBusy = false;
+        downloadMpvButton.disabled = false;
+        downloadMpvButton.textContent = 'Download mpv';
+        mpvSetupStatus.textContent = payload.message || 'Could not download mpv.';
+      }
+    };
 
     form.addEventListener('submit', event => {
       event.preventDefault();

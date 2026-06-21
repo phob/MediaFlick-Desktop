@@ -12,6 +12,8 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 pub enum SegmentType {
     Intro,
     Outro,
+    Recap,
+    Commercial,
 }
 
 impl SegmentType {
@@ -19,6 +21,8 @@ impl SegmentType {
         match self {
             Self::Intro => "Seek to Skip Intro",
             Self::Outro => "Seek to Skip Credits",
+            Self::Recap => "Seek to Skip Recap",
+            Self::Commercial => "Seek to Skip Commercial",
         }
     }
 
@@ -26,6 +30,35 @@ impl SegmentType {
         match self {
             Self::Intro => "Skipped Intro",
             Self::Outro => "Skipped Credits",
+            Self::Recap => "Skipped Recap",
+            Self::Commercial => "Skipped Commercial",
+        }
+    }
+
+    pub fn countdown_label(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro",
+            Self::Outro => "Credits",
+            Self::Recap => "Recap",
+            Self::Commercial => "Commercial",
+        }
+    }
+
+    pub fn marker_start_label(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro",
+            Self::Outro => "Credits",
+            Self::Recap => "Recap",
+            Self::Commercial => "Commercial",
+        }
+    }
+
+    pub fn marker_end_label(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro End",
+            Self::Outro => "Credits End",
+            Self::Recap => "Recap End",
+            Self::Commercial => "Commercial End",
         }
     }
 
@@ -34,6 +67,8 @@ impl SegmentType {
             value if value.eq_ignore_ascii_case("Intro") => Some(Self::Intro),
             value if value.eq_ignore_ascii_case("Outro") => Some(Self::Outro),
             value if value.eq_ignore_ascii_case("Credits") => Some(Self::Outro),
+            value if value.eq_ignore_ascii_case("Recap") => Some(Self::Recap),
+            value if value.eq_ignore_ascii_case("Commercial") => Some(Self::Commercial),
             _ => None,
         }
     }
@@ -103,7 +138,7 @@ fn fetch_segments(
     item_id: &str,
 ) -> Result<Vec<SkipSegment>, String> {
     let url = format!(
-        "{}/MediaSegments/{}?includeSegmentTypes=Intro&includeSegmentTypes=Outro",
+        "{}/MediaSegments/{}?includeSegmentTypes=Intro&includeSegmentTypes=Outro&includeSegmentTypes=Recap&includeSegmentTypes=Commercial",
         session.base_url().trim_end_matches('/'),
         encode_path_segment(item_id)
     );
@@ -161,7 +196,32 @@ fn encode_path_segment(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_path_segment;
+    use super::{SegmentType, encode_path_segment};
+
+    #[test]
+    fn maps_jellyfin_segment_types_including_recap_and_commercial() {
+        assert_eq!(
+            SegmentType::from_jellyfin("Intro"),
+            Some(SegmentType::Intro)
+        );
+        assert_eq!(
+            SegmentType::from_jellyfin("Outro"),
+            Some(SegmentType::Outro)
+        );
+        assert_eq!(
+            SegmentType::from_jellyfin("Credits"),
+            Some(SegmentType::Outro)
+        );
+        assert_eq!(
+            SegmentType::from_jellyfin("recap"),
+            Some(SegmentType::Recap)
+        );
+        assert_eq!(
+            SegmentType::from_jellyfin("COMMERCIAL"),
+            Some(SegmentType::Commercial)
+        );
+        assert_eq!(SegmentType::from_jellyfin("Preview"), None);
+    }
 
     #[test]
     fn passes_through_guid_item_ids() {

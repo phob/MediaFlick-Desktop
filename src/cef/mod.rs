@@ -11,6 +11,7 @@ use serde_json::json;
 use crate::app::about;
 use crate::app::client_settings;
 use crate::app::logger;
+use crate::app::mpv_setup::{self, MpvSetupPhase};
 use crate::app::settings::{
     AppSettings, CloseBehavior, MpvFullscreenBehavior, SegmentSkipMode, WebUiWindowSettings,
     normalize_server_url,
@@ -615,6 +616,7 @@ struct BrowserStateInner {
     mpv_controller: MpvController,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
+    mpv_setup_started: bool,
     force_close_requested: bool,
 }
 
@@ -638,6 +640,7 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         mpv_controller,
         update_available: None,
         update_download_started: false,
+        mpv_setup_started: false,
         force_close_requested: false,
     }));
     start_playback_event_bridge(state.clone(), playback_event_rx);
@@ -680,11 +683,26 @@ fn post_update_event(state: BrowserState, event: UpdateEvent) {
     }
 }
 
+fn post_mpv_setup_event(state: BrowserState, event: MpvSetupEvent) {
+    let mut task = MpvSetupEventTask::new(state, event);
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "mpv.setup", "failed to post mpv setup event to CEF UI thread");
+    }
+}
+
 #[derive(Debug, Clone)]
 enum UpdateEvent {
     Available(UpdateRelease),
     DownloadProgress { downloaded: u64, total: Option<u64> },
     DownloadReady(PathBuf),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+enum MpvSetupEvent {
+    Progress { downloaded: u64, total: Option<u64> },
+    Extracting,
+    Ready(PathBuf),
     Error(String),
 }
 
@@ -710,6 +728,19 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             handle_update_event(&self.state, self.event.clone());
+        }
+    }
+}
+
+wrap_task! {
+    struct MpvSetupEventTask {
+        state: BrowserState,
+        event: MpvSetupEvent,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            handle_mpv_setup_event(&self.state, self.event.clone());
         }
     }
 }
@@ -848,6 +879,55 @@ fn dispatch_update_progress(state: &BrowserState, status: &str, payload: serde_j
     }
 }
 
+fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
+    match event {
+        MpvSetupEvent::Progress { downloaded, total } => {
+            dispatch_mpv_setup(
+                state,
+                "downloading",
+                json!({ "downloaded": downloaded, "total": total }),
+            );
+        }
+        MpvSetupEvent::Extracting => {
+            dispatch_mpv_setup(state, "extracting", json!({}));
+        }
+        MpvSetupEvent::Ready(path) => {
+            let mpv_path = path.to_string_lossy().into_owned();
+            tracing::info!(target: "mpv.setup", path = %mpv_path, "mpv installed");
+            if let Ok(mut state) = state.lock() {
+                state.mpv_setup_started = false;
+                state.settings.mpv_path = Some(mpv_path.clone());
+                state.settings.sanitize();
+                if let Err(error) = state.settings.save() {
+                    tracing::warn!(target: "mpv.setup", "failed to save mpv path: {error}");
+                }
+                warm_configured_mpv(&state.mpv_controller, &state.settings);
+            }
+            dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
+        }
+        MpvSetupEvent::Error(message) => {
+            tracing::warn!(target: "mpv.setup", "mpv setup failed: {message}");
+            if let Ok(mut state) = state.lock() {
+                state.mpv_setup_started = false;
+            }
+            dispatch_mpv_setup(state, "error", json!({ "message": message }));
+        }
+    }
+}
+
+fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: serde_json::Value) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let script = mpv_setup::setup_script(status, payload);
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            execute_mpv_setup_script(&frame, &script);
+        }
+    }
+}
+
 fn show_pending_update_to_frame(frame: &Frame, state: &BrowserState) {
     let pending_update = state.lock().ok().and_then(|state| {
         (!state.update_download_started)
@@ -892,6 +972,14 @@ fn execute_update_script(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
         Some(&CefString::from("mediaflick-desktop://update-toast")),
+        1,
+    );
+}
+
+fn execute_mpv_setup_script(frame: &Frame, script: &str) {
+    frame.execute_java_script(
+        Some(&CefString::from(script)),
+        Some(&CefString::from("mediaflick-desktop://mpv-setup")),
         1,
     );
 }
@@ -1414,6 +1502,16 @@ fn route_bridge_action(
         return true;
     }
 
+    if request_url.starts_with("mediaflick-desktop://mpv-download") {
+        start_mpv_download(state);
+        return true;
+    }
+
+    if request_url.starts_with("mediaflick-desktop://mpv-help") {
+        open_external_link(mpv_setup::MPV_HELP_URL);
+        return true;
+    }
+
     if is_client_settings_request(request_url) {
         show_client_settings_dialog(browser, frame, state);
         return true;
@@ -1769,6 +1867,58 @@ fn start_update_download(_query: &str, state: &BrowserState) {
             Ok(path) => post_update_event(state_for_thread, UpdateEvent::DownloadReady(path)),
             Err(error) => {
                 post_update_event(state_for_thread, UpdateEvent::Error(error.to_string()))
+            }
+        }
+    });
+}
+
+fn start_mpv_download(state: &BrowserState) {
+    if !mpv_setup::supported() {
+        dispatch_mpv_setup(
+            state,
+            "error",
+            json!({ "message": "Automatic mpv download is only available on Windows." }),
+        );
+        return;
+    }
+
+    match state.lock() {
+        Ok(mut state) => {
+            if state.mpv_setup_started {
+                tracing::debug!(target: "mpv.setup", "ignored duplicate mpv download request");
+                return;
+            }
+            state.mpv_setup_started = true;
+        }
+        Err(error) => {
+            tracing::warn!(target: "mpv.setup", "failed to lock browser state for mpv download: {error}");
+            return;
+        }
+    }
+
+    tracing::info!(target: "mpv.setup", "starting mpv download");
+    dispatch_mpv_setup(
+        state,
+        "downloading",
+        json!({ "downloaded": 0, "total": null }),
+    );
+
+    let state_for_thread = state.clone();
+    thread::spawn(move || {
+        let progress_state = state_for_thread.clone();
+        let result = mpv_setup::download_and_install(move |phase| match phase {
+            MpvSetupPhase::Downloading { downloaded, total } => post_mpv_setup_event(
+                progress_state.clone(),
+                MpvSetupEvent::Progress { downloaded, total },
+            ),
+            MpvSetupPhase::Extracting => {
+                post_mpv_setup_event(progress_state.clone(), MpvSetupEvent::Extracting)
+            }
+        });
+        match result {
+            Ok(path) => post_mpv_setup_event(state_for_thread, MpvSetupEvent::Ready(path)),
+            Err(error) => {
+                post_mpv_setup_event(state_for_thread, MpvSetupEvent::Error(error.to_string()))
             }
         }
     });
@@ -2239,6 +2389,14 @@ fn save_client_settings(
         .as_deref()
         .and_then(parse_segment_skip_mode)
         .unwrap_or(settings.skip_credits);
+    settings.skip_recap = query_param(query, "skipRecap")
+        .as_deref()
+        .and_then(parse_segment_skip_mode)
+        .unwrap_or(settings.skip_recap);
+    settings.skip_commercial = query_param(query, "skipCommercial")
+        .as_deref()
+        .and_then(parse_segment_skip_mode)
+        .unwrap_or(settings.skip_commercial);
     settings.sanitize();
 
     let bindings = MpvInputBindings {
@@ -2405,6 +2563,7 @@ fn welcome_html(settings: &AppSettings) -> String {
             &html_escape(settings.mpv_path.as_deref().unwrap_or_default()),
         )
         .replace("{{mpv_placeholder}}", &html_escape(mpv_placeholder()))
+        .replace("{{mpv_setup_config}}", &mpv_setup::ui_config_json())
         .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{connect_disabled}}", connect_disabled)
 }

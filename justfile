@@ -124,7 +124,7 @@ run-mpv *args:
 run-mpv *args:
     "${MEDIAFLICK_DESKTOP_MPV_PATH:-mpv}" {{args}}
 
-# Stage a Windows release payload with CEF and bundled mpv under ./dist/MediaFlickDesktop
+# Stage a Windows release payload with CEF under ./dist/MediaFlickDesktop
 [group('package')]
 [windows]
 windows-dist: release
