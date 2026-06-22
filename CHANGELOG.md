@@ -10,6 +10,7 @@
 - Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
 - Added Jellyfin recap and commercial segment skipping in mpv with their own prompt/always Client Settings, alongside the existing intro and credits options.
 - Added skip-segment markers on the mpv seek bar by injecting chapter ticks at each segment's boundaries, so the timeline shows where intros, credits, recaps, and commercials are skipped. Existing embedded file chapters are preserved and merged with the markers rather than replaced.
+- Added an MPC-HC player backend on Windows: a new "Player backend" client setting switches playback between mpv and MPC-HC, driven over slave mode (`WM_COPYDATA` / `MpcApi.h`) — open, resume, play/pause, seek, playback speed, audio/subtitle track selection, segment skipping with on-screen prompts and auto-skip countdowns, Jellyfin progress reporting, and end-of-file auto-advance to the next episode. The setting is a segmented switch that shows only the active backend's options and applies live without restarting the app; MPC-HC launches on first playback rather than at app start. Both players sit behind a new `PlayerBackend` trait with a capability probe; chapter-marker pips, external subtitle URLs, the mark-watched hotkey, and absolute volume/mute are mpv-only and degrade gracefully on MPC-HC.
 - Added README disclosure for AI-assisted project work.
 - Added unit tests for the CEF bridge origin allowlist, external-link scheme checks, and U+2028/U+2029, HTML, and percent-encoding escaping helpers, locking in recent security hardening.
 
@@ -24,11 +25,13 @@
 - Changed the default CEF cache location to the project-local `.cache/cef` directory instead of an upstream Jellyfin Desktop checkout path.
 - Updated the Rust `cef` crate to v149.1.0.
 - Changed the Windows auto-update installer launch to use Inno Setup `/SILENT` instead of `/VERYSILENT`.
+- Changed the Windows in-app mpv download to install mpv inside the app installation directory.
 - Changed Windows mpv window raising on file load to pulse the `window-minimized` IPC property so the player window takes focus, instead of the `ontop` pulse which only changed z-order.
 - Scoped the Jellyfin page `fetch` and `XMLHttpRequest` hooks to PlaybackInfo, play-state report, and direct-stream URLs, so unrelated page requests pass straight through to the native implementation.
 
 ### Fixed
 
+- Fixed the external player (mpv or MPC-HC) sometimes being left running after MediaFlick exits — for example after switching player backends at runtime — by binding each spawned player to a Windows job object the OS terminates when the app process ends.
 - Hardened the auto-updater to download installers only over HTTPS from GitHub-owned hosts and into a unique per-run directory, preventing redirect-to-untrusted-host and predictable-temp-path attacks.
 - Restricted the native `mediaflick-desktop://` bridge to pages from our own local UI or the configured Jellyfin origin, so unrelated page content can no longer drive mpv, settings, or app exit.
 - Restricted Jellyfin playback-state reporting to `http(s)` targets and percent-encoded the media-segments item id, closing SSRF and path-injection vectors from page-supplied stream URLs.

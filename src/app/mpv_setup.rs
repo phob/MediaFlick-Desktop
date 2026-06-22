@@ -143,14 +143,16 @@ where
 
 #[cfg(target_os = "windows")]
 fn install_root() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("USERPROFILE")
-                .map(|home| PathBuf::from(home).join("AppData").join("Local"))
-        })
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("mediaflick-desktop").join("mpv")
+    app_install_dir().join("mpv")
+}
+
+#[cfg(target_os = "windows")]
+fn app_install_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 #[cfg(target_os = "windows")]
@@ -188,7 +190,7 @@ struct GithubAsset {
 
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::{GithubAsset, select_mpv_asset};
+    use super::{GithubAsset, install_root, select_mpv_asset};
 
     fn asset(name: &str) -> GithubAsset {
         GithubAsset {
@@ -196,6 +198,13 @@ mod tests {
             browser_download_url: format!("https://github.com/x/y/releases/download/z/{name}"),
             size: Some(1),
         }
+    }
+
+    #[test]
+    fn installs_under_current_executable_directory() {
+        let exe_path = std::env::current_exe().expect("current exe path");
+        let app_dir = exe_path.parent().expect("current exe parent");
+        assert_eq!(install_root(), app_dir.join("mpv"));
     }
 
     #[test]

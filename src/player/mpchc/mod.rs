@@ -1,15 +1,15 @@
-pub mod controller;
-pub mod external;
-pub mod input;
+mod controller;
+mod protocol;
+mod transport;
 
-pub use controller::{MpvControlCommand, MpvController, MpvPlaybackEvent, MpvPlayerSnapshot};
-pub use external::{ExternalMpv, HttpHeader, MpvLaunch};
+pub use controller::MpcHcController;
 
 use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig};
 use crate::jellyfin::bridge::PlaybackContext;
-use crate::player::{Capabilities, MPV_CAPABILITIES, PlayerBackend};
+use crate::mpv::{MpvControlCommand, MpvLaunch, MpvPlayerSnapshot};
+use crate::player::{Capabilities, MPCHC_CAPABILITIES, PlayerBackend};
 
-impl PlayerBackend for MpvController {
+impl PlayerBackend for MpcHcController {
     fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior) {
         self.warm(path, fullscreen);
     }
@@ -35,7 +35,7 @@ impl PlayerBackend for MpvController {
     }
 
     fn capabilities(&self) -> Capabilities {
-        MPV_CAPABILITIES
+        MPCHC_CAPABILITIES
     }
 
     fn shutdown(&self) {

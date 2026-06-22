@@ -14,6 +14,10 @@ pub struct AppSettings {
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpv_path: Option<String>,
+    #[serde(default, skip_serializing_if = "PlayerBackend::is_default")]
+    pub player_backend: PlayerBackend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mpchc_path: Option<String>,
     #[serde(
         default = "default_log_level_string",
         skip_serializing_if = "is_default_log_level"
@@ -85,6 +89,35 @@ impl SegmentSkipConfig {
             && self.credits == SegmentSkipMode::Disabled
             && self.recap == SegmentSkipMode::Disabled
             && self.commercial == SegmentSkipMode::Disabled
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayerBackend {
+    #[default]
+    Mpv,
+    Mpchc,
+}
+
+impl PlayerBackend {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mpv => "mpv",
+            Self::Mpchc => "mpchc",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "mpv" => Some(Self::Mpv),
+            "mpchc" | "mpc-hc" | "mpc_hc" => Some(Self::Mpchc),
+            _ => None,
+        }
     }
 }
 
@@ -188,6 +221,8 @@ impl Default for AppSettings {
         Self {
             jellyfin_url: None,
             mpv_path: None,
+            player_backend: PlayerBackend::default(),
+            mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: MpvFullscreenBehavior::default(),
             close_behavior: CloseBehavior::default(),
@@ -235,10 +270,26 @@ impl AppSettings {
         self.jellyfin_url
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty())
-            && self
-                .mpv_path
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
+            && self.player_path().is_some()
+    }
+
+    pub fn effective_backend(&self) -> PlayerBackend {
+        #[cfg(target_os = "windows")]
+        {
+            self.player_backend
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            PlayerBackend::Mpv
+        }
+    }
+
+    pub fn player_path(&self) -> Option<&str> {
+        let path = match self.effective_backend() {
+            PlayerBackend::Mpv => self.mpv_path.as_deref(),
+            PlayerBackend::Mpchc => self.mpchc_path.as_deref(),
+        };
+        path.map(str::trim).filter(|value| !value.is_empty())
     }
 
     pub fn segment_skip_config(&self) -> SegmentSkipConfig {
@@ -254,6 +305,12 @@ impl AppSettings {
         self.jellyfin_url = self.jellyfin_url.as_deref().and_then(normalize_server_url);
         self.mpv_path = self
             .mpv_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        self.mpchc_path = self
+            .mpchc_path
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -358,7 +415,7 @@ fn roaming_base_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, WebUiWindowSettings, normalize_server_url};
+    use super::{AppSettings, PlayerBackend, WebUiWindowSettings, normalize_server_url};
 
     #[test]
     fn leaves_absolute_urls_alone() {
@@ -400,6 +457,44 @@ mod tests {
             mpv_path: Some("C:/mpv/mpv.exe".to_string()),
             ..Default::default()
         };
+        assert!(settings.is_complete());
+    }
+
+    #[test]
+    fn player_backend_round_trips_by_id() {
+        assert_eq!(PlayerBackend::Mpv.as_str(), "mpv");
+        assert_eq!(PlayerBackend::Mpchc.as_str(), "mpchc");
+        assert_eq!(PlayerBackend::from_id("mpv"), Some(PlayerBackend::Mpv));
+        assert_eq!(PlayerBackend::from_id("MPC-HC"), Some(PlayerBackend::Mpchc));
+        assert_eq!(PlayerBackend::from_id("mpchc"), Some(PlayerBackend::Mpchc));
+        assert_eq!(PlayerBackend::from_id("vlc"), None);
+    }
+
+    #[test]
+    fn sanitize_trims_mpchc_path() {
+        let mut settings = AppSettings {
+            mpchc_path: Some("  C:/MPC-HC/mpc-hc64.exe  ".to_string()),
+            ..Default::default()
+        };
+        settings.sanitize();
+        assert_eq!(
+            settings.mpchc_path.as_deref(),
+            Some("C:/MPC-HC/mpc-hc64.exe")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn complete_with_mpchc_backend_requires_mpchc_path() {
+        let mut settings = AppSettings {
+            jellyfin_url: Some("http://localhost:8096".to_string()),
+            player_backend: PlayerBackend::Mpchc,
+            ..Default::default()
+        };
+        assert_eq!(settings.effective_backend(), PlayerBackend::Mpchc);
+        assert!(!settings.is_complete());
+        settings.mpchc_path = Some("C:/MPC-HC/mpc-hc64.exe".to_string());
+        assert_eq!(settings.player_path(), Some("C:/MPC-HC/mpc-hc64.exe"));
         assert!(settings.is_complete());
     }
 

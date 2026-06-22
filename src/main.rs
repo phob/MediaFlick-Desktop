@@ -4,6 +4,7 @@ mod app;
 mod cef;
 mod jellyfin;
 mod mpv;
+mod player;
 mod windows;
 
 use clap::Parser;

@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaFlick Desktop — Player backend sketch</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --media-black: oklch(18% .006 260);
+    --chrome: oklch(24% .008 260);
+    --panel: oklch(29% .01 260);
+    --raised: oklch(34% .012 260);
+    --border: oklch(78% .01 260 / .16);
+    --border-strong: oklch(82% .012 260 / .26);
+    --text: oklch(91% .01 260);
+    --muted: oklch(73% .012 260);
+    --quiet: oklch(59% .012 260);
+    --disabled: oklch(54% .01 260);
+    --cyan: oklch(68% .145 227);
+    --cyan-pressed: oklch(61% .145 227);
+    --cyan-soft: oklch(68% .145 227 / .18);
+    --violet: oklch(62% .13 316);
+    --danger: oklch(66% .18 31);
+    --success: oklch(72% .1 158);
+    --shadow: oklch(12% .006 260 / .62);
+    font: 14px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: var(--text);
+    background:
+      radial-gradient(120% 80% at 50% -10%, oklch(26% .008 260), transparent 60%),
+      oklch(13% .006 260);
+  }
+  .dialog {
+    width: min(820px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: var(--chrome);
+    box-shadow: 0 24px 72px var(--shadow);
+  }
+  .head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 14px;
+    padding: 22px 24px 18px;
+    border-bottom: 1px solid var(--border);
+    background: oklch(22% .008 260);
+  }
+  .mark { width: 34px; height: 34px; }
+  .eyebrow {
+    margin: 1px 0 4px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  h2 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -.01em; }
+  .close {
+    width: 34px; height: 34px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--muted);
+    background: transparent;
+    font: 22px/1 "Segoe UI", system-ui, sans-serif;
+    cursor: pointer;
+  }
+  .close:hover { color: var(--text); background: var(--raised); border-color: var(--border); }
+  .body {
+    overflow: auto;
+    padding: 18px 24px 20px;
+    background: var(--media-black);
+  }
+  .group {
+    margin: 0;
+    padding: 17px 18px 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--chrome);
+  }
+  .group + .group { margin-top: 14px; }
+  legend { padding: 0 6px; margin-left: -6px; font-size: 15px; font-weight: 650; }
+  .row {
+    display: grid;
+    grid-template-columns: 188px minmax(0, 1fr);
+    gap: 22px;
+    align-items: center;
+    padding-top: 15px;
+  }
+  .row + .row { margin-top: 15px; border-top: 1px solid oklch(82% .01 260 / .1); }
+  .row.top { align-items: start; }
+  label { display: block; margin: 0; font-size: 14px; font-weight: 650; line-height: 1.25; }
+  .label-sub { margin-top: 4px; color: var(--quiet); font-size: 12px; font-weight: 500; }
+  .control { min-width: 0; }
+  .path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+  input, select {
+    width: 100%; height: 40px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 12px;
+    color: var(--text);
+    background: var(--panel);
+    font: inherit;
+    outline: none;
+  }
+  input:hover, select:hover { border-color: var(--border-strong); background: var(--raised); }
+  input::placeholder { color: var(--quiet); }
+  input:disabled, select:disabled { color: var(--disabled); opacity: .72; }
+
+  .seg {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .seg button {
+    height: 56px;
+    display: grid;
+    gap: 2px;
+    place-content: center;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+    transition: background-color 140ms ease-out, color 140ms ease-out;
+  }
+  .seg button .t { font-weight: 700; font-size: 14px; }
+  .seg button .d { font-size: 12px; color: var(--quiet); }
+  .seg button:hover { background: var(--raised); color: var(--text); }
+  .seg button[aria-pressed="true"] {
+    color: var(--media-black);
+    background: var(--cyan);
+    border-color: transparent;
+  }
+  .seg button[aria-pressed="true"] .d { color: oklch(18% .006 260 / .75); }
+
+  .note {
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--cyan);
+    border-radius: 6px;
+    background: oklch(26% .01 260);
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .note.warn { border-left-color: var(--danger); }
+  .note strong { color: var(--text); font-weight: 650; }
+  .note code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text);
+    background: oklch(20% .008 260);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .radio-stack { display: grid; gap: 8px; }
+  .radio-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    cursor: pointer;
+  }
+  .radio-card:hover { border-color: var(--border-strong); background: var(--raised); }
+  .radio-card input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--cyan); }
+  .radio-card .rc-t, .fixed-method .rc-t { display: block; font-weight: 650; }
+  .radio-card .rc-d, .fixed-method .rc-d { display: block; margin-top: 3px; color: var(--quiet); font-size: 12px; line-height: 1.45; }
+  .radio-card.is-on { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan-soft) inset; }
+  .fixed-method {
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+  }
+
+  button.action {
+    min-width: 96px; height: 40px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0 15px;
+    color: var(--media-black);
+    background: var(--cyan);
+    font: inherit; font-weight: 700;
+    cursor: pointer;
+  }
+  button.action:hover { background: oklch(72% .145 227); }
+  button.action.secondary { color: var(--text); background: var(--panel); border-color: var(--border); }
+  button.action.secondary:hover { background: var(--raised); border-color: var(--border-strong); }
+
+  .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 24px 18px;
+    border-top: 1px solid var(--border);
+    background: oklch(22% .008 260);
+  }
+  .status { color: var(--muted); font-size: 13px; font-weight: 600; }
+  [hidden] { display: none !important; }
+
+  @media (max-width: 680px) {
+    .row { grid-template-columns: 1fr; gap: 9px; }
+    .path-row { grid-template-columns: 1fr; }
+    .seg { grid-auto-flow: row; }
+  }
+</style>
+</head>
+<body>
+  <section class="dialog" role="dialog" aria-modal="true" aria-label="Client settings">
+    <div class="head">
+      <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true">
+        <defs>
+          <linearGradient id="g" x1="268" y1="220" x2="780" y2="804" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#AA5CC3"/><stop offset="1" stop-color="#00A4DC"/>
+          </linearGradient>
+          <linearGradient id="s" x1="184" y1="112" x2="840" y2="912" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#2A2A38"/><stop offset="1" stop-color="#1D1D27"/>
+          </linearGradient>
+        </defs>
+        <rect x="96" y="96" width="832" height="832" rx="210" fill="url(#s)"/>
+        <rect x="96" y="96" width="832" height="832" rx="210" stroke="#626276" stroke-opacity="0.65" stroke-width="24"/>
+        <path fill="url(#g)" d="M364 292C330 272 288 296 288 336V688C288 728 330 752 364 732L664 556C698 536 698 488 664 468L364 292Z"/>
+        <path fill="url(#g)" fill-opacity="0.88" d="M680 256H796C836 256 868 288 868 328V444H772V352H680V256Z"/>
+        <path fill="#20202B" fill-opacity="0.78" d="M384 404V620L568 512L384 404Z"/>
+      </svg>
+      <div>
+        <p class="eyebrow">MediaFlick Desktop</p>
+        <h2>Client settings</h2>
+      </div>
+      <button class="close" type="button" aria-label="Close">×</button>
+    </div>
+
+    <div class="body">
+      <fieldset class="group">
+        <legend>Player backend</legend>
+        <div class="row top">
+          <div>
+            <label>External player</label>
+            <p class="label-sub">Which player MediaFlick hands playback off to.</p>
+          </div>
+          <div class="control">
+            <div class="seg" role="group" aria-label="Player backend">
+              <button type="button" data-backend="mpv" aria-pressed="true">
+                <span class="t">mpv</span>
+                <span class="d">JSON IPC over a pipe</span>
+              </button>
+              <button type="button" data-backend="mpchc" aria-pressed="false">
+                <span class="t">MPC-HC</span>
+                <span class="d">Windows · slave / web</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- ============ mpv panel ============ -->
+      <fieldset class="group" data-panel="mpv">
+        <legend>mpv handoff</legend>
+        <div class="row">
+          <label for="mpv-path">mpv executable</label>
+          <div class="control path-row">
+            <input id="mpv-path" type="text" spellcheck="false" value="C:\Program Files\MediaFlick Desktop\mpv\mpv.exe">
+            <button class="action secondary" type="button">Browse</button>
+          </div>
+        </div>
+        <div class="row">
+          <label for="mpv-fs">Default fullscreen</label>
+          <div class="control">
+            <select id="mpv-fs">
+              <option value="fullscreen">Start mpv fullscreen</option>
+              <option value="windowed">Start mpv windowed</option>
+            </select>
+          </div>
+        </div>
+        <p class="note">
+          <strong>mpv</strong> is controlled over a JSON IPC pipe — MediaFlick sends commands and
+          confirms effects via observed-property events. This is the current default and supports
+          chapter markers and segment skipping.
+        </p>
+      </fieldset>
+
+      <!-- ============ MPC-HC panel ============ -->
+      <fieldset class="group" data-panel="mpchc" hidden>
+        <legend>MPC-HC handoff</legend>
+        <div class="row">
+          <label for="mpchc-path">MPC-HC executable</label>
+          <div class="control path-row">
+            <input id="mpchc-path" type="text" spellcheck="false" placeholder="C:\Program Files\MPC-HC\mpc-hc64.exe">
+            <button class="action secondary" type="button">Browse</button>
+          </div>
+        </div>
+
+        <div class="row top">
+          <div>
+            <label>Control interface</label>
+            <p class="label-sub">How MediaFlick talks to MPC-HC.</p>
+          </div>
+          <div class="control">
+            <div class="fixed-method">
+              <span class="rc-t">Slave mode (WM_COPYDATA)</span>
+              <span class="rc-d">Launched once with <code>/slave &lt;hwnd&gt;</code>, then driven entirely
+                over <code>WM_COPYDATA</code>. Bidirectional — pushes state/position notifications back,
+                like mpv's IPC.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <label for="mpchc-fs">Default fullscreen</label>
+          <div class="control">
+            <select id="mpchc-fs">
+              <option value="fullscreen">Start MPC-HC fullscreen</option>
+              <option value="windowed">Start MPC-HC windowed</option>
+            </select>
+          </div>
+        </div>
+
+        <p class="note">
+          <strong>Slave mode</strong> requires a hidden message-pump window on the MediaFlick side to
+          send and receive <code>WM_COPYDATA</code>; command IDs come from MPC-HC's <code>MpcApi.h</code>.
+          Chapter markers, external subtitle URLs, and the mark-watched hotkey aren't available on MPC-HC
+          and degrade gracefully.
+        </p>
+      </fieldset>
+
+      <!-- ============ shared: applies to whichever backend ============ -->
+      <fieldset class="group">
+        <legend>Segment skipping</legend>
+        <div class="row">
+          <label for="skip-intro">Intros</label>
+          <div class="control">
+            <select id="skip-intro">
+              <option value="disabled">Never skip</option>
+              <option value="prompt" selected>Ask / seek to skip</option>
+              <option value="always">Always skip</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <label for="skip-credits">Credits</label>
+          <div class="control">
+            <select id="skip-credits">
+              <option value="disabled">Never skip</option>
+              <option value="prompt" selected>Ask / seek to skip</option>
+              <option value="always">Always skip</option>
+            </select>
+          </div>
+        </div>
+        <p class="note" data-skip-note hidden>
+          On MPC-HC, position is polled (~1&nbsp;s) rather than pushed, so segment prompts may fire
+          slightly later than on mpv. The skip behaviour itself is unaffected.
+        </p>
+      </fieldset>
+    </div>
+
+    <div class="actions">
+      <span class="status" id="status"></span>
+      <button class="action secondary" type="button">Cancel</button>
+      <button class="action" type="button" id="save">Save settings</button>
+    </div>
+  </section>
+
+  <script>
+    const segButtons = document.querySelectorAll('.seg button');
+    const panels = { mpv: document.querySelector('[data-panel="mpv"]'),
+                     mpchc: document.querySelector('[data-panel="mpchc"]') };
+    const status = document.getElementById('status');
+
+    function selectBackend(backend) {
+      segButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.backend === backend)));
+      panels.mpv.hidden = backend !== 'mpv';
+      panels.mpchc.hidden = backend !== 'mpchc';
+      syncSkipNote();
+    }
+    segButtons.forEach(b => b.addEventListener('click', () => selectBackend(b.dataset.backend)));
+
+    const skipNote = document.querySelector('[data-skip-note]');
+    function syncSkipNote() {
+      skipNote.hidden = panels.mpchc.hidden;
+    }
+
+    document.getElementById('save').addEventListener('click', () => {
+      const backend = document.querySelector('.seg button[aria-pressed="true"]').dataset.backend;
+      status.textContent = `Saved — backend: ${backend}.`;
+      status.style.color = 'var(--success)';
+    });
+
+    selectBackend('mpv');
+  </script>
+</body>
+</html>

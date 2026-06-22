@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaFlick Desktop — mpv ↔ MPC-HC integration plan</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --media-black: oklch(18% .006 260);
+    --room: oklch(13% .006 260);
+    --chrome: oklch(24% .008 260);
+    --panel: oklch(29% .01 260);
+    --raised: oklch(34% .012 260);
+    --border: oklch(78% .01 260 / .16);
+    --border-strong: oklch(82% .012 260 / .26);
+    --text: oklch(91% .01 260);
+    --muted: oklch(73% .012 260);
+    --quiet: oklch(59% .012 260);
+    --cyan: oklch(68% .145 227);
+    --violet: oklch(66% .13 316);
+    --danger: oklch(66% .18 31);
+    --warn: oklch(80% .13 86);
+    --success: oklch(72% .1 158);
+    --shadow: oklch(12% .006 260 / .62);
+    font: 15px/1.5 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--text);
+    background:
+      radial-gradient(120% 60% at 50% -8%, oklch(26% .008 260), transparent 60%),
+      var(--room);
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 96px; }
+
+  header.page {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 18px;
+    align-items: center;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--border);
+  }
+  .mark { width: 54px; height: 54px; filter: drop-shadow(0 10px 24px var(--shadow)); }
+  .eyebrow { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -.02em; line-height: 1.1; }
+  .sub { margin: 8px 0 0; color: var(--muted); font-size: 15px; max-width: 70ch; }
+
+  h2 {
+    margin: 46px 0 14px;
+    font-size: 21px;
+    font-weight: 650;
+    letter-spacing: -.01em;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .n {
+    display: inline-grid; place-content: center;
+    width: 26px; height: 26px; margin-right: 10px;
+    border-radius: 6px;
+    background: var(--cyan); color: var(--media-black);
+    font-size: 14px; font-weight: 800;
+    vertical-align: middle;
+  }
+  h3 { margin: 26px 0 10px; font-size: 16px; font-weight: 650; }
+  p { margin: 10px 0; }
+  code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: .86em;
+    color: var(--text);
+    background: oklch(20% .008 260);
+    padding: 1.5px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  a { color: var(--cyan); }
+
+  .card {
+    margin: 14px 0;
+    padding: 18px 20px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--chrome);
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .t-ok    { background: oklch(72% .1 158 / .18);  color: var(--success); border: 1px solid oklch(72% .1 158 / .4); }
+  .t-deg   { background: oklch(80% .13 86 / .16);  color: var(--warn);    border: 1px solid oklch(80% .13 86 / .4); }
+  .t-no    { background: oklch(66% .18 31 / .16);  color: var(--danger);  border: 1px solid oklch(66% .18 31 / .42); }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    color: var(--muted);
+    font-size: 12px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    border-bottom: 1px solid var(--border-strong);
+    background: oklch(22% .008 260);
+    position: sticky; top: 0;
+  }
+  tbody td { padding: 11px 12px; border-bottom: 1px solid oklch(82% .01 260 / .1); vertical-align: top; }
+  tbody tr:hover { background: oklch(26% .01 260 / .5); }
+  td .feat { font-weight: 650; }
+  td .mech { display: block; margin-top: 3px; color: var(--quiet); font-size: 12.5px; line-height: 1.4; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+
+  ol.steps { counter-reset: step; list-style: none; padding: 0; margin: 0; }
+  ol.steps > li {
+    position: relative;
+    margin: 12px 0;
+    padding: 16px 18px 16px 56px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--chrome);
+  }
+  ol.steps > li::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute; left: 16px; top: 16px;
+    width: 28px; height: 28px;
+    display: grid; place-content: center;
+    border-radius: 7px;
+    background: var(--panel); border: 1px solid var(--border-strong);
+    color: var(--cyan); font-weight: 800; font-size: 14px;
+  }
+  ol.steps h3 { margin: 0 0 4px; }
+  ul.tight { margin: 6px 0; padding-left: 20px; }
+  ul.tight li { margin: 4px 0; }
+
+  .note {
+    margin: 12px 0;
+    padding: 13px 15px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--cyan);
+    border-radius: 8px;
+    background: oklch(26% .01 260);
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  .note.danger { border-left-color: var(--danger); }
+  .note strong { color: var(--text); }
+
+  pre {
+    margin: 12px 0;
+    padding: 16px;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: oklch(16% .006 260);
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: 0; padding: 0; color: var(--text); }
+  .kw { color: var(--violet); }
+  .ty { color: var(--cyan); }
+  .cm { color: var(--quiet); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0 6px; }
+  .toc a {
+    text-decoration: none;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--chrome);
+    color: var(--muted);
+    font-size: 13px; font-weight: 600;
+  }
+  .toc a:hover { color: var(--text); border-color: var(--border-strong); background: var(--raised); }
+
+  .pill-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .summary-num { font-size: 28px; font-weight: 750; letter-spacing: -.02em; }
+  .summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 760px) { .summary-row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="268" y1="220" x2="780" y2="804" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#AA5CC3"/><stop offset="1" stop-color="#00A4DC"/>
+        </linearGradient>
+        <linearGradient id="s" x1="184" y1="112" x2="840" y2="912" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#2A2A38"/><stop offset="1" stop-color="#1D1D27"/>
+        </linearGradient>
+      </defs>
+      <rect x="96" y="96" width="832" height="832" rx="210" fill="url(#s)"/>
+      <rect x="96" y="96" width="832" height="832" rx="210" stroke="#626276" stroke-opacity="0.65" stroke-width="24"/>
+      <path fill="url(#g)" d="M364 292C330 272 288 296 288 336V688C288 728 330 752 364 732L664 556C698 536 698 488 664 468L364 292Z"/>
+      <path fill="url(#g)" fill-opacity="0.88" d="M680 256H796C836 256 868 288 868 328V444H772V352H680V256Z"/>
+      <path fill="#20202B" fill-opacity="0.78" d="M384 404V620L568 512L384 404Z"/>
+    </svg>
+    <div>
+      <p class="eyebrow">MediaFlick Desktop · Technical plan</p>
+      <h1>Switching the player backend between mpv and MPC-HC</h1>
+      <p class="sub">A design for abstracting the external player behind one interface, adding an MPC-HC
+        implementation driven over slave mode (<code>WM_COPYDATA</code>), and an honest account of which
+        features survive the move and which do not.</p>
+    </div>
+  </header>
+
+  <div class="toc">
+    <a href="#tldr">TL;DR</a>
+    <a href="#arch">Architecture</a>
+    <a href="#control">Control interface</a>
+    <a href="#matrix">Feature matrix</a>
+    <a href="#blockers">Hard blockers</a>
+    <a href="#steps">Implementation steps</a>
+    <a href="#risks">Risks &amp; open questions</a>
+  </div>
+
+  <!-- ───────────────────────── TL;DR ───────────────────────── -->
+  <h2 id="tldr"><span class="n">0</span>TL;DR</h2>
+  <div class="card">
+    <p><strong>MPC-HC is a viable secondary backend on Windows</strong>, driven via <em>slave mode</em>
+      (<code>/slave &lt;hwnd&gt;</code> + <code>WM_COPYDATA</code>). Core playback — open, play/pause, stop,
+      seek/resume, speed, end-of-stream → next episode — all map onto documented
+      <code>MpcApi.h</code> commands.</p>
+    <p>The migration costs <strong>three features outright</strong> and <strong>degrades a handful more</strong>.
+      The headline losses are <strong>chapter-marker injection</strong> for segments, <strong>external
+      subtitle URLs</strong>, and the injected <strong>mark-watched hotkey</strong> — MPC-HC's API has no
+      equivalent for any of them.</p>
+    <div class="summary-row" style="margin-top:16px">
+      <div class="card" style="margin:0; text-align:center; border-color: oklch(72% .1 158 / .4)">
+        <div class="summary-num" style="color:var(--success)">~12</div>
+        <div class="tag t-ok">Works</div>
+      </div>
+      <div class="card" style="margin:0; text-align:center; border-color: oklch(80% .13 86 / .4)">
+        <div class="summary-num" style="color:var(--warn)">~6</div>
+        <div class="tag t-deg">Degraded / workaround</div>
+      </div>
+      <div class="card" style="margin:0; text-align:center; border-color: oklch(66% .18 31 / .42)">
+        <div class="summary-num" style="color:var(--danger)">3</div>
+        <div class="tag t-no">Not possible</div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:16px"><strong>Platform note:</strong> mpv is cross-platform; MPC-HC
+      is Windows-only. The backend switch is therefore only ever offered on Windows — on macOS/Linux the
+      setting is hidden and mpv stays the sole option.</div>
+  </div>
+
+  <!-- ───────────────────────── Architecture ───────────────────────── -->
+  <h2 id="arch"><span class="n">1</span>Architecture: one interface, two implementations</h2>
+  <p>Today the app talks to mpv directly through <code>src/mpv/controller.rs</code> and
+    <code>src/mpv/external.rs</code>, with settings carrying a single <code>mpvPath</code>. The clean move is
+    to extract the contract the rest of the app already relies on — load, control, observe — into a
+    <code>PlayerBackend</code> trait, keep the existing mpv code as one implementor, and add an
+    <code>mpchc</code> implementor beside it.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>What the app needs from a backend</h3>
+      <ul class="tight">
+        <li><strong>Commands in:</strong> load, pause, stop, seek, speed, volume/mute, audio/sub track, fullscreen, OSD text</li>
+        <li><strong>Events out:</strong> file-loaded, position, duration, pause-state, end-of-stream, user-seek</li>
+        <li><strong>Lifecycle:</strong> spawn idle, keep alive across episodes, restart on crash, quit</li>
+      </ul>
+      <p class="cm" style="font-size:13px">This is exactly the surface <code>MpvController</code> +
+        <code>ExternalMpv</code> already expose internally — so the trait is a refactor, not a redesign.</p>
+    </div>
+    <div class="card">
+      <h3>Selection &amp; settings</h3>
+      <ul class="tight">
+        <li>New setting <code>playerBackend: "mpv" | "mpchc"</code> (default <code>mpv</code>)</li>
+        <li>MPC-HC field: <code>mpchcPath</code> (slave mode is the only control path, so no method selector)</li>
+        <li>Settings dialog gains the backend switch (see the
+          <code>player-backend-settings.html</code> sketch)</li>
+        <li>Factory at startup picks the implementor from the setting</li>
+      </ul>
+    </div>
+  </div>
+
+  <pre><code><span class="cm">// src/player/mod.rs — the shared contract</span>
+<span class="kw">pub trait</span> <span class="ty">PlayerBackend</span> {
+    <span class="kw">fn</span> spawn_idle(&<span class="kw">self</span>) -> Result&lt;()&gt;;
+    <span class="kw">fn</span> load(&<span class="kw">self</span>, req: <span class="ty">LoadRequest</span>) -> Result&lt;()&gt;;     <span class="cm">// url + tracks + resume pos</span>
+    <span class="kw">fn</span> control(&<span class="kw">self</span>, cmd: <span class="ty">PlayerControlCommand</span>) -> Result&lt;()&gt;; <span class="cm">// pause/seek/volume/…</span>
+    <span class="kw">fn</span> events(&<span class="kw">self</span>) -> Receiver&lt;<span class="ty">PlayerEvent</span>&gt;;            <span class="cm">// position/eof/loaded/…</span>
+    <span class="kw">fn</span> capabilities(&<span class="kw">self</span>) -> <span class="ty">Capabilities</span>;               <span class="cm">// what this backend supports</span>
+    <span class="kw">fn</span> shutdown(&<span class="kw">self</span>);
+}
+
+<span class="kw">pub struct</span> <span class="ty">Capabilities</span> {
+    chapter_markers: <span class="ty">bool</span>,      <span class="cm">// mpv: true   · mpc-hc: false</span>
+    external_subtitles: <span class="ty">bool</span>,   <span class="cm">// mpv: true   · mpc-hc: false</span>
+    injected_hotkeys: <span class="ty">bool</span>,     <span class="cm">// mpv: true   · mpc-hc: false</span>
+    absolute_volume: <span class="ty">bool</span>,       <span class="cm">// mpv: true   · mpc-hc: false (relative only)</span>
+    pushes_position: <span class="ty">bool</span>,        <span class="cm">// mpv: true   · mpc-hc: false (must poll)</span>
+}</code></pre>
+  <div class="note"><strong>Why a <code>capabilities()</code> probe matters:</strong> rather than scatter
+    <code>if backend == mpchc</code> checks, callers ask the capability. The segment engine asks
+    <code>chapter_markers</code> before drawing chapter pips; the progress reporter asks
+    <code>pushes_position</code> to decide observe-vs-poll. This keeps the difference in one place and makes the
+    UI able to grey out unsupported settings.</p>
+  </div>
+
+  <!-- ───────────────────────── Control interface ───────────────────────── -->
+  <h2 id="control"><span class="n">2</span>How MediaFlick will talk to MPC-HC</h2>
+  <p>The plan is <strong>slave mode only</strong>. MPC-HC also has an HTTP web interface, but it adds nothing we
+    need and costs a second control path to maintain — see the contingency note below for the one scenario where
+    it would re-enter the picture.</p>
+
+  <div class="card" style="border-color: oklch(72% .1 158 / .4)">
+    <div class="pill-head"><h3 style="margin:0">Slave mode <span class="tag t-ok">The interface</span></h3></div>
+    <ul class="tight">
+      <li>Launch <code>mpc-hc64.exe /slave &lt;our_hwnd&gt;</code> <strong>once</strong></li>
+      <li>MPC-HC replies <code>CMD_CONNECT</code> with <em>its</em> HWND</li>
+      <li>From then on we drive <em>everything</em> — including opening the next episode (<code>CMD_OPENFILE</code>)
+        — through <code>WM_COPYDATA</code>. We never re-launch the exe to load a file.</li>
+      <li>MPC-HC pushes <code>CMD_PLAYMODE</code>, <code>CMD_NOTIFYSEEK</code>,
+        <code>CMD_NOTIFYENDOFSTREAM</code>, <code>CMD_NOWPLAYING</code> back</li>
+      <li><strong>Bidirectional</strong> — the closest analogue to mpv's IPC + observed properties</li>
+    </ul>
+    <p class="cm" style="font-size:13px">Needs a hidden message-pump window on our side to receive
+      <code>WM_COPYDATA</code> (a small Win32 piece we don't have yet). The "launch once, then messages only"
+      discipline is also exactly what sidesteps the <a href="https://github.com/clsid2/mpc-hc/issues/2895">#2895</a>
+      double-load behaviour (see Risks).</p>
+  </div>
+
+  <div class="note"><strong>Why not the HTTP web interface?</strong> Same capability ceiling (all three hard
+    blockers below apply to it too), but strictly worse for us: poll-only with no pushed events, <em>ambiguous
+    end-of-file detection</em> (which would undermine the next-episode handoff), a port to manage, and the user
+    has to enable it manually in MPC-HC's options first. Its only edge — simpler code with no Win32 message
+    pump — is undercut by the fact that we need a poll loop anyway (position isn't pushed even in slave mode).
+    Building both means double the surface on an already-secondary backend.</div>
+
+  <div class="note warn"><strong>HTTP contingency:</strong> keep it on the shelf for exactly one case — if slave
+    mode turns out to be unworkable on the MPC-HC builds we target. That's a decision to make <em>after</em>
+    testing slave mode, not work to do up front.</div>
+
+  <!-- ───────────────────────── Feature matrix ───────────────────────── -->
+  <h2 id="matrix"><span class="n">3</span>Feature compatibility matrix</h2>
+  <p>Every capability the app currently drives through mpv, and its fate on MPC-HC slave mode. mpv mechanisms
+    are from <code>src/mpv/controller.rs</code>; MPC-HC mechanisms are from <code>MpcApi.h</code>.</p>
+  <div class="legend">
+    <span><span class="tag t-ok">Works</span> direct equivalent</span>
+    <span><span class="tag t-deg">Degraded</span> works with a workaround or reduced fidelity</span>
+    <span><span class="tag t-no">Not possible</span> no API path</span>
+  </div>
+
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th style="width:30%">Feature</th><th style="width:24%">mpv mechanism</th><th style="width:30%">MPC-HC slave</th><th style="width:16%">Status</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="feat">Process lifecycle / idle</span><span class="mech">keep alive across episodes</span></td>
+        <td><code>--idle=yes</code>, persistent process</td>
+        <td>Keep app open, <code>CMD_CLOSEFILE</code> between items</td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Load Jellyfin stream</span><span class="mech">with auth + track pre-selection</span></td>
+        <td><code>loadfile</code> + <code>--http-header-fields-append</code></td>
+        <td><code>CMD_OPENFILE</code> — <strong>no custom headers</strong>; auth must ride in the URL (<code>?api_key=</code>)</td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Play / pause</span></td>
+        <td><code>set_property pause</code></td>
+        <td><code>CMD_PLAY</code> / <code>CMD_PAUSE</code></td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Stop</span></td>
+        <td><code>stop</code></td>
+        <td><code>CMD_STOP</code> / <code>CMD_CLOSEFILE</code></td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Seek &amp; resume position</span></td>
+        <td><code>seek absolute+exact</code></td>
+        <td><code>CMD_SETPOSITION</code> (seconds)</td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Playback speed</span></td>
+        <td><code>set_property speed</code></td>
+        <td><code>CMD_SETSPEED</code></td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Segment skipping (seek)</span><span class="mech">intro/credits/recap/commercial</span></td>
+        <td>watch <code>time-pos</code> → <code>seek</code></td>
+        <td>poll <code>CMD_GETCURRENTPOSITION</code> → <code>CMD_SETPOSITION</code></td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Skip prompt OSD</span><span class="mech">"Seek to skip…" overlay</span></td>
+        <td><code>show-text</code> (position + duration args)</td>
+        <td><code>CMD_OSDSHOWMESSAGE</code> — plainer, less layout control</td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Progress reporting</span><span class="mech">position → Jellyfin</span></td>
+        <td><code>observe_property time-pos</code> (pushed)</td>
+        <td>poll <code>CMD_GETCURRENTPOSITION</code> on a timer + <code>CMD_NOTIFYSEEK</code></td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Duration</span></td>
+        <td><code>observe_property duration</code></td>
+        <td><code>CMD_NOWPLAYING</code> (sent on open)</td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">End-of-file → next episode</span></td>
+        <td><code>end-file</code> event + <code>eof-reached</code></td>
+        <td><code>CMD_NOTIFYENDOFSTREAM</code> + <code>CMD_PLAYMODE</code></td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">User-seek detection</span><span class="mech">accept skip on manual seek</span></td>
+        <td><code>seek</code> event</td>
+        <td><code>CMD_NOTIFYSEEK</code> (pushed on jump)</td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Audio track select</span></td>
+        <td><code>set_property aid</code></td>
+        <td><code>CMD_SETAUDIOTRACK</code> by index (map via <code>CMD_LISTAUDIOTRACKS</code>)</td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Subtitle track select (embedded)</span></td>
+        <td><code>set_property sid</code></td>
+        <td><code>CMD_SETSUBTITLETRACK</code> by index (<code>-1</code> = off)</td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Fullscreen control</span></td>
+        <td><code>set_property fullscreen</code> (set true/false)</td>
+        <td><code>CMD_TOGGLEFULLSCREEN</code> — <strong>toggle only</strong>, track state ourselves</td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Volume / mute</span></td>
+        <td><code>set_property volume</code> (absolute) + <code>mute</code></td>
+        <td>only <code>CMD_INCREASE/DECREASEVOLUME</code>; <strong>no absolute set, no mute, no readback</strong></td>
+        <td><span class="tag t-deg">Degraded</span></td>
+      </tr>
+      <tr>
+        <td><span class="feat">Window raise / focus</span></td>
+        <td><code>window-minimized</code> / <code>ontop</code> pulse</td>
+        <td>Win32 <code>SetForegroundWindow</code> on MPC-HC's HWND (outside the API)</td>
+        <td><span class="tag t-ok">Works</span></td>
+      </tr>
+      <tr style="background: oklch(66% .18 31 / .07)">
+        <td><span class="feat">Chapter markers for segments</span><span class="mech">intro/credits pips on the bar</span></td>
+        <td><code>set_property chapter-list</code> (inject custom chapters)</td>
+        <td><strong>No API to set chapters.</strong> MPC-HC only reads chapters from the file</td>
+        <td><span class="tag t-no">Not possible</span></td>
+      </tr>
+      <tr style="background: oklch(66% .18 31 / .07)">
+        <td><span class="feat">External subtitle URLs</span><span class="mech">Jellyfin sidecar subs</span></td>
+        <td><code>sub-add url select</code></td>
+        <td><strong>No API to load a subtitle by path/URL.</strong> Only file-embedded tracks selectable</td>
+        <td><span class="tag t-no">Not possible</span></td>
+      </tr>
+      <tr style="background: oklch(66% .18 31 / .07)">
+        <td><span class="feat">Mark-watched hotkey</span><span class="mech">"w" → mark watched + next</span></td>
+        <td><code>define-section</code> + <code>script-message</code> callback</td>
+        <td><strong>No hotkey-injection / callback channel.</strong> Needs a different trigger (below)</td>
+        <td><span class="tag t-no">Not possible</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- ───────────────────────── Blockers ───────────────────────── -->
+  <h2 id="blockers"><span class="n">4</span>The three hard blockers — and how to handle them</h2>
+
+  <div class="card">
+    <h3>① Chapter markers for segments <span class="tag t-no">Not possible</span></h3>
+    <p>mpv lets us rewrite <code>chapter-list</code> so intro/credits boundaries appear as pips on the seek bar.
+      MPC-HC exposes <strong>no chapter-setting command</strong> and reads chapters only from the container.</p>
+    <p><strong>Handling:</strong> degrade gracefully. Segment <em>skipping</em> still works (it's seek-based, not
+      chapter-based), so users lose only the visual markers, not the behaviour. Gate the pips on
+      <code>capabilities().chapter_markers</code>.</p>
+  </div>
+
+  <div class="card">
+    <h3>② External subtitle URLs <span class="tag t-no">Not possible</span></h3>
+    <p>Jellyfin often serves subtitles as separate sidecar URLs; mpv loads them with <code>sub-add</code>.
+      MPC-HC's API can only select tracks that already exist in the opened stream.</p>
+    <p><strong>Handling:</strong> request a <em>muxed/transcoded</em> stream from Jellyfin with subtitles burned-in
+      or embedded, so they arrive as in-container tracks selectable by <code>CMD_SETSUBTITLETRACK</code>. This
+      changes the stream-URL negotiation for the MPC-HC path and may force transcoding for some subtitle
+      formats. Flag external-only subtitle tracks as unavailable in the picker otherwise.</p>
+  </div>
+
+  <div class="card">
+    <h3>③ Mark-watched hotkey <span class="tag t-no">Not possible</span></h3>
+    <p>The "w" key works because mpv runs an injected input section that fires a <code>script-message</code> back
+      to us. MPC-HC has no way to register a host callback on a keypress.</p>
+    <p><strong>Handling options:</strong></p>
+    <ul class="tight">
+      <li><strong>Drop the in-player hotkey</strong> for MPC-HC; rely on natural EOF → next episode (which works
+        via <code>CMD_NOTIFYENDOFSTREAM</code>).</li>
+      <li><strong>Move the action into Jellyfin Web</strong> (a button / its own key handling in the CEF layer),
+        independent of the player.</li>
+      <li><strong>Global hotkey</strong> registered by MediaFlick at the OS level while MPC-HC is focused — heavier,
+        and focus-fragile; likely not worth it.</li>
+    </ul>
+  </div>
+
+  <!-- ───────────────────────── Steps ───────────────────────── -->
+  <h2 id="steps"><span class="n">5</span>Implementation steps</h2>
+  <ol class="steps">
+    <li>
+      <h3>Extract the <code>PlayerBackend</code> trait</h3>
+      <p>Pull the command/event/lifecycle surface out of <code>MpvController</code> into
+        <code>src/player/mod.rs</code>. mpv becomes <code>src/player/mpv/…</code> implementing the trait with
+        zero behaviour change — pure refactor, existing tests stay green.</p>
+    </li>
+    <li>
+      <h3>Add the backend setting &amp; factory</h3>
+      <p>Add <code>playerBackend</code>, <code>mpchcPath</code>, <code>mpchcControl</code> to
+        <code>settings.rs</code> / <code>client_settings.rs</code>. A factory builds the right backend at
+        startup. Wire the settings-dialog switch from the
+        <code>player-backend-settings.html</code> sketch (Windows-only).</p>
+    </li>
+    <li>
+      <h3>Build the <code>WM_COPYDATA</code> transport</h3>
+      <p>Hidden message-pump window in <code>src/player/mpchc/transport.rs</code>: launch with
+        <code>/slave &lt;hwnd&gt;</code>, handle <code>CMD_CONNECT</code>, encode/decode the pipe-delimited
+        Unicode payloads, expose send + an inbound event channel.</p>
+    </li>
+    <li>
+      <h3>Implement the MPC-HC backend</h3>
+      <p>Map the trait onto <code>CMD_*</code>: open/play/pause/stop/seek/speed/tracks/fullscreen/OSD. Translate
+        inbound <code>CMD_PLAYMODE</code> / <code>CMD_NOTIFYSEEK</code> / <code>CMD_NOTIFYENDOFSTREAM</code> /
+        <code>CMD_NOWPLAYING</code> into <code>PlayerEvent</code>s.</p>
+    </li>
+    <li>
+      <h3>Add the position-polling loop</h3>
+      <p>Since MPC-HC doesn't push <code>time-pos</code>, run a timer (~1 s) issuing
+        <code>CMD_GETCURRENTPOSITION</code> and feed replies into the same progress pipeline the mpv path uses.
+        Drive segment-skip checks off the same cadence.</p>
+    </li>
+    <li>
+      <h3>Wire <code>capabilities()</code> through the feature call-sites</h3>
+      <p>Chapter pips, external-sub picker entries, the mark-watched hotkey, absolute volume UI — each guarded by
+        a capability flag and greyed out / hidden when the active backend can't do it.</p>
+    </li>
+    <li>
+      <h3>Stream-URL negotiation for MPC-HC</h3>
+      <p>Embed auth in the URL (<code>api_key</code>) instead of headers, and prefer a stream profile whose
+        subtitles are embedded/burned so they're selectable in-player.</p>
+    </li>
+    <li>
+      <h3>Tests, changelog, docs</h3>
+      <p>Unit-test the <code>WM_COPYDATA</code> codec and the event translation; smoke-test a real MPC-HC.
+        Add the <code>[Unreleased]</code> changelog entries (Added: backend switch; Changed: settings).</p>
+    </li>
+  </ol>
+
+  <!-- ───────────────────────── Risks ───────────────────────── -->
+  <h2 id="risks"><span class="n">6</span>Risks &amp; open questions</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>Known risks</h3>
+      <ul class="tight">
+        <li><strong>#2895 is a non-issue for us</strong> — the "spawns a new instance / loads twice" report
+          (<a href="https://github.com/clsid2/mpc-hc/issues/2895">clsid2/mpc-hc#2895</a>, closed) was
+          <em>API misuse</em>: the reporter re-ran the exe to open files while also sending messages. The
+          maintainer's guidance — <em>"once you launched the exe as a slave you should control it with window
+          messages only"</em> — is precisely our design. Spawning a new instance on a second <code>/slave</code>
+          launch is intentional. No version pinning needed on this account.</li>
+        <li><strong>Auth in URL</strong> leaks the token into MPC-HC history / recent files.</li>
+        <li><strong>Polling cadence</strong> trades fidelity for load — segment skips fire up to ~1 s late vs
+          mpv's pushed updates.</li>
+        <li><strong>Fork divergence</strong> — original mpc-hc vs the maintained <code>clsid2</code> fork; target
+          the latter and document the minimum version.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Open questions</h3>
+      <ul class="tight">
+        <li>Does <code>CMD_SETPOSITION</code> accept sub-second precision in the target build? (affects resume/skip exactness)</li>
+        <li>Is the MPC-HC build the <em>user's</em> install or one we bundle? (affects the "Get MPC-HC" affordance)</li>
+        <li>Acceptable to require transcoding when only external subtitles exist?</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note warn" style="margin-top:18px"><strong>Recommendation:</strong> ship slave-mode-only behind a
+    Windows-only switch, with chapter pips / external subs / mark-watched-hotkey cleanly degraded via
+    <code>capabilities()</code>. Don't build the HTTP interface — hold it only as a contingency if slave mode
+    proves unworkable on the target builds. Core viewing — open, resume, skip, auto-next — is fully intact; the
+    losses are all secondary polish.</div>
+
+  <p class="cm" style="margin-top:30px; font-size:13px">Grounded in <code>src/mpv/controller.rs</code>,
+    <code>src/mpv/external.rs</code>, <code>src/mpv/input.rs</code>, <code>src/jellyfin/playback_reporter.rs</code>,
+    <code>src/jellyfin/media_segments.rs</code>, and MPC-HC <code>MpcApi.h</code> (clsid2 fork).</p>
+
+</div>
+</body>
+</html>
