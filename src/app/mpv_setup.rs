@@ -97,19 +97,38 @@ where
 
     progress(MpvSetupPhase::Extracting);
     let install_dir = install_root();
-    let _ = std::fs::remove_dir_all(&install_dir);
-    std::fs::create_dir_all(&install_dir)?;
-    sevenz_rust2::decompress_file(&archive_path, &install_dir).map_err(|error| {
+    let staging_dir = install_dir.with_extension("new");
+    let _ = std::fs::remove_dir_all(&staging_dir);
+    std::fs::create_dir_all(&staging_dir)?;
+    sevenz_rust2::decompress_file(&archive_path, &staging_dir).map_err(|error| {
+        let _ = std::fs::remove_dir_all(&staging_dir);
         std::io::Error::other(format!("failed to extract mpv archive: {error}"))
     })?;
     let _ = std::fs::remove_dir_all(&download_dir);
 
-    let mpv = install_dir.join("mpv.exe");
-    if !mpv.is_file() {
+    if !staging_dir.join("mpv.exe").is_file() {
+        let _ = std::fs::remove_dir_all(&staging_dir);
         return Err(
             std::io::Error::other("mpv.exe was not found in the downloaded archive").into(),
         );
     }
+
+    let backup_dir = install_dir.with_extension("old");
+    let _ = std::fs::remove_dir_all(&backup_dir);
+    let had_existing = install_dir.exists();
+    if had_existing {
+        std::fs::rename(&install_dir, &backup_dir)?;
+    }
+    if let Err(error) = std::fs::rename(&staging_dir, &install_dir) {
+        if had_existing {
+            let _ = std::fs::rename(&backup_dir, &install_dir);
+        }
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        return Err(error.into());
+    }
+    let _ = std::fs::remove_dir_all(&backup_dir);
+
+    let mpv = install_dir.join("mpv.exe");
     tracing::info!(target: "mpv.setup", path = %mpv.display(), "installed mpv");
     Ok(mpv)
 }
