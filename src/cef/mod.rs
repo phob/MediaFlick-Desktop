@@ -13,13 +13,14 @@ use crate::app::client_settings;
 use crate::app::logger;
 use crate::app::mpv_setup::{self, MpvSetupPhase};
 use crate::app::settings::{
-    AppSettings, CloseBehavior, MpvFullscreenBehavior, SegmentSkipMode, WebUiWindowSettings,
-    normalize_server_url,
+    AppSettings, CloseBehavior, MpvFullscreenBehavior, PlayerBackend as PlayerBackendKind,
+    SegmentSkipMode, WebUiWindowSettings, normalize_server_url,
 };
 use crate::app::updater::{self, UpdateRelease};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
 use crate::mpv::input::MpvInputBindings;
-use crate::mpv::{HttpHeader, MpvControlCommand, MpvController, MpvLaunch, MpvPlaybackEvent};
+use crate::mpv::{HttpHeader, MpvControlCommand, MpvLaunch, MpvPlaybackEvent};
+use crate::player::{PlayerBackend, build_backend};
 use crate::windows::set_window_icon;
 
 #[derive(Debug, Clone)]
@@ -613,7 +614,8 @@ struct BrowserStateInner {
     settings: AppSettings,
     browsers: Vec<Browser>,
     playback_contexts: Vec<PendingPlaybackContext>,
-    mpv_controller: MpvController,
+    player: Box<dyn PlayerBackend>,
+    playback_event_tx: mpsc::Sender<MpvPlaybackEvent>,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
     mpv_setup_started: bool,
@@ -629,15 +631,15 @@ type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
 fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
-    let mpv_controller =
-        MpvController::new(Some(playback_event_tx), settings.segment_skip_config());
-    warm_configured_mpv(&mpv_controller, &settings);
+    let player = build_backend(&settings, playback_event_tx.clone());
+    warm_configured_player(player.as_ref(), &settings);
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
         browsers: Vec::new(),
         playback_contexts: Vec::new(),
-        mpv_controller,
+        player,
+        playback_event_tx,
         update_available: None,
         update_download_started: false,
         mpv_setup_started: false,
@@ -648,13 +650,13 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     state
 }
 
-fn warm_configured_mpv(mpv_controller: &MpvController, settings: &AppSettings) {
-    mpv_controller.set_segment_skip_config(settings.segment_skip_config());
-    let Some(mpv_path) = settings.mpv_path.clone() else {
-        tracing::debug!(target: "mpv.ipc", "skipped mpv warmup because no executable is configured");
+fn warm_configured_player(player: &dyn PlayerBackend, settings: &AppSettings) {
+    player.set_segment_skip_config(settings.segment_skip_config());
+    let Some(path) = settings.player_path() else {
+        tracing::debug!(target: "mpv.ipc", "skipped player warmup because no executable is configured");
         return;
     };
-    mpv_controller.warm(mpv_path, settings.default_fullscreen);
+    player.warm(path.to_string(), settings.default_fullscreen);
 }
 
 fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEvent>) {
@@ -901,7 +903,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
                 if let Err(error) = state.settings.save() {
                     tracing::warn!(target: "mpv.setup", "failed to save mpv path: {error}");
                 }
-                warm_configured_mpv(&state.mpv_controller, &state.settings);
+                warm_configured_player(state.player.as_ref(), &state.settings);
             }
             dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
         }
@@ -1234,7 +1236,7 @@ wrap_life_span_handler! {
 
             if should_quit {
                 if let Ok(state) = self.state.lock() {
-                    state.mpv_controller.shutdown();
+                    state.player.shutdown();
                 }
                 quit_message_loop();
             }
@@ -1494,6 +1496,11 @@ fn route_bridge_action(
 ) -> bool {
     if request_url.starts_with("mediaflick-desktop://select-mpv") {
         open_mpv_dialog(browser, frame, state);
+        return true;
+    }
+
+    if request_url.starts_with("mediaflick-desktop://select-mpchc") {
+        open_mpchc_dialog(browser, frame, state);
         return true;
     }
 
@@ -1809,7 +1816,7 @@ fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
 
     if close_requests == 0 {
         if let Ok(state) = state.lock() {
-            state.mpv_controller.shutdown();
+            state.player.shutdown();
         }
         quit_message_loop();
     }
@@ -1965,6 +1972,31 @@ wrap_run_file_dialog_callback! {
     }
 }
 
+wrap_run_file_dialog_callback! {
+    struct MpchcFileDialogCallback {
+        frame: Option<Frame>,
+    }
+
+    impl RunFileDialogCallback {
+        fn on_file_dialog_dismissed(&self, file_paths: Option<&mut CefStringList>) {
+            let Some(frame) = &self.frame else {
+                return;
+            };
+            let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
+                execute_welcome_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
+                return;
+            };
+            execute_welcome_js(
+                frame,
+                &format!(
+                    "window.__mediaFlickDesktopSetMpchcPath({});",
+                    js_string_literal(&path)
+                ),
+            );
+        }
+    }
+}
+
 const PLAYBACK_CONTEXT_TTL: Duration = Duration::from_secs(15 * 60);
 fn remember_playback_context(query: &str, state: &BrowserState) {
     let context = match jellyfin_bridge::parse_context_payload(query) {
@@ -1984,9 +2016,7 @@ fn remember_playback_context(query: &str, state: &BrowserState) {
         return;
     };
     prune_playback_state(&mut state);
-    state
-        .mpv_controller
-        .update_playback_context(context.clone());
+    state.player.update_playback_context(context.clone());
     state.playback_contexts.push(PendingPlaybackContext {
         context,
         seen_at: Instant::now(),
@@ -2041,7 +2071,7 @@ fn handle_player_command(query: &str, state: &BrowserState) {
         return;
     };
     tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
-    state.mpv_controller.control(command);
+    state.player.control(command);
 }
 
 fn log_playback_stop_ack(query: &str) {
@@ -2076,9 +2106,9 @@ fn respond_player_state(
     query: &str,
     state: &BrowserState,
 ) {
-    let snapshot = state
+    let (snapshot, capabilities) = state
         .lock()
-        .map(|state| state.mpv_controller.snapshot())
+        .map(|state| (state.player.snapshot(), state.player.capabilities()))
         .unwrap_or_default();
     let response = json!({
         "requestId": query_param(query, "requestId").unwrap_or_default(),
@@ -2093,6 +2123,13 @@ fn respond_player_state(
         "volume": snapshot.volume,
         "mute": snapshot.mute,
         "stopReason": snapshot.stop_reason,
+        "capabilities": {
+            "chapterMarkers": capabilities.chapter_markers,
+            "externalSubtitles": capabilities.external_subtitles,
+            "injectedHotkeys": capabilities.injected_hotkeys,
+            "absoluteVolume": capabilities.absolute_volume,
+            "pushesPosition": capabilities.pushes_position,
+        },
     });
     let script = format!(
         "window.__mediaFlickDesktopReceivePlayerState&&window.__mediaFlickDesktopReceivePlayerState({});",
@@ -2195,22 +2232,22 @@ fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
         return false;
     };
     prune_playback_state(&mut state);
-    let Some(mpv_path) = state.settings.mpv_path.clone() else {
+    let Some(path) = state.settings.player_path().map(str::to_string) else {
         tracing::warn!(
             target: "bridge",
             launch = %logger::launch_summary(&launch),
-            "cannot hand playback to mpv because mpv path is not configured"
+            "cannot hand playback to the player because no executable is configured"
         );
         return false;
     };
     let fullscreen = state.settings.default_fullscreen;
     tracing::info!(
         target: "bridge",
-        mpv_path = %mpv_path,
+        player_path = %path,
         launch = %logger::launch_summary(&launch),
-        "handing playback to mpv controller"
+        "handing playback to player controller"
     );
-    state.mpv_controller.load(mpv_path, fullscreen, launch);
+    state.player.load(path, fullscreen, launch);
     true
 }
 
@@ -2299,6 +2336,43 @@ fn open_mpv_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>, sta
     );
 }
 
+fn open_mpchc_dialog(
+    browser: Option<&mut Browser>,
+    frame: Option<&mut Frame>,
+    state: &BrowserState,
+) {
+    let Some(browser) = browser else {
+        return;
+    };
+    let Some(host) = browser.host() else {
+        return;
+    };
+    let frame = frame.map(|frame| frame.clone());
+
+    let default_path = state
+        .lock()
+        .ok()
+        .and_then(|state| state.settings.mpchc_path.clone())
+        .map(|path| CefString::from(path.as_str()));
+    let mut filters = CefStringList::new();
+    #[cfg(target_os = "windows")]
+    filters.append(".exe");
+    let filters = if cfg!(target_os = "windows") {
+        Some(&mut filters)
+    } else {
+        None
+    };
+    let title = CefString::from("Select MPC-HC executable");
+    let mut callback = MpchcFileDialogCallback::new(frame);
+    host.run_file_dialog(
+        FileDialogMode::OPEN,
+        Some(&title),
+        default_path.as_ref(),
+        filters,
+        Some(&mut callback),
+    );
+}
+
 fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &BrowserState) {
     let Some(frame) = frame else {
         return;
@@ -2331,7 +2405,7 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
 
     if let Ok(mut state) = state.lock() {
         state.settings = settings;
-        warm_configured_mpv(&state.mpv_controller, &state.settings);
+        warm_configured_player(state.player.as_ref(), &state.settings);
     }
 
     frame.load_url(Some(&CefString::from(jellyfin_url.as_str())));
@@ -2350,19 +2424,34 @@ fn save_client_settings(
         return;
     };
 
-    let Some(mpv_path) = query_param(query, "mpv")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    else {
-        notify_client_settings_error(&frame, "Choose an mpv executable.");
-        return;
-    };
-
     let mut settings = state
         .lock()
         .map(|state| state.settings.clone())
         .unwrap_or_default();
-    settings.mpv_path = Some(mpv_path);
+    settings.player_backend = query_param(query, "playerBackend")
+        .as_deref()
+        .and_then(PlayerBackendKind::from_id)
+        .unwrap_or(settings.player_backend);
+    if let Some(mpv_path) = query_param(query, "mpv")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        settings.mpv_path = Some(mpv_path);
+    }
+    if let Some(mpchc_path) = query_param(query, "mpchc")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        settings.mpchc_path = Some(mpchc_path);
+    }
+    if settings.player_path().is_none() {
+        let message = match settings.effective_backend() {
+            PlayerBackendKind::Mpchc => "Choose an MPC-HC executable.",
+            PlayerBackendKind::Mpv => "Choose an mpv executable.",
+        };
+        notify_client_settings_error(&frame, message);
+        return;
+    }
     if let Some(log_level) = query_param(query, "logLevel")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -2415,8 +2504,20 @@ fn save_client_settings(
     }
 
     if let Ok(mut state) = state.lock() {
+        let backend_changed = state.settings.effective_backend() != settings.effective_backend();
         state.settings = settings;
-        warm_configured_mpv(&state.mpv_controller, &state.settings);
+        if backend_changed {
+            tracing::info!(
+                target: "playback",
+                backend = state.settings.effective_backend().as_str(),
+                "rebuilding player backend after settings change"
+            );
+            state.player.shutdown();
+            let event_tx = state.playback_event_tx.clone();
+            let player = build_backend(&state.settings, event_tx);
+            state.player = player;
+        }
+        warm_configured_player(state.player.as_ref(), &state.settings);
     }
     apply_scrollbar_settings_to_frame(&frame, state);
     execute_client_settings_js(

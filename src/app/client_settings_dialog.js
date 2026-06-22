@@ -159,6 +159,43 @@
         line-height: 1.25;
       }
       .control { min-width: 0; }
+      .row.top { align-items: start; }
+      .label-sub { margin: 4px 0 0; color: var(--quiet); font-size: 12px; font-weight: 500; }
+      .seg {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 1fr;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+      .seg button {
+        height: 54px;
+        display: grid;
+        gap: 2px;
+        place-content: center;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        color: var(--muted);
+        background: transparent;
+        font: inherit;
+        cursor: pointer;
+        transition: background-color 140ms ease-out, color 140ms ease-out;
+      }
+      .seg button .t { font-weight: 700; font-size: 14px; }
+      .seg button .d { font-size: 12px; color: var(--quiet); }
+      .seg button:hover { background: var(--raised); color: var(--text); }
+      .seg button[aria-pressed="true"] {
+        color: var(--media-black);
+        background: var(--cyan);
+        border-color: transparent;
+      }
+      .seg button[aria-pressed="true"] .d { color: oklch(18% .006 260 / .75); }
+      @media (prefers-reduced-motion: reduce) {
+        .seg button { transition: none; }
+      }
       .path-row {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -294,7 +331,29 @@
       </div>
       <form id="settings-form" aria-busy="false">
         <div class="body">
-          <fieldset class="group">
+          <fieldset class="group" id="backend-group" hidden>
+            <legend>Player backend</legend>
+            <div class="row top">
+              <div>
+                <label>External player</label>
+                <p class="label-sub">Which player MediaFlick hands playback off to.</p>
+              </div>
+              <div class="control">
+                <div class="seg" role="group" aria-label="Player backend">
+                  <button type="button" data-backend="mpv" aria-pressed="true">
+                    <span class="t">mpv</span>
+                    <span class="d">JSON IPC</span>
+                  </button>
+                  <button type="button" data-backend="mpchc" aria-pressed="false">
+                    <span class="t">MPC-HC</span>
+                    <span class="d">Slave mode</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="group" id="mpv-group">
             <legend>mpv handoff</legend>
             <div class="row">
               <label for="mpv-path">mpv executable</label>
@@ -328,6 +387,17 @@
               <label for="mark-watched-next">Mark watched key</label>
               <div class="control">
                 <input id="mark-watched-next" name="mark-watched-next" type="text" spellcheck="false" autocomplete="off" placeholder="w">
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="group" id="mpchc-group" hidden>
+            <legend>MPC-HC handoff</legend>
+            <div class="row">
+              <label for="mpchc-path">MPC-HC executable</label>
+              <div class="control path-row">
+                <input id="mpchc-path" name="mpchc-path" type="text" spellcheck="false" autocomplete="off" placeholder="C:\\Program Files\\MPC-HC\\mpc-hc64.exe">
+                <button id="browse-mpchc" class="action secondary" type="button">Browse</button>
               </div>
             </div>
           </fieldset>
@@ -424,6 +494,12 @@
     </section>`;
 
   const form = root.getElementById('settings-form');
+  const backendGroup = root.getElementById('backend-group');
+  const segButtons = root.querySelectorAll('.seg button');
+  const mpvGroup = root.getElementById('mpv-group');
+  const mpchcGroup = root.getElementById('mpchc-group');
+  const mpchcPath = root.getElementById('mpchc-path');
+  const browseMpchc = root.getElementById('browse-mpchc');
   const mpvPath = root.getElementById('mpv-path');
   const logLevel = root.getElementById('log-level');
   const defaultFullscreen = root.getElementById('default-fullscreen');
@@ -458,6 +534,20 @@
   skipCommercial.value = settings.skipCommercial || 'prompt';
   markWatchedNext.value = settings.markWatchedNext || '';
 
+  mpchcPath.value = settings.mpchcPath || '';
+  let currentBackend = settings.mpchcSupported && settings.playerBackend === 'mpchc' ? 'mpchc' : 'mpv';
+  function selectBackend(backend) {
+    currentBackend = backend;
+    segButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.backend === backend)));
+    mpvGroup.hidden = backend !== 'mpv';
+    mpchcGroup.hidden = backend !== 'mpchc';
+  }
+  segButtons.forEach(button => button.addEventListener('click', () => selectBackend(button.dataset.backend)));
+  if (settings.mpchcSupported) {
+    backendGroup.hidden = false;
+  }
+  selectBackend(currentBackend);
+
   function focusableControls() {
     return Array.from(root.querySelectorAll('button, input, select')).filter(element => !element.disabled && element.offsetParent !== null);
   }
@@ -465,6 +555,7 @@
     document.removeEventListener('keydown', onKeyDown, true);
     delete window.__mediaFlickDesktopSetBusy;
     delete window.__mediaFlickDesktopSetMpvPath;
+    delete window.__mediaFlickDesktopSetMpchcPath;
     delete window.__mediaFlickDesktopClientSettingsSaved;
     delete window.__mediaFlickDesktopClientSettingsSaveFailed;
     delete window.__mediaFlickDesktopMpvSetup;
@@ -509,6 +600,11 @@
     mpvPath.value = path || '';
     setBusy(false);
     mpvPath.focus();
+  };
+  window.__mediaFlickDesktopSetMpchcPath = path => {
+    mpchcPath.value = path || '';
+    setBusy(false);
+    mpchcPath.focus();
   };
   window.__mediaFlickDesktopClientSettingsSaved = () => {
     setBusy(false);
@@ -608,9 +704,19 @@
     setBusy(true, 'Opening file picker...');
     window.location.href = 'mediaflick-desktop://select-mpv?token=' + BRIDGE_TOKEN + '&target=settings';
   });
+  browseMpchc.addEventListener('click', () => {
+    setBusy(true, 'Opening file picker...');
+    window.location.href = 'mediaflick-desktop://select-mpchc?token=' + BRIDGE_TOKEN + '&target=settings';
+  });
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (!mpvPath.value.trim()) {
+    const requireMpchc = settings.mpchcSupported && currentBackend === 'mpchc';
+    if (requireMpchc && !mpchcPath.value.trim()) {
+      setStatus('Choose an MPC-HC executable before saving.', 'error');
+      mpchcPath.focus();
+      return;
+    }
+    if (!requireMpchc && !mpvPath.value.trim()) {
       setStatus('Choose an mpv executable before saving.', 'error');
       mpvPath.focus();
       return;
@@ -619,6 +725,8 @@
     const query = new URLSearchParams({
       token: BRIDGE_TOKEN,
       mpv: mpvPath.value.trim(),
+      playerBackend: settings.mpchcSupported ? currentBackend : 'mpv',
+      mpchc: mpchcPath.value.trim(),
       logLevel: logLevel.value,
       defaultFullscreen: defaultFullscreen.value,
       closeBehavior: closeBehavior.value,

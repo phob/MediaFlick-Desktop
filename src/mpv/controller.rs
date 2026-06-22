@@ -771,6 +771,7 @@ impl ControllerState {
                 return false;
             }
         };
+        crate::windows::confine_to_app_lifetime(&child);
 
         let (ipc_worker, event_rx) = match start_ipc_worker(
             &ipc_path,

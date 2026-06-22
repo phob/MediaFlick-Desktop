@@ -10,6 +10,9 @@ const CLIENT_SETTINGS_PLACEHOLDER: &str = "__MEDIAFLICK_CLIENT_SETTINGS_JSON__";
 pub fn dialog_script(settings: &AppSettings, bindings: &MpvInputBindings) -> String {
     let data = json!({
         "mpvPath": settings.mpv_path.as_deref().unwrap_or_default(),
+        "playerBackend": settings.player_backend.as_str(),
+        "mpchcPath": settings.mpchc_path.as_deref().unwrap_or_default(),
+        "mpchcSupported": cfg!(target_os = "windows"),
         "logLevel": settings.log_level,
         "defaultFullscreen": settings.default_fullscreen.as_str(),
         "closeBehavior": settings.close_behavior.as_str(),
