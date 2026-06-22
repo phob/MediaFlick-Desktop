@@ -38,6 +38,8 @@
 - Fixed an auto-skipped intro/credits segment being consumed even when its seek failed, so the skip can be retried after the mpv session recovers.
 - Escaped U+2028/U+2029 in data injected into the Jellyfin page, preventing server-derived playback fields from breaking the injected script.
 - Fixed native mpv forward seeks not accepting an active skip-intro/credits prompt when mpv reports the seek event before the `seeking` property.
+- Fixed the in-app mpv download deleting a working install before the new archive is validated; the build is now extracted to a staging directory, checked for `mpv.exe`, and swapped into place with the previous install kept until the swap succeeds.
+- Fixed segment chapter markers overwriting a file's embedded chapters when a duration or media-segment update raced ahead of mpv's `chapter-list` event; marker injection now waits until the file's own chapters have been captured.
 - Fixed Linux and macOS update notifications by linking the updater dialog to the GitHub latest release page instead of offering unsupported automatic installation.
 - Fixed Linux and macOS first launch by auto-detecting a system `mpv` executable and using generic mpv executable wording in app UI.
 - Fixed Linux AppImage startup aborts with `close symbol missing` by preloading bundled CEF and stripping that preload from spawned mpv processes.

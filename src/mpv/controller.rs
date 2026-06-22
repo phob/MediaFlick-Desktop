@@ -1169,11 +1169,13 @@ impl ControllerState {
         if !self.mpv_playback_active {
             return;
         }
-        let base = self.original_chapters.clone().unwrap_or_default();
 
         let markers = if self.skip_segments.is_empty() {
             Vec::new()
         } else {
+            if self.original_chapters.is_none() {
+                return;
+            }
             let Some(duration_ticks) = self.last_state.duration_ticks.filter(|ticks| *ticks > 0)
             else {
                 return;
@@ -1181,6 +1183,8 @@ impl ControllerState {
             let duration_seconds = duration_ticks as f64 / TICKS_PER_SECOND;
             build_segment_chapter_markers(&self.skip_segments, duration_seconds)
         };
+
+        let base = self.original_chapters.clone().unwrap_or_default();
 
         if markers.is_empty() {
             self.injected_chapter_markers.clear();
