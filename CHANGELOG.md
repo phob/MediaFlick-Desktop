@@ -36,6 +36,7 @@
 
 ### Fixed
 
+- Fixed the Linux and macOS release builds failing to compile because the `warnings = "deny"` lint flagged the Windows-only MPC-HC segment helpers and mpv auto-download phases as dead code on those platforms.
 - Fixed every native bridge message (player commands, playback context, play-state reports) being delivered twice because `sendBridgeRequest` fired both a `fetch` and an `<img>` request as a fallback pair; it now sends one and only falls back to the image when `fetch` is unavailable. This was duplicating each play/pause/seek/volume command — and the duplicate seeks compounded MPC-HC's synchronous seek stalls.
 - Fixed the external player (mpv or MPC-HC) sometimes being left running after MediaFlick exits — for example after switching player backends at runtime — by binding each spawned player to a Windows job object the OS terminates when the app process ends.
 - Hardened the auto-updater to download installers only over HTTPS from GitHub-owned hosts and into a unique per-run directory, preventing redirect-to-untrusted-host and predictable-temp-path attacks.
