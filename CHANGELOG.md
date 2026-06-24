@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.5] - 2026-06-24
+
+### Added
+
 - Added in-app mpv setup: the welcome and Client Settings screens now offer a one-click "Download mpv" on Windows (fetched and extracted from the shinchiro mpv builds) and copyable per-OS install commands on macOS and Linux, plus a link to mpv.io/installation.
 - Added native Jellyfin intro and credits skipping in mpv with prompt/always settings and forward-seek prompt acceptance.
 - Added Jellyfin recap and commercial segment skipping in mpv with their own prompt/always Client Settings, alongside the existing intro and credits options.
@@ -57,10 +68,6 @@
 - Added a Jellyfin Web integration check that logs a clear console error and shows a dismissible banner when the bridge cannot install its required hooks (for example, after an incompatible Jellyfin Web update), instead of silently failing to drive mpv.
 - Required a per-session token on `mediaflick-desktop://` requests originating from the Jellyfin page, so in-origin scripts (such as a rogue Jellyfin plugin or injected content) can no longer forge bridge actions like app exit or playback control.
 - Fixed mpv commands silently failing after a half-open IPC connection by detecting a dead command-writer and restarting the mpv session, instead of waiting for the event stream to also disconnect.
-
-### Removed
-
-
 ## [0.1.4] - 2026-06-19
 
 ### Added

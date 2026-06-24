@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "mediaflick-desktop"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cef",
  "clap",
