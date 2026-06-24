@@ -14,6 +14,18 @@ MediaFlick Desktop opens Jellyfin Web in a desktop CEF window, then hands direct
 
 While mpv is playing, MediaFlick Desktop still reports playstate back to your Jellyfin server so playback starts, progress, watched state, and resume positions continue to work.
 
+## Features
+
+- Jellyfin Web in a native desktop CEF window
+- Direct-play streams handed to an external `mpv` process, so your full mpv setup applies (`mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, input bindings)
+- Playstate reported back to Jellyfin: playback start, progress, watched state, and resume positions
+- Jellyfin media-segment skipping for intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings
+- Skip-segment markers on the mpv seek bar so the timeline shows where segments are skipped, merged with the file's own chapters
+- Optional MPC-HC player backend on Windows, switchable live from Client Settings (mpv remains the default)
+- One-click **Download mpv** on Windows, with auto-detection of a system `mpv` on Linux and macOS
+- Automatic in-app updates from GitHub Releases (Windows)
+- Cross-platform: Windows, Linux, and macOS
+
 ## Why
 
 I’ve always wanted an app that offered the convenience and look of the media player desktop apps provided by developers, but with the ability to enjoy SVP4 and SDR-to-HDR content. Almost all desktop media player apps are partially based on libmpv, without being able to fully utilize all of mpv’s capabilities. While there are the well-known mpv shim applications—which I’ve used for a very long time. Now the new Jellyfin desktop app, currently still in development, came with the promise that it would fully read the mpv configuration and thus be highly customizable. This is true in many respects, but especially when it comes to technologies like integrating SVP 4 and custom HDR profiles, I believe the limitation of having MPV within the app is the main factor behind many of these restrictions. And so I had the idea to simply write a desktop app for myself that exclusively connects to and controls an external MPV player.
@@ -25,154 +37,10 @@ I’ve always wanted an app that offered the convenience and look of the media p
 
 ## Install
 
-### Windows installer
+Download the latest `MediaFlickDesktop-Setup-<version>.exe` from [GitHub Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it.
 
-1. Download the latest `MediaFlickDesktop-Setup-<version>.exe` from [GitHub Releases](https://github.com/phob/mediaflick-desktop/releases/latest).
-2. Run the installer.
-3. Launch **MediaFlick Desktop** from the Start menu or the optional desktop shortcut.
-
-The installer installs the app for the current user to:
-
-```text
-%LOCALAPPDATA%\Programs\MediaFlick Desktop
-```
-
-mpv is not bundled. On first launch the welcome screen offers a one-click **Download mpv** button on Windows, and copyable install commands for macOS (`brew install mpv`) and Linux (`sudo apt install mpv`), with a link to [mpv.io/installation](https://mpv.io/installation/). Linux and macOS also auto-detect a system `mpv` in common locations, so there you usually only need to enter your Jellyfin server URL.
-
-MediaFlick Desktop checks GitHub Releases for newer Windows installers. When an update is available, an in-app toast lets you download it, shows progress, then runs the installer quietly and restarts the app into the new version.
-
-### Portable / manual install
-
-If you are using a release zip or a manually staged build:
-
-1. Extract the app folder somewhere permanent.
-2. Make sure `mediaflick-desktop.exe` stays next to the included CEF runtime files and `locales` folder.
-3. Run `mediaflick-desktop.exe`.
-4. On the welcome screen, use **Download mpv** (Windows) or **Browse** to select your own mpv executable.
-
-## First launch
-
-On first launch, MediaFlick Desktop asks for:
-
-- **Jellyfin server URL** — for example `http://localhost:8096` or `https://jellyfin.example.com`
-- **mpv executable** — the mpv executable you want MediaFlick Desktop to control, auto-filled when detected
-
-Use **Download mpv** (Windows) to fetch and install mpv automatically, or the native **Browse** button to select an existing mpv executable. macOS and Linux show the install command for your platform.
-
-The app saves these settings here:
-
-```text
-%APPDATA%\mediaflick-desktop\config.json
-```
-
-## mpv configuration
-
-MediaFlick Desktop uses an external mpv player, so your normal mpv setup can be used. Configure mpv the same way you normally would for your system, such as with `mpv.conf`, scripts, shaders, profiles, and input bindings.
-
-MediaFlick Desktop also has its own small input binding file for app-specific actions:
-
-```text
-%APPDATA%\mediaflick-desktop\input.json
-```
-
-By default, pressing `w` marks the current item watched, closes the current mpv process, and lets Jellyfin Web's normal autoplay setting decide whether to start the next queued item. To change that binding, create or edit `input.json`:
-
-```json
-{
-  "bindings": {
-    "mark_watched_next": "W"
-  }
-}
-```
-
-## Command-line options
-
-You can also provide the Jellyfin URL and mpv path from the command line:
-
-```powershell
-mediaflick-desktop.exe --url http://localhost:8096 --mpv-path "C:\Program Files\mpv\mpv.exe"
-# Linux/macOS example:
-mediaflick-desktop --url http://localhost:8096 --mpv-path /usr/bin/mpv
-```
-
-This is useful for testing, shortcuts, or quickly switching between servers and mpv installations.
+On Linux and macOS, use a release archive and run `mediaflick-desktop`. mpv is not bundled: Windows offers a one-click **Download mpv**, while Linux and macOS auto-detect a system `mpv`.
 
 ## Build it yourself
 
-Building is mainly intended for developers and advanced users.
-
-### Requirements
-
-- Rust toolchain
-- `just`
-- CMake and Ninja, required by `cef-dll-sys`
-- A CEF cache. By default, `just` downloads/caches CEF in this checkout at `.cache/cef`; set `CEF_PATH=...` to override it.
-
-### Build a local debug app
-
-```sh
-just build
-```
-
-The staged app is created in `build/`:
-
-```text
-build/mediaflick-desktop.exe
-```
-
-Run it with:
-
-```sh
-just run --url http://localhost:8096
-```
-
-### Build a release app
-
-```sh
-just release
-```
-
-### Build a Windows release package
-
-To stage a Windows release payload with the app, CEF runtime files, and locales (mpv is no longer bundled; the app downloads it on first run):
-
-```powershell
-just windows-dist
-```
-
-The staged payload is created in:
-
-```text
-dist/MediaFlickDesktop/
-```
-
-### Build the Windows installer
-
-Install Inno Setup 6, then run:
-
-```powershell
-$env:ISCC = "C:\path\to\ISCC.exe" # optional if ISCC.exe is on PATH
-just windows-installer
-```
-
-The installer is created in:
-
-```text
-dist/installer/MediaFlickDesktop-Setup-<version>.exe
-```
-
-### Build Linux and macOS release packages
-
-Linux AppImage packaging requires `appimagetool` or network access so the script can download it:
-
-```sh
-just linux-appimage
-```
-
-macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
-
-```sh
-just macos-dmg
-```
-
-The packages are written to `dist/`.
+See [BUILDING.md](BUILDING.md).

@@ -839,6 +839,7 @@
           credentials: 'omit',
           keepalive: true
         }).catch(() => {});
+        return;
       } catch (_) {}
     }
     const image = new Image();
