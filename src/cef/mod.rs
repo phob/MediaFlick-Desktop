@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::app::about;
 use crate::app::client_settings;
+use crate::app::error_toast;
 use crate::app::logger;
 use crate::app::mpv_setup::{self, MpvSetupPhase};
 use crate::app::settings::{
@@ -747,7 +748,27 @@ wrap_task! {
     }
 }
 
+wrap_task! {
+    struct ErrorToastTask {
+        state: BrowserState,
+        title: String,
+        body: String,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            dispatch_error_toast(&self.state, &self.title, &self.body);
+        }
+    }
+}
+
 fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
+    if let MpvPlaybackEvent::Failed { message } = &event {
+        tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
+        dispatch_error_toast(state, "Playback error", message);
+        return;
+    }
+
     let browsers = state
         .lock()
         .map(|state| state.browsers.clone())
@@ -804,6 +825,7 @@ fn playback_event_script(event: &MpvPlaybackEvent) -> String {
                 js_json(&payload)
             )
         }
+        MpvPlaybackEvent::Failed { .. } => String::new(),
     }
 }
 
@@ -974,6 +996,42 @@ fn execute_update_script(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
         Some(&CefString::from("mediaflick-desktop://update-toast")),
+        1,
+    );
+}
+
+fn notify_error(state: &BrowserState, title: &str, body: &str) {
+    let mut task = ErrorToastTask::new(state.clone(), title.to_string(), body.to_string());
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "bridge", title, "failed to post error toast to CEF UI thread");
+    }
+}
+
+fn dispatch_error_toast(state: &BrowserState, title: &str, body: &str) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    if browsers.is_empty() {
+        tracing::warn!(
+            target: "bridge",
+            title,
+            "skipped error toast because no WebUI browsers are registered"
+        );
+        return;
+    }
+    let script = error_toast::error_toast_script(title, body);
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            execute_error_script(&frame, &script);
+        }
+    }
+}
+
+fn execute_error_script(frame: &Frame, script: &str) {
+    frame.execute_java_script(
+        Some(&CefString::from(script)),
+        Some(&CefString::from("mediaflick-desktop://error-toast")),
         1,
     );
 }
@@ -2227,27 +2285,33 @@ fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -
 }
 
 fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
-    let Ok(mut state) = state.lock() else {
+    let Ok(mut guard) = state.lock() else {
         tracing::warn!(target: "bridge", "failed to lock browser state while handing playback to mpv");
         return false;
     };
-    prune_playback_state(&mut state);
-    let Some(path) = state.settings.player_path().map(str::to_string) else {
+    prune_playback_state(&mut guard);
+    let Some(path) = guard.settings.player_path().map(str::to_string) else {
+        drop(guard);
         tracing::warn!(
             target: "bridge",
             launch = %logger::launch_summary(&launch),
             "cannot hand playback to the player because no executable is configured"
         );
+        notify_error(
+            state,
+            "Playback unavailable",
+            "No media player is configured. Open Settings to set up mpv or MPC-HC.",
+        );
         return false;
     };
-    let fullscreen = state.settings.default_fullscreen;
+    let fullscreen = guard.settings.default_fullscreen;
     tracing::info!(
         target: "bridge",
         player_path = %path,
         launch = %logger::launch_summary(&launch),
         "handing playback to player controller"
     );
-    state.player.load(path, fullscreen, launch);
+    guard.player.load(path, fullscreen, launch);
     true
 }
 

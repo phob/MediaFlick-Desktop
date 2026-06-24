@@ -350,6 +350,9 @@ impl State {
         self.fullscreen_pref = fullscreen;
         if !self.ensure_process(&path, fullscreen) {
             tracing::warn!(target: "mpchc", "cannot load playback because MPC-HC is unavailable");
+            self.report_playback_failure(
+                "Could not start MPC-HC. Check that the MPC-HC path in Settings is correct.",
+            );
             return;
         }
 
@@ -958,6 +961,14 @@ impl State {
         self.recent_loads.iter().any(|load| {
             load.key == key && now.saturating_duration_since(load.seen_at) < DUPLICATE_DEBOUNCE
         })
+    }
+
+    fn report_playback_failure(&self, message: impl Into<String>) {
+        if let Some(event_tx) = &self.event_tx {
+            let _ = event_tx.send(MpvPlaybackEvent::Failed {
+                message: message.into(),
+            });
+        }
     }
 
     fn show_osd(&self, message: &str, duration_ms: i32) {

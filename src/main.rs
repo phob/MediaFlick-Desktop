@@ -43,6 +43,19 @@ fn main() {
     let effective_log_level = cli.log_level.as_deref().unwrap_or(&settings.log_level);
     let _log_guard = logger::init(log_file, effective_log_level);
 
+    let instance_id = crate::app::instance::instance_id();
+    let _instance_guard = match crate::app::instance::InstanceGuard::acquire(&instance_id) {
+        Some(guard) => guard,
+        None => {
+            tracing::info!(
+                target: "main",
+                "another mediaflick-desktop session is already running; exiting"
+            );
+            crate::app::instance::notify_already_running();
+            std::process::exit(0);
+        }
+    };
+
     let mut should_save_settings = false;
 
     if let Some(url) = cli.normalized_url() {
