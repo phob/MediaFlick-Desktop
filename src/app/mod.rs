@@ -1,6 +1,8 @@
 pub mod about;
 pub mod cli;
 pub mod client_settings;
+pub mod error_toast;
+pub mod instance;
 pub mod logger;
 pub mod mpv_setup;
 pub mod settings;

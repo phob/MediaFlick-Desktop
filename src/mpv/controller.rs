@@ -77,6 +77,7 @@ pub struct MpvPlayerSnapshot {
 #[derive(Debug, Clone)]
 pub enum MpvPlaybackEvent {
     Stopped(MpvPlayerSnapshot),
+    Failed { message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -602,6 +603,9 @@ impl ControllerState {
                 mpv_path = %mpv_path,
                 "cannot load playback because mpv is unavailable"
             );
+            self.report_playback_failure(
+                "Could not start mpv. Check that the mpv path in Settings is correct.",
+            );
             return;
         };
         self.apply_default_fullscreen(fullscreen);
@@ -650,8 +654,17 @@ impl ControllerState {
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
+                self.report_playback_failure("mpv did not accept the video. Try playing again.");
                 self.handle_mpv_session_lost("loadfile command failed");
             }
+        }
+    }
+
+    fn report_playback_failure(&self, message: impl Into<String>) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(MpvPlaybackEvent::Failed {
+                message: message.into(),
+            });
         }
     }
 
