@@ -1,3 +1,5 @@
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use crate::app::settings::{SegmentSkipConfig, SegmentSkipMode};
 use crate::jellyfin::media_segments::{SegmentType, SkipSegment};
 

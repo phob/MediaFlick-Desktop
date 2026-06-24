@@ -11,6 +11,7 @@ const MPV_LATEST_RELEASE_API_URL: &str =
 
 /// A stage of the in-app mpv setup, reported back to the UI while it runs.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub enum MpvSetupPhase {
     Downloading { downloaded: u64, total: Option<u64> },
     Extracting,
