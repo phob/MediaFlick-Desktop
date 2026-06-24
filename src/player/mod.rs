@@ -32,9 +32,9 @@ pub const MPV_CAPABILITIES: Capabilities = Capabilities {
 #[allow(dead_code)]
 pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
     chapter_markers: false,
-    external_subtitles: false,
+    external_subtitles: true,
     injected_hotkeys: false,
-    absolute_volume: false,
+    absolute_volume: true,
     pushes_position: false,
 };
 

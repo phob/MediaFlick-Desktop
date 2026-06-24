@@ -118,11 +118,80 @@
         flex: 1 1 auto;
         flex-direction: column;
       }
+      .tabs {
+        display: flex;
+        gap: 2px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--border);
+        background: oklch(22% .008 260);
+      }
+      .tab {
+        position: relative;
+        height: 46px;
+        padding: 0 14px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -1px;
+        color: var(--muted);
+        background: transparent;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+        transition: color 140ms ease-out, border-color 140ms ease-out;
+      }
+      .tab:hover { color: var(--text); }
+      .tab[aria-selected="true"] {
+        color: var(--text);
+        border-bottom-color: var(--cyan);
+      }
+      .tab:focus-visible {
+        outline-offset: -2px;
+        border-radius: 4px;
+      }
+      .scroll {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        background: var(--media-black);
+      }
       .body {
+        flex: 1 1 auto;
+        min-height: 0;
         overflow: auto;
         overscroll-behavior: contain;
         padding: 18px 24px 20px;
-        background: var(--media-black);
+      }
+      .panel[hidden] { display: none; }
+      .fade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 34px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 160ms ease-out;
+        z-index: 1;
+      }
+      .fade-top {
+        top: 0;
+        background: linear-gradient(to bottom, var(--media-black) 35%, transparent);
+      }
+      .fade-bottom {
+        bottom: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 5px;
+        color: var(--quiet);
+        background: linear-gradient(to top, var(--media-black) 35%, transparent);
+      }
+      .fade-bottom .chev { width: 18px; height: 18px; display: block; }
+      .scroll.show-top .fade-top { opacity: 1; }
+      .scroll.show-bottom .fade-bottom { opacity: 1; }
+      @media (prefers-reduced-motion: reduce) {
+        .tab, .fade { transition: none; }
       }
       .group {
         margin: 0;
@@ -292,6 +361,8 @@
       @media (max-width: 680px) {
         .dialog { width: calc(100vw - 20px); max-height: calc(100vh - 20px); }
         .head { grid-template-columns: auto minmax(0, 1fr) auto; padding: 18px 16px 15px; }
+        .tabs { padding: 0 8px; }
+        .tab { padding: 0 10px; }
         .body { padding: 14px 14px 16px; }
         .group { padding: 15px 14px 16px; }
         .row { grid-template-columns: 1fr; gap: 9px; }
@@ -330,160 +401,179 @@
         <button class="close" type="button" aria-label="Close">×</button>
       </div>
       <form id="settings-form" aria-busy="false">
-        <div class="body">
-          <fieldset class="group" id="backend-group" hidden>
-            <legend>Player backend</legend>
-            <div class="row top">
-              <div>
-                <label>External player</label>
-                <p class="label-sub">Which player MediaFlick hands playback off to.</p>
-              </div>
-              <div class="control">
-                <div class="seg" role="group" aria-label="Player backend">
-                  <button type="button" data-backend="mpv" aria-pressed="true">
-                    <span class="t">mpv</span>
-                    <span class="d">JSON IPC</span>
-                  </button>
-                  <button type="button" data-backend="mpchc" aria-pressed="false">
-                    <span class="t">MPC-HC</span>
-                    <span class="d">Slave mode</span>
-                  </button>
+        <div class="tabs" role="tablist" aria-label="Settings sections">
+          <button class="tab" type="button" role="tab" id="tab-player" data-tab="player" aria-controls="panel-player" aria-selected="true">Player</button>
+          <button class="tab" type="button" role="tab" id="tab-playback" data-tab="playback" aria-controls="panel-playback" aria-selected="false" tabindex="-1">Playback</button>
+          <button class="tab" type="button" role="tab" id="tab-app" data-tab="app" aria-controls="panel-app" aria-selected="false" tabindex="-1">Application</button>
+        </div>
+        <div class="scroll">
+          <div class="fade fade-top" aria-hidden="true"></div>
+          <div class="body">
+            <div class="panel" id="panel-player" role="tabpanel" aria-labelledby="tab-player">
+              <fieldset class="group" id="backend-group" hidden>
+                <legend>Player backend</legend>
+                <div class="row top">
+                  <div>
+                    <label>External player</label>
+                    <p class="label-sub">Which player MediaFlick hands playback off to.</p>
+                  </div>
+                  <div class="control">
+                    <div class="seg" role="group" aria-label="Player backend">
+                      <button type="button" data-backend="mpv" aria-pressed="true">
+                        <span class="t">mpv</span>
+                        <span class="d">JSON IPC</span>
+                      </button>
+                      <button type="button" data-backend="mpchc" aria-pressed="false">
+                        <span class="t">MPC-HC</span>
+                        <span class="d">Slave mode</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          </fieldset>
+              </fieldset>
 
-          <fieldset class="group" id="mpv-group">
-            <legend>mpv handoff</legend>
-            <div class="row">
-              <label for="mpv-path">mpv executable</label>
-              <div class="control path-row">
-                <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" autocomplete="off">
-                <button id="browse" class="action secondary" type="button">Browse</button>
-              </div>
-            </div>
-            <div class="row">
-              <label for="download-mpv">Get mpv</label>
-              <div class="control getmpv">
-                <button id="download-mpv" class="action secondary" type="button" hidden>Download mpv</button>
-                <div class="cmd-row" id="mpv-cmd-line" hidden>
-                  <code id="mpv-cmd"></code>
-                  <button id="copy-mpv" class="action secondary" type="button">Copy</button>
+              <fieldset class="group" id="mpv-group">
+                <legend>mpv handoff</legend>
+                <div class="row">
+                  <label for="mpv-path">mpv executable</label>
+                  <div class="control path-row">
+                    <input id="mpv-path" name="mpv-path" type="text" spellcheck="false" autocomplete="off">
+                    <button id="browse" class="action secondary" type="button">Browse</button>
+                  </div>
                 </div>
-                <span class="status" id="mpv-setup-status" aria-live="polite"></span>
-                <a id="mpv-help-link" class="help" href="#">mpv.io/installation</a>
-              </div>
-            </div>
-            <div class="row">
-              <label for="default-fullscreen">Default fullscreen</label>
-              <div class="control">
-                <select id="default-fullscreen" name="default-fullscreen">
-                  <option value="fullscreen">Start mpv fullscreen</option>
-                  <option value="windowed">Start mpv windowed</option>
-                </select>
-              </div>
-            </div>
-            <div class="row">
-              <label for="mark-watched-next">Mark watched key</label>
-              <div class="control">
-                <input id="mark-watched-next" name="mark-watched-next" type="text" spellcheck="false" autocomplete="off" placeholder="w">
-              </div>
-            </div>
-          </fieldset>
+                <div class="row">
+                  <label for="download-mpv">Get mpv</label>
+                  <div class="control getmpv">
+                    <button id="download-mpv" class="action secondary" type="button" hidden>Download mpv</button>
+                    <div class="cmd-row" id="mpv-cmd-line" hidden>
+                      <code id="mpv-cmd"></code>
+                      <button id="copy-mpv" class="action secondary" type="button">Copy</button>
+                    </div>
+                    <span class="status" id="mpv-setup-status" aria-live="polite"></span>
+                    <a id="mpv-help-link" class="help" href="#">mpv.io/installation</a>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="default-fullscreen">Default fullscreen</label>
+                  <div class="control">
+                    <select id="default-fullscreen" name="default-fullscreen">
+                      <option value="fullscreen">Start mpv fullscreen</option>
+                      <option value="windowed">Start mpv windowed</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="mark-watched-next">Mark watched key</label>
+                  <div class="control">
+                    <input id="mark-watched-next" name="mark-watched-next" type="text" spellcheck="false" autocomplete="off" placeholder="w">
+                  </div>
+                </div>
+              </fieldset>
 
-          <fieldset class="group" id="mpchc-group" hidden>
-            <legend>MPC-HC handoff</legend>
-            <div class="row">
-              <label for="mpchc-path">MPC-HC executable</label>
-              <div class="control path-row">
-                <input id="mpchc-path" name="mpchc-path" type="text" spellcheck="false" autocomplete="off" placeholder="C:\\Program Files\\MPC-HC\\mpc-hc64.exe">
-                <button id="browse-mpchc" class="action secondary" type="button">Browse</button>
-              </div>
+              <fieldset class="group" id="mpchc-group" hidden>
+                <legend>MPC-HC handoff</legend>
+                <div class="row">
+                  <label for="mpchc-path">MPC-HC executable</label>
+                  <div class="control path-row">
+                    <input id="mpchc-path" name="mpchc-path" type="text" spellcheck="false" autocomplete="off" placeholder="C:\\Program Files\\MPC-HC\\mpc-hc64.exe">
+                    <button id="browse-mpchc" class="action secondary" type="button">Browse</button>
+                  </div>
+                </div>
+              </fieldset>
             </div>
-          </fieldset>
 
-          <fieldset class="group">
-            <legend>Segment skipping</legend>
-            <div class="row">
-              <label for="skip-intro">Intros</label>
-              <div class="control">
-                <select id="skip-intro" name="skip-intro">
-                  <option value="disabled">Never skip</option>
-                  <option value="prompt">Ask / seek to skip</option>
-                  <option value="always">Always skip</option>
-                </select>
-              </div>
+            <div class="panel" id="panel-playback" role="tabpanel" aria-labelledby="tab-playback" hidden>
+              <fieldset class="group">
+                <legend>Segment skipping</legend>
+                <div class="row">
+                  <label for="skip-intro">Intros</label>
+                  <div class="control">
+                    <select id="skip-intro" name="skip-intro">
+                      <option value="disabled">Never skip</option>
+                      <option value="prompt">Ask / seek to skip</option>
+                      <option value="always">Always skip</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="skip-credits">Credits</label>
+                  <div class="control">
+                    <select id="skip-credits" name="skip-credits">
+                      <option value="disabled">Never skip</option>
+                      <option value="prompt">Ask / seek to skip</option>
+                      <option value="always">Always skip</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="skip-recap">Recaps</label>
+                  <div class="control">
+                    <select id="skip-recap" name="skip-recap">
+                      <option value="disabled">Never skip</option>
+                      <option value="prompt">Ask / seek to skip</option>
+                      <option value="always">Always skip</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="skip-commercial">Commercials</label>
+                  <div class="control">
+                    <select id="skip-commercial" name="skip-commercial">
+                      <option value="disabled">Never skip</option>
+                      <option value="prompt">Ask / seek to skip</option>
+                      <option value="always">Always skip</option>
+                    </select>
+                  </div>
+                </div>
+              </fieldset>
             </div>
-            <div class="row">
-              <label for="skip-credits">Credits</label>
-              <div class="control">
-                <select id="skip-credits" name="skip-credits">
-                  <option value="disabled">Never skip</option>
-                  <option value="prompt">Ask / seek to skip</option>
-                  <option value="always">Always skip</option>
-                </select>
-              </div>
-            </div>
-            <div class="row">
-              <label for="skip-recap">Recaps</label>
-              <div class="control">
-                <select id="skip-recap" name="skip-recap">
-                  <option value="disabled">Never skip</option>
-                  <option value="prompt">Ask / seek to skip</option>
-                  <option value="always">Always skip</option>
-                </select>
-              </div>
-            </div>
-            <div class="row">
-              <label for="skip-commercial">Commercials</label>
-              <div class="control">
-                <select id="skip-commercial" name="skip-commercial">
-                  <option value="disabled">Never skip</option>
-                  <option value="prompt">Ask / seek to skip</option>
-                  <option value="always">Always skip</option>
-                </select>
-              </div>
-            </div>
-          </fieldset>
 
-          <fieldset class="group">
-            <legend>Desktop shell</legend>
-            <div class="row">
-              <label for="close-behavior">Close button</label>
-              <div class="control">
-                <select id="close-behavior" name="close-behavior">
-                  <option value="exit_app">Exit application</option>
-                  <option value="minimize_window">Minimize window</option>
-                </select>
-              </div>
-            </div>
-            <div class="row">
-              <label for="scrollbars">Scrollbars</label>
-              <div class="control">
-                <select id="scrollbars" name="scrollbars">
-                  <option value="hidden">Hide scrollbars</option>
-                  <option value="visible">Show scrollbars</option>
-                </select>
-              </div>
-            </div>
-          </fieldset>
+            <div class="panel" id="panel-app" role="tabpanel" aria-labelledby="tab-app" hidden>
+              <fieldset class="group">
+                <legend>Desktop shell</legend>
+                <div class="row">
+                  <label for="close-behavior">Close button</label>
+                  <div class="control">
+                    <select id="close-behavior" name="close-behavior">
+                      <option value="exit_app">Exit application</option>
+                      <option value="minimize_window">Minimize window</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="row">
+                  <label for="scrollbars">Scrollbars</label>
+                  <div class="control">
+                    <select id="scrollbars" name="scrollbars">
+                      <option value="hidden">Hide scrollbars</option>
+                      <option value="visible">Show scrollbars</option>
+                    </select>
+                  </div>
+                </div>
+              </fieldset>
 
-          <fieldset class="group">
-            <legend>Diagnostics</legend>
-            <div class="row">
-              <label for="log-level">Log level</label>
-              <div class="control">
-                <input id="log-level" name="log-level" type="text" spellcheck="false" autocomplete="off" list="log-level-options">
-                <datalist id="log-level-options">
-                  <option value="error"></option>
-                  <option value="warn"></option>
-                  <option value="info"></option>
-                  <option value="debug"></option>
-                  <option value="trace"></option>
-                </datalist>
-              </div>
+              <fieldset class="group">
+                <legend>Diagnostics</legend>
+                <div class="row">
+                  <label for="log-level">Log level</label>
+                  <div class="control">
+                    <input id="log-level" name="log-level" type="text" spellcheck="false" autocomplete="off" list="log-level-options">
+                    <datalist id="log-level-options">
+                      <option value="error"></option>
+                      <option value="warn"></option>
+                      <option value="info"></option>
+                      <option value="debug"></option>
+                      <option value="trace"></option>
+                    </datalist>
+                  </div>
+                </div>
+              </fieldset>
             </div>
-          </fieldset>
+          </div>
+          <div class="fade fade-bottom" aria-hidden="true">
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </div>
         </div>
         <div class="actions">
           <span class="status" id="status" aria-live="polite"></span>
@@ -522,6 +612,15 @@
   const cancel = root.getElementById('cancel');
   const closeButton = root.querySelector('.close');
   const bg = root.querySelector('.bg');
+  const tabButtons = root.querySelectorAll('.tab');
+  const scrollArea = root.querySelector('.scroll');
+  const body = root.querySelector('.body');
+  const panels = {
+    player: root.getElementById('panel-player'),
+    playback: root.getElementById('panel-playback'),
+    app: root.getElementById('panel-app')
+  };
+  const tabOrder = ['player', 'playback', 'app'];
 
   mpvPath.value = settings.mpvPath || '';
   logLevel.value = settings.logLevel || 'debug';
@@ -535,12 +634,35 @@
   markWatchedNext.value = settings.markWatchedNext || '';
 
   mpchcPath.value = settings.mpchcPath || '';
+
+  function updateScrollAffordance() {
+    const top = body.scrollTop > 1;
+    const bottom = body.scrollTop + body.clientHeight < body.scrollHeight - 1;
+    scrollArea.classList.toggle('show-top', top);
+    scrollArea.classList.toggle('show-bottom', bottom);
+  }
+
+  let currentTab = 'player';
+  function selectTab(name) {
+    if (!panels[name]) return;
+    currentTab = name;
+    tabButtons.forEach(tab => {
+      const on = tab.dataset.tab === name;
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.tabIndex = on ? 0 : -1;
+    });
+    tabOrder.forEach(key => { panels[key].hidden = key !== name; });
+    body.scrollTop = 0;
+    updateScrollAffordance();
+  }
+
   let currentBackend = settings.mpchcSupported && settings.playerBackend === 'mpchc' ? 'mpchc' : 'mpv';
   function selectBackend(backend) {
     currentBackend = backend;
     segButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.backend === backend)));
     mpvGroup.hidden = backend !== 'mpv';
     mpchcGroup.hidden = backend !== 'mpchc';
+    updateScrollAffordance();
   }
   segButtons.forEach(button => button.addEventListener('click', () => selectBackend(button.dataset.backend)));
   if (settings.mpchcSupported) {
@@ -548,11 +670,38 @@
   }
   selectBackend(currentBackend);
 
+  tabButtons.forEach(tab => {
+    tab.addEventListener('click', () => selectTab(tab.dataset.tab));
+    tab.addEventListener('keydown', event => {
+      const index = tabOrder.indexOf(tab.dataset.tab);
+      let next = null;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        next = tabOrder[(index + 1) % tabOrder.length];
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        next = tabOrder[(index - 1 + tabOrder.length) % tabOrder.length];
+      } else if (event.key === 'Home') {
+        next = tabOrder[0];
+      } else if (event.key === 'End') {
+        next = tabOrder[tabOrder.length - 1];
+      }
+      if (next) {
+        event.preventDefault();
+        selectTab(next);
+        root.getElementById('tab-' + next).focus();
+      }
+    });
+  });
+
+  body.addEventListener('scroll', updateScrollAffordance, { passive: true });
+  window.addEventListener('resize', updateScrollAffordance);
+  selectTab('player');
+
   function focusableControls() {
-    return Array.from(root.querySelectorAll('button, input, select')).filter(element => !element.disabled && element.offsetParent !== null);
+    return Array.from(root.querySelectorAll('button, input, select')).filter(element => !element.disabled && element.offsetParent !== null && element.tabIndex !== -1);
   }
   function close() {
     document.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('resize', updateScrollAffordance);
     delete window.__mediaFlickDesktopSetBusy;
     delete window.__mediaFlickDesktopSetMpvPath;
     delete window.__mediaFlickDesktopSetMpchcPath;
@@ -599,11 +748,13 @@
   window.__mediaFlickDesktopSetMpvPath = path => {
     mpvPath.value = path || '';
     setBusy(false);
+    selectTab('player');
     mpvPath.focus();
   };
   window.__mediaFlickDesktopSetMpchcPath = path => {
     mpchcPath.value = path || '';
     setBusy(false);
+    selectTab('player');
     mpchcPath.focus();
   };
   window.__mediaFlickDesktopClientSettingsSaved = () => {
@@ -712,11 +863,13 @@
     event.preventDefault();
     const requireMpchc = settings.mpchcSupported && currentBackend === 'mpchc';
     if (requireMpchc && !mpchcPath.value.trim()) {
+      selectTab('player');
       setStatus('Choose an MPC-HC executable before saving.', 'error');
       mpchcPath.focus();
       return;
     }
     if (!requireMpchc && !mpvPath.value.trim()) {
+      selectTab('player');
       setStatus('Choose an mpv executable before saving.', 'error');
       mpvPath.focus();
       return;
@@ -742,7 +895,10 @@
   cancel.addEventListener('click', close);
   closeButton.addEventListener('click', close);
   bg.addEventListener('mousedown', event => { event.preventDefault(); close(); });
-  host.addEventListener('mediaflick-desktop-settings-focus', () => mpvPath.focus());
+  host.addEventListener('mediaflick-desktop-settings-focus', () => {
+    selectTab('player');
+    (currentBackend === 'mpchc' ? mpchcPath : mpvPath).focus();
+  });
   document.addEventListener('keydown', onKeyDown, true);
-  mpvPath.focus();
+  (currentBackend === 'mpchc' ? mpchcPath : mpvPath).focus();
 })();

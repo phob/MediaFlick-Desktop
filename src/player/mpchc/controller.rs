@@ -28,6 +28,8 @@ const SEGMENT_SKIP_OSD_DEBOUNCE: Duration = Duration::from_secs(3);
 const SEGMENT_AUTO_SKIP_DELAY: Duration = Duration::from_secs(3);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL: Duration = Duration::from_secs(1);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS: i32 = 1200;
+const VOLUME_STEP_PERCENT: f64 = 5.0;
+const SEEKING_OSD_DURATION_MS: i32 = 60_000;
 
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
 
@@ -141,6 +143,12 @@ impl MpcHcController {
             pending_auto_skip: None,
             last_skip_osd_at: None,
             recent_loads: VecDeque::new(),
+            fullscreen_pref: MpvFullscreenBehavior::default(),
+            fullscreen_state: false,
+            target_volume: 100.0,
+            believed_output: 100.0,
+            muted: false,
+            seeking_osd: false,
         };
         thread::spawn(move || state.run());
         Self {
@@ -217,6 +225,12 @@ struct State {
     pending_auto_skip: Option<PendingAutoSkip>,
     last_skip_osd_at: Option<Instant>,
     recent_loads: VecDeque<RecentLoad>,
+    fullscreen_pref: MpvFullscreenBehavior,
+    fullscreen_state: bool,
+    target_volume: f64,
+    believed_output: f64,
+    muted: bool,
+    seeking_osd: bool,
 }
 
 impl State {
@@ -317,6 +331,7 @@ impl State {
                 tracing::info!(target: "mpchc", path = %path, "launched MPC-HC slave process");
                 crate::windows::confine_to_app_lifetime(&child);
                 self.child = Some(child);
+                self.fullscreen_state = fullscreen == MpvFullscreenBehavior::Fullscreen;
                 true
             }
             Err(error) => {
@@ -332,6 +347,7 @@ impl State {
             tracing::debug!(target: "mpchc", dedupe_key = %key, "ignored duplicate playback load");
             return;
         }
+        self.fullscreen_pref = fullscreen;
         if !self.ensure_process(&path, fullscreen) {
             tracing::warn!(target: "mpchc", "cannot load playback because MPC-HC is unavailable");
             return;
@@ -344,7 +360,8 @@ impl State {
         let reporter = PlaybackReporter::from_launch(&launch);
         self.resume_seconds = launch.start_seconds().filter(|seconds| *seconds > 0.0);
         self.last_state = MpvPlaybackState {
-            volume: Some(100),
+            volume: Some(self.target_volume.round() as i64),
+            mute: Some(self.muted),
             position_ticks: self
                 .resume_seconds
                 .and_then(seconds_to_ticks)
@@ -355,6 +372,7 @@ impl State {
         self.current_skip_segment = None;
         self.pending_auto_skip = None;
         self.last_skip_osd_at = None;
+        self.seeking_osd = false;
         self.identity = Some(identity);
         self.playback_active = true;
 
@@ -396,14 +414,16 @@ impl State {
             transport.set_target(hwnd);
         }
         self.connected = true;
-        tracing::info!(target: "mpchc", "MPC-HC connected");
+        tracing::info!(target: "mpchc", target_hwnd = format!("{hwnd:#x}"), "MPC-HC connected");
         if self.awaiting_open && self.pending.is_some() {
             self.send_open();
         }
     }
 
     fn on_loaded(&mut self) {
+        let mut selection = None;
         if let Some(pending) = self.pending.take() {
+            selection = Some(track_selection(&pending.launch));
             if let Some(reporter) = &pending.reporter {
                 reporter.report_start(&self.last_state);
             }
@@ -412,12 +432,37 @@ impl State {
                 last_progress: Instant::now(),
             });
         }
-        if let Some(seconds) = self.resume_seconds.take() {
-            self.send_command(protocol::CMD_SETPOSITION, &format!("{seconds:.3}"));
-        }
         self.send_command_empty(protocol::CMD_GETNOWPLAYING);
+        if let Some(selection) = selection {
+            self.apply_track_selection(selection);
+        }
+        self.apply_default_fullscreen();
+        if let Some(target) = self.resume_seconds.take().filter(|seconds| *seconds > 0.0) {
+            self.send_seek(target);
+        }
         self.last_position_poll = Instant::now();
         self.publish_snapshot();
+    }
+
+    fn apply_track_selection(&mut self, selection: TrackSelection) {
+        if let Some(index) = selection.audio_index {
+            self.send_command(protocol::CMD_SETAUDIOTRACK, &index.to_string());
+        }
+        if let Some(index) = selection.subtitle_index {
+            self.send_command(protocol::CMD_SETSUBTITLETRACK, &index.to_string());
+        }
+    }
+
+    fn apply_default_fullscreen(&mut self) {
+        if !self.connected {
+            return;
+        }
+        let want = self.fullscreen_pref == MpvFullscreenBehavior::Fullscreen;
+        if self.fullscreen_state == want {
+            return;
+        }
+        self.send_command_empty(protocol::CMD_TOGGLEFULLSCREEN);
+        self.fullscreen_state = want;
     }
 
     fn control(&mut self, command: MpvControlCommand) {
@@ -430,35 +475,80 @@ impl State {
             }
             MpvControlCommand::SeekMilliseconds(position_ms) => {
                 if !self.handle_prompt_skip(position_ms) {
-                    self.send_command(
-                        protocol::CMD_SETPOSITION,
-                        &format!("{:.3}", position_ms / 1000.0),
-                    );
+                    self.send_seek(position_ms / 1000.0);
                 }
             }
             MpvControlCommand::SetPlaybackRate(rate) => {
                 self.send_command(protocol::CMD_SETSPEED, &format!("{rate}"));
             }
             MpvControlCommand::SetAudioTrack(index) => {
-                self.send_command(protocol::CMD_SETAUDIOTRACK, &index.to_string());
+                if let Some(track) = mpchc_audio_index(index) {
+                    self.send_command(protocol::CMD_SETAUDIOTRACK, &track.to_string());
+                }
             }
             MpvControlCommand::SetSubtitleTrack(index) => {
                 self.send_command(
                     protocol::CMD_SETSUBTITLETRACK,
-                    &index.unwrap_or(-1).to_string(),
+                    &mpchc_subtitle_index(index).to_string(),
                 );
             }
             MpvControlCommand::AddSubtitle(_) => {
-                tracing::debug!(target: "mpchc", "external subtitle URLs are not supported on MPC-HC");
+                tracing::debug!(target: "mpchc", "external subtitles are delivered burned-in, not via runtime sub-add");
             }
-            MpvControlCommand::SetVolume(_) | MpvControlCommand::SetMute(_) => {
-                tracing::debug!(target: "mpchc", "absolute volume/mute is not supported on MPC-HC");
-            }
+            MpvControlCommand::SetVolume(volume) => self.set_volume(volume),
+            MpvControlCommand::SetMute(mute) => self.set_mute(mute),
             MpvControlCommand::Stop => {
                 self.finish_active("stop", false);
                 self.send_command_empty(protocol::CMD_STOP);
             }
         }
+    }
+
+    fn set_volume(&mut self, volume: f64) {
+        if !volume.is_finite() {
+            return;
+        }
+        let target = volume.clamp(0.0, 100.0);
+        self.target_volume = target;
+        if !self.muted {
+            self.step_output_to(target);
+        }
+        self.last_state.volume = Some(target.round() as i64);
+        self.publish_snapshot();
+    }
+
+    fn set_mute(&mut self, mute: bool) {
+        if self.muted != mute {
+            self.muted = mute;
+            let target = if mute { 0.0 } else { self.target_volume };
+            self.step_output_to(target);
+        }
+        self.last_state.mute = Some(mute);
+        self.publish_snapshot();
+    }
+
+    fn step_output_to(&mut self, target: f64) {
+        let target = target.clamp(0.0, 100.0);
+        let delta = target - self.believed_output;
+        let steps = volume_step_count(delta);
+        if steps == 0 {
+            return;
+        }
+        let (command, applied) = if delta > 0.0 {
+            (
+                protocol::CMD_INCREASEVOLUME,
+                steps as f64 * VOLUME_STEP_PERCENT,
+            )
+        } else {
+            (
+                protocol::CMD_DECREASEVOLUME,
+                -(steps as f64) * VOLUME_STEP_PERCENT,
+            )
+        };
+        for _ in 0..steps {
+            self.send_command_empty(command);
+        }
+        self.believed_output = (self.believed_output + applied).clamp(0.0, 100.0);
     }
 
     fn update_context(&mut self, context: PlaybackContext) {
@@ -586,6 +676,9 @@ impl State {
     }
 
     fn handle_position(&mut self, seconds: f64, user_seek: bool) {
+        if user_seek && self.seeking_osd {
+            self.clear_seeking_osd();
+        }
         let Some(ticks) = seconds_to_ticks(seconds) else {
             return;
         };
@@ -596,6 +689,19 @@ impl State {
         }
         self.update_skip_state(ticks);
         self.publish_snapshot();
+    }
+
+    fn send_seek(&mut self, seconds: f64) {
+        self.show_osd("Seeking...", SEEKING_OSD_DURATION_MS);
+        self.seeking_osd = true;
+        self.send_command(protocol::CMD_SETPOSITION, &format!("{seconds:.3}"));
+    }
+
+    fn clear_seeking_osd(&mut self) {
+        self.seeking_osd = false;
+        if let Some(transport) = &self.transport {
+            transport.send_osd(protocol::OSD_TOPLEFT, 1, "");
+        }
     }
 
     fn maybe_poll_position(&mut self) {
@@ -788,15 +894,20 @@ impl State {
         }
         let end_ticks = segment.end_ticks;
         let segment_type = segment.segment_type;
-        self.current_skip_segment = None;
-        self.pending_auto_skip = None;
-        self.last_skip_osd_at = Some(Instant::now());
         if end_ticks <= self.last_state.position_ticks {
+            self.current_skip_segment = None;
+            self.pending_auto_skip = None;
             self.mark_triggered(index);
             return false;
         }
         let seconds = end_ticks as f64 / TICKS_PER_SECOND;
-        self.send_command(protocol::CMD_SETPOSITION, &format!("{seconds:.3}"));
+        if !self.send_command(protocol::CMD_SETPOSITION, &format!("{seconds:.3}")) {
+            tracing::warn!(target: "mpchc", reason, end_ticks, "skip seek failed to send; leaving segment for retry");
+            return false;
+        }
+        self.current_skip_segment = None;
+        self.pending_auto_skip = None;
+        self.last_skip_osd_at = Some(Instant::now());
         self.mark_triggered(index);
         tracing::info!(target: "mpchc", reason, end_ticks, "skipped media segment");
         self.show_osd(segment_type.skipped_text(), SEGMENT_SKIP_OSD_DURATION_MS);
@@ -822,6 +933,7 @@ impl State {
         self.current_skip_segment = None;
         self.pending_auto_skip = None;
         self.resume_seconds = None;
+        self.seeking_osd = false;
         if !had_session {
             return;
         }
@@ -835,7 +947,8 @@ impl State {
         }
         self.identity = None;
         self.last_state = MpvPlaybackState {
-            volume: Some(100),
+            volume: Some(self.target_volume.round() as i64),
+            mute: Some(self.muted),
             ..MpvPlaybackState::default()
         };
     }
@@ -853,18 +966,14 @@ impl State {
         }
     }
 
-    fn send_command(&mut self, command: u32, payload: &str) {
-        let sent = self
-            .transport
+    fn send_command(&mut self, command: u32, payload: &str) -> bool {
+        self.transport
             .as_ref()
-            .is_some_and(|transport| transport.send_command(command, payload));
-        if !sent {
-            tracing::warn!(target: "mpchc", command = format!("{command:#x}"), "failed to send MPC-HC command");
-        }
+            .is_some_and(|transport| transport.send_command(command, payload))
     }
 
-    fn send_command_empty(&mut self, command: u32) {
-        self.send_command(command, "");
+    fn send_command_empty(&mut self, command: u32) -> bool {
+        self.send_command(command, "")
     }
 
     fn build_snapshot(&self, active: bool, stop_reason: Option<&'static str>) -> MpvPlayerSnapshot {
@@ -897,7 +1006,7 @@ impl State {
     fn shutdown(&mut self) {
         self.finish_active("quit", false);
         if let Some(transport) = &self.transport {
-            transport.send_command(protocol::CMD_CLOSEAPP, "");
+            transport.send_now(protocol::CMD_CLOSEAPP, "");
         }
         if let Some(mut child) = self.child.take()
             && matches!(child.try_wait(), Ok(None))
@@ -913,7 +1022,7 @@ impl State {
 }
 
 fn mpchc_media_url(launch: &MpvLaunch) -> String {
-    let url = launch.media_url.clone();
+    let url = apply_subtitle_burn_in(launch.media_url.clone(), launch);
     if url_has_token(&url) {
         return url;
     }
@@ -922,6 +1031,103 @@ fn mpchc_media_url(launch: &MpvLaunch) -> String {
     };
     let separator = if url.contains('?') { '&' } else { '?' };
     format!("{url}{separator}api_key={token}")
+}
+
+fn volume_step_count(delta: f64) -> i64 {
+    (delta.abs() / VOLUME_STEP_PERCENT).round() as i64
+}
+
+struct TrackSelection {
+    audio_index: Option<i64>,
+    subtitle_index: Option<i64>,
+}
+
+fn track_selection(launch: &MpvLaunch) -> TrackSelection {
+    let audio_index = launch.audio_mpv_id.and_then(mpchc_audio_index);
+    let has_external_subtitle = launch
+        .subtitle_url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let subtitle_index = if has_external_subtitle {
+        Some(-1)
+    } else {
+        launch
+            .subtitle_mpv_id
+            .map(|id| mpchc_subtitle_index(Some(id)))
+    };
+    TrackSelection {
+        audio_index,
+        subtitle_index,
+    }
+}
+
+fn mpchc_audio_index(mpv_id: i64) -> Option<i64> {
+    (mpv_id > 0).then_some(mpv_id - 1)
+}
+
+fn mpchc_subtitle_index(mpv_id: Option<i64>) -> i64 {
+    match mpv_id {
+        Some(id) if id > 0 => id - 1,
+        _ => -1,
+    }
+}
+
+fn apply_subtitle_burn_in(url: String, launch: &MpvLaunch) -> String {
+    let Some(index) = launch.subtitle_stream_index.filter(|index| *index >= 0) else {
+        return url;
+    };
+    let is_external = launch
+        .subtitle_url
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if !is_external || query_has_key(&url, "subtitlestreamindex") {
+        return url;
+    }
+    let url = remove_query_keys(&url, &["static"]);
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}SubtitleStreamIndex={index}&SubtitleMethod=Encode")
+}
+
+fn query_has_key(url: &str, key: &str) -> bool {
+    let Some((_, rest)) = url.split_once('?') else {
+        return false;
+    };
+    let query = rest.split('#').next().unwrap_or(rest);
+    query.split('&').any(|pair| {
+        pair.split('=')
+            .next()
+            .unwrap_or_default()
+            .eq_ignore_ascii_case(key)
+    })
+}
+
+fn remove_query_keys(url: &str, keys: &[&str]) -> String {
+    let Some((before, rest)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let (query, fragment) = rest
+        .split_once('#')
+        .map(|(query, fragment)| (query, Some(fragment)))
+        .unwrap_or((rest, None));
+    let kept = query
+        .split('&')
+        .filter(|pair| {
+            let key = pair.split('=').next().unwrap_or_default();
+            !keys.iter().any(|removed| key.eq_ignore_ascii_case(removed))
+        })
+        .collect::<Vec<_>>();
+    let mut out = String::from(before);
+    if !kept.is_empty() {
+        out.push('?');
+        out.push_str(&kept.join("&"));
+    }
+    if let Some(fragment) = fragment {
+        out.push('#');
+        out.push_str(fragment);
+    }
+    out
 }
 
 fn url_has_token(url: &str) -> bool {
@@ -958,4 +1164,140 @@ fn token_from_headers(launch: &MpvLaunch) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mpv::HttpHeader;
+
+    fn external_subtitle_launch() -> MpvLaunch {
+        MpvLaunch {
+            media_url: "https://host/Videos/abc/stream.mkv?static=true&MediaSourceId=src"
+                .to_string(),
+            subtitle_stream_index: Some(3),
+            subtitle_url: Some("https://host/Videos/abc/sub.srt".to_string()),
+            ..MpvLaunch::default()
+        }
+    }
+
+    #[test]
+    fn burn_in_drops_static_and_requests_encoded_subtitle() {
+        let url = apply_subtitle_burn_in(
+            external_subtitle_launch().media_url.clone(),
+            &external_subtitle_launch(),
+        );
+        assert!(!query_has_key(&url, "static"));
+        assert!(url.contains("SubtitleStreamIndex=3"));
+        assert!(url.contains("SubtitleMethod=Encode"));
+        assert!(url.contains("MediaSourceId=src"));
+    }
+
+    #[test]
+    fn burn_in_skipped_for_embedded_subtitle() {
+        let launch = MpvLaunch {
+            subtitle_url: None,
+            ..external_subtitle_launch()
+        };
+        let original = launch.media_url.clone();
+        assert_eq!(apply_subtitle_burn_in(original.clone(), &launch), original);
+    }
+
+    #[test]
+    fn burn_in_skipped_without_subtitle_index() {
+        let launch = MpvLaunch {
+            subtitle_stream_index: None,
+            ..external_subtitle_launch()
+        };
+        let original = launch.media_url.clone();
+        assert_eq!(apply_subtitle_burn_in(original.clone(), &launch), original);
+    }
+
+    #[test]
+    fn burn_in_is_idempotent() {
+        let launch = external_subtitle_launch();
+        let once = apply_subtitle_burn_in(launch.media_url.clone(), &launch);
+        let twice = apply_subtitle_burn_in(once.clone(), &launch);
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn media_url_appends_token_after_burn_in() {
+        let launch = MpvLaunch {
+            headers: vec![HttpHeader {
+                name: "X-Emby-Token".to_string(),
+                value: "secret".to_string(),
+            }],
+            ..external_subtitle_launch()
+        };
+        let url = mpchc_media_url(&launch);
+        assert!(url.contains("SubtitleMethod=Encode"));
+        assert!(url.contains("api_key=secret"));
+    }
+
+    #[test]
+    fn remove_query_keys_preserves_fragment_and_other_pairs() {
+        assert_eq!(
+            remove_query_keys("https://host/x?a=1&static=true&b=2#frag", &["static"]),
+            "https://host/x?a=1&b=2#frag"
+        );
+        assert_eq!(
+            remove_query_keys("https://host/x?static=true", &["static"]),
+            "https://host/x"
+        );
+    }
+
+    #[test]
+    fn volume_step_count_rounds_to_nearest_step() {
+        assert_eq!(volume_step_count(0.0), 0);
+        assert_eq!(volume_step_count(-25.0), 5);
+        assert_eq!(volume_step_count(23.0), 5);
+        assert_eq!(volume_step_count(2.0), 0);
+    }
+
+    #[test]
+    fn audio_index_is_zero_based_and_drops_non_tracks() {
+        assert_eq!(mpchc_audio_index(1), Some(0));
+        assert_eq!(mpchc_audio_index(3), Some(2));
+        assert_eq!(mpchc_audio_index(0), None);
+        assert_eq!(mpchc_audio_index(-1), None);
+    }
+
+    #[test]
+    fn subtitle_index_is_zero_based_with_off_sentinel() {
+        assert_eq!(mpchc_subtitle_index(Some(1)), 0);
+        assert_eq!(mpchc_subtitle_index(Some(5)), 4);
+        assert_eq!(mpchc_subtitle_index(Some(-1)), -1);
+        assert_eq!(mpchc_subtitle_index(Some(0)), -1);
+        assert_eq!(mpchc_subtitle_index(None), -1);
+    }
+
+    #[test]
+    fn track_selection_converts_embedded_tracks() {
+        let launch = MpvLaunch {
+            audio_mpv_id: Some(2),
+            subtitle_mpv_id: Some(5),
+            ..MpvLaunch::default()
+        };
+        let selection = track_selection(&launch);
+        assert_eq!(selection.audio_index, Some(1));
+        assert_eq!(selection.subtitle_index, Some(4));
+    }
+
+    #[test]
+    fn track_selection_disables_embedded_subtitle_for_external() {
+        let launch = MpvLaunch {
+            subtitle_mpv_id: Some(3),
+            subtitle_url: Some("https://host/sub.srt".to_string()),
+            ..MpvLaunch::default()
+        };
+        assert_eq!(track_selection(&launch).subtitle_index, Some(-1));
+    }
+
+    #[test]
+    fn track_selection_leaves_unset_tracks_alone() {
+        let selection = track_selection(&MpvLaunch::default());
+        assert_eq!(selection.audio_index, None);
+        assert_eq!(selection.subtitle_index, None);
+    }
 }
