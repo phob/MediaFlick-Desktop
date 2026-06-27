@@ -6,7 +6,16 @@
 
 ### Added
 
+- Added infinite scroll to the Jellyfin library card/poster grid: scrolling toward the bottom now lazy-loads and appends the next page of items in place and hides the pagination controls, instead of requiring the Next/Previous page buttons. It reuses Jellyfin Web's own paged fetch and card rendering (so cards, images, and auth match exactly) by intercepting the grid container's content updates and appending rather than replacing, so it works across the different library controllers (Movies, TV Shows, and other paged grids). It applies only to the card grid layout (the list/table view keeps its native pager), only takes over once the full pager is present, and degrades to normal pagination if the expected Jellyfin Web DOM is not found.
+
+- Added a `CI` GitHub Actions workflow that runs on every pull request and on pushes to `main`, checking formatting (`cargo fmt --check`) on Linux and running clippy (`-D warnings`), the test suite, and a binary build on both Linux and Windows so dependency and code changes are validated on every PR.
+- Enabled Renovate auto-merge for non-major dependency updates and lock-file maintenance: once the `CI` checks pass, Renovate merges these PRs itself (`platformAutomerge` disabled), while major updates still open a PR for manual review.
+
 ### Changed
+
+- Demoted the high-frequency Jellyfin playstate log lines (state send, state sent, and progress-report-due) from `debug` to `trace` so the default `debug` log level is no longer dominated by them.
+- Expanded the `sending mpv command` log line so `set_property` commands now report the property and its value inline (for example `set_property pause=true`), summarizing large array/object values like `chapter-list` as an item/field count instead of dumping them.
+- Changed the Client Settings "Log level" control from a free-text input with suggestions to a proper dropdown listing Error, Warn, Info, Debug, and Trace.
 
 ### Fixed
 

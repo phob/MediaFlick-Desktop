@@ -2064,6 +2064,189 @@
     else document.addEventListener('DOMContentLoaded', render, { once: true });
   }
 
+  function installLibraryInfiniteScroll() {
+    const SCROLL_THRESHOLD_PX = 600;
+    const RESET_TIMEOUT_MS = 8000;
+    const MAX_AUTO_FILL = 2;
+    const STYLE_ID = 'mediaflick-desktop-infinite-scroll';
+    const PAGE_CLASS = 'mediaFlickInfiniteScroll';
+    const INNER_HTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    let activeContainer = null;
+    let loading = false;
+    let appendMode = false;
+    let nativeScrollTo = null;
+    let resetTimer = null;
+    let autoFillContainer = null;
+    let autoFillCount = 0;
+    let taggedPage = null;
+
+    function ensureStyle() {
+      if (document.getElementById(STYLE_ID)) return;
+      const style = document.createElement('style');
+      style.id = STYLE_ID;
+      style.textContent = '.' + PAGE_CLASS + ' .paging { display: none !important; }';
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    function libraryPageOf(container) {
+      return container && container.closest ? container.closest('.libraryPage') : null;
+    }
+
+    function isGridContainer(container) {
+      return !!container && container.classList.contains('vertical-wrap');
+    }
+
+    function scopeOf(container) {
+      if (!container) return null;
+      return (container.closest && container.closest('.tabContent')) || libraryPageOf(container);
+    }
+
+    function hasPager(scope) {
+      return !!scope && !!scope.querySelector('.btnNextPage');
+    }
+
+    function hasMore(scope) {
+      if (!scope) return false;
+      const next = scope.querySelector('.btnNextPage');
+      return !!next && !next.disabled;
+    }
+
+    function findActiveGrid() {
+      const candidates = document.querySelectorAll('.libraryPage:not(.hide) .itemsContainer.vertical-wrap');
+      for (const c of candidates) {
+        if (c.offsetParent !== null) return c;
+      }
+      return null;
+    }
+
+    function restoreScrollTo() {
+      if (nativeScrollTo) {
+        window.scrollTo = nativeScrollTo;
+        nativeScrollTo = null;
+      }
+    }
+
+    function finishLoad() {
+      if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+      }
+      restoreScrollTo();
+      appendMode = false;
+      loading = false;
+    }
+
+    function enhance(container) {
+      if (container.__mediaFlickInfinite) return true;
+      if (!INNER_HTML_DESCRIPTOR || !INNER_HTML_DESCRIPTOR.get || !INNER_HTML_DESCRIPTOR.set) {
+        return false;
+      }
+      container.__mediaFlickInfinite = true;
+      Object.defineProperty(container, 'innerHTML', {
+        configurable: true,
+        get() {
+          return INNER_HTML_DESCRIPTOR.get.call(this);
+        },
+        set(html) {
+          if (!appendMode) {
+            INNER_HTML_DESCRIPTOR.set.call(this, html);
+            return;
+          }
+          this.insertAdjacentHTML('beforeend', html);
+          setTimeout(finishLoad, 0);
+        }
+      });
+      return true;
+    }
+
+    function loadMore() {
+      if (loading || !activeContainer) return;
+      const scope = scopeOf(activeContainer);
+      if (!isGridContainer(activeContainer) || !hasMore(scope)) return;
+      const nextBtn = scope.querySelector('.btnNextPage:not([disabled])');
+      if (!nextBtn) return;
+      loading = true;
+      appendMode = true;
+      nativeScrollTo = window.scrollTo;
+      window.scrollTo = function () {};
+      resetTimer = setTimeout(finishLoad, RESET_TIMEOUT_MS);
+      try {
+        nextBtn.click();
+      } catch (_) {
+        finishLoad();
+      }
+    }
+
+    function nearBottom() {
+      const doc = document.documentElement;
+      return window.scrollY + window.innerHeight >= doc.scrollHeight - SCROLL_THRESHOLD_PX;
+    }
+
+    function onScroll() {
+      if (!activeContainer || loading) return;
+      if (nearBottom()) loadMore();
+    }
+
+    function maybeAutoFill(scope) {
+      if (autoFillContainer !== activeContainer) {
+        autoFillContainer = activeContainer;
+        autoFillCount = 0;
+      }
+      const notScrollable = document.documentElement.scrollHeight <= window.innerHeight;
+      if (notScrollable && hasMore(scope) && autoFillCount < MAX_AUTO_FILL) {
+        autoFillCount += 1;
+        loadMore();
+      }
+    }
+
+    function syncActiveContainer() {
+      const container = findActiveGrid();
+      const scope = scopeOf(container);
+      const page = container && hasPager(scope) && enhance(container) ? libraryPageOf(container) : null;
+      if (page) {
+        activeContainer = container;
+        ensureStyle();
+        if (taggedPage && taggedPage !== page) {
+          taggedPage.classList.remove(PAGE_CLASS);
+        }
+        page.classList.add(PAGE_CLASS);
+        taggedPage = page;
+        if (!loading) maybeAutoFill(scope);
+      } else {
+        if (taggedPage) {
+          taggedPage.classList.remove(PAGE_CLASS);
+          taggedPage = null;
+        }
+        activeContainer = null;
+      }
+    }
+
+    let scanQueued = false;
+    function queueScan() {
+      if (scanQueued) return;
+      scanQueued = true;
+      setTimeout(() => {
+        scanQueued = false;
+        try {
+          syncActiveContainer();
+        } catch (_) {}
+      }, 0);
+    }
+
+    function start() {
+      const observer = new MutationObserver(queueScan);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll, { passive: true });
+      queueScan();
+    }
+
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+  }
+
+  installLibraryInfiniteScroll();
+
   const integrationProblems = bridgeIntegrationProblems();
   if (integrationProblems.length) {
     console.error('[mediaflick-desktop] Jellyfin Web integration check failed; the bridge may not work with this Jellyfin Web version:', integrationProblems);

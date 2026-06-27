@@ -17,6 +17,7 @@ While mpv is playing, MediaFlick Desktop still reports playstate back to your Je
 ## Features
 
 - Jellyfin Web in a native desktop CEF window
+- Infinite scroll for the library card/poster grid: the next page lazy-loads and appends as you scroll instead of using pagination controls
 - Direct-play streams handed to an external `mpv` process, so your full mpv setup applies (`mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, input bindings)
 - Playstate reported back to Jellyfin: playback start, progress, watched state, and resume positions
 - Jellyfin media-segment skipping for intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings

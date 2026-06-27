@@ -556,14 +556,13 @@
                 <div class="row">
                   <label for="log-level">Log level</label>
                   <div class="control">
-                    <input id="log-level" name="log-level" type="text" spellcheck="false" autocomplete="off" list="log-level-options">
-                    <datalist id="log-level-options">
-                      <option value="error"></option>
-                      <option value="warn"></option>
-                      <option value="info"></option>
-                      <option value="debug"></option>
-                      <option value="trace"></option>
-                    </datalist>
+                    <select id="log-level" name="log-level">
+                      <option value="error">Error</option>
+                      <option value="warn">Warn</option>
+                      <option value="info">Info</option>
+                      <option value="debug">Debug</option>
+                      <option value="trace">Trace</option>
+                    </select>
                   </div>
                 </div>
               </fieldset>
