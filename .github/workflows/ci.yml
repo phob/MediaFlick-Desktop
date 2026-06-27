@@ -39,14 +39,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            cef_path: ${{ github.workspace }}/.cache/cef
-          - os: windows-latest
-            cef_path: ${{ github.workspace }}\.cache\cef
+        os: [ubuntu-24.04, windows-latest]
 
     env:
-      CEF_PATH: ${{ matrix.cef_path }}
+      CEF_PATH: ${{ github.workspace }}/.cache/cef
 
     steps:
       - name: Check out repository
