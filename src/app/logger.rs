@@ -232,7 +232,26 @@ pub fn mpv_command_summary(command: &Value) -> String {
             let mode = args.get(2).and_then(Value::as_str).unwrap_or("unknown");
             format!("loadfile mode={mode} url={url}")
         }
+        "set_property" => {
+            let property = args.get(1).and_then(Value::as_str).unwrap_or("unknown");
+            let value = args
+                .get(2)
+                .map(summarize_value)
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("set_property {property}={value}")
+        }
         other => other.to_string(),
+    }
+}
+
+fn summarize_value(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Array(items) => format!("[{} items]", items.len()),
+        Value::Object(map) => format!("{{{} fields}}", map.len()),
     }
 }
 
@@ -549,5 +568,25 @@ mod tests {
         assert!(command_summary.contains("loadfile"));
         assert!(command_summary.contains("api_key=REDACTED"));
         assert!(!command_summary.contains("secret"));
+    }
+
+    #[test]
+    fn mpv_command_summary_reports_set_property_value() {
+        let scalar = json!({ "command": ["set_property", "pause", true] });
+        assert_eq!(mpv_command_summary(&scalar), "set_property pause=true");
+
+        let volume = json!({ "command": ["set_property", "volume", 80.0] });
+        assert_eq!(mpv_command_summary(&volume), "set_property volume=80.0");
+
+        let sid = json!({ "command": ["set_property", "sid", "no"] });
+        assert_eq!(mpv_command_summary(&sid), "set_property sid=no");
+
+        let chapters = json!({
+            "command": ["set_property", "chapter-list", [{ "title": "a" }, { "title": "b" }]]
+        });
+        assert_eq!(
+            mpv_command_summary(&chapters),
+            "set_property chapter-list=[2 items]"
+        );
     }
 }

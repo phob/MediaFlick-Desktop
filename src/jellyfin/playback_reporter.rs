@@ -138,7 +138,7 @@ impl PlaybackReporter {
 
     fn post_playstate(&self, endpoint: &str, body: Value, state: &MpvPlaybackState) {
         let url = join_api_url(&self.session.base_url, endpoint);
-        tracing::debug!(
+        tracing::trace!(
             target: "jellyfin.playstate",
             endpoint,
             item_id = %self.session.item_id,
@@ -157,7 +157,7 @@ impl PlaybackReporter {
         }
 
         match request.send_json(&body) {
-            Ok(response) => tracing::debug!(
+            Ok(response) => tracing::trace!(
                 target: "jellyfin.playstate",
                 endpoint,
                 item_id = %self.session.item_id,

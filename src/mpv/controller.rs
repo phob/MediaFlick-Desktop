@@ -1634,7 +1634,7 @@ impl ControllerState {
         let now = Instant::now();
         let due = now.saturating_duration_since(active.last_progress_sent) >= PROGRESS_INTERVAL;
         if due || active.last_pause != self.last_state.pause {
-            tracing::debug!(
+            tracing::trace!(
                 target: "jellyfin.playstate",
                 due,
                 pause_changed = active.last_pause != self.last_state.pause,
