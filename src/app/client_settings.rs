@@ -15,6 +15,7 @@ pub fn dialog_script(settings: &AppSettings, bindings: &MpvInputBindings) -> Str
         "mpchcSupported": cfg!(target_os = "windows"),
         "logLevel": settings.log_level,
         "defaultFullscreen": settings.default_fullscreen.as_str(),
+        "streamingQuality": settings.streaming_quality.as_str(),
         "closeBehavior": settings.close_behavior.as_str(),
         "showScrollbars": settings.show_scrollbars,
         "skipIntro": settings.skip_intro.as_str(),

@@ -7,6 +7,28 @@
     return;
   }
 
+  function sendBridge(url) {
+    // Use a no-cors request instead of window.location so the bridge call does
+    // not trigger a top-level navigation. Navigating away fires Jellyfin Web's
+    // beforeunload handler, which stops and destroys the active player and
+    // orphans running mpv playback while settings are open.
+    try {
+      if (typeof window.fetch === 'function') {
+        window.fetch(url, {
+          method: 'GET',
+          mode: 'no-cors',
+          cache: 'no-store',
+          credentials: 'omit',
+          keepalive: true
+        }).catch(() => {});
+        return;
+      }
+    } catch (_) {}
+    const image = new Image();
+    image.src = url;
+    setTimeout(() => { image.src = ''; }, 1000);
+  }
+
   const host = document.createElement('div');
   host.id = '__mediaFlickDesktopClientSettings';
   host.style.cssText = 'position:fixed;inset:0;z-index:2147483647';
@@ -229,7 +251,7 @@
       }
       .control { min-width: 0; }
       .row.top { align-items: start; }
-      .label-sub { margin: 4px 0 0; color: var(--quiet); font-size: 12px; font-weight: 500; }
+      .label-sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; font-weight: 500; }
       .seg {
         display: grid;
         grid-auto-flow: column;
@@ -484,6 +506,31 @@
 
             <div class="panel" id="panel-playback" role="tabpanel" aria-labelledby="tab-playback" hidden>
               <fieldset class="group">
+                <legend>Streaming</legend>
+                <div class="row top">
+                  <div>
+                    <label for="streaming-quality">Streaming quality</label>
+                    <p class="label-sub" id="streaming-quality-help">Lower limits let Jellyfin transcode high-bitrate media before external playback.</p>
+                  </div>
+                  <div class="control">
+                    <select id="streaming-quality" name="streaming-quality" aria-describedby="streaming-quality-help">
+                      <option value="original">Original quality — direct only</option>
+                      <option value="auto">Auto — use Jellyfin's limit</option>
+                      <option value="120_mbps">120 Mbps</option>
+                      <option value="80_mbps">80 Mbps</option>
+                      <option value="60_mbps">60 Mbps</option>
+                      <option value="40_mbps">40 Mbps</option>
+                      <option value="20_mbps">20 Mbps</option>
+                      <option value="10_mbps">10 Mbps</option>
+                      <option value="5_mbps">5 Mbps</option>
+                      <option value="3_mbps">3 Mbps</option>
+                      <option value="1_5_mbps">1.5 Mbps</option>
+                    </select>
+                  </div>
+                </div>
+              </fieldset>
+
+              <fieldset class="group">
                 <legend>Segment skipping</legend>
                 <div class="row">
                   <label for="skip-intro">Intros</label>
@@ -594,6 +641,7 @@
   const defaultFullscreen = root.getElementById('default-fullscreen');
   const closeBehavior = root.getElementById('close-behavior');
   const scrollbars = root.getElementById('scrollbars');
+  const streamingQuality = root.getElementById('streaming-quality');
   const skipIntro = root.getElementById('skip-intro');
   const skipCredits = root.getElementById('skip-credits');
   const skipRecap = root.getElementById('skip-recap');
@@ -626,6 +674,7 @@
   defaultFullscreen.value = settings.defaultFullscreen || 'fullscreen';
   closeBehavior.value = settings.closeBehavior || 'exit_app';
   scrollbars.value = settings.showScrollbars ? 'visible' : 'hidden';
+  streamingQuality.value = settings.streamingQuality || 'original';
   skipIntro.value = settings.skipIntro || 'prompt';
   skipCredits.value = settings.skipCredits || 'prompt';
   skipRecap.value = settings.skipRecap || 'prompt';
@@ -796,7 +845,7 @@
     downloadMpv.disabled = true;
     downloadMpv.textContent = 'Starting';
     setMpvSetupStatus('Contacting mpv release server…', '');
-    window.location.href = 'mediaflick-desktop://mpv-download?token=' + BRIDGE_TOKEN;
+    sendBridge('mediaflick-desktop://mpv-download?token=' + BRIDGE_TOKEN);
   });
 
   copyMpv.addEventListener('click', async () => {
@@ -817,7 +866,7 @@
 
   mpvHelpLink.addEventListener('click', event => {
     event.preventDefault();
-    window.location.href = 'mediaflick-desktop://mpv-help?token=' + BRIDGE_TOKEN;
+    sendBridge('mediaflick-desktop://mpv-help?token=' + BRIDGE_TOKEN);
   });
 
   window.__mediaFlickDesktopMpvSetup = event => {
@@ -852,11 +901,11 @@
 
   browse.addEventListener('click', () => {
     setBusy(true, 'Opening file picker...');
-    window.location.href = 'mediaflick-desktop://select-mpv?token=' + BRIDGE_TOKEN + '&target=settings';
+    sendBridge('mediaflick-desktop://select-mpv?token=' + BRIDGE_TOKEN + '&target=settings');
   });
   browseMpchc.addEventListener('click', () => {
     setBusy(true, 'Opening file picker...');
-    window.location.href = 'mediaflick-desktop://select-mpchc?token=' + BRIDGE_TOKEN + '&target=settings';
+    sendBridge('mediaflick-desktop://select-mpchc?token=' + BRIDGE_TOKEN + '&target=settings');
   });
   form.addEventListener('submit', event => {
     event.preventDefault();
@@ -883,13 +932,14 @@
       defaultFullscreen: defaultFullscreen.value,
       closeBehavior: closeBehavior.value,
       scrollbars: scrollbars.value,
+      streamingQuality: streamingQuality.value,
       skipIntro: skipIntro.value,
       skipCredits: skipCredits.value,
       skipRecap: skipRecap.value,
       skipCommercial: skipCommercial.value,
       markWatchedNext: markWatchedNext.value.trim()
     });
-    window.location.href = `mediaflick-desktop://client-settings-save?${query.toString()}`;
+    sendBridge(`mediaflick-desktop://client-settings-save?${query.toString()}`);
   });
   cancel.addEventListener('click', close);
   closeButton.addEventListener('click', close);

@@ -10,14 +10,26 @@
 
 - Added a `CI` GitHub Actions workflow that runs on every pull request and on pushes to `main`, checking formatting (`cargo fmt --check`) on Linux and running clippy (`-D warnings`), the test suite, and a binary build on both Linux and Windows so dependency and code changes are validated on every PR.
 - Enabled Renovate auto-merge for non-major dependency updates and lock-file maintenance: once the `CI` checks pass, Renovate merges these PRs itself (`platformAutomerge` disabled), while major updates still open a PR for manual review.
+- Added selectable streaming quality for external playback: keep original-quality direct playback, use Jellyfin's automatic connection limit, or choose a fixed bitrate from 1.5 to 120 Mbps. Auto and limited modes now advertise HLS transcoding support and let Jellyfin fall back to a server transcode when required, while applying saved changes to the next playback without reloading the app.
 
 ### Changed
 
+- Rewrote `README.md` to lead with the external-mpv differentiator (SVP4 motion interpolation, SDR-to-HDR, shaders, full `mpv.conf`) rather than a generic "Jellyfin Web in a window" framing, added a downloads badge and placeholders for a demo GIF and an SVP4/HDR comparison clip (`docs/demo.gif`, `docs/svp-hdr-demo.gif`), and reframed the AI-assistance note as a short closing disclosure about tooling (builds, CI, review) instead of a prominent up-front banner.
 - Demoted the high-frequency Jellyfin playstate log lines (state send, state sent, and progress-report-due) from `debug` to `trace` so the default `debug` log level is no longer dominated by them.
 - Expanded the `sending mpv command` log line so `set_property` commands now report the property and its value inline (for example `set_property pause=true`), summarizing large array/object values like `chapter-list` as an item/field count instead of dumping them.
 - Changed the Client Settings "Log level" control from a free-text input with suggestions to a proper dropdown listing Error, Warn, Info, Debug, and Trace.
+- Updated the Rust `cef` crate to v149.2.0 ([#16](https://github.com/phob/MediaFlick-Desktop/pull/16) by [@renovate](https://github.com/apps/renovate)).
+- Updated the Rust `cef` crate to v149.3.0 ([#17](https://github.com/phob/MediaFlick-Desktop/pull/17) by [@renovate](https://github.com/apps/renovate)).
+- Updated the Rust `sevenz-rust2` crate to v0.21.2 ([#18](https://github.com/phob/MediaFlick-Desktop/pull/18) by [@renovate](https://github.com/apps/renovate)).
+- Updated the Rust `sevenz-rust2` crate to v0.21.3 ([#19](https://github.com/phob/MediaFlick-Desktop/pull/19) by [@renovate](https://github.com/apps/renovate)).
+- Refreshed locked Rust dependencies ([#20](https://github.com/phob/MediaFlick-Desktop/pull/20) by [@renovate](https://github.com/apps/renovate)).
 
 ### Fixed
+
+- Fixed transcoded mpv playback briefly starting at the beginning or aborting instead of reaching Jellyfin's resume position when a slow external subtitle download blocked the validated command pipe. Network-backed `sub-add` now runs asynchronously on a dedicated persistent IPC connection opened while mpv is still idle, so resume and player-control commands remain reply-validated on the existing command path while subtitle completion or rejection is still logged.
+- Fixed mpv playback stalls and replacement races by moving Jellyfin playstate HTTP requests onto an ordered background queue, waiting for and validating real mpv IPC command replies instead of treating pipe writes as acceptance, and preserving incoming pending playback when mpv emits the replaced file's stale `end-file` event.
+- Fixed opening the app menus (Client Settings, About, Exit) or using the Client Settings buttons (Save, Browse, Get mpv, mpv.io link) during playback tearing down the active mpv session: the Jellyfin video backdrop vanished, the on-screen controls stopped responding (the back button became unclickable), and stopping mpv no longer reported back to Jellyfin. These bridge actions navigated the page via `window.location`, which fires Jellyfin Web's `beforeunload` handler — stopping and destroying the current player and orphaning the running mpv — before CEF cancels the navigation. They now use the same no-cors request the rest of the bridge already uses, which does not unload the page.
+- Fixed the CI build-and-test jobs failing to resolve the CEF cache path by defining `CEF_PATH` at the job level.
 
 ### Removed
 

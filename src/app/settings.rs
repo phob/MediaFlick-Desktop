@@ -25,6 +25,8 @@ pub struct AppSettings {
     pub log_level: String,
     #[serde(default, skip_serializing_if = "MpvFullscreenBehavior::is_default")]
     pub default_fullscreen: MpvFullscreenBehavior,
+    #[serde(default, skip_serializing_if = "StreamingQuality::is_default")]
+    pub streaming_quality: StreamingQuality,
     #[serde(default, skip_serializing_if = "CloseBehavior::is_default")]
     pub close_behavior: CloseBehavior,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -39,6 +41,91 @@ pub struct AppSettings {
     pub skip_recap: SegmentSkipMode,
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamingQuality {
+    #[default]
+    #[serde(rename = "original")]
+    Original,
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "120_mbps")]
+    Mbps120,
+    #[serde(rename = "80_mbps")]
+    Mbps80,
+    #[serde(rename = "60_mbps")]
+    Mbps60,
+    #[serde(rename = "40_mbps")]
+    Mbps40,
+    #[serde(rename = "20_mbps")]
+    Mbps20,
+    #[serde(rename = "10_mbps")]
+    Mbps10,
+    #[serde(rename = "5_mbps")]
+    Mbps5,
+    #[serde(rename = "3_mbps")]
+    Mbps3,
+    #[serde(rename = "1_5_mbps")]
+    Mbps1_5,
+}
+
+impl StreamingQuality {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Auto => "auto",
+            Self::Mbps120 => "120_mbps",
+            Self::Mbps80 => "80_mbps",
+            Self::Mbps60 => "60_mbps",
+            Self::Mbps40 => "40_mbps",
+            Self::Mbps20 => "20_mbps",
+            Self::Mbps10 => "10_mbps",
+            Self::Mbps5 => "5_mbps",
+            Self::Mbps3 => "3_mbps",
+            Self::Mbps1_5 => "1_5_mbps",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "original" => Some(Self::Original),
+            "auto" => Some(Self::Auto),
+            "120_mbps" => Some(Self::Mbps120),
+            "80_mbps" => Some(Self::Mbps80),
+            "60_mbps" => Some(Self::Mbps60),
+            "40_mbps" => Some(Self::Mbps40),
+            "20_mbps" => Some(Self::Mbps20),
+            "10_mbps" => Some(Self::Mbps10),
+            "5_mbps" => Some(Self::Mbps5),
+            "3_mbps" => Some(Self::Mbps3),
+            "1_5_mbps" => Some(Self::Mbps1_5),
+            _ => None,
+        }
+    }
+
+    pub fn allows_transcoding(self) -> bool {
+        self != Self::Original
+    }
+
+    pub fn max_streaming_bitrate(self) -> Option<u64> {
+        match self {
+            Self::Original | Self::Auto => None,
+            Self::Mbps120 => Some(120_000_000),
+            Self::Mbps80 => Some(80_000_000),
+            Self::Mbps60 => Some(60_000_000),
+            Self::Mbps40 => Some(40_000_000),
+            Self::Mbps20 => Some(20_000_000),
+            Self::Mbps10 => Some(10_000_000),
+            Self::Mbps5 => Some(5_000_000),
+            Self::Mbps3 => Some(3_000_000),
+            Self::Mbps1_5 => Some(1_500_000),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -225,6 +312,7 @@ impl Default for AppSettings {
             mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: MpvFullscreenBehavior::default(),
+            streaming_quality: StreamingQuality::default(),
             close_behavior: CloseBehavior::default(),
             show_scrollbars: false,
             webui_window: WebUiWindowSettings::default(),
@@ -415,7 +503,9 @@ fn roaming_base_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppSettings, PlayerBackend, WebUiWindowSettings, normalize_server_url};
+    use super::{
+        AppSettings, PlayerBackend, StreamingQuality, WebUiWindowSettings, normalize_server_url,
+    };
 
     #[test]
     fn leaves_absolute_urls_alone() {
@@ -468,6 +558,51 @@ mod tests {
         assert_eq!(PlayerBackend::from_id("MPC-HC"), Some(PlayerBackend::Mpchc));
         assert_eq!(PlayerBackend::from_id("mpchc"), Some(PlayerBackend::Mpchc));
         assert_eq!(PlayerBackend::from_id("vlc"), None);
+    }
+
+    #[test]
+    fn streaming_quality_round_trips_and_maps_bitrates() {
+        let cases = [
+            ("original", StreamingQuality::Original, None),
+            ("auto", StreamingQuality::Auto, None),
+            ("120_mbps", StreamingQuality::Mbps120, Some(120_000_000)),
+            ("80_mbps", StreamingQuality::Mbps80, Some(80_000_000)),
+            ("60_mbps", StreamingQuality::Mbps60, Some(60_000_000)),
+            ("40_mbps", StreamingQuality::Mbps40, Some(40_000_000)),
+            ("20_mbps", StreamingQuality::Mbps20, Some(20_000_000)),
+            ("10_mbps", StreamingQuality::Mbps10, Some(10_000_000)),
+            ("5_mbps", StreamingQuality::Mbps5, Some(5_000_000)),
+            ("3_mbps", StreamingQuality::Mbps3, Some(3_000_000)),
+            ("1_5_mbps", StreamingQuality::Mbps1_5, Some(1_500_000)),
+        ];
+
+        for (id, quality, bitrate) in cases {
+            assert_eq!(StreamingQuality::from_id(id), Some(quality));
+            assert_eq!(quality.as_str(), id);
+            assert_eq!(
+                quality.allows_transcoding(),
+                quality != StreamingQuality::Original
+            );
+            assert_eq!(quality.max_streaming_bitrate(), bitrate);
+        }
+        assert_eq!(StreamingQuality::from_id("unknown"), None);
+    }
+
+    #[test]
+    fn streaming_quality_is_backward_compatible_and_omits_default() {
+        let defaults: AppSettings = serde_json::from_str("{}").expect("default settings");
+        assert_eq!(defaults.streaming_quality, StreamingQuality::Original);
+        let serialized = serde_json::to_value(&defaults).expect("serialize settings");
+        assert!(serialized.get("streaming_quality").is_none());
+
+        let configured = AppSettings {
+            streaming_quality: StreamingQuality::Mbps10,
+            ..Default::default()
+        };
+        let serialized = serde_json::to_value(&configured).expect("serialize configured settings");
+        assert_eq!(serialized["streaming_quality"], "10_mbps");
+        let restored: AppSettings = serde_json::from_value(serialized).expect("restore settings");
+        assert_eq!(restored.streaming_quality, StreamingQuality::Mbps10);
     }
 
     #[test]

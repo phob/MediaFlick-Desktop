@@ -160,6 +160,7 @@ struct ControllerState {
     segment_skip_config: SegmentSkipConfig,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
+    replacement_end_file_pending: bool,
     pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
     event_tx: Option<Sender<MpvPlaybackEvent>>,
@@ -253,19 +254,39 @@ impl MpvEvent {
 struct IpcWorker {
     path: String,
     command_tx: Sender<IpcCommand>,
+    detached_command_tx: Sender<Value>,
     reader_thread: thread::JoinHandle<()>,
     writer_thread: thread::JoinHandle<()>,
+    detached_writer_thread: thread::JoinHandle<()>,
+    detached_reply_thread: thread::JoinHandle<()>,
     writer_alive: Arc<AtomicBool>,
+    detached_writer_alive: Arc<AtomicBool>,
 }
 
 type IpcCommand = (Value, Sender<io::Result<()>>);
 
+enum IpcCommandFailure {
+    Transport(io::Error),
+    Rejected(io::Error),
+}
+
 struct IpcCommandWriter {
+    stream: BufReader<IpcConnection>,
+    alive: Arc<AtomicBool>,
+}
+
+struct IpcDetachedCommandWriter {
     stream: IpcConnection,
     alive: Arc<AtomicBool>,
 }
 
 impl Drop for IpcCommandWriter {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Drop for IpcDetachedCommandWriter {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::SeqCst);
     }
@@ -400,6 +421,7 @@ impl ControllerState {
             segment_skip_config,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
+            replacement_end_file_pending: false,
             pending_raise_pulse_reset_at: None,
             last_session_poll: Instant::now(),
             event_tx,
@@ -613,6 +635,7 @@ impl ControllerState {
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
         self.reset_chapter_markers();
+        let replacing_active_file = self.mpv_playback_active || self.active.is_some();
         if let Some(active) = self.active.take() {
             tracing::info!(
                 target: "playback",
@@ -646,6 +669,7 @@ impl ControllerState {
                     reporter,
                     requested_at: Instant::now(),
                 });
+                self.replacement_end_file_pending = replacing_active_file;
                 self.fetch_media_segments(playback_id, pending_launch);
                 self.prepare_pending_playback_state();
                 self.schedule_mpv_raise("loadfile accepted");
@@ -1855,6 +1879,7 @@ impl ControllerState {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
         self.pending_raise_pulse_reset_at = None;
+        self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
         if self.active.is_none() && self.pending.is_none() {
             self.playback_runtime_ticks = None;
@@ -1902,8 +1927,19 @@ impl ControllerState {
             command = %logger::redacted_json(&command),
             "sending raw mpv command"
         );
-        let result = worker.send(command);
+        let detached = command
+            .get("async")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let result = if detached {
+            worker.send_detached(command)
+        } else {
+            worker.send(command)
+        };
         match &result {
+            Ok(()) if detached => {
+                tracing::debug!(target: "mpv.ipc", "queued asynchronous mpv command")
+            }
             Ok(()) => tracing::debug!(target: "mpv.ipc", "sent mpv command"),
             Err(error) => tracing::warn!(target: "mpv.ipc", "mpv command send failed: {error}"),
         }
@@ -2030,7 +2066,11 @@ pub fn control_command(command: MpvControlCommand) -> Option<Value> {
         },
         MpvControlCommand::AddSubtitle(url) => {
             let url = non_empty(Some(url.as_str()))?;
-            json!(["sub-add", url, "select"])
+            return Some(json!({
+                "command": ["sub-add", url, "select"],
+                "request_id": next_request_id(),
+                "async": true,
+            }));
         }
         MpvControlCommand::Stop => json!(["stop"]),
     };
@@ -2065,21 +2105,49 @@ impl IpcWorker {
         tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv IPC command writer");
         let writer_alive = Arc::new(AtomicBool::new(true));
         let writer = IpcCommandWriter {
-            stream: connect_ipc_for_commands_with_timeout(path, IPC_COMMAND_CONNECT_TIMEOUT)?,
+            stream: BufReader::new(connect_ipc_for_commands_with_timeout(
+                path,
+                IPC_COMMAND_CONNECT_TIMEOUT,
+            )?),
             alive: writer_alive.clone(),
         };
+        // Slow network-backed commands such as `sub-add` must not occupy the
+        // validated main command pipe: a blocked subtitle download can otherwise
+        // keep the post-file-loaded resume seek from reaching mpv. Open this
+        // additional pipe while mpv is still idle (never after load), and split
+        // its reads from writes so async command completions remain observable.
+        tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv detached command writer");
+        let detached_stream =
+            connect_ipc_for_commands_with_timeout(path, IPC_COMMAND_CONNECT_TIMEOUT)?;
+        let detached_reply_stream = detached_stream.try_clone()?;
+        let detached_writer_alive = Arc::new(AtomicBool::new(true));
+        let detached_writer = IpcDetachedCommandWriter {
+            stream: detached_stream,
+            alive: detached_writer_alive.clone(),
+        };
+        let detached_reply_alive = detached_writer_alive.clone();
 
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
+        let (detached_command_tx, detached_command_rx) = mpsc::channel();
         let reader_thread = thread::spawn(move || read_events(reader, event_tx));
         let writer_thread = thread::spawn(move || writer.write_commands(command_rx));
+        let detached_writer_thread =
+            thread::spawn(move || detached_writer.write_commands(detached_command_rx));
+        let detached_reply_thread = thread::spawn(move || {
+            read_detached_command_replies(detached_reply_stream, detached_reply_alive)
+        });
         Ok((
             Self {
                 path: path.to_string(),
                 command_tx,
+                detached_command_tx,
                 reader_thread,
                 writer_thread,
+                detached_writer_thread,
+                detached_reply_thread,
                 writer_alive,
+                detached_writer_alive,
             },
             event_rx,
         ))
@@ -2104,18 +2172,37 @@ impl IpcWorker {
             })
     }
 
+    fn send_detached(&self, command: Value) -> io::Result<()> {
+        if !self.detached_writer_alive.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "mpv detached IPC writer stopped",
+            ));
+        }
+        self.detached_command_tx.send(command).map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "mpv detached IPC writer stopped")
+        })
+    }
+
     fn shutdown(self) {
         let Self {
             path,
             command_tx,
+            detached_command_tx,
             reader_thread,
             writer_thread,
+            detached_writer_thread,
+            detached_reply_thread,
             writer_alive: _,
+            detached_writer_alive: _,
         } = self;
         tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
         drop(command_tx);
+        drop(detached_command_tx);
         let _ = writer_thread.join();
+        let _ = detached_writer_thread.join();
         let _ = reader_thread.join();
+        let _ = detached_reply_thread.join();
     }
 }
 
@@ -2127,14 +2214,109 @@ impl IpcCommandWriter {
                 command = %logger::mpv_command_summary(&command),
                 "writing mpv IPC command"
             );
-            let result = write_command(&mut self.stream, &command);
-            let failed = result.is_err();
-            let _ = ack.send(result);
-            if failed {
-                break;
+            match self.write_command_and_wait_for_reply(&command) {
+                Ok(()) => {
+                    let _ = ack.send(Ok(()));
+                }
+                Err(IpcCommandFailure::Rejected(error)) => {
+                    let _ = ack.send(Err(error));
+                }
+                Err(IpcCommandFailure::Transport(error)) => {
+                    let _ = ack.send(Err(error));
+                    break;
+                }
             }
         }
         tracing::trace!(target: "mpv.ipc", "mpv IPC writer stopped");
+    }
+
+    fn write_command_and_wait_for_reply(
+        &mut self,
+        command: &Value,
+    ) -> Result<(), IpcCommandFailure> {
+        let request_id = command
+            .get("request_id")
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        write_command(self.stream.get_mut(), command).map_err(IpcCommandFailure::Transport)?;
+
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match self.stream.read_line(&mut line) {
+                Ok(0) => {
+                    return Err(IpcCommandFailure::Transport(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "mpv IPC command connection closed before its reply",
+                    )));
+                }
+                Ok(_) => {}
+                Err(error) => return Err(IpcCommandFailure::Transport(error)),
+            }
+
+            let Ok(reply) = serde_json::from_str::<Value>(&line) else {
+                tracing::trace!(
+                    target: "mpv.ipc",
+                    line = %logger::redact_text(&line),
+                    "ignored malformed mpv IPC command reply"
+                );
+                continue;
+            };
+            if reply.get("event").is_some() {
+                tracing::trace!(
+                    target: "mpv.ipc",
+                    event = %logger::redacted_json(&reply),
+                    "ignored duplicate event on mpv command connection"
+                );
+                continue;
+            }
+            let reply_id = reply
+                .get("request_id")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            if reply_id != request_id {
+                tracing::trace!(
+                    target: "mpv.ipc",
+                    request_id,
+                    reply_id,
+                    "ignored unrelated mpv IPC command reply"
+                );
+                continue;
+            }
+
+            log_command_reply(&reply);
+            return command_reply_result(&reply, request_id).map_err(IpcCommandFailure::Rejected);
+        }
+    }
+}
+
+impl IpcDetachedCommandWriter {
+    fn write_commands(mut self, rx: Receiver<Value>) {
+        while let Ok(command) = rx.recv() {
+            tracing::trace!(
+                target: "mpv.ipc",
+                command = %logger::mpv_command_summary(&command),
+                "writing detached mpv IPC command"
+            );
+            if let Err(error) = write_command(&mut self.stream, &command) {
+                tracing::warn!(target: "mpv.ipc", "detached mpv IPC command write failed: {error}");
+                break;
+            }
+        }
+        tracing::trace!(target: "mpv.ipc", "mpv detached IPC writer stopped");
+    }
+}
+
+fn command_reply_result(reply: &Value, request_id: i64) -> io::Result<()> {
+    match reply.get("error").and_then(Value::as_str) {
+        Some("success") => Ok(()),
+        Some(error) => Err(io::Error::other(format!(
+            "mpv rejected request {request_id}: {error}"
+        ))),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("mpv reply for request {request_id} did not contain an error status"),
+        )),
     }
 }
 
@@ -2215,6 +2397,42 @@ fn log_command_reply(value: &Value) {
             "mpv rejected command"
         ),
     }
+}
+
+fn read_detached_command_replies(stream: IpcConnection, alive: Arc<AtomicBool>) {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                    tracing::trace!(
+                        target: "mpv.ipc",
+                        line = %logger::redact_text(&line),
+                        "ignored malformed detached mpv IPC reply"
+                    );
+                    continue;
+                };
+                if value.get("event").is_some() {
+                    tracing::trace!(
+                        target: "mpv.ipc",
+                        event = %logger::redacted_json(&value),
+                        "ignored event on detached mpv command connection"
+                    );
+                    continue;
+                }
+                log_command_reply(&value);
+            }
+            Err(error) => {
+                tracing::trace!(target: "mpv.ipc", "detached mpv IPC reply read failed: {error}");
+                break;
+            }
+        }
+    }
+    alive.store(false, Ordering::SeqCst);
+    tracing::trace!(target: "mpv.ipc", "mpv detached IPC reply reader stopped");
 }
 
 fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
@@ -2352,7 +2570,10 @@ fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
 
 #[cfg(target_os = "windows")]
 fn connect_ipc_for_commands(path: &str) -> io::Result<IpcConnection> {
-    std::fs::OpenOptions::new().write(true).open(path)
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
 }
 
 #[cfg(all(unix, not(target_os = "windows")))]
@@ -2551,8 +2772,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, PlaybackIdentity,
-        build_segment_chapter_markers, control_command, loadfile_command, merge_chapter_markers,
-        mpv_string_list,
+        build_segment_chapter_markers, command_reply_result, control_command, loadfile_command,
+        merge_chapter_markers, mpv_string_list,
     };
     use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
     use crate::jellyfin::bridge::PlaybackContext;
@@ -2765,6 +2986,17 @@ mod tests {
     }
 
     #[test]
+    fn command_replies_surface_mpv_rejections() {
+        assert!(command_reply_result(&json!({ "request_id": 42, "error": "success" }), 42).is_ok());
+        let error = command_reply_result(
+            &json!({ "request_id": 43, "error": "property unavailable" }),
+            43,
+        )
+        .expect_err("rejected command");
+        assert!(error.to_string().contains("property unavailable"));
+    }
+
+    #[test]
     fn control_commands_map_to_mpv_ipc_commands() {
         let pause = control_command(MpvControlCommand::SetPause(true)).expect("pause command");
         assert_eq!(pause["command"], json!(["set_property", "pause", true]));
@@ -2791,6 +3023,9 @@ mod tests {
             external_subtitle["command"],
             json!(["sub-add", "https://example.test/sub.srt", "select"])
         );
+        assert_eq!(external_subtitle["async"], true);
+
+        assert!(seek.get("async").is_none());
 
         assert!(control_command(MpvControlCommand::SetPlaybackRate(f64::NAN)).is_none());
     }
@@ -3089,6 +3324,20 @@ mod tests {
         state.finish_active(Some("stop"));
 
         assert!(state.pending.is_some());
+    }
+
+    #[test]
+    fn active_replacement_ignores_old_end_file_without_next_episode_handoff() {
+        let mut state = controller_with_pending_load(None);
+        state.replacement_end_file_pending = true;
+
+        state.finish_active(Some("stop"));
+
+        assert!(state.pending.is_some());
+        assert!(!state.replacement_end_file_pending);
+        state.activate_pending();
+        assert!(state.pending.is_none());
+        assert!(snapshot_active(&state));
     }
 
     #[test]

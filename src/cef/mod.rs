@@ -15,7 +15,7 @@ use crate::app::logger;
 use crate::app::mpv_setup::{self, MpvSetupPhase};
 use crate::app::settings::{
     AppSettings, CloseBehavior, MpvFullscreenBehavior, PlayerBackend as PlayerBackendKind,
-    SegmentSkipMode, WebUiWindowSettings, normalize_server_url,
+    SegmentSkipMode, StreamingQuality, WebUiWindowSettings, normalize_server_url,
 };
 use crate::app::updater::{self, UpdateRelease};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
@@ -304,13 +304,17 @@ wrap_app! {
         }
 
         fn render_process_handler(&self) -> Option<RenderProcessHandler> {
-            Some(JellyfinRenderProcessHandler::new())
+            Some(JellyfinRenderProcessHandler::new(
+                self.config.settings.clone(),
+            ))
         }
     }
 }
 
 wrap_render_process_handler! {
-    struct JellyfinRenderProcessHandler;
+    struct JellyfinRenderProcessHandler {
+        settings: AppSettings,
+    }
 
     impl RenderProcessHandler {
         fn on_context_created(
@@ -329,7 +333,7 @@ wrap_render_process_handler! {
             if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
                 return;
             }
-            let script = jellyfin_bridge::bridge_script();
+            let script = jellyfin_bridge::bridge_script(&self.settings);
             frame.execute_java_script(
                 Some(&CefString::from(script.as_str())),
                 Some(&CefString::from("mediaflick-desktop://bridge.js")),
@@ -1325,7 +1329,12 @@ wrap_load_handler! {
                 return;
             }
             if !frame_url.starts_with("data:") {
-                let script = jellyfin_bridge::bridge_script();
+                let settings = self
+                    .state
+                    .lock()
+                    .map(|state| state.settings.clone())
+                    .unwrap_or_default();
+                let script = jellyfin_bridge::bridge_script(&settings);
                 frame.execute_java_script(
                     Some(&CefString::from(script.as_str())),
                     Some(&CefString::from("mediaflick-desktop://bridge.js")),
@@ -2526,6 +2535,10 @@ fn save_client_settings(
         .as_deref()
         .and_then(parse_fullscreen_behavior)
         .unwrap_or(settings.default_fullscreen);
+    settings.streaming_quality = query_param(query, "streamingQuality")
+        .as_deref()
+        .and_then(StreamingQuality::from_id)
+        .unwrap_or(settings.streaming_quality);
     settings.close_behavior = query_param(query, "closeBehavior")
         .as_deref()
         .and_then(parse_close_behavior)
@@ -2567,6 +2580,7 @@ fn save_client_settings(
         return;
     }
 
+    let bridge_settings_script = jellyfin_bridge::bridge_settings_script(&settings);
     if let Ok(mut state) = state.lock() {
         let backend_changed = state.settings.effective_backend() != settings.effective_backend();
         state.settings = settings;
@@ -2586,7 +2600,9 @@ fn save_client_settings(
     apply_scrollbar_settings_to_frame(&frame, state);
     execute_client_settings_js(
         &frame,
-        "window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved();",
+        &format!(
+            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved();"
+        ),
     );
 }
 

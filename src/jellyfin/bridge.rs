@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app::about;
+use crate::app::settings::AppSettings;
 use crate::mpv::{HttpHeader, MpvLaunch};
 
 static BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
@@ -115,12 +116,33 @@ impl PlaybackContext {
     }
 }
 
-pub fn bridge_script() -> String {
+pub fn bridge_script(settings: &AppSettings) -> String {
     include_str!("bridge.js")
+        .replace(
+            "__MEDIAFLICK_PLAYBACK_SETTINGS_JSON__",
+            &playback_settings_json(settings),
+        )
         .replace("{{app_version}}", about::APP_VERSION)
         .replace("{{git_version}}", about::GIT_VERSION)
         .replace("{{created_by}}", about::CREATED_BY)
         .replace("{{bridge_token}}", bridge_token())
+}
+
+pub fn bridge_settings_script(settings: &AppSettings) -> String {
+    format!(
+        "window.__mediaFlickDesktopConfigureBridge&&window.__mediaFlickDesktopConfigureBridge({});",
+        playback_settings_json(settings)
+    )
+}
+
+fn playback_settings_json(settings: &AppSettings) -> String {
+    serde_json::json!({
+        "quality": settings.streaming_quality.as_str(),
+        "enableTranscoding": settings.streaming_quality.allows_transcoding(),
+        "maxStreamingBitrate": settings.streaming_quality.max_streaming_bitrate(),
+        "playerBackend": settings.effective_backend().as_str(),
+    })
+    .to_string()
 }
 
 pub fn ensure_session_token() {
@@ -317,9 +339,35 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_token, generate_bridge_token, item_id_from_stream_url, launch_from_stream_url,
-        redact_url_secrets,
+        bridge_script, bridge_settings_script, bridge_token, generate_bridge_token,
+        item_id_from_stream_url, launch_from_stream_url, redact_url_secrets,
     };
+    use crate::app::settings::{AppSettings, StreamingQuality};
+
+    #[test]
+    fn bridge_script_contains_configured_streaming_quality() {
+        let settings = AppSettings {
+            streaming_quality: StreamingQuality::Mbps10,
+            ..Default::default()
+        };
+        let script = bridge_script(&settings);
+        assert!(script.contains("\"quality\":\"10_mbps\""));
+        assert!(script.contains("\"maxStreamingBitrate\":10000000"));
+        assert!(!script.contains("__MEDIAFLICK_PLAYBACK_SETTINGS_JSON__"));
+
+        let update = bridge_settings_script(&settings);
+        assert!(update.contains("__mediaFlickDesktopConfigureBridge"));
+        assert!(update.contains("\"quality\":\"10_mbps\""));
+        assert!(update.contains("\"enableTranscoding\":true"));
+    }
+
+    #[test]
+    fn original_quality_disables_configured_bitrate() {
+        let script = bridge_settings_script(&AppSettings::default());
+        assert!(script.contains("\"quality\":\"original\""));
+        assert!(script.contains("\"enableTranscoding\":false"));
+        assert!(script.contains("\"maxStreamingBitrate\":null"));
+    }
 
     #[test]
     fn generated_tokens_are_unique_and_hex() {
