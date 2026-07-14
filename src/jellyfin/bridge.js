@@ -1,6 +1,15 @@
 (() => {
-  if (window.__mediaFlickDesktopBridgeInstalled) return;
+  const injectedPlaybackSettings = __MEDIAFLICK_PLAYBACK_SETTINGS_JSON__;
+  if (window.__mediaFlickDesktopBridgeInstalled) {
+    window.__mediaFlickDesktopConfigureBridge?.(injectedPlaybackSettings);
+    return;
+  }
   window.__mediaFlickDesktopBridgeInstalled = true;
+
+  let playbackSettings = normalizePlaybackSettings(injectedPlaybackSettings);
+  window.__mediaFlickDesktopConfigureBridge = value => {
+    playbackSettings = normalizePlaybackSettings(value);
+  };
 
   const contextsByItem = new Map();
   const contextsByMediaSource = new Map();
@@ -53,9 +62,24 @@
       },
       { Type: 'Photo' }
     ],
-    TranscodingProfiles: [],
-    SubtitleProfiles: ['srt', 'subrip', 'ass', 'ssa', 'PGSSUB', 'DVDSUB', 'DVBSUB', 'DVBTXT', 'webvtt', 'vtt', 'microdvd', 'subviewer', 'subviewer1', 'sami', 'realtext', 'stl', 'ttml']
-      .flatMap((Format) => [{ Format, Method: 'Embed' }, { Format, Method: 'External' }]),
+    TranscodingProfiles: [
+      { Type: 'Audio' },
+      {
+        Container: 'ts',
+        Type: 'Video',
+        Protocol: 'hls',
+        AudioCodec: 'aac,mp3,ac3,opus,flac,vorbis',
+        VideoCodec: 'h264,mpeg4,mpeg2video',
+        MaxAudioChannels: '6'
+      },
+      { Container: 'jpeg', Type: 'Photo' }
+    ],
+    SubtitleProfiles: [
+      ...['srt', 'subrip', 'ass', 'ssa', 'sub', 'webvtt', 'vtt', 'microdvd', 'subviewer', 'subviewer1', 'sami', 'smi', 'realtext', 'stl', 'ttml']
+        .flatMap((Format) => [{ Format, Method: 'Embed' }, { Format, Method: 'External' }]),
+      ...['PGSSUB', 'PGS', 'DVDSUB', 'DVBSUB', 'DVBTXT']
+        .map((Format) => ({ Format, Method: 'Embed' }))
+    ],
     ResponseProfiles: [],
     ContainerProfiles: [],
     CodecProfiles: []
@@ -81,6 +105,11 @@
     return !!url && /\/Items\/[^/?#]+\/PlaybackInfo/i.test(url.pathname);
   }
 
+  function isLiveStreamOpenUrl(value) {
+    const url = parsedUrl(value);
+    return !!url && /\/LiveStreams\/Open$/i.test(url.pathname);
+  }
+
   function itemIdFromPlaybackInfoUrl(value) {
     const url = parsedUrl(value);
     if (!url) return '';
@@ -95,6 +124,17 @@
     if (!(path.includes('/videos/') || path.includes('/audio/'))) return false;
     if (path.includes('/hls') || path.includes('/dash') || path.includes('/transcoding')) return false;
     return path.includes('/stream') || path.includes('/original');
+  }
+
+  function isTranscodingPlaybackUrl(value) {
+    const url = parsedUrl(value);
+    if (!url) return false;
+    const path = url.pathname.toLowerCase();
+    if (!(path.includes('/videos/') || path.includes('/audio/'))) return false;
+    return path.endsWith('.m3u8')
+      || path.includes('/hls/')
+      || path.includes('/transcoding/')
+      || /\/audio\/[^/]+\/universal$/.test(path);
   }
 
   function streamContext(value) {
@@ -494,7 +534,7 @@
     return undefined;
   }
 
-  function selectedSubtitleTrack(mediaSource, selectedIndex) {
+  function selectedSubtitleTrack(mediaSource, selectedIndex, transcoding = false) {
     const wanted = numberish(selectedIndex);
     if (wanted === undefined) return {};
     if (wanted < 0) return { subtitleMpvId: -1 };
@@ -506,6 +546,10 @@
         const method = deliveryMethod(stream);
         const url = deliveryUrl(stream);
         if (method === 'external' && url) return { subtitleUrl: absoluteUrl(url) };
+        if (method === 'encode') return {};
+        if (transcoding && (method === 'embed' || (!method && !isExternalStream(stream)))) {
+          return { subtitleMpvId: 1 };
+        }
         if (method === 'embed' || (!method && !isExternalStream(stream))) return { subtitleMpvId: mpvId };
         return {};
       }
@@ -514,38 +558,90 @@
     return {};
   }
 
-  function selectedTrackContext(mediaSource, audioIndex, subtitleIndex) {
+  function selectedTrackContext(mediaSource, audioIndex, subtitleIndex, playMethod = '') {
     const out = {};
-    const audioMpvId = selectedAudioMpvId(mediaSource, audioIndex);
+    const transcoding = String(playMethod).toLowerCase() === 'transcode';
+    const audioMpvId = transcoding && numberish(audioIndex) !== undefined
+      ? 1
+      : selectedAudioMpvId(mediaSource, audioIndex);
     if (audioMpvId !== undefined) out.audioMpvId = audioMpvId;
-    Object.assign(out, selectedSubtitleTrack(mediaSource, subtitleIndex));
+    Object.assign(out, selectedSubtitleTrack(mediaSource, subtitleIndex, transcoding));
     return out;
   }
 
-  function cloneMpvDeviceProfile() {
-    return JSON.parse(JSON.stringify(MPV_DEVICE_PROFILE));
+  function normalizePlaybackSettings(value) {
+    const quality = typeof value?.quality === 'string' ? value.quality : 'original';
+    const bitrate = Number(value?.maxStreamingBitrate);
+    return {
+      quality,
+      enableTranscoding: value?.enableTranscoding === true,
+      maxStreamingBitrate: Number.isFinite(bitrate) && bitrate > 0 ? Math.floor(bitrate) : null,
+      playerBackend: value?.playerBackend === 'mpchc' ? 'mpchc' : 'mpv'
+    };
   }
 
-  function patchPlaybackInfoBody(requestUrl, body) {
-    if (!isPlaybackInfoUrl(requestUrl) || typeof body !== 'string' || !body.trim().startsWith('{')) {
+  function effectiveStreamingBitrate(incomingBitrate) {
+    if (!playbackSettings.enableTranscoding) return MAX_BITRATE;
+    if (playbackSettings.maxStreamingBitrate) return playbackSettings.maxStreamingBitrate;
+    const incoming = numberish(incomingBitrate);
+    return incoming && incoming > 0 ? Math.floor(incoming) : MAX_BITRATE;
+  }
+
+  function configuredDeviceProfile(incomingBitrate) {
+    const bitrate = effectiveStreamingBitrate(incomingBitrate);
+    const profile = JSON.parse(JSON.stringify(MPV_DEVICE_PROFILE));
+    profile.MaxStaticBitrate = bitrate;
+    profile.MaxStaticMusicBitrate = bitrate;
+    profile.MaxStreamingBitrate = bitrate;
+    if (!playbackSettings.enableTranscoding) {
+      profile.TranscodingProfiles = [];
+    }
+    if (playbackSettings.playerBackend === 'mpchc') {
+      const formats = [...new Set(profile.SubtitleProfiles.map(entry => entry.Format))];
+      profile.SubtitleProfiles = formats.flatMap(Format => [
+        { Format, Method: 'Embed' },
+        { Format, Method: 'Encode' }
+      ]);
+    }
+    return profile;
+  }
+
+  function cloneMpvDeviceProfile() {
+    return configuredDeviceProfile();
+  }
+
+  function patchPlaybackRequestUrl(value) {
+    if (!isLiveStreamOpenUrl(value)) return absoluteUrl(value);
+    const url = parsedUrl(value);
+    if (!url) return absoluteUrl(value);
+    const incoming = url.searchParams.get('MaxStreamingBitrate');
+    url.searchParams.set('MaxStreamingBitrate', String(effectiveStreamingBitrate(incoming)));
+    return url.href;
+  }
+
+  function patchPlaybackRequestBody(requestUrl, body) {
+    const playbackInfo = isPlaybackInfoUrl(requestUrl);
+    const liveStreamOpen = isLiveStreamOpenUrl(requestUrl);
+    if ((!playbackInfo && !liveStreamOpen) || typeof body !== 'string' || !body.trim().startsWith('{')) {
       return body;
     }
 
     try {
       const dto = JSON.parse(body);
-      dto.DeviceProfile = cloneMpvDeviceProfile();
-      dto.MaxStreamingBitrate = Math.max(numberish(dto.MaxStreamingBitrate) || 0, MAX_BITRATE);
-      dto.EnableDirectPlay = true;
-      dto.EnableDirectStream = true;
-      dto.AllowVideoStreamCopy = true;
-      dto.AllowAudioStreamCopy = true;
-      dto.AutoOpenLiveStream = true;
-      // Direct-play handoff only: if the browser asks for transcoding first,
-      // Jellyfin may never emit a raw /Videos|Audio/.../stream URL for us to capture.
-      dto.EnableTranscoding = false;
+      const bitrate = effectiveStreamingBitrate(dto.MaxStreamingBitrate);
+      dto.DeviceProfile = configuredDeviceProfile(dto.MaxStreamingBitrate);
+      if (playbackInfo) {
+        dto.MaxStreamingBitrate = bitrate;
+        dto.EnableDirectPlay = true;
+        dto.EnableDirectStream = true;
+        dto.AllowVideoStreamCopy = true;
+        dto.AllowAudioStreamCopy = true;
+        dto.AutoOpenLiveStream = true;
+        dto.EnableTranscoding = playbackSettings.enableTranscoding;
+      }
       return JSON.stringify(dto);
     } catch (error) {
-      console.debug('[mediaflick-desktop] failed to patch PlaybackInfo profile', error);
+      console.debug('[mediaflick-desktop] failed to patch playback profile', error);
       return body;
     }
   }
@@ -827,9 +923,12 @@
     });
   };
 
-  function sendBridgeRequest(action, payload) {
-    const url = 'mediaflick-desktop://' + action + '?token=' + BRIDGE_TOKEN
-      + '&payload=' + encodeURIComponent(JSON.stringify(payload));
+  function fireBridgeUrl(url) {
+    // Never assign window.location for bridge calls: a top-level navigation to
+    // mediaflick-desktop:// fires Jellyfin Web's beforeunload handler (which
+    // stops and destroys the current player) before CEF cancels it, orphaning
+    // active mpv playback. A no-cors fetch is a subresource request and does
+    // not unload the page.
     if (typeof nativeFetch === 'function') {
       try {
         nativeFetch.call(window, url, {
@@ -847,6 +946,12 @@
     setTimeout(() => {
       image.src = '';
     }, 1000);
+  }
+
+  function sendBridgeRequest(action, payload) {
+    const url = 'mediaflick-desktop://' + action + '?token=' + BRIDGE_TOKEN
+      + '&payload=' + encodeURIComponent(JSON.stringify(payload));
+    fireBridgeUrl(url);
   }
 
   function pruneContexts() {
@@ -876,7 +981,10 @@
   }
 
   function isBridgeRelevantUrl(value) {
-    return isPlaybackInfoUrl(value) || isPlaystateReportUrl(value) || isDirectStreamUrl(value);
+    return isPlaybackInfoUrl(value)
+      || isLiveStreamOpenUrl(value)
+      || isPlaystateReportUrl(value)
+      || isDirectStreamUrl(value);
   }
 
   function playstateContext(requestUrl, body) {
@@ -1007,6 +1115,10 @@
         ?? mediaSource.DefaultSubtitleStreamIndex
         ?? mediaSource.defaultSubtitleStreamIndex
     );
+    const playMethod = options?.playMethod
+      || options?.PlayMethod
+      || context.playMethod
+      || (isTranscodingPlaybackUrl(mediaUrl) ? 'Transcode' : '');
 
     return mergeContext(context, mergeContext({
       mediaUrl,
@@ -1017,12 +1129,12 @@
       runtimeTicks: numberish(mediaSource.RunTimeTicks ?? item.RunTimeTicks ?? context.runtimeTicks),
       audioStreamIndex,
       subtitleStreamIndex,
-      playMethod: options?.playMethod || context.playMethod || '',
+      playMethod,
       playlistItemId: options?.playlistItemId || options?.PlaylistItemId || context.playlistItemId || '',
       queue: queueItems(options) || context.queue,
       details: options || context.details,
       title: item.Name || mediaSource.Name || document.title || context.title || ''
-    }, selectedTrackContext(mediaSource, audioStreamIndex, subtitleStreamIndex)));
+    }, selectedTrackContext(mediaSource, audioStreamIndex, subtitleStreamIndex, playMethod)));
   }
 
   class MediaFlickDesktopPlayer {
@@ -1041,6 +1153,7 @@
       this.priority = -1;
       this.syncPlayWrapAs = 'htmlvideoplayer';
       this.useFullSubtitleUrls = true;
+      this.useServerPlaybackInfoForAudio = true;
       this.isLocalPlayer = true;
       this.isFetching = false;
 
@@ -1412,10 +1525,7 @@
       return this._currentSrc;
     }
 
-    getDeviceProfile(item, options) {
-      if (this.appHost?.getDeviceProfile) {
-        return Promise.resolve(this.appHost.getDeviceProfile(item, options));
-      }
+    getDeviceProfile() {
       return Promise.resolve(cloneMpvDeviceProfile());
     }
 
@@ -1624,16 +1734,16 @@
       nativeShell.downloadFile = (info) => info?.url && nativeShell.openUrl(info.url);
     }
     nativeShell.openClientSettings = () => {
-      window.location.href = 'mediaflick-desktop://client-settings?token=' + BRIDGE_TOKEN;
+      fireBridgeUrl('mediaflick-desktop://client-settings?token=' + BRIDGE_TOKEN);
     };
 
     nativeShell.getAppInfo = () => Object.assign({}, APP_INFO);
     nativeShell.openAbout = () => {
-      window.location.href = 'mediaflick-desktop://app-about?token=' + BRIDGE_TOKEN;
+      fireBridgeUrl('mediaflick-desktop://app-about?token=' + BRIDGE_TOKEN);
     };
 
     const exitApplication = () => {
-      window.location.href = 'mediaflick-desktop://app-exit?token=' + BRIDGE_TOKEN;
+      fireBridgeUrl('mediaflick-desktop://app-exit?token=' + BRIDGE_TOKEN);
     };
 
     const appHost = nativeShell.AppHost && typeof nativeShell.AppHost === 'object'
@@ -1695,18 +1805,25 @@
       if (!isBridgeRelevantUrl(requestUrl)) {
         return nativeFetch.call(this, input, init);
       }
+      const patchedRequestUrl = patchPlaybackRequestUrl(requestUrl);
+      let fetchInput = input;
+      if (patchedRequestUrl !== requestUrl) {
+        fetchInput = typeof Request !== 'undefined' && input instanceof Request
+          ? new Request(patchedRequestUrl, input)
+          : patchedRequestUrl;
+      }
       let requestBody = init?.body;
       let fetchInit = init;
-      const patchedBody = patchPlaybackInfoBody(requestUrl, requestBody);
+      const patchedBody = patchPlaybackRequestBody(patchedRequestUrl, requestBody);
       if (patchedBody !== requestBody) {
         requestBody = patchedBody;
         fetchInit = Object.assign({}, init || {}, { body: patchedBody });
       }
-      if (shouldSuppressPlaystateReport(requestUrl, requestBody)) {
-        return Promise.resolve(syntheticNoContentResponse(requestUrl));
+      if (shouldSuppressPlaystateReport(patchedRequestUrl, requestBody)) {
+        return Promise.resolve(syntheticNoContentResponse(patchedRequestUrl));
       }
-      if (isDirectStreamUrl(requestUrl)) rememberForStream(requestUrl);
-      return nativeFetch.call(this, input, fetchInit).then((response) => {
+      if (isDirectStreamUrl(patchedRequestUrl)) rememberForStream(patchedRequestUrl);
+      return nativeFetch.call(this, fetchInput, fetchInit).then((response) => {
         if (isPlaybackInfoUrl(requestUrl)) {
           response.clone().json().then((json) => rememberPlaybackInfo(requestUrl, json, requestBody)).catch(() => {});
         }
@@ -1719,15 +1836,21 @@
   const nativeSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function(method, url) {
     this.__mediaFlickDesktopMethod = String(method || 'GET').toUpperCase();
-    this.__mediaFlickDesktopUrl = absoluteUrl(url);
+    const absoluteRequestUrl = absoluteUrl(url);
+    this.__mediaFlickDesktopUrl = patchPlaybackRequestUrl(absoluteRequestUrl);
     if (isDirectStreamUrl(this.__mediaFlickDesktopUrl)) rememberForStream(this.__mediaFlickDesktopUrl);
-    return nativeOpen.apply(this, arguments);
+    if (this.__mediaFlickDesktopUrl === absoluteRequestUrl) {
+      return nativeOpen.apply(this, arguments);
+    }
+    const args = Array.from(arguments);
+    args[1] = this.__mediaFlickDesktopUrl;
+    return nativeOpen.apply(this, args);
   };
   XMLHttpRequest.prototype.send = function(body) {
     if (!isBridgeRelevantUrl(this.__mediaFlickDesktopUrl)) {
       return nativeSend.call(this, body);
     }
-    let requestBody = patchPlaybackInfoBody(this.__mediaFlickDesktopUrl, body);
+    let requestBody = patchPlaybackRequestBody(this.__mediaFlickDesktopUrl, body);
     if (shouldSuppressPlaystateReport(this.__mediaFlickDesktopUrl, requestBody)) {
       completeSyntheticXhr(this, this.__mediaFlickDesktopUrl);
       return;

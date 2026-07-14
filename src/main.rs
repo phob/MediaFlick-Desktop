@@ -26,7 +26,7 @@ fn main() {
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
         std::process::exit(cef::run(AppConfig {
-            settings: AppSettings::default(),
+            settings: AppSettings::load(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,

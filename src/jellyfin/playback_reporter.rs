@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{OnceLock, mpsc};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
@@ -13,6 +15,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
 static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
+static PLAYSTATE_REPORTER: OnceLock<mpsc::Sender<PlaystateRequest>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct PlaybackSession {
@@ -89,19 +92,21 @@ pub fn make_mpv_ipc_path() -> String {
 
 pub struct PlaybackReporter {
     pub session: PlaybackSession,
-    agent: ureq::Agent,
+}
+
+struct PlaystateRequest {
+    endpoint: &'static str,
+    url: String,
+    item_id: String,
+    play_session_id: Option<String>,
+    auth_headers: Vec<HttpHeader>,
+    body: Value,
+    state: MpvPlaybackState,
 }
 
 impl PlaybackReporter {
     pub fn new(session: PlaybackSession) -> Self {
-        let config = ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
-            .build();
-        Self {
-            session,
-            agent: config.into(),
-        }
+        Self { session }
     }
 
     pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
@@ -113,7 +118,7 @@ impl PlaybackReporter {
     }
 
     pub fn report_start(&self, state: &MpvPlaybackState) {
-        self.post_playstate(
+        self.queue_playstate(
             "Sessions/Playing",
             playback_progress_body(&self.session, state),
             state,
@@ -121,7 +126,7 @@ impl PlaybackReporter {
     }
 
     pub fn report_progress(&self, state: &MpvPlaybackState) {
-        self.post_playstate(
+        self.queue_playstate(
             "Sessions/Playing/Progress",
             playback_progress_body(&self.session, state),
             state,
@@ -129,46 +134,90 @@ impl PlaybackReporter {
     }
 
     pub fn report_stopped(&self, state: &MpvPlaybackState, failed: bool) {
-        self.post_playstate(
+        self.queue_playstate(
             "Sessions/Playing/Stopped",
             playback_stop_body(&self.session, state, failed),
             state,
         );
     }
 
-    fn post_playstate(&self, endpoint: &str, body: Value, state: &MpvPlaybackState) {
-        let url = join_api_url(&self.session.base_url, endpoint);
+    fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &MpvPlaybackState) {
+        let request = PlaystateRequest {
+            endpoint,
+            url: join_api_url(&self.session.base_url, endpoint),
+            item_id: self.session.item_id.clone(),
+            play_session_id: self.session.play_session_id.clone(),
+            auth_headers: self.session.auth_headers.clone(),
+            body,
+            state: *state,
+        };
         tracing::trace!(
             target: "jellyfin.playstate",
             endpoint,
-            item_id = %self.session.item_id,
-            play_session_id = %display_opt(self.session.play_session_id.as_deref()),
+            item_id = %request.item_id,
+            play_session_id = %display_opt(request.play_session_id.as_deref()),
             state = %state,
-            body = %logger::redacted_json(&body),
-            "sending Jellyfin playback state"
+            body = %logger::redacted_json(&request.body),
+            "queued Jellyfin playback state"
         );
-        let mut request = self
-            .agent
-            .post(url.as_str())
-            .header("Accept", "application/json");
-
-        for header in &self.session.auth_headers {
-            request = request.header(header.name.as_str(), header.value.as_str());
-        }
-
-        match request.send_json(&body) {
-            Ok(response) => tracing::trace!(
+        if playstate_reporter().send(request).is_err() {
+            tracing::warn!(
                 target: "jellyfin.playstate",
                 endpoint,
                 item_id = %self.session.item_id,
+                "failed to queue Jellyfin playback state"
+            );
+        }
+    }
+}
+
+fn playstate_reporter() -> &'static mpsc::Sender<PlaystateRequest> {
+    PLAYSTATE_REPORTER.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        thread::Builder::new()
+            .name("jellyfin-playstate".to_string())
+            .spawn(move || run_playstate_reporter(rx))
+            .expect("failed to start Jellyfin playstate reporter");
+        tx
+    })
+}
+
+fn run_playstate_reporter(rx: mpsc::Receiver<PlaystateRequest>) {
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(HTTP_TIMEOUT))
+        .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
+        .build();
+    let agent: ureq::Agent = config.into();
+
+    while let Ok(report) = rx.recv() {
+        tracing::trace!(
+            target: "jellyfin.playstate",
+            endpoint = report.endpoint,
+            item_id = %report.item_id,
+            play_session_id = %display_opt(report.play_session_id.as_deref()),
+            state = %report.state,
+            "sending queued Jellyfin playback state"
+        );
+        let mut request = agent
+            .post(report.url.as_str())
+            .header("Accept", "application/json");
+        for header in &report.auth_headers {
+            request = request.header(header.name.as_str(), header.value.as_str());
+        }
+
+        match request.send_json(&report.body) {
+            Ok(response) => tracing::trace!(
+                target: "jellyfin.playstate",
+                endpoint = report.endpoint,
+                item_id = %report.item_id,
                 status = response.status().as_u16(),
                 "sent Jellyfin playback state"
             ),
             Err(error) => tracing::warn!(
                 target: "jellyfin.playstate",
-                endpoint,
-                item_id = %self.session.item_id,
-                state = %state,
+                endpoint = report.endpoint,
+                item_id = %report.item_id,
+                state = %report.state,
                 "failed to report Jellyfin playback state: {error}"
             ),
         }

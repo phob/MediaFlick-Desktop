@@ -205,6 +205,7 @@ impl ControllerState {
         }
         self.mpv_playback_active = true;
         self.next_playback_handoff_until = None;
+        self.replacement_end_file_pending = false;
         self.schedule_mpv_raise("file-loaded");
         self.load_external_subtitle(&launch);
         self.kick_start_playback(&launch);
@@ -259,14 +260,15 @@ impl ControllerState {
         self.startup_seek = None;
         let failed = matches!(reason, Some("error"));
         let stop_reason = normalized_stop_reason(reason);
-        if self.should_ignore_pending_end_file_during_next_playback_handoff(reason) {
+        if self.should_ignore_pending_end_file_during_playback_handoff(reason) {
             tracing::debug!(
                 target: "playback",
                 reason = reason.unwrap_or("unknown"),
-                "ignored old mpv end-file while next playback handoff is pending"
+                "ignored old mpv end-file while replacement playback is pending"
             );
             return;
         }
+        self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
         if let Some(pending) = self.pending.take() {
             self.next_playback_handoff_until = None;
@@ -340,15 +342,16 @@ impl ControllerState {
             })
     }
 
-    fn should_ignore_pending_end_file_during_next_playback_handoff(
+    fn should_ignore_pending_end_file_during_playback_handoff(
         &mut self,
         reason: Option<&str>,
     ) -> bool {
-        if self.pending.is_none() {
+        if self.pending.is_none() || !matches!(reason, Some("stop" | "redirect")) {
             return false;
         }
-        if !matches!(reason, Some("stop" | "redirect")) {
-            return false;
+        if self.replacement_end_file_pending {
+            self.replacement_end_file_pending = false;
+            return true;
         }
         self.should_suppress_stop_during_next_playback_handoff()
     }
