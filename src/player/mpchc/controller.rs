@@ -10,7 +10,7 @@ use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkip
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
 use crate::jellyfin::media_segments::{self, SkipSegment};
 use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, seconds_to_ticks,
+    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, flush_playstate_reports, seconds_to_ticks,
 };
 use crate::mpv::{MpvControlCommand, MpvLaunch, MpvPlaybackEvent, MpvPlayerSnapshot};
 use crate::player::segments;
@@ -22,7 +22,8 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(200);
 const POSITION_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
-const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(25);
+const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
 const SEGMENT_SKIP_OSD_DURATION_MS: i32 = 3000;
 const SEGMENT_SKIP_OSD_DEBOUNCE: Duration = Duration::from_secs(3);
 const SEGMENT_AUTO_SKIP_DELAY: Duration = Duration::from_secs(3);
@@ -1029,6 +1030,9 @@ impl State {
             transport.shutdown();
         }
         self.inbound = None;
+        if !flush_playstate_reports(PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT) {
+            tracing::warn!(target: "jellyfin.playstate", "timed out flushing queued Jellyfin playback state during MPC-HC shutdown");
+        }
     }
 }
 
@@ -1190,6 +1194,15 @@ mod tests {
             subtitle_url: Some("https://host/Videos/abc/sub.srt".to_string()),
             ..MpvLaunch::default()
         }
+    }
+
+    #[test]
+    fn shutdown_ack_deadline_includes_playstate_flush_and_player_close() {
+        assert!(
+            SHUTDOWN_ACK_TIMEOUT
+                > PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT
+                    .saturating_add(crate::player::mpchc::transport::SHUTDOWN_SEND_TIMEOUT)
+        );
     }
 
     #[test]

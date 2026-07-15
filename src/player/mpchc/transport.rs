@@ -12,6 +12,7 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
@@ -26,7 +27,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use super::protocol::{self, Inbound};
 
 const SEND_TIMEOUT_MS: u32 = 60_000;
-const SHUTDOWN_SEND_TIMEOUT_MS: u32 = 5_000;
+pub(super) const SHUTDOWN_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct WindowContext {
     inbound: Sender<Inbound>,
@@ -347,7 +348,7 @@ impl MpcHcTransport {
             command,
             outbound.bytes.as_ptr() as *const c_void,
             outbound.bytes.len() as u32,
-            SHUTDOWN_SEND_TIMEOUT_MS,
+            SHUTDOWN_SEND_TIMEOUT.as_millis() as u32,
             SMTO_ABORTIFHUNG,
         )
     }

@@ -37,7 +37,7 @@ const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
-const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(25);
+const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(60);
 const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
 const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -262,7 +262,7 @@ struct IpcWorker {
     writer_alive: Arc<AtomicBool>,
 }
 
-type IpcCommand = (Value, Sender<Result<(), IpcCommandFailure>>);
+type IpcCommand = (Value, Duration, Sender<Result<(), IpcCommandFailure>>);
 
 #[derive(Debug)]
 enum IpcCommandFailure {
@@ -704,8 +704,7 @@ impl ControllerState {
             }
             Err(IpcCommandFailure::Rejected(error)) => {
                 tracing::warn!(target: "mpv.ipc", "mpv rejected loadfile command: {error}");
-                self.mpv_playback_active = false;
-                self.report_playback_failure("mpv did not accept the video. Try playing again.");
+                self.handle_rejected_loadfile(replacing_active_file, identity);
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
@@ -714,6 +713,25 @@ impl ControllerState {
                 self.handle_mpv_session_lost("loadfile transport failed");
             }
         }
+    }
+
+    fn handle_rejected_loadfile(
+        &mut self,
+        replacing_active_file: bool,
+        identity: PlaybackIdentity,
+    ) {
+        self.mpv_playback_active = false;
+        if replacing_active_file {
+            tracing::warn!(
+                target: "mpv.ipc",
+                "resetting mpv after rejected replacement loadfile command"
+            );
+            self.playback_identity = Some(identity);
+            self.reset_mpv();
+            let snapshot = self.publish_snapshot_with_stop_reason(Some("error"));
+            self.notify_playback_stopped(snapshot);
+        }
+        self.report_playback_failure("mpv did not accept the video. Try playing again.");
     }
 
     fn report_playback_failure(&self, message: impl Into<String>) {
@@ -2210,7 +2228,7 @@ impl IpcWorker {
             )));
         }
         let (ack, ack_rx) = mpsc::channel();
-        self.command_tx.send((command, ack)).map_err(|_| {
+        self.command_tx.send((command, timeout, ack)).map_err(|_| {
             IpcCommandFailure::Transport(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "mpv IPC writer stopped",
@@ -2251,7 +2269,7 @@ impl IpcWorker {
 
 impl IpcCommandWriter {
     fn write_commands(mut self, rx: Receiver<IpcCommand>) {
-        while let Ok((command, ack)) = rx.recv() {
+        while let Ok((command, timeout, ack)) = rx.recv() {
             tracing::trace!(
                 target: "mpv.ipc",
                 command = %logger::mpv_command_summary(&command),
@@ -2268,7 +2286,7 @@ impl IpcCommandWriter {
                 // eventual completion reply by request id.
                 write_command(self.stream.get_mut(), &command).map_err(IpcCommandFailure::Transport)
             } else {
-                self.write_command_and_wait_for_reply(&command)
+                self.write_command_and_wait_for_reply(&command, timeout)
             };
             match result {
                 Ok(()) => {
@@ -2289,11 +2307,14 @@ impl IpcCommandWriter {
     fn write_command_and_wait_for_reply(
         &mut self,
         command: &Value,
+        timeout: Duration,
     ) -> Result<(), IpcCommandFailure> {
         let request_id = command
             .get("request_id")
             .and_then(Value::as_i64)
             .unwrap_or_default();
+        set_ipc_command_read_timeout(self.stream.get_mut(), timeout)
+            .map_err(IpcCommandFailure::Transport)?;
         write_command(self.stream.get_mut(), command).map_err(IpcCommandFailure::Transport)?;
 
         let mut line = String::new();
@@ -2580,6 +2601,11 @@ fn connect_ipc_for_commands(path: &str) -> io::Result<IpcConnection> {
         .open(path)
 }
 
+#[cfg(target_os = "windows")]
+fn set_ipc_command_read_timeout(_stream: &IpcConnection, _timeout: Duration) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(all(unix, not(target_os = "windows")))]
 type IpcConnection = std::os::unix::net::UnixStream;
 
@@ -2593,7 +2619,14 @@ fn connect_ipc(path: &str) -> io::Result<IpcConnection> {
 
 #[cfg(all(unix, not(target_os = "windows")))]
 fn connect_ipc_for_commands(path: &str) -> io::Result<IpcConnection> {
-    connect_ipc(path)
+    let stream = std::os::unix::net::UnixStream::connect(path)?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    Ok(stream)
+}
+
+#[cfg(all(unix, not(target_os = "windows")))]
+fn set_ipc_command_read_timeout(stream: &IpcConnection, timeout: Duration) -> io::Result<()> {
+    stream.set_read_timeout(Some(timeout))
 }
 
 fn mpv_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
@@ -3289,6 +3322,75 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_ack_deadline_includes_longest_command_and_cleanup() {
+        let bounded_shutdown_wait = super::IPC_SUBTITLE_COMMAND_TIMEOUT
+            .saturating_add(super::IPC_COMMAND_TIMEOUT)
+            .saturating_add(super::SHUTDOWN_WAIT)
+            .saturating_add(super::PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT);
+
+        assert_eq!(bounded_shutdown_wait, std::time::Duration::from_secs(48));
+        assert!(super::CONTROLLER_SHUTDOWN_ACK_TIMEOUT > bounded_shutdown_wait);
+    }
+
+    #[test]
+    fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity() {
+        let mut state = controller_with_pending_load(None);
+        let (event_tx, event_rx) = mpsc::channel();
+        state.event_tx = Some(event_tx);
+        state.pending = None;
+        state.mpv_playback_active = true;
+        state.current_mpv_path = Some("stale-mpv".to_string());
+        state.ipc_path = Some(crate::jellyfin::playback_reporter::make_mpv_ipc_path());
+        state.replacement_end_file_pending = true;
+        state.pending_raise_pulse_reset_at = Some(Instant::now());
+        let mut replacement = MpvLaunch::new("https://example.test/replacement.mkv");
+        replacement.item_id = Some("replacement-item".to_string());
+        replacement.media_source_id = Some("replacement-source".to_string());
+        replacement.play_session_id = Some("replacement-session".to_string());
+        let replacement_identity = PlaybackIdentity::from_launch(2, &replacement);
+
+        state.handle_rejected_loadfile(true, replacement_identity);
+
+        assert!(!state.mpv_playback_active);
+        assert!(state.current_mpv_path.is_none());
+        assert!(state.ipc_path.is_none());
+        assert!(!state.replacement_end_file_pending);
+        assert!(state.pending_raise_pulse_reset_at.is_none());
+        let snapshot = state.snapshot.lock().expect("snapshot").clone();
+        assert!(!snapshot.active);
+        assert_eq!(snapshot.stop_reason, Some("error"));
+        assert_eq!(snapshot.playback_id, Some(2));
+        assert_eq!(snapshot.item_id.as_deref(), Some("replacement-item"));
+        assert_eq!(
+            snapshot.media_source_id.as_deref(),
+            Some("replacement-source")
+        );
+        assert_eq!(
+            snapshot.play_session_id.as_deref(),
+            Some("replacement-session")
+        );
+
+        let stopped = match event_rx.try_recv().expect("stopped event before failure") {
+            MpvPlaybackEvent::Stopped(stopped) => stopped,
+            MpvPlaybackEvent::Failed { .. } => panic!("failure event arrived before stopped event"),
+        };
+        assert!(!stopped.active);
+        assert_eq!(stopped.stop_reason, Some("error"));
+        assert_eq!(stopped.playback_id, snapshot.playback_id);
+        assert_eq!(stopped.item_id, snapshot.item_id);
+        assert_eq!(stopped.media_source_id, snapshot.media_source_id);
+        assert_eq!(stopped.play_session_id, snapshot.play_session_id);
+        assert!(matches!(
+            event_rx.try_recv().expect("failure event after stopped"),
+            MpvPlaybackEvent::Failed { .. }
+        ));
+        assert!(matches!(
+            event_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
     fn pending_load_blocks_different_replacement_until_file_loaded() {
         let mut state = controller_with_pending_load(None);
         let pending_key = state.pending.as_ref().expect("pending load").key.clone();
@@ -3355,6 +3457,50 @@ mod tests {
 
         assert!(state.next_playback_handoff_until.is_some());
         assert_eq!(state.last_state.position_ticks, 120_000_000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_command_ipc_uses_per_command_read_timeout() {
+        use super::{connect_ipc, connect_ipc_for_commands, set_ipc_command_read_timeout};
+        use std::os::unix::net::UnixListener;
+
+        let path = crate::jellyfin::playback_reporter::make_mpv_ipc_path();
+        let listener = UnixListener::bind(&path).expect("bind test IPC socket");
+
+        let command = connect_ipc_for_commands(&path).expect("connect command socket");
+        let (_command_peer, _) = listener.accept().expect("accept command socket");
+        assert_eq!(command.read_timeout().expect("command read timeout"), None);
+        assert_eq!(
+            command.write_timeout().expect("command write timeout"),
+            Some(Duration::from_secs(2))
+        );
+
+        let subtitle_timeout = Duration::from_secs(30);
+        set_ipc_command_read_timeout(&command, subtitle_timeout)
+            .expect("set per-command read timeout");
+        assert_eq!(
+            command
+                .read_timeout()
+                .expect("updated command read timeout"),
+            Some(subtitle_timeout)
+        );
+
+        let event = connect_ipc(&path).expect("connect event socket");
+        let (_event_peer, _) = listener.accept().expect("accept event socket");
+        assert_eq!(
+            event.read_timeout().expect("event read timeout"),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
+            event.write_timeout().expect("event write timeout"),
+            Some(Duration::from_secs(2))
+        );
+
+        drop(event);
+        drop(command);
+        drop(listener);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
