@@ -86,7 +86,7 @@ impl ControllerState {
             .or(self.playback_identity.as_ref())
     }
 
-    fn notify_playback_stopped(&self, snapshot: MpvPlayerSnapshot) {
+    pub(super) fn notify_playback_stopped(&self, snapshot: MpvPlayerSnapshot) {
         tracing::debug!(
             target: "playback",
             playback_id = ?snapshot.playback_id,

@@ -18,11 +18,6 @@
   <a href="https://github.com/phob/mediaflick-desktop/releases/latest"><img src="https://img.shields.io/github/downloads/phob/mediaflick-desktop/total" alt="Downloads"></a>
 </p>
 
-<!-- DEMO: 15–20s loop — click a poster in the grid → mpv window launches → skip-intro prompt appears on the seek bar. -->
-<p align="center">
-  <img src="docs/demo.gif" alt="Clicking a poster in the library grid hands the stream to an external mpv window with skip-segment markers on the seek bar" width="820">
-</p>
-
 ## Why this exists, and why it's different
 
 Every other Jellyfin desktop app plays video *inside* itself with libmpv. That's convenient, but it quietly caps what mpv can do — the features power users actually chase, like **SVP 4 frame interpolation** and **SDR-to-HDR tone mapping**, are exactly the ones that don't survive being embedded.
@@ -30,13 +25,6 @@ Every other Jellyfin desktop app plays video *inside* itself with libmpv. That's
 MediaFlick Desktop takes the opposite approach. It shows you Jellyfin Web in a native window, but when you press play it hands the stream to the **external `mpv` you already configured**. Original-quality direct playback remains the default, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections. Your `mpv.conf`, your scripts, your shaders, your SVP4 pipeline, your HDR profiles, your input bindings — all of it applies, because it's the real mpv, not a stripped-down copy.
 
 The catch with playing outside the browser is usually that Jellyfin loses track of what you watched. MediaFlick solves that: while mpv plays, it reports **playback start, progress, watched state, and resume position** back to your server, so your library stays correct across every device.
-
-### See the difference
-
-<!-- DEMO: SVP4 / SDR-to-HDR before-after. Side-by-side or slider — same frame, mpv-embedded client vs MediaFlick's external mpv with SVP4 + HDR active. -->
-<p align="center">
-  <img src="docs/svp-hdr-demo.gif" alt="SVP4 motion interpolation and SDR-to-HDR running through MediaFlick's external mpv" width="820">
-</p>
 
 ## Features
 
