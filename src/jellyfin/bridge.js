@@ -78,7 +78,7 @@
       ...['srt', 'subrip', 'ass', 'ssa', 'sub', 'webvtt', 'vtt', 'microdvd', 'subviewer', 'subviewer1', 'sami', 'smi', 'realtext', 'stl', 'ttml']
         .flatMap((Format) => [{ Format, Method: 'Embed' }, { Format, Method: 'External' }]),
       ...['PGSSUB', 'PGS', 'DVDSUB', 'DVBSUB', 'DVBTXT']
-        .map((Format) => ({ Format, Method: 'Embed' }))
+        .flatMap((Format) => [{ Format, Method: 'Embed' }, { Format, Method: 'External' }])
     ],
     ResponseProfiles: [],
     ContainerProfiles: [],
@@ -600,6 +600,7 @@
       const formats = [...new Set(profile.SubtitleProfiles.map(entry => entry.Format))];
       profile.SubtitleProfiles = formats.flatMap(Format => [
         { Format, Method: 'Embed' },
+        { Format, Method: 'External' },
         { Format, Method: 'Encode' }
       ]);
     }
@@ -611,7 +612,7 @@
   }
 
   function patchPlaybackRequestUrl(value) {
-    if (!isLiveStreamOpenUrl(value)) return absoluteUrl(value);
+    if (!isPlaybackInfoUrl(value) && !isLiveStreamOpenUrl(value)) return absoluteUrl(value);
     const url = parsedUrl(value);
     if (!url) return absoluteUrl(value);
     const incoming = url.searchParams.get('MaxStreamingBitrate');

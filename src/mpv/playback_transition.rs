@@ -207,8 +207,11 @@ impl ControllerState {
         self.next_playback_handoff_until = None;
         self.replacement_end_file_pending = false;
         self.schedule_mpv_raise("file-loaded");
-        self.load_external_subtitle(&launch);
+        self.stage_external_subtitle(&launch);
         self.kick_start_playback(&launch);
+        if self.startup_seek.is_none() {
+            self.load_pending_external_subtitle();
+        }
         self.publish_snapshot();
     }
 
@@ -268,6 +271,7 @@ impl ControllerState {
             );
             return;
         }
+        self.pending_external_subtitle_url = None;
         self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
         if let Some(pending) = self.pending.take() {

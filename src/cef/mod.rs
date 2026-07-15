@@ -313,7 +313,7 @@ wrap_app! {
 
 wrap_render_process_handler! {
     struct JellyfinRenderProcessHandler {
-        settings: AppSettings,
+        _initial_settings: AppSettings,
     }
 
     impl RenderProcessHandler {
@@ -333,7 +333,11 @@ wrap_render_process_handler! {
             if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
                 return;
             }
-            let script = jellyfin_bridge::bridge_script(&self.settings);
+            // Render processes can outlive a settings save. Read the atomically
+            // persisted snapshot for every new JS context so a reused renderer
+            // never reinstalls the bridge with its startup-only quality choice.
+            let settings = AppSettings::load();
+            let script = jellyfin_bridge::bridge_script(&settings);
             frame.execute_java_script(
                 Some(&CefString::from(script.as_str())),
                 Some(&CefString::from("mediaflick-desktop://bridge.js")),
