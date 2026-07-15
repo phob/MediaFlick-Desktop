@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
@@ -15,7 +15,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
 static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
-static PLAYSTATE_REPORTER: OnceLock<mpsc::Sender<PlaystateRequest>> = OnceLock::new();
+static PLAYSTATE_REPORTER: OnceLock<mpsc::Sender<PlaystateMessage>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct PlaybackSession {
@@ -104,6 +104,11 @@ struct PlaystateRequest {
     state: MpvPlaybackState,
 }
 
+enum PlaystateMessage {
+    Report(PlaystateRequest),
+    Flush(mpsc::Sender<()>),
+}
+
 impl PlaybackReporter {
     pub fn new(session: PlaybackSession) -> Self {
         Self { session }
@@ -160,7 +165,10 @@ impl PlaybackReporter {
             body = %logger::redacted_json(&request.body),
             "queued Jellyfin playback state"
         );
-        if playstate_reporter().send(request).is_err() {
+        if playstate_reporter()
+            .send(PlaystateMessage::Report(request))
+            .is_err()
+        {
             tracing::warn!(
                 target: "jellyfin.playstate",
                 endpoint,
@@ -171,7 +179,7 @@ impl PlaybackReporter {
     }
 }
 
-fn playstate_reporter() -> &'static mpsc::Sender<PlaystateRequest> {
+fn playstate_reporter() -> &'static mpsc::Sender<PlaystateMessage> {
     PLAYSTATE_REPORTER.get_or_init(|| {
         let (tx, rx) = mpsc::channel();
         thread::Builder::new()
@@ -182,45 +190,104 @@ fn playstate_reporter() -> &'static mpsc::Sender<PlaystateRequest> {
     })
 }
 
-fn run_playstate_reporter(rx: mpsc::Receiver<PlaystateRequest>) {
+pub fn flush_playstate_reports(timeout: Duration) -> bool {
+    let (ack, ack_rx) = mpsc::channel();
+    playstate_reporter()
+        .send(PlaystateMessage::Flush(ack))
+        .is_ok()
+        && ack_rx.recv_timeout(timeout).is_ok()
+}
+
+fn run_playstate_reporter(rx: mpsc::Receiver<PlaystateMessage>) {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(HTTP_TIMEOUT))
         .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
         .build();
     let agent: ureq::Agent = config.into();
 
-    while let Ok(report) = rx.recv() {
-        tracing::trace!(
+    let mut pending = VecDeque::new();
+    while let Ok(message) = rx.recv() {
+        let mut flush = None;
+        collect_playstate_message(message, &mut pending, &mut flush);
+        while flush.is_none() {
+            let Ok(message) = rx.try_recv() else {
+                break;
+            };
+            collect_playstate_message(message, &mut pending, &mut flush);
+        }
+
+        while let Some(report) = pending.pop_front() {
+            send_playstate_report(&agent, report);
+        }
+        if let Some(ack) = flush {
+            let _ = ack.send(());
+        }
+    }
+}
+
+fn collect_playstate_message(
+    message: PlaystateMessage,
+    pending: &mut VecDeque<PlaystateRequest>,
+    flush: &mut Option<mpsc::Sender<()>>,
+) {
+    match message {
+        PlaystateMessage::Report(report) => enqueue_playstate_report(pending, report),
+        PlaystateMessage::Flush(ack) => *flush = Some(ack),
+    }
+}
+
+fn enqueue_playstate_report(pending: &mut VecDeque<PlaystateRequest>, report: PlaystateRequest) {
+    if report.is_progress() || report.is_stopped() {
+        pending.retain(|queued| !(queued.is_progress() && queued.same_session(&report)));
+    }
+    pending.push_back(report);
+}
+
+impl PlaystateRequest {
+    fn is_progress(&self) -> bool {
+        self.endpoint == "Sessions/Playing/Progress"
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.endpoint == "Sessions/Playing/Stopped"
+    }
+
+    fn same_session(&self, other: &Self) -> bool {
+        self.item_id == other.item_id && self.play_session_id == other.play_session_id
+    }
+}
+
+fn send_playstate_report(agent: &ureq::Agent, report: PlaystateRequest) {
+    tracing::trace!(
+        target: "jellyfin.playstate",
+        endpoint = report.endpoint,
+        item_id = %report.item_id,
+        play_session_id = %display_opt(report.play_session_id.as_deref()),
+        state = %report.state,
+        "sending queued Jellyfin playback state"
+    );
+    let mut request = agent
+        .post(report.url.as_str())
+        .header("Accept", "application/json");
+    for header in &report.auth_headers {
+        request = request.header(header.name.as_str(), header.value.as_str());
+    }
+
+    match request.send_json(&report.body) {
+        Ok(response) => tracing::trace!(
             target: "jellyfin.playstate",
             endpoint = report.endpoint,
             item_id = %report.item_id,
-            play_session_id = %display_opt(report.play_session_id.as_deref()),
+            status = response.status().as_u16(),
+            "sent Jellyfin playback state"
+        ),
+        Err(error) => tracing::warn!(
+            target: "jellyfin.playstate",
+            endpoint = report.endpoint,
+            item_id = %report.item_id,
             state = %report.state,
-            "sending queued Jellyfin playback state"
-        );
-        let mut request = agent
-            .post(report.url.as_str())
-            .header("Accept", "application/json");
-        for header in &report.auth_headers {
-            request = request.header(header.name.as_str(), header.value.as_str());
-        }
-
-        match request.send_json(&report.body) {
-            Ok(response) => tracing::trace!(
-                target: "jellyfin.playstate",
-                endpoint = report.endpoint,
-                item_id = %report.item_id,
-                status = response.status().as_u16(),
-                "sent Jellyfin playback state"
-            ),
-            Err(error) => tracing::warn!(
-                target: "jellyfin.playstate",
-                endpoint = report.endpoint,
-                item_id = %report.item_id,
-                state = %report.state,
-                "failed to report Jellyfin playback state: {error}"
-            ),
-        }
+            "failed to report Jellyfin playback state: {error}"
+        ),
     }
 }
 
@@ -696,11 +763,48 @@ pub fn cleanup_ipc_path(_path: &str) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        MpvPlaybackState, PlaybackSession, auth_parameter, playback_progress_body,
-        playback_stop_body, server_base_url, token_from_authorization, token_from_launch,
+        MpvPlaybackState, PlaybackSession, PlaystateRequest, auth_parameter,
+        enqueue_playstate_report, playback_progress_body, playback_stop_body, server_base_url,
+        token_from_authorization, token_from_launch,
     };
     use crate::mpv::{HttpHeader, MpvLaunch};
     use serde_json::json;
+    use std::collections::VecDeque;
+
+    fn queued_report(endpoint: &'static str, item_id: &str) -> PlaystateRequest {
+        PlaystateRequest {
+            endpoint,
+            url: "https://example.test/Sessions/Playing".to_string(),
+            item_id: item_id.to_string(),
+            play_session_id: Some("session".to_string()),
+            auth_headers: Vec::new(),
+            body: json!({}),
+            state: MpvPlaybackState::default(),
+        }
+    }
+
+    #[test]
+    fn stopped_supersedes_queued_progress_for_the_same_session() {
+        let mut pending = VecDeque::new();
+        enqueue_playstate_report(&mut pending, queued_report("Sessions/Playing", "current"));
+        enqueue_playstate_report(
+            &mut pending,
+            queued_report("Sessions/Playing/Progress", "current"),
+        );
+        enqueue_playstate_report(
+            &mut pending,
+            queued_report("Sessions/Playing/Progress", "other"),
+        );
+        enqueue_playstate_report(
+            &mut pending,
+            queued_report("Sessions/Playing/Stopped", "current"),
+        );
+
+        assert_eq!(pending.len(), 3);
+        assert_eq!(pending[0].endpoint, "Sessions/Playing");
+        assert_eq!(pending[1].item_id, "other");
+        assert_eq!(pending[2].endpoint, "Sessions/Playing/Stopped");
+    }
 
     #[test]
     fn extracts_server_base_with_subpath() {

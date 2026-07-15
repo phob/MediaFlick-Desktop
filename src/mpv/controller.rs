@@ -15,8 +15,8 @@ use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkip
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
 use crate::jellyfin::media_segments::{self, SegmentType, SkipSegment};
 use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, cleanup_ipc_path, make_mpv_ipc_path,
-    seconds_to_ticks,
+    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, cleanup_ipc_path,
+    flush_playstate_reports, make_mpv_ipc_path, seconds_to_ticks,
 };
 use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
@@ -38,6 +38,7 @@ const DUPLICATE_DEBOUNCE: Duration = Duration::from_secs(2);
 const MPV_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(2);
 const CONTROLLER_SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(25);
+const PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(11);
 const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STARTUP_SEEK_POSITION_TOLERANCE: i64 = 30_000_000;
@@ -48,6 +49,7 @@ const SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL: Duration = Duration::from_secs(1);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS: i64 = 1200;
 const CHAPTER_MARKER_RETRY_INTERVAL: Duration = Duration::from_millis(1000);
 const CHAPTER_MARKER_MAX_ATTEMPTS: u32 = 15;
+const IPC_SUBTITLE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
@@ -138,6 +140,7 @@ struct ControllerState {
     ipc_path: Option<String>,
     ipc_worker: Option<IpcWorker>,
     event_rx: Option<Receiver<MpvEvent>>,
+    pending_external_subtitle_url: Option<String>,
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
     playback_identity: Option<PlaybackIdentity>,
@@ -254,39 +257,53 @@ impl MpvEvent {
 struct IpcWorker {
     path: String,
     command_tx: Sender<IpcCommand>,
-    detached_command_tx: Sender<Value>,
     reader_thread: thread::JoinHandle<()>,
     writer_thread: thread::JoinHandle<()>,
-    detached_writer_thread: thread::JoinHandle<()>,
-    detached_reply_thread: thread::JoinHandle<()>,
     writer_alive: Arc<AtomicBool>,
-    detached_writer_alive: Arc<AtomicBool>,
 }
 
-type IpcCommand = (Value, Sender<io::Result<()>>);
+type IpcCommand = (Value, Sender<Result<(), IpcCommandFailure>>);
 
+#[derive(Debug)]
 enum IpcCommandFailure {
     Transport(io::Error),
     Rejected(io::Error),
 }
+
+impl IpcCommandFailure {
+    fn is_transport(&self) -> bool {
+        matches!(self, Self::Transport(_))
+    }
+
+    fn with_context(self, context: impl std::fmt::Display) -> Self {
+        match self {
+            Self::Transport(error) => {
+                Self::Transport(io::Error::new(error.kind(), format!("{context}: {error}")))
+            }
+            Self::Rejected(error) => {
+                Self::Rejected(io::Error::new(error.kind(), format!("{context}: {error}")))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for IpcCommandFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport(error) => write!(formatter, "IPC transport failure: {error}"),
+            Self::Rejected(error) => write!(formatter, "mpv rejected command: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for IpcCommandFailure {}
 
 struct IpcCommandWriter {
     stream: BufReader<IpcConnection>,
     alive: Arc<AtomicBool>,
 }
 
-struct IpcDetachedCommandWriter {
-    stream: IpcConnection,
-    alive: Arc<AtomicBool>,
-}
-
 impl Drop for IpcCommandWriter {
-    fn drop(&mut self) {
-        self.alive.store(false, Ordering::SeqCst);
-    }
-}
-
-impl Drop for IpcDetachedCommandWriter {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::SeqCst);
     }
@@ -396,6 +413,7 @@ impl ControllerState {
             ipc_path: None,
             ipc_worker: None,
             event_rx: None,
+            pending_external_subtitle_url: None,
             active: None,
             pending: None,
             playback_identity: None,
@@ -526,7 +544,9 @@ impl ControllerState {
         }
         if let Err(error) = self.send_mpv_command(command_json) {
             tracing::warn!(target: "mpv.ipc", ?command, "failed to send mpv control command: {error}");
-            self.handle_mpv_session_lost("mpv control command failed");
+            if error.is_transport() {
+                self.handle_mpv_session_lost("mpv control command transport failed");
+            }
         }
     }
 
@@ -582,9 +602,15 @@ impl ControllerState {
                         startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;
                     }
                 }
+                Err(IpcCommandFailure::Rejected(error)) => {
+                    tracing::warn!(target: "mpv.ipc", "mpv rejected startup seek; retrying after file settles: {error}");
+                    if let Some(startup_seek) = &mut self.startup_seek {
+                        startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;
+                    }
+                }
                 Err(error) => {
                     tracing::warn!(target: "mpv.ipc", "failed to send mpv startup seek command: {error}");
-                    self.handle_mpv_session_lost("mpv startup seek command failed");
+                    self.handle_mpv_session_lost("mpv startup seek transport failed");
                 }
             }
         }
@@ -672,14 +698,20 @@ impl ControllerState {
                 self.replacement_end_file_pending = replacing_active_file;
                 self.fetch_media_segments(playback_id, pending_launch);
                 self.prepare_pending_playback_state();
+                #[cfg(not(windows))]
                 self.schedule_mpv_raise("loadfile accepted");
                 self.publish_snapshot();
+            }
+            Err(IpcCommandFailure::Rejected(error)) => {
+                tracing::warn!(target: "mpv.ipc", "mpv rejected loadfile command: {error}");
+                self.mpv_playback_active = false;
+                self.report_playback_failure("mpv did not accept the video. Try playing again.");
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command after reconnect attempt: {error}");
                 self.mpv_playback_active = false;
                 self.report_playback_failure("mpv did not accept the video. Try playing again.");
-                self.handle_mpv_session_lost("loadfile command failed");
+                self.handle_mpv_session_lost("loadfile transport failed");
             }
         }
     }
@@ -727,10 +759,11 @@ impl ControllerState {
         mpv_path: &str,
         fullscreen: MpvFullscreenBehavior,
         launch: &MpvLaunch,
-    ) -> io::Result<()> {
+    ) -> Result<(), IpcCommandFailure> {
         match self.send_mpv_command(loadfile_command(launch)) {
             Ok(()) => Ok(()),
-            Err(first_error) => {
+            Err(first_error @ IpcCommandFailure::Rejected(_)) => Err(first_error),
+            Err(first_error @ IpcCommandFailure::Transport(_)) => {
                 tracing::warn!(target: "mpv.ipc", "failed to send mpv loadfile command; restarting session and retrying once: {first_error}");
                 self.reset_mpv();
                 if !self.ensure_mpv(mpv_path, fullscreen) {
@@ -739,10 +772,8 @@ impl ControllerState {
                 self.apply_default_fullscreen(fullscreen);
                 self.send_mpv_command(loadfile_command(launch))
                     .map_err(|retry_error| {
-                        io::Error::new(
-                            retry_error.kind(),
-                            format!("initial failure: {first_error}; retry failure: {retry_error}"),
-                        )
+                        retry_error
+                            .with_context(format!("initial failure: {first_error}; retry failure"))
                     })
             }
         }
@@ -930,20 +961,36 @@ impl ControllerState {
         }
     }
 
-    fn load_external_subtitle(&mut self, launch: &MpvLaunch) {
-        let Some(subtitle_url) = non_empty(launch.subtitle_url.as_deref()) else {
+    fn stage_external_subtitle(&mut self, launch: &MpvLaunch) {
+        self.pending_external_subtitle_url =
+            non_empty(launch.subtitle_url.as_deref()).map(ToOwned::to_owned);
+    }
+
+    fn load_pending_external_subtitle(&mut self) {
+        let Some(subtitle_url) = self.pending_external_subtitle_url.take() else {
+            return;
+        };
+        let Some(command) = control_command(MpvControlCommand::AddSubtitle(subtitle_url.clone()))
+        else {
             return;
         };
         tracing::debug!(
             target: "mpv.ipc",
-            subtitle_url = %jellyfin_bridge::redact_url_secrets(subtitle_url),
-            "loading selected external Jellyfin subtitle in mpv"
+            subtitle_url = %jellyfin_bridge::redact_url_secrets(&subtitle_url),
+            timeout_ms = IPC_SUBTITLE_COMMAND_TIMEOUT.as_millis(),
+            "loading selected external Jellyfin subtitle from its remote URL"
         );
-        if let Some(command) =
-            control_command(MpvControlCommand::AddSubtitle(subtitle_url.to_string()))
-            && let Err(error) = self.send_mpv_command(command)
-        {
-            tracing::warn!(target: "mpv.ipc", "failed to load selected external subtitle: {error}");
+        match self.send_mpv_command_with_timeout(command, IPC_SUBTITLE_COMMAND_TIMEOUT) {
+            Ok(()) => {
+                tracing::debug!(target: "mpv.ipc", "loaded selected external Jellyfin subtitle")
+            }
+            Err(IpcCommandFailure::Rejected(error)) => {
+                tracing::warn!(target: "mpv.ipc", "mpv rejected external subtitle: {error}");
+            }
+            Err(error) => {
+                tracing::warn!(target: "mpv.ipc", "failed to load external subtitle in mpv: {error}");
+                self.handle_mpv_session_lost("mpv external subtitle transport failed");
+            }
         }
     }
 
@@ -1561,7 +1608,9 @@ impl ControllerState {
             }
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", reason, "failed to skip Jellyfin media segment: {error}");
-                self.handle_mpv_session_lost("segment skip command failed");
+                if error.is_transport() {
+                    self.handle_mpv_session_lost("segment skip command transport failed");
+                }
                 false
             }
         }
@@ -1624,6 +1673,7 @@ impl ControllerState {
             "mpv startup seek reached resume range"
         );
         self.startup_seek = None;
+        self.load_pending_external_subtitle();
         false
     }
 
@@ -1778,7 +1828,24 @@ impl ControllerState {
 
     #[cfg(windows)]
     fn begin_mpv_raise(&self, reason: &'static str) -> bool {
-        self.set_mpv_bool_property("window-minimized", true, reason)
+        let Some(process_id) = self.child.as_ref().map(Child::id) else {
+            tracing::trace!(target: "mpv.focus", reason, "cannot activate mpv because its child process is unavailable");
+            return false;
+        };
+        match crate::windows::activate_process_window(process_id) {
+            crate::windows::ProcessWindowActivation::Activated => {
+                tracing::debug!(target: "mpv.focus", reason, process_id, "activated mpv with the Windows foreground API");
+                false
+            }
+            crate::windows::ProcessWindowActivation::WindowNotFound => {
+                tracing::debug!(target: "mpv.focus", reason, process_id, "mpv window was not available for native activation; using minimize/restore fallback");
+                self.set_mpv_bool_property("window-minimized", true, reason)
+            }
+            crate::windows::ProcessWindowActivation::Denied => {
+                tracing::debug!(target: "mpv.focus", reason, process_id, "Windows denied native mpv activation; using minimize/restore fallback");
+                self.set_mpv_bool_property("window-minimized", true, reason)
+            }
+        }
     }
 
     #[cfg(windows)]
@@ -1873,11 +1940,15 @@ impl ControllerState {
             let _ = child.kill();
         }
         self.reset_mpv();
+        if !flush_playstate_reports(PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT) {
+            tracing::warn!(target: "jellyfin.playstate", "timed out flushing queued Jellyfin playback state during shutdown");
+        }
     }
 
     fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
+        self.pending_external_subtitle_url = None;
         self.pending_raise_pulse_reset_at = None;
         self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
@@ -1905,17 +1976,25 @@ impl ControllerState {
         self.publish_snapshot();
     }
 
-    fn send_mpv_command(&self, command: Value) -> io::Result<()> {
+    fn send_mpv_command(&self, command: Value) -> Result<(), IpcCommandFailure> {
+        self.send_mpv_command_with_timeout(command, IPC_COMMAND_TIMEOUT)
+    }
+
+    fn send_mpv_command_with_timeout(
+        &self,
+        command: Value,
+        timeout: Duration,
+    ) -> Result<(), IpcCommandFailure> {
         let Some(worker) = &self.ipc_worker else {
             tracing::warn!(
                 target: "mpv.ipc",
                 command = %logger::mpv_command_summary(&command),
                 "cannot send mpv command because IPC worker is not connected"
             );
-            return Err(io::Error::new(
+            return Err(IpcCommandFailure::Transport(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "mpv IPC worker is not connected",
-            ));
+            )));
         };
         tracing::debug!(
             target: "mpv.ipc",
@@ -1927,19 +2006,8 @@ impl ControllerState {
             command = %logger::redacted_json(&command),
             "sending raw mpv command"
         );
-        let detached = command
-            .get("async")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let result = if detached {
-            worker.send_detached(command)
-        } else {
-            worker.send(command)
-        };
+        let result = worker.send_with_timeout(command, timeout);
         match &result {
-            Ok(()) if detached => {
-                tracing::debug!(target: "mpv.ipc", "queued asynchronous mpv command")
-            }
             Ok(()) => tracing::debug!(target: "mpv.ipc", "sent mpv command"),
             Err(error) => tracing::warn!(target: "mpv.ipc", "mpv command send failed: {error}"),
         }
@@ -2069,7 +2137,6 @@ pub fn control_command(command: MpvControlCommand) -> Option<Value> {
             return Some(json!({
                 "command": ["sub-add", url, "select"],
                 "request_id": next_request_id(),
-                "async": true,
             }));
         }
         MpvControlCommand::Stop => json!(["stop"]),
@@ -2111,43 +2178,17 @@ impl IpcWorker {
             )?),
             alive: writer_alive.clone(),
         };
-        // Slow network-backed commands such as `sub-add` must not occupy the
-        // validated main command pipe: a blocked subtitle download can otherwise
-        // keep the post-file-loaded resume seek from reaching mpv. Open this
-        // additional pipe while mpv is still idle (never after load), and split
-        // its reads from writes so async command completions remain observable.
-        tracing::trace!(target: "mpv.ipc", ipc_path = path, "connecting mpv detached command writer");
-        let detached_stream =
-            connect_ipc_for_commands_with_timeout(path, IPC_COMMAND_CONNECT_TIMEOUT)?;
-        let detached_reply_stream = detached_stream.try_clone()?;
-        let detached_writer_alive = Arc::new(AtomicBool::new(true));
-        let detached_writer = IpcDetachedCommandWriter {
-            stream: detached_stream,
-            alive: detached_writer_alive.clone(),
-        };
-        let detached_reply_alive = detached_writer_alive.clone();
-
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
-        let (detached_command_tx, detached_command_rx) = mpsc::channel();
         let reader_thread = thread::spawn(move || read_events(reader, event_tx));
         let writer_thread = thread::spawn(move || writer.write_commands(command_rx));
-        let detached_writer_thread =
-            thread::spawn(move || detached_writer.write_commands(detached_command_rx));
-        let detached_reply_thread = thread::spawn(move || {
-            read_detached_command_replies(detached_reply_stream, detached_reply_alive)
-        });
         Ok((
             Self {
                 path: path.to_string(),
                 command_tx,
-                detached_command_tx,
                 reader_thread,
                 writer_thread,
-                detached_writer_thread,
-                detached_reply_thread,
                 writer_alive,
-                detached_writer_alive,
             },
             event_rx,
         ))
@@ -2157,52 +2198,54 @@ impl IpcWorker {
         self.writer_alive.load(Ordering::SeqCst)
     }
 
-    fn send(&self, command: Value) -> io::Result<()> {
-        let (ack, ack_rx) = mpsc::channel();
-        self.command_tx
-            .send((command, ack))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "mpv IPC writer stopped"))?;
-        ack_rx
-            .recv_timeout(IPC_COMMAND_TIMEOUT)
-            .unwrap_or_else(|_| {
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "mpv IPC write timed out",
-                ))
-            })
-    }
-
-    fn send_detached(&self, command: Value) -> io::Result<()> {
-        if !self.detached_writer_alive.load(Ordering::SeqCst) {
-            return Err(io::Error::new(
+    fn send_with_timeout(
+        &self,
+        command: Value,
+        timeout: Duration,
+    ) -> Result<(), IpcCommandFailure> {
+        if !self.writer_alive.load(Ordering::SeqCst) {
+            return Err(IpcCommandFailure::Transport(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "mpv detached IPC writer stopped",
-            ));
+                "mpv IPC writer stopped",
+            )));
         }
-        self.detached_command_tx.send(command).map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "mpv detached IPC writer stopped")
-        })
+        let (ack, ack_rx) = mpsc::channel();
+        self.command_tx.send((command, ack)).map_err(|_| {
+            IpcCommandFailure::Transport(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "mpv IPC writer stopped",
+            ))
+        })?;
+        match ack_rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(_) => {
+                // A reply timeout leaves the synchronous reader's state
+                // unknowable. Poison this worker so no later command queues
+                // behind it; the controller poll will replace the session.
+                self.writer_alive.store(false, Ordering::SeqCst);
+                Err(IpcCommandFailure::Transport(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "mpv IPC command reply timed out after {}ms",
+                        timeout.as_millis()
+                    ),
+                )))
+            }
+        }
     }
 
     fn shutdown(self) {
         let Self {
             path,
             command_tx,
-            detached_command_tx,
             reader_thread,
             writer_thread,
-            detached_writer_thread,
-            detached_reply_thread,
             writer_alive: _,
-            detached_writer_alive: _,
         } = self;
         tracing::trace!(target: "mpv.ipc", ipc_path = %path, "joining mpv IPC reader thread");
         drop(command_tx);
-        drop(detached_command_tx);
         let _ = writer_thread.join();
-        let _ = detached_writer_thread.join();
         let _ = reader_thread.join();
-        let _ = detached_reply_thread.join();
     }
 }
 
@@ -2214,15 +2257,28 @@ impl IpcCommandWriter {
                 command = %logger::mpv_command_summary(&command),
                 "writing mpv IPC command"
             );
-            match self.write_command_and_wait_for_reply(&command) {
+            let asynchronous = command
+                .get("async")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let result = if asynchronous {
+                // mpv's async IPC mode explicitly permits later commands to run
+                // while this one is still executing. Acknowledge the successful
+                // write now; a later validated command drains and logs the
+                // eventual completion reply by request id.
+                write_command(self.stream.get_mut(), &command).map_err(IpcCommandFailure::Transport)
+            } else {
+                self.write_command_and_wait_for_reply(&command)
+            };
+            match result {
                 Ok(()) => {
                     let _ = ack.send(Ok(()));
                 }
                 Err(IpcCommandFailure::Rejected(error)) => {
-                    let _ = ack.send(Err(error));
+                    let _ = ack.send(Err(IpcCommandFailure::Rejected(error)));
                 }
                 Err(IpcCommandFailure::Transport(error)) => {
-                    let _ = ack.send(Err(error));
+                    let _ = ack.send(Err(IpcCommandFailure::Transport(error)));
                     break;
                 }
             }
@@ -2275,6 +2331,7 @@ impl IpcCommandWriter {
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             if reply_id != request_id {
+                log_command_reply(&reply);
                 tracing::trace!(
                     target: "mpv.ipc",
                     request_id,
@@ -2287,23 +2344,6 @@ impl IpcCommandWriter {
             log_command_reply(&reply);
             return command_reply_result(&reply, request_id).map_err(IpcCommandFailure::Rejected);
         }
-    }
-}
-
-impl IpcDetachedCommandWriter {
-    fn write_commands(mut self, rx: Receiver<Value>) {
-        while let Ok(command) = rx.recv() {
-            tracing::trace!(
-                target: "mpv.ipc",
-                command = %logger::mpv_command_summary(&command),
-                "writing detached mpv IPC command"
-            );
-            if let Err(error) = write_command(&mut self.stream, &command) {
-                tracing::warn!(target: "mpv.ipc", "detached mpv IPC command write failed: {error}");
-                break;
-            }
-        }
-        tracing::trace!(target: "mpv.ipc", "mpv detached IPC writer stopped");
     }
 }
 
@@ -2397,42 +2437,6 @@ fn log_command_reply(value: &Value) {
             "mpv rejected command"
         ),
     }
-}
-
-fn read_detached_command_replies(stream: IpcConnection, alive: Arc<AtomicBool>) {
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                    tracing::trace!(
-                        target: "mpv.ipc",
-                        line = %logger::redact_text(&line),
-                        "ignored malformed detached mpv IPC reply"
-                    );
-                    continue;
-                };
-                if value.get("event").is_some() {
-                    tracing::trace!(
-                        target: "mpv.ipc",
-                        event = %logger::redacted_json(&value),
-                        "ignored event on detached mpv command connection"
-                    );
-                    continue;
-                }
-                log_command_reply(&value);
-            }
-            Err(error) => {
-                tracing::trace!(target: "mpv.ipc", "detached mpv IPC reply read failed: {error}");
-                break;
-            }
-        }
-    }
-    alive.store(false, Ordering::SeqCst);
-    tracing::trace!(target: "mpv.ipc", "mpv detached IPC reply reader stopped");
 }
 
 fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
@@ -3023,7 +3027,7 @@ mod tests {
             external_subtitle["command"],
             json!(["sub-add", "https://example.test/sub.srt", "select"])
         );
-        assert_eq!(external_subtitle["async"], true);
+        assert!(external_subtitle.get("async").is_none());
 
         assert!(seek.get("async").is_none());
 

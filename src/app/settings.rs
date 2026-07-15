@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +9,7 @@ const DEFAULT_WEBUI_WINDOW_HEIGHT: i32 = 800;
 const MIN_WEBUI_WINDOW_WIDTH: i32 = 640;
 const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
 const DEFAULT_LOG_LEVEL: &str = "debug";
+static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -351,7 +354,7 @@ impl AppSettings {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_vec_pretty(&settings).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        atomic_write(&path, &json)
     }
 
     pub fn is_complete(&self) -> bool {
@@ -408,6 +411,82 @@ impl AppSettings {
             self.log_level = DEFAULT_LOG_LEVEL.to_string();
         }
         self.webui_window.sanitize();
+    }
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("settings.json");
+    let mut last_collision = None;
+
+    for _ in 0..100 {
+        let counter = SETTINGS_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(".{file_name}.tmp-{}-{counter}", std::process::id()));
+        let mut file = match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_collision = Some(error);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+
+        let result = (|| {
+            file.write_all(contents)?;
+            file.sync_all()?;
+            drop(file);
+            replace_file(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return result;
+    }
+
+    Err(last_collision.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not allocate a temporary settings file",
+        )
+    }))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(temporary, destination)
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(temporary: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let temporary: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let moved = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 

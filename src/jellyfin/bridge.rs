@@ -353,6 +353,8 @@ mod tests {
         let script = bridge_script(&settings);
         assert!(script.contains("\"quality\":\"10_mbps\""));
         assert!(script.contains("\"maxStreamingBitrate\":10000000"));
+        assert!(script.contains("if (!isPlaybackInfoUrl(value) && !isLiveStreamOpenUrl(value))"));
+        assert!(script.contains("{ Format, Method: 'External' }"));
         assert!(!script.contains("__MEDIAFLICK_PLAYBACK_SETTINGS_JSON__"));
 
         let update = bridge_settings_script(&settings);
