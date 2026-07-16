@@ -37,7 +37,7 @@ mod tests {
         let previous = AppSettings::default();
         let mut next = previous.clone();
         next.mpchc_path = Some("other.exe".to_string());
-        next.default_fullscreen = crate::preferences::MpvFullscreenBehavior::Windowed;
+        next.default_fullscreen = crate::preferences::FullscreenBehavior::Windowed;
 
         assert!(!SettingsApplyPlan::between(&previous, &next).rebuild_player);
     }

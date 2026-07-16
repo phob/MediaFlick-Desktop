@@ -9,8 +9,8 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use crate::windows::install_hidden_command_processor_shim;
 
-use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
-use crate::preferences::MpvFullscreenBehavior;
+use crate::playback::{HttpHeader, PlaybackRequest};
+use crate::preferences::FullscreenBehavior;
 
 const WINDOWED_AUTOFIT: &str = "70%";
 
@@ -33,16 +33,16 @@ impl ExternalMpv {
     /// Build a plain command for a media URL.
     #[allow(dead_code)]
     pub fn command_for_url(&self, media_url: &str) -> Command {
-        self.command_for_launch(&MpvLaunch::new(media_url))
+        self.command_for_launch(&PlaybackRequest::new(media_url))
     }
 
-    pub fn command_for_launch(&self, launch: &MpvLaunch) -> Command {
+    pub fn command_for_launch(&self, launch: &PlaybackRequest) -> Command {
         self.command_for_launch_with_ipc(launch, None)
     }
 
     pub fn command_for_launch_with_ipc(
         &self,
-        launch: &MpvLaunch,
+        launch: &PlaybackRequest,
         ipc_path: Option<&str>,
     ) -> Command {
         let mut command = self.hidden_command();
@@ -85,13 +85,13 @@ impl ExternalMpv {
 
     #[allow(dead_code)]
     pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
-        self.command_for_idle_with_ipc_and_fullscreen(ipc_path, MpvFullscreenBehavior::Fullscreen)
+        self.command_for_idle_with_ipc_and_fullscreen(ipc_path, FullscreenBehavior::Fullscreen)
     }
 
     pub fn command_for_idle_with_ipc_and_fullscreen(
         &self,
         ipc_path: &str,
-        fullscreen: MpvFullscreenBehavior,
+        fullscreen: FullscreenBehavior,
     ) -> Command {
         let mut command = self.hidden_command();
         command.arg("--force-window=no");
@@ -111,7 +111,7 @@ impl ExternalMpv {
     }
 
     #[allow(dead_code)]
-    pub fn spawn(&self, launch: &MpvLaunch) -> std::io::Result<Child> {
+    pub fn spawn(&self, launch: &PlaybackRequest) -> std::io::Result<Child> {
         self.command_for_launch(launch).spawn()
     }
 
@@ -184,7 +184,7 @@ fn configure_focus_on_file_load(command: &mut Command) {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn configure_focus_on_file_load(_command: &mut Command) {}
 
-impl MpvLaunch {
+impl PlaybackRequest {
     fn script_metadata(&self) -> Vec<(&'static str, String)> {
         let mut values = Vec::new();
         push_metadata(&mut values, "item_id", self.item_id.as_deref());
@@ -209,7 +209,7 @@ impl MpvLaunch {
     }
 }
 
-fn mpv_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
+fn mpv_headers(launch: &PlaybackRequest) -> Vec<HttpHeader> {
     let mut headers = Vec::<HttpHeader>::new();
     for header in &launch.headers {
         let name = sanitize_header_name(&header.name);

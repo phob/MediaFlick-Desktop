@@ -7,7 +7,7 @@ use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
-use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
+use crate::playback::{HttpHeader, PlaybackRequest};
 use crate::preferences::config_dir;
 
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
@@ -183,7 +183,7 @@ fn backup_path(path: &Path, index: usize) -> PathBuf {
     PathBuf::from(value)
 }
 
-pub fn launch_summary(launch: &MpvLaunch) -> String {
+pub fn launch_summary(launch: &PlaybackRequest) -> String {
     format!(
         "item={} media_source={} play_session={} start={} audio={} subtitle={} url={} headers=[{}]",
         display_opt(launch.item_id.as_deref()),
@@ -504,7 +504,7 @@ mod tests {
     use super::{
         launch_summary, mpv_command_summary, redact_text, redact_url_secrets, redacted_json,
     };
-    use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
+    use crate::playback::{HttpHeader, PlaybackRequest};
 
     #[test]
     fn redacts_query_tokens() {
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn launch_and_command_summaries_are_sanitized() {
-        let mut launch = MpvLaunch::new("https://server/Videos/1/stream.mkv?api_key=secret");
+        let mut launch = PlaybackRequest::new("https://server/Videos/1/stream.mkv?api_key=secret");
         launch.item_id = Some("item".to_string());
         launch.headers = vec![HttpHeader {
             name: "X-Emby-Token".to_string(),

@@ -8,14 +8,14 @@ use crate::playback::{
     Capabilities, MPCHC_CAPABILITIES, PlaybackContext, PlaybackRequest, PlayerBackend,
     PlayerCommand, PlayerSnapshot,
 };
-use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 impl PlayerBackend for MpcHcController {
-    fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior) {
+    fn warm(&self, path: String, fullscreen: FullscreenBehavior) {
         self.warm(path, fullscreen);
     }
 
-    fn load(&self, path: String, fullscreen: MpvFullscreenBehavior, launch: PlaybackRequest) {
+    fn load(&self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.load(path, fullscreen, launch);
     }
 
