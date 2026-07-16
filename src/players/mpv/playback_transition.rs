@@ -7,8 +7,8 @@
 use std::time::Instant;
 
 use crate::app::logger;
-use crate::jellyfin::bridge::PlaybackContext;
-use crate::jellyfin::playback_reporter::seconds_to_ticks;
+use crate::playback::PlaybackContext;
+use crate::playback::seconds_to_ticks;
 
 use super::{
     ActivePlayback, ControllerState, MpvPlaybackEvent, MpvPlayerSnapshot,

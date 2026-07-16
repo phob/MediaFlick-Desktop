@@ -1,19 +1,24 @@
 use std::collections::VecDeque;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
-use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
-use crate::jellyfin::media_segments::{self, SkipSegment};
+use crate::app::logger;
+use crate::jellyfin::media_segments;
 use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, flush_playstate_reports, seconds_to_ticks,
+    MpvPlaybackState, PlaybackReporter, flush_playstate_reports,
 };
-use crate::mpv::{MpvControlCommand, MpvLaunch, MpvPlaybackEvent, MpvPlayerSnapshot};
-use crate::player::segments;
+use crate::playback::PlaybackContext;
+use crate::playback::segments::{self, SkipSegment};
+use crate::playback::{
+    PlaybackEvent as MpvPlaybackEvent, PlaybackRequest as MpvLaunch,
+    PlayerCommand as MpvControlCommand, PlayerSnapshot as MpvPlayerSnapshot, TICKS_PER_SECOND,
+    seconds_to_ticks,
+};
+use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
 
 use super::protocol::{self, Inbound};
 use super::transport::MpcHcTransport;
@@ -32,10 +37,8 @@ const SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS: i32 = 1200;
 const VOLUME_STEP_PERCENT: f64 = 5.0;
 const SEEKING_OSD_DURATION_MS: i32 = 60_000;
 
-static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
-
 fn next_playback_id() -> i64 {
-    PLAYBACK_COUNTER.fetch_add(1, Ordering::Relaxed)
+    crate::playback::model::allocate_playback_id()
 }
 
 #[derive(Clone)]
@@ -86,12 +89,52 @@ impl Identity {
     }
 }
 
+fn identity_matches_context(identity: &Identity, context: &PlaybackContext) -> bool {
+    let mut matched = false;
+    for (expected, actual) in [
+        (identity.item_id.as_deref(), context.item_id.as_deref()),
+        (
+            identity.media_source_id.as_deref(),
+            context.media_source_id.as_deref(),
+        ),
+        (
+            identity.play_session_id.as_deref(),
+            context.play_session_id.as_deref(),
+        ),
+    ] {
+        let expected = expected.map(str::trim).filter(|value| !value.is_empty());
+        let actual = actual.map(str::trim).filter(|value| !value.is_empty());
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            continue;
+        };
+        if expected != actual {
+            return false;
+        }
+        matched = true;
+    }
+    matched
+}
+
+fn update_identity_from_context(identity: &mut Identity, context: &PlaybackContext) {
+    if identity.item_id.is_none() {
+        identity.item_id = context.item_id.clone();
+    }
+    if identity.media_source_id.is_none() {
+        identity.media_source_id = context.media_source_id.clone();
+    }
+    if identity.play_session_id.is_none() {
+        identity.play_session_id = context.play_session_id.clone();
+    }
+}
+
 struct Pending {
+    identity: Identity,
     launch: MpvLaunch,
     reporter: Option<PlaybackReporter>,
 }
 
 struct Active {
+    identity: Identity,
     reporter: Option<PlaybackReporter>,
     last_progress: Instant,
 }
@@ -377,10 +420,11 @@ impl State {
         self.pending_auto_skip = None;
         self.last_skip_osd_at = None;
         self.seeking_osd = false;
-        self.identity = Some(identity);
+        self.identity = Some(identity.clone());
         self.playback_active = true;
 
         self.pending = Some(Pending {
+            identity,
             launch: launch.clone(),
             reporter,
         });
@@ -407,7 +451,7 @@ impl State {
         let url = mpchc_media_url(&pending.launch);
         tracing::info!(
             target: "mpchc",
-            url = %jellyfin_bridge::redact_url_secrets(&url),
+            url = %logger::redact_url_secrets(&url),
             "opening Jellyfin stream in MPC-HC"
         );
         self.send_command(protocol::CMD_OPENFILE, &url);
@@ -432,6 +476,7 @@ impl State {
                 reporter.report_start(&self.last_state);
             }
             self.active = Some(Active {
+                identity: pending.identity,
                 reporter: pending.reporter,
                 last_progress: Instant::now(),
             });
@@ -557,16 +602,28 @@ impl State {
 
     fn update_context(&mut self, context: PlaybackContext) {
         if let Some(active) = &mut self.active
-            && let Some(reporter) = &mut active.reporter
+            && identity_matches_context(&active.identity, &context)
         {
-            reporter.merge_context(&context);
+            update_identity_from_context(&mut active.identity, &context);
+            if let Some(reporter) = &mut active.reporter {
+                reporter.merge_context(&context);
+            }
         }
-        if let Some(pending) = &mut self.pending {
-            context.merge_into_launch(&mut pending.launch);
+        if let Some(pending) = &mut self.pending
+            && identity_matches_context(&pending.identity, &context)
+        {
+            context.merge_into_request(&mut pending.launch);
+            update_identity_from_context(&mut pending.identity, &context);
             if let Some(reporter) = &mut pending.reporter {
                 reporter.merge_context(&context);
             }
         }
+        if let Some(identity) = &mut self.identity
+            && identity_matches_context(identity, &context)
+        {
+            update_identity_from_context(identity, &context);
+        }
+        self.publish_snapshot();
     }
 
     fn apply_segment_skip_config(&mut self, config: SegmentSkipConfig) {
@@ -1184,7 +1241,7 @@ fn token_from_headers(launch: &MpvLaunch) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mpv::HttpHeader;
+    use crate::playback::HttpHeader;
 
     fn external_subtitle_launch() -> MpvLaunch {
         MpvLaunch {
@@ -1197,11 +1254,35 @@ mod tests {
     }
 
     #[test]
+    fn playback_context_must_match_the_active_identity() {
+        let identity = Identity {
+            playback_id: 1,
+            item_id: Some("current".to_string()),
+            media_source_id: Some("source".to_string()),
+            play_session_id: None,
+        };
+        assert!(identity_matches_context(
+            &identity,
+            &PlaybackContext {
+                item_id: Some("current".to_string()),
+                ..Default::default()
+            }
+        ));
+        assert!(!identity_matches_context(
+            &identity,
+            &PlaybackContext {
+                item_id: Some("next".to_string()),
+                ..Default::default()
+            }
+        ));
+    }
+
+    #[test]
     fn shutdown_ack_deadline_includes_playstate_flush_and_player_close() {
         assert!(
             SHUTDOWN_ACK_TIMEOUT
                 > PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT
-                    .saturating_add(crate::player::mpchc::transport::SHUTDOWN_SEND_TIMEOUT)
+                    .saturating_add(crate::players::mpchc::transport::SHUTDOWN_SEND_TIMEOUT)
         );
     }
 

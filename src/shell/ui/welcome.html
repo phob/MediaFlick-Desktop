@@ -408,16 +408,18 @@
       setBusy(false);
     };
 
+    const bridgeToken = '{{bridge_token}}';
+
     serverInput.addEventListener('input', updateButtonState);
     mpvInput.addEventListener('input', updateButtonState);
 
     browseButton.addEventListener('click', () => {
       setBusy(true);
-      window.location.href = 'mediaflick-desktop://select-mpv';
+      window.location.href = `mediaflick-desktop://select-mpv?token=${encodeURIComponent(bridgeToken)}`;
     });
 
     aboutButton.addEventListener('click', () => {
-      window.location.href = 'mediaflick-desktop://app-about';
+      window.location.href = `mediaflick-desktop://app-about?token=${encodeURIComponent(bridgeToken)}`;
     });
 
     const mpvSetup = {{mpv_setup_config}};
@@ -453,7 +455,7 @@
       downloadMpvButton.disabled = true;
       downloadMpvButton.textContent = 'Starting';
       mpvSetupStatus.textContent = 'Contacting mpv release server…';
-      window.location.href = 'mediaflick-desktop://mpv-download';
+      window.location.href = `mediaflick-desktop://mpv-download?token=${encodeURIComponent(bridgeToken)}`;
     });
 
     copyMpvButton.addEventListener('click', async () => {
@@ -474,7 +476,7 @@
 
     mpvHelpLink.addEventListener('click', event => {
       event.preventDefault();
-      window.location.href = 'mediaflick-desktop://mpv-help';
+      window.location.href = `mediaflick-desktop://mpv-help?token=${encodeURIComponent(bridgeToken)}`;
     });
 
     window.__mediaFlickDesktopMpvSetup = event => {
@@ -521,6 +523,7 @@
         server: serverInput.value.trim(),
         mpv: mpvInput.value.trim(),
       });
+      query.set('token', bridgeToken);
       window.location.href = `mediaflick-desktop://save?${query.toString()}`;
     });
 

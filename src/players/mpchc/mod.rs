@@ -4,21 +4,22 @@ mod transport;
 
 pub use controller::MpcHcController;
 
-use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig};
-use crate::jellyfin::bridge::PlaybackContext;
-use crate::mpv::{MpvControlCommand, MpvLaunch, MpvPlayerSnapshot};
-use crate::player::{Capabilities, MPCHC_CAPABILITIES, PlayerBackend};
+use crate::playback::{
+    Capabilities, MPCHC_CAPABILITIES, PlaybackContext, PlaybackRequest, PlayerBackend,
+    PlayerCommand, PlayerSnapshot,
+};
+use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig};
 
 impl PlayerBackend for MpcHcController {
     fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior) {
         self.warm(path, fullscreen);
     }
 
-    fn load(&self, path: String, fullscreen: MpvFullscreenBehavior, launch: MpvLaunch) {
+    fn load(&self, path: String, fullscreen: MpvFullscreenBehavior, launch: PlaybackRequest) {
         self.load(path, fullscreen, launch);
     }
 
-    fn control(&self, command: MpvControlCommand) {
+    fn control(&self, command: PlayerCommand) {
         self.control(command);
     }
 
@@ -30,7 +31,7 @@ impl PlayerBackend for MpcHcController {
         self.update_playback_context(context);
     }
 
-    fn snapshot(&self) -> MpvPlayerSnapshot {
+    fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot()
     }
 

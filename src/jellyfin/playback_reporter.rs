@@ -1,6 +1,4 @@
 use std::collections::{HashSet, VecDeque};
-use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,13 +6,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
-use crate::jellyfin::bridge::PlaybackContext;
-use crate::mpv::{HttpHeader, MpvLaunch};
+pub use crate::playback::ReportingState as MpvPlaybackState;
+use crate::playback::{HttpHeader, PlaybackContext, PlaybackRequest as MpvLaunch};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
-pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
-static IPC_COUNTER: AtomicU64 = AtomicU64::new(1);
 static PLAYSTATE_REPORTER: OnceLock<mpsc::Sender<PlaystateMessage>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -32,62 +28,6 @@ pub struct PlaybackSession {
     playback_start_time_ticks: i64,
     auth_headers: Vec<HttpHeader>,
     queue: Option<Value>,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MpvPlaybackState {
-    pub position_ticks: i64,
-    pub pause: bool,
-    pub duration_ticks: Option<i64>,
-    pub volume: Option<i64>,
-    pub mute: Option<bool>,
-    pub eof_reached: bool,
-}
-
-impl fmt::Display for MpvPlaybackState {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "position={} duration={} paused={} volume={} muted={} eof={}",
-            ticks_summary(Some(self.position_ticks.max(0))),
-            ticks_summary(self.duration_ticks),
-            self.pause,
-            self.volume
-                .map(|volume| volume.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-            self.mute
-                .map(|mute| mute.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-            self.eof_reached
-        )
-    }
-}
-
-pub fn make_mpv_ipc_path() -> String {
-    let counter = IPC_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-
-    #[cfg(target_os = "windows")]
-    {
-        format!(
-            r"\\.\pipe\mediaflick-desktop-{}-{timestamp}-{counter}",
-            std::process::id()
-        )
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::temp_dir()
-            .join(format!(
-                "mediaflick-desktop-{}-{timestamp}-{counter}.sock",
-                std::process::id()
-            ))
-            .to_string_lossy()
-            .into_owned()
-    }
 }
 
 pub struct PlaybackReporter {
@@ -641,12 +581,6 @@ fn sanitize_auth_value(value: &str) -> String {
         .collect()
 }
 
-pub fn seconds_to_ticks(seconds: f64) -> Option<i64> {
-    seconds
-        .is_finite()
-        .then(|| (seconds.max(0.0) * TICKS_PER_SECOND).round() as i64)
-}
-
 fn server_base_url(media_url: &str) -> Option<String> {
     let (scheme, _) = media_url.split_once("://")?;
     if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
@@ -739,26 +673,12 @@ fn display_opt(value: Option<&str>) -> &str {
     non_empty(value).unwrap_or("unknown")
 }
 
-fn ticks_summary(value: Option<i64>) -> String {
-    value
-        .map(|ticks| format!("{ticks} ({:.3}s)", ticks as f64 / TICKS_PER_SECOND))
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
 fn unix_now_ticks() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().saturating_mul(10_000) as i64)
         .unwrap_or_default()
 }
-
-#[cfg(not(target_os = "windows"))]
-pub fn cleanup_ipc_path(path: &str) {
-    let _ = std::fs::remove_file(path);
-}
-
-#[cfg(target_os = "windows")]
-pub fn cleanup_ipc_path(_path: &str) {}
 
 #[cfg(test)]
 mod tests {
@@ -767,7 +687,7 @@ mod tests {
         enqueue_playstate_report, playback_progress_body, playback_stop_body, server_base_url,
         token_from_authorization, token_from_launch,
     };
-    use crate::mpv::{HttpHeader, MpvLaunch};
+    use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
     use serde_json::json;
     use std::collections::VecDeque;
 

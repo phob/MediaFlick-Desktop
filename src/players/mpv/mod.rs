@@ -1,13 +1,18 @@
 pub mod controller;
 pub mod external;
 pub mod input;
+pub mod ipc;
 
-pub use controller::{MpvControlCommand, MpvController, MpvPlaybackEvent, MpvPlayerSnapshot};
-pub use external::{ExternalMpv, HttpHeader, MpvLaunch};
+pub use controller::MpvController;
+pub use external::ExternalMpv;
 
-use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig};
-use crate::jellyfin::bridge::PlaybackContext;
-use crate::player::{Capabilities, MPV_CAPABILITIES, PlayerBackend};
+use crate::playback::{
+    PlaybackRequest as MpvLaunch, PlayerCommand as MpvControlCommand,
+    PlayerSnapshot as MpvPlayerSnapshot,
+};
+
+use crate::playback::{Capabilities, MPV_CAPABILITIES, PlaybackContext, PlayerBackend};
+use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig};
 
 impl PlayerBackend for MpvController {
     fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior) {
