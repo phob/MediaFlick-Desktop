@@ -6,6 +6,17 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+
+## [0.1.6] - 2026-07-16
+
+### Added
+
 - Added infinite scroll to the Jellyfin library card/poster grid: scrolling toward the bottom now lazy-loads and appends the next page of items in place and hides the pagination controls, instead of requiring the Next/Previous page buttons. It reuses Jellyfin Web's own paged fetch and card rendering (so cards, images, and auth match exactly) by intercepting the grid container's content updates and appending rather than replacing, so it works across the different library controllers (Movies, TV Shows, and other paged grids). It applies only to the card grid layout (the list/table view keeps its native pager), only takes over once the full pager is present, and degrades to normal pagination if the expected Jellyfin Web DOM is not found.
 
 - Added a `CI` GitHub Actions workflow that runs on every pull request and on pushes to `main`, checking formatting (`cargo fmt --check`) on Linux and running clippy (`-D warnings`), the test suite, and a binary build on both Linux and Windows so dependency and code changes are validated on every PR.
@@ -41,10 +52,6 @@
 - Fixed privileged resource-request bridge actions running directly on CEF's IO thread by marshalling them to the UI thread, and required the per-session bridge token for local welcome and data-page actions as well as Jellyfin-origin actions. Playback-context registration stays synchronous on the IO thread so a directly following stream capture always sees it, and rejected or unrecognized bridge requests now log their URL with the session token redacted.
 - Fixed late playback context for another item being merged into MPC-HC's active Jellyfin reporter, and made playback IDs monotonic across runtime backend switches.
 - Fixed player replacement and shutdown holding shell-state or coordinator locks during bounded process teardown, preventing long settings and CEF callback stalls. Retired backends now tear down on a detached thread so switching player backends never blocks the CEF UI thread, and a poisoned coordinator lock no longer silently drops player commands or leaks the running player.
-
-### Removed
-
-
 ## [0.1.5] - 2026-06-24
 
 ### Added
