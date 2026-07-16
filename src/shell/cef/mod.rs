@@ -12,13 +12,12 @@ use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
 use crate::maintenance::player_setup::{self as mpv_setup, MpvSetupPhase};
 use crate::maintenance::updater::{self, UpdateRelease};
 use crate::playback::{
-    HttpHeader, PlaybackContextRegistry, PlaybackCoordinator, PlaybackEvent as MpvPlaybackEvent,
-    PlaybackRequest,
+    HttpHeader, PlaybackContextRegistry, PlaybackCoordinator, PlaybackEvent, PlaybackRequest,
 };
 use crate::players::build_backend;
 use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
-    AppSettings, CloseBehavior, FileSettingsStore, MpvFullscreenBehavior,
+    AppSettings, CloseBehavior, FileSettingsStore, FullscreenBehavior,
     PlayerBackend as PlayerBackendKind, SegmentSkipMode, SettingsApplyPlan, SettingsStore,
     StreamingQuality, WebUiWindowSettings, normalize_server_url,
 };
@@ -625,7 +624,7 @@ struct BrowserStateInner {
     browsers: Vec<Browser>,
     playback_contexts: PlaybackContextRegistry,
     playback: Arc<PlaybackCoordinator>,
-    playback_event_tx: mpsc::Sender<MpvPlaybackEvent>,
+    playback_event_tx: mpsc::Sender<PlaybackEvent>,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
     mpv_setup_started: bool,
@@ -667,7 +666,7 @@ fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings
     playback.warm(path.to_string(), settings.default_fullscreen);
 }
 
-fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEvent>) {
+fn start_playback_event_bridge(state: BrowserState, rx: Receiver<PlaybackEvent>) {
     let state = Arc::downgrade(&state);
     thread::spawn(move || {
         while let Ok(event) = rx.recv() {
@@ -723,7 +722,7 @@ enum MpvSetupEvent {
 wrap_task! {
     struct PlaybackEventTask {
         state: BrowserState,
-        event: MpvPlaybackEvent,
+        event: PlaybackEvent,
     }
 
     impl Task {
@@ -777,7 +776,7 @@ wrap_task! {
             ) {
                 tracing::warn!(
                     target: "bridge",
-                    url = %self.request_url,
+                    url = %logger::redact_url_secrets(&self.request_url),
                     "ignored unrecognized bridge resource request"
                 );
             }
@@ -811,8 +810,8 @@ wrap_task! {
     }
 }
 
-fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
-    if let MpvPlaybackEvent::Failed { message } = &event {
+fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
+    if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
         dispatch_error_toast(state, "Playback error", message);
         return;
@@ -853,9 +852,9 @@ fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
     );
 }
 
-fn playback_event_script(event: &MpvPlaybackEvent) -> String {
+fn playback_event_script(event: &PlaybackEvent) -> String {
     match event {
-        MpvPlaybackEvent::Stopped(snapshot) => {
+        PlaybackEvent::Stopped(snapshot) => {
             let payload = json!({
                 "active": snapshot.active,
                 "playbackId": snapshot.playback_id,
@@ -874,7 +873,7 @@ fn playback_event_script(event: &MpvPlaybackEvent) -> String {
                 js_json(&payload)
             )
         }
-        MpvPlaybackEvent::Failed { .. } => String::new(),
+        PlaybackEvent::Failed { .. } => String::new(),
     }
 }
 
@@ -1533,16 +1532,26 @@ wrap_resource_request_handler! {
                     frame.as_deref_mut(),
                     &self.state,
                 ) {
-                    post_bridge_action(
-                        request_url.clone(),
-                        browser.as_deref().cloned(),
-                        frame.as_deref().cloned(),
-                        self.state.clone(),
-                    );
+                    // Playback context must be registered before a later
+                    // stream-resource request on this IO thread can try to
+                    // merge it; it touches no CEF objects, so handle it here
+                    // instead of racing a posted UI-thread task.
+                    if let Some(jellyfin_bridge::BridgeAction::RememberPlaybackContext(query)) =
+                        jellyfin_bridge::parse_bridge_action(&request_url)
+                    {
+                        remember_playback_context(query, &self.state);
+                    } else {
+                        post_bridge_action(
+                            request_url.clone(),
+                            browser.as_deref().cloned(),
+                            frame.as_deref().cloned(),
+                            self.state.clone(),
+                        );
+                    }
                 } else {
                     tracing::warn!(
                         target: "bridge",
-                        url = %request_url,
+                        url = %logger::redact_url_secrets(&request_url),
                         "rejected bridge resource request from untrusted frame"
                     );
                 }
@@ -2506,7 +2515,6 @@ fn save_client_settings(
         return;
     }
 
-    let bridge_settings_script = jellyfin_bridge::bridge_settings_script(&settings);
     let runtime_update = state.lock().ok().map(|mut state| {
         let apply_plan = SettingsApplyPlan::between(&state.settings, &settings);
         state.settings = settings.clone();
@@ -2516,30 +2524,52 @@ fn save_client_settings(
             state.playback_event_tx.clone(),
         )
     });
-    if let Some((apply_plan, playback, event_tx)) = runtime_update {
-        if apply_plan.rebuild_player {
-            tracing::info!(
-                target: "playback",
-                backend = settings.effective_backend().as_str(),
-                "rebuilding player backend after settings change"
-            );
-            playback.replace(build_backend(&settings, event_tx));
-        }
+    let Some((apply_plan, playback, event_tx)) = runtime_update else {
+        tracing::warn!(target: "config", "failed to lock browser state while applying saved client settings");
+        notify_client_settings_error(
+            &frame,
+            "Saved, but the running app could not apply the new settings.",
+        );
+        return;
+    };
+
+    if apply_plan.rebuild_player {
+        tracing::info!(
+            target: "playback",
+            backend = settings.effective_backend().as_str(),
+            "rebuilding player backend after settings change"
+        );
+        playback.replace(build_backend(&settings, event_tx));
         warm_configured_player(&playback, &settings);
+    } else if apply_plan.update_segment_policy {
+        playback.configure_segments(settings.segment_skip_config());
     }
-    apply_scrollbar_settings_to_frame(&frame, state);
+    if apply_plan.update_shell_css {
+        apply_scrollbar_settings_to_frame(&frame, state);
+    }
+    let bridge_settings_script = if apply_plan.update_bridge_profile {
+        jellyfin_bridge::bridge_settings_script(&settings)
+    } else {
+        String::new()
+    };
+    let saved_message = if apply_plan.restart_required {
+        "Saved. Restart MediaFlick Desktop to apply the new log level."
+    } else {
+        ""
+    };
     execute_client_settings_js(
         &frame,
         &format!(
-            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved();"
+            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved({});",
+            js_string_literal(saved_message)
         ),
     );
 }
 
-fn parse_fullscreen_behavior(value: &str) -> Option<MpvFullscreenBehavior> {
+fn parse_fullscreen_behavior(value: &str) -> Option<FullscreenBehavior> {
     match value {
-        "fullscreen" => Some(MpvFullscreenBehavior::Fullscreen),
-        "windowed" => Some(MpvFullscreenBehavior::Windowed),
+        "fullscreen" => Some(FullscreenBehavior::Fullscreen),
+        "windowed" => Some(FullscreenBehavior::Windowed),
         _ => None,
     }
 }

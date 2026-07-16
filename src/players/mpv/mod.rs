@@ -7,23 +7,21 @@ pub use controller::MpvController;
 pub use external::ExternalMpv;
 
 use crate::playback::{
-    PlaybackRequest as MpvLaunch, PlayerCommand as MpvControlCommand,
-    PlayerSnapshot as MpvPlayerSnapshot,
+    Capabilities, MPV_CAPABILITIES, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
+    PlayerSnapshot,
 };
-
-use crate::playback::{Capabilities, MPV_CAPABILITIES, PlaybackContext, PlayerBackend};
-use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 impl PlayerBackend for MpvController {
-    fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior) {
+    fn warm(&self, path: String, fullscreen: FullscreenBehavior) {
         self.warm(path, fullscreen);
     }
 
-    fn load(&self, path: String, fullscreen: MpvFullscreenBehavior, launch: MpvLaunch) {
+    fn load(&self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.load(path, fullscreen, launch);
     }
 
-    fn control(&self, command: MpvControlCommand) {
+    fn control(&self, command: PlayerCommand) {
         self.control(command);
     }
 
@@ -35,7 +33,7 @@ impl PlayerBackend for MpvController {
         self.update_playback_context(context);
     }
 
-    fn snapshot(&self) -> MpvPlayerSnapshot {
+    fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot()
     }
 

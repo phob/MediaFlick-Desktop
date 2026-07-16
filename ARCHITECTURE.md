@@ -14,9 +14,12 @@ main / bootstrap
 
 shell / players / jellyfin
   -> playback (backend-neutral contracts and policies)
+
+playback
+  -> preferences (settings value types referenced by playback contracts)
 ```
 
-The `playback` domain must not expose CEF, mpv IPC, MPC-HC slave-mode, or Jellyfin HTTP types. Concrete player construction belongs at the application boundary in `players::build_backend`.
+The `playback` domain must not expose CEF, mpv IPC, MPC-HC slave-mode, or Jellyfin HTTP types. It may depend on `preferences` value types such as `FullscreenBehavior` and `SegmentSkipConfig`; `preferences` must not depend on `playback`. Concrete player construction belongs at the application boundary in `players::build_backend`.
 
 ## Domains
 
@@ -49,7 +52,8 @@ The `playback` domain must not expose CEF, mpv IPC, MPC-HC slave-mode, or Jellyf
 - CEF browser, frame, window, dialog, and JavaScript operations run on the CEF UI thread.
 - `BrowserState` is used only to copy or update shell state. It must not be held while a player is opened, controlled, replaced, warmed, or shut down.
 - Player adapters own their worker threads and normalize their public surface through `PlayerBackend`.
-- Backend replacement publishes the replacement under the coordinator lock and shuts down the retired backend after releasing that lock.
+- Backend replacement publishes the replacement under the coordinator lock and retires the previous backend on a detached thread so no CEF thread waits on player teardown.
+- Playback-context registration (`play-context`) is handled synchronously on the CEF IO thread so a following stream-resource request always observes it; all other bridge actions are marshalled to the UI thread.
 - Playback contexts are correlated by `PlaybackContextRegistry`; adapters must reject context that conflicts with the active playback identity.
 
 ## CEF subprocess startup

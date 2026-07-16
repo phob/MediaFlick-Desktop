@@ -6,8 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
-pub use crate::playback::ReportingState as MpvPlaybackState;
-use crate::playback::{HttpHeader, PlaybackContext, PlaybackRequest as MpvLaunch};
+use crate::playback::{HttpHeader, PlaybackContext, PlaybackRequest, ReportingState};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -41,7 +40,7 @@ struct PlaystateRequest {
     play_session_id: Option<String>,
     auth_headers: Vec<HttpHeader>,
     body: Value,
-    state: MpvPlaybackState,
+    state: ReportingState,
 }
 
 enum PlaystateMessage {
@@ -54,7 +53,7 @@ impl PlaybackReporter {
         Self { session }
     }
 
-    pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
+    pub fn from_launch(launch: &PlaybackRequest) -> Option<Self> {
         PlaybackSession::from_launch(launch).map(Self::new)
     }
 
@@ -62,7 +61,7 @@ impl PlaybackReporter {
         self.session.merge_context(context);
     }
 
-    pub fn report_start(&self, state: &MpvPlaybackState) {
+    pub fn report_start(&self, state: &ReportingState) {
         self.queue_playstate(
             "Sessions/Playing",
             playback_progress_body(&self.session, state),
@@ -70,7 +69,7 @@ impl PlaybackReporter {
         );
     }
 
-    pub fn report_progress(&self, state: &MpvPlaybackState) {
+    pub fn report_progress(&self, state: &ReportingState) {
         self.queue_playstate(
             "Sessions/Playing/Progress",
             playback_progress_body(&self.session, state),
@@ -78,7 +77,7 @@ impl PlaybackReporter {
         );
     }
 
-    pub fn report_stopped(&self, state: &MpvPlaybackState, failed: bool) {
+    pub fn report_stopped(&self, state: &ReportingState, failed: bool) {
         self.queue_playstate(
             "Sessions/Playing/Stopped",
             playback_stop_body(&self.session, state, failed),
@@ -86,7 +85,7 @@ impl PlaybackReporter {
         );
     }
 
-    fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &MpvPlaybackState) {
+    fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &ReportingState) {
         let request = PlaystateRequest {
             endpoint,
             url: join_api_url(&self.session.base_url, endpoint),
@@ -232,7 +231,7 @@ fn send_playstate_report(agent: &ureq::Agent, report: PlaystateRequest) {
 }
 
 impl PlaybackSession {
-    pub fn from_launch(launch: &MpvLaunch) -> Option<Self> {
+    pub fn from_launch(launch: &PlaybackRequest) -> Option<Self> {
         let item_id = non_empty(launch.item_id.as_deref())?.to_string();
         let base_url = server_base_url(&launch.media_url)?;
         let auth_headers = playback_auth_headers(launch);
@@ -328,7 +327,7 @@ impl PlaybackSession {
     }
 }
 
-pub fn playback_progress_body(session: &PlaybackSession, state: &MpvPlaybackState) -> Value {
+pub fn playback_progress_body(session: &PlaybackSession, state: &ReportingState) -> Value {
     let mut body = Map::new();
     insert_common_body_fields(&mut body, session, state);
     body.insert(
@@ -340,7 +339,7 @@ pub fn playback_progress_body(session: &PlaybackSession, state: &MpvPlaybackStat
 
 pub fn playback_stop_body(
     session: &PlaybackSession,
-    state: &MpvPlaybackState,
+    state: &ReportingState,
     failed: bool,
 ) -> Value {
     let mut body = Map::new();
@@ -352,7 +351,7 @@ pub fn playback_stop_body(
 fn insert_common_body_fields(
     body: &mut Map<String, Value>,
     session: &PlaybackSession,
-    state: &MpvPlaybackState,
+    state: &ReportingState,
 ) {
     body.insert("ItemId".to_string(), json!(session.item_id));
     insert_string_opt(body, "MediaSourceId", session.media_source_id.as_deref());
@@ -386,7 +385,7 @@ fn insert_common_body_fields(
 fn insert_stop_body_fields(
     body: &mut Map<String, Value>,
     session: &PlaybackSession,
-    state: &MpvPlaybackState,
+    state: &ReportingState,
 ) {
     body.insert("ItemId".to_string(), json!(session.item_id));
     insert_string_opt(body, "MediaSourceId", session.media_source_id.as_deref());
@@ -413,11 +412,11 @@ fn insert_i64_opt(body: &mut Map<String, Value>, key: &str, value: Option<i64>) 
     }
 }
 
-fn can_seek(session: &PlaybackSession, state: &MpvPlaybackState) -> bool {
+fn can_seek(session: &PlaybackSession, state: &ReportingState) -> bool {
     state.duration_ticks.unwrap_or(0) > 0 || session.runtime_ticks.unwrap_or(0) > 0
 }
 
-fn playback_auth_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
+fn playback_auth_headers(launch: &PlaybackRequest) -> Vec<HttpHeader> {
     let token = token_from_launch(launch);
     let mut headers = Vec::new();
     let mut seen = HashSet::<String>::new();
@@ -452,7 +451,7 @@ fn playback_auth_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
     headers
 }
 
-fn token_from_launch(launch: &MpvLaunch) -> Option<String> {
+fn token_from_launch(launch: &PlaybackRequest) -> Option<String> {
     for header_name in ["X-Emby-Token", "X-MediaBrowser-Token"] {
         if let Some(value) = header_value(launch, header_name) {
             return Some(value);
@@ -504,7 +503,7 @@ fn auth_parameter(value: &str, key: &str) -> Option<String> {
     non_empty(Some(&rest[..end])).map(str::to_string)
 }
 
-fn header_value(launch: &MpvLaunch, name: &str) -> Option<String> {
+fn header_value(launch: &PlaybackRequest, name: &str) -> Option<String> {
     launch.headers.iter().find_map(|header| {
         header
             .name
@@ -683,11 +682,11 @@ fn unix_now_ticks() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        MpvPlaybackState, PlaybackSession, PlaystateRequest, auth_parameter,
+        PlaybackSession, PlaystateRequest, ReportingState, auth_parameter,
         enqueue_playstate_report, playback_progress_body, playback_stop_body, server_base_url,
         token_from_authorization, token_from_launch,
     };
-    use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
+    use crate::playback::{HttpHeader, PlaybackRequest};
     use serde_json::json;
     use std::collections::VecDeque;
 
@@ -699,7 +698,7 @@ mod tests {
             play_session_id: Some("session".to_string()),
             auth_headers: Vec::new(),
             body: json!({}),
-            state: MpvPlaybackState::default(),
+            state: ReportingState::default(),
         }
     }
 
@@ -752,13 +751,14 @@ mod tests {
 
     #[test]
     fn extracts_token_from_jellyfin_apikey_query() {
-        let launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv?ApiKey=secret");
+        let launch =
+            PlaybackRequest::new("https://example.test/Videos/item/stream.mkv?ApiKey=secret");
         assert_eq!(token_from_launch(&launch).as_deref(), Some("secret"));
     }
 
     #[test]
     fn playback_bodies_include_richer_mpv_and_jellyfin_fields() {
-        let mut launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/Videos/item/stream.mkv");
         launch.item_id = Some("item".to_string());
         launch.media_source_id = Some("media".to_string());
         launch.play_session_id = Some("session".to_string());
@@ -779,7 +779,7 @@ mod tests {
         launch.details = Some(json!({ "NotAQueue": true }));
 
         let session = PlaybackSession::from_launch(&launch).expect("session");
-        let state = MpvPlaybackState {
+        let state = ReportingState {
             position_ticks: 10_000_000,
             pause: true,
             duration_ticks: Some(120_000_000),
@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn playback_bodies_drop_invalid_queue_shapes() {
-        let mut launch = MpvLaunch::new("https://example.test/Videos/item/stream.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/Videos/item/stream.mkv");
         launch.item_id = Some("item".to_string());
         launch.headers = vec![HttpHeader {
             name: "X-Emby-Token".to_string(),
@@ -824,7 +824,7 @@ mod tests {
         launch.queue = Some(json!({ "bad": true }));
 
         let session = PlaybackSession::from_launch(&launch).expect("session");
-        let state = MpvPlaybackState::default();
+        let state = ReportingState::default();
         assert!(
             playback_progress_body(&session, &state)
                 .get("NowPlayingQueue")
@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn mpv_playback_state_summary_is_stable() {
-        let state = MpvPlaybackState {
+        let state = ReportingState {
             position_ticks: 10_000_000,
             pause: true,
             duration_ticks: Some(120_000_000),

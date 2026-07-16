@@ -181,11 +181,6 @@ impl PlaybackContext {
         request.merge_missing_from(&context_request);
     }
 
-    /// Compatibility name used by the current bridge protocol.
-    pub fn merge_into_launch(&self, request: &mut PlaybackRequest) {
-        self.merge_into_request(request);
-    }
-
     pub fn match_score(&self, request: &PlaybackRequest) -> u8 {
         for (context_value, request_value) in [
             (self.item_id.as_deref(), request.item_id.as_deref()),

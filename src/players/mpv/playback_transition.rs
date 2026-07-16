@@ -11,8 +11,8 @@ use crate::playback::PlaybackContext;
 use crate::playback::seconds_to_ticks;
 
 use super::{
-    ActivePlayback, ControllerState, MpvPlaybackEvent, MpvPlayerSnapshot,
-    NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackIdentity, is_completion_reason, normalized_stop_reason,
+    ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
+    PlaybackIdentity, PlayerSnapshot, is_completion_reason, normalized_stop_reason,
 };
 
 impl ControllerState {
@@ -39,14 +39,14 @@ impl ControllerState {
         );
     }
 
-    pub(super) fn publish_snapshot(&self) -> MpvPlayerSnapshot {
+    pub(super) fn publish_snapshot(&self) -> PlayerSnapshot {
         self.publish_snapshot_with_stop_reason(None)
     }
 
     pub(super) fn publish_snapshot_with_stop_reason(
         &self,
         stop_reason: Option<&'static str>,
-    ) -> MpvPlayerSnapshot {
+    ) -> PlayerSnapshot {
         self.publish_snapshot_for_identity(stop_reason, self.current_identity())
     }
 
@@ -54,8 +54,8 @@ impl ControllerState {
         &self,
         stop_reason: Option<&'static str>,
         identity: Option<&PlaybackIdentity>,
-    ) -> MpvPlayerSnapshot {
-        let snapshot = MpvPlayerSnapshot {
+    ) -> PlayerSnapshot {
+        let snapshot = PlayerSnapshot {
             active: self.mpv_playback_active || self.active.is_some() || self.pending.is_some(),
             playback_id: identity.map(|identity| identity.playback_id),
             item_id: identity.and_then(|identity| identity.item_id.clone()),
@@ -86,7 +86,7 @@ impl ControllerState {
             .or(self.playback_identity.as_ref())
     }
 
-    pub(super) fn notify_playback_stopped(&self, snapshot: MpvPlayerSnapshot) {
+    pub(super) fn notify_playback_stopped(&self, snapshot: PlayerSnapshot) {
         tracing::debug!(
             target: "playback",
             playback_id = ?snapshot.playback_id,
@@ -97,7 +97,7 @@ impl ControllerState {
             "notifying WebUI that mpv playback stopped"
         );
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(MpvPlaybackEvent::Stopped(snapshot));
+            let _ = tx.send(PlaybackEvent::Stopped(snapshot));
         }
     }
 
@@ -107,7 +107,7 @@ impl ControllerState {
         if let Some(pending) = &mut self.pending
             && identity_matches_context(&pending.identity, &context)
         {
-            context.merge_into_launch(&mut pending.launch);
+            context.merge_into_request(&mut pending.launch);
             update_identity_from_context(&mut pending.identity, &context);
             if let Some(reporter) = &mut pending.reporter {
                 reporter.merge_context(&context);

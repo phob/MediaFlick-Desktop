@@ -15,7 +15,7 @@ pub use model::{
     ReportingState, TICKS_PER_SECOND, seconds_to_ticks,
 };
 
-use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Capabilities {
@@ -45,8 +45,8 @@ pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
 
 /// Port implemented by each external player adapter.
 pub trait PlayerBackend: Send {
-    fn warm(&self, path: String, fullscreen: MpvFullscreenBehavior);
-    fn load(&self, path: String, fullscreen: MpvFullscreenBehavior, request: PlaybackRequest);
+    fn warm(&self, path: String, fullscreen: FullscreenBehavior);
+    fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
     fn set_segment_skip_config(&self, config: SegmentSkipConfig);
     fn update_playback_context(&self, context: PlaybackContext);
