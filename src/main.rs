@@ -1,19 +1,20 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
-mod cef;
 mod jellyfin;
-mod mpv;
-mod player;
+mod maintenance;
+mod playback;
+mod players;
+mod preferences;
+mod shell;
 mod windows;
 
 use clap::Parser;
 
 use crate::app::cli::Cli;
 use crate::app::logger;
-use crate::app::settings::AppSettings;
-use crate::cef::AppConfig;
-use crate::mpv::ExternalMpv;
+use crate::preferences::{FileSettingsStore, SettingsStore};
+use crate::shell::cef::AppConfig;
 
 fn main() {
     if let Some(exit_code) = windows::run_command_processor_shim() {
@@ -25,8 +26,8 @@ fn main() {
     // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
-        std::process::exit(cef::run(AppConfig {
-            settings: AppSettings::load(),
+        std::process::exit(crate::shell::cef::run(AppConfig {
+            settings: FileSettingsStore.load(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,
@@ -34,7 +35,8 @@ fn main() {
     }
 
     let cli = Cli::parse();
-    let mut settings = AppSettings::load();
+    let settings_store = FileSettingsStore;
+    let mut settings = settings_store.load();
     let log_file = cli
         .log_file
         .clone()
@@ -72,16 +74,10 @@ fn main() {
     }
     settings.sanitize();
 
-    if should_save_settings && let Err(error) = settings.save() {
+    if should_save_settings && let Err(error) = settings_store.save(&settings) {
         tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
     }
 
-    let mpv = ExternalMpv::new(
-        settings
-            .mpv_path
-            .clone()
-            .unwrap_or_else(|| "mpv".to_string()),
-    );
     let target = if settings.is_complete() {
         settings.jellyfin_url.as_deref().unwrap_or("welcome screen")
     } else {
@@ -89,12 +85,13 @@ fn main() {
     };
     tracing::info!(
         target: "main",
-        "Starting mediaflick-desktop: target={}, external mpv={}",
+        "Starting mediaflick-desktop: target={}, player_backend={}, player={}",
         target,
-        mpv.executable().display()
+        settings.effective_backend().as_str(),
+        settings.player_path().unwrap_or("not configured")
     );
 
-    std::process::exit(cef::run(AppConfig {
+    std::process::exit(crate::shell::cef::run(AppConfig {
         settings,
         title: "MediaFlick Desktop".to_string(),
         remote_debugging_port: cli.remote_debugging_port,
@@ -113,7 +110,7 @@ fn default_mpv_path() -> Option<std::path::PathBuf> {
 }
 
 fn downloaded_mpv_path() -> Option<std::path::PathBuf> {
-    let path = crate::app::mpv_setup::installed_mpv_path();
+    let path = crate::maintenance::player_setup::installed_mpv_path();
     path.is_file().then_some(path)
 }
 

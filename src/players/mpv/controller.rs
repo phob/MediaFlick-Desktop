@@ -11,15 +11,21 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
-use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
-use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
-use crate::jellyfin::media_segments::{self, SegmentType, SkipSegment};
+use crate::jellyfin::media_segments;
 use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, cleanup_ipc_path,
-    flush_playstate_reports, make_mpv_ipc_path, seconds_to_ticks,
+    MpvPlaybackState, PlaybackReporter, flush_playstate_reports,
 };
-use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
-use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
+use crate::playback::PlaybackContext;
+use crate::playback::segments::{SegmentType, SkipSegment};
+use crate::playback::{
+    HttpHeader, PlaybackEvent as MpvPlaybackEvent, PlaybackRequest as MpvLaunch,
+    PlayerCommand as MpvControlCommand, PlayerSnapshot as MpvPlayerSnapshot, TICKS_PER_SECOND,
+    seconds_to_ticks,
+};
+use crate::players::mpv::ExternalMpv;
+use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
+use crate::players::mpv::ipc::{cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path};
+use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
 
 #[path = "playback_transition.rs"]
 mod playback_transition;
@@ -52,47 +58,12 @@ const CHAPTER_MARKER_MAX_ATTEMPTS: u32 = 15;
 const IPC_SUBTITLE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
-static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 #[derive(Clone)]
 pub struct MpvController {
     tx: Sender<ControllerMessage>,
     snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
     shutdown_requested: Arc<AtomicBool>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MpvPlayerSnapshot {
-    pub active: bool,
-    pub playback_id: Option<i64>,
-    pub item_id: Option<String>,
-    pub media_source_id: Option<String>,
-    pub play_session_id: Option<String>,
-    pub position_ms: f64,
-    pub duration_ms: Option<f64>,
-    pub paused: bool,
-    pub volume: Option<i64>,
-    pub mute: Option<bool>,
-    pub stop_reason: Option<&'static str>,
-}
-
-#[derive(Debug, Clone)]
-pub enum MpvPlaybackEvent {
-    Stopped(MpvPlayerSnapshot),
-    Failed { message: String },
-}
-
-#[derive(Debug, Clone)]
-pub enum MpvControlCommand {
-    SetPause(bool),
-    SeekMilliseconds(f64),
-    SetVolume(f64),
-    SetMute(bool),
-    SetPlaybackRate(f64),
-    SetAudioTrack(i64),
-    SetSubtitleTrack(Option<i64>),
-    AddSubtitle(String),
-    Stop,
 }
 
 enum ControllerMessage {
@@ -676,7 +647,7 @@ impl ControllerState {
                 tracing::info!(
                     target: "playback",
                     item_id = %launch.item_id.as_deref().unwrap_or("unknown"),
-                    url = %jellyfin_bridge::redact_url_secrets(&launch.media_url),
+                    url = %logger::redact_url_secrets(&launch.media_url),
                     "loaded Jellyfin stream in mpv"
                 );
                 self.recent_loads.push_back(RecentLoad {
@@ -994,7 +965,7 @@ impl ControllerState {
         };
         tracing::debug!(
             target: "mpv.ipc",
-            subtitle_url = %jellyfin_bridge::redact_url_secrets(&subtitle_url),
+            subtitle_url = %logger::redact_url_secrets(&subtitle_url),
             timeout_ms = IPC_SUBTITLE_COMMAND_TIMEOUT.as_millis(),
             "loading selected external Jellyfin subtitle from its remote URL"
         );
@@ -2171,7 +2142,7 @@ fn next_request_id() -> i64 {
 }
 
 fn next_playback_id() -> i64 {
-    PLAYBACK_COUNTER.fetch_add(1, Ordering::Relaxed)
+    crate::playback::model::allocate_playback_id()
 }
 
 fn media_url_without_fragment(url: &str) -> &str {
@@ -2812,10 +2783,10 @@ mod tests {
         build_segment_chapter_markers, command_reply_result, control_command, loadfile_command,
         merge_chapter_markers, mpv_string_list,
     };
-    use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
-    use crate::jellyfin::bridge::PlaybackContext;
-    use crate::jellyfin::media_segments::{SegmentType, SkipSegment};
-    use crate::mpv::{HttpHeader, MpvLaunch};
+    use crate::playback::PlaybackContext;
+    use crate::playback::segments::{SegmentType, SkipSegment};
+    use crate::playback::{HttpHeader, PlaybackRequest as MpvLaunch};
+    use crate::preferences::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
     use serde_json::json;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
@@ -3340,7 +3311,7 @@ mod tests {
         state.pending = None;
         state.mpv_playback_active = true;
         state.current_mpv_path = Some("stale-mpv".to_string());
-        state.ipc_path = Some(crate::jellyfin::playback_reporter::make_mpv_ipc_path());
+        state.ipc_path = Some(crate::players::mpv::ipc::make_ipc_path());
         state.replacement_end_file_pending = true;
         state.pending_raise_pulse_reset_at = Some(Instant::now());
         let mut replacement = MpvLaunch::new("https://example.test/replacement.mkv");
@@ -3465,7 +3436,7 @@ mod tests {
         use super::{connect_ipc, connect_ipc_for_commands, set_ipc_command_read_timeout};
         use std::os::unix::net::UnixListener;
 
-        let path = crate::jellyfin::playback_reporter::make_mpv_ipc_path();
+        let path = crate::players::mpv::ipc::make_ipc_path();
         let listener = UnixListener::bind(&path).expect("bind test IPC socket");
 
         let command = connect_ipc_for_commands(&path).expect("connect command socket");

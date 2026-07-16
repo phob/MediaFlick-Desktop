@@ -1,9 +1,8 @@
-pub mod about;
+//! Process-level application support.
+//!
+//! Feature behavior belongs to playback, preferences, maintenance, or shell.
+
+pub mod build_info;
 pub mod cli;
-pub mod client_settings;
-pub mod error_toast;
 pub mod instance;
 pub mod logger;
-pub mod mpv_setup;
-pub mod settings;
-pub mod updater;
