@@ -1,9 +1,6 @@
 use serde_json::json;
 
-pub const APP_NAME: &str = "MediaFlick Desktop";
-pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GIT_VERSION: &str = env!("MEDIAFLICK_DESKTOP_GIT_VERSION");
-pub const CREATED_BY: &str = env!("MEDIAFLICK_DESKTOP_CREATED_BY");
+pub use crate::app::build_info::{APP_NAME, APP_VERSION, CREATED_BY, GIT_VERSION};
 
 const ABOUT_DIALOG_SCRIPT: &str = include_str!("about_dialog.js");
 const ABOUT_INFO_PLACEHOLDER: &str = "__MEDIAFLICK_ABOUT_INFO_JSON__";

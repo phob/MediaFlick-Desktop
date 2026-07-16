@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::app::updater::UpdaterResult;
+use crate::maintenance::updater::UpdaterResult;
 
 /// Where users can read about installing mpv on every platform.
 pub const MPV_HELP_URL: &str = "https://mpv.io/installation/";
@@ -46,7 +46,7 @@ pub fn installed_mpv_path() -> PathBuf {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        crate::app::settings::config_dir().join("mpv").join("mpv")
+        crate::preferences::config_dir().join("mpv").join("mpv")
     }
 }
 
@@ -72,7 +72,7 @@ pub fn download_and_install<F>(mut progress: F) -> UpdaterResult<PathBuf>
 where
     F: FnMut(MpvSetupPhase),
 {
-    use crate::app::updater;
+    use crate::maintenance::updater;
 
     let agent = updater::update_agent();
     let mut response = agent

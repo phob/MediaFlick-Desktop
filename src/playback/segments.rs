@@ -1,7 +1,64 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
-use crate::app::settings::{SegmentSkipConfig, SegmentSkipMode};
-use crate::jellyfin::media_segments::{SegmentType, SkipSegment};
+use crate::preferences::{SegmentSkipConfig, SegmentSkipMode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentType {
+    Intro,
+    Outro,
+    Recap,
+    Commercial,
+}
+
+impl SegmentType {
+    pub fn prompt_text(self) -> &'static str {
+        match self {
+            Self::Intro => "Seek to Skip Intro",
+            Self::Outro => "Seek to Skip Credits",
+            Self::Recap => "Seek to Skip Recap",
+            Self::Commercial => "Seek to Skip Commercial",
+        }
+    }
+
+    pub fn skipped_text(self) -> &'static str {
+        match self {
+            Self::Intro => "Skipped Intro",
+            Self::Outro => "Skipped Credits",
+            Self::Recap => "Skipped Recap",
+            Self::Commercial => "Skipped Commercial",
+        }
+    }
+
+    pub fn countdown_label(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro",
+            Self::Outro => "Credits",
+            Self::Recap => "Recap",
+            Self::Commercial => "Commercial",
+        }
+    }
+
+    pub fn marker_start_label(self) -> &'static str {
+        self.countdown_label()
+    }
+
+    pub fn marker_end_label(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro End",
+            Self::Outro => "Credits End",
+            Self::Recap => "Recap End",
+            Self::Commercial => "Commercial End",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipSegment {
+    pub segment_type: SegmentType,
+    pub start_ticks: i64,
+    pub end_ticks: i64,
+    pub triggered: bool,
+}
 
 pub fn mode_for_segment(config: &SegmentSkipConfig, segment_type: SegmentType) -> SegmentSkipMode {
     match segment_type {

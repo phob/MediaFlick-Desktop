@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::app::settings::config_dir;
+use crate::preferences::config_dir;
 
 const FALLBACK_INSTANCE_ID: &str = "default";
 

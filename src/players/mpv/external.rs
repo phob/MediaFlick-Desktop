@@ -9,119 +9,14 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use crate::windows::install_hidden_command_processor_shim;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use crate::app::settings::MpvFullscreenBehavior;
+use crate::playback::{HttpHeader, PlaybackRequest};
+use crate::preferences::FullscreenBehavior;
 
 const WINDOWED_AUTOFIT: &str = "70%";
 
 #[derive(Debug, Clone)]
 pub struct ExternalMpv {
     executable: PathBuf,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct HttpHeader {
-    pub name: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct MpvLaunch {
-    #[serde(alias = "url")]
-    pub media_url: String,
-    pub headers: Vec<HttpHeader>,
-    pub item_id: Option<String>,
-    pub media_source_id: Option<String>,
-    pub play_session_id: Option<String>,
-    pub device_id: Option<String>,
-    #[serde(alias = "startPositionTicks")]
-    pub start_time_ticks: Option<i64>,
-    pub start_milliseconds: Option<f64>,
-    pub runtime_ticks: Option<i64>,
-    pub title: Option<String>,
-    pub audio_stream_index: Option<i64>,
-    pub subtitle_stream_index: Option<i64>,
-    pub audio_mpv_id: Option<i64>,
-    pub subtitle_mpv_id: Option<i64>,
-    pub subtitle_url: Option<String>,
-    pub play_method: Option<String>,
-    pub playlist_item_id: Option<String>,
-    pub queue: Option<Value>,
-    pub details: Option<Value>,
-}
-
-impl MpvLaunch {
-    pub fn new(media_url: impl Into<String>) -> Self {
-        Self {
-            media_url: media_url.into(),
-            ..Default::default()
-        }
-    }
-
-    pub fn start_seconds(&self) -> Option<f64> {
-        if let Some(milliseconds) = self.start_milliseconds.filter(|value| *value > 0.0) {
-            return Some(milliseconds / 1000.0);
-        }
-        self.start_time_ticks
-            .filter(|ticks| *ticks > 0)
-            .map(|ticks| ticks as f64 / 10_000_000.0)
-    }
-
-    pub fn dedupe_key(&self) -> String {
-        if let Some(play_session_id) = non_empty(self.play_session_id.as_deref()) {
-            return format!("play-session:{play_session_id}");
-        }
-        if let (Some(item_id), Some(media_source_id)) = (
-            non_empty(self.item_id.as_deref()),
-            non_empty(self.media_source_id.as_deref()),
-        ) {
-            return format!("item:{item_id}:source:{media_source_id}");
-        }
-        redact_url_query_value(
-            &self.media_url,
-            &[
-                "api_key",
-                "apikey",
-                "access_token",
-                "accesstoken",
-                "x-emby-token",
-                "x-mediabrowser-token",
-            ],
-        )
-    }
-
-    pub fn merge_missing_from(&mut self, other: &Self) {
-        if self.media_url.trim().is_empty() {
-            self.media_url = other.media_url.clone();
-        }
-        if self.headers.is_empty() {
-            self.headers = other.headers.clone();
-        }
-        merge_option(&mut self.item_id, &other.item_id);
-        merge_option(&mut self.media_source_id, &other.media_source_id);
-        merge_option(&mut self.play_session_id, &other.play_session_id);
-        merge_option(&mut self.device_id, &other.device_id);
-        merge_option(&mut self.start_time_ticks, &other.start_time_ticks);
-        merge_option(&mut self.start_milliseconds, &other.start_milliseconds);
-        merge_option(&mut self.runtime_ticks, &other.runtime_ticks);
-        merge_option(&mut self.title, &other.title);
-        merge_option(&mut self.audio_stream_index, &other.audio_stream_index);
-        merge_option(
-            &mut self.subtitle_stream_index,
-            &other.subtitle_stream_index,
-        );
-        merge_option(&mut self.audio_mpv_id, &other.audio_mpv_id);
-        merge_option(&mut self.subtitle_mpv_id, &other.subtitle_mpv_id);
-        merge_option(&mut self.subtitle_url, &other.subtitle_url);
-        merge_option(&mut self.play_method, &other.play_method);
-        merge_option(&mut self.playlist_item_id, &other.playlist_item_id);
-        merge_option(&mut self.queue, &other.queue);
-        merge_option(&mut self.details, &other.details);
-    }
 }
 
 impl ExternalMpv {
@@ -138,16 +33,16 @@ impl ExternalMpv {
     /// Build a plain command for a media URL.
     #[allow(dead_code)]
     pub fn command_for_url(&self, media_url: &str) -> Command {
-        self.command_for_launch(&MpvLaunch::new(media_url))
+        self.command_for_launch(&PlaybackRequest::new(media_url))
     }
 
-    pub fn command_for_launch(&self, launch: &MpvLaunch) -> Command {
+    pub fn command_for_launch(&self, launch: &PlaybackRequest) -> Command {
         self.command_for_launch_with_ipc(launch, None)
     }
 
     pub fn command_for_launch_with_ipc(
         &self,
-        launch: &MpvLaunch,
+        launch: &PlaybackRequest,
         ipc_path: Option<&str>,
     ) -> Command {
         let mut command = self.hidden_command();
@@ -190,13 +85,13 @@ impl ExternalMpv {
 
     #[allow(dead_code)]
     pub fn command_for_idle_with_ipc(&self, ipc_path: &str) -> Command {
-        self.command_for_idle_with_ipc_and_fullscreen(ipc_path, MpvFullscreenBehavior::Fullscreen)
+        self.command_for_idle_with_ipc_and_fullscreen(ipc_path, FullscreenBehavior::Fullscreen)
     }
 
     pub fn command_for_idle_with_ipc_and_fullscreen(
         &self,
         ipc_path: &str,
-        fullscreen: MpvFullscreenBehavior,
+        fullscreen: FullscreenBehavior,
     ) -> Command {
         let mut command = self.hidden_command();
         command.arg("--force-window=no");
@@ -216,7 +111,7 @@ impl ExternalMpv {
     }
 
     #[allow(dead_code)]
-    pub fn spawn(&self, launch: &MpvLaunch) -> std::io::Result<Child> {
+    pub fn spawn(&self, launch: &PlaybackRequest) -> std::io::Result<Child> {
         self.command_for_launch(launch).spawn()
     }
 
@@ -289,7 +184,7 @@ fn configure_focus_on_file_load(command: &mut Command) {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn configure_focus_on_file_load(_command: &mut Command) {}
 
-impl MpvLaunch {
+impl PlaybackRequest {
     fn script_metadata(&self) -> Vec<(&'static str, String)> {
         let mut values = Vec::new();
         push_metadata(&mut values, "item_id", self.item_id.as_deref());
@@ -314,7 +209,7 @@ impl MpvLaunch {
     }
 }
 
-fn mpv_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
+fn mpv_headers(launch: &PlaybackRequest) -> Vec<HttpHeader> {
     let mut headers = Vec::<HttpHeader>::new();
     for header in &launch.headers {
         let name = sanitize_header_name(&header.name);
@@ -382,12 +277,6 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn merge_option<T: Clone>(target: &mut Option<T>, source: &Option<T>) {
-    if target.is_none() {
-        *target = source.clone();
-    }
-}
-
 fn push_metadata(values: &mut Vec<(&'static str, String)>, key: &'static str, value: Option<&str>) {
     if let Some(value) = non_empty(value) {
         values.push((key, sanitize_arg_value(value)));
@@ -415,35 +304,6 @@ fn query_auth_token(url: &str) -> Option<String> {
     ]
     .into_iter()
     .find_map(|key| query_param_ci(url, key))
-}
-
-fn redact_url_query_value(url: &str, keys: &[&str]) -> String {
-    let Some((before_query, rest)) = url.split_once('?') else {
-        return url.to_string();
-    };
-    let (query, fragment) = rest
-        .split_once('#')
-        .map(|(query, fragment)| (query, Some(fragment)))
-        .unwrap_or((rest, None));
-    let redacted = query
-        .split('&')
-        .map(|pair| {
-            let Some((raw_key, _raw_value)) = pair.split_once('=') else {
-                return pair.to_string();
-            };
-            let decoded_key = percent_decode(raw_key);
-            if keys.iter().any(|key| decoded_key.eq_ignore_ascii_case(key)) {
-                format!("{raw_key}=REDACTED")
-            } else {
-                pair.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("&");
-    match fragment {
-        Some(fragment) => format!("{before_query}?{redacted}#{fragment}"),
-        None => format!("{before_query}?{redacted}"),
-    }
 }
 
 fn percent_decode(input: &str) -> String {
