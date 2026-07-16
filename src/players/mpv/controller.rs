@@ -11,15 +11,18 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 
 use crate::app::logger;
-use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
-use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
-use crate::jellyfin::media_segments::{self, SegmentType, SkipSegment};
-use crate::jellyfin::playback_reporter::{
-    MpvPlaybackState, PlaybackReporter, TICKS_PER_SECOND, cleanup_ipc_path,
-    flush_playstate_reports, make_mpv_ipc_path, seconds_to_ticks,
+use crate::jellyfin::media_segments;
+use crate::jellyfin::playback_reporter::{PlaybackReporter, flush_playstate_reports};
+use crate::playback::model::allocate_playback_id;
+use crate::playback::segments::{SegmentType, SkipSegment};
+use crate::playback::{
+    HttpHeader, PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot,
+    ReportingState, TICKS_PER_SECOND, seconds_to_ticks,
 };
-use crate::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
-use crate::mpv::{ExternalMpv, HttpHeader, MpvLaunch};
+use crate::players::mpv::ExternalMpv;
+use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
+use crate::players::mpv::ipc::{cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path};
+use crate::preferences::{FullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
 
 #[path = "playback_transition.rs"]
 mod playback_transition;
@@ -52,61 +55,26 @@ const CHAPTER_MARKER_MAX_ATTEMPTS: u32 = 15;
 const IPC_SUBTITLE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
-static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
 
 #[derive(Clone)]
 pub struct MpvController {
     tx: Sender<ControllerMessage>,
-    snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
+    snapshot: Arc<Mutex<PlayerSnapshot>>,
     shutdown_requested: Arc<AtomicBool>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MpvPlayerSnapshot {
-    pub active: bool,
-    pub playback_id: Option<i64>,
-    pub item_id: Option<String>,
-    pub media_source_id: Option<String>,
-    pub play_session_id: Option<String>,
-    pub position_ms: f64,
-    pub duration_ms: Option<f64>,
-    pub paused: bool,
-    pub volume: Option<i64>,
-    pub mute: Option<bool>,
-    pub stop_reason: Option<&'static str>,
-}
-
-#[derive(Debug, Clone)]
-pub enum MpvPlaybackEvent {
-    Stopped(MpvPlayerSnapshot),
-    Failed { message: String },
-}
-
-#[derive(Debug, Clone)]
-pub enum MpvControlCommand {
-    SetPause(bool),
-    SeekMilliseconds(f64),
-    SetVolume(f64),
-    SetMute(bool),
-    SetPlaybackRate(f64),
-    SetAudioTrack(i64),
-    SetSubtitleTrack(Option<i64>),
-    AddSubtitle(String),
-    Stop,
 }
 
 enum ControllerMessage {
     Warm {
         mpv_path: String,
-        fullscreen: MpvFullscreenBehavior,
+        fullscreen: FullscreenBehavior,
     },
     Load {
         mpv_path: String,
-        fullscreen: MpvFullscreenBehavior,
-        launch: Box<MpvLaunch>,
+        fullscreen: FullscreenBehavior,
+        launch: Box<PlaybackRequest>,
     },
     PlaybackContext(Box<PlaybackContext>),
-    Control(MpvControlCommand),
+    Control(PlayerCommand),
     SegmentSkipConfig(SegmentSkipConfig),
     MediaSegmentsFetched {
         playback_id: i64,
@@ -133,7 +101,7 @@ struct PendingAutoSkip {
 struct ControllerState {
     tx: Sender<ControllerMessage>,
     rx: Receiver<ControllerMessage>,
-    snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
+    snapshot: Arc<Mutex<PlayerSnapshot>>,
     child: Option<Child>,
     configured_mpv: Option<ConfiguredMpv>,
     current_mpv_path: Option<String>,
@@ -147,7 +115,7 @@ struct ControllerState {
     startup_seek: Option<StartupSeek>,
     mpv_playback_active: bool,
     playback_runtime_ticks: Option<i64>,
-    last_state: MpvPlaybackState,
+    last_state: ReportingState,
     last_position_log_bucket: Option<i64>,
     skip_segments: Vec<SkipSegment>,
     current_skip_segment: Option<usize>,
@@ -166,14 +134,14 @@ struct ControllerState {
     replacement_end_file_pending: bool,
     pending_raise_pulse_reset_at: Option<Instant>,
     last_session_poll: Instant,
-    event_tx: Option<Sender<MpvPlaybackEvent>>,
+    event_tx: Option<Sender<PlaybackEvent>>,
     shutdown_requested: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
 struct ConfiguredMpv {
     mpv_path: String,
-    fullscreen: MpvFullscreenBehavior,
+    fullscreen: FullscreenBehavior,
 }
 
 #[derive(Debug, Clone)]
@@ -185,7 +153,7 @@ struct PlaybackIdentity {
 }
 
 impl PlaybackIdentity {
-    fn from_launch(playback_id: i64, launch: &MpvLaunch) -> Self {
+    fn from_launch(playback_id: i64, launch: &PlaybackRequest) -> Self {
         Self {
             playback_id,
             item_id: launch.item_id.clone(),
@@ -198,7 +166,7 @@ impl PlaybackIdentity {
 struct PendingPlayback {
     key: String,
     identity: PlaybackIdentity,
-    launch: MpvLaunch,
+    launch: PlaybackRequest,
     reporter: Option<PlaybackReporter>,
     requested_at: Instant,
 }
@@ -311,11 +279,11 @@ impl Drop for IpcCommandWriter {
 
 impl MpvController {
     pub fn new(
-        event_tx: Option<Sender<MpvPlaybackEvent>>,
+        event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
-        let snapshot = Arc::new(Mutex::new(MpvPlayerSnapshot::default()));
+        let snapshot = Arc::new(Mutex::new(PlayerSnapshot::default()));
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let controller_snapshot = snapshot.clone();
         let controller_shutdown_requested = shutdown_requested.clone();
@@ -338,7 +306,7 @@ impl MpvController {
         }
     }
 
-    pub fn warm(&self, mpv_path: impl Into<String>, fullscreen: MpvFullscreenBehavior) {
+    pub fn warm(&self, mpv_path: impl Into<String>, fullscreen: FullscreenBehavior) {
         let _ = self.tx.send(ControllerMessage::Warm {
             mpv_path: mpv_path.into(),
             fullscreen,
@@ -348,8 +316,8 @@ impl MpvController {
     pub fn load(
         &self,
         mpv_path: impl Into<String>,
-        fullscreen: MpvFullscreenBehavior,
-        launch: MpvLaunch,
+        fullscreen: FullscreenBehavior,
+        launch: PlaybackRequest,
     ) {
         let _ = self.tx.send(ControllerMessage::Load {
             mpv_path: mpv_path.into(),
@@ -358,7 +326,7 @@ impl MpvController {
         });
     }
 
-    pub fn control(&self, command: MpvControlCommand) {
+    pub fn control(&self, command: PlayerCommand) {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
@@ -372,7 +340,7 @@ impl MpvController {
             .send(ControllerMessage::PlaybackContext(Box::new(context)));
     }
 
-    pub fn snapshot(&self) -> MpvPlayerSnapshot {
+    pub fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot
             .lock()
             .map(|snapshot| snapshot.clone())
@@ -398,8 +366,8 @@ impl ControllerState {
     fn new(
         tx: Sender<ControllerMessage>,
         rx: Receiver<ControllerMessage>,
-        snapshot: Arc<Mutex<MpvPlayerSnapshot>>,
-        event_tx: Option<Sender<MpvPlaybackEvent>>,
+        snapshot: Arc<Mutex<PlayerSnapshot>>,
+        event_tx: Option<Sender<PlaybackEvent>>,
         shutdown_requested: Arc<AtomicBool>,
         segment_skip_config: SegmentSkipConfig,
     ) -> Self {
@@ -420,7 +388,7 @@ impl ControllerState {
             startup_seek: None,
             mpv_playback_active: false,
             playback_runtime_ticks: None,
-            last_state: MpvPlaybackState {
+            last_state: ReportingState {
                 volume: Some(100),
                 ..Default::default()
             },
@@ -518,8 +486,8 @@ impl ControllerState {
         }
     }
 
-    fn control(&mut self, command: MpvControlCommand) {
-        if matches!(command, MpvControlCommand::Stop)
+    fn control(&mut self, command: PlayerCommand) {
+        if matches!(command, PlayerCommand::Stop)
             && self.should_suppress_stop_during_next_playback_handoff()
         {
             tracing::debug!(
@@ -550,7 +518,7 @@ impl ControllerState {
         }
     }
 
-    fn kick_start_playback(&mut self, launch: &MpvLaunch) {
+    fn kick_start_playback(&mut self, launch: &PlaybackRequest) {
         // Regression guard: resumed Jellyfin streams must not use mpv's
         // load-time `start` option. On Windows external mpv can show a still
         // frame until a later seek when opened directly at the resume offset.
@@ -592,9 +560,9 @@ impl ControllerState {
             retry = startup_seek.sent_at.is_some(),
             "sending delayed mpv startup seek"
         );
-        if let Some(command) = control_command(MpvControlCommand::SeekMilliseconds(
-            startup_seek.position_ms,
-        )) {
+        if let Some(command) =
+            control_command(PlayerCommand::SeekMilliseconds(startup_seek.position_ms))
+        {
             match self.send_mpv_command(command) {
                 Ok(()) => {
                     if let Some(startup_seek) = &mut self.startup_seek {
@@ -616,10 +584,10 @@ impl ControllerState {
         }
     }
 
-    fn load(&mut self, mpv_path: String, fullscreen: MpvFullscreenBehavior, launch: MpvLaunch) {
+    fn load(&mut self, mpv_path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.remember_configured_mpv(&mpv_path, fullscreen);
         let key = launch.dedupe_key();
-        let identity = PlaybackIdentity::from_launch(next_playback_id(), &launch);
+        let identity = PlaybackIdentity::from_launch(allocate_playback_id(), &launch);
         tracing::debug!(
             target: "playback",
             playback_id = identity.playback_id,
@@ -676,7 +644,7 @@ impl ControllerState {
                 tracing::info!(
                     target: "playback",
                     item_id = %launch.item_id.as_deref().unwrap_or("unknown"),
-                    url = %jellyfin_bridge::redact_url_secrets(&launch.media_url),
+                    url = %logger::redact_url_secrets(&launch.media_url),
                     "loaded Jellyfin stream in mpv"
                 );
                 self.recent_loads.push_back(RecentLoad {
@@ -736,13 +704,13 @@ impl ControllerState {
 
     fn report_playback_failure(&self, message: impl Into<String>) {
         if let Some(tx) = &self.event_tx {
-            let _ = tx.send(MpvPlaybackEvent::Failed {
+            let _ = tx.send(PlaybackEvent::Failed {
                 message: message.into(),
             });
         }
     }
 
-    fn warm(&mut self, mpv_path: String, fullscreen: MpvFullscreenBehavior) {
+    fn warm(&mut self, mpv_path: String, fullscreen: FullscreenBehavior) {
         tracing::debug!(
             target: "mpv.ipc",
             mpv_path = %mpv_path,
@@ -755,16 +723,16 @@ impl ControllerState {
         }
     }
 
-    fn remember_configured_mpv(&mut self, mpv_path: &str, fullscreen: MpvFullscreenBehavior) {
+    fn remember_configured_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) {
         self.configured_mpv = Some(ConfiguredMpv {
             mpv_path: mpv_path.to_string(),
             fullscreen,
         });
     }
 
-    fn apply_default_fullscreen(&self, fullscreen: MpvFullscreenBehavior) {
+    fn apply_default_fullscreen(&self, fullscreen: FullscreenBehavior) {
         let command = json!({
-            "command": ["set_property", "fullscreen", fullscreen == MpvFullscreenBehavior::Fullscreen],
+            "command": ["set_property", "fullscreen", fullscreen == FullscreenBehavior::Fullscreen],
             "request_id": next_request_id(),
         });
         if let Err(error) = self.send_mpv_command(command) {
@@ -775,8 +743,8 @@ impl ControllerState {
     fn send_loadfile_with_reconnect(
         &mut self,
         mpv_path: &str,
-        fullscreen: MpvFullscreenBehavior,
-        launch: &MpvLaunch,
+        fullscreen: FullscreenBehavior,
+        launch: &PlaybackRequest,
     ) -> Result<(), IpcCommandFailure> {
         match self.send_mpv_command(loadfile_command(launch)) {
             Ok(()) => Ok(()),
@@ -797,7 +765,7 @@ impl ControllerState {
         }
     }
 
-    fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: MpvFullscreenBehavior) -> bool {
+    fn ensure_mpv(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) -> bool {
         if self.shutdown_requested.load(Ordering::SeqCst) {
             tracing::debug!(target: "mpv.ipc", "skipping mpv start because shutdown is requested");
             return false;
@@ -979,7 +947,7 @@ impl ControllerState {
         }
     }
 
-    fn stage_external_subtitle(&mut self, launch: &MpvLaunch) {
+    fn stage_external_subtitle(&mut self, launch: &PlaybackRequest) {
         self.pending_external_subtitle_url =
             non_empty(launch.subtitle_url.as_deref()).map(ToOwned::to_owned);
     }
@@ -988,13 +956,13 @@ impl ControllerState {
         let Some(subtitle_url) = self.pending_external_subtitle_url.take() else {
             return;
         };
-        let Some(command) = control_command(MpvControlCommand::AddSubtitle(subtitle_url.clone()))
+        let Some(command) = control_command(PlayerCommand::AddSubtitle(subtitle_url.clone()))
         else {
             return;
         };
         tracing::debug!(
             target: "mpv.ipc",
-            subtitle_url = %jellyfin_bridge::redact_url_secrets(&subtitle_url),
+            subtitle_url = %logger::redact_url_secrets(&subtitle_url),
             timeout_ms = IPC_SUBTITLE_COMMAND_TIMEOUT.as_millis(),
             "loading selected external Jellyfin subtitle from its remote URL"
         );
@@ -1189,7 +1157,7 @@ impl ControllerState {
         }
     }
 
-    fn fetch_media_segments(&self, playback_id: i64, launch: MpvLaunch) {
+    fn fetch_media_segments(&self, playback_id: i64, launch: PlaybackRequest) {
         if self.segment_skip_config.all_disabled() {
             return;
         }
@@ -1360,8 +1328,8 @@ impl ControllerState {
         }
     }
 
-    fn handle_prompt_skip_control(&mut self, command: &MpvControlCommand) -> bool {
-        let MpvControlCommand::SeekMilliseconds(position_ms) = command else {
+    fn handle_prompt_skip_control(&mut self, command: &PlayerCommand) -> bool {
+        let PlayerCommand::SeekMilliseconds(position_ms) = command else {
             return false;
         };
         let Some(requested_ticks) = seconds_to_ticks(position_ms / 1000.0) else {
@@ -2069,7 +2037,7 @@ fn chapter_time(chapter: &Value) -> f64 {
         .unwrap_or_default()
 }
 
-pub fn loadfile_command(launch: &MpvLaunch) -> Value {
+pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
     let mut options = Map::new();
     // Intentionally do not set mpv's `start` option here. Resume is performed
     // by a delayed absolute seek after file-loaded; see kick_start_playback.
@@ -2113,51 +2081,51 @@ pub fn loadfile_command(launch: &MpvLaunch) -> Value {
     })
 }
 
-pub fn control_command(command: MpvControlCommand) -> Option<Value> {
+pub fn control_command(command: PlayerCommand) -> Option<Value> {
     let command = match command {
-        MpvControlCommand::SetPause(pause) => {
+        PlayerCommand::SetPause(pause) => {
             json!(["set_property", "pause", pause])
         }
-        MpvControlCommand::SeekMilliseconds(position_ms) => {
+        PlayerCommand::SeekMilliseconds(position_ms) => {
             if !position_ms.is_finite() {
                 return None;
             }
             let seconds = (position_ms / 1000.0).max(0.0);
             json!(["seek", seconds, "absolute+exact"])
         }
-        MpvControlCommand::SetVolume(volume) => {
+        PlayerCommand::SetVolume(volume) => {
             if !volume.is_finite() {
                 return None;
             }
             json!(["set_property", "volume", volume.clamp(0.0, 100.0)])
         }
-        MpvControlCommand::SetMute(mute) => {
+        PlayerCommand::SetMute(mute) => {
             json!(["set_property", "mute", mute])
         }
-        MpvControlCommand::SetPlaybackRate(rate) => {
+        PlayerCommand::SetPlaybackRate(rate) => {
             if !rate.is_finite() {
                 return None;
             }
             json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
         }
-        MpvControlCommand::SetAudioTrack(id) => {
+        PlayerCommand::SetAudioTrack(id) => {
             if id <= 0 {
                 return None;
             }
             json!(["set_property", "aid", id])
         }
-        MpvControlCommand::SetSubtitleTrack(id) => match id.filter(|id| *id > 0) {
+        PlayerCommand::SetSubtitleTrack(id) => match id.filter(|id| *id > 0) {
             Some(id) => json!(["set_property", "sid", id]),
             None => json!(["set_property", "sid", "no"]),
         },
-        MpvControlCommand::AddSubtitle(url) => {
+        PlayerCommand::AddSubtitle(url) => {
             let url = non_empty(Some(url.as_str()))?;
             return Some(json!({
                 "command": ["sub-add", url, "select"],
                 "request_id": next_request_id(),
             }));
         }
-        MpvControlCommand::Stop => json!(["stop"]),
+        PlayerCommand::Stop => json!(["stop"]),
     };
 
     Some(json!({
@@ -2168,10 +2136,6 @@ pub fn control_command(command: MpvControlCommand) -> Option<Value> {
 
 fn next_request_id() -> i64 {
     REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-fn next_playback_id() -> i64 {
-    PLAYBACK_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 fn media_url_without_fragment(url: &str) -> &str {
@@ -2629,7 +2593,7 @@ fn set_ipc_command_read_timeout(stream: &IpcConnection, timeout: Duration) -> io
     stream.set_read_timeout(Some(timeout))
 }
 
-fn mpv_headers(launch: &MpvLaunch) -> Vec<HttpHeader> {
+fn mpv_headers(launch: &PlaybackRequest) -> Vec<HttpHeader> {
     let mut headers = Vec::<HttpHeader>::new();
     for header in &launch.headers {
         let name = sanitize_header_name(&header.name);
@@ -2808,14 +2772,14 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControllerState, MpvControlCommand, MpvPlaybackEvent, PendingPlayback, PlaybackIdentity,
+        ControllerState, PendingPlayback, PlaybackEvent, PlaybackIdentity, PlayerCommand,
         build_segment_chapter_markers, command_reply_result, control_command, loadfile_command,
         merge_chapter_markers, mpv_string_list,
     };
-    use crate::app::settings::{MpvFullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
-    use crate::jellyfin::bridge::PlaybackContext;
-    use crate::jellyfin::media_segments::{SegmentType, SkipSegment};
-    use crate::mpv::{HttpHeader, MpvLaunch};
+    use crate::playback::PlaybackContext;
+    use crate::playback::segments::{SegmentType, SkipSegment};
+    use crate::playback::{HttpHeader, PlaybackRequest};
+    use crate::preferences::{FullscreenBehavior, SegmentSkipConfig, SegmentSkipMode};
     use serde_json::json;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc;
@@ -2824,7 +2788,7 @@ mod tests {
 
     fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
         let (tx, rx) = mpsc::channel();
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv?ApiKey=secret");
         launch.start_time_ticks = start_time_ticks;
 
         let mut state = ControllerState::new(
@@ -2927,7 +2891,7 @@ mod tests {
 
     #[test]
     fn loadfile_command_contains_url_replace_options_and_request_id() {
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
         launch.start_time_ticks = Some(20_000_000);
         launch.title = Some("A Movie".to_string());
 
@@ -2944,7 +2908,7 @@ mod tests {
 
     #[test]
     fn loadfile_command_applies_selected_tracks() {
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
         launch.audio_stream_index = Some(3);
         launch.subtitle_stream_index = Some(5);
         launch.audio_mpv_id = Some(2);
@@ -2958,7 +2922,7 @@ mod tests {
 
     #[test]
     fn loadfile_command_disables_embedded_subtitles_for_external_subtitle() {
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
         launch.subtitle_stream_index = Some(7);
         launch.subtitle_url = Some("https://example.test/subtitle.srt".to_string());
 
@@ -2969,7 +2933,7 @@ mod tests {
 
     #[test]
     fn loadfile_filters_and_escapes_headers_for_mpv_string_list() {
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
         launch.headers = vec![
             HttpHeader {
                 name: "Authorization".to_string(),
@@ -2993,7 +2957,7 @@ mod tests {
 
     #[test]
     fn loadfile_adds_token_header_from_url_when_missing() {
-        let launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
+        let launch = PlaybackRequest::new("https://example.test/video.mkv?ApiKey=secret");
         let command = loadfile_command(&launch);
         let headers = command["command"][4]["http-header-fields"]
             .as_str()
@@ -3003,7 +2967,7 @@ mod tests {
 
     #[test]
     fn loadfile_strips_media_fragment_from_url() {
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret#t=30");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv?ApiKey=secret#t=30");
         launch.start_time_ticks = Some(300_000_000);
 
         let command = loadfile_command(&launch);
@@ -3035,24 +2999,24 @@ mod tests {
 
     #[test]
     fn control_commands_map_to_mpv_ipc_commands() {
-        let pause = control_command(MpvControlCommand::SetPause(true)).expect("pause command");
+        let pause = control_command(PlayerCommand::SetPause(true)).expect("pause command");
         assert_eq!(pause["command"], json!(["set_property", "pause", true]));
 
         let seek =
-            control_command(MpvControlCommand::SeekMilliseconds(12_345.0)).expect("seek command");
+            control_command(PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek command");
         assert_eq!(seek["command"], json!(["seek", 12.345, "absolute+exact"]));
 
-        let volume = control_command(MpvControlCommand::SetVolume(250.0)).expect("volume command");
+        let volume = control_command(PlayerCommand::SetVolume(250.0)).expect("volume command");
         assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
 
-        let audio = control_command(MpvControlCommand::SetAudioTrack(2)).expect("audio command");
+        let audio = control_command(PlayerCommand::SetAudioTrack(2)).expect("audio command");
         assert_eq!(audio["command"], json!(["set_property", "aid", 2]));
 
-        let subtitle = control_command(MpvControlCommand::SetSubtitleTrack(None))
-            .expect("subtitle none command");
+        let subtitle =
+            control_command(PlayerCommand::SetSubtitleTrack(None)).expect("subtitle none command");
         assert_eq!(subtitle["command"], json!(["set_property", "sid", "no"]));
 
-        let external_subtitle = control_command(MpvControlCommand::AddSubtitle(
+        let external_subtitle = control_command(PlayerCommand::AddSubtitle(
             "https://example.test/sub.srt".to_string(),
         ))
         .expect("external subtitle command");
@@ -3064,7 +3028,7 @@ mod tests {
 
         assert!(seek.get("async").is_none());
 
-        assert!(control_command(MpvControlCommand::SetPlaybackRate(f64::NAN)).is_none());
+        assert!(control_command(PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
     }
 
     #[test]
@@ -3159,7 +3123,7 @@ mod tests {
     fn finish_without_reporter_emits_stopped_event() {
         let (tx, rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let mut launch = MpvLaunch::new("https://example.test/video.mkv?ApiKey=secret");
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv?ApiKey=secret");
         launch.item_id = Some("item-1".to_string());
 
         let mut state = ControllerState::new(
@@ -3184,7 +3148,7 @@ mod tests {
         let event = event_rx.try_recv().expect("stopped event");
         assert!(matches!(
             event,
-            MpvPlaybackEvent::Stopped(snapshot)
+            PlaybackEvent::Stopped(snapshot)
                 if !snapshot.active
                     && snapshot.stop_reason == Some("quit")
                     && snapshot.playback_id == Some(1)
@@ -3340,10 +3304,10 @@ mod tests {
         state.pending = None;
         state.mpv_playback_active = true;
         state.current_mpv_path = Some("stale-mpv".to_string());
-        state.ipc_path = Some(crate::jellyfin::playback_reporter::make_mpv_ipc_path());
+        state.ipc_path = Some(crate::players::mpv::ipc::make_ipc_path());
         state.replacement_end_file_pending = true;
         state.pending_raise_pulse_reset_at = Some(Instant::now());
-        let mut replacement = MpvLaunch::new("https://example.test/replacement.mkv");
+        let mut replacement = PlaybackRequest::new("https://example.test/replacement.mkv");
         replacement.item_id = Some("replacement-item".to_string());
         replacement.media_source_id = Some("replacement-source".to_string());
         replacement.play_session_id = Some("replacement-session".to_string());
@@ -3371,8 +3335,8 @@ mod tests {
         );
 
         let stopped = match event_rx.try_recv().expect("stopped event before failure") {
-            MpvPlaybackEvent::Stopped(stopped) => stopped,
-            MpvPlaybackEvent::Failed { .. } => panic!("failure event arrived before stopped event"),
+            PlaybackEvent::Stopped(stopped) => stopped,
+            PlaybackEvent::Failed { .. } => panic!("failure event arrived before stopped event"),
         };
         assert!(!stopped.active);
         assert_eq!(stopped.stop_reason, Some("error"));
@@ -3382,7 +3346,7 @@ mod tests {
         assert_eq!(stopped.play_session_id, snapshot.play_session_id);
         assert!(matches!(
             event_rx.try_recv().expect("failure event after stopped"),
-            MpvPlaybackEvent::Failed { .. }
+            PlaybackEvent::Failed { .. }
         ));
         assert!(matches!(
             event_rx.try_recv(),
@@ -3394,13 +3358,13 @@ mod tests {
     fn pending_load_blocks_different_replacement_until_file_loaded() {
         let mut state = controller_with_pending_load(None);
         let pending_key = state.pending.as_ref().expect("pending load").key.clone();
-        let mut launch = MpvLaunch::new("https://example.test/next-video.mkv?ApiKey=secret");
+        let mut launch = PlaybackRequest::new("https://example.test/next-video.mkv?ApiKey=secret");
         launch.item_id = Some("next-item".to_string());
         launch.media_source_id = Some("next-source".to_string());
 
         state.load(
             "C:\\missing\\mpv.exe".to_string(),
-            MpvFullscreenBehavior::Fullscreen,
+            FullscreenBehavior::Fullscreen,
             launch,
         );
 
@@ -3465,7 +3429,7 @@ mod tests {
         use super::{connect_ipc, connect_ipc_for_commands, set_ipc_command_read_timeout};
         use std::os::unix::net::UnixListener;
 
-        let path = crate::jellyfin::playback_reporter::make_mpv_ipc_path();
+        let path = crate::players::mpv::ipc::make_ipc_path();
         let listener = UnixListener::bind(&path).expect("bind test IPC socket");
 
         let command = connect_ipc_for_commands(&path).expect("connect command socket");

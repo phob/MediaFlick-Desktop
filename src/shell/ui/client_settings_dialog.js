@@ -805,9 +805,9 @@
     selectTab('player');
     mpchcPath.focus();
   };
-  window.__mediaFlickDesktopClientSettingsSaved = () => {
+  window.__mediaFlickDesktopClientSettingsSaved = message => {
     setBusy(false);
-    setStatus('Saved.', 'saved');
+    setStatus(message || 'Saved.', 'saved');
   };
   window.__mediaFlickDesktopClientSettingsSaveFailed = message => {
     setBusy(false);

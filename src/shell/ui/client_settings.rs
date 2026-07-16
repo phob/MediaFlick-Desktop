@@ -1,8 +1,8 @@
 use serde_json::json;
 
-use crate::app::mpv_setup;
-use crate::app::settings::AppSettings;
-use crate::mpv::input::MpvInputBindings;
+use crate::maintenance::player_setup as mpv_setup;
+use crate::players::mpv::input::MpvInputBindings;
+use crate::preferences::AppSettings;
 
 const CLIENT_SETTINGS_DIALOG_SCRIPT: &str = include_str!("client_settings_dialog.js");
 const CLIENT_SETTINGS_PLACEHOLDER: &str = "__MEDIAFLICK_CLIENT_SETTINGS_JSON__";

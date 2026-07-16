@@ -26,8 +26,8 @@ pub struct AppSettings {
         skip_serializing_if = "is_default_log_level"
     )]
     pub log_level: String,
-    #[serde(default, skip_serializing_if = "MpvFullscreenBehavior::is_default")]
-    pub default_fullscreen: MpvFullscreenBehavior,
+    #[serde(default, skip_serializing_if = "FullscreenBehavior::is_default")]
+    pub default_fullscreen: FullscreenBehavior,
     #[serde(default, skip_serializing_if = "StreamingQuality::is_default")]
     pub streaming_quality: StreamingQuality,
     #[serde(default, skip_serializing_if = "CloseBehavior::is_default")]
@@ -213,13 +213,13 @@ impl PlayerBackend {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MpvFullscreenBehavior {
+pub enum FullscreenBehavior {
     #[default]
     Fullscreen,
     Windowed,
 }
 
-impl MpvFullscreenBehavior {
+impl FullscreenBehavior {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
     }
@@ -314,7 +314,7 @@ impl Default for AppSettings {
             player_backend: PlayerBackend::default(),
             mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
-            default_fullscreen: MpvFullscreenBehavior::default(),
+            default_fullscreen: FullscreenBehavior::default(),
             streaming_quality: StreamingQuality::default(),
             close_behavior: CloseBehavior::default(),
             show_scrollbars: false,

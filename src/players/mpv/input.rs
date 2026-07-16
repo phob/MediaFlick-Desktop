@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::app::settings::config_dir;
+use crate::preferences::config_dir;
 
 pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";

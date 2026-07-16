@@ -24,6 +24,8 @@
 - Updated the Rust `sevenz-rust2` crate to v0.21.3 ([#19](https://github.com/phob/MediaFlick-Desktop/pull/19) by [@renovate](https://github.com/apps/renovate)).
 - Refreshed locked Rust dependencies ([#20](https://github.com/phob/MediaFlick-Desktop/pull/20) by [@renovate](https://github.com/apps/renovate)).
 - Refreshed locked Rust dependencies ([#22](https://github.com/phob/MediaFlick-Desktop/pull/22) by [@renovate](https://github.com/apps/renovate)).
+- Reorganized the desktop app around playback, player-adapter, Jellyfin, preferences, maintenance, and shell domains. Playback requests, commands, events, context correlation, segment policy, and backend coordination are now backend-neutral contracts shared by mpv and MPC-HC, while CEF and native player protocols remain adapters; added `ARCHITECTURE.md` to document dependency and concurrency rules. The transitional `Mpv*` type aliases and `MpvFullscreenBehavior` were renamed to their backend-neutral `playback`/`preferences` names.
+- Client Settings saves now apply only the runtime effects the change actually requires, as computed by `SettingsApplyPlan` (player rebuild and warmup, segment-skip policy update, bridge profile refresh, scrollbar CSS), and the save confirmation states when a log-level change needs an app restart to take effect.
 
 ### Fixed
 
@@ -36,6 +38,9 @@
 - Fixed mpv playback stalls and replacement races by moving Jellyfin playstate HTTP requests onto an ordered background queue, waiting for and validating real mpv IPC command replies instead of treating pipe writes as acceptance, and preserving incoming pending playback when mpv emits the replaced file's stale `end-file` event.
 - Fixed opening the app menus (Client Settings, About, Exit) or using the Client Settings buttons (Save, Browse, Get mpv, mpv.io link) during playback tearing down the active mpv session: the Jellyfin video backdrop vanished, the on-screen controls stopped responding (the back button became unclickable), and stopping mpv no longer reported back to Jellyfin. These bridge actions navigated the page via `window.location`, which fires Jellyfin Web's `beforeunload` handler — stopping and destroying the current player and orphaning the running mpv — before CEF cancels the navigation. They now use the same no-cors request the rest of the bridge already uses, which does not unload the page.
 - Fixed the CI build-and-test jobs failing to resolve the CEF cache path by defining `CEF_PATH` at the job level.
+- Fixed privileged resource-request bridge actions running directly on CEF's IO thread by marshalling them to the UI thread, and required the per-session bridge token for local welcome and data-page actions as well as Jellyfin-origin actions. Playback-context registration stays synchronous on the IO thread so a directly following stream capture always sees it, and rejected or unrecognized bridge requests now log their URL with the session token redacted.
+- Fixed late playback context for another item being merged into MPC-HC's active Jellyfin reporter, and made playback IDs monotonic across runtime backend switches.
+- Fixed player replacement and shutdown holding shell-state or coordinator locks during bounded process teardown, preventing long settings and CEF callback stalls. Retired backends now tear down on a detached thread so switching player backends never blocks the CEF UI thread, and a poisoned coordinator lock no longer silently drops player commands or leaks the running player.
 
 ### Removed
 

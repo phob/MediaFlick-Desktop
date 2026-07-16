@@ -3,25 +3,25 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use cef::*;
 use serde_json::json;
 
-use crate::app::about;
-use crate::app::client_settings;
-use crate::app::error_toast;
 use crate::app::logger;
-use crate::app::mpv_setup::{self, MpvSetupPhase};
-use crate::app::settings::{
-    AppSettings, CloseBehavior, MpvFullscreenBehavior, PlayerBackend as PlayerBackendKind,
-    SegmentSkipMode, StreamingQuality, WebUiWindowSettings, normalize_server_url,
-};
-use crate::app::updater::{self, UpdateRelease};
 use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
-use crate::mpv::input::MpvInputBindings;
-use crate::mpv::{HttpHeader, MpvControlCommand, MpvLaunch, MpvPlaybackEvent};
-use crate::player::{PlayerBackend, build_backend};
+use crate::maintenance::player_setup::{self as mpv_setup, MpvSetupPhase};
+use crate::maintenance::updater::{self, UpdateRelease};
+use crate::playback::{
+    HttpHeader, PlaybackContextRegistry, PlaybackCoordinator, PlaybackEvent, PlaybackRequest,
+};
+use crate::players::build_backend;
+use crate::players::mpv::input::MpvInputBindings;
+use crate::preferences::{
+    AppSettings, CloseBehavior, FileSettingsStore, FullscreenBehavior,
+    PlayerBackend as PlayerBackendKind, SegmentSkipMode, SettingsApplyPlan, SettingsStore,
+    StreamingQuality, WebUiWindowSettings, normalize_server_url,
+};
+use crate::shell::ui::{about, client_settings, error_toast};
 use crate::windows::set_window_icon;
 
 #[derive(Debug, Clone)]
@@ -604,7 +604,7 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
             return;
         }
     };
-    if let Err(error) = settings.save() {
+    if let Err(error) = FileSettingsStore.save(&settings) {
         tracing::warn!(target: "config", "failed to save mediaflick-desktop config on window close: {error}");
     }
 }
@@ -622,32 +622,30 @@ struct BrowserStateInner {
     title: String,
     settings: AppSettings,
     browsers: Vec<Browser>,
-    playback_contexts: Vec<PendingPlaybackContext>,
-    player: Box<dyn PlayerBackend>,
-    playback_event_tx: mpsc::Sender<MpvPlaybackEvent>,
+    playback_contexts: PlaybackContextRegistry,
+    playback: Arc<PlaybackCoordinator>,
+    playback_event_tx: mpsc::Sender<PlaybackEvent>,
     update_available: Option<UpdateRelease>,
     update_download_started: bool,
     mpv_setup_started: bool,
     force_close_requested: bool,
 }
 
-struct PendingPlaybackContext {
-    context: PlaybackContext,
-    seen_at: Instant,
-}
-
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
 fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
-    let player = build_backend(&settings, playback_event_tx.clone());
-    warm_configured_player(player.as_ref(), &settings);
+    let playback = Arc::new(PlaybackCoordinator::new(build_backend(
+        &settings,
+        playback_event_tx.clone(),
+    )));
+    warm_configured_player(&playback, &settings);
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
         browsers: Vec::new(),
-        playback_contexts: Vec::new(),
-        player,
+        playback_contexts: PlaybackContextRegistry::default(),
+        playback,
         playback_event_tx,
         update_available: None,
         update_download_started: false,
@@ -659,19 +657,23 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
     state
 }
 
-fn warm_configured_player(player: &dyn PlayerBackend, settings: &AppSettings) {
-    player.set_segment_skip_config(settings.segment_skip_config());
+fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings) {
+    playback.configure_segments(settings.segment_skip_config());
     let Some(path) = settings.player_path() else {
         tracing::debug!(target: "mpv.ipc", "skipped player warmup because no executable is configured");
         return;
     };
-    player.warm(path.to_string(), settings.default_fullscreen);
+    playback.warm(path.to_string(), settings.default_fullscreen);
 }
 
-fn start_playback_event_bridge(state: BrowserState, rx: Receiver<MpvPlaybackEvent>) {
+fn start_playback_event_bridge(state: BrowserState, rx: Receiver<PlaybackEvent>) {
+    let state = Arc::downgrade(&state);
     thread::spawn(move || {
         while let Ok(event) = rx.recv() {
-            let mut task = PlaybackEventTask::new(state.clone(), event);
+            let Some(state) = state.upgrade() else {
+                break;
+            };
+            let mut task = PlaybackEventTask::new(state, event);
             if post_task(ThreadId::UI, Some(&mut task)) == 0 {
                 tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
             }
@@ -720,7 +722,7 @@ enum MpvSetupEvent {
 wrap_task! {
     struct PlaybackEventTask {
         state: BrowserState,
-        event: MpvPlaybackEvent,
+        event: PlaybackEvent,
     }
 
     impl Task {
@@ -757,6 +759,44 @@ wrap_task! {
 }
 
 wrap_task! {
+    struct BridgeActionTask {
+        request_url: String,
+        browser: Option<Browser>,
+        frame: Option<Frame>,
+        state: BrowserState,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            if !route_bridge_action(
+                &self.request_url,
+                self.browser.clone().as_mut(),
+                self.frame.clone().as_mut(),
+                &self.state,
+            ) {
+                tracing::warn!(
+                    target: "bridge",
+                    url = %logger::redact_url_secrets(&self.request_url),
+                    "ignored unrecognized bridge resource request"
+                );
+            }
+        }
+    }
+}
+
+fn post_bridge_action(
+    request_url: String,
+    browser: Option<Browser>,
+    frame: Option<Frame>,
+    state: BrowserState,
+) {
+    let mut task = BridgeActionTask::new(request_url, browser, frame, state);
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "bridge", "failed to post bridge action to CEF UI thread");
+    }
+}
+
+wrap_task! {
     struct ErrorToastTask {
         state: BrowserState,
         title: String,
@@ -770,8 +810,8 @@ wrap_task! {
     }
 }
 
-fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
-    if let MpvPlaybackEvent::Failed { message } = &event {
+fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
+    if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
         dispatch_error_toast(state, "Playback error", message);
         return;
@@ -812,9 +852,9 @@ fn dispatch_playback_event(state: &BrowserState, event: MpvPlaybackEvent) {
     );
 }
 
-fn playback_event_script(event: &MpvPlaybackEvent) -> String {
+fn playback_event_script(event: &PlaybackEvent) -> String {
     match event {
-        MpvPlaybackEvent::Stopped(snapshot) => {
+        PlaybackEvent::Stopped(snapshot) => {
             let payload = json!({
                 "active": snapshot.active,
                 "playbackId": snapshot.playback_id,
@@ -833,7 +873,7 @@ fn playback_event_script(event: &MpvPlaybackEvent) -> String {
                 js_json(&payload)
             )
         }
-        MpvPlaybackEvent::Failed { .. } => String::new(),
+        PlaybackEvent::Failed { .. } => String::new(),
     }
 }
 
@@ -926,14 +966,17 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
         MpvSetupEvent::Ready(path) => {
             let mpv_path = path.to_string_lossy().into_owned();
             tracing::info!(target: "mpv.setup", path = %mpv_path, "mpv installed");
-            if let Ok(mut state) = state.lock() {
+            let runtime_update = state.lock().ok().map(|mut state| {
                 state.mpv_setup_started = false;
                 state.settings.mpv_path = Some(mpv_path.clone());
                 state.settings.sanitize();
-                if let Err(error) = state.settings.save() {
+                (state.settings.clone(), state.playback.clone())
+            });
+            if let Some((settings, playback)) = runtime_update {
+                if let Err(error) = FileSettingsStore.save(&settings) {
                     tracing::warn!(target: "mpv.setup", "failed to save mpv path: {error}");
                 }
-                warm_configured_player(state.player.as_ref(), &state.settings);
+                warm_configured_player(&playback, &settings);
             }
             dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
         }
@@ -1301,8 +1344,13 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
-                if let Ok(state) = self.state.lock() {
-                    state.player.shutdown();
+                let playback = self
+                    .state
+                    .lock()
+                    .ok()
+                    .map(|state| state.playback.clone());
+                if let Some(playback) = playback {
+                    playback.shutdown();
                 }
                 quit_message_loop();
             }
@@ -1484,17 +1532,26 @@ wrap_resource_request_handler! {
                     frame.as_deref_mut(),
                     &self.state,
                 ) {
-                    if !route_bridge_action(&request_url, browser, frame, &self.state) {
-                        tracing::warn!(
-                            target: "bridge",
-                            url = %request_url,
-                            "ignored unrecognized bridge resource request"
+                    // Playback context must be registered before a later
+                    // stream-resource request on this IO thread can try to
+                    // merge it; it touches no CEF objects, so handle it here
+                    // instead of racing a posted UI-thread task.
+                    if let Some(jellyfin_bridge::BridgeAction::RememberPlaybackContext(query)) =
+                        jellyfin_bridge::parse_bridge_action(&request_url)
+                    {
+                        remember_playback_context(query, &self.state);
+                    } else {
+                        post_bridge_action(
+                            request_url.clone(),
+                            browser.as_deref().cloned(),
+                            frame.as_deref().cloned(),
+                            self.state.clone(),
                         );
                     }
                 } else {
                     tracing::warn!(
                         target: "bridge",
-                        url = %request_url,
+                        url = %logger::redact_url_secrets(&request_url),
                         "rejected bridge resource request from untrusted frame"
                     );
                 }
@@ -1514,7 +1571,7 @@ wrap_resource_request_handler! {
                 "captured direct stream resource for mpv handoff"
             );
             merge_recent_playback_context(&self.state, &mut launch);
-            if hand_off_to_mpv(&self.state, launch) {
+            if hand_off_to_player(&self.state, launch) {
                 ReturnValue::CANCEL
             } else {
                 ReturnValue::CONTINUE
@@ -1535,6 +1592,9 @@ fn bridge_request_is_trusted(
         .or_else(|| frame.map(|frame| CefString::from(&frame.url()).to_string()))
         .unwrap_or_default();
 
+    if !bridge_token_is_valid(request_url) {
+        return false;
+    }
     if document_url.is_empty()
         || document_url.starts_with("data:")
         || document_url.starts_with("mediaflick-desktop://")
@@ -1548,7 +1608,7 @@ fn bridge_request_is_trusted(
     if !server_url.is_some_and(|server_url| same_web_origin(&document_url, &server_url)) {
         return false;
     }
-    bridge_token_is_valid(request_url)
+    true
 }
 
 fn bridge_token_is_valid(request_url: &str) -> bool {
@@ -1565,87 +1625,32 @@ fn route_bridge_action(
     frame: Option<&mut Frame>,
     state: &BrowserState,
 ) -> bool {
-    if request_url.starts_with("mediaflick-desktop://select-mpv") {
-        open_mpv_dialog(browser, frame, state);
-        return true;
-    }
+    use jellyfin_bridge::BridgeAction;
 
-    if request_url.starts_with("mediaflick-desktop://select-mpchc") {
-        open_mpchc_dialog(browser, frame, state);
-        return true;
+    let Some(action) = jellyfin_bridge::parse_bridge_action(request_url) else {
+        return false;
+    };
+    match action {
+        BridgeAction::SelectMpv => open_mpv_dialog(browser, frame, state),
+        BridgeAction::SelectMpcHc => open_mpchc_dialog(browser, frame, state),
+        BridgeAction::About => show_about_dialog(browser, frame),
+        BridgeAction::DownloadMpv => start_mpv_download(state),
+        BridgeAction::MpvHelp => open_external_link(mpv_setup::MPV_HELP_URL),
+        BridgeAction::ClientSettings => show_client_settings_dialog(browser, frame, state),
+        BridgeAction::Exit => initiate_app_exit(browser, state),
+        BridgeAction::DownloadUpdate(query) => start_update_download(query, state),
+        BridgeAction::OpenUpdateRelease => open_update_release_page(),
+        BridgeAction::SaveWelcome(query) => save_settings_and_open(query, frame, state),
+        BridgeAction::SaveClientSettings(query) => {
+            save_client_settings(query, browser, frame, state);
+        }
+        BridgeAction::RememberPlaybackContext(query) => remember_playback_context(query, state),
+        BridgeAction::StartPlayback(query) => start_playback_from_bridge_payload(query, state),
+        BridgeAction::PlayerState(query) => respond_player_state(browser, frame, query, state),
+        BridgeAction::PlaybackStopAck(query) => log_playback_stop_ack(query),
+        BridgeAction::PlayerCommand(query) => handle_player_command(query, state),
     }
-
-    if request_url.starts_with("mediaflick-desktop://app-about") {
-        show_about_dialog(browser, frame);
-        return true;
-    }
-
-    if request_url.starts_with("mediaflick-desktop://mpv-download") {
-        start_mpv_download(state);
-        return true;
-    }
-
-    if request_url.starts_with("mediaflick-desktop://mpv-help") {
-        open_external_link(mpv_setup::MPV_HELP_URL);
-        return true;
-    }
-
-    if is_client_settings_request(request_url) {
-        show_client_settings_dialog(browser, frame, state);
-        return true;
-    }
-
-    if request_url.starts_with("mediaflick-desktop://app-exit") {
-        initiate_app_exit(browser, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "update-download") {
-        start_update_download(query, state);
-        return true;
-    }
-
-    if request_url.starts_with("mediaflick-desktop://update-release") {
-        open_update_release_page();
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "save") {
-        save_settings_and_open(query, frame, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "client-settings-save") {
-        save_client_settings(query, browser, frame, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "play-context") {
-        remember_playback_context(query, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "play") {
-        spawn_mpv_from_bridge_payload(query, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "player-state") {
-        respond_player_state(browser, frame, query, state);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "playback-stop-ack") {
-        log_playback_stop_ack(query);
-        return true;
-    }
-
-    if let Some(query) = bridge_action_query(request_url, "player-command") {
-        handle_player_command(query, state);
-        return true;
-    }
-
-    false
+    true
 }
 
 fn should_open_navigation_externally(
@@ -1886,8 +1891,9 @@ fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
     }
 
     if close_requests == 0 {
-        if let Ok(state) = state.lock() {
-            state.player.shutdown();
+        let playback = state.lock().ok().map(|state| state.playback.clone());
+        if let Some(playback) = playback {
+            playback.shutdown();
         }
         quit_message_loop();
     }
@@ -2002,22 +2008,6 @@ fn start_mpv_download(state: &BrowserState) {
     });
 }
 
-fn is_client_settings_request(request_url: &str) -> bool {
-    request_url == "mediaflick-desktop://client-settings"
-        || request_url.starts_with("mediaflick-desktop://client-settings?")
-        || request_url.starts_with("mediaflick-desktop://client-settings/")
-}
-
-fn bridge_action_query<'a>(request_url: &'a str, action: &str) -> Option<&'a str> {
-    let after_scheme = request_url.strip_prefix("mediaflick-desktop://")?;
-    let query = after_scheme
-        .strip_prefix(action)?
-        .strip_prefix('/')
-        .unwrap_or_else(|| &after_scheme[action.len()..])
-        .strip_prefix('?')?;
-    Some(query)
-}
-
 wrap_run_file_dialog_callback! {
     struct MpvFileDialogCallback {
         frame: Option<Frame>,
@@ -2068,7 +2058,6 @@ wrap_run_file_dialog_callback! {
     }
 }
 
-const PLAYBACK_CONTEXT_TTL: Duration = Duration::from_secs(15 * 60);
 fn remember_playback_context(query: &str, state: &BrowserState) {
     let context = match jellyfin_bridge::parse_context_payload(query) {
         Ok(context) => context,
@@ -2086,15 +2075,13 @@ fn remember_playback_context(query: &str, state: &BrowserState) {
         tracing::warn!(target: "bridge", "failed to lock browser state while remembering playback context");
         return;
     };
-    prune_playback_state(&mut state);
-    state.player.update_playback_context(context.clone());
-    state.playback_contexts.push(PendingPlaybackContext {
-        context,
-        seen_at: Instant::now(),
-    });
+    let playback = state.playback.clone();
+    state.playback_contexts.remember(context.clone());
+    drop(state);
+    playback.update_context(context);
 }
 
-fn spawn_mpv_from_bridge_payload(query: &str, state: &BrowserState) {
+fn start_playback_from_bridge_payload(query: &str, state: &BrowserState) {
     let mut launch = match jellyfin_bridge::parse_launch_payload(query) {
         Ok(launch) => launch,
         Err(error) => {
@@ -2118,31 +2105,30 @@ fn spawn_mpv_from_bridge_payload(query: &str, state: &BrowserState) {
         launch = %logger::launch_summary(&launch),
         "launch payload ready for mpv handoff"
     );
-    let _ = hand_off_to_mpv(state, launch);
+    let _ = hand_off_to_player(state, launch);
 }
 
 fn handle_player_command(query: &str, state: &BrowserState) {
-    let payload = match jellyfin_bridge::parse_player_command_payload(query) {
-        Ok(payload) => payload,
+    let command = match jellyfin_bridge::parse_player_command(query) {
+        Ok(Some(command)) => command,
+        Ok(None) => {
+            tracing::debug!(target: "bridge", "ignored unsupported player command payload");
+            return;
+        }
         Err(error) => {
             tracing::warn!(target: "bridge", "failed to parse player command payload: {error}");
             return;
         }
     };
-    let Some(command) = player_command_from_payload(&payload) else {
-        tracing::debug!(
-            target: "bridge",
-            command = %payload.command,
-            "ignored unsupported player command payload"
-        );
-        return;
-    };
-    let Ok(state) = state.lock() else {
-        tracing::warn!(target: "bridge", "failed to lock browser state while handling player command");
-        return;
+    let playback = match state.lock() {
+        Ok(state) => state.playback.clone(),
+        Err(_) => {
+            tracing::warn!(target: "bridge", "failed to lock browser state while handling player command");
+            return;
+        }
     };
     tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
-    state.player.control(command);
+    playback.control(command);
 }
 
 fn log_playback_stop_ack(query: &str) {
@@ -2177,9 +2163,9 @@ fn respond_player_state(
     query: &str,
     state: &BrowserState,
 ) {
-    let (snapshot, capabilities) = state
-        .lock()
-        .map(|state| (state.player.snapshot(), state.player.capabilities()))
+    let playback = state.lock().ok().map(|state| state.playback.clone());
+    let (snapshot, capabilities) = playback
+        .map(|playback| (playback.snapshot(), playback.capabilities()))
         .unwrap_or_default();
     let response = json!({
         "requestId": query_param(query, "requestId").unwrap_or_default(),
@@ -2219,63 +2205,12 @@ fn respond_player_state(
     }
 }
 
-fn player_command_from_payload(
-    payload: &jellyfin_bridge::PlayerCommandPayload,
-) -> Option<MpvControlCommand> {
-    match payload.command.as_str() {
-        "set-pause" => payload.pause.map(MpvControlCommand::SetPause),
-        "seek" => payload
-            .position_ms
-            .filter(|value| value.is_finite())
-            .map(MpvControlCommand::SeekMilliseconds),
-        "set-volume" => payload
-            .volume
-            .filter(|value| value.is_finite())
-            .map(MpvControlCommand::SetVolume),
-        "set-mute" => payload.mute.map(MpvControlCommand::SetMute),
-        "set-playback-rate" => payload
-            .rate
-            .filter(|value| value.is_finite())
-            .map(MpvControlCommand::SetPlaybackRate),
-        "set-audio-stream" => payload
-            .audio_mpv_id
-            .filter(|id| *id > 0)
-            .map(MpvControlCommand::SetAudioTrack),
-        "set-subtitle-stream" => payload
-            .subtitle_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .map(|url| MpvControlCommand::AddSubtitle(url.to_string()))
-            .or(Some(MpvControlCommand::SetSubtitleTrack(
-                payload.subtitle_mpv_id,
-            ))),
-        "stop" => Some(MpvControlCommand::Stop),
-        _ => None,
-    }
-}
-
-fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -> Option<u8> {
+fn merge_recent_playback_context(state: &BrowserState, launch: &mut PlaybackRequest) -> Option<u8> {
     let Ok(mut state) = state.lock() else {
         tracing::warn!(target: "bridge", "failed to lock browser state while merging playback context");
         return None;
     };
-    prune_playback_state(&mut state);
-    let best_context = state
-        .playback_contexts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, pending)| {
-            let score = pending.context.match_score(launch);
-            (score > 0).then_some((score, pending.seen_at, index))
-        })
-        .max_by_key(|(score, seen_at, _index)| (*score, *seen_at))
-        .and_then(|(score, _seen_at, index)| {
-            state
-                .playback_contexts
-                .get(index)
-                .map(|pending| (score, pending.context.clone()))
-        });
+    let best_context = state.playback_contexts.merge_best(launch);
     drop(state);
 
     if let Some((score, context)) = best_context {
@@ -2285,7 +2220,6 @@ fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -
             context = %playback_context_summary(&context),
             "merged recent playback context into launch"
         );
-        context.merge_into_launch(launch);
         Some(score)
     } else {
         tracing::trace!(
@@ -2297,12 +2231,11 @@ fn merge_recent_playback_context(state: &BrowserState, launch: &mut MpvLaunch) -
     }
 }
 
-fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
-    let Ok(mut guard) = state.lock() else {
+fn hand_off_to_player(state: &BrowserState, launch: PlaybackRequest) -> bool {
+    let Ok(guard) = state.lock() else {
         tracing::warn!(target: "bridge", "failed to lock browser state while handing playback to mpv");
         return false;
     };
-    prune_playback_state(&mut guard);
     let Some(path) = guard.settings.player_path().map(str::to_string) else {
         drop(guard);
         tracing::warn!(
@@ -2318,21 +2251,16 @@ fn hand_off_to_mpv(state: &BrowserState, launch: MpvLaunch) -> bool {
         return false;
     };
     let fullscreen = guard.settings.default_fullscreen;
+    let playback = guard.playback.clone();
+    drop(guard);
     tracing::info!(
         target: "bridge",
         player_path = %path,
         launch = %logger::launch_summary(&launch),
         "handing playback to player controller"
     );
-    guard.player.load(path, fullscreen, launch);
+    playback.open(path, fullscreen, launch);
     true
-}
-
-fn prune_playback_state(state: &mut BrowserStateInner) {
-    let now = Instant::now();
-    state
-        .playback_contexts
-        .retain(|context| now.saturating_duration_since(context.seen_at) <= PLAYBACK_CONTEXT_TTL);
 }
 
 fn playback_context_summary(context: &PlaybackContext) -> String {
@@ -2475,14 +2403,17 @@ fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &Browse
     settings.mpv_path = Some(mpv_path);
     settings.sanitize();
 
-    if let Err(error) = settings.save() {
+    if let Err(error) = FileSettingsStore.save(&settings) {
         notify_save_error(frame, &format!("Could not save config: {error}"));
         return;
     }
 
-    if let Ok(mut state) = state.lock() {
-        state.settings = settings;
-        warm_configured_player(state.player.as_ref(), &state.settings);
+    let playback = state.lock().ok().map(|mut state| {
+        state.settings = settings.clone();
+        state.playback.clone()
+    });
+    if let Some(playback) = playback {
+        warm_configured_player(&playback, &settings);
     }
 
     frame.load_url(Some(&CefString::from(jellyfin_url.as_str())));
@@ -2575,7 +2506,7 @@ fn save_client_settings(
             .filter(|value| !value.is_empty()),
     };
 
-    if let Err(error) = settings.save() {
+    if let Err(error) = FileSettingsStore.save(&settings) {
         notify_client_settings_error(&frame, &format!("Could not save config: {error}"));
         return;
     }
@@ -2584,36 +2515,61 @@ fn save_client_settings(
         return;
     }
 
-    let bridge_settings_script = jellyfin_bridge::bridge_settings_script(&settings);
-    if let Ok(mut state) = state.lock() {
-        let backend_changed = state.settings.effective_backend() != settings.effective_backend();
-        state.settings = settings;
-        if backend_changed {
-            tracing::info!(
-                target: "playback",
-                backend = state.settings.effective_backend().as_str(),
-                "rebuilding player backend after settings change"
-            );
-            state.player.shutdown();
-            let event_tx = state.playback_event_tx.clone();
-            let player = build_backend(&state.settings, event_tx);
-            state.player = player;
-        }
-        warm_configured_player(state.player.as_ref(), &state.settings);
+    let runtime_update = state.lock().ok().map(|mut state| {
+        let apply_plan = SettingsApplyPlan::between(&state.settings, &settings);
+        state.settings = settings.clone();
+        (
+            apply_plan,
+            state.playback.clone(),
+            state.playback_event_tx.clone(),
+        )
+    });
+    let Some((apply_plan, playback, event_tx)) = runtime_update else {
+        tracing::warn!(target: "config", "failed to lock browser state while applying saved client settings");
+        notify_client_settings_error(
+            &frame,
+            "Saved, but the running app could not apply the new settings.",
+        );
+        return;
+    };
+
+    if apply_plan.rebuild_player {
+        tracing::info!(
+            target: "playback",
+            backend = settings.effective_backend().as_str(),
+            "rebuilding player backend after settings change"
+        );
+        playback.replace(build_backend(&settings, event_tx));
+        warm_configured_player(&playback, &settings);
+    } else if apply_plan.update_segment_policy {
+        playback.configure_segments(settings.segment_skip_config());
     }
-    apply_scrollbar_settings_to_frame(&frame, state);
+    if apply_plan.update_shell_css {
+        apply_scrollbar_settings_to_frame(&frame, state);
+    }
+    let bridge_settings_script = if apply_plan.update_bridge_profile {
+        jellyfin_bridge::bridge_settings_script(&settings)
+    } else {
+        String::new()
+    };
+    let saved_message = if apply_plan.restart_required {
+        "Saved. Restart MediaFlick Desktop to apply the new log level."
+    } else {
+        ""
+    };
     execute_client_settings_js(
         &frame,
         &format!(
-            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved();"
+            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved({});",
+            js_string_literal(saved_message)
         ),
     );
 }
 
-fn parse_fullscreen_behavior(value: &str) -> Option<MpvFullscreenBehavior> {
+fn parse_fullscreen_behavior(value: &str) -> Option<FullscreenBehavior> {
     match value {
-        "fullscreen" => Some(MpvFullscreenBehavior::Fullscreen),
-        "windowed" => Some(MpvFullscreenBehavior::Windowed),
+        "fullscreen" => Some(FullscreenBehavior::Fullscreen),
+        "windowed" => Some(FullscreenBehavior::Windowed),
         _ => None,
     }
 }
@@ -2739,6 +2695,7 @@ fn welcome_html(settings: &AppSettings) -> String {
     };
 
     include_str!("../ui/welcome.html")
+        .replace("{{bridge_token}}", jellyfin_bridge::bridge_token())
         .replace(
             "{{saved_url}}",
             &html_escape(settings.jellyfin_url.as_deref().unwrap_or_default()),

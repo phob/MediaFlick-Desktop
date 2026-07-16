@@ -1,39 +1,14 @@
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
 
-use crate::app::about;
-use crate::app::settings::AppSettings;
-use crate::mpv::{HttpHeader, MpvLaunch};
+use crate::app::build_info;
+pub use crate::playback::PlaybackContext;
+use crate::playback::{HttpHeader, PlaybackRequest, PlayerCommand};
+use crate::preferences::AppSettings;
 
 static BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
 const BRIDGE_TOKEN_ENV: &str = "MEDIAFLICK_BRIDGE_TOKEN";
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct PlaybackContext {
-    #[serde(alias = "url")]
-    pub media_url: Option<String>,
-    pub item_id: Option<String>,
-    pub media_source_id: Option<String>,
-    pub play_session_id: Option<String>,
-    pub device_id: Option<String>,
-    #[serde(alias = "startPositionTicks")]
-    pub start_time_ticks: Option<i64>,
-    pub start_milliseconds: Option<f64>,
-    pub runtime_ticks: Option<i64>,
-    pub title: Option<String>,
-    pub audio_stream_index: Option<i64>,
-    pub subtitle_stream_index: Option<i64>,
-    pub audio_mpv_id: Option<i64>,
-    pub subtitle_mpv_id: Option<i64>,
-    pub subtitle_url: Option<String>,
-    pub play_method: Option<String>,
-    pub playlist_item_id: Option<String>,
-    pub queue: Option<Value>,
-    pub details: Option<Value>,
-}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -66,54 +41,56 @@ pub struct PlaybackStopAckPayload {
     pub active_players: usize,
 }
 
-impl PlaybackContext {
-    pub fn merge_into_launch(&self, launch: &mut MpvLaunch) {
-        let context_launch = MpvLaunch {
-            media_url: self.media_url.clone().unwrap_or_default(),
-            item_id: self.item_id.clone(),
-            media_source_id: self.media_source_id.clone(),
-            play_session_id: self.play_session_id.clone(),
-            device_id: self.device_id.clone(),
-            start_time_ticks: self.start_time_ticks,
-            start_milliseconds: self.start_milliseconds,
-            runtime_ticks: self.runtime_ticks,
-            title: self.title.clone(),
-            audio_stream_index: self.audio_stream_index,
-            subtitle_stream_index: self.subtitle_stream_index,
-            audio_mpv_id: self.audio_mpv_id,
-            subtitle_mpv_id: self.subtitle_mpv_id,
-            subtitle_url: self.subtitle_url.clone(),
-            play_method: self.play_method.clone(),
-            playlist_item_id: self.playlist_item_id.clone(),
-            queue: self.queue.clone(),
-            details: self.details.clone(),
-            ..Default::default()
-        };
-        launch.merge_missing_from(&context_launch);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeAction<'a> {
+    SelectMpv,
+    SelectMpcHc,
+    About,
+    DownloadMpv,
+    MpvHelp,
+    ClientSettings,
+    Exit,
+    DownloadUpdate(&'a str),
+    OpenUpdateRelease,
+    SaveWelcome(&'a str),
+    SaveClientSettings(&'a str),
+    RememberPlaybackContext(&'a str),
+    StartPlayback(&'a str),
+    PlayerState(&'a str),
+    PlaybackStopAck(&'a str),
+    PlayerCommand(&'a str),
+}
+
+pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction<'_>> {
+    let request = request_url.strip_prefix("mediaflick-desktop://")?;
+    let request = request.split('#').next().unwrap_or_default();
+    let (path, query) = request
+        .split_once('?')
+        .map_or((request, ""), |(path, query)| (path, query));
+    let action = path.strip_suffix('/').unwrap_or(path);
+    if action.contains('/') {
+        return None;
     }
 
-    pub fn match_score(&self, launch: &MpvLaunch) -> u8 {
-        let mut score = 0;
-        if same_non_empty(self.media_url.as_deref(), Some(launch.media_url.as_str())) {
-            score = score.max(5);
-        }
-        if same_non_empty(
-            self.play_session_id.as_deref(),
-            launch.play_session_id.as_deref(),
-        ) {
-            score = score.max(4);
-        }
-        if same_non_empty(
-            self.media_source_id.as_deref(),
-            launch.media_source_id.as_deref(),
-        ) {
-            score = score.max(3);
-        }
-        if same_non_empty(self.item_id.as_deref(), launch.item_id.as_deref()) {
-            score = score.max(2);
-        }
-        score
-    }
+    Some(match action {
+        "select-mpv" => BridgeAction::SelectMpv,
+        "select-mpchc" => BridgeAction::SelectMpcHc,
+        "app-about" => BridgeAction::About,
+        "mpv-download" => BridgeAction::DownloadMpv,
+        "mpv-help" => BridgeAction::MpvHelp,
+        "client-settings" => BridgeAction::ClientSettings,
+        "app-exit" => BridgeAction::Exit,
+        "update-download" => BridgeAction::DownloadUpdate(query),
+        "update-release" => BridgeAction::OpenUpdateRelease,
+        "save" => BridgeAction::SaveWelcome(query),
+        "client-settings-save" => BridgeAction::SaveClientSettings(query),
+        "play-context" => BridgeAction::RememberPlaybackContext(query),
+        "play" => BridgeAction::StartPlayback(query),
+        "player-state" => BridgeAction::PlayerState(query),
+        "playback-stop-ack" => BridgeAction::PlaybackStopAck(query),
+        "player-command" => BridgeAction::PlayerCommand(query),
+        _ => return None,
+    })
 }
 
 pub fn bridge_script(settings: &AppSettings) -> String {
@@ -122,9 +99,9 @@ pub fn bridge_script(settings: &AppSettings) -> String {
             "__MEDIAFLICK_PLAYBACK_SETTINGS_JSON__",
             &playback_settings_json(settings),
         )
-        .replace("{{app_version}}", about::APP_VERSION)
-        .replace("{{git_version}}", about::GIT_VERSION)
-        .replace("{{created_by}}", about::CREATED_BY)
+        .replace("{{app_version}}", build_info::APP_VERSION)
+        .replace("{{git_version}}", build_info::GIT_VERSION)
+        .replace("{{created_by}}", build_info::CREATED_BY)
         .replace("{{bridge_token}}", bridge_token())
 }
 
@@ -194,16 +171,45 @@ pub fn parse_context_payload(query: &str) -> Result<PlaybackContext, serde_json:
     serde_json::from_str(&payload)
 }
 
-pub fn parse_launch_payload(query: &str) -> Result<MpvLaunch, serde_json::Error> {
+pub fn parse_launch_payload(query: &str) -> Result<PlaybackRequest, serde_json::Error> {
     let payload = query_param(query, "payload").unwrap_or_default();
     serde_json::from_str(&payload)
 }
 
-pub fn parse_player_command_payload(
-    query: &str,
-) -> Result<PlayerCommandPayload, serde_json::Error> {
+pub fn parse_player_command(query: &str) -> Result<Option<PlayerCommand>, serde_json::Error> {
     let payload = query_param(query, "payload").unwrap_or_default();
-    serde_json::from_str(&payload)
+    let payload: PlayerCommandPayload = serde_json::from_str(&payload)?;
+    Ok(match payload.command.as_str() {
+        "set-pause" => payload.pause.map(PlayerCommand::SetPause),
+        "seek" => payload
+            .position_ms
+            .filter(|value| value.is_finite())
+            .map(PlayerCommand::SeekMilliseconds),
+        "set-volume" => payload
+            .volume
+            .filter(|value| value.is_finite())
+            .map(PlayerCommand::SetVolume),
+        "set-mute" => payload.mute.map(PlayerCommand::SetMute),
+        "set-playback-rate" => payload
+            .rate
+            .filter(|value| value.is_finite())
+            .map(PlayerCommand::SetPlaybackRate),
+        "set-audio-stream" => payload
+            .audio_mpv_id
+            .filter(|id| *id > 0)
+            .map(PlayerCommand::SetAudioTrack),
+        "set-subtitle-stream" => payload
+            .subtitle_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(|url| PlayerCommand::AddSubtitle(url.to_string()))
+            .or(Some(PlayerCommand::SetSubtitleTrack(
+                payload.subtitle_mpv_id,
+            ))),
+        "stop" => Some(PlayerCommand::Stop),
+        _ => None,
+    })
 }
 
 pub fn parse_playback_stop_ack_payload(
@@ -213,12 +219,12 @@ pub fn parse_playback_stop_ack_payload(
     serde_json::from_str(&payload)
 }
 
-pub fn launch_from_stream_url(url: &str, headers: Vec<HttpHeader>) -> Option<MpvLaunch> {
+pub fn launch_from_stream_url(url: &str, headers: Vec<HttpHeader>) -> Option<PlaybackRequest> {
     if !is_direct_stream_url(url) {
         return None;
     }
 
-    let mut launch = MpvLaunch::new(url.to_string());
+    let mut launch = PlaybackRequest::new(url.to_string());
     launch.headers = headers;
     launch.item_id = item_id_from_stream_url(url);
     launch.media_source_id = query_param_ci_from_url(url, "MediaSourceId");
@@ -233,10 +239,6 @@ pub fn launch_from_stream_url(url: &str, headers: Vec<HttpHeader>) -> Option<Mpv
         .filter(|ticks| *ticks > 0)
         .map(|ticks| ticks as f64 / 10_000.0);
     Some(launch)
-}
-
-pub fn redact_url_secrets(url: &str) -> String {
-    crate::app::logger::redact_url_secrets(url)
 }
 
 fn is_direct_stream_url(url: &str) -> bool {
@@ -294,16 +296,6 @@ fn query_param_ci(query: &str, key: &str) -> Option<String> {
     })
 }
 
-fn same_non_empty(left: Option<&str>, right: Option<&str>) -> bool {
-    let Some(left) = left.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    let Some(right) = right.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    left.eq_ignore_ascii_case(right)
-}
-
 fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -339,10 +331,30 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_script, bridge_settings_script, bridge_token, generate_bridge_token,
-        item_id_from_stream_url, launch_from_stream_url, redact_url_secrets,
+        BridgeAction, bridge_script, bridge_settings_script, bridge_token, generate_bridge_token,
+        item_id_from_stream_url, launch_from_stream_url, parse_bridge_action,
     };
-    use crate::app::settings::{AppSettings, StreamingQuality};
+    use crate::preferences::{AppSettings, StreamingQuality};
+
+    #[test]
+    fn parses_bridge_actions_exactly() {
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://play?payload=value#ignored"),
+            Some(BridgeAction::StartPlayback("payload=value"))
+        );
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://client-settings/"),
+            Some(BridgeAction::ClientSettings)
+        );
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://app-exit-malicious"),
+            None
+        );
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://play/extra?payload=value"),
+            None
+        );
+    }
 
     #[test]
     fn bridge_script_contains_configured_streaming_quality() {
@@ -412,14 +424,6 @@ mod tests {
             item_id_from_stream_url("https://server/Audio/song-id/stream.mp3?Static=true")
                 .as_deref(),
             Some("song-id")
-        );
-    }
-
-    #[test]
-    fn redacts_jellyfin_apikey_query() {
-        assert_eq!(
-            redact_url_secrets("https://server/Videos/abc/stream.mkv?ApiKey=secret&Static=true"),
-            "https://server/Videos/abc/stream.mkv?ApiKey=REDACTED&Static=true"
         );
     }
 }

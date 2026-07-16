@@ -4,64 +4,12 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::jellyfin::playback_reporter::PlaybackSession;
-use crate::mpv::MpvLaunch;
+use crate::playback::PlaybackRequest;
+pub use crate::playback::segments::{SegmentType, SkipSegment};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SegmentType {
-    Intro,
-    Outro,
-    Recap,
-    Commercial,
-}
-
 impl SegmentType {
-    pub fn prompt_text(self) -> &'static str {
-        match self {
-            Self::Intro => "Seek to Skip Intro",
-            Self::Outro => "Seek to Skip Credits",
-            Self::Recap => "Seek to Skip Recap",
-            Self::Commercial => "Seek to Skip Commercial",
-        }
-    }
-
-    pub fn skipped_text(self) -> &'static str {
-        match self {
-            Self::Intro => "Skipped Intro",
-            Self::Outro => "Skipped Credits",
-            Self::Recap => "Skipped Recap",
-            Self::Commercial => "Skipped Commercial",
-        }
-    }
-
-    pub fn countdown_label(self) -> &'static str {
-        match self {
-            Self::Intro => "Intro",
-            Self::Outro => "Credits",
-            Self::Recap => "Recap",
-            Self::Commercial => "Commercial",
-        }
-    }
-
-    pub fn marker_start_label(self) -> &'static str {
-        match self {
-            Self::Intro => "Intro",
-            Self::Outro => "Credits",
-            Self::Recap => "Recap",
-            Self::Commercial => "Commercial",
-        }
-    }
-
-    pub fn marker_end_label(self) -> &'static str {
-        match self {
-            Self::Intro => "Intro End",
-            Self::Outro => "Credits End",
-            Self::Recap => "Recap End",
-            Self::Commercial => "Commercial End",
-        }
-    }
-
     fn from_jellyfin(value: &str) -> Option<Self> {
         match value {
             value if value.eq_ignore_ascii_case("Intro") => Some(Self::Intro),
@@ -72,14 +20,6 @@ impl SegmentType {
             _ => None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkipSegment {
-    pub segment_type: SegmentType,
-    pub start_ticks: i64,
-    pub end_ticks: i64,
-    pub triggered: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,7 +38,7 @@ struct MediaSegmentDto {
     end_ticks: i64,
 }
 
-pub fn fetch_for_launch(launch: &MpvLaunch) -> Result<Vec<SkipSegment>, String> {
+pub fn fetch_for_launch(launch: &PlaybackRequest) -> Result<Vec<SkipSegment>, String> {
     let session = PlaybackSession::from_launch(launch)
         .ok_or_else(|| "missing Jellyfin session details for media segments".to_string())?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
