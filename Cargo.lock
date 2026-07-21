@@ -130,9 +130,9 @@ dependencies = [
 
 [[package]]
 name = "cef"
-version = "150.0.0+150.0.10"
+version = "150.2.0+150.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8dd6aaa08e30ced80c7c18445807984243a06b7f4004c264922302b7e05d5c41"
+checksum = "1e87ee18310e292fbe9cf16b8b5875c49f69ee2b23d0c3aea6413bc852fb6b76"
 dependencies = [
  "cef-dll-sys",
  "libloading",
@@ -142,9 +142,9 @@ dependencies = [
 
 [[package]]
 name = "cef-dll-sys"
-version = "150.0.0+150.0.10"
+version = "150.2.0+150.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0ec349898441a7e9f91add53716d9c40f6fc381c9b41818241e4f63fb73f0b8"
+checksum = "e37c230925be89fcfbdd03623f3b574495bd47a92737980391b6b5c851d45e32"
 dependencies = [
  "anyhow",
  "cmake",
@@ -343,7 +343,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -848,7 +848,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
