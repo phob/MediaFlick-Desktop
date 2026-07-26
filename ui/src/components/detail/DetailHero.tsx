@@ -82,7 +82,10 @@ function Poster({ item }: { item: ItemDetail }) {
   return (
     <div
       className={cn(
-        "relative hidden shrink-0 overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:block",
+        // `self-start`: the hero row is as tall as the backdrop, and without it
+        // the frame — ring, shadow and all — stretches into an empty box far
+        // below the artwork it holds.
+        "relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:block",
         isStill ? "w-[340px]" : "w-[220px]",
       )}
     >
@@ -106,9 +109,12 @@ function Poster({ item }: { item: ItemDetail }) {
  * The top of every detail page: the item's own backdrop bled behind the poster,
  * title, facts, and action bar.
  *
- * The backdrop is a background, not content — it sits under two gradients so
- * text keeps its contrast whatever the artwork looks like, and the whole block
- * falls back to the flat page background when an item has no backdrop at all.
+ * The backdrop is a background and nothing else. It is taken out of flow at its
+ * own 16:9 size, so it is never cropped to a hero height and never pushes the
+ * hero, cast, seasons, or details around; it simply reaches past this header and
+ * those sections draw over it. Only two gradients touch it: one keeps the hero's
+ * own text legible, the other dims the artwork away where the page's content
+ * begins.
  */
 export function DetailHero({
   item,
@@ -139,33 +145,57 @@ export function DetailHero({
   ].filter(Boolean)
 
   return (
-    <header className="relative isolate">
+    <header className="relative">
       {showBackdrop && (
-        <div className="absolute inset-0 -z-10 overflow-hidden">
+        // `aspect-video` gives the layer the picture's own height, so the whole
+        // frame is there. It deliberately reaches below this header, and the
+        // negative z-index puts it behind the whole detail page rather than just
+        // behind the hero — which is why this header must not `isolate`, and why
+        // the page it sits in does (see `ItemDetail`): without that stacking
+        // context the artwork would either cover the sections below or disappear
+        // behind the app shell's own background.
+        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 aspect-video">
           <img
             src={backdrop!}
             alt=""
             decoding="async"
             onError={() => setBackdropFailed(true)}
-            className="h-full w-full object-cover object-top"
+            className="h-full w-full object-cover"
           />
-          {/* Two passes, each fading out well before the other takes over: one
-              dissolves the bottom edge into the page, the other keeps the text
-              column readable. Overlapping them at full strength is what turns a
-              backdrop into a grey rectangle. */}
-          <div className="absolute inset-0 bg-linear-to-t from-background from-5% via-background/40 via-45% to-transparent" />
-          <div className="absolute inset-0 bg-linear-to-r from-background from-10% via-background/55 via-45% to-transparent to-80%" />
+          {/* Two passes over the part of the picture that lies behind the page's
+              own content. The first drops it back to a steady wash just past the
+              hero, in the few rem before the cast row starts, because names and
+              table rows have to stay readable over whatever the artwork happens to
+              be doing there. The second takes that wash to nothing by the picture's
+              last line, so it ends in the page colour instead of on a visible edge.
+              Above the hero's floor neither one applies. */}
+          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[26rem] to-background/65 to-[31rem]" />
+          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[55rem] to-background" />
         </div>
       )}
 
       <div
         className={cn(
-          "flex gap-8 px-6 pb-10",
-          // Without artwork there is nothing to clear, so the block does not
-          // need the height the backdrop asks for.
+          "relative flex gap-8 px-6 pb-10",
+          // Unchanged by the backdrop, which is what keeps everything below this
+          // header exactly where it was.
           showBackdrop ? "min-h-[26rem] pt-14" : "pt-6",
         )}
       >
+        {/* Contrast for the text, and only for the text: the scrim belongs to this
+            block, so it covers what has to stay legible and leaves the rest of the
+            picture alone — running it over the whole backdrop is what used to turn
+            the lower half into a grey rectangle.
+
+            Both mask axes are needed. Downwards it feathers out, because a flat
+            scrim would end on a visible line across the artwork. Sideways it is
+            measured in `rem`, not per cent: the text stops at a real width
+            (`max-w-3xl` past the poster), so a proportional taper would leave the
+            end of a synopsis unprotected on a wide window and dim half the picture
+            on a narrow one. */}
+        {showBackdrop && (
+          <div className="pointer-events-none absolute inset-0 -z-1 bg-background/80 [mask-composite:intersect] [mask-image:linear-gradient(to_right,#000_66rem,transparent_82rem),linear-gradient(to_bottom,#000_55%,transparent)]" />
+        )}
         <Poster item={item} />
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <Breadcrumb item={item} />
