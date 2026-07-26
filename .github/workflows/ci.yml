@@ -53,6 +53,18 @@ jobs:
         with:
           components: clippy
 
+      # The UI bundle is embedded in the binary, so every Rust job needs it.
+      # build.rs shells out to pnpm unless MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       - name: Cache Cargo and CEF downloads
         uses: actions/cache@v6
         with:
@@ -63,6 +75,9 @@ jobs:
           key: ci-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ci-${{ matrix.os }}-
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

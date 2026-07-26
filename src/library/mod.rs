@@ -246,7 +246,29 @@ impl Library {
 
     /// Removes cached items the server no longer reports.
     pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<usize> {
-        let existing = self.all_ids()?;
+        self.delete_missing(&self.all_ids()?, keep)
+    }
+
+    /// Removes cached children of `parent_id` the server no longer reports.
+    ///
+    /// Scoped to one parent so a detail page can reconcile itself without the
+    /// whole-library sweep, and matched with exactly the predicate [`children`]
+    /// reads back — otherwise a row this misses reappears on the season page.
+    ///
+    /// [`children`]: Self::children
+    pub fn retain_children(
+        &self,
+        parent_id: &str,
+        keep: &HashSet<String>,
+    ) -> rusqlite::Result<usize> {
+        self.delete_missing(&self.child_ids(parent_id)?, keep)
+    }
+
+    fn delete_missing(
+        &self,
+        existing: &HashSet<String>,
+        keep: &HashSet<String>,
+    ) -> rusqlite::Result<usize> {
         let stale = existing.difference(keep).cloned().collect::<Vec<_>>();
         if stale.is_empty() {
             return Ok(0);
@@ -257,6 +279,50 @@ impl Library {
                 transaction.execute("DELETE FROM user_data WHERE jellyfin_id = ?1", params![id])?;
             }
             Ok(stale.len())
+        })
+    }
+
+    fn child_ids(&self, parent_id: &str) -> rusqlite::Result<HashSet<String>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT jellyfin_id FROM items
+                 WHERE parent_id = ?1 OR (season_id = ?1 AND kind = 'Episode')",
+            )?;
+            let ids = statement
+                .query_map(params![parent_id], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<HashSet<_>>>()?;
+            Ok(ids)
+        })
+    }
+
+    /// The item type of a cached item, used to decide whether a parent is worth
+    /// reconciling against the server at all.
+    pub fn kind(&self, item_id: &str) -> Option<String> {
+        self.db
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT kind FROM items WHERE jellyfin_id = ?1",
+                    params![item_id],
+                    |row| row.get::<_, String>(0),
+                )
+            })
+            .ok()
+    }
+
+    /// Drops one item the server has authoritatively disowned.
+    ///
+    /// Jellyfin re-creates an item with a new id when its file is replaced, so
+    /// the old row would otherwise linger — offering a dead poster and a dead
+    /// Play button — until the next daily deletion sweep.
+    pub fn forget(&self, item_id: &str) -> rusqlite::Result<bool> {
+        self.db.with_transaction(|transaction| {
+            let removed = transaction
+                .execute("DELETE FROM items WHERE jellyfin_id = ?1", params![item_id])?;
+            transaction.execute(
+                "DELETE FROM user_data WHERE jellyfin_id = ?1",
+                params![item_id],
+            )?;
+            Ok(removed > 0)
         })
     }
 
@@ -991,6 +1057,76 @@ mod tests {
         assert_eq!(library.retain_ids(&keep).expect("retain"), 1);
         assert!(library.item("m2").expect("query").is_none());
         assert_eq!(library.retain_ids(&keep).expect("retain"), 0);
+    }
+
+    /// A season page reads its episodes back through `children`, so anything
+    /// that predicate can see has to be evictable through `retain_children`.
+    #[test]
+    fn retain_children_drops_only_the_episodes_the_server_dropped() {
+        let library = seeded();
+        let keep = ["e2"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(
+            library.retain_children("season1", &keep).expect("retain"),
+            1
+        );
+        let remaining = library.children("season1").expect("children");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["id"], "e2");
+        // Untouched: the sweep is scoped to that one parent.
+        assert!(library.item("m1").expect("query").is_some());
+        assert_eq!(
+            library.retain_children("season1", &keep).expect("retain"),
+            0
+        );
+    }
+
+    /// The whole point of the season reconcile: a server that reports no
+    /// children clears the cached ones instead of leaving ghosts behind.
+    #[test]
+    fn retain_children_clears_a_parent_the_server_reports_as_empty() {
+        let library = seeded();
+        assert_eq!(
+            library
+                .retain_children("season1", &HashSet::new())
+                .expect("retain"),
+            2
+        );
+        assert!(library.children("season1").expect("children").is_empty());
+    }
+
+    #[test]
+    fn kind_reads_back_the_item_type() {
+        let library = seeded();
+        assert_eq!(library.kind("s1").as_deref(), Some("Series"));
+        assert_eq!(library.kind("e1").as_deref(), Some("Episode"));
+        assert_eq!(library.kind("missing"), None);
+    }
+
+    /// Replacing a file in Jellyfin re-creates the item under a new id, so the
+    /// old row has to go as soon as the server 404s it rather than waiting for
+    /// the next daily deletion sweep.
+    #[test]
+    fn forget_drops_a_single_item_and_its_user_data() {
+        let library = seeded();
+        library
+            .record_playback_progress("e1", 1_200_000_000, false)
+            .expect("progress");
+
+        assert!(library.forget("e1").expect("forget"));
+        assert!(library.item("e1").expect("query").is_none());
+        assert!(
+            !library
+                .continue_watching(10)
+                .expect("rows")
+                .iter()
+                .any(|row| row["id"] == "e1")
+        );
+        // Idempotent: a second eviction is not an error and reports no change.
+        assert!(!library.forget("e1").expect("forget"));
     }
 
     #[test]

@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+/* Tailwind v4, CSS-first: no tailwind.config.js — tokens live here.
+   The palette is carried over from the hand-written UI's app.css so shadcn
+   primitives inherit the existing look instead of introducing a second one. */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Surfaces */
+  --background: #0d0f13;
+  --foreground: #e8ecf2;
+  --card: #161a21;
+  --card-foreground: #e8ecf2;
+  --popover: #161a21;
+  --popover-foreground: #e8ecf2;
+
+  /* Interaction */
+  --primary: #4f8cff;
+  --primary-foreground: #ffffff;
+  --secondary: #1e242e;
+  --secondary-foreground: #e8ecf2;
+  --muted: #1e242e;
+  --muted-foreground: #98a2b3;
+  --accent: #1e242e;
+  --accent-foreground: #e8ecf2;
+  --destructive: #ff6b6b;
+  --destructive-foreground: #ffffff;
+
+  /* Lines */
+  --border: #262d38;
+  --input: #262d38;
+  --ring: #4f8cff;
+
+  --radius: 0.625rem;
+
+  /* Media-grid geometry, carried over verbatim. */
+  --poster-width: 168px;
+  --poster-height: 252px;
+  --card-gap: 18px;
+  --card-height: 306px;
+  --header-height: 56px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --spacing-poster-w: var(--poster-width);
+  --spacing-poster-h: var(--poster-height);
+  --spacing-header: var(--header-height);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    /* The app owns the whole window; the shell never scrolls, panes do. */
+    @apply overflow-hidden bg-background text-foreground;
+    font:
+      14px/1.45 "Segoe UI",
+      system-ui,
+      -apple-system,
+      sans-serif;
+  }
+}

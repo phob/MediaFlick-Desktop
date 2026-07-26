@@ -58,7 +58,9 @@ pub fn sync_once() -> i32 {
         eprintln!("not signed in: start the app and sign in first");
         return 2;
     }
-    match sync::run_cycle(&library, &session) {
+    // Running this by hand is an explicit ask, so it reconciles deletions even
+    // if the background thread swept less than an hour ago.
+    match sync::run_cycle(&library, &session, sync::Trigger::Requested) {
         Ok(report) => {
             println!(
                 "bootstrapped {} · updated {} · user data {} · deleted {} · {} ms",

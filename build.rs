@@ -10,6 +10,7 @@ fn main() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     track_git_refs(&repo_root);
+    build_ui(&repo_root);
 
     let git_version = std::env::var("MEDIAFLICK_DESKTOP_GIT_VERSION")
         .ok()
@@ -36,6 +37,102 @@ fn main() {
             .compile()
             .expect("failed to compile Windows resources");
     }
+}
+
+/// Builds the UI bundle that `src/shell/cef/api.rs` embeds with `include_bytes!`.
+///
+/// Cargo owns this rather than a separate `just ui` step so `cargo build` stays
+/// self-sufficient and can never embed a stale `ui/dist` — the failure mode is
+/// silent otherwise, and it would ship in a release binary.
+///
+/// Set `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` when the bundle was already built
+/// out of band (CI splits the steps to cache `node_modules`).
+fn build_ui(repo_root: &Path) {
+    let ui_dir = repo_root.join("ui");
+    if !ui_dir.join("package.json").is_file() {
+        panic!("ui/package.json is missing — the UI bundle cannot be built");
+    }
+
+    // Any of these changing invalidates the bundle. `ui/src` is watched
+    // recursively.
+    for path in [
+        "src",
+        "index.html",
+        "package.json",
+        "pnpm-lock.yaml",
+        "vite.config.ts",
+    ] {
+        println!("cargo:rerun-if-changed={}", ui_dir.join(path).display());
+    }
+    println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_SKIP_UI_BUILD");
+
+    if std::env::var("MEDIAFLICK_DESKTOP_SKIP_UI_BUILD").as_deref() == Ok("1") {
+        assert!(
+            ui_dir.join("dist/app.js").is_file(),
+            "MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 but ui/dist/app.js does not exist"
+        );
+    } else {
+        if !ui_dir.join("node_modules").is_dir() {
+            run_pnpm(&ui_dir, &["install", "--frozen-lockfile"]);
+        }
+        run_pnpm(&ui_dir, &["build"]);
+    }
+
+    stage_bundle(&ui_dir.join("dist"));
+}
+
+/// Copies the built bundle into `OUT_DIR` for `include_bytes!`.
+///
+/// Embedding straight from `ui/dist` looks simpler but breaks: cargo skips
+/// `build.rs` whenever its tracked inputs are unchanged, so a wiped `ui/dist`
+/// leaves `include_bytes!` pointing at nothing. `OUT_DIR` is cargo-managed and
+/// survives exactly as long as the fingerprint that produced it.
+fn stage_bundle(dist: &Path) {
+    let out_dir = std::path::PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("cargo always sets OUT_DIR for build scripts"),
+    );
+
+    for asset in ["app.js", "app.css", "index.html"] {
+        let source = dist.join(asset);
+        let target = out_dir.join(asset);
+        std::fs::copy(&source, &target).unwrap_or_else(|error| {
+            panic!(
+                "failed to stage {} into OUT_DIR: {error}. Run `just ui` to rebuild the bundle.",
+                source.display()
+            )
+        });
+    }
+}
+
+fn run_pnpm(ui_dir: &Path, args: &[&str]) {
+    // On Windows pnpm is a `.cmd` shim, which `Command::new` will not resolve
+    // from the bare name.
+    let candidates: &[&str] = if cfg!(windows) {
+        &["pnpm.cmd", "pnpm"]
+    } else {
+        &["pnpm"]
+    };
+
+    let mut last_error = None;
+    for program in candidates {
+        match Command::new(program)
+            .args(args)
+            .current_dir(ui_dir)
+            .status()
+        {
+            Ok(status) if status.success() => return,
+            Ok(status) => panic!("`pnpm {}` failed with {status}", args.join(" ")),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    panic!(
+        "could not run `pnpm {}` in {}: {}. Install Node and pnpm, or set \
+         MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 with a prebuilt ui/dist.",
+        args.join(" "),
+        ui_dir.display(),
+        last_error.expect("at least one candidate is tried"),
+    );
 }
 
 fn git_version(repo_root: &Path) -> Option<String> {

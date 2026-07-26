@@ -18,13 +18,21 @@ pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 
 /// Metadata pulled for every synced item. Provider IDs are the join keys for
 /// the external-rating and list features planned on top of the cache.
+/// `DateLastSaved` is deliberately absent: it is a valid `ItemFields` value but
+/// servers return it empty, and it is not a valid `ItemSortBy` value, so the
+/// cache keys freshness on `DateCreated` instead. See `library::sync`.
 pub const SYNC_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
-DateCreated,DateLastSaved,OriginalTitle,SortName,PremiereDate,OfficialRating,\
+DateCreated,OriginalTitle,SortName,PremiereDate,OfficialRating,\
 CommunityRating,CriticRating,ChildCount,ParentId";
 
 /// Page size for the bootstrap and incremental sweeps. Kept modest because
 /// each row carries cast, studios, and provider ids.
 pub const PAGE_SIZE: i64 = 200;
+
+/// Page size for one parent's children. A series' season list and a season's
+/// episode list both fit inside a single page in practice; the paging loop is
+/// only there so a pathological parent still resolves completely.
+pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
@@ -87,6 +95,40 @@ pub fn fetch_identity_page(
             ("SortOrder", "Ascending".to_string()),
         ],
     )
+}
+
+fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("parentId", parent_id.to_string()),
+        // Deliberately not recursive: a series must answer with its seasons,
+        // not with every episode underneath it.
+        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+        ("Fields", SYNC_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", start_index.to_string()),
+        ("Limit", CHILDREN_PAGE_SIZE.to_string()),
+        (
+            "SortBy",
+            "ParentIndexNumber,IndexNumber,SortName".to_string(),
+        ),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+/// The direct children of one series or season, as the server sees them now.
+///
+/// Used to reconcile a detail page against the server, which is the only way
+/// the season view can avoid showing episodes that were deleted since the last
+/// sweep.
+pub fn fetch_children(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+    start_index: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json("/Items", &children_query(user_id, parent_id, start_index))
 }
 
 /// Fetch a single item through `/Items?ids=`, which every supported server
@@ -247,7 +289,10 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PAGE_SIZE, SYNC_FIELDS, SYNCED_ITEM_TYPES, image_path, items_page_query};
+    use super::{
+        CHILDREN_PAGE_SIZE, PAGE_SIZE, SYNC_FIELDS, SYNCED_ITEM_TYPES, children_query, image_path,
+        items_page_query,
+    };
 
     #[test]
     fn synced_types_exclude_music_and_live_tv() {
@@ -258,13 +303,20 @@ mod tests {
     #[test]
     fn sync_fields_request_the_provider_join_keys() {
         assert!(SYNC_FIELDS.contains("ProviderIds"));
-        assert!(SYNC_FIELDS.contains("DateLastSaved"));
+        assert!(SYNC_FIELDS.contains("DateCreated"));
         assert!(!SYNC_FIELDS.contains(' '));
+    }
+
+    /// `DateLastSaved` is not a valid `ItemSortBy` value and servers return the
+    /// field empty, so keying sync freshness on it silently disables the sweep.
+    #[test]
+    fn sync_fields_do_not_request_date_last_saved() {
+        assert!(!SYNC_FIELDS.contains("DateLastSaved"));
     }
 
     #[test]
     fn a_sync_page_request_carries_the_paging_and_field_selection() {
-        let query = items_page_query("uid", 400, "DateLastSaved", "Descending")
+        let query = items_page_query("uid", 400, "DateCreated", "Descending")
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["userId"], "uid");
@@ -274,8 +326,24 @@ mod tests {
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["StartIndex"], "400");
         assert_eq!(query["Limit"], PAGE_SIZE.to_string());
-        assert_eq!(query["SortBy"], "DateLastSaved");
+        assert_eq!(query["SortBy"], "DateCreated");
         assert_eq!(query["SortOrder"], "Descending");
+    }
+
+    /// `Recursive` must stay absent: with it, a series would answer with every
+    /// episode underneath it and the season reconcile would delete its seasons.
+    #[test]
+    fn a_children_request_asks_for_direct_children_only() {
+        let query = children_query("uid", "season1", 0)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["parentId"], "season1");
+        assert!(!query.contains_key("Recursive"));
+        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["EnableUserData"], "true");
+        assert_eq!(query["Limit"], CHILDREN_PAGE_SIZE.to_string());
+        assert_eq!(query["SortBy"], "ParentIndexNumber,IndexNumber,SortName");
     }
 
     #[test]
