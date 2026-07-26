@@ -2,6 +2,7 @@
 
 mod app;
 mod jellyfin;
+mod library;
 mod maintenance;
 mod playback;
 mod players;
@@ -45,6 +46,15 @@ fn main() {
     let effective_log_level = cli.log_level.as_deref().unwrap_or(&settings.log_level);
     let _log_guard = logger::init(log_file, effective_log_level);
 
+    // Headless checks open no window and share the database through WAL, so
+    // they run before the single-instance guard and work alongside a running app.
+    if cli.library_stats {
+        std::process::exit(library::headless::print_stats());
+    }
+    if cli.library_sync_once {
+        std::process::exit(library::headless::sync_once());
+    }
+
     let instance_id = crate::app::instance::instance_id();
     let _instance_guard = match crate::app::instance::InstanceGuard::acquire(&instance_id) {
         Some(guard) => guard,
@@ -78,15 +88,10 @@ fn main() {
         tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
     }
 
-    let target = if settings.is_complete() {
-        settings.jellyfin_url.as_deref().unwrap_or("welcome screen")
-    } else {
-        "welcome screen"
-    };
     tracing::info!(
         target: "main",
-        "Starting mediaflick-desktop: target={}, player_backend={}, player={}",
-        target,
+        "Starting mediaflick-desktop: server={}, player_backend={}, player={}",
+        settings.jellyfin_url.as_deref().unwrap_or("not configured"),
         settings.effective_backend().as_str(),
         settings.player_path().unwrap_or("not configured")
     );
