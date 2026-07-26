@@ -45,6 +45,7 @@
 ### Removed
 
 - Removed the settings machinery that only existed to reconfigure the injected jellyfin-web bridge (`SettingsApplyPlan::update_bridge_profile`, `AppSettings::is_complete`, and the playback-context correlation registry).
+- Removed the superseded hand-written ES-module UI (`src/shell/ui/app/`). It was kept as a porting reference after the React swap; the last views that depended on it — the windowed library grid, the filter controls, Quick Connect, and the streaming-quality picker — have all landed, and nothing built or shipped referenced it. The native dialogs under `src/shell/ui/` are unaffected.
 
 
 ## [0.1.6] - 2026-07-16
