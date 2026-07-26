@@ -57,6 +57,7 @@
 - The library bootstrap and identity sweep now stop at a page cap instead of paging forever if the server keeps answering with full pages. The bootstrap resumes from its stored offset on the next cycle, and a truncated identity sweep skips the deletion pass, since a partial list of what exists must not delete live items.
 - The Play, "From start", and per-episode play buttons are disabled while a play request is in flight, instead of queuing a second launch on a double click.
 - Clearing the server address on the sign-in screen now leaves the field blank so it can be retyped; it used to snap back to the saved URL on every keystroke.
+- Fixed the detail page's backdrop ending on a hard edge on any window narrower than about 1560px. The gradient that takes the artwork back to the page colour started at a fixed distance down the picture, but the backdrop is sized 16:9 against the window width — so unless the window was wide enough to make it that tall, the image was cut off partway through the fade. That stop is now a proportion of the backdrop, so the fade lands on its last line at every width.
 - Fixed every CI and release job failing at "Install pnpm". `pnpm/action-setup` needs a version and looks for it in a root `package.json`, which this repo does not have — the UI manifest lives in `ui/`. The manifest now pins `packageManager` and both workflows point the action at it, so the pnpm version is stated once and CI uses the same one as local builds.
 
 ### Removed
