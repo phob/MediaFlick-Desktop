@@ -8,8 +8,8 @@
 
 <p align="center">
   Not libmpv baked into an app — your actual external <code>mpv</code> process, with SVP4 motion
-  interpolation, SDR-to-HDR, custom shaders, and your full <code>mpv.conf</code>. Browse in Jellyfin
-  Web, hit play, and mpv takes over while watched state and resume points sync straight back to your server.
+  interpolation, SDR-to-HDR, custom shaders, and your full <code>mpv.conf</code>. Browse a fast native
+  library, hit play, and mpv takes over while watched state and resume points sync straight back to your server.
 </p>
 
 <p align="center">
@@ -22,7 +22,9 @@
 
 Every other Jellyfin desktop app plays video *inside* itself with libmpv. That's convenient, but it quietly caps what mpv can do — the features power users actually chase, like **SVP 4 frame interpolation** and **SDR-to-HDR tone mapping**, are exactly the ones that don't survive being embedded.
 
-MediaFlick Desktop takes the opposite approach. It shows you Jellyfin Web in a native window, but when you press play it hands the stream to the **external `mpv` you already configured**. Original-quality direct playback remains the default, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections. Your `mpv.conf`, your scripts, your shaders, your SVP4 pipeline, your HDR profiles, your input bindings — all of it applies, because it's the real mpv, not a stripped-down copy.
+MediaFlick Desktop takes the opposite approach. It has its **own UI** — no embedded Jellyfin Web — and when you press play it hands the stream to the **external `mpv` you already configured**. Original-quality direct playback remains the default, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections. Your `mpv.conf`, your scripts, your shaders, your SVP4 pipeline, your HDR profiles, your input bindings — all of it applies, because it's the real mpv, not a stripped-down copy.
+
+Browsing is fast because it isn't a web client talking to a server on every keystroke: the app keeps a **local SQLite mirror of your library** and searches it directly, so type-ahead search stays instant even on a big library and posters keep working while the server is slow.
 
 The catch with playing outside the browser is usually that Jellyfin loses track of what you watched. MediaFlick solves that: while mpv plays, it reports **playback start, progress, watched state, and resume position** back to your server, so your library stays correct across every device.
 
@@ -33,7 +35,9 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Playstate synced to Jellyfin** — playback start, progress, watched state, and resume positions report back to your server.
 - **Media-segment skipping** — skip intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings.
 - **Skip markers on the seek bar** — the mpv timeline shows exactly where segments are skipped, merged with the file's own chapters.
-- **Jellyfin Web in a native window** — rendered in a CEF shell, with infinite scroll on the poster grid instead of pagination.
+- **Its own native UI** — sign-in (password or Quick Connect), home rows for Continue Watching / Next Up / Recently Added, a virtualized poster grid, and a details view with cast, seasons, and episodes.
+- **Local metadata cache** — your library is mirrored into SQLite with full-text search over titles, overviews, genres, and cast, kept current by a background sync.
+- **Server administration in your browser** — anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
 - **One-click mpv download on Windows** — no manual setup; Linux and macOS auto-detect a system `mpv`.
 - **Optional MPC-HC backend on Windows** — switchable live from Client Settings (mpv stays the default).
 - **Automatic in-app updates** from GitHub Releases (Windows).
@@ -42,6 +46,8 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 ## Install
 
 **Windows** — download the latest `MediaFlickDesktop-Setup-<version>.exe` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it. Don't have mpv yet? There's a one-click **Download mpv** in the app.
+
+On first launch, enter your Jellyfin server address and sign in. Right-click anywhere for **Client Settings**, **Open Jellyfin dashboard**, and **About**.
 
 **Linux / macOS** — grab the release archive and run `mediaflick-desktop`. mpv isn't bundled; a system `mpv` is auto-detected.
 

@@ -7,22 +7,26 @@ use std::thread;
 use cef::*;
 use serde_json::json;
 
-use crate::app::logger;
-use crate::jellyfin::bridge::{self as jellyfin_bridge, PlaybackContext};
+use crate::app::paths::app_data_dir;
+use crate::app::services;
+use crate::app::urls::query_param;
+use crate::app::{logger, urls};
+use crate::jellyfin::bridge as jellyfin_bridge;
 use crate::maintenance::player_setup::{self as mpv_setup, MpvSetupPhase};
 use crate::maintenance::updater::{self, UpdateRelease};
-use crate::playback::{
-    HttpHeader, PlaybackContextRegistry, PlaybackCoordinator, PlaybackEvent, PlaybackRequest,
-};
+use crate::playback::{PlaybackCoordinator, PlaybackEvent};
 use crate::players::build_backend;
 use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
     AppSettings, CloseBehavior, FileSettingsStore, FullscreenBehavior,
     PlayerBackend as PlayerBackendKind, SegmentSkipMode, SettingsApplyPlan, SettingsStore,
-    StreamingQuality, WebUiWindowSettings, normalize_server_url,
+    StreamingQuality, WebUiWindowSettings,
 };
 use crate::shell::ui::{about, client_settings, error_toast};
 use crate::windows::set_window_icon;
+
+pub mod api;
+pub mod app_scheme;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -119,7 +123,7 @@ struct RuntimePaths {
 
 impl RuntimePaths {
     fn new() -> Self {
-        let base = platform_data_dir().join("mediaflick-desktop");
+        let base = app_data_dir();
         let browser_subprocess_path = current_exe_path();
         let app_dir = browser_subprocess_path
             .as_ref()
@@ -188,39 +192,6 @@ fn current_exe_path() -> Option<PathBuf> {
 fn cef_string_from_path(path: Option<&PathBuf>) -> CefString {
     path.map(|path| CefString::from(path.to_string_lossy().as_ref()))
         .unwrap_or_default()
-}
-
-fn platform_data_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(value) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(value);
-        }
-        if let Some(value) = std::env::var_os("APPDATA") {
-            return PathBuf::from(value);
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support");
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(value) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(value);
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(".local").join("share");
-        }
-    }
-
-    std::env::temp_dir()
 }
 
 wrap_app! {
@@ -302,48 +273,6 @@ wrap_app! {
                 self.config.clone(),
             ))
         }
-
-        fn render_process_handler(&self) -> Option<RenderProcessHandler> {
-            Some(JellyfinRenderProcessHandler::new(
-                self.config.settings.clone(),
-            ))
-        }
-    }
-}
-
-wrap_render_process_handler! {
-    struct JellyfinRenderProcessHandler {
-        _initial_settings: AppSettings,
-    }
-
-    impl RenderProcessHandler {
-        fn on_context_created(
-            &self,
-            _browser: Option<&mut Browser>,
-            frame: Option<&mut Frame>,
-            _context: Option<&mut V8Context>,
-        ) {
-            let Some(frame) = frame else {
-                return;
-            };
-            if frame.is_main() == 0 {
-                return;
-            }
-            let frame_url = CefString::from(&frame.url()).to_string();
-            if frame_url.starts_with("data:") || frame_url.starts_with("mediaflick-desktop://") {
-                return;
-            }
-            // Render processes can outlive a settings save. Read the atomically
-            // persisted snapshot for every new JS context so a reused renderer
-            // never reinstalls the bridge with its startup-only quality choice.
-            let settings = AppSettings::load();
-            let script = jellyfin_bridge::bridge_script(&settings);
-            frame.execute_java_script(
-                Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("mediaflick-desktop://bridge.js")),
-                0,
-            );
-        }
     }
 }
 
@@ -357,6 +286,11 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
+            // The own UI is the only UI: it is served from our own scheme and
+            // talks to the library cache and the player through /api/*.
+            app_scheme::register();
+            services::init();
+
             let handler_state = new_browser_state(
                 self.config.title.clone(),
                 self.config.settings.clone(),
@@ -367,16 +301,7 @@ wrap_browser_process_handler! {
             }
 
             let settings = BrowserSettings::default();
-            let initial_url = if self.config.settings.is_complete() {
-                self.config
-                    .settings
-                    .jellyfin_url
-                    .clone()
-                    .unwrap_or_else(|| welcome_page_url(&self.config.settings))
-            } else {
-                welcome_page_url(&self.config.settings)
-            };
-            let url = CefString::from(initial_url.as_str());
+            let url = CefString::from(app_scheme::APP_URL);
             let runtime_style = RuntimeStyle::ALLOY;
 
             let mut client = self.default_client();
@@ -622,7 +547,6 @@ struct BrowserStateInner {
     title: String,
     settings: AppSettings,
     browsers: Vec<Browser>,
-    playback_contexts: PlaybackContextRegistry,
     playback: Arc<PlaybackCoordinator>,
     playback_event_tx: mpsc::Sender<PlaybackEvent>,
     update_available: Option<UpdateRelease>,
@@ -640,11 +564,15 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         playback_event_tx.clone(),
     )));
     warm_configured_player(&playback, &settings);
+    // The app-scheme API starts playback from a background thread, so it needs
+    // the coordinator without reaching into this UI-thread state.
+    if let Some(services) = services::services() {
+        services.attach_playback(playback.clone());
+    }
     let state = Arc::new(Mutex::new(BrowserStateInner {
         title,
         settings,
         browsers: Vec::new(),
-        playback_contexts: PlaybackContextRegistry::default(),
         playback,
         playback_event_tx,
         update_available: None,
@@ -817,6 +745,10 @@ fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
         return;
     }
 
+    if let PlaybackEvent::Stopped(snapshot) = &event {
+        mirror_playback_progress(snapshot);
+    }
+
     let browsers = state
         .lock()
         .map(|state| state.browsers.clone())
@@ -850,6 +782,31 @@ fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
         frame_count,
         "dispatched playback event to WebUI"
     );
+}
+
+/// Mirrors what we just reported to Jellyfin into the local cache so Continue
+/// Watching updates immediately instead of waiting for the next sync sweep.
+/// Runs off the UI thread because a sync write may hold the database briefly.
+fn mirror_playback_progress(snapshot: &crate::playback::PlayerSnapshot) {
+    let (Some(item_id), Some(services)) = (snapshot.item_id.clone(), services::services()) else {
+        return;
+    };
+    let finished = matches!(snapshot.stop_reason, Some("eof") | Some("watched-next"));
+    let position_ticks = (snapshot.position_ms.max(0.0) * 10_000.0) as i64;
+    if let Err(error) = thread::Builder::new()
+        .name("library-progress".to_string())
+        .spawn(move || {
+            if let Err(error) =
+                services
+                    .library
+                    .record_playback_progress(&item_id, position_ticks, finished)
+            {
+                tracing::warn!(target: "library.db", "failed to mirror playback progress: {error}");
+            }
+        })
+    {
+        tracing::warn!(target: "library.db", "failed to spawn the progress mirror thread: {error}");
+    }
 }
 
 fn playback_event_script(event: &PlaybackEvent) -> String {
@@ -1129,7 +1086,8 @@ wrap_client! {
 
 const MENU_ID_FULLSCREEN: i32 = sys::cef_menu_id_t::MENU_ID_USER_FIRST as i32;
 const MENU_ID_CLIENT_SETTINGS: i32 = MENU_ID_FULLSCREEN + 1;
-const MENU_ID_ABOUT: i32 = MENU_ID_CLIENT_SETTINGS + 1;
+const MENU_ID_DASHBOARD: i32 = MENU_ID_CLIENT_SETTINGS + 1;
+const MENU_ID_ABOUT: i32 = MENU_ID_DASHBOARD + 1;
 
 fn cef_i32<T>(value: T) -> i32
 where
@@ -1170,6 +1128,10 @@ wrap_context_menu_handler! {
             }
             model.add_item(MENU_ID_FULLSCREEN, Some(&CefString::from("Fullscreen")));
             model.add_item(MENU_ID_CLIENT_SETTINGS, Some(&CefString::from("Client Settings")));
+            model.add_item(
+                MENU_ID_DASHBOARD,
+                Some(&CefString::from("Open Jellyfin dashboard")),
+            );
             model.add_item(MENU_ID_ABOUT, Some(&CefString::from("About")));
         }
 
@@ -1184,6 +1146,7 @@ wrap_context_menu_handler! {
             match command_id {
                 MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser),
                 MENU_ID_CLIENT_SETTINGS => show_client_settings_dialog(browser, frame, &self.state),
+                MENU_ID_DASHBOARD => open_server_dashboard(&self.state),
                 MENU_ID_ABOUT => show_about_dialog(browser, frame),
                 _ => return 0,
             }
@@ -1352,6 +1315,9 @@ wrap_life_span_handler! {
                 if let Some(playback) = playback {
                     playback.shutdown();
                 }
+                if let Some(services) = services::services() {
+                    services.sync.stop();
+                }
                 quit_message_loop();
             }
         }
@@ -1375,23 +1341,6 @@ wrap_load_handler! {
             };
             if frame.is_main() == 0 {
                 return;
-            }
-            let frame_url = CefString::from(&frame.url()).to_string();
-            if frame_url.starts_with("mediaflick-desktop://") {
-                return;
-            }
-            if !frame_url.starts_with("data:") {
-                let settings = self
-                    .state
-                    .lock()
-                    .map(|state| state.settings.clone())
-                    .unwrap_or_default();
-                let script = jellyfin_bridge::bridge_script(&settings);
-                frame.execute_java_script(
-                    Some(&CefString::from(script.as_str())),
-                    Some(&CefString::from("mediaflick-desktop://bridge.js")),
-                    1,
-                );
             }
             apply_scrollbar_settings_to_frame(frame, &self.state);
             show_pending_update_to_frame(frame, &self.state);
@@ -1454,13 +1403,13 @@ wrap_request_handler! {
             let request_url = CefString::from(&request.url()).to_string();
             let mut browser = browser;
             let mut frame = frame;
+            // Our own UI is served by the app-scheme handler; let it through.
+            if app_scheme::is_app_url(&request_url) {
+                return 0;
+            }
             if !request_url.starts_with("mediaflick-desktop://") {
-                if should_open_navigation_externally(
-                    &request_url,
-                    frame.as_deref_mut(),
-                    user_gesture,
-                    &self.state,
-                ) {
+                // Nothing outside the app bundle is ever rendered in-window.
+                if user_gesture != 0 && is_browser_openable_url(&request_url) {
                     open_external_link(&request_url);
                     return 1;
                 }
@@ -1471,7 +1420,6 @@ wrap_request_handler! {
                 &request_url,
                 browser.as_deref_mut(),
                 frame.as_deref_mut(),
-                &self.state,
             ) {
                 tracing::warn!(
                     target: "bridge",
@@ -1523,68 +1471,46 @@ wrap_resource_request_handler! {
             };
 
             let request_url = CefString::from(&request.url()).to_string();
-            if request_url.starts_with("mediaflick-desktop://") {
-                let mut browser = browser;
-                let mut frame = frame;
-                if bridge_request_is_trusted(
-                    &request_url,
-                    browser.as_deref_mut(),
-                    frame.as_deref_mut(),
-                    &self.state,
-                ) {
-                    // Playback context must be registered before a later
-                    // stream-resource request on this IO thread can try to
-                    // merge it; it touches no CEF objects, so handle it here
-                    // instead of racing a posted UI-thread task.
-                    if let Some(jellyfin_bridge::BridgeAction::RememberPlaybackContext(query)) =
-                        jellyfin_bridge::parse_bridge_action(&request_url)
-                    {
-                        remember_playback_context(query, &self.state);
-                    } else {
-                        post_bridge_action(
-                            request_url.clone(),
-                            browser.as_deref().cloned(),
-                            frame.as_deref().cloned(),
-                            self.state.clone(),
-                        );
-                    }
-                } else {
-                    tracing::warn!(
-                        target: "bridge",
-                        url = %logger::redact_url_secrets(&request_url),
-                        "rejected bridge resource request from untrusted frame"
-                    );
-                }
-                return ReturnValue::CANCEL;
-            }
-
-            let Some(mut launch) = jellyfin_bridge::launch_from_stream_url(
-                &request_url,
-                request_headers(request),
-            ) else {
+            // The app scheme is served by our resource handler, not here.
+            if app_scheme::is_app_url(&request_url) {
                 return ReturnValue::CONTINUE;
-            };
-
-            tracing::debug!(
-                target: "bridge",
-                launch = %logger::launch_summary(&launch),
-                "captured direct stream resource for mpv handoff"
-            );
-            merge_recent_playback_context(&self.state, &mut launch);
-            if hand_off_to_player(&self.state, launch) {
-                ReturnValue::CANCEL
-            } else {
-                ReturnValue::CONTINUE
             }
+            if !request_url.starts_with("mediaflick-desktop://") {
+                return ReturnValue::CONTINUE;
+            }
+
+            let mut browser = browser;
+            let mut frame = frame;
+            if bridge_request_is_trusted(
+                &request_url,
+                browser.as_deref_mut(),
+                frame.as_deref_mut(),
+            ) {
+                post_bridge_action(
+                    request_url.clone(),
+                    browser.as_deref().cloned(),
+                    frame.as_deref().cloned(),
+                    self.state.clone(),
+                );
+            } else {
+                tracing::warn!(
+                    target: "bridge",
+                    url = %logger::redact_url_secrets(&request_url),
+                    "rejected native dialog request from untrusted frame"
+                );
+            }
+            ReturnValue::CANCEL
         }
     }
 }
 
+/// The native dialogs (client settings, update toast, mpv setup) still talk to
+/// the shell over `mediaflick-desktop://<action>` URLs. Only first-party
+/// documents holding this session's token may trigger them.
 fn bridge_request_is_trusted(
     request_url: &str,
     browser: Option<&mut Browser>,
     frame: Option<&mut Frame>,
-    state: &BrowserState,
 ) -> bool {
     let document_url = browser
         .and_then(|browser| browser.main_frame())
@@ -1595,20 +1521,9 @@ fn bridge_request_is_trusted(
     if !bridge_token_is_valid(request_url) {
         return false;
     }
-    if document_url.is_empty()
+    document_url.is_empty()
         || document_url.starts_with("data:")
         || document_url.starts_with("mediaflick-desktop://")
-    {
-        return true;
-    }
-    let server_url = state
-        .lock()
-        .ok()
-        .and_then(|state| state.settings.jellyfin_url.clone());
-    if !server_url.is_some_and(|server_url| same_web_origin(&document_url, &server_url)) {
-        return false;
-    }
-    true
 }
 
 fn bridge_token_is_valid(request_url: &str) -> bool {
@@ -1616,7 +1531,7 @@ fn bridge_token_is_valid(request_url: &str) -> bool {
         return false;
     };
     let query = query.split('#').next().unwrap_or_default();
-    query_param(query, "token").is_some_and(|token| token == jellyfin_bridge::bridge_token())
+    urls::query_param(query, "token").is_some_and(|token| token == jellyfin_bridge::bridge_token())
 }
 
 fn route_bridge_action(
@@ -1640,54 +1555,33 @@ fn route_bridge_action(
         BridgeAction::Exit => initiate_app_exit(browser, state),
         BridgeAction::DownloadUpdate(query) => start_update_download(query, state),
         BridgeAction::OpenUpdateRelease => open_update_release_page(),
-        BridgeAction::SaveWelcome(query) => save_settings_and_open(query, frame, state),
         BridgeAction::SaveClientSettings(query) => {
             save_client_settings(query, browser, frame, state);
         }
-        BridgeAction::RememberPlaybackContext(query) => remember_playback_context(query, state),
-        BridgeAction::StartPlayback(query) => start_playback_from_bridge_payload(query, state),
-        BridgeAction::PlayerState(query) => respond_player_state(browser, frame, query, state),
-        BridgeAction::PlaybackStopAck(query) => log_playback_stop_ack(query),
-        BridgeAction::PlayerCommand(query) => handle_player_command(query, state),
     }
     true
 }
 
-fn should_open_navigation_externally(
-    request_url: &str,
-    frame: Option<&mut Frame>,
-    user_gesture: i32,
-    state: &BrowserState,
-) -> bool {
-    if user_gesture == 0 || !is_browser_openable_url(request_url) {
-        return false;
-    }
-
-    let current_url = if let Some(frame) = frame {
-        if frame.is_main() == 0 {
-            return false;
-        }
-        CefString::from(&frame.url()).to_string()
-    } else {
-        String::new()
-    };
-
-    if same_web_origin(request_url, &current_url) {
-        return false;
-    }
-
+/// Server administration is deliberately not rebuilt in the own UI; it opens in
+/// the system browser instead.
+fn open_server_dashboard(state: &BrowserState) {
     let server_url = state
         .lock()
         .ok()
-        .and_then(|state| state.settings.jellyfin_url.clone());
-    if server_url
-        .as_deref()
-        .is_some_and(|server_url| same_web_origin(request_url, server_url))
-    {
-        return false;
-    }
-
-    true
+        .and_then(|state| state.settings.jellyfin_url.clone())
+        .or_else(|| services::services().and_then(|services| services.session.server_url()));
+    let Some(server_url) = server_url else {
+        notify_error(
+            state,
+            "No server configured",
+            "Sign in to a Jellyfin server first.",
+        );
+        return;
+    };
+    open_external_link(&format!(
+        "{}/web/#/dashboard",
+        server_url.trim_end_matches('/')
+    ));
 }
 
 fn open_external_link(url: &str) {
@@ -1722,60 +1616,6 @@ fn url_scheme(url: &str) -> Option<String> {
         return None;
     }
     Some(scheme.to_ascii_lowercase())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct UrlOrigin {
-    scheme: String,
-    host: String,
-    port: Option<u16>,
-}
-
-fn same_web_origin(left: &str, right: &str) -> bool {
-    let Some(left) = parse_web_origin(left) else {
-        return false;
-    };
-    parse_web_origin(right).is_some_and(|right| left == right)
-}
-
-fn parse_web_origin(url: &str) -> Option<UrlOrigin> {
-    let (scheme, rest) = url.split_once("://")?;
-    let scheme = scheme.to_ascii_lowercase();
-    if !matches!(scheme.as_str(), "http" | "https") {
-        return None;
-    }
-
-    let authority = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
-    if authority.is_empty() {
-        return None;
-    }
-
-    let (host, port) = parse_host_port(authority)?;
-    let default_port = match scheme.as_str() {
-        "http" => Some(80),
-        "https" => Some(443),
-        _ => None,
-    };
-    let port = if port == default_port { None } else { port };
-
-    Some(UrlOrigin { scheme, host, port })
-}
-
-fn parse_host_port(authority: &str) -> Option<(String, Option<u16>)> {
-    if let Some(rest) = authority.strip_prefix('[') {
-        let (host, suffix) = rest.split_once(']')?;
-        let port = suffix
-            .strip_prefix(':')
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse().ok());
-        return Some((format!("[{host}]"), port));
-    }
-
-    let (host, port) = authority
-        .rsplit_once(':')
-        .and_then(|(host, port)| Some((host, port.parse().ok()?)))
-        .map_or((authority, None), |(host, port)| (host, Some(port)));
-    (!host.is_empty()).then(|| (host.to_ascii_lowercase(), port))
 }
 
 #[cfg(target_os = "windows")]
@@ -2019,10 +1859,10 @@ wrap_run_file_dialog_callback! {
                 return;
             };
             let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
-                execute_welcome_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
+                execute_client_settings_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
                 return;
             };
-            execute_welcome_js(
+            execute_client_settings_js(
                 frame,
                 &format!(
                     "window.__mediaFlickDesktopSetMpvPath({});",
@@ -2044,10 +1884,10 @@ wrap_run_file_dialog_callback! {
                 return;
             };
             let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
-                execute_welcome_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
+                execute_client_settings_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
                 return;
             };
-            execute_welcome_js(
+            execute_client_settings_js(
                 frame,
                 &format!(
                     "window.__mediaFlickDesktopSetMpchcPath({});",
@@ -2056,256 +1896,6 @@ wrap_run_file_dialog_callback! {
             );
         }
     }
-}
-
-fn remember_playback_context(query: &str, state: &BrowserState) {
-    let context = match jellyfin_bridge::parse_context_payload(query) {
-        Ok(context) => context,
-        Err(error) => {
-            tracing::warn!(target: "bridge", "failed to parse playback context payload: {error}");
-            return;
-        }
-    };
-    tracing::debug!(
-        target: "bridge",
-        context = %playback_context_summary(&context),
-        "remembering playback context from bridge"
-    );
-    let Ok(mut state) = state.lock() else {
-        tracing::warn!(target: "bridge", "failed to lock browser state while remembering playback context");
-        return;
-    };
-    let playback = state.playback.clone();
-    state.playback_contexts.remember(context.clone());
-    drop(state);
-    playback.update_context(context);
-}
-
-fn start_playback_from_bridge_payload(query: &str, state: &BrowserState) {
-    let mut launch = match jellyfin_bridge::parse_launch_payload(query) {
-        Ok(launch) => launch,
-        Err(error) => {
-            tracing::warn!(target: "bridge", "failed to parse mpv launch payload: {error}");
-            return;
-        }
-    };
-    if launch.media_url.trim().is_empty() {
-        tracing::warn!(target: "bridge", "ignored mpv launch payload with empty media URL");
-        return;
-    }
-    tracing::debug!(
-        target: "bridge",
-        launch = %logger::launch_summary(&launch),
-        "received mpv launch payload from bridge"
-    );
-    let merge_score = merge_recent_playback_context(state, &mut launch);
-    tracing::debug!(
-        target: "bridge",
-        merge_score = ?merge_score,
-        launch = %logger::launch_summary(&launch),
-        "launch payload ready for mpv handoff"
-    );
-    let _ = hand_off_to_player(state, launch);
-}
-
-fn handle_player_command(query: &str, state: &BrowserState) {
-    let command = match jellyfin_bridge::parse_player_command(query) {
-        Ok(Some(command)) => command,
-        Ok(None) => {
-            tracing::debug!(target: "bridge", "ignored unsupported player command payload");
-            return;
-        }
-        Err(error) => {
-            tracing::warn!(target: "bridge", "failed to parse player command payload: {error}");
-            return;
-        }
-    };
-    let playback = match state.lock() {
-        Ok(state) => state.playback.clone(),
-        Err(_) => {
-            tracing::warn!(target: "bridge", "failed to lock browser state while handling player command");
-            return;
-        }
-    };
-    tracing::debug!(target: "bridge", ?command, "forwarding web player command to mpv");
-    playback.control(command);
-}
-
-fn log_playback_stop_ack(query: &str) {
-    let payload = match jellyfin_bridge::parse_playback_stop_ack_payload(query) {
-        Ok(payload) => payload,
-        Err(error) => {
-            tracing::warn!(target: "bridge", "failed to parse playback stop ack payload: {error}");
-            return;
-        }
-    };
-    tracing::debug!(
-        target: "bridge",
-        active = ?payload.active,
-        playback_id = ?payload.playback_id,
-        item_id = %payload.item_id.as_deref().unwrap_or("unknown"),
-        media_source_id = %payload.media_source_id.as_deref().unwrap_or("unknown"),
-        play_session_id = %payload.play_session_id.as_deref().unwrap_or("unknown"),
-        position_ms = ?payload.position_ms,
-        stop_reason = %payload.stop_reason.as_deref().unwrap_or("unknown"),
-        handled_players = payload.handled_players,
-        handled_synthetic = payload.handled_synthetic,
-        ignored_players = payload.ignored_players,
-        ignored_synthetic = payload.ignored_synthetic,
-        active_players = payload.active_players,
-        "WebUI acknowledged mpv playback stopped"
-    );
-}
-
-fn respond_player_state(
-    browser: Option<&mut Browser>,
-    frame: Option<&mut Frame>,
-    query: &str,
-    state: &BrowserState,
-) {
-    let playback = state.lock().ok().map(|state| state.playback.clone());
-    let (snapshot, capabilities) = playback
-        .map(|playback| (playback.snapshot(), playback.capabilities()))
-        .unwrap_or_default();
-    let response = json!({
-        "requestId": query_param(query, "requestId").unwrap_or_default(),
-        "active": snapshot.active,
-        "playbackId": snapshot.playback_id,
-        "itemId": snapshot.item_id,
-        "mediaSourceId": snapshot.media_source_id,
-        "playSessionId": snapshot.play_session_id,
-        "positionMs": snapshot.position_ms,
-        "durationMs": snapshot.duration_ms,
-        "paused": snapshot.paused,
-        "volume": snapshot.volume,
-        "mute": snapshot.mute,
-        "stopReason": snapshot.stop_reason,
-        "capabilities": {
-            "chapterMarkers": capabilities.chapter_markers,
-            "externalSubtitles": capabilities.external_subtitles,
-            "injectedHotkeys": capabilities.injected_hotkeys,
-            "absoluteVolume": capabilities.absolute_volume,
-            "pushesPosition": capabilities.pushes_position,
-        },
-    });
-    let script = format!(
-        "window.__mediaFlickDesktopReceivePlayerState&&window.__mediaFlickDesktopReceivePlayerState({});",
-        js_json(&response)
-    );
-
-    let target_frame = browser
-        .and_then(|browser| browser.main_frame())
-        .or_else(|| frame.map(|frame| frame.clone()));
-    if let Some(frame) = target_frame {
-        frame.execute_java_script(
-            Some(&CefString::from(script.as_str())),
-            Some(&CefString::from("mediaflick-desktop://player-state")),
-            1,
-        );
-    }
-}
-
-fn merge_recent_playback_context(state: &BrowserState, launch: &mut PlaybackRequest) -> Option<u8> {
-    let Ok(mut state) = state.lock() else {
-        tracing::warn!(target: "bridge", "failed to lock browser state while merging playback context");
-        return None;
-    };
-    let best_context = state.playback_contexts.merge_best(launch);
-    drop(state);
-
-    if let Some((score, context)) = best_context {
-        tracing::debug!(
-            target: "bridge",
-            score,
-            context = %playback_context_summary(&context),
-            "merged recent playback context into launch"
-        );
-        Some(score)
-    } else {
-        tracing::trace!(
-            target: "bridge",
-            launch = %logger::launch_summary(launch),
-            "no recent playback context matched launch"
-        );
-        None
-    }
-}
-
-fn hand_off_to_player(state: &BrowserState, launch: PlaybackRequest) -> bool {
-    let Ok(guard) = state.lock() else {
-        tracing::warn!(target: "bridge", "failed to lock browser state while handing playback to mpv");
-        return false;
-    };
-    let Some(path) = guard.settings.player_path().map(str::to_string) else {
-        drop(guard);
-        tracing::warn!(
-            target: "bridge",
-            launch = %logger::launch_summary(&launch),
-            "cannot hand playback to the player because no executable is configured"
-        );
-        notify_error(
-            state,
-            "Playback unavailable",
-            "No media player is configured. Open Settings to set up mpv or MPC-HC.",
-        );
-        return false;
-    };
-    let fullscreen = guard.settings.default_fullscreen;
-    let playback = guard.playback.clone();
-    drop(guard);
-    tracing::info!(
-        target: "bridge",
-        player_path = %path,
-        launch = %logger::launch_summary(&launch),
-        "handing playback to player controller"
-    );
-    playback.open(path, fullscreen, launch);
-    true
-}
-
-fn playback_context_summary(context: &PlaybackContext) -> String {
-    format!(
-        "item={} media_source={} play_session={} start={} url={}",
-        display_opt(context.item_id.as_deref()),
-        display_opt(context.media_source_id.as_deref()),
-        display_opt(context.play_session_id.as_deref()),
-        context
-            .start_time_ticks
-            .map(|ticks| ticks.to_string())
-            .unwrap_or_else(|| "none".to_string()),
-        context
-            .media_url
-            .as_deref()
-            .map(logger::redact_url_secrets)
-            .unwrap_or_else(|| "unknown".to_string())
-    )
-}
-
-fn display_opt(value: Option<&str>) -> &str {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-}
-
-fn request_headers(request: &Request) -> Vec<HttpHeader> {
-    let mut map = CefStringMultimap::new();
-    request.header_map(Some(&mut map));
-    let headers = map
-        .into_iter()
-        .flat_map(|(name, values)| {
-            values.into_iter().map(move |value| HttpHeader {
-                name: name.clone(),
-                value,
-            })
-        })
-        .collect::<Vec<_>>();
-    tracing::trace!(
-        target: "bridge",
-        headers = %logger::redacted_header_summary(&headers),
-        "captured direct stream request headers"
-    );
-    headers
 }
 
 fn open_mpv_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>, state: &BrowserState) {
@@ -2376,47 +1966,6 @@ fn open_mpchc_dialog(
         filters,
         Some(&mut callback),
     );
-}
-
-fn save_settings_and_open(query: &str, frame: Option<&mut Frame>, state: &BrowserState) {
-    let Some(frame) = frame else {
-        return;
-    };
-    let server = query_param(query, "server").and_then(|value| normalize_server_url(&value));
-    let mpv_path = query_param(query, "mpv")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    let (Some(jellyfin_url), Some(mpv_path)) = (server, mpv_path) else {
-        notify_save_error(
-            frame,
-            "Enter a Jellyfin server URL and choose an mpv executable.",
-        );
-        return;
-    };
-
-    let mut settings = state
-        .lock()
-        .map(|state| state.settings.clone())
-        .unwrap_or_default();
-    settings.jellyfin_url = Some(jellyfin_url.clone());
-    settings.mpv_path = Some(mpv_path);
-    settings.sanitize();
-
-    if let Err(error) = FileSettingsStore.save(&settings) {
-        notify_save_error(frame, &format!("Could not save config: {error}"));
-        return;
-    }
-
-    let playback = state.lock().ok().map(|mut state| {
-        state.settings = settings.clone();
-        state.playback.clone()
-    });
-    if let Some(playback) = playback {
-        warm_configured_player(&playback, &settings);
-    }
-
-    frame.load_url(Some(&CefString::from(jellyfin_url.as_str())));
 }
 
 fn save_client_settings(
@@ -2547,11 +2096,6 @@ fn save_client_settings(
     if apply_plan.update_shell_css {
         apply_scrollbar_settings_to_frame(&frame, state);
     }
-    let bridge_settings_script = if apply_plan.update_bridge_profile {
-        jellyfin_bridge::bridge_settings_script(&settings)
-    } else {
-        String::new()
-    };
     let saved_message = if apply_plan.restart_required {
         "Saved. Restart MediaFlick Desktop to apply the new log level."
     } else {
@@ -2560,7 +2104,7 @@ fn save_client_settings(
     execute_client_settings_js(
         &frame,
         &format!(
-            "{bridge_settings_script}window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved({});",
+            "window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved({});",
             js_string_literal(saved_message)
         ),
     );
@@ -2591,24 +2135,6 @@ fn parse_segment_skip_mode(value: &str) -> Option<SegmentSkipMode> {
     }
 }
 
-fn notify_save_error(frame: &Frame, message: &str) {
-    execute_welcome_js(
-        frame,
-        &format!(
-            "window.__mediaFlickDesktopSaveFailed({});",
-            js_string_literal(message)
-        ),
-    );
-}
-
-fn execute_welcome_js(frame: &Frame, script: &str) {
-    frame.execute_java_script(
-        Some(&CefString::from(script)),
-        Some(&CefString::from("mediaflick-desktop://welcome")),
-        1,
-    );
-}
-
 fn notify_client_settings_error(frame: &Frame, message: &str) {
     execute_client_settings_js(
         frame,
@@ -2625,45 +2151,6 @@ fn execute_client_settings_js(frame: &Frame, script: &str) {
         Some(&CefString::from("mediaflick-desktop://client-settings")),
         1,
     );
-}
-
-fn query_param(query: &str, key: &str) -> Option<String> {
-    query.split('&').find_map(|pair| {
-        let (raw_key, raw_value) = pair.split_once('=')?;
-        (percent_decode(raw_key) == key).then(|| percent_decode(raw_value))
-    })
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2]))
-        {
-            out.push((hi << 4) | lo);
-            i += 3;
-            continue;
-        }
-        if bytes[i] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[i]);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn js_string_literal(value: &str) -> String {
@@ -2683,43 +2170,12 @@ fn escape_js_line_separators(json: &str) -> String {
     }
 }
 
-fn welcome_page_url(settings: &AppSettings) -> String {
-    data_uri(welcome_html(settings).as_bytes(), "text/html")
-}
-
-fn welcome_html(settings: &AppSettings) -> String {
-    let connect_disabled = if settings.jellyfin_url.is_some() && settings.mpv_path.is_some() {
-        ""
-    } else {
-        "disabled"
-    };
-
-    include_str!("../ui/welcome.html")
-        .replace("{{bridge_token}}", jellyfin_bridge::bridge_token())
-        .replace(
-            "{{saved_url}}",
-            &html_escape(settings.jellyfin_url.as_deref().unwrap_or_default()),
-        )
-        .replace(
-            "{{saved_mpv}}",
-            &html_escape(settings.mpv_path.as_deref().unwrap_or_default()),
-        )
-        .replace("{{mpv_placeholder}}", &html_escape(mpv_placeholder()))
-        .replace("{{mpv_setup_config}}", &mpv_setup::ui_config_json())
-        .replace("{{app_version}}", about::APP_VERSION)
-        .replace("{{connect_disabled}}", connect_disabled)
-}
-
 fn load_error_html(title: &str, failed_url: &str, error_text: &str, error_code: i32) -> String {
     include_str!("../ui/load_error.html")
         .replace("{{title}}", &html_escape(title))
         .replace("{{failed_url}}", &html_escape(failed_url))
         .replace("{{error_text}}", &html_escape(error_text))
         .replace("{{error_code}}", &error_code.to_string())
-}
-
-fn mpv_placeholder() -> &'static str {
-    "mpv"
 }
 
 fn data_uri(data: &[u8], mime_type: &str) -> String {
@@ -2741,82 +2197,8 @@ fn html_escape(value: &str) -> String {
 mod tests {
     use super::{
         bridge_token_is_valid, escape_js_line_separators, html_escape, is_browser_openable_url,
-        is_safe_external_link, js_string_literal, percent_decode, same_web_origin, url_scheme,
+        is_safe_external_link, js_string_literal, url_scheme,
     };
-
-    #[test]
-    fn same_origin_matches_identical_urls() {
-        assert!(same_web_origin(
-            "http://192.168.1.10:8096/web/index.html",
-            "http://192.168.1.10:8096"
-        ));
-    }
-
-    #[test]
-    fn same_origin_ignores_scheme_and_host_case() {
-        assert!(same_web_origin(
-            "HTTPS://Jellyfin.Example.COM/web/",
-            "https://jellyfin.example.com"
-        ));
-    }
-
-    #[test]
-    fn same_origin_treats_default_ports_as_implicit() {
-        assert!(same_web_origin("http://host:80/web", "http://host"));
-        assert!(same_web_origin("https://host:443/web", "https://host"));
-    }
-
-    #[test]
-    fn same_origin_distinguishes_explicit_ports() {
-        assert!(!same_web_origin("http://host:8096", "http://host:9096"));
-        assert!(!same_web_origin("http://host:8443", "http://host"));
-    }
-
-    #[test]
-    fn same_origin_distinguishes_scheme() {
-        assert!(!same_web_origin("http://host", "https://host"));
-    }
-
-    #[test]
-    fn same_origin_distinguishes_host() {
-        assert!(!same_web_origin(
-            "http://jellyfin.example.com",
-            "http://attacker.example.com"
-        ));
-    }
-
-    #[test]
-    fn same_origin_strips_userinfo() {
-        assert!(same_web_origin(
-            "http://user:pass@jellyfin.example.com/web",
-            "http://jellyfin.example.com"
-        ));
-    }
-
-    #[test]
-    fn same_origin_matches_ipv6_with_default_port() {
-        assert!(same_web_origin("http://[::1]:80/web", "http://[::1]"));
-        assert!(!same_web_origin("http://[::1]:8096", "http://[::1]:9096"));
-    }
-
-    #[test]
-    fn same_origin_rejects_non_web_schemes() {
-        assert!(!same_web_origin("file:///etc/passwd", "file:///etc/passwd"));
-        assert!(!same_web_origin(
-            "mediaflick-desktop://bridge",
-            "mediaflick-desktop://bridge"
-        ));
-        assert!(!same_web_origin(
-            "data:text/html,evil",
-            "data:text/html,evil"
-        ));
-    }
-
-    #[test]
-    fn same_origin_rejects_unparseable_input() {
-        assert!(!same_web_origin("not-a-url", "http://host"));
-        assert!(!same_web_origin("http://", "http://"));
-    }
 
     #[test]
     fn url_scheme_lowercases_known_schemes() {
@@ -2880,28 +2262,16 @@ mod tests {
     }
 
     #[test]
-    fn bridge_token_is_valid_accepts_the_session_token() {
+    fn dialog_requests_must_carry_this_session_token() {
         let token = crate::jellyfin::bridge::bridge_token();
-        let url = format!("mediaflick-desktop://play?token={token}&payload=%7B%7D");
+        let url = format!("mediaflick-desktop://client-settings-save?token={token}&mpv=x");
         assert!(bridge_token_is_valid(&url));
-    }
-
-    #[test]
-    fn bridge_token_is_valid_rejects_wrong_or_missing_token() {
         assert!(!bridge_token_is_valid(
-            "mediaflick-desktop://play?token=deadbeef&payload=%7B%7D"
+            "mediaflick-desktop://client-settings-save?token=deadbeef"
         ));
         assert!(!bridge_token_is_valid(
-            "mediaflick-desktop://play?payload=%7B%7D"
+            "mediaflick-desktop://client-settings-save?mpv=x"
         ));
         assert!(!bridge_token_is_valid("mediaflick-desktop://app-exit"));
-    }
-
-    #[test]
-    fn percent_decode_handles_escapes_plus_and_passthrough() {
-        assert_eq!(percent_decode("a%20b+c"), "a b c");
-        assert_eq!(percent_decode("%2Fpath%2F"), "/path/");
-        assert_eq!(percent_decode("plain"), "plain");
-        assert_eq!(percent_decode("100%"), "100%");
     }
 }

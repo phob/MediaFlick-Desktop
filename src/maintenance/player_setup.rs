@@ -50,17 +50,6 @@ pub fn installed_mpv_path() -> PathBuf {
     }
 }
 
-/// JSON config injected into the welcome/settings screens so they can render the
-/// appropriate "get mpv" affordance for the current platform.
-pub fn ui_config_json() -> String {
-    serde_json::json!({
-        "platform": platform_id(),
-        "canDownload": supported(),
-        "helpUrl": MPV_HELP_URL,
-    })
-    .to_string()
-}
-
 /// Builds the JS that pushes an mpv setup status update into the page.
 pub fn setup_script(state: &str, payload: serde_json::Value) -> String {
     let payload = serde_json::json!({ "state": state, "payload": payload });

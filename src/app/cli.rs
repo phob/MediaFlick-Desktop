@@ -8,7 +8,7 @@ use crate::preferences::normalize_server_url;
 #[command(name = "mediaflick-desktop")]
 #[command(about = "External mpv playback for Jellyfin in a Rust/CEF desktop shell")]
 pub struct Cli {
-    /// Jellyfin server URL. If omitted, the welcome screen asks for one.
+    /// Jellyfin server URL to prefill on the sign-in screen.
     ///
     /// Examples: http://localhost:8096, https://jellyfin.example.com.
     #[arg(long, env = "JELLYFIN_URL")]
@@ -37,6 +37,14 @@ pub struct Cli {
     /// Rust app log file. Defaults to the app config directory.
     #[arg(long, env = "MEDIAFLICK_DESKTOP_LOG_FILE")]
     pub log_file: Option<PathBuf>,
+
+    /// Run one library sync cycle, print the result, and exit.
+    #[arg(long, default_value_t = false)]
+    pub library_sync_once: bool,
+
+    /// Print local library cache statistics and exit.
+    #[arg(long, default_value_t = false)]
+    pub library_stats: bool,
 }
 
 impl Cli {

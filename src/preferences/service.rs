@@ -5,7 +5,6 @@ use super::AppSettings;
 pub struct SettingsApplyPlan {
     pub rebuild_player: bool,
     pub update_segment_policy: bool,
-    pub update_bridge_profile: bool,
     pub update_shell_css: bool,
     pub restart_required: bool,
 }
@@ -19,8 +18,6 @@ impl SettingsApplyPlan {
                     super::PlayerBackend::Mpchc => previous.mpchc_path != next.mpchc_path,
                 },
             update_segment_policy: previous.segment_skip_config() != next.segment_skip_config(),
-            update_bridge_profile: previous.streaming_quality != next.streaming_quality
-                || previous.effective_backend() != next.effective_backend(),
             update_shell_css: previous.show_scrollbars != next.show_scrollbars,
             restart_required: previous.log_level != next.log_level,
         }
@@ -57,7 +54,6 @@ mod tests {
             SettingsApplyPlan {
                 rebuild_player: true,
                 update_segment_policy: true,
-                update_bridge_profile: true,
                 update_shell_css: true,
                 restart_required: true,
             }
@@ -66,14 +62,13 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn switching_the_effective_backend_rebuilds_player_and_bridge_profile() {
+    fn switching_the_effective_backend_rebuilds_the_player() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
         next.player_backend = crate::preferences::PlayerBackend::Mpchc;
 
         let plan = SettingsApplyPlan::between(&previous, &next);
         assert!(plan.rebuild_player);
-        assert!(plan.update_bridge_profile);
         assert!(!plan.update_segment_policy);
         assert!(!plan.update_shell_css);
         assert!(!plan.restart_required);
