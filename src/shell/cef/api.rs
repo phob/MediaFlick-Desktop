@@ -3,6 +3,7 @@
 //! Handlers run on a CEF background thread (never the UI or IO thread), so
 //! blocking SQLite and HTTP calls are safe here.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -284,11 +285,49 @@ fn home(services: &Arc<Services>) -> ApiResponse {
 
     ApiResponse::ok(json!({
         "rows": [
-            { "id": "resume", "title": "Continue Watching", "items": resume },
-            { "id": "nextUp", "title": "Next Up", "items": next_up },
+            { "id": "resume", "title": "Continue Watching", "items": merge_next_up(resume, next_up) },
             { "id": "recent", "title": "Recently Added", "items": recent },
         ],
     }))
+}
+
+/// Continue Watching and Next Up share one row: half-watched items first, in the
+/// order the cache returned them, then the next unwatched episode of everything
+/// else.
+///
+/// A show can legitimately show up in both lists — Jellyfin counts an
+/// in-progress episode as that series' Next Up — so entries are keyed by series
+/// as well as by id. Without the series key a partly watched episode and its own
+/// Next Up successor would sit next to each other as two cards for one show.
+///
+/// Both sources are already capped at `HOME_ROW_LIMIT`, and the merged row keeps
+/// all of what survives deduplication rather than re-applying that cap to the
+/// total: trimming it back to one row's worth would put a library with a handful
+/// of half-watched items and many unwatched series out of reach entirely.
+fn merge_next_up(resume: Vec<Value>, next_up: Vec<Value>) -> Vec<Value> {
+    fn key(item: &Value, field: &str) -> Option<String> {
+        item[field].as_str().map(str::to_string)
+    }
+
+    let mut seen: HashSet<String> = resume
+        .iter()
+        .flat_map(|item| [key(item, "id"), key(item, "seriesId")])
+        .flatten()
+        .collect();
+
+    let mut merged = resume;
+    for item in next_up {
+        let keys: Vec<String> = [key(&item, "id"), key(&item, "seriesId")]
+            .into_iter()
+            .flatten()
+            .collect();
+        if keys.iter().any(|key| seen.contains(key)) {
+            continue;
+        }
+        seen.extend(keys);
+        merged.push(item);
+    }
+    merged
 }
 
 fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -1086,8 +1125,8 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiRequest, ApiResponse, cache_key, external_url, file_name_of, handle, media_source_json,
-        mime_for_image, summary_from_dto,
+        ApiRequest, ApiResponse, HOME_ROW_LIMIT, cache_key, external_url, file_name_of, handle,
+        media_source_json, merge_next_up, mime_for_image, summary_from_dto,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
@@ -1172,6 +1211,55 @@ mod tests {
         assert_eq!(summary["positionTicks"], 42);
         assert_eq!(summary["played"], false);
         assert_eq!(summary["favorite"], false);
+    }
+
+    fn episode(id: &str, series_id: &str) -> serde_json::Value {
+        json!({ "id": id, "kind": "Episode", "seriesId": series_id })
+    }
+
+    #[test]
+    fn continue_watching_comes_before_next_up_in_the_merged_row() {
+        let merged = merge_next_up(
+            vec![episode("e1", "sev"), json!({ "id": "m1", "kind": "Movie" })],
+            vec![episode("e9", "silo"), episode("e8", "andor")],
+        );
+        let ids: Vec<&str> = merged
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["e1", "m1", "e9", "e8"]);
+    }
+
+    /// The in-progress episode is also its series' Next Up, so the naive
+    /// concatenation would show the same card twice.
+    #[test]
+    fn a_show_already_being_watched_is_not_repeated_by_next_up() {
+        let merged = merge_next_up(
+            vec![episode("e1", "sev")],
+            // Same episode by id, then the successor within the same series.
+            vec![
+                episode("e1", "sev"),
+                episode("e2", "sev"),
+                episode("e9", "silo"),
+            ],
+        );
+        let ids: Vec<&str> = merged
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["e1", "e9"]);
+    }
+
+    /// A full Continue Watching list must not squeeze Next Up off the row.
+    #[test]
+    fn next_up_survives_a_continue_watching_list_that_fills_a_row_on_its_own() {
+        let limit = HOME_ROW_LIMIT as usize;
+        let resume: Vec<_> = (0..limit)
+            .map(|index| json!({ "id": format!("r{index}"), "kind": "Movie" }))
+            .collect();
+        let merged = merge_next_up(resume, vec![episode("e9", "silo")]);
+        assert_eq!(merged.len(), limit + 1);
+        assert_eq!(merged.last().expect("last")["id"], "e9");
     }
 
     #[test]
