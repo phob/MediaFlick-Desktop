@@ -72,9 +72,7 @@ fn build_ui(repo_root: &Path) {
             "MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 but ui/dist/app.js does not exist"
         );
     } else {
-        if !ui_dir.join("node_modules").is_dir() {
-            run_pnpm(&ui_dir, &["install", "--frozen-lockfile"]);
-        }
+        run_pnpm(&ui_dir, &["install", "--frozen-lockfile"]);
         run_pnpm(&ui_dir, &["build"]);
     }
 
