@@ -47,6 +47,7 @@
 - Deletions are now noticed within an hour instead of once a day. The deletion sweep and the user-data sweep were requesting identical pages on separate schedules, so they were folded into one identity sweep — the same request count, with deleted items dropped as often as watch state is mirrored.
 - Fixed the library grid stuttering badly while scrolling slowly. The UI asked the image proxy for posters with a `width` parameter, but the proxy reads `maxWidth` — so it saw no width at all and served Jellyfin's untouched originals, up to 2000x3000 (24 MB once decoded) for a 168px slot. A screenful of cards was around a gigabyte of decoded bitmaps, which thrashed the renderer's image cache and forced a re-decode of every poster that scrolled back into view. Posters are now requested at the width they are drawn at, and a slow scroll through the whole library holds its frame rate with nothing dropped. Posters cached under the old key are re-fetched once at the smaller size.
 - Poster cards no longer re-render on every scroll tick, and their images decode off the main thread; the grid's page window is also recomputed only when it actually moves rather than on every row that scrolls past.
+- Fixed every CI and release job failing at "Install pnpm". `pnpm/action-setup` needs a version and looks for it in a root `package.json`, which this repo does not have — the UI manifest lives in `ui/`. The manifest now pins `packageManager` and both workflows point the action at it, so the pnpm version is stated once and CI uses the same one as local builds.
 
 ### Removed
 
