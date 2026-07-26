@@ -80,6 +80,52 @@ export interface ClientSettings {
   serverUrl: string | null
 }
 
+/** Mirrors the JSON `Session::connect` answers. */
+export interface ServerInfo {
+  serverUrl: string
+  serverName: string | null
+  version: string | null
+  quickConnect: boolean
+}
+
+export interface QuickConnectStart {
+  serverUrl: string
+  code: string
+  secret: string
+}
+
+/** Ids accepted by `StreamingQuality::from_id` (`src/preferences/model.rs`). */
+export type StreamingQualityId =
+  | "original"
+  | "auto"
+  | "120_mbps"
+  | "80_mbps"
+  | "60_mbps"
+  | "40_mbps"
+  | "20_mbps"
+  | "10_mbps"
+  | "5_mbps"
+  | "3_mbps"
+  | "1_5_mbps"
+
+export const STREAMING_QUALITIES: { id: StreamingQualityId; label: string }[] = [
+  { id: "original", label: "Original file" },
+  { id: "auto", label: "Auto" },
+  { id: "120_mbps", label: "120 Mbps" },
+  { id: "80_mbps", label: "80 Mbps" },
+  { id: "60_mbps", label: "60 Mbps" },
+  { id: "40_mbps", label: "40 Mbps" },
+  { id: "20_mbps", label: "20 Mbps" },
+  { id: "10_mbps", label: "10 Mbps" },
+  { id: "5_mbps", label: "5 Mbps" },
+  { id: "3_mbps", label: "3 Mbps" },
+  { id: "1_5_mbps", label: "1.5 Mbps" },
+]
+
+export function qualityLabel(id: string | null | undefined) {
+  return STREAMING_QUALITIES.find((quality) => quality.id === id)?.label ?? null
+}
+
 export interface PlayerCapabilities {
   chapterMarkers: boolean
   externalSubtitles: boolean
@@ -102,6 +148,22 @@ export interface PlayerState {
   stopReason?: string | null
   capabilities?: PlayerCapabilities
 }
+
+/** The `started: false` shape comes back when there is no next episode. */
+export interface PlayStarted {
+  started: boolean
+  itemId?: string
+  playMethod?: string
+  mediaSource?: string
+  startTicks?: number
+}
+
+/** Mirrors the command arm in `player_command` (`src/shell/cef/api.rs`). */
+export type PlayerCommand =
+  | { command: "pause" | "resume" | "stop" }
+  | { command: "seek"; positionMs: number }
+  | { command: "set-volume"; volume: number }
+  | { command: "set-mute"; mute: boolean }
 
 export interface ItemQuery {
   search?: string
@@ -176,18 +238,20 @@ export const api = {
   status: () => request<Status>("/api/status"),
   settings: () => request<ClientSettings>("/api/settings"),
 
-  connect: (server: string) => request<unknown>("/api/auth/connect", { method: "POST", body: { server } }),
+  connect: (server: string, signal?: AbortSignal) =>
+    request<ServerInfo>("/api/auth/connect", { method: "POST", body: { server }, signal }),
   login: (server: string, username: string, password: string) =>
     request<Status>("/api/auth/login", { method: "POST", body: { server, username, password } }),
   quickConnectStart: (server: string) =>
-    request<{ code?: string; secret?: string }>("/api/auth/quickconnect/start", {
+    request<QuickConnectStart>("/api/auth/quickconnect/start", {
       method: "POST",
       body: { server },
     }),
-  quickConnectPoll: (server: string, secret: string) =>
-    request<{ authenticated?: boolean } & Status>("/api/auth/quickconnect/poll", {
+  quickConnectPoll: (server: string, secret: string, signal?: AbortSignal) =>
+    request<{ authenticated: boolean }>("/api/auth/quickconnect/poll", {
       method: "POST",
       body: { server, secret },
+      signal,
     }),
   logout: () => request<Status>("/api/auth/logout", { method: "POST" }),
 
@@ -206,24 +270,33 @@ export const api = {
       body: { favorite },
     }),
 
-  play: (itemId: string, resume: boolean) =>
-    request<unknown>("/api/play", { method: "POST", body: { itemId, resume } }),
-  playNext: (itemId: string) => request<unknown>("/api/play/next", { method: "POST", body: { itemId } }),
+  /** `quality` overrides the saved Client Settings default for this play only. */
+  play: (itemId: string, resume: boolean, quality?: StreamingQualityId) =>
+    request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } }),
+  playNext: (itemId: string) =>
+    request<PlayStarted>("/api/play/next", { method: "POST", body: { itemId } }),
 
   playerState: () => request<PlayerState>("/api/player/state"),
-  playerCommand: (name: string, extra: Record<string, unknown> = {}) =>
-    request<unknown>("/api/player/command", { method: "POST", body: { command: name, ...extra } }),
+  playerCommand: (command: PlayerCommand) =>
+    request<unknown>("/api/player/command", { method: "POST", body: command }),
 
   sync: () => request<{ requested: boolean }>("/api/sync", { method: "POST" }),
 }
 
-/** Poster/backdrop URL through the Rust image proxy, which keeps the token out of the DOM. */
+/**
+ * Poster/backdrop URL through the Rust image proxy, which keeps the token out
+ * of the DOM. The parameter has to be spelled `maxWidth`: that is what the
+ * proxy in `src/shell/cef/api.rs` reads and what it forwards to Jellyfin. Under
+ * any other name the proxy sees no width at all and serves the untouched
+ * original — 2000x3000 posters decoded into a 168px slot, which is what made
+ * the grid stutter.
+ */
 export function imageUrl(
   item: Pick<ItemSummary, "id" | "primaryImageTag">,
   type: "Primary" | "Backdrop" = "Primary",
-  width = POSTER_WIDTH,
+  maxWidth = POSTER_WIDTH,
 ) {
-  return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ width, tag: item.primaryImageTag })}`
+  return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag: item.primaryImageTag })}`
 }
 
 export function ticksToMs(ticks: number | null | undefined) {

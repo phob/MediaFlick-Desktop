@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { ApiError, type ItemQuery } from "./api"
+import { ApiError, type ItemQuery, type PlayerState } from "./api"
 
 // Defaults follow SILO Server's `lib/query-client.ts` — see
 // .planning/research/silo-server-web.md. `refetchOnWindowFocus` is off because
@@ -27,10 +27,23 @@ export const queryKeys = {
   settings: ["settings"] as const,
   home: ["home"] as const,
   genres: ["genres"] as const,
+  serverInfo: (server: string) => ["server-info", server] as const,
+  quickConnect: (secret: string) => ["quick-connect", secret] as const,
   items: (query: ItemQuery) => ["items", query] as const,
   item: (id: string) => ["item", id] as const,
   children: (id: string) => ["item", id, "children"] as const,
   playerState: ["player", "state"] as const,
+}
+
+/**
+ * Applies a control's expected outcome to the player snapshot right away. The
+ * state is polled once a second, so without this every button spends up to a
+ * second looking like it did nothing.
+ */
+export function patchPlayerState(patch: Partial<PlayerState>) {
+  queryClient.setQueryData(queryKeys.playerState, (previous?: PlayerState) =>
+    previous ? { ...previous, ...patch } : previous,
+  )
 }
 
 /**

@@ -30,7 +30,6 @@ export default function App() {
         <Route path="/item/:id" element={<ItemDetail />} />
         <Route path="*" element={<Home />} />
       </Routes>
-      {/* TODO(port): player bar, driven by usePlayerState + /api/player/command. */}
     </AppShell>
   )
 }

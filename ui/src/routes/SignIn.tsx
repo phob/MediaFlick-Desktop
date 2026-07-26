@@ -2,7 +2,13 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { useLogin, useSettings } from "@/lib/queries"
+import {
+  useLogin,
+  useQuickConnectPoll,
+  useQuickConnectStart,
+  useServerInfo,
+  useSettings,
+} from "@/lib/queries"
 
 export default function SignIn() {
   const settings = useSettings()
@@ -13,6 +19,15 @@ export default function SignIn() {
 
   // The saved server URL prefills the field once settings arrive.
   const serverValue = server || settings.data?.serverUrl || ""
+  // Probing only on blur keeps a half-typed address from being dialled on
+  // every keystroke.
+  const [probed, setProbed] = useState<string | null>(null)
+  const info = useServerInfo(probed ?? settings.data?.serverUrl ?? "")
+
+  const quickConnect = useQuickConnectStart()
+  const poll = useQuickConnectPoll(quickConnect.data)
+
+  const quickError = quickConnect.error ?? poll.error
 
   return (
     <div className="grid h-full place-items-center p-6">
@@ -20,7 +35,7 @@ export default function SignIn() {
         <CardHeader>
           <CardTitle>Sign in to Jellyfin</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-4">
           <form
             className="flex flex-col gap-3"
             onSubmit={(event) => {
@@ -31,6 +46,13 @@ export default function SignIn() {
             <Input
               value={serverValue}
               onChange={(event) => setServer(event.target.value)}
+              onBlur={(event) => {
+                const next = event.target.value.trim()
+                if (next === probed) return
+                setProbed(next)
+                // A code issued by the previous server is worthless now.
+                quickConnect.reset()
+              }}
               placeholder="https://jellyfin.example.com"
               autoComplete="url"
             />
@@ -52,7 +74,37 @@ export default function SignIn() {
               {login.isPending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
-          {/* TODO(port): Quick Connect, via api.quickConnectStart/quickConnectPoll. */}
+
+          {info.data && (
+            <p className="text-center text-xs text-muted-foreground">
+              {[info.data.serverName ?? "Jellyfin", info.data.version].filter(Boolean).join(" · ")}
+            </p>
+          )}
+
+          {/* Only offered where the server actually has it enabled — an
+              always-visible button that answers 501 is worse than no button. */}
+          {info.data?.quickConnect && (
+            <div className="flex flex-col gap-2 border-t pt-4">
+              {quickConnect.data ? (
+                <div className="flex flex-col items-center gap-1">
+                  <p className="text-sm text-muted-foreground">Enter this code in Jellyfin</p>
+                  <p className="text-2xl font-medium tracking-[0.3em]">{quickConnect.data.code}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {poll.data?.authenticated ? "Approved — signing in…" : "Waiting for approval…"}
+                  </p>
+                </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  disabled={quickConnect.isPending || !serverValue}
+                  onClick={() => quickConnect.mutate(serverValue)}
+                >
+                  {quickConnect.isPending ? "Starting…" : "Use Quick Connect"}
+                </Button>
+              )}
+              {quickError && <p className="text-sm text-destructive">{quickError.message}</p>}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
