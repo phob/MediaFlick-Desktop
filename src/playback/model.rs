@@ -180,48 +180,6 @@ impl PlaybackContext {
         };
         request.merge_missing_from(&context_request);
     }
-
-    pub fn match_score(&self, request: &PlaybackRequest) -> u8 {
-        for (context_value, request_value) in [
-            (self.item_id.as_deref(), request.item_id.as_deref()),
-            (
-                self.media_source_id.as_deref(),
-                request.media_source_id.as_deref(),
-            ),
-            (
-                self.play_session_id.as_deref(),
-                request.play_session_id.as_deref(),
-            ),
-        ] {
-            if let (Some(context_value), Some(request_value)) =
-                (non_empty(context_value), non_empty(request_value))
-                && !context_value.eq_ignore_ascii_case(request_value)
-            {
-                return 0;
-            }
-        }
-
-        let mut score = 0;
-        if same_non_empty(self.media_url.as_deref(), Some(request.media_url.as_str())) {
-            score = score.max(5);
-        }
-        if same_non_empty(
-            self.play_session_id.as_deref(),
-            request.play_session_id.as_deref(),
-        ) {
-            score = score.max(4);
-        }
-        if same_non_empty(
-            self.media_source_id.as_deref(),
-            request.media_source_id.as_deref(),
-        ) {
-            score = score.max(3);
-        }
-        if same_non_empty(self.item_id.as_deref(), request.item_id.as_deref()) {
-            score = score.max(2);
-        }
-        score
-    }
 }
 
 /// State used for playstate reporting. Time is represented in Jellyfin ticks
@@ -297,16 +255,6 @@ fn ticks_summary(ticks: Option<i64>) -> String {
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn same_non_empty(left: Option<&str>, right: Option<&str>) -> bool {
-    let Some(left) = non_empty(left) else {
-        return false;
-    };
-    let Some(right) = non_empty(right) else {
-        return false;
-    };
-    left.eq_ignore_ascii_case(right)
 }
 
 fn merge_option<T: Clone>(target: &mut Option<T>, source: &Option<T>) {

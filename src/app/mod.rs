@@ -4,5 +4,9 @@
 
 pub mod build_info;
 pub mod cli;
+pub mod ids;
 pub mod instance;
 pub mod logger;
+pub mod paths;
+pub mod services;
+pub mod urls;

@@ -10,12 +10,16 @@ path = "src/main.rs"
 
 [dependencies]
 cef = { version = "=150.2.1", default-features = false }
+getrandom = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3", features = ["json"] }
+# 0.40 pulls libsqlite3-sys 0.38.1, whose build script needs a newer Rust than
+# this project's toolchain. Revisit once the toolchain moves past 1.93.
+rusqlite = { version = "0.37", features = ["bundled"] }
 clap = { version = "4", default-features = false, features = [
     "std",
     "derive",

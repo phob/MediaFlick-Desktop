@@ -357,13 +357,6 @@ impl AppSettings {
         atomic_write(&path, &json)
     }
 
-    pub fn is_complete(&self) -> bool {
-        self.jellyfin_url
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            && self.player_path().is_some()
-    }
-
     pub fn effective_backend(&self) -> PlayerBackend {
         #[cfg(target_os = "windows")]
         {
@@ -615,18 +608,8 @@ mod tests {
     }
 
     #[test]
-    fn blank_url_means_welcome_screen() {
+    fn blank_urls_are_rejected() {
         assert_eq!(normalize_server_url("  "), None);
-    }
-
-    #[test]
-    fn complete_requires_url_and_mpv() {
-        let settings = AppSettings {
-            jellyfin_url: Some("http://localhost:8096".to_string()),
-            mpv_path: Some("C:/mpv/mpv.exe".to_string()),
-            ..Default::default()
-        };
-        assert!(settings.is_complete());
     }
 
     #[test]
@@ -699,17 +682,15 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn complete_with_mpchc_backend_requires_mpchc_path() {
+    fn mpchc_backend_reads_the_mpchc_path() {
         let mut settings = AppSettings {
-            jellyfin_url: Some("http://localhost:8096".to_string()),
             player_backend: PlayerBackend::Mpchc,
             ..Default::default()
         };
         assert_eq!(settings.effective_backend(), PlayerBackend::Mpchc);
-        assert!(!settings.is_complete());
+        assert_eq!(settings.player_path(), None);
         settings.mpchc_path = Some("C:/MPC-HC/mpc-hc64.exe".to_string());
         assert_eq!(settings.player_path(), Some("C:/MPC-HC/mpc-hc64.exe"));
-        assert!(settings.is_complete());
     }
 
     #[test]

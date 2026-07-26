@@ -3,12 +3,10 @@
 //! This module owns the contracts and policies used by every external player.
 //! Concrete mpv and MPC-HC protocol implementations live under `players`.
 
-pub mod context_registry;
 pub mod coordinator;
 pub mod model;
 pub mod segments;
 
-pub use context_registry::PlaybackContextRegistry;
 pub use coordinator::PlaybackCoordinator;
 pub use model::{
     HttpHeader, PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot,

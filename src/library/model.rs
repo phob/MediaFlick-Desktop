@@ -1,0 +1,247 @@
+//! Row shapes for the metadata cache and their translation from Jellyfin DTOs.
+
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::jellyfin::api::model::{BaseItemDto, UserItemDataDto};
+
+/// One cached library item. Provider IDs get dedicated columns because they are
+/// the join keys for every external metadata feature planned on top of the cache.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ItemRecord {
+    pub jellyfin_id: String,
+    pub kind: String,
+    pub name: String,
+    pub original_title: Option<String>,
+    pub sort_name: Option<String>,
+    pub year: Option<i64>,
+    pub premiere_date: Option<String>,
+    pub runtime_ticks: Option<i64>,
+    pub overview: Option<String>,
+    pub community_rating: Option<f64>,
+    pub critic_rating: Option<f64>,
+    pub official_rating: Option<String>,
+    pub parent_id: Option<String>,
+    pub series_id: Option<String>,
+    pub series_name: Option<String>,
+    pub season_id: Option<String>,
+    pub index_number: Option<i64>,
+    pub parent_index_number: Option<i64>,
+    pub child_count: Option<i64>,
+    pub tmdb_id: Option<String>,
+    pub imdb_id: Option<String>,
+    pub tvdb_id: Option<String>,
+    pub genres: String,
+    pub tags: String,
+    pub studios: String,
+    pub people: String,
+    pub image_tags: String,
+    pub primary_image_tag: Option<String>,
+    pub backdrop_image_tag: Option<String>,
+    pub search_genres: String,
+    pub search_people: String,
+    pub date_created: Option<String>,
+    pub date_last_saved: Option<String>,
+}
+
+/// Cast and crew kept for the details view; capped so a 200-person credit list
+/// does not bloat every row.
+const MAX_PEOPLE: usize = 30;
+
+impl ItemRecord {
+    pub fn from_dto(dto: &BaseItemDto) -> Self {
+        let people = dto
+            .people
+            .iter()
+            .take(MAX_PEOPLE)
+            .map(|person| {
+                json!({
+                    "id": person.id,
+                    "name": person.name,
+                    "role": person.role,
+                    "type": person.person_type,
+                    "imageTag": person.primary_image_tag,
+                })
+            })
+            .collect::<Vec<_>>();
+        let studios = dto
+            .studios
+            .iter()
+            .filter_map(|studio| studio.name.clone())
+            .collect::<Vec<_>>();
+
+        Self {
+            jellyfin_id: dto.id.clone(),
+            kind: dto
+                .item_type
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string()),
+            name: dto.display_name().to_string(),
+            original_title: non_empty(dto.original_title.as_deref()),
+            sort_name: non_empty(dto.sort_name.as_deref())
+                .or_else(|| Some(dto.display_name().to_lowercase())),
+            year: dto.production_year,
+            premiere_date: non_empty(dto.premiere_date.as_deref()),
+            runtime_ticks: dto.run_time_ticks.filter(|ticks| *ticks > 0),
+            overview: non_empty(dto.overview.as_deref()),
+            community_rating: dto.community_rating,
+            critic_rating: dto.critic_rating,
+            official_rating: non_empty(dto.official_rating.as_deref()),
+            parent_id: non_empty(dto.parent_id.as_deref()),
+            series_id: non_empty(dto.series_id.as_deref()),
+            series_name: non_empty(dto.series_name.as_deref()),
+            season_id: non_empty(dto.season_id.as_deref()),
+            index_number: dto.index_number,
+            parent_index_number: dto.parent_index_number,
+            child_count: dto.child_count,
+            tmdb_id: dto.provider_id("Tmdb").map(str::to_string),
+            imdb_id: dto.provider_id("Imdb").map(str::to_string),
+            tvdb_id: dto.provider_id("Tvdb").map(str::to_string),
+            genres: json_text(&dto.genres),
+            tags: json_text(&dto.tags),
+            studios: json_text(&studios),
+            people: serde_json::to_string(&people).unwrap_or_else(|_| "[]".to_string()),
+            image_tags: json_text(&dto.image_tags),
+            primary_image_tag: dto.primary_image_tag().map(str::to_string),
+            backdrop_image_tag: dto
+                .backdrop_image_tags
+                .first()
+                .or_else(|| dto.parent_backdrop_image_tags.first())
+                .cloned(),
+            search_genres: dto.genres.join(", "),
+            search_people: dto
+                .people
+                .iter()
+                .filter_map(|person| person.name.clone())
+                .take(MAX_PEOPLE)
+                .collect::<Vec<_>>()
+                .join(", "),
+            date_created: non_empty(dto.date_created.as_deref()),
+            date_last_saved: non_empty(dto.date_last_saved.as_deref()),
+        }
+    }
+}
+
+/// Watch state mirrored from the server and from our own playback reporting.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct UserDataRecord {
+    pub jellyfin_id: String,
+    pub played: bool,
+    pub play_count: i64,
+    pub playback_position_ticks: i64,
+    pub is_favorite: bool,
+    pub played_percentage: Option<f64>,
+    pub last_played_date: Option<String>,
+}
+
+impl UserDataRecord {
+    pub fn from_dto(jellyfin_id: &str, dto: &UserItemDataDto) -> Self {
+        Self {
+            jellyfin_id: jellyfin_id.to_string(),
+            played: dto.played,
+            play_count: dto.play_count,
+            playback_position_ticks: dto.playback_position_ticks.max(0),
+            is_favorite: dto.is_favorite,
+            played_percentage: dto.played_percentage,
+            last_played_date: non_empty(dto.last_played_date.as_deref()),
+        }
+    }
+}
+
+/// Counts shown on the status card and by `--library-stats`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryStats {
+    pub movies: i64,
+    pub series: i64,
+    pub seasons: i64,
+    pub episodes: i64,
+    pub total: i64,
+}
+
+fn json_text<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ItemRecord, UserDataRecord};
+    use crate::jellyfin::api::model::{BaseItemDto, UserItemDataDto};
+
+    fn dto(json: &str) -> BaseItemDto {
+        serde_json::from_str(json).expect("dto")
+    }
+
+    #[test]
+    fn provider_ids_land_in_dedicated_columns() {
+        let record = ItemRecord::from_dto(&dto(
+            r#"{"Id":"a","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
+                "ProviderIds":{"Tmdb":"603","Imdb":"tt0133093"}}"#,
+        ));
+        assert_eq!(record.tmdb_id.as_deref(), Some("603"));
+        assert_eq!(record.imdb_id.as_deref(), Some("tt0133093"));
+        assert_eq!(record.tvdb_id, None);
+        assert_eq!(record.year, Some(1999));
+        assert_eq!(record.kind, "Movie");
+    }
+
+    #[test]
+    fn missing_sort_names_fall_back_to_a_lowercased_title() {
+        let record = ItemRecord::from_dto(&dto(r#"{"Id":"a","Name":"The Matrix"}"#));
+        assert_eq!(record.sort_name.as_deref(), Some("the matrix"));
+        assert_eq!(record.kind, "Unknown");
+    }
+
+    #[test]
+    fn genres_and_people_are_flattened_for_search_and_kept_as_json() {
+        let record = ItemRecord::from_dto(&dto(
+            r#"{"Id":"a","Name":"Speed","Genres":["Action","Thriller"],
+                "People":[{"Name":"Keanu Reeves","Type":"Actor","Role":"Jack"},
+                          {"Name":"Sandra Bullock"}]}"#,
+        ));
+        assert_eq!(record.search_genres, "Action, Thriller");
+        assert_eq!(record.search_people, "Keanu Reeves, Sandra Bullock");
+        assert_eq!(record.genres, r#"["Action","Thriller"]"#);
+        assert!(record.people.contains("\"role\":\"Jack\""));
+    }
+
+    #[test]
+    fn people_lists_are_capped() {
+        let people = (0..50)
+            .map(|index| format!(r#"{{"Name":"Person {index}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let record = ItemRecord::from_dto(&dto(&format!(
+            r#"{{"Id":"a","Name":"Crowd","People":[{people}]}}"#
+        )));
+        assert_eq!(record.search_people.split(", ").count(), 30);
+    }
+
+    #[test]
+    fn zero_runtimes_and_blank_strings_become_null() {
+        let record = ItemRecord::from_dto(&dto(
+            r#"{"Id":"a","Name":"A","RunTimeTicks":0,"Overview":"   ","OfficialRating":""}"#,
+        ));
+        assert_eq!(record.runtime_ticks, None);
+        assert_eq!(record.overview, None);
+        assert_eq!(record.official_rating, None);
+    }
+
+    #[test]
+    fn user_data_clamps_negative_positions() {
+        let dto: UserItemDataDto =
+            serde_json::from_str(r#"{"PlaybackPositionTicks":-5,"Played":true,"PlayCount":2}"#)
+                .expect("user data");
+        let record = UserDataRecord::from_dto("a", &dto);
+        assert_eq!(record.playback_position_ticks, 0);
+        assert!(record.played);
+        assert_eq!(record.play_count, 2);
+    }
+}
