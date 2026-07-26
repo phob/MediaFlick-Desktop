@@ -166,11 +166,20 @@ export function DetailHero({
               own content. The first drops it back to a steady wash just past the
               hero, in the few rem before the cast row starts, because names and
               table rows have to stay readable over whatever the artwork happens to
-              be doing there. The second takes that wash to nothing by the picture's
-              last line, so it ends in the page colour instead of on a visible edge.
-              Above the hero's floor neither one applies. */}
+              be doing there. Its stops are in `rem` because they answer to the
+              hero's own `min-h-[26rem]` floor, which is where that content begins
+              at any window width.
+
+              The second takes that wash to nothing by the picture's last line, so
+              it ends in the page colour instead of on a visible edge — and that
+              one is a percentage, because the line it has to land on is the
+              backdrop's own bottom and this layer is sized `aspect-video`, so its
+              height follows the window width. A fixed stop only completed the fade
+              on windows wide enough to make the picture that tall; on anything
+              narrower the artwork was cut off mid-fade, which is the edge this
+              gradient exists to remove. */}
           <div className="absolute inset-0 bg-linear-to-b from-transparent from-[26rem] to-background/65 to-[31rem]" />
-          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[55rem] to-background" />
+          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[80%] to-background" />
         </div>
       )}
 
