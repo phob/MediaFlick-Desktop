@@ -103,7 +103,11 @@ export default function ItemDetail() {
       : undefined
 
   return (
-    <div className="flex flex-col gap-10 pb-12">
+    // `isolate` scopes the hero's backdrop, which is painted at a negative
+    // z-index: it has to sit behind every section on this page and in front of the
+    // app shell's opaque background, and this stacking context is what pins it
+    // between the two.
+    <div className="relative isolate flex flex-col gap-10 pb-12">
       <DetailHero item={item} episodeCount={episodeCount || null}>
         {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
         <DetailActions
