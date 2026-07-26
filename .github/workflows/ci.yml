@@ -57,6 +57,8 @@ jobs:
       # build.rs shells out to pnpm unless MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ui/package.json
 
       - name: Install Node toolchain
         uses: actions/setup-node@v6
