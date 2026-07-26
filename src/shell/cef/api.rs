@@ -356,8 +356,14 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
                 Err(error) => storage_failure(&error),
             }
         }
-        Ok(None) => ApiResponse::error(404, "the server has no item with that id"),
+        Ok(None) => {
+            forget_item(services, item_id);
+            ApiResponse::error(404, "the server has no item with that id")
+        }
         Err(error) => {
+            if matches!(error, ApiError::Status { status: 404 }) {
+                forget_item(services, item_id);
+            }
             services.session.note_error(&error);
             ApiResponse::from_api_error(&error)
         }
@@ -365,9 +371,81 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
 }
 
 fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    // Only containers have a child list worth asking the server about; a movie
+    // detail page asks for children too and must not pay for a round trip.
+    if matches!(
+        services.library.kind(item_id).as_deref(),
+        Some("Series" | "Season")
+    ) {
+        reconcile_children(services, item_id);
+    }
     match services.library.children(item_id) {
         Ok(children) => ApiResponse::ok(json!({ "items": children })),
         Err(error) => storage_failure(&error),
+    }
+}
+
+/// Re-reads one parent's child list from the server before answering.
+///
+/// The cache alone cannot be trusted on a detail page: deleting episodes in
+/// Jellyfin leaves their rows behind until the next identity sweep, and the
+/// season view is exactly where those ghosts surface — a wall of art-less cards
+/// with a dead Play button. The image-404 eviction only cleans up rows whose
+/// poster happens to be requested, so it misses lazily-loaded cards below the
+/// fold and episodes that never had artwork.
+///
+/// One small non-recursive request per navigation buys a correct list, and it
+/// also makes newly added episodes appear without waiting for a sweep.
+fn reconcile_children(services: &Arc<Services>, parent_id: &str) {
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(_) => return,
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut offset = 0;
+    loop {
+        let page = match items::fetch_children(&client, &user_id, parent_id, offset) {
+            Ok(page) => page,
+            Err(error) => {
+                // Offline, or the server is unwell. The cached list is still the
+                // best answer available, so leave it exactly as it is.
+                tracing::debug!(
+                    target: "app.api",
+                    "could not reconcile the children of {parent_id}: {error}"
+                );
+                services.session.note_error(&error);
+                return;
+            }
+        };
+        let received = page.items.len() as i64;
+        if page.items.is_empty() {
+            break;
+        }
+        seen.extend(page.items.iter().map(|item| item.id.clone()));
+        let _ = services.library.upsert_page(&page.items);
+        offset += received;
+        if received < items::CHILDREN_PAGE_SIZE {
+            break;
+        }
+    }
+
+    // An empty `seen` here came from a successful request, so it is the server
+    // saying this parent has no children left — unlike the library-wide sweep,
+    // where the blast radius makes that answer too dangerous to trust.
+    match services.library.retain_children(parent_id, &seen) {
+        Ok(0) => {}
+        Ok(dropped) => {
+            tracing::info!(
+                target: "app.api",
+                dropped,
+                parent_id,
+                "dropped cached children the server no longer reports"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(target: "app.api", "could not evict stale children: {error}");
+        }
     }
 }
 
@@ -439,7 +517,7 @@ fn image(
         return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
     }
 
-    let (client, _) = match services.session.client_and_user() {
+    let (client, user_id) = match services.session.client_and_user() {
         Ok(pair) => pair,
         Err(error) => return ApiResponse::from_api_error(&error),
     };
@@ -458,8 +536,37 @@ fn image(
             ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
         }
         Err(error) => {
+            // A missing image is the first sign of a replaced file, because the
+            // grid renders posters long before anything tries to play them.
+            if matches!(error, ApiError::Status { status: 404 }) {
+                forget_if_server_disowns(services, &client, &user_id, item_id);
+            }
             services.session.note_error(&error);
             ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+/// Evicts a cached item, but only once the server confirms it is really gone.
+///
+/// An image 404 alone is not proof: an item can exist with no artwork under
+/// that tag. `fetch_item` queries `/Items?ids=`, so a missing item comes back as
+/// an empty result rather than an error, which cleanly separates "deleted" from
+/// "the server is unwell" — the latter lands in `Err` and is left alone.
+fn forget_if_server_disowns(
+    services: &Arc<Services>,
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) {
+    match items::fetch_item(client, user_id, item_id) {
+        Ok(None) => forget_item(services, item_id),
+        Ok(Some(_)) => {}
+        Err(error) => {
+            tracing::debug!(
+                target: "app.api",
+                "could not confirm whether {item_id} still exists: {error}"
+            );
         }
     }
 }
@@ -593,7 +700,15 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiRespons
         options,
     ) {
         Ok(prepared) => prepared,
-        Err(error) => return ApiResponse::from_api_error(&error),
+        Err(error) => {
+            // A 404 from `PlaybackInfo` means the item no longer exists on the
+            // server, so the cached row is a phantom: drop it now rather than
+            // offering a Play button that can never work.
+            if matches!(error, ApiError::Status { status: 404 }) {
+                forget_item(services, &options.item_id);
+            }
+            return ApiResponse::from_api_error(&error);
+        }
     };
 
     tracing::info!(
@@ -719,17 +834,21 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
 
 // -------------------------------------------------------------------- assets
 
+// The bundle is built by `build.rs` (Vite, in `ui/`) and staged into `OUT_DIR`.
+// It is emitted with fixed names — no content hashing and no code splitting,
+// because the assets never cross a network: they are embedded here and served
+// from memory.
 fn static_asset(path: &str) -> Option<ApiResponse> {
     match path {
         "" | "/" | "/index.html" => Some(index_html()),
         "/app.js" => Some(ApiResponse::asset(
             "text/javascript; charset=utf-8",
-            include_bytes!("../ui/app/app.js"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/app.js")),
             NO_STORE,
         )),
         "/app.css" => Some(ApiResponse::asset(
             "text/css; charset=utf-8",
-            include_bytes!("../ui/app/app.css"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/app.css")),
             NO_STORE,
         )),
         _ => None,
@@ -739,7 +858,7 @@ fn static_asset(path: &str) -> Option<ApiResponse> {
 fn index_html() -> ApiResponse {
     ApiResponse::asset(
         "text/html; charset=utf-8",
-        include_bytes!("../ui/app/index.html"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/index.html")),
         NO_STORE,
     )
 }
@@ -772,6 +891,25 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
             .unwrap_or(0),
         "favorite": dto.user_data.as_ref().is_some_and(|data| data.is_favorite),
     })
+}
+
+/// Evicts a cached item the server has disowned, and asks for a sync so the
+/// replacement (Jellyfin re-creates the item with a new id) is picked up.
+fn forget_item(services: &Arc<Services>, item_id: &str) {
+    match services.library.forget(item_id) {
+        Ok(true) => {
+            tracing::info!(
+                target: "app.api",
+                item_id,
+                "dropped a cached item the server no longer has"
+            );
+            services.sync.request();
+        }
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(target: "app.api", "failed to drop stale item {item_id}: {error}");
+        }
+    }
 }
 
 fn storage_failure(error: &rusqlite::Error) -> ApiResponse {

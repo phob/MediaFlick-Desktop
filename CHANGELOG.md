@@ -11,20 +11,32 @@
 ### Added
 
 - Added native Jellyfin authentication: username/password sign-in and Quick Connect, a persistent per-installation device id shown in Jellyfin's Devices dashboard, session restore across restarts, and automatic return to the sign-in screen when the server rejects the stored token.
-- Added a local SQLite metadata cache (`library.db`) covering movies, series, seasons, and episodes, with FTS5 full-text search over titles, overviews, genres, and cast, dedicated indexed columns for TMDB/IMDb/TVDB ids, and a background sync thread that runs a resumable bootstrap, an incremental `DateLastSaved` sweep, a periodic user-data mirror, and a daily deletion sweep.
+- Added a local SQLite metadata cache (`library.db`) covering movies, series, seasons, and episodes, with FTS5 full-text search over titles, overviews, genres, and cast, dedicated indexed columns for TMDB/IMDb/TVDB ids, and a background sync thread that runs a resumable bootstrap, an incremental `DateCreated` sweep, and an hourly identity sweep that both mirrors watch state and drops items deleted on the server.
 - Added the app's own UI on the `mediaflick-desktop://app/` scheme: sign-in, a home screen with Continue Watching / Next Up / Recently Added rows, a virtualized library grid with instant type-ahead search plus sort, genre, and watched filters, a details view with cast, seasons, and episodes, and mark-watched/favorite round-trips.
 - Added a native play path that negotiates `PlaybackInfo` with a device profile honoring the configured streaming quality, picks a media source, builds the direct-stream or transcoding URL, and hands the result straight to the playback coordinator. Episodes automatically continue with the next one when mpv reports end-of-file or mark-watched-and-next.
 - Added an in-app player bar (position, pause/resume, stop, scrub) backed by a `/api/player/*` endpoint pair, plus an image proxy with a pruned on-disk poster cache that keeps the access token out of the DOM.
 - Added `--library-stats` and `--library-sync-once` for headless verification of the cache without starting the browser shell.
 - Added `scripts/cdp-eval.ps1` for evaluating JavaScript inside a running app window over `--remote-debugging-port`.
+- Added the React UI toolchain in `ui/`: Vite, TypeScript, Tailwind CSS v4 (CSS-first, no config file), shadcn/ui on the unified `radix-ui` package, TanStack Query as the only state layer, react-router, and `@tanstack/react-virtual`. `build.rs` runs the bundle build and stages it into `OUT_DIR`, so `cargo build` stays self-sufficient and can never embed a stale bundle; `just ui` and `just ui-dev` are available for working on the UI alone.
 
 ### Changed
+
+- Replaced the hand-written ES-module UI with a React application. The bundle is emitted with fixed `app.js`/`app.css` names and no code splitting — the assets are embedded in the binary and served from memory, so content hashing and chunking buy nothing — and `static_asset` embeds them from `OUT_DIR` instead of the source tree. Client-side routing moved from hash URLs to `pushState`, which the app scheme already supported.
+- Building the app now requires Node and pnpm, and CI and the release workflow install both before the Rust steps. Set `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` to embed a bundle that was built out of band.
 
 - The browser window now always loads `mediaflick-desktop://app/` instead of the Jellyfin server URL, and the shell only opens HTTP(S) navigations in the system browser.
 - Added `rusqlite` (bundled SQLite with FTS5), pinned to 0.37 because 0.40's `libsqlite3-sys` build script needs a newer Rust than the project's toolchain.
 - Raised the Jellyfin HTTP budget to 120 s with a 10 s connect timeout so full-metadata sync pages survive a remote server, while an unreachable address still fails fast on the sign-in screen.
 
 ### Fixed
+
+- Fixed the incremental library sweep, which had never written a single row. It sorted and filtered on `DateLastSaved`, which is not a valid `ItemSortBy` value and which servers return empty, so every item compared as "not newer", the first page was cut to nothing, and the watermark was never stored. The cache therefore stopped changing entirely once the initial bootstrap finished — new and replaced items never appeared. The sweep now uses `DateCreated`, which is a valid sort key and is populated; because Jellyfin re-creates an item with a new id when its file is replaced, this also covers replacements.
+- Added a weekly re-bootstrap that re-pages the whole library. Jellyfin exposes no usable "changed since" ordering, so this is what picks up in-place metadata edits to items that already exist.
+- Cached items the server no longer has are now dropped as soon as it says so — a missing poster, a 404 from `PlaybackInfo`, or a missing item when fetching one directly — instead of lingering until the next sweep and offering a dead poster and a dead Play button. Because a poster can 404 on an item that still exists, that path confirms with the server before evicting anything, and a server that is merely unreachable never causes an eviction.
+- Fixed a poster whose artwork has disappeared from the server re-requesting itself on every render; the card now falls back to the title placeholder after the first failure.
+- Fixed a series or season page listing episodes that had been deleted on the server: they appeared as a wall of art-less placeholder cards with a dead Play button. Opening a series or season now reconciles its child list against the server before answering, so deleted episodes disappear and newly added ones show up immediately, instead of waiting for the next library sweep. A server that is unreachable leaves the cached list untouched.
+- Fixed the library refresh button not actually re-checking for deleted items. It nudged the sync thread, but the sweep that detects deletions kept its own hourly gate, so pressing refresh within the hour did nothing observable. An explicitly requested cycle — the refresh button, a fresh sign-in, or `--library-sync-once` — now bypasses that gate; the timer still respects it, so background bandwidth is unchanged.
+- Deletions are now noticed within an hour instead of once a day. The deletion sweep and the user-data sweep were requesting identical pages on separate schedules, so they were folded into one identity sweep — the same request count, with deleted items dropped as often as watch state is mirrored.
 
 ### Removed
 

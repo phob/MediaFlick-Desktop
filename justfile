@@ -24,6 +24,17 @@ clean:
 clean:
     rm -rf build target
 
+# Build the UI bundle into ui/dist (cargo build does this too, via build.rs)
+[group('build')]
+ui:
+    pnpm --dir ui install --frozen-lockfile
+    pnpm --dir ui build
+
+# Run the Vite dev server against the UI bundle
+[group('run')]
+ui-dev:
+    pnpm --dir ui dev
+
 # Format the Rust crate
 [group('lint')]
 fmt:

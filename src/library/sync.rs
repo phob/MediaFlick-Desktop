@@ -1,9 +1,16 @@
 //! Background synchronisation of the metadata cache.
 //!
-//! One thread owns the whole cycle: a resumable bootstrap, an incremental
-//! `DateLastSaved` sweep, a periodic user-data mirror, and a daily deletion
-//! sweep. It idles until credentials exist and pauses when the server rejects
-//! the token.
+//! One thread owns the whole cycle: a resumable bootstrap that re-runs
+//! periodically, an incremental `DateCreated` sweep, a periodic user-data
+//! mirror, and a daily deletion sweep. It idles until credentials exist and
+//! pauses when the server rejects the token.
+//!
+//! Jellyfin offers no "changed since" ordering — `DateLastSaved` is a valid
+//! `ItemFields` value but not a valid `ItemSortBy` one, and servers return it
+//! empty. So the incremental sweep catches *new* items via `DateCreated`
+//! (which also covers a replaced file, since Jellyfin re-creates the item with
+//! a fresh id), and in-place metadata edits are picked up by the periodic
+//! re-bootstrap instead.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +31,12 @@ use super::{Library, UserDataRecord};
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
-const USER_DATA_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
-const DELETION_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often the identity-only pass runs. It mirrors watch state *and* detects
+/// deletions from the same pages, so both stay this fresh for one pass' cost.
+const IDENTITY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// How often the whole library is re-paged. This is the only thing that notices
+/// an in-place metadata edit, so it trades bandwidth for eventual correctness.
+const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// Identity-only pages can be much larger than metadata pages.
 const IDENTITY_PAGE_SIZE: i64 = 1_000;
 /// Safety valve so a server that never reaches the watermark cannot loop.
@@ -34,8 +45,8 @@ const MAX_INCREMENTAL_PAGES: usize = 100;
 const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
 const META_WATERMARK: &str = "sync.watermark";
-const META_LAST_USER_DATA_SWEEP: &str = "sync.user_data_sweep_at";
-const META_LAST_DELETION_SWEEP: &str = "sync.deletion_sweep_at";
+const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
+const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 const META_LAST_SYNC: &str = "sync.completed_at";
 
 /// What a single cycle changed; surfaced by `/api/status` and `--library-stats`.
@@ -52,6 +63,28 @@ pub struct SyncReport {
 impl SyncReport {
     pub fn changed(&self) -> bool {
         self.bootstrapped > 0 || self.updated > 0 || self.deleted > 0
+    }
+}
+
+/// What set this cycle off.
+///
+/// The distinction only matters to the identity sweep. Its hourly gate is a
+/// bandwidth budget for the *timer*, not a correctness rule, and it is the only
+/// thing that notices a deletion — so an explicit ask has to be able to skip it.
+/// Without that, pressing refresh after deleting something on the server does
+/// nothing observable until the hour is up, which reads as a broken button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    /// The timer came around.
+    Scheduled,
+    /// A person asked: the refresh button, a fresh sign-in, or
+    /// `--library-sync-once`.
+    Requested,
+}
+
+impl Trigger {
+    fn forces_identity_sweep(self) -> bool {
+        matches!(self, Self::Requested)
     }
 }
 
@@ -74,7 +107,11 @@ pub struct SyncHandle {
 }
 
 impl SyncHandle {
-    /// Asks for a cycle as soon as possible (login, window focus, manual refresh).
+    /// Asks for a cycle as soon as possible: sign-in, the refresh button, or an
+    /// eviction that proved the cache is behind.
+    ///
+    /// The resulting cycle runs as [`Trigger::Requested`], so it also reconciles
+    /// deletions instead of waiting out the identity sweep's hourly gate.
     pub fn request(&self) {
         if let Ok(mut flags) = self.signal.flags.lock() {
             flags.requested = true;
@@ -114,16 +151,25 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 
 fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
+    // The cycle that runs at start-up is an ordinary one. `due` already forces
+    // the identity sweep whenever the app was closed for longer than the sweep
+    // interval, which is every launch that could have missed a deletion.
+    let mut trigger = Trigger::Scheduled;
     loop {
         if !session.is_authenticated() {
-            if !wait(&handle, IDLE_INTERVAL) {
-                return;
+            match wait(&handle, IDLE_INTERVAL) {
+                Wake::Stopped => return,
+                // Held until a cycle can actually consume it: this is the
+                // sign-in nudge arriving just before the session goes live.
+                Wake::Requested => trigger = Trigger::Requested,
+                Wake::Elapsed => {}
             }
             continue;
         }
 
         handle.running.store(true, Ordering::Relaxed);
-        let outcome = run_cycle(&library, &session);
+        let outcome = run_cycle(&library, &session, trigger);
+        trigger = Trigger::Scheduled;
         handle.running.store(false, Ordering::Relaxed);
 
         let delay = match outcome {
@@ -151,23 +197,35 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                 jittered(backoff)
             }
         };
-        if !wait(&handle, delay) {
-            return;
+        match wait(&handle, delay) {
+            Wake::Stopped => return,
+            Wake::Requested => trigger = Trigger::Requested,
+            Wake::Elapsed => {}
         }
     }
 }
 
-/// Returns false when the thread should exit.
-fn wait(handle: &SyncHandle, timeout: Duration) -> bool {
+/// Why the sync thread stopped waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wake {
+    /// Someone called [`SyncHandle::request`].
+    Requested,
+    /// The timeout elapsed on its own.
+    Elapsed,
+    /// The thread should exit.
+    Stopped,
+}
+
+fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
     let Ok(mut flags) = handle.signal.flags.lock() else {
-        return false;
+        return Wake::Stopped;
     };
     if flags.stopped {
-        return false;
+        return Wake::Stopped;
     }
     if flags.requested {
         flags.requested = false;
-        return true;
+        return Wake::Requested;
     }
     let (mut flags, _) = handle
         .signal
@@ -175,28 +233,43 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> bool {
         .wait_timeout(flags, timeout)
         .unwrap_or_else(|error| error.into_inner());
     if flags.stopped {
-        return false;
+        return Wake::Stopped;
     }
-    flags.requested = false;
-    true
+    // A request that landed during the wait still counts as one: the condvar
+    // cannot distinguish it from a plain timeout, but the flag can.
+    if flags.requested {
+        flags.requested = false;
+        return Wake::Requested;
+    }
+    Wake::Elapsed
 }
 
 /// Runs one full cycle. Public so `--library-sync-once` can reuse it.
-pub fn run_cycle(library: &Library, session: &Session) -> Result<SyncReport, ApiError> {
+pub fn run_cycle(
+    library: &Library,
+    session: &Session,
+    trigger: Trigger,
+) -> Result<SyncReport, ApiError> {
     let started = Instant::now();
     let (client, user_id) = session.client_and_user()?;
     let mut report = SyncReport::default();
 
     let result = (|| -> Result<(), ApiError> {
+        if due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL) {
+            // Re-page everything. Upserts are idempotent, so this refreshes
+            // metadata in place rather than churning rows.
+            let _ = library.set_meta(META_BOOTSTRAP_DONE, "0");
+            let _ = library.set_meta(META_BOOTSTRAP_OFFSET, "0");
+        }
         report.bootstrapped = bootstrap(library, &client, &user_id)?;
         report.updated = incremental(library, &client, &user_id)?;
-        if due(library, META_LAST_USER_DATA_SWEEP, USER_DATA_SWEEP_INTERVAL) {
-            report.user_data_refreshed = user_data_sweep(library, &client, &user_id)?;
-            touch(library, META_LAST_USER_DATA_SWEEP);
-        }
-        if due(library, META_LAST_DELETION_SWEEP, DELETION_SWEEP_INTERVAL) {
-            report.deleted = deletion_sweep(library, &client, &user_id)?;
-            touch(library, META_LAST_DELETION_SWEEP);
+        if trigger.forces_identity_sweep()
+            || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
+        {
+            let (refreshed, deleted) = identity_sweep(library, &client, &user_id)?;
+            report.user_data_refreshed = refreshed;
+            report.deleted = deleted;
+            touch(library, META_LAST_IDENTITY_SWEEP);
         }
         Ok(())
     })();
@@ -257,11 +330,15 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
         let _ = library.set_meta(META_WATERMARK, &watermark);
     }
     let _ = library.set_meta(META_BOOTSTRAP_DONE, "1");
+    touch(library, META_LAST_BOOTSTRAP);
     tracing::info!(target: "library.sync", items = written, "library bootstrap complete");
     Ok(written)
 }
 
-/// Walks `DateLastSaved` descending until it reaches items already cached.
+/// Walks `DateCreated` descending until it reaches items already cached.
+///
+/// This is what makes a replaced file appear: Jellyfin deletes the old item and
+/// adds a new one with a new id and a fresh `DateCreated`.
 fn incremental(
     library: &Library,
     client: &JellyfinClient,
@@ -273,7 +350,7 @@ fn incremental(
     let mut newest = watermark.clone();
 
     for _ in 0..MAX_INCREMENTAL_PAGES {
-        let page = items::fetch_items_page(client, user_id, offset, "DateLastSaved", "Descending")?;
+        let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")?;
         if page.items.is_empty() {
             break;
         }
@@ -282,7 +359,7 @@ fn incremental(
         let fresh = page
             .items
             .iter()
-            .take_while(|item| is_newer(item.date_last_saved.as_deref(), watermark.as_deref()))
+            .take_while(|item| is_newer(item.date_created.as_deref(), watermark.as_deref()))
             .cloned()
             .collect::<Vec<_>>();
         let reached_watermark = fresh.len() < page.items.len();
@@ -300,19 +377,28 @@ fn incremental(
     Ok(written)
 }
 
-/// Cheap sweep that catches watch-state changes made on other devices.
-fn user_data_sweep(
+/// One identity-only pass over the library that both mirrors watch state and
+/// drops items the server no longer reports.
+///
+/// These used to be two sweeps requesting the identical pages on different
+/// schedules, which meant deletions were only noticed once a day. Folding them
+/// together makes deletions as fresh as watch state for no extra requests.
+///
+/// Returns `(user data rows refreshed, items deleted)`.
+fn identity_sweep(
     library: &Library,
     client: &JellyfinClient,
     user_id: &str,
-) -> Result<usize, ApiError> {
+) -> Result<(usize, usize), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
+    let mut seen = HashSet::new();
     loop {
         let page = items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)?;
         if page.items.is_empty() {
             break;
         }
+        seen.extend(page.items.iter().map(|item| item.id.clone()));
         let records = page
             .items
             .iter()
@@ -328,34 +414,13 @@ fn user_data_sweep(
             break;
         }
     }
-    Ok(refreshed)
-}
-
-/// Diffs the server's full id list against the cache and drops the leftovers.
-fn deletion_sweep(
-    library: &Library,
-    client: &JellyfinClient,
-    user_id: &str,
-) -> Result<usize, ApiError> {
-    let mut offset = 0;
-    let mut seen = HashSet::new();
-    loop {
-        let page = items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)?;
-        if page.items.is_empty() {
-            break;
-        }
-        seen.extend(page.items.iter().map(|item| item.id.clone()));
-        offset += page.items.len() as i64;
-        if (page.items.len() as i64) < IDENTITY_PAGE_SIZE {
-            break;
-        }
-    }
     if seen.is_empty() {
         // An empty answer is far more likely to be a server hiccup than an
         // emptied library, so never treat it as "delete everything".
-        return Ok(0);
+        return Ok((refreshed, 0));
     }
-    library.retain_ids(&seen).map_err(storage_error)
+    let deleted = library.retain_ids(&seen).map_err(storage_error)?;
+    Ok((refreshed, deleted))
 }
 
 fn advance_watermark(
@@ -363,8 +428,8 @@ fn advance_watermark(
     items: &[crate::jellyfin::api::model::BaseItemDto],
 ) {
     for item in items {
-        if is_newer(item.date_last_saved.as_deref(), watermark.as_deref()) {
-            *watermark = item.date_last_saved.clone();
+        if is_newer(item.date_created.as_deref(), watermark.as_deref()) {
+            *watermark = item.date_created.clone();
         }
     }
 }
@@ -415,20 +480,21 @@ fn jittered(base: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_INCREMENTAL_PAGES, PAGE_SIZE, SYNC_INTERVAL, SyncReport, advance_watermark, is_newer,
-        jittered,
+        Flags, MAX_INCREMENTAL_PAGES, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle, SyncReport,
+        Trigger, Wake, advance_watermark, is_newer, jittered, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
 
     fn items(dates: &[&str]) -> Vec<BaseItemDto> {
         dates
             .iter()
             .enumerate()
             .map(|(index, date)| {
-                serde_json::from_str(&format!(
-                    r#"{{"Id":"item{index}","DateLastSaved":"{date}"}}"#
-                ))
-                .expect("dto")
+                serde_json::from_str(&format!(r#"{{"Id":"item{index}","DateCreated":"{date}"}}"#))
+                    .expect("dto")
             })
             .collect()
     }
@@ -456,6 +522,20 @@ mod tests {
         let undated: Vec<BaseItemDto> = vec![serde_json::from_str(r#"{"Id":"a"}"#).expect("dto")];
         advance_watermark(&mut watermark, &undated);
         assert_eq!(watermark.as_deref(), Some("2024-01-01T00:00:00Z"));
+    }
+
+    /// Regression: the sweep used to key on `DateLastSaved`, which servers
+    /// return empty. Every item then looked "not newer", so `take_while` cut
+    /// the first page to nothing and the cache silently stopped updating.
+    #[test]
+    fn watermark_ignores_date_last_saved() {
+        let mut watermark = None;
+        let saved_only: Vec<BaseItemDto> = vec![
+            serde_json::from_str(r#"{"Id":"a","DateLastSaved":"2024-05-01T00:00:00Z"}"#)
+                .expect("dto"),
+        ];
+        advance_watermark(&mut watermark, &saved_only);
+        assert_eq!(watermark, None);
     }
 
     #[test]
@@ -493,6 +573,36 @@ mod tests {
             assert!(delay >= SYNC_INTERVAL);
             assert!(delay < SYNC_INTERVAL + SYNC_INTERVAL / 5 + std::time::Duration::from_secs(1));
         }
+    }
+
+    /// Only an explicit ask may skip the identity sweep's hourly gate; letting
+    /// the timer skip it would re-page the whole library every ten minutes.
+    #[test]
+    fn only_a_requested_cycle_forces_the_identity_sweep() {
+        assert!(Trigger::Requested.forces_identity_sweep());
+        assert!(!Trigger::Scheduled.forces_identity_sweep());
+    }
+
+    /// The refresh button is only a "reconcile now" lever if the request
+    /// survives the wait it interrupts — a request that reads back as a plain
+    /// timeout would silently fall back to the hourly gate.
+    #[test]
+    fn a_request_is_distinguishable_from_a_timeout_and_is_consumed_once() {
+        let handle = SyncHandle {
+            signal: Arc::new(Signal {
+                flags: Mutex::new(Flags::default()),
+                condvar: Condvar::new(),
+            }),
+            running: Arc::new(AtomicBool::new(false)),
+        };
+
+        handle.request();
+        assert_eq!(wait(&handle, Duration::ZERO), Wake::Requested);
+        // Consumed: the next wait is an ordinary scheduled one.
+        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
+
+        handle.stop();
+        assert_eq!(wait(&handle, Duration::ZERO), Wake::Stopped);
     }
 
     #[test]

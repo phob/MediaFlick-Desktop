@@ -6,6 +6,10 @@
 /dist/
 /release/
 
+# UI bundle: built by build.rs, never committed, so a stale bundle can't ship
+/ui/node_modules/
+/ui/dist/
+
 # Scratch/vendor checkouts
 /tmp/
 /.cache/
