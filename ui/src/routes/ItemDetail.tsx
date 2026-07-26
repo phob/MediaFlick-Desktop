@@ -1,16 +1,78 @@
 import { Heart, Play, Check } from "lucide-react"
 import { useParams } from "react-router-dom"
+import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { imageUrl, ticksToMs } from "@/lib/api"
-import { useChildren, useItem, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
+import {
+  STREAMING_QUALITIES,
+  imageUrl,
+  qualityLabel,
+  ticksToMs,
+  type StreamingQualityId,
+} from "@/lib/api"
+import { setQualityOverride, useQualityOverride } from "@/lib/playback-quality"
+import {
+  useChildren,
+  useItem,
+  usePlay,
+  useSetFavorite,
+  useSetPlayed,
+  useSettings,
+} from "@/lib/queries"
 
 function formatRuntime(ticks: number | null) {
   const minutes = Math.round(ticksToMs(ticks) / 60_000)
   if (!minutes) return null
   const hours = Math.floor(minutes / 60)
   return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/** Stands in for "no override" — Radix Select cannot hold an empty value. */
+const FROM_SETTINGS = "__settings__"
+
+/**
+ * A per-session override of the streaming quality saved in Client Settings.
+ * It applies from the next playback on, so it lives next to the Play button
+ * rather than in a settings dialog.
+ */
+function QualityPicker() {
+  const override = useQualityOverride()
+  const settings = useSettings()
+  const saved = qualityLabel(settings.data?.streamingQuality)
+
+  return (
+    <Select
+      value={override ?? FROM_SETTINGS}
+      onValueChange={(value) => {
+        const quality = value === FROM_SETTINGS ? null : (value as StreamingQualityId)
+        setQualityOverride(quality)
+        const label = quality ? qualityLabel(quality) : (saved ?? "the saved setting")
+        toast.success(`Next playback uses ${label}.`)
+      }}
+    >
+      <SelectTrigger size="sm" aria-label="Streaming quality">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={FROM_SETTINGS}>
+          Quality: from settings{saved ? ` (${saved})` : ""}
+        </SelectItem>
+        {STREAMING_QUALITIES.map((quality) => (
+          <SelectItem key={quality.id} value={quality.id}>
+            Quality: {quality.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
 }
 
 export default function ItemDetail() {
@@ -20,6 +82,7 @@ export default function ItemDetail() {
   const play = usePlay()
   const setPlayed = useSetPlayed()
   const setFavorite = useSetFavorite()
+  const quality = useQualityOverride() ?? undefined
 
   if (error) return <p className="p-6 text-sm text-destructive">{error.message}</p>
   if (isPending) return <Skeleton className="m-6 h-64 rounded-lg" />
@@ -47,13 +110,16 @@ export default function ItemDetail() {
               ))}
           </div>
           {item.overview && <p className="max-w-2xl text-sm leading-relaxed">{item.overview}</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => play.mutate({ id: item.id, resume: resumable })}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => play.mutate({ id: item.id, resume: resumable, quality })}>
               <Play className="size-4" />
               {resumable ? "Resume" : "Play"}
             </Button>
             {resumable && (
-              <Button variant="secondary" onClick={() => play.mutate({ id: item.id, resume: false })}>
+              <Button
+                variant="secondary"
+                onClick={() => play.mutate({ id: item.id, resume: false, quality })}
+              >
                 Play from start
               </Button>
             )}
@@ -70,8 +136,8 @@ export default function ItemDetail() {
             >
               <Heart className={item.favorite ? "size-4 fill-current" : "size-4"} />
             </Button>
+            {item.kind !== "Series" && item.kind !== "Season" && <QualityPicker />}
           </div>
-          {/* TODO(port): streaming-quality picker, backed by /api/settings. */}
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { memo, useState } from "react"
 import { Link } from "react-router-dom"
 import { imageUrl, progressFraction, type ItemSummary } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -16,7 +16,19 @@ function subtitleFor(item: ItemSummary) {
   return item.year ? String(item.year) : ""
 }
 
-export function MediaCard({ item, className }: { item: ItemSummary; className?: string }) {
+/**
+ * Memoised because the windowed grid re-renders on every scroll tick: without
+ * it a full screen of cards reconciles ~60 times a second for nothing. `item`
+ * comes straight out of the query cache, whose structural sharing keeps the
+ * reference stable between renders, so the comparison actually holds.
+ */
+export const MediaCard = memo(function MediaCard({
+  item,
+  className,
+}: {
+  item: ItemSummary
+  className?: string
+}) {
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   // A cached `primaryImageTag` can outlive the artwork on the server, and a
@@ -38,7 +50,13 @@ export function MediaCard({ item, className }: { item: ItemSummary; className?: 
           <img
             src={imageUrl(item)}
             alt=""
-            loading="lazy"
+            // No `loading="lazy"`: the virtualizer already mounts only the rows
+            // near the viewport, so lazy loading just adds a second deferral —
+            // the overscan rows would wait for an intersection check instead of
+            // fetching ahead, and the poster would land after the row is
+            // already on screen. `decoding="async"` keeps the decode off the
+            // main thread so a newly revealed row cannot drop a scroll frame.
+            decoding="async"
             onError={() => setImageFailed(true)}
             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
           />
@@ -64,4 +82,4 @@ export function MediaCard({ item, className }: { item: ItemSummary; className?: 
       </div>
     </Link>
   )
-}
+})

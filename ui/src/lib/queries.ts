@@ -1,6 +1,14 @@
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ApiError, api, type ItemQuery } from "./api"
+import {
+  ApiError,
+  PAGE_SIZE,
+  api,
+  type ItemQuery,
+  type PlayerCommand,
+  type QuickConnectStart,
+  type StreamingQualityId,
+} from "./api"
 import { invalidateMediaSurfaces, queryClient, queryKeys } from "./query-client"
 
 /**
@@ -42,6 +50,24 @@ export function useItems(query: ItemQuery, enabled = true) {
     queryKey: queryKeys.items(query),
     queryFn: ({ signal }) => api.items(query, signal),
     enabled,
+  })
+}
+
+/**
+ * The windowed grid's data source: one query per `PAGE_SIZE` page, so a page
+ * already in the cache renders without a round trip and pages scrolled past
+ * stay cached under the normal `gcTime`. Callers pass only the pages they can
+ * actually see (plus page 0, which anchors `total`).
+ */
+export function useItemPages(query: ItemQuery, pages: number[]) {
+  return useQueries({
+    queries: pages.map((page) => {
+      const paged = { ...query, limit: PAGE_SIZE, offset: page * PAGE_SIZE }
+      return {
+        queryKey: queryKeys.items(paged),
+        queryFn: ({ signal }: { signal: AbortSignal }) => api.items(paged, signal),
+      }
+    }),
   })
 }
 
@@ -89,8 +115,29 @@ export function useSetFavorite() {
 
 export function usePlay() {
   return useMutation({
-    mutationFn: ({ id, resume }: { id: string; resume: boolean }) => api.play(id, resume),
-    onSuccess: () => {
+    mutationFn: ({
+      id,
+      resume,
+      quality,
+    }: {
+      id: string
+      resume: boolean
+      quality?: StreamingQualityId
+    }) => api.play(id, resume, quality),
+    onSuccess: (started) => {
+      // The player is a separate window that can take a moment to come up, so
+      // say something: otherwise Play looks like it did nothing at all.
+      toast.success(started.playMethod ? `Playing (${started.playMethod})` : "Playing")
+      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+    },
+    onError: reportError,
+  })
+}
+
+export function usePlayerCommand() {
+  return useMutation({
+    mutationFn: (command: PlayerCommand) => api.playerCommand(command),
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
     },
     onError: reportError,
@@ -105,6 +152,51 @@ export function useLogin() {
       queryClient.setQueryData(queryKeys.status, status)
       invalidateMediaSurfaces()
     },
+  })
+}
+
+/**
+ * Probes a server address so the sign-in view can name the server and only
+ * offer Quick Connect where it is actually enabled.
+ */
+export function useServerInfo(server: string) {
+  return useQuery({
+    queryKey: queryKeys.serverInfo(server),
+    queryFn: ({ signal }) => api.connect(server, signal),
+    enabled: Boolean(server),
+    // A typo in the address should surface immediately, not after a retry.
+    retry: false,
+    staleTime: 60_000,
+  })
+}
+
+export function useQuickConnectStart() {
+  return useMutation({ mutationFn: (server: string) => api.quickConnectStart(server) })
+}
+
+/**
+ * Polls an approved-yet? Quick Connect request every two seconds. There is no
+ * client-side deadline on purpose: the server expires the secret itself and
+ * answers 404, which surfaces here as a plain error.
+ */
+export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
+  return useQuery({
+    queryKey: queryKeys.quickConnect(started?.secret ?? ""),
+    queryFn: async ({ signal }) => {
+      const result = await api.quickConnectPoll(started!.serverUrl, started!.secret, signal)
+      if (result.authenticated) {
+        // The shell gates on `/api/status`; re-reading it is what actually
+        // swaps the sign-in view for the app.
+        await queryClient.invalidateQueries({ queryKey: queryKeys.status })
+        invalidateMediaSurfaces()
+      }
+      return result
+    },
+    enabled: Boolean(started),
+    refetchInterval: (query) => (query.state.data?.authenticated ? false : 2000),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
   })
 }
 
