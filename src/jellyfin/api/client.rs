@@ -2,7 +2,7 @@
 //! app-scheme API, and the play path.
 
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -17,6 +17,10 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 /// on the sign-in screen does not appear to hang.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 3;
+/// The budget above is per attempt, so retries must share one deadline of their
+/// own: otherwise a stalling server holds a caller — the sign-in screen, the UI
+/// thread waiting on an API answer — for `MAX_ATTEMPTS` × `HTTP_TIMEOUT`.
+const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
 
 /// Value reported to the Jellyfin Devices dashboard as the client name.
 pub const CLIENT_NAME: &str = build_info::APP_NAME;
@@ -110,6 +114,10 @@ impl JellyfinClient {
         &self.device_id
     }
 
+    /// Only the tests read the raw token now: everything that sends it uses
+    /// [`Self::authorization_header`] or [`Self::auth_headers`], so it never
+    /// reaches a URL.
+    #[cfg(test)]
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref()
     }
@@ -262,6 +270,7 @@ impl JellyfinClient {
         path: &str,
         mut call: impl FnMut() -> Result<T, ApiError>,
     ) -> Result<T, ApiError> {
+        let deadline = Instant::now() + RETRY_BUDGET;
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -269,6 +278,15 @@ impl JellyfinClient {
                 Ok(value) => return Ok(value),
                 Err(error) if error.is_retryable() && attempt < MAX_ATTEMPTS => {
                     let backoff = Duration::from_millis(250 * (1u64 << (attempt - 1)));
+                    if deadline.saturating_duration_since(Instant::now()) <= backoff {
+                        tracing::debug!(
+                            target: "jellyfin.api",
+                            path,
+                            attempt,
+                            "giving up on the Jellyfin request, the retry budget is spent: {error}"
+                        );
+                        return Err(error);
+                    }
                     tracing::debug!(
                         target: "jellyfin.api",
                         path,

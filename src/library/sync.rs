@@ -41,6 +41,12 @@ const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const IDENTITY_PAGE_SIZE: i64 = 1_000;
 /// Safety valve so a server that never reaches the watermark cannot loop.
 const MAX_INCREMENTAL_PAGES: usize = 100;
+/// The same valve for the two full passes, which end on the server's own idea
+/// of where the library stops. Both caps sit far above any real library — a
+/// server that reaches one is repeating pages or miscounting, not answering
+/// honestly — so they only bound a runaway, never a normal cycle.
+const MAX_BOOTSTRAP_PAGES: usize = 1_000;
+const MAX_IDENTITY_PAGES: usize = 1_000;
 
 const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
@@ -303,14 +309,19 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
     let mut written = 0;
     let mut watermark = library.meta(META_WATERMARK);
 
-    loop {
+    let mut pages = 0;
+    let truncated = loop {
+        if pages >= MAX_BOOTSTRAP_PAGES {
+            break true;
+        }
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")?;
         if page.items.is_empty() {
-            break;
+            break false;
         }
         advance_watermark(&mut watermark, &page.items);
         written += library.upsert_page(&page.items).map_err(storage_error)?;
         offset += page.items.len() as i64;
+        pages += 1;
         let _ = library.set_meta(META_BOOTSTRAP_OFFSET, &offset.to_string());
         tracing::debug!(
             target: "library.sync",
@@ -319,15 +330,27 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
             "bootstrapped a library page"
         );
         if page.total_record_count > 0 && offset >= page.total_record_count {
-            break;
+            break false;
         }
         if (page.items.len() as i64) < PAGE_SIZE {
-            break;
+            break false;
         }
-    }
+    };
 
     if let Some(watermark) = watermark {
         let _ = library.set_meta(META_WATERMARK, &watermark);
+    }
+    if truncated {
+        // The offset is stored, so the next cycle picks up where this one
+        // stopped. Marking the bootstrap done here would instead declare a
+        // half-paged library complete.
+        tracing::warn!(
+            target: "library.sync",
+            pages,
+            offset,
+            "stopped bootstrapping at the page cap; resuming next cycle"
+        );
+        return Ok(written);
     }
     let _ = library.set_meta(META_BOOTSTRAP_DONE, "1");
     touch(library, META_LAST_BOOTSTRAP);
@@ -393,10 +416,14 @@ fn identity_sweep(
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
-    loop {
+    let mut pages = 0;
+    let truncated = loop {
+        if pages >= MAX_IDENTITY_PAGES {
+            break true;
+        }
         let page = items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)?;
         if page.items.is_empty() {
-            break;
+            break false;
         }
         seen.extend(page.items.iter().map(|item| item.id.clone()));
         let records = page
@@ -410,9 +437,21 @@ fn identity_sweep(
             .collect::<Vec<_>>();
         refreshed += library.upsert_user_data(&records).map_err(storage_error)?;
         offset += page.items.len() as i64;
+        pages += 1;
         if (page.items.len() as i64) < IDENTITY_PAGE_SIZE {
-            break;
+            break false;
         }
+    };
+    if truncated {
+        // `seen` is what decides which items still exist, so a partial one must
+        // never reach `retain_ids` — everything past the cap would be deleted.
+        tracing::warn!(
+            target: "library.sync",
+            pages,
+            offset,
+            "stopped the identity sweep at the page cap; skipping the deletion pass"
+        );
+        return Ok((refreshed, 0));
     }
     if seen.is_empty() {
         // An empty answer is far more likely to be a server hiccup than an

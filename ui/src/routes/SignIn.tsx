@@ -13,12 +13,14 @@ import {
 export default function SignIn() {
   const settings = useSettings()
   const login = useLogin()
-  const [server, setServer] = useState("")
+  // `null` is "untouched", which is what lets the saved URL prefill the field
+  // once settings arrive. An empty string is a field the user cleared on
+  // purpose, and has to stay cleared so it can be retyped from scratch.
+  const [server, setServer] = useState<string | null>(null)
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
 
-  // The saved server URL prefills the field once settings arrive.
-  const serverValue = server || settings.data?.serverUrl || ""
+  const serverValue = server ?? settings.data?.serverUrl ?? ""
   // Probing only on blur keeps a half-typed address from being dialled on
   // every keystroke.
   const [probed, setProbed] = useState<string | null>(null)

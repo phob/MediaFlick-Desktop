@@ -1,28 +1,20 @@
 //! Opaque identifier generation without pulling in a UUID dependency.
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::fmt::Write;
 
-static SEQUENCE: AtomicU64 = AtomicU64::new(1);
-
-/// A lowercase hex string of `bytes * 2` characters seeded from the process
-/// `RandomState` (which itself is OS-seeded) mixed with the wall clock.
+/// A lowercase hex string of `bytes * 2` characters filled from the operating
+/// system's CSPRNG.
+///
+/// These values are not only identifiers: the bridge session token is one, so
+/// a hash of the wall clock and a counter — both of which an attacker can
+/// guess — is not good enough.
 pub fn random_hex(bytes: usize) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or_default();
+    let mut buffer = vec![0u8; bytes];
+    getrandom::getrandom(&mut buffer).expect("the operating system random number generator");
     let mut out = String::with_capacity(bytes * 2);
-    while out.len() < bytes * 2 {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u64(SEQUENCE.fetch_add(1, Ordering::Relaxed));
-        hasher.write_u128(nanos);
-        hasher.write_usize(out.len());
-        out.push_str(&format!("{:016x}", hasher.finish()));
+    for byte in buffer {
+        let _ = write!(out, "{byte:02x}");
     }
-    out.truncate(bytes * 2);
     out
 }
 

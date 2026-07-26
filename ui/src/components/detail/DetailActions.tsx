@@ -142,6 +142,7 @@ export function DetailActions({
         {target && (
           <Button
             size="lg"
+            disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: resumable, quality })}
           >
             <Play className="size-4 fill-current" />
@@ -152,6 +153,7 @@ export function DetailActions({
           <Button
             variant="secondary"
             size="lg"
+            disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: false, quality })}
           >
             <RotateCcw className="size-4" />
