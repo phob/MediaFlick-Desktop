@@ -4,6 +4,12 @@
 
 export const TICKS_PER_MS = 10_000
 export const POSTER_WIDTH = 400
+/** The detail hero renders edge to edge, so its backdrop needs a real width. */
+export const BACKDROP_WIDTH = 1920
+/** Detail poster and episode thumbnails: bigger slots than the grid's. */
+export const DETAIL_POSTER_WIDTH = 600
+export const THUMBNAIL_WIDTH = 480
+export const HEADSHOT_WIDTH = 200
 export const PAGE_SIZE = 60
 
 export type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
@@ -28,6 +34,8 @@ export interface ItemSummary {
   playCount: number
   positionTicks: number
   favorite: boolean
+  /** Only `/api/item/{id}/children` carries this; the grid queries do not. */
+  overview?: string | null
 }
 
 export interface Person {
@@ -50,6 +58,59 @@ export interface ItemDetail extends ItemSummary {
   providerIds: { tmdb: string | null; imdb: string | null; tvdb: string | null }
   parentId: string | null
   dateCreated: string | null
+}
+
+/** One track of a media source, as `media_stream_json` in `api.rs` shapes it. */
+export interface MediaStream {
+  index: number
+  codec: string | null
+  language: string | null
+  title: string | null
+  displayTitle: string | null
+  width: number | null
+  height: number | null
+  channels: number | null
+  videoRange: string | null
+  videoRangeType: string | null
+  bitDepth: number | null
+  isDefault: boolean
+  isForced: boolean
+  isExternal: boolean
+}
+
+/** One playable file behind an item, from `/api/item/{id}/media`. */
+export interface MediaSource {
+  id: string | null
+  name: string
+  container: string | null
+  fileName: string | null
+  size: number | null
+  bitrate: number | null
+  video: MediaStream[]
+  audio: MediaStream[]
+  subtitles: MediaStream[]
+}
+
+/**
+ * External databases the shell can open in the default browser. The UI only
+ * names the provider — `external_url` in `api.rs` owns the address, and the
+ * kinds listed here mirror the routes it knows, so a button never appears for a
+ * link the shell would refuse to build.
+ */
+export const EXTERNAL_PROVIDERS = [
+  { id: "imdb", label: "IMDb", kinds: ["Movie", "Series", "Episode"] },
+  { id: "tmdb", label: "TMDb", kinds: ["Movie", "Series"] },
+  { id: "tvdb", label: "TVDB", kinds: ["Movie", "Series", "Episode"] },
+] as const
+
+export type ExternalProvider = (typeof EXTERNAL_PROVIDERS)[number]["id"]
+
+export function externalLinksFor(item: ItemDetail) {
+  return EXTERNAL_PROVIDERS.filter(
+    (provider) =>
+      Boolean(item.providerIds?.[provider.id]) &&
+      (provider.kinds as readonly string[]).includes(item.kind),
+  )
 }
 
 export interface HomeRow {
@@ -262,6 +323,15 @@ export const api = {
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
   children: (id: string) =>
     request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
+  media: (id: string) =>
+    request<{ sources: MediaSource[] }>(`/api/item/${encodeURIComponent(id)}/media`),
+  nextUp: (id: string) =>
+    request<{ item: ItemSummary | null }>(`/api/item/${encodeURIComponent(id)}/nextup`),
+  openExternal: (id: string, provider: ExternalProvider) =>
+    request<{ opened: boolean; url: string }>(`/api/item/${encodeURIComponent(id)}/external`, {
+      method: "POST",
+      body: { provider },
+    }),
   setPlayed: (id: string, played: boolean) =>
     request<unknown>(`/api/item/${encodeURIComponent(id)}/played`, { method: "POST", body: { played } }),
   setFavorite: (id: string, favorite: boolean) =>
@@ -293,10 +363,26 @@ export const api = {
  */
 export function imageUrl(
   item: Pick<ItemSummary, "id" | "primaryImageTag">,
-  type: "Primary" | "Backdrop" = "Primary",
+  type: "Primary" | "Backdrop" | "Thumb" | "Logo" = "Primary",
   maxWidth = POSTER_WIDTH,
+  // Every image type has its own tag. Passing the poster's tag along with
+  // `Backdrop` asks Jellyfin for an image that does not exist under it, so the
+  // caller has to say which tag goes with the type it asked for.
+  tag: string | null = item.primaryImageTag,
 ) {
-  return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag: item.primaryImageTag })}`
+  return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag })}`
+}
+
+/** Null when the item has no backdrop, so callers can lay out without one. */
+export function backdropUrl(item: ItemDetail, maxWidth = BACKDROP_WIDTH) {
+  if (!item.backdropImageTag) return null
+  return imageUrl(item, "Backdrop", maxWidth, item.backdropImageTag)
+}
+
+/** Cast headshots go through the same proxy: people are items in Jellyfin. */
+export function personImageUrl(person: Person, maxWidth = HEADSHOT_WIDTH) {
+  if (!person.id || !person.imageTag) return null
+  return imageUrl({ id: person.id, primaryImageTag: person.imageTag }, "Primary", maxWidth)
 }
 
 export function ticksToMs(ticks: number | null | undefined) {

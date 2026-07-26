@@ -1,77 +1,73 @@
-import { Heart, Play, Check } from "lucide-react"
 import { useParams } from "react-router-dom"
-import { toast } from "sonner"
+import { CastRow } from "@/components/detail/CastRow"
+import { DetailActions } from "@/components/detail/DetailActions"
+import { DetailFacts } from "@/components/detail/DetailFacts"
+import { DetailHero } from "@/components/detail/DetailHero"
+import { EpisodeList } from "@/components/detail/EpisodeList"
+import { MediaInfo } from "@/components/detail/MediaInfo"
 import { MediaCard } from "@/components/MediaCard"
-import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  STREAMING_QUALITIES,
-  imageUrl,
-  qualityLabel,
-  ticksToMs,
-  type StreamingQualityId,
-} from "@/lib/api"
-import { setQualityOverride, useQualityOverride } from "@/lib/playback-quality"
-import {
-  useChildren,
-  useItem,
-  usePlay,
-  useSetFavorite,
-  useSetPlayed,
-  useSettings,
-} from "@/lib/queries"
+import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
+import { useChildren, useItem, useMediaInfo, useNextUp } from "@/lib/queries"
 
-function formatRuntime(ticks: number | null) {
-  const minutes = Math.round(ticksToMs(ticks) / 60_000)
-  if (!minutes) return null
-  const hours = Math.floor(minutes / 60)
-  return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+function DetailSkeleton() {
+  return (
+    <div className="flex gap-8 p-6">
+      <Skeleton className="hidden h-[330px] w-[220px] rounded-xl sm:block" />
+      <div className="flex flex-1 flex-col gap-4">
+        <Skeleton className="h-9 w-2/3 max-w-lg" />
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-20 max-w-3xl" />
+        <Skeleton className="h-10 w-72" />
+      </div>
+    </div>
+  )
 }
 
-/** Stands in for "no override" — Radix Select cannot hold an empty value. */
-const FROM_SETTINGS = "__settings__"
+/** Seasons of a series still read best as posters — they are covers, not text. */
+function SeasonGrid({ seasons }: { seasons: ItemSummary[] }) {
+  if (!seasons.length) return null
+  return (
+    <section className="flex flex-col gap-3 px-6">
+      <h2 className="text-base font-medium">Seasons</h2>
+      <div className="flex flex-wrap gap-[var(--card-gap)]">
+        {seasons.map((season) => (
+          <MediaCard key={season.id} item={season} />
+        ))}
+      </div>
+    </section>
+  )
+}
 
 /**
- * A per-session override of the streaming quality saved in Client Settings.
- * It applies from the next playback on, so it lives next to the Play button
- * rather than in a settings dialog.
+ * What a season's Play button should start: whatever was left half-watched,
+ * otherwise the first episode not yet seen, otherwise the season opener. The
+ * episodes are already loaded for the list, so this costs nothing.
  */
-function QualityPicker() {
-  const override = useQualityOverride()
-  const settings = useSettings()
-  const saved = qualityLabel(settings.data?.streamingQuality)
-
+function seasonPlayTarget(episodes: ItemSummary[]) {
   return (
-    <Select
-      value={override ?? FROM_SETTINGS}
-      onValueChange={(value) => {
-        const quality = value === FROM_SETTINGS ? null : (value as StreamingQualityId)
-        setQualityOverride(quality)
-        const label = quality ? qualityLabel(quality) : (saved ?? "the saved setting")
-        toast.success(`Next playback uses ${label}.`)
-      }}
-    >
-      <SelectTrigger size="sm" aria-label="Streaming quality">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={FROM_SETTINGS}>
-          Quality: from settings{saved ? ` (${saved})` : ""}
-        </SelectItem>
-        {STREAMING_QUALITIES.map((quality) => (
-          <SelectItem key={quality.id} value={quality.id}>
-            Quality: {quality.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    episodes.find((episode) => episode.positionTicks > 0) ??
+    episodes.find((episode) => !episode.played) ??
+    episodes[0] ??
+    null
+  )
+}
+
+function episodeCode(episode: ItemSummary) {
+  return episode.parentIndexNumber != null && episode.indexNumber != null
+    ? `S${episode.parentIndexNumber}E${episode.indexNumber}`
+    : null
+}
+
+/**
+ * Which episode a series' Play button will start, spelled out under the hero.
+ * The button itself only has room for the code.
+ */
+function NextUpNote({ episode }: { episode: ItemSummary }) {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Next up: {[episodeCode(episode), episode.name].filter(Boolean).join(" · ")}
+    </p>
   )
 }
 
@@ -79,80 +75,67 @@ export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const { data: item, isPending, error } = useItem(id)
   const children = useChildren(id)
-  const play = usePlay()
-  const setPlayed = useSetPlayed()
-  const setFavorite = useSetFavorite()
-  const quality = useQualityOverride() ?? undefined
+  const isSeries = item?.kind === "Series"
+  const isContainer = isSeries || item?.kind === "Season"
+  // Both of these are server round trips, so they only run for the kind that
+  // has an answer: containers have no streams, and only a series has a Next Up.
+  const media = useMediaInfo(id, Boolean(item) && !isContainer)
+  const nextUp = useNextUp(id, isSeries)
 
   if (error) return <p className="p-6 text-sm text-destructive">{error.message}</p>
-  if (isPending) return <Skeleton className="m-6 h-64 rounded-lg" />
+  if (isPending) return <DetailSkeleton />
 
-  const resumable = item.positionTicks > 0
-  const runtime = formatRuntime(item.runtimeTicks)
+  const childItems = children.data?.items ?? []
+  const episodes = childItems.filter((child) => child.kind === "Episode")
+  const seasons = childItems.filter((child) => child.kind === "Season")
+  // A series knows how many seasons it has but not how many episodes; each
+  // season row carries its own count, so the total is already on hand.
+  const episodeCount = isSeries
+    ? seasons.reduce((total, season) => total + (season.childCount ?? 0), 0)
+    : episodes.length
+
+  // Containers cannot be played themselves, so their Play button stands in for
+  // one episode; everything else plays itself and needs no target at all.
+  const playTarget = isSeries
+    ? (nextUp.data?.item ?? null)
+    : item.kind === "Season"
+      ? seasonPlayTarget(episodes)
+      : undefined
 
   return (
-    <div className="flex flex-col gap-8 p-6">
-      <div className="flex gap-6">
-        {item.primaryImageTag && (
-          <img
-            src={imageUrl(item)}
-            alt=""
-            className="h-poster-h w-poster-w shrink-0 rounded-lg object-cover"
-          />
-        )}
-        <div className="flex min-w-0 flex-col gap-3">
-          <h1 className="text-2xl font-medium">{item.name}</h1>
-          <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-            {[item.year, runtime, item.officialRating, item.genres?.join(", ")]
-              .filter(Boolean)
-              .map((part, index) => (
-                <span key={index}>{part}</span>
-              ))}
-          </div>
-          {item.overview && <p className="max-w-2xl text-sm leading-relaxed">{item.overview}</p>}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={() => play.mutate({ id: item.id, resume: resumable, quality })}>
-              <Play className="size-4" />
-              {resumable ? "Resume" : "Play"}
-            </Button>
-            {resumable && (
-              <Button
-                variant="secondary"
-                onClick={() => play.mutate({ id: item.id, resume: false, quality })}
-              >
-                Play from start
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              onClick={() => setPlayed.mutate({ id: item.id, played: !item.played })}
-            >
-              <Check className="size-4" />
-              {item.played ? "Mark unwatched" : "Mark watched"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
-            >
-              <Heart className={item.favorite ? "size-4 fill-current" : "size-4"} />
-            </Button>
-            {item.kind !== "Series" && item.kind !== "Season" && <QualityPicker />}
-          </div>
-        </div>
-      </div>
+    <div className="flex flex-col gap-10 pb-12">
+      <DetailHero item={item} episodeCount={episodeCount || null}>
+        {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
+        <DetailActions
+          item={item}
+          playTarget={playTarget}
+          playLabel={playLabelFor(item, playTarget ?? null)}
+        />
+      </DetailHero>
 
-      {children.data && children.data.items.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-base font-medium">
-            {item.kind === "Series" ? "Seasons" : "Episodes"}
-          </h2>
-          <div className="flex flex-wrap gap-[var(--card-gap)]">
-            {children.data.items.map((child) => (
-              <MediaCard key={child.id} item={child} />
-            ))}
-          </div>
-        </section>
-      )}
+      {episodes.length > 0 && <EpisodeList episodes={episodes} parentId={item.id} />}
+      <SeasonGrid seasons={seasons} />
+
+      <CastRow people={item.people} />
+
+      <div className="grid max-w-7xl gap-8 px-6 lg:grid-cols-2">
+        <DetailFacts item={item} />
+        <MediaInfo sources={media.data?.sources} isPending={!isContainer && media.isPending} />
+      </div>
     </div>
   )
+}
+
+/**
+ * A container's Play button starts one particular episode, so it names it
+ * rather than leaving the user to guess which one — and whether it will resume.
+ */
+function playLabelFor(item: Item, target: ItemSummary | null) {
+  if ((item.kind !== "Series" && item.kind !== "Season") || !target) return undefined
+  const verb = target.positionTicks > 0 ? "Resume" : "Play"
+  const code =
+    item.kind === "Season" && target.indexNumber != null
+      ? `episode ${target.indexNumber}`
+      : episodeCode(target)
+  return code ? `${verb} ${code}` : verb
 }

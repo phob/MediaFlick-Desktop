@@ -211,6 +211,12 @@ pub struct MediaStream {
     pub height: Option<i64>,
     pub width: Option<i64>,
     pub channels: Option<i64>,
+    /// "SDR" or "HDR". `video_range_type` narrows the latter to HDR10, HLG, or
+    /// one of the Dolby Vision profiles, which is what decides whether a file
+    /// tone-maps on a given display.
+    pub video_range: Option<String>,
+    pub video_range_type: Option<String>,
+    pub bit_depth: Option<i64>,
 }
 
 #[cfg(test)]

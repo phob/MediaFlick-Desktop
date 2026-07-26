@@ -11,7 +11,7 @@ use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
-use super::model::{BaseItemDto, ItemsResponse, PlaybackInfoResponse};
+use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, PlaybackInfoResponse};
 
 /// Item types the local cache mirrors. Music and live TV are out of scope.
 pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
@@ -148,6 +148,34 @@ pub fn fetch_item(
         ],
     )?;
     Ok(response.items.into_iter().next())
+}
+
+/// Container, codec, and track detail for one item.
+///
+/// `MediaSources` is deliberately absent from `SYNC_FIELDS`: it multiplies the
+/// size of every synced row and only the detail page ever reads it, so it is
+/// fetched on demand and never cached.
+pub fn fetch_media_sources(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Vec<MediaSourceInfo>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", "MediaSources,MediaStreams".to_string()),
+            ("EnableUserData", "false".to_string()),
+            ("EnableImages", "false".to_string()),
+        ],
+    )?;
+    Ok(response
+        .items
+        .into_iter()
+        .next()
+        .map(|item| item.media_sources)
+        .unwrap_or_default())
 }
 
 /// Server-side "what should I watch next" logic; deliberately not replicated

@@ -4,6 +4,7 @@ import {
   ApiError,
   PAGE_SIZE,
   api,
+  type ExternalProvider,
   type ItemQuery,
   type PlayerCommand,
   type QuickConnectStart,
@@ -87,6 +88,38 @@ export function useChildren(id: string | undefined) {
   })
 }
 
+/**
+ * Container and track detail. This is the one detail-page query that always
+ * costs a request to the server — nothing about codecs is cached locally — so
+ * it is only enabled for the kinds that have streams of their own.
+ */
+export function useMediaInfo(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.media(id ?? ""),
+    queryFn: () => api.media(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
+/** The episode a series should resume with; server-side logic, series only. */
+export function useNextUp(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.nextUp(id ?? ""),
+    queryFn: () => api.nextUp(id!),
+    enabled: Boolean(id) && enabled,
+  })
+}
+
+export function useOpenExternal() {
+  return useMutation({
+    mutationFn: ({ id, provider }: { id: string; provider: ExternalProvider }) =>
+      api.openExternal(id, provider),
+    onError: reportError,
+  })
+}
+
 /** Polls only while something is actually playing; idle costs one request. */
 export function usePlayerState() {
   return useQuery({
@@ -97,18 +130,30 @@ export function usePlayerState() {
   })
 }
 
+/**
+ * `context` is the id of whatever list the item was toggled from — a season for
+ * an episode row, a series for a Next Up card. Without it the row updates but
+ * the list it sits in keeps the stale watched state.
+ */
+interface UserDataMutation {
+  id: string
+  context?: string | null
+}
+
 export function useSetPlayed() {
   return useMutation({
-    mutationFn: ({ id, played }: { id: string; played: boolean }) => api.setPlayed(id, played),
-    onSuccess: (_result, { id }) => invalidateMediaSurfaces(id),
+    mutationFn: ({ id, played }: UserDataMutation & { played: boolean }) =>
+      api.setPlayed(id, played),
+    onSuccess: (_result, { id, context }) => invalidateMediaSurfaces(id, context),
     onError: reportError,
   })
 }
 
 export function useSetFavorite() {
   return useMutation({
-    mutationFn: ({ id, favorite }: { id: string; favorite: boolean }) => api.setFavorite(id, favorite),
-    onSuccess: (_result, { id }) => invalidateMediaSurfaces(id),
+    mutationFn: ({ id, favorite }: UserDataMutation & { favorite: boolean }) =>
+      api.setFavorite(id, favorite),
+    onSuccess: (_result, { id, context }) => invalidateMediaSurfaces(id, context),
     onError: reportError,
   })
 }
