@@ -4,13 +4,31 @@
 
 ### Breaking Changes
 
+- Replaced the embedded Jellyfin Web client with MediaFlick Desktop's own UI. The app no longer loads jellyfin-web at all: it now signs in against the Jellyfin server itself and serves its own login, home, library, and details views from `mediaflick-desktop://app/`. Existing users keep their configured server URL and must sign in once on the new login screen; browsing, searching, and starting playback all happen in the new UI. Server administration is not rebuilt and opens in the system browser through the new "Open Jellyfin dashboard" context-menu item.
+- Removed the jellyfin-web injection bridge (`bridge.js` and its stream-URL interception). Playback is now negotiated natively through `PlaybackInfo` and handed to mpv/MPC-HC directly, so third-party scripts or workflows that relied on the injected `window.__mediaFlickDesktop*` playback hooks in jellyfin-web no longer apply. The native dialogs (Client Settings, About, update toast, mpv setup) are unchanged.
+- Removed the welcome/setup screen. The server address is entered on the sign-in screen and the media player is configured in Client Settings.
+
 ### Added
 
+- Added native Jellyfin authentication: username/password sign-in and Quick Connect, a persistent per-installation device id shown in Jellyfin's Devices dashboard, session restore across restarts, and automatic return to the sign-in screen when the server rejects the stored token.
+- Added a local SQLite metadata cache (`library.db`) covering movies, series, seasons, and episodes, with FTS5 full-text search over titles, overviews, genres, and cast, dedicated indexed columns for TMDB/IMDb/TVDB ids, and a background sync thread that runs a resumable bootstrap, an incremental `DateLastSaved` sweep, a periodic user-data mirror, and a daily deletion sweep.
+- Added the app's own UI on the `mediaflick-desktop://app/` scheme: sign-in, a home screen with Continue Watching / Next Up / Recently Added rows, a virtualized library grid with instant type-ahead search plus sort, genre, and watched filters, a details view with cast, seasons, and episodes, and mark-watched/favorite round-trips.
+- Added a native play path that negotiates `PlaybackInfo` with a device profile honoring the configured streaming quality, picks a media source, builds the direct-stream or transcoding URL, and hands the result straight to the playback coordinator. Episodes automatically continue with the next one when mpv reports end-of-file or mark-watched-and-next.
+- Added an in-app player bar (position, pause/resume, stop, scrub) backed by a `/api/player/*` endpoint pair, plus an image proxy with a pruned on-disk poster cache that keeps the access token out of the DOM.
+- Added `--library-stats` and `--library-sync-once` for headless verification of the cache without starting the browser shell.
+- Added `scripts/cdp-eval.ps1` for evaluating JavaScript inside a running app window over `--remote-debugging-port`.
+
 ### Changed
+
+- The browser window now always loads `mediaflick-desktop://app/` instead of the Jellyfin server URL, and the shell only opens HTTP(S) navigations in the system browser.
+- Added `rusqlite` (bundled SQLite with FTS5), pinned to 0.37 because 0.40's `libsqlite3-sys` build script needs a newer Rust than the project's toolchain.
+- Raised the Jellyfin HTTP budget to 120 s with a 10 s connect timeout so full-metadata sync pages survive a remote server, while an unreachable address still fails fast on the sign-in screen.
 
 ### Fixed
 
 ### Removed
+
+- Removed the settings machinery that only existed to reconfigure the injected jellyfin-web bridge (`SettingsApplyPlan::update_bridge_profile`, `AppSettings::is_complete`, and the playback-context correlation registry).
 
 
 ## [0.1.6] - 2026-07-16

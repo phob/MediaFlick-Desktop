@@ -1,0 +1,588 @@
+/* MediaFlick Desktop shell. Dark-first; the app owns the whole window. */
+
+:root {
+  --bg: #0d0f13;
+  --bg-raised: #161a21;
+  --bg-hover: #1e242e;
+  --line: #262d38;
+  --text: #e8ecf2;
+  --text-dim: #98a2b3;
+  --accent: #4f8cff;
+  --accent-text: #ffffff;
+  --danger: #ff6b6b;
+  --radius: 10px;
+  --poster-width: 168px;
+  --poster-height: 252px;
+  --card-gap: 18px;
+  --card-height: 306px;
+  --header-height: 56px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.boot,
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------ header */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--header-height);
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+  flex: 0 0 auto;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: 4px;
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+}
+
+.nav a {
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.nav a:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.nav a.active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.search {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search input {
+  width: 260px;
+  padding: 7px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.search input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.header .user {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- main */
+
+.main {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 20px;
+}
+
+.sync-note {
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+}
+
+.row {
+  margin-bottom: 28px;
+}
+
+.row h2,
+.section h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.rail {
+  display: flex;
+  gap: var(--card-gap);
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+
+/* -------------------------------------------------------------------- card */
+
+.card {
+  width: var(--poster-width);
+  flex: 0 0 auto;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  background: none;
+  text-align: left;
+}
+
+.card .poster {
+  position: relative;
+  width: var(--poster-width);
+  height: var(--poster-height);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.card .poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.card:hover .poster {
+  outline: 2px solid var(--accent);
+}
+
+.card .fallback {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.card .progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.card .progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.card .badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.card .title {
+  margin-top: 7px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card .subtitle {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- grid */
+
+.filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filters select,
+.filters button {
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.filters .count {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.grid-viewport {
+  position: relative;
+}
+
+.grid-canvas {
+  position: relative;
+  width: 100%;
+}
+
+.grid-canvas .card {
+  position: absolute;
+}
+
+/* ----------------------------------------------------------------- details */
+
+.detail {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+.detail .art {
+  width: 260px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.detail .art img {
+  width: 100%;
+  display: block;
+}
+
+.detail h1 {
+  font-size: 26px;
+  margin: 0 0 6px;
+}
+
+.detail .meta {
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.detail .overview {
+  max-width: 70ch;
+  margin-bottom: 20px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.actions button,
+.actions select {
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  cursor: pointer;
+}
+
+.actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.actions button:hover:not(.primary) {
+  background: var(--bg-hover);
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.people {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.person {
+  width: 110px;
+  font-size: 12px;
+}
+
+.person .avatar {
+  width: 110px;
+  height: 150px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.person .avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.person .role {
+  color: var(--text-dim);
+}
+
+.episodes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.episode {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.episode:hover {
+  background: var(--bg-hover);
+}
+
+.episode .number {
+  color: var(--text-dim);
+  min-width: 56px;
+}
+
+.episode .name {
+  flex: 1 1 auto;
+}
+
+.episode .watched {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- login */
+
+.login {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.login-card {
+  width: 380px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-raised);
+}
+
+.login-card h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+.login-card p.hint {
+  color: var(--text-dim);
+  margin: 0 0 20px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.field input {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.login-card button {
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.login-card button.secondary {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text);
+  font-weight: 400;
+}
+
+.login-card button[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  margin-top: 14px;
+  color: var(--danger);
+}
+
+.quick-code {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  text-align: center;
+}
+
+.quick-code strong {
+  display: block;
+  font-size: 30px;
+  letter-spacing: 0.18em;
+  margin-top: 6px;
+}
+
+/* -------------------------------------------------------------- player bar */
+
+.player-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+
+.player-bar .now {
+  min-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-bar .scrubber {
+  flex: 1 1 auto;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.player-bar .scrubber span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.player-bar .time {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.player-bar button {
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.player-bar button:hover {
+  background: var(--bg-hover);
+}
+
+/* ------------------------------------------------------------------ toasts */
+
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 40;
+}
+
+.toast {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  max-width: 360px;
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}

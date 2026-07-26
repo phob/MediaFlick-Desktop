@@ -1,0 +1,289 @@
+//! Item queries, user-data writes, and playback negotiation.
+//!
+//! Endpoints that Jellyfin moved out of `/Users/{userId}/…` in 10.9 are tried
+//! at the modern path first and fall back to the legacy one, so the app works
+//! against both current and older servers.
+
+use serde_json::{Value, json};
+
+use crate::app::urls::encode_path_segment;
+use crate::preferences::StreamingQuality;
+
+use super::client::{ApiError, JellyfinClient};
+use super::device_profile::device_profile;
+use super::model::{BaseItemDto, ItemsResponse, PlaybackInfoResponse};
+
+/// Item types the local cache mirrors. Music and live TV are out of scope.
+pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
+
+/// Metadata pulled for every synced item. Provider IDs are the join keys for
+/// the external-rating and list features planned on top of the cache.
+pub const SYNC_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
+DateCreated,DateLastSaved,OriginalTitle,SortName,PremiereDate,OfficialRating,\
+CommunityRating,CriticRating,ChildCount,ParentId";
+
+/// Page size for the bootstrap and incremental sweeps. Kept modest because
+/// each row carries cast, studios, and provider ids.
+pub const PAGE_SIZE: i64 = 200;
+
+fn user_query(user_id: &str) -> (&'static str, String) {
+    ("userId", user_id.to_string())
+}
+
+fn items_page_query(
+    user_id: &str,
+    start_index: i64,
+    sort_by: &str,
+    sort_order: &str,
+) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("Recursive", "true".to_string()),
+        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+        ("Fields", SYNC_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", start_index.to_string()),
+        ("Limit", PAGE_SIZE.to_string()),
+        ("SortBy", sort_by.to_string()),
+        ("SortOrder", sort_order.to_string()),
+    ]
+}
+
+/// One page of the library, ordered so paging stays stable during a sweep.
+pub fn fetch_items_page(
+    client: &JellyfinClient,
+    user_id: &str,
+    start_index: i64,
+    sort_by: &str,
+    sort_order: &str,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &items_page_query(user_id, start_index, sort_by, sort_order),
+    )
+}
+
+/// Identity-only sweep used to detect items deleted on the server, and the
+/// cheap user-data mirror.
+pub fn fetch_identity_page(
+    client: &JellyfinClient,
+    user_id: &str,
+    start_index: i64,
+    page_size: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("Recursive", "true".to_string()),
+            ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+            ("Fields", String::new()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "false".to_string()),
+            ("StartIndex", start_index.to_string()),
+            ("Limit", page_size.to_string()),
+            ("SortBy", "DateCreated".to_string()),
+            ("SortOrder", "Ascending".to_string()),
+        ],
+    )
+}
+
+/// Fetch a single item through `/Items?ids=`, which every supported server
+/// version exposes.
+pub fn fetch_item(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<BaseItemDto>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", SYNC_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+        ],
+    )?;
+    Ok(response.items.into_iter().next())
+}
+
+/// Server-side "what should I watch next" logic; deliberately not replicated
+/// against the local cache.
+pub fn fetch_next_up(
+    client: &JellyfinClient,
+    user_id: &str,
+    series_id: Option<&str>,
+    limit: i64,
+) -> Result<ItemsResponse, ApiError> {
+    let mut query = vec![
+        user_query(user_id),
+        ("Limit", limit.to_string()),
+        ("Fields", SYNC_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+    ];
+    if let Some(series_id) = series_id {
+        query.push(("seriesId", series_id.to_string()));
+    }
+    client.get_json("/Shows/NextUp", &query)
+}
+
+pub fn set_played(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    played: bool,
+) -> Result<(), ApiError> {
+    let modern = format!("/UserPlayedItems/{}", encode_path_segment(item_id));
+    let legacy = format!(
+        "/Users/{}/PlayedItems/{}",
+        encode_path_segment(user_id),
+        encode_path_segment(item_id)
+    );
+    user_data_write(client, user_id, &modern, &legacy, played)
+}
+
+pub fn set_favorite(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    favorite: bool,
+) -> Result<(), ApiError> {
+    let modern = format!("/UserFavoriteItems/{}", encode_path_segment(item_id));
+    let legacy = format!(
+        "/Users/{}/FavoriteItems/{}",
+        encode_path_segment(user_id),
+        encode_path_segment(item_id)
+    );
+    user_data_write(client, user_id, &modern, &legacy, favorite)
+}
+
+fn user_data_write(
+    client: &JellyfinClient,
+    user_id: &str,
+    modern_path: &str,
+    legacy_path: &str,
+    enable: bool,
+) -> Result<(), ApiError> {
+    let query = [user_query(user_id)];
+    let result = if enable {
+        client.post_empty(modern_path, &query, &json!({}))
+    } else {
+        client.delete(modern_path, &query)
+    };
+    match result {
+        Err(ApiError::Status { status }) if status == 404 || status == 405 => {
+            if enable {
+                client.post_empty(legacy_path, &[], &json!({}))
+            } else {
+                client.delete(legacy_path, &[])
+            }
+        }
+        other => other,
+    }
+}
+
+/// What the caller wants out of `PlaybackInfo`.
+#[derive(Debug, Clone, Default)]
+pub struct PlaybackInfoRequest {
+    pub media_source_id: Option<String>,
+    pub start_time_ticks: Option<i64>,
+    pub audio_stream_index: Option<i64>,
+    pub subtitle_stream_index: Option<i64>,
+}
+
+pub fn playback_info(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+    quality: StreamingQuality,
+    request: &PlaybackInfoRequest,
+) -> Result<PlaybackInfoResponse, ApiError> {
+    let mut body = json!({
+        "UserId": user_id,
+        "DeviceProfile": device_profile(quality),
+        "EnableDirectPlay": true,
+        "EnableDirectStream": true,
+        "EnableTranscoding": quality.allows_transcoding(),
+        "AllowVideoStreamCopy": true,
+        "AllowAudioStreamCopy": true,
+        "AutoOpenLiveStream": true,
+        "StartTimeTicks": request.start_time_ticks.unwrap_or(0),
+    });
+    if let Some(bitrate) = quality.max_streaming_bitrate() {
+        body["MaxStreamingBitrate"] = json!(bitrate);
+    }
+    for (key, value) in [
+        (
+            "MediaSourceId",
+            request.media_source_id.clone().map(Value::from),
+        ),
+        (
+            "AudioStreamIndex",
+            request.audio_stream_index.map(Value::from),
+        ),
+        (
+            "SubtitleStreamIndex",
+            request.subtitle_stream_index.map(Value::from),
+        ),
+    ] {
+        if let Some(value) = value {
+            body[key] = value;
+        }
+    }
+
+    let path = format!("/Items/{}/PlaybackInfo", encode_path_segment(item_id));
+    client.post_json(&path, &[("userId", user_id.to_string())], &body)
+}
+
+/// Path of the poster/backdrop endpoint for an item.
+pub fn image_path(item_id: &str, image_type: &str) -> String {
+    format!(
+        "/Items/{}/Images/{}",
+        encode_path_segment(item_id),
+        encode_path_segment(image_type)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAGE_SIZE, SYNC_FIELDS, SYNCED_ITEM_TYPES, image_path, items_page_query};
+
+    #[test]
+    fn synced_types_exclude_music_and_live_tv() {
+        assert_eq!(SYNCED_ITEM_TYPES, "Movie,Series,Season,Episode");
+        assert!(!SYNCED_ITEM_TYPES.contains("Audio"));
+    }
+
+    #[test]
+    fn sync_fields_request_the_provider_join_keys() {
+        assert!(SYNC_FIELDS.contains("ProviderIds"));
+        assert!(SYNC_FIELDS.contains("DateLastSaved"));
+        assert!(!SYNC_FIELDS.contains(' '));
+    }
+
+    #[test]
+    fn a_sync_page_request_carries_the_paging_and_field_selection() {
+        let query = items_page_query("uid", 400, "DateLastSaved", "Descending")
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["userId"], "uid");
+        assert_eq!(query["Recursive"], "true");
+        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["EnableUserData"], "true");
+        assert_eq!(query["StartIndex"], "400");
+        assert_eq!(query["Limit"], PAGE_SIZE.to_string());
+        assert_eq!(query["SortBy"], "DateLastSaved");
+        assert_eq!(query["SortOrder"], "Descending");
+    }
+
+    #[test]
+    fn image_paths_escape_the_item_id() {
+        assert_eq!(image_path("abc", "Primary"), "/Items/abc/Images/Primary");
+        assert_eq!(
+            image_path("../secret", "Primary"),
+            "/Items/..%2Fsecret/Images/Primary"
+        );
+    }
+}
