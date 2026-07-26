@@ -177,10 +177,11 @@ fn stream_url(
             .filter(|container| !container.is_empty())
             .and_then(|container| container.split(',').next())
             .unwrap_or("mkv");
-        let mut query = vec![
-            ("static", "true".to_string()),
-            ("api_key", client.token().unwrap_or_default().to_string()),
-        ];
+        // No `api_key`: the token travels in `request.headers` instead, so it
+        // stays out of the player's command line, its recent-files list, and
+        // its logs. mpv sends those headers; the MPC-HC controller, which
+        // cannot, appends the token to the URL itself at launch time.
+        let mut query = vec![("static", "true".to_string())];
         if let Some(media_source_id) = &source.id {
             query.push(("mediaSourceId", media_source_id.clone()));
         }
@@ -342,7 +343,7 @@ mod tests {
                 .starts_with("http://server:8096/Videos/item-1/stream.mkv?")
         );
         assert!(prepared.request.media_url.contains("static=true"));
-        assert!(prepared.request.media_url.contains("api_key=secret"));
+        assert!(!prepared.request.media_url.contains("api_key"));
         assert!(prepared.request.media_url.contains("mediaSourceId=src"));
         assert!(prepared.request.media_url.contains("playSessionId=session"));
         assert!(prepared.request.media_url.contains("tag=etag"));

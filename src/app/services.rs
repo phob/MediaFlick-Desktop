@@ -1,7 +1,7 @@
 //! Process-wide services the app-scheme API reaches from CEF's background
 //! threads, where the UI-thread browser state is not available.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use crate::app::paths;
 use crate::jellyfin::session::Session;
@@ -11,6 +11,9 @@ use crate::playback::PlaybackCoordinator;
 
 static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
 static INIT_ERROR: OnceLock<String> = OnceLock::new();
+/// `OnceLock::set` only makes the *result* single-shot, not the work leading up
+/// to it, so the whole sequence is serialized here instead.
+static INIT_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct Services {
     pub library: Arc<Library>,
@@ -39,6 +42,18 @@ pub fn init() -> Option<Arc<Services>> {
     if let Some(services) = SERVICES.get() {
         return Some(services.clone());
     }
+    // Several CEF threads can reach the API at once before anything is up.
+    // Whoever takes this lock and still finds no services is the one that
+    // builds them; without it, both would open the database and spawn a sync
+    // thread, and the loser of the `SERVICES.set` race would leak its thread
+    // against a `Library` nothing else can see. A poisoned lock only means a
+    // previous attempt panicked, which the checks below already handle.
+    let _guard = INIT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(services) = SERVICES.get() {
+        return Some(services.clone());
+    }
     let path = paths::library_db_path();
     let library = match Library::open(&path) {
         Ok(library) => Arc::new(library),
@@ -63,9 +78,9 @@ pub fn init() -> Option<Arc<Services>> {
         sync,
         playback: RwLock::new(None),
     });
-    let _ = SERVICES.set(services);
+    let _ = SERVICES.set(services.clone());
     tracing::info!(target: "library.db", path = %path.display(), "library database ready");
-    SERVICES.get().cloned()
+    Some(services)
 }
 
 pub fn services() -> Option<Arc<Services>> {

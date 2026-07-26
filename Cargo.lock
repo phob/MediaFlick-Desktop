@@ -722,6 +722,7 @@ version = "0.1.6"
 dependencies = [
  "cef",
  "clap",
+ "getrandom",
  "rusqlite",
  "serde",
  "serde_json",

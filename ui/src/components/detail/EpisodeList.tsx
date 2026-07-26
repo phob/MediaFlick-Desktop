@@ -85,6 +85,7 @@ function EpisodeRow({ episode, parentId }: { episode: ItemSummary; parentId: str
         <div className="mt-auto flex items-center gap-2 pt-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <Button
             size="sm"
+            disabled={play.isPending}
             onClick={() => play.mutate({ id: episode.id, resume: resumable, quality })}
           >
             <Play className="size-3 fill-current" />
