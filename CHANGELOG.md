@@ -20,6 +20,10 @@
 - Added `scripts/cdp-eval.ps1` for evaluating JavaScript inside a running app window over `--remote-debugging-port`.
 - Added a collapsible sidebar as the app's primary navigation, replacing the top header bar: the library search, Home, Movies, Series, and a new Favorites view, with the signed-in user and their server pinned at the bottom and sync-library and sign-out in the menu there. It collapses to an icon rail from the toggle or Ctrl+B and remembers that across restarts.
 - Added the React UI toolchain in `ui/`: Vite, TypeScript, Tailwind CSS v4 (CSS-first, no config file), shadcn/ui on the unified `radix-ui` package, TanStack Query as the only state layer, react-router, and `@tanstack/react-virtual`. `build.rs` runs the bundle build and stages it into `OUT_DIR`, so `cargo build` stays self-sufficient and can never embed a stale bundle; `just ui` and `just ui-dev` are available for working on the UI alone.
+- Added a media-information panel to the details view: container, file size, overall bitrate, resolution, dynamic range (HDR10, HLG, Dolby Vision), bit depth, and every video, audio, and subtitle track with its codec, language, and channel layout. It is served by a new `/api/item/{id}/media` endpoint that reads `MediaSources` from the server on demand, since codecs are deliberately not in the local cache. Long subtitle lists collapse after six tracks.
+- Added external-database links to the details view. A menu next to the action buttons opens the item on IMDb, TMDb, or TVDB in the system browser. The UI only names a provider — `/api/item/{id}/external` looks the id up in the cache and builds the address itself, and offers no link where the provider has no page for that kind of item.
+- Added a Play button to series and season pages, which previously offered none. A series starts its Next Up episode (falling back to the first episode once the show is fully watched or the server is unreachable), a season starts whatever was left half-watched, and both buttons name the episode they will start.
+- Added `scripts/cdp-screenshot.ps1`, the screenshot counterpart to `cdp-eval.ps1`, for capturing the running app window over `--remote-debugging-port`.
 
 ### Changed
 
@@ -29,6 +33,8 @@
 - The browser window now always loads `mediaflick-desktop://app/` instead of the Jellyfin server URL, and the shell only opens HTTP(S) navigations in the system browser.
 - Added `rusqlite` (bundled SQLite with FTS5), pinned to 0.37 because 0.40's `libsqlite3-sys` build script needs a newer Rust than the project's toolchain.
 - Raised the Jellyfin HTTP budget to 120 s with a 10 s connect timeout so full-metadata sync pages survive a remote server, while an unreachable address still fails fast on the sign-in screen.
+- Rebuilt the details view, which showed only a small poster, a fact line, and the synopsis. It now opens with the item's own backdrop behind a larger poster, breadcrumbs from an episode back to its season and series, community and critic ratings, clickable genre chips, and a resume bar with the time remaining. Below it are a cast row with headshots and roles, a details panel with directors, writers, studios, premiere and added dates, play count and tags, and the new media panel.
+- Episodes are now listed as rows with a 16:9 still, number, title, runtime, synopsis, and per-episode Play and watched controls, instead of as 2:3 poster cards with no text. An episode's own page shows its still at 16:9 rather than cropped into a poster frame. `/api/item/{id}/children` carries the overview for this, so the list costs no extra requests.
 
 ### Fixed
 

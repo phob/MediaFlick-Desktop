@@ -32,6 +32,8 @@ export const queryKeys = {
   items: (query: ItemQuery) => ["items", query] as const,
   item: (id: string) => ["item", id] as const,
   children: (id: string) => ["item", id, "children"] as const,
+  media: (id: string) => ["item", id, "media"] as const,
+  nextUp: (id: string) => ["item", id, "nextup"] as const,
   playerState: ["player", "state"] as const,
 }
 
@@ -50,13 +52,19 @@ export function patchPlayerState(patch: Partial<PlayerState>) {
  * The media-surface invalidation entry point, mirroring SILO's
  * `invalidateMediaSurfaceQueries`. Anything that changes catalog or user state
  * calls this rather than trying to patch individual caches.
+ *
+ * Takes several ids because the item whose state changed is often not the one
+ * on screen: marking an episode watched from a season page has to refresh the
+ * season's child list, and the series' Next Up, as well as the episode itself.
+ * `queryKeys.item(id)` is a prefix of that item's children, media, and Next Up
+ * keys, so one invalidation per id covers all of them.
  */
-export function invalidateMediaSurfaces(itemId?: string) {
+export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[]) {
   const active = { refetchType: "active" as const }
   void queryClient.invalidateQueries({ queryKey: queryKeys.home, ...active })
   void queryClient.invalidateQueries({ queryKey: ["items"], ...active })
-  if (itemId) {
+  for (const itemId of itemIds) {
+    if (!itemId) continue
     void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...active })
-    void queryClient.invalidateQueries({ queryKey: queryKeys.children(itemId), ...active })
   }
 }

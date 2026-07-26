@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::app::services::{self, Services};
 use crate::app::urls::{percent_decode, query_param};
 use crate::jellyfin::api::items;
-use crate::jellyfin::api::model::BaseItemDto;
+use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::{ItemQuery, ItemSort};
@@ -138,6 +138,11 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         },
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
+        ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
+        ["item", id, "nextup"] if request.is("GET") => next_up(services, &percent_decode(id)),
+        ["item", id, "external"] if request.is("POST") => {
+            open_external(services, &percent_decode(id), request)
+        }
         ["item", id, "played"] if request.is("POST") => {
             set_played(services, &percent_decode(id), request)
         }
@@ -447,6 +452,167 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) {
             tracing::warn!(target: "app.api", "could not evict stale children: {error}");
         }
     }
+}
+
+/// Container, codec, and track detail for the detail page.
+///
+/// Folders have no streams of their own, so they are answered from here without
+/// a round trip rather than letting the server return an empty source list.
+fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    if matches!(
+        services.library.kind(item_id).as_deref(),
+        Some("Series" | "Season")
+    ) {
+        return ApiResponse::ok(json!({ "sources": [] }));
+    }
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    match items::fetch_media_sources(&client, &user_id, item_id) {
+        Ok(sources) => ApiResponse::ok(json!({
+            "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
+        })),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+fn media_source_json(source: &MediaSourceInfo) -> Value {
+    let streams = |kind: &str| {
+        source
+            .streams_of_type(kind)
+            .map(media_stream_json)
+            .collect::<Vec<_>>()
+    };
+    json!({
+        "id": source.id,
+        "name": source.display_name(),
+        "container": source.container,
+        // Only the file name: the server's directory layout is not the UI's
+        // business, but "which file is this" is exactly what this page is for.
+        // Jellyfin answers non-admin users with an opaque id in `Path`, which
+        // `file_name_of` filters out — the source name carries the release
+        // there, and the UI falls back to it.
+        "fileName": source.path.as_deref().and_then(file_name_of),
+        "size": source.size,
+        "bitrate": source.bitrate,
+        "video": streams("video"),
+        "audio": streams("audio"),
+        "subtitles": streams("subtitle"),
+    })
+}
+
+fn media_stream_json(stream: &MediaStream) -> Value {
+    json!({
+        "index": stream.index,
+        "codec": stream.codec,
+        "language": stream.language,
+        "title": stream.title,
+        "displayTitle": stream.display_title,
+        "width": stream.width,
+        "height": stream.height,
+        "channels": stream.channels,
+        "videoRange": stream.video_range,
+        "videoRangeType": stream.video_range_type,
+        "bitDepth": stream.bit_depth,
+        "isDefault": stream.is_default,
+        "isForced": stream.is_forced,
+        "isExternal": stream.is_external,
+    })
+}
+
+/// The basename of a real file path.
+///
+/// `Path` is admin-only in Jellyfin; ordinary users get an opaque id there
+/// instead, so a name with no extension is not a file name and is dropped
+/// rather than printed as if it were one.
+fn file_name_of(path: &str) -> Option<&str> {
+    let name = path.rsplit(['/', '\\']).next()?;
+    let extension = name.rsplit_once('.')?.1;
+    (!extension.is_empty() && extension.len() <= 5 && extension.chars().all(char::is_alphanumeric))
+        .then_some(name)
+}
+
+/// The episode a series' Play button should start.
+///
+/// Next Up is server-side logic, exactly as on the home screen, so a series
+/// page agrees with the Next Up row. It runs out on a fully watched show and is
+/// unavailable offline, and in both cases the first episode is a better answer
+/// than a page with nothing to play.
+fn next_up(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    if services.library.kind(item_id).as_deref() != Some("Series") {
+        return ApiResponse::ok(json!({ "item": Value::Null }));
+    }
+    let from_server = match services.session.client_and_user() {
+        Ok((client, user_id)) => items::fetch_next_up(&client, &user_id, Some(item_id), 1)
+            .map(|response| response.items.first().map(summary_from_dto))
+            .unwrap_or_else(|error| {
+                services.session.note_error(&error);
+                tracing::debug!(target: "app.api", "Next Up unavailable for {item_id}: {error}");
+                None
+            }),
+        Err(_) => None,
+    };
+    let item = match from_server {
+        Some(item) => Some(item),
+        None => services.library.first_episode(item_id).unwrap_or_default(),
+    };
+    ApiResponse::ok(json!({ "item": item }))
+}
+
+/// Opens an item's page on IMDb, TMDb, or TVDB in the default browser.
+///
+/// The UI names a provider, never a URL: the id and the item kind both come
+/// from the cached row here, so nothing the page can say turns into a launched
+/// address.
+fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    let provider = body["provider"].as_str().unwrap_or_default().to_string();
+    let item = match services.library.item(item_id) {
+        Ok(Some(item)) => item,
+        Ok(None) => return ApiResponse::error(404, "no cached item with that id"),
+        Err(error) => return storage_failure(&error),
+    };
+    let kind = item["kind"].as_str().unwrap_or_default();
+    let id = item["providerIds"][provider.as_str()]
+        .as_str()
+        .unwrap_or("");
+    let Some(url) = external_url(&provider, id, kind) else {
+        return ApiResponse::error(404, "this item has no id for that database");
+    };
+    super::open_external_link(&url);
+    ApiResponse::ok(json!({ "opened": true, "url": url }))
+}
+
+/// Builds the provider URL, or `None` when the id is missing, is not the plain
+/// token these databases use in a path segment, or belongs to a kind the
+/// provider has no page for.
+///
+/// The kind matters because the ids are not interchangeable: an episode's TMDb
+/// id is an episode id, so linking it under `/tv/` would land on an unrelated
+/// show. Where a provider has no route for the kind, there is no link.
+fn external_url(provider: &str, id: &str, kind: &str) -> Option<String> {
+    if id.is_empty()
+        || id.len() > 32
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(match (provider, kind) {
+        // IMDb keeps movies, series, and episodes under one `/title/` route.
+        ("imdb", "Movie" | "Series" | "Episode") => format!("https://www.imdb.com/title/{id}/"),
+        ("tmdb", "Movie") => format!("https://www.themoviedb.org/movie/{id}"),
+        ("tmdb", "Series") => format!("https://www.themoviedb.org/tv/{id}"),
+        ("tvdb", "Movie") => format!("https://thetvdb.com/dereferrer/movie/{id}"),
+        ("tvdb", "Series") => format!("https://thetvdb.com/dereferrer/series/{id}"),
+        ("tvdb", "Episode") => format!("https://thetvdb.com/dereferrer/episode/{id}"),
+        _ => return None,
+    })
 }
 
 fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
@@ -919,8 +1085,11 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiRequest, ApiResponse, cache_key, handle, mime_for_image, summary_from_dto};
-    use crate::jellyfin::api::model::BaseItemDto;
+    use super::{
+        ApiRequest, ApiResponse, cache_key, external_url, file_name_of, handle, media_source_json,
+        mime_for_image, summary_from_dto,
+    };
+    use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
 
     fn get(path: &str) -> ApiResponse {
@@ -1017,5 +1186,87 @@ mod tests {
         assert_eq!(response.status, 404);
         let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
         assert_eq!(body["expired"], false);
+    }
+
+    #[test]
+    fn external_links_are_built_per_provider_and_kind() {
+        assert_eq!(
+            external_url("imdb", "tt0133093", "Movie").as_deref(),
+            Some("https://www.imdb.com/title/tt0133093/")
+        );
+        assert_eq!(
+            external_url("tmdb", "603", "Movie").as_deref(),
+            Some("https://www.themoviedb.org/movie/603")
+        );
+        assert_eq!(
+            external_url("tmdb", "95396", "Series").as_deref(),
+            Some("https://www.themoviedb.org/tv/95396")
+        );
+        assert_eq!(
+            external_url("tvdb", "371980", "Episode").as_deref(),
+            Some("https://thetvdb.com/dereferrer/episode/371980")
+        );
+    }
+
+    /// An episode's TMDb id is an episode id, so there is no `/tv/` page for it
+    /// and offering one would link an unrelated show.
+    #[test]
+    fn external_links_are_absent_where_the_id_does_not_address_a_page() {
+        assert_eq!(external_url("tmdb", "12345", "Episode"), None);
+        assert_eq!(external_url("tmdb", "12345", "Season"), None);
+        assert_eq!(external_url("tvdb", "12345", "Season"), None);
+        assert_eq!(external_url("imdb", "", "Movie"), None);
+        assert_eq!(external_url("trakt", "12345", "Movie"), None);
+    }
+
+    /// Ids reach `open_external_link` as a path segment, so anything that is
+    /// not a plain token must not produce a URL at all.
+    #[test]
+    fn external_links_reject_ids_that_are_not_plain_tokens() {
+        let too_long = "a".repeat(33);
+        for id in ["tt1/../evil", "603?x=1", "603#f", "603 604", &too_long] {
+            assert_eq!(external_url("imdb", id, "Movie"), None, "id {id}");
+        }
+    }
+
+    #[test]
+    fn media_source_paths_are_reduced_to_a_file_name() {
+        assert_eq!(
+            file_name_of("/mnt/media/Movies/The Matrix (1999)/matrix.mkv"),
+            Some("matrix.mkv")
+        );
+        assert_eq!(
+            file_name_of(r"D:\Media\Movies\matrix.mkv"),
+            Some("matrix.mkv")
+        );
+    }
+
+    /// Non-admin users get an opaque id in `Path`, which must not be printed as
+    /// if it were the name of a file.
+    #[test]
+    fn media_source_paths_that_are_not_file_names_are_dropped() {
+        assert_eq!(file_name_of("6967c5ef-2daf-4951-9d03-38db9a7f5351"), None);
+        assert_eq!(file_name_of("/mnt/media/Movies/The Matrix (1999)"), None);
+        assert_eq!(file_name_of(""), None);
+    }
+
+    #[test]
+    fn media_sources_are_flattened_into_video_audio_and_subtitle_lists() {
+        let source: MediaSourceInfo = serde_json::from_str(
+            r#"{"Id":"src","Name":"matrix","Container":"mkv","Size":123,"Bitrate":456,
+                "Path":"/mnt/matrix.mkv",
+                "MediaStreams":[
+                    {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":2160},
+                    {"Index":1,"Type":"Audio","Codec":"dts","Channels":6,"IsDefault":true},
+                    {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"eng","IsExternal":true}]}"#,
+        )
+        .expect("source");
+        let value = media_source_json(&source);
+        assert_eq!(value["container"], "mkv");
+        assert_eq!(value["fileName"], "matrix.mkv");
+        assert_eq!(value["video"][0]["height"], 2160);
+        assert_eq!(value["audio"][0]["channels"], 6);
+        assert_eq!(value["subtitles"][0]["isExternal"], true);
+        assert_eq!(value["video"].as_array().map(Vec::len), Some(1));
     }
 }

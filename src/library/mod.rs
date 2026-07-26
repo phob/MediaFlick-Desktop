@@ -479,10 +479,14 @@ impl Library {
     }
 
     /// Seasons of a series, or episodes of a season, in broadcast order.
+    ///
+    /// Carries the overview on top of the summary shape: the episode list is a
+    /// reading surface, not a poster wall, and re-fetching one synopsis per row
+    /// would be a request per episode.
     pub fn children(&self, parent_id: &str) -> rusqlite::Result<Vec<Value>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS} FROM items i
+                "SELECT {SUMMARY_COLUMNS}, i.overview FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
                  WHERE i.parent_id = ?1 OR (i.season_id = ?1 AND i.kind = 'Episode')
                  ORDER BY i.parent_index_number ASC NULLS LAST,
@@ -490,7 +494,7 @@ impl Library {
                           i.sort_name COLLATE NOCASE ASC"
             ))?;
             let rows = statement
-                .query_map(params![parent_id], summary_row)?
+                .query_map(params![parent_id], child_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -539,6 +543,30 @@ impl Library {
                 .query_map([], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
+        })
+    }
+
+    /// The earliest episode of a series in broadcast order.
+    ///
+    /// This is what a series' Play button falls back to once the server has no
+    /// Next Up left to offer — a fully watched show would otherwise leave the
+    /// page with nothing to play.
+    pub fn first_episode(&self, series_id: &str) -> rusqlite::Result<Option<Value>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {SUMMARY_COLUMNS} FROM items i
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 WHERE i.kind = 'Episode' AND i.series_id = ?1
+                 ORDER BY i.parent_index_number ASC NULLS LAST,
+                          i.index_number ASC NULLS LAST,
+                          i.sort_name COLLATE NOCASE ASC
+                 LIMIT 1"
+            ))?;
+            let mut rows = statement.query(params![series_id])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(summary_row(row)?)),
+                None => Ok(None),
+            }
         })
     }
 
@@ -602,6 +630,18 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         "positionTicks": row.get::<_, i64>(17)?,
         "favorite": row.get::<_, i64>(18)? != 0,
     }))
+}
+
+/// A summary row plus the overview, in the one column past `SUMMARY_COLUMNS`.
+fn child_row(row: &Row<'_>) -> rusqlite::Result<Value> {
+    let mut value = summary_row(row)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "overview".to_string(),
+            json!(row.get::<_, Option<String>>(19)?),
+        );
+    }
+    Ok(value)
 }
 
 fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
@@ -885,7 +925,7 @@ mod tests {
                 dto(r#"{"Id":"s1","Name":"Severance","Type":"Series","DateCreated":"2024-02-02"}"#),
                 dto(
                     r#"{"Id":"e1","Name":"Good News About Hell","Type":"Episode","SeriesId":"s1",
-                        "ParentId":"season1","SeasonId":"season1",
+                        "ParentId":"season1","SeasonId":"season1","Overview":"Mark is promoted.",
                         "IndexNumber":1,"ParentIndexNumber":1}"#,
                 ),
                 dto(
@@ -1014,6 +1054,15 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["id"], "e1");
         assert_eq!(rows[1]["id"], "e2");
+    }
+
+    /// The episode list prints a synopsis per row; without it here that would
+    /// be one request per episode.
+    #[test]
+    fn children_carry_their_overview() {
+        let rows = seeded().children("season1").expect("children");
+        assert_eq!(rows[0]["overview"], "Mark is promoted.");
+        assert_eq!(rows[1]["overview"], serde_json::Value::Null);
     }
 
     #[test]
