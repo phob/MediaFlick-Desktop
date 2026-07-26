@@ -113,8 +113,12 @@ export function externalLinksFor(item: ItemDetail) {
   )
 }
 
+/**
+ * `resume` is Continue Watching and Next Up in one row — `home` in
+ * `src/shell/cef/api.rs` merges them, half-watched items first.
+ */
 export interface HomeRow {
-  id: "resume" | "nextUp" | "recent"
+  id: "resume" | "recent"
   title: string
   items: ItemSummary[]
 }
