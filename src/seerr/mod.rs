@@ -316,14 +316,27 @@ impl SeerrSession {
     /// Forgets the session without touching the instance address, so re-linking
     /// does not mean retyping it.
     fn unlink_locally(&self) {
-        let mut next = self.read();
-        next.cookies = SessionCookies::default();
-        next.user_id = None;
-        next.user_name = None;
-        next.jellyfin_server_id = None;
-        next.jellyfin_user_id = None;
-        next.expired = false;
-        self.commit(next);
+        // A lost revision race must not leave the previous account's cookie
+        // behind, so the clear is retried against the refreshed revision.
+        for _ in 0..3 {
+            let mut next = self.read();
+            if next.cookies.is_empty() && next.jellyfin_user_id.is_none() {
+                return;
+            }
+            next.cookies = SessionCookies::default();
+            next.user_id = None;
+            next.user_name = None;
+            next.jellyfin_server_id = None;
+            next.jellyfin_user_id = None;
+            next.expired = false;
+            if self.commit(next) {
+                return;
+            }
+        }
+        tracing::warn!(
+            target: "seerr.session",
+            "could not drop the Seerr link: the stored link kept changing"
+        );
     }
 
     /// Best-effort server-side teardown before a stored session is abandoned.
