@@ -17,7 +17,9 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::{ItemQuery, ItemSort};
 use crate::preferences::{AppSettings, StreamingQuality};
+use crate::seerr::DiscoverKind;
 use crate::seerr::api::SeerrError;
+use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -147,6 +149,29 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
         ["seerr", "status"] if request.is("GET") => ApiResponse::ok(services.seerr.status()),
         ["seerr", "connect"] if request.is("POST") => seerr_connect(services, request),
+        ["seerr", "link"] if request.is("POST") => seerr_link(services),
+        ["seerr", "link", "poll"] if request.is("POST") => seerr_link_poll(services, request),
+        ["seerr", "link", "password"] if request.is("POST") => {
+            seerr_link_password(services, request)
+        }
+        ["seerr", "unlink"] if request.is("POST") => ApiResponse::ok(services.seerr.unlink()),
+        ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
+        ["seerr", "discover", kind] if request.is("GET") => {
+            seerr_discover(services, &percent_decode(kind), request)
+        }
+        ["seerr", "media", media_type, tmdb_id] if request.is("GET") => seerr_media(
+            services,
+            &percent_decode(media_type),
+            &percent_decode(tmdb_id),
+        ),
+        ["seerr", "request"] if request.is("POST") => seerr_request(services, request),
+        ["seerr", "requests"] if request.is("GET") => seerr_requests(services, request),
+        ["seerr", "request", id] if request.is("DELETE") => {
+            seerr_cancel_request(services, &percent_decode(id))
+        }
+        ["seerr", "image", size, file] if request.is("GET") => {
+            seerr_image(&percent_decode(size), &percent_decode(file))
+        }
         ["home"] if request.is("GET") => home(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["genres"] if request.is("GET") => match services.library.genres() {
@@ -291,6 +316,156 @@ fn seerr_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
         Ok(value) => ApiResponse::ok(value),
         Err(error) => ApiResponse::from_seerr_error(&error),
     }
+}
+
+/// Starts the password-less link. Answers `{"method":"password"}` — not an
+/// error — whenever Quick Connect is unavailable on either side, since every
+/// Seerr release supports the password path this then falls back to.
+fn seerr_link(services: &Arc<Services>) -> ApiResponse {
+    match services.seerr.link_start() {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_link_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    match services
+        .seerr
+        .link_poll(body["secret"].as_str().unwrap_or_default())
+    {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_link_password(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    let result = services.seerr.link_with_password(
+        body["username"].as_str().unwrap_or_default(),
+        body["password"].as_str().unwrap_or_default(),
+    );
+    match result {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let query = request.param("q").unwrap_or_default();
+    match services.seerr.search(&query, page_param(request)) {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) -> ApiResponse {
+    let Some(kind) = DiscoverKind::from_id(kind) else {
+        return ApiResponse::error(404, "unknown discover row");
+    };
+    match services.seerr.discover(kind, page_param(request)) {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> ApiResponse {
+    let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
+        return ApiResponse::error(400, "that is not a TMDB id");
+    };
+    match services.seerr.media_detail(media_type, tmdb_id) {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    // An explicit list means "these seasons"; its absence means "the whole
+    // show", which Seerr expands to whatever it does not already have.
+    let seasons = body["seasons"].as_array().map(|seasons| {
+        seasons
+            .iter()
+            .filter_map(serde_json::Value::as_i64)
+            .collect::<Vec<_>>()
+    });
+    let result = services.seerr.create_request(
+        body["mediaType"].as_str().unwrap_or_default(),
+        body["tmdbId"].as_i64().unwrap_or_default(),
+        seasons,
+        body["is4k"].as_bool().unwrap_or(false),
+    );
+    match result {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let number = |key: &str, fallback: i64| {
+        request
+            .param(key)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(fallback)
+    };
+    let result = services.seerr.requests(
+        number("take", 20),
+        number("skip", 0),
+        &request.param("filter").unwrap_or_else(|| "all".to_string()),
+    );
+    match result {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiResponse {
+    let Ok(request_id) = request_id.parse::<i64>() else {
+        return ApiResponse::error(400, "that is not a request id");
+    };
+    match services.seerr.cancel_request(request_id) {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seerr_error(&error),
+    }
+}
+
+/// The TMDB poster proxy, in the same posture as [`open_external`]: the UI
+/// names a rendition size and an image file, never an address, and
+/// [`tmdb_image_url`] is what decides whether those two compose into a request
+/// at all.
+///
+/// Art for titles the library does not have is exactly the browsing that pulls
+/// the most bytes, so it shares the pruned on-disk cache the Jellyfin image
+/// proxy already has, and is served as immutable — a TMDB file name addresses
+/// one unchanging image.
+fn seerr_image(size: &str, file: &str) -> ApiResponse {
+    let Some(url) = tmdb_image_url(size, file) else {
+        return ApiResponse::error(404, "no such poster");
+    };
+    let key = cache_key("tmdb", size, file, 0);
+    let cache_path = crate::app::paths::image_cache_dir().join(&key);
+    if let Ok(bytes) = std::fs::read(&cache_path)
+        && !bytes.is_empty()
+    {
+        return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
+    }
+    match fetch_tmdb_image(&url) {
+        Ok((bytes, content_type)) => {
+            store_image(&cache_path, &bytes);
+            ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
+        }
+        Err(error) => {
+            tracing::debug!(target: "app.api", "could not fetch poster art: {error}");
+            ApiResponse::from_seerr_error(&error)
+        }
+    }
+}
+
+fn page_param(request: &ApiRequest) -> i64 {
+    request
+        .param("page")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1)
 }
 
 // ------------------------------------------------------------------ browsing
@@ -1120,6 +1295,8 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
         "indexNumber": dto.index_number,
         "parentIndexNumber": dto.parent_index_number,
         "primaryImageTag": dto.primary_image_tag(),
+        "thumbImageTag": dto.image_tag("Thumb"),
+        "backdropImageTag": dto.backdrop_image_tags.first(),
         "childCount": dto.child_count,
         "premiereDate": dto.premiere_date,
         "seasonId": dto.season_id,
@@ -1237,6 +1414,8 @@ mod tests {
         let dto: BaseItemDto = serde_json::from_str(
             r#"{"Id":"e1","Name":"Half Loop","Type":"Episode","SeriesName":"Severance",
                 "IndexNumber":2,"ParentIndexNumber":1,
+                "ImageTags":{"Primary":"still-tag","Thumb":"thumb-tag"},
+                "BackdropImageTags":["backdrop-tag"],
                 "UserData":{"Played":false,"PlaybackPositionTicks":42}}"#,
         )
         .expect("dto");
@@ -1247,6 +1426,9 @@ mod tests {
         assert_eq!(summary["positionTicks"], 42);
         assert_eq!(summary["played"], false);
         assert_eq!(summary["favorite"], false);
+        assert_eq!(summary["primaryImageTag"], "still-tag");
+        assert_eq!(summary["thumbImageTag"], "thumb-tag");
+        assert_eq!(summary["backdropImageTag"], "backdrop-tag");
     }
 
     fn episode(id: &str, series_id: &str) -> serde_json::Value {

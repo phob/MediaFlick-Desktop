@@ -50,8 +50,8 @@ export function DetailFacts({ item }: { item: ItemDetail }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-base font-medium">Details</h2>
-      <dl className="divide-y divide-border/60 rounded-lg bg-card/60 px-4 py-1">
+      <h2 className="section-title">Details</h2>
+      <dl className="divide-y divide-border/60 rounded-xl border border-white/5 bg-card/55 px-4 py-1 shadow-lg shadow-black/10">
         {facts.map((fact) => (
           <Fact key={fact.label} label={fact.label}>
             {fact.value}

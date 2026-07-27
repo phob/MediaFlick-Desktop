@@ -31,9 +31,9 @@ export function CastRow({ people }: { people: Person[] }) {
   if (!cast.length) return null
 
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="px-6 text-base font-medium">Cast</h2>
-      <div className="flex gap-6 overflow-x-auto px-6 pb-2">
+    <section className="flex min-w-0 flex-col gap-4">
+      <h2 className="section-title px-6 sm:px-10 lg:px-14">Cast</h2>
+      <div className="media-strip flex gap-6 overflow-x-auto px-6 pb-3 sm:px-10 lg:px-14">
         {cast.map((person, index) => (
           <figure
             key={`${person.id ?? person.name}-${index}`}

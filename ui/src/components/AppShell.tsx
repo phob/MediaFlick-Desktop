@@ -32,12 +32,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           // A blocked storage partition is not a reason to refuse to collapse.
         }
       }}
-      className="h-full"
+      className="app-experience h-full min-w-0 overflow-hidden"
     >
       <AppSidebar />
-      <SidebarInset className="min-h-0 overflow-hidden">
+      <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
         {/* The shell never scrolls; the content pane does. */}
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
+          {children}
+        </div>
         <PlayerBar />
       </SidebarInset>
     </SidebarProvider>

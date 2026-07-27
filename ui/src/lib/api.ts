@@ -4,6 +4,8 @@
 
 export const TICKS_PER_MS = 10_000
 export const POSTER_WIDTH = 400
+/** Home progress cards are drawn wider and use 16:9 art. */
+export const LANDSCAPE_WIDTH = 560
 /** The detail hero renders edge to edge, so its backdrop needs a real width. */
 export const BACKDROP_WIDTH = 1920
 /** Detail poster and episode thumbnails: bigger slots than the grid's. */
@@ -27,6 +29,8 @@ export interface ItemSummary {
   indexNumber: number | null
   parentIndexNumber: number | null
   primaryImageTag: string | null
+  thumbImageTag: string | null
+  backdropImageTag: string | null
   childCount: number | null
   premiereDate: string | null
   seasonId: string | null
@@ -52,7 +56,6 @@ export interface ItemDetail extends ItemSummary {
   tags: string[]
   studios: string[]
   people: Person[]
-  backdropImageTag: string | null
   criticRating: number | null
   originalTitle: string | null
   providerIds: { tmdb: string | null; imdb: string | null; tvdb: string | null }
@@ -115,10 +118,11 @@ export function externalLinksFor(item: ItemDetail) {
 
 /**
  * `resume` is Continue Watching and Next Up in one row — `home` in
- * `src/shell/cef/api.rs` merges them, half-watched items first.
+ * `src/shell/cef/api.rs` merges them, half-watched items first. `favorites` is
+ * assembled by the UI from the regular items endpoint for the My List shelf.
  */
 export interface HomeRow {
-  id: "resume" | "recent"
+  id: "resume" | "recent" | "favorites"
   title: string
   items: ItemSummary[]
 }
@@ -157,6 +161,157 @@ export interface QuickConnectStart {
   serverUrl: string
   code: string
   secret: string
+}
+
+// ------------------------------------------------------------------- seerr
+
+/** The two TMDB namespaces; `person` results never reach the UI. */
+export type SeerrMediaType = "movie" | "tv"
+
+/** `status_name` in `src/seerr/api/model.rs`. */
+export type SeerrStatus =
+  | "unknown"
+  | "pending"
+  | "processing"
+  | "partial"
+  | "available"
+  | "blacklisted"
+
+/** `request_status_name` in `src/seerr/api/model.rs`. */
+export type SeerrRequestStatus = "unknown" | "pending" | "approved" | "declined" | "failed"
+
+/**
+ * One Seerr result, already joined against the local cache by the shell.
+ * `libraryItemId` is the whole point of the join: a result either plays or is
+ * requested, and the card never has to guess which.
+ */
+export interface SeerrResult {
+  mediaType: SeerrMediaType
+  tmdbId: number
+  title: string
+  year: number | null
+  overview: string | null
+  posterPath: string | null
+  backdropPath: string | null
+  voteAverage: number | null
+  status: SeerrStatus
+  status4k: SeerrStatus
+  libraryItemId: string | null
+}
+
+export interface SeerrSeason {
+  seasonNumber: number
+  name: string | null
+  episodeCount: number
+  airDate: string | null
+  status: SeerrStatus
+}
+
+export interface SeerrMediaDetail extends SeerrResult {
+  runtimeMinutes: number | null
+  genres: string[]
+  seasons: SeerrSeason[]
+}
+
+export interface SeerrPage<T> {
+  page: number
+  totalPages: number
+  totalResults: number
+  results: T[]
+}
+
+export interface SeerrRequest {
+  id: number
+  status: SeerrRequestStatus
+  mediaType: SeerrMediaType
+  tmdbId: number | null
+  is4k: boolean
+  createdAt: string | null
+  updatedAt: string | null
+  mediaStatus: SeerrStatus
+  seasons: number[]
+  libraryItemId: string | null
+}
+
+/** What one media kind may do, from the user's Seerr permission mask. */
+export interface SeerrCapability {
+  request: boolean
+  autoApprove: boolean
+}
+
+export interface SeerrCapabilities {
+  movie: SeerrCapability
+  tv: SeerrCapability
+  movie4k: SeerrCapability
+  tv4k: SeerrCapability
+}
+
+export interface SeerrQuotaStatus {
+  days: number | null
+  limit: number | null
+  used: number
+  remaining: number | null
+  restricted: boolean
+}
+
+/** Mirrors `SeerrSession::status` in `src/seerr/mod.rs`. */
+export interface SeerrStatusInfo {
+  configured: boolean
+  linked: boolean
+  expired: boolean
+  serverUrl: string | null
+  instance: {
+    movie4kEnabled: boolean
+    series4kEnabled: boolean
+    partialRequestsEnabled: boolean
+  }
+  user: { id: number; name: string; avatar: string | null; jellyfinUserId: string | null } | null
+  capabilities: SeerrCapabilities | null
+  quota: { movie: SeerrQuotaStatus; tv: SeerrQuotaStatus } | null
+}
+
+/** What `POST /api/seerr/connect` reports about the instance it probed. */
+export interface SeerrServerInfo {
+  serverUrl: string
+  version: string
+  applicationTitle: string | null
+  localLogin: boolean
+  mediaServerLogin: boolean
+  newSignInAllowed: boolean
+  movie4kEnabled: boolean
+  series4kEnabled: boolean
+  partialRequestsEnabled: boolean
+  linked: boolean
+}
+
+/**
+ * `link` answers `{ method: "password" }` whenever Quick Connect is unavailable
+ * on either side — that is the expected answer on every stable Seerr, not an
+ * error, so the dialog just shows the password form.
+ */
+export interface SeerrLinkResult {
+  method: "password" | "quickconnect"
+  linked: boolean
+  secret?: string
+  status?: SeerrStatusInfo
+}
+
+export const SEERR_DISCOVER_ROWS = [
+  { id: "trending", label: "Trending" },
+  { id: "movies", label: "Movies" },
+  { id: "tv", label: "Series" },
+] as const
+
+export type SeerrDiscoverRow = (typeof SEERR_DISCOVER_ROWS)[number]["id"]
+
+/**
+ * TMDB art through the Rust proxy. The size is a name from the allowlist in
+ * `tmdb_image_url` (`src/seerr/api/client.rs`) — the UI never composes an
+ * address, exactly as with the Jellyfin image proxy and the external links.
+ */
+export function seerrImageUrl(path: string | null | undefined, size = "w300") {
+  if (!path) return null
+  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}`
 }
 
 /** Ids accepted by `StreamingQuality::from_id` (`src/preferences/model.rs`). */
@@ -248,12 +403,19 @@ export class ApiError extends Error {
   readonly status: number
   /** The server rejected the stored token — the shell must return to sign-in. */
   readonly expired: boolean
+  /**
+   * The *Seerr* session lapsed, which `from_seerr_error` reports under its own
+   * name. Signing out of the app over it would be wrong: the Jellyfin session
+   * is untouched, and only the Seerr link needs establishing again.
+   */
+  readonly seerrExpired: boolean
 
-  constructor(message: string, status: number, expired: boolean) {
+  constructor(message: string, status: number, expired: boolean, seerrExpired = false) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.expired = expired
+    this.seerrExpired = seerrExpired
   }
 }
 
@@ -279,11 +441,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    const envelope = payload as { error?: string; expired?: boolean } | null
+    const envelope = payload as {
+      error?: string
+      expired?: boolean
+      seerrExpired?: boolean
+    } | null
     throw new ApiError(
       envelope?.error ?? `request failed (${response.status})`,
       response.status,
       Boolean(envelope?.expired),
+      Boolean(envelope?.seerrExpired),
     )
   }
   return payload as T
@@ -355,6 +522,45 @@ export const api = {
     request<unknown>("/api/player/command", { method: "POST", body: command }),
 
   sync: () => request<{ requested: boolean }>("/api/sync", { method: "POST" }),
+
+  seerr: {
+    status: () => request<SeerrStatusInfo>("/api/seerr/status"),
+    connect: (server: string) =>
+      request<SeerrServerInfo>("/api/seerr/connect", { method: "POST", body: { server } }),
+    /** Tries the password-less path; answers `method: "password"` if unavailable. */
+    link: () => request<SeerrLinkResult>("/api/seerr/link", { method: "POST" }),
+    linkPoll: (secret: string) =>
+      request<SeerrLinkResult>("/api/seerr/link/poll", { method: "POST", body: { secret } }),
+    linkPassword: (username: string, password: string) =>
+      request<SeerrLinkResult>("/api/seerr/link/password", {
+        method: "POST",
+        body: { username, password },
+      }),
+    unlink: () => request<SeerrStatusInfo>("/api/seerr/unlink", { method: "POST" }),
+
+    search: (q: string, page = 1, signal?: AbortSignal) =>
+      request<SeerrPage<SeerrResult>>(`/api/seerr/search${queryString({ q, page })}`, { signal }),
+    discover: (row: SeerrDiscoverRow, page = 1, signal?: AbortSignal) =>
+      request<SeerrPage<SeerrResult>>(`/api/seerr/discover/${row}${queryString({ page })}`, {
+        signal,
+      }),
+    media: (mediaType: SeerrMediaType, tmdbId: number) =>
+      request<SeerrMediaDetail>(`/api/seerr/media/${mediaType}/${tmdbId}`),
+
+    requests: (filter = "all", take = 40, signal?: AbortSignal) =>
+      request<SeerrPage<SeerrRequest>>(`/api/seerr/requests${queryString({ filter, take })}`, {
+        signal,
+      }),
+    /** Omitting `seasons` on a series asks for everything Seerr lacks. */
+    request: (body: {
+      mediaType: SeerrMediaType
+      tmdbId: number
+      seasons?: number[]
+      is4k?: boolean
+    }) => request<SeerrRequest>("/api/seerr/request", { method: "POST", body }),
+    cancelRequest: (id: number) =>
+      request<{ cancelled: boolean }>(`/api/seerr/request/${id}`, { method: "DELETE" }),
+  },
 }
 
 /**
@@ -381,6 +587,30 @@ export function imageUrl(
 export function backdropUrl(item: ItemDetail, maxWidth = BACKDROP_WIDTH) {
   if (!item.backdropImageTag) return null
   return imageUrl(item, "Backdrop", maxWidth, item.backdropImageTag)
+}
+
+/**
+ * Landscape cards prefer an episode still, then Jellyfin's purpose-built
+ * Thumb art, then a backdrop. A poster is the last-resort fallback so a title
+ * with incomplete metadata still has something to show.
+ */
+export function landscapeImageCandidates(
+  item: Pick<
+    ItemSummary,
+    "id" | "kind" | "primaryImageTag" | "thumbImageTag" | "backdropImageTag"
+  >,
+  maxWidth = LANDSCAPE_WIDTH,
+) {
+  const candidates: string[] = []
+  const add = (type: "Primary" | "Backdrop" | "Thumb", tag: string | null) => {
+    if (tag) candidates.push(imageUrl(item, type, maxWidth, tag))
+  }
+
+  if (item.kind === "Episode") add("Primary", item.primaryImageTag)
+  add("Thumb", item.thumbImageTag)
+  add("Backdrop", item.backdropImageTag)
+  if (item.kind !== "Episode") add("Primary", item.primaryImageTag)
+  return [...new Set(candidates)]
 }
 
 /** Cast headshots go through the same proxy: people are items in Jellyfin. */

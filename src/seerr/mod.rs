@@ -16,14 +16,52 @@ use std::sync::{Arc, RwLock};
 
 use serde_json::{Value, json};
 
-use crate::library::{Library, SeerrConfig};
+use crate::jellyfin::api::JellyfinClient;
+use crate::jellyfin::api::auth as jellyfin_auth;
+use crate::library::{Library, SeerrConfig, StoredCredentials};
 use crate::preferences::normalize_server_url;
 
 use api::client::{SeerrClient, SessionCookies};
 use api::error::SeerrError;
 use api::model::{
-    Capabilities, MEDIA_SERVER_JELLYFIN, PublicSettings, SeerrUser, StatusInfo, UserQuota,
+    self as model, Capabilities, MEDIA_SERVER_JELLYFIN, MediaDetail, MediaInfo, MediaRequest,
+    PublicSettings, QuickConnectHandshake, RequestPage, SearchPage, SearchResult, SeerrUser,
+    StatusInfo, UserQuota,
 };
+
+/// Seerr's own login, present in every release.
+const LOGIN_PATH: &str = "auth/jellyfin";
+/// The Quick Connect login pair, present only on builds newer than v3.3.0.
+const QUICK_CONNECT_INITIATE: &str = "auth/jellyfin/quickconnect/initiate";
+const QUICK_CONNECT_AUTHENTICATE: &str = "auth/jellyfin/quickconnect/authenticate";
+
+/// The discovery rows the UI can ask for. An enum rather than a string so a
+/// path segment from the page can never reach the address unchecked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscoverKind {
+    Trending,
+    Movies,
+    Tv,
+}
+
+impl DiscoverKind {
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value {
+            "trending" => Some(Self::Trending),
+            "movies" => Some(Self::Movies),
+            "tv" => Some(Self::Tv),
+            _ => None,
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::Trending => "discover/trending",
+            Self::Movies => "discover/movies",
+            Self::Tv => "discover/tv",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 struct SeerrState {
@@ -126,21 +164,7 @@ impl SeerrSession {
     pub fn connect(&self, server_url: &str) -> Result<Value, SeerrError> {
         let normalized = normalize_server_url(server_url).ok_or(SeerrError::NotConfigured)?;
         let client = SeerrClient::new(&normalized, SessionCookies::default());
-        let settings: PublicSettings = client.get_json("settings/public", &[])?;
-        if !settings.initialized {
-            return Err(SeerrError::Unusable(
-                "this Seerr instance has not finished its setup wizard yet".to_string(),
-            ));
-        }
-        // Only present on an initialized instance, so it is checked, not required.
-        if settings
-            .media_server_type
-            .is_some_and(|kind| kind != MEDIA_SERVER_JELLYFIN)
-        {
-            return Err(SeerrError::Unusable(
-                "this Seerr instance is not connected to a Jellyfin server".to_string(),
-            ));
-        }
+        let settings = probe_public(&client)?;
         // The version is informational and feature-detects the Quick Connect
         // login routes later, so a failure here must not fail the connect.
         let version = client
@@ -199,6 +223,598 @@ impl SeerrSession {
             "partialRequestsEnabled": settings.partial_requests_enabled,
             "linked": linked,
         }))
+    }
+
+    // -------------------------------------------------------------------- link
+
+    /// Links with the user's media-server password — the path every released
+    /// Seerr has, and therefore the one the UI must always be able to fall back
+    /// to. The password is used once and never stored; what is kept is the
+    /// session cookie Seerr answers with.
+    pub fn link_with_password(&self, username: &str, password: &str) -> Result<Value, SeerrError> {
+        let username = username.trim();
+        if username.is_empty() || password.is_empty() {
+            return Err(SeerrError::Unusable(
+                "enter the username and password of your media-server account".to_string(),
+            ));
+        }
+        let client = self.link_client()?;
+        // One GET before the write: it re-checks the instance is still usable
+        // and refreshes a CSRF pair that may have rotated since the last run.
+        let settings = probe_public(&client)?;
+        let _: Value = client
+            .post_json(
+                LOGIN_PATH,
+                &json!({ "username": username, "password": password }),
+            )
+            .map_err(map_login_error)?;
+        let status = self.finish_link(&client, Some(&settings))?;
+        Ok(json!({ "method": "password", "linked": true, "status": status }))
+    }
+
+    /// Links without a password, when both halves of the flow support it.
+    ///
+    /// Seerr starts a Quick Connect handshake against the same Jellyfin server,
+    /// we approve its code as an already-authenticated client of that server,
+    /// and Seerr redeems it for a session. This needs a Seerr new enough to
+    /// carry the routes — they are absent from v3.3.0, the latest stable
+    /// release — *and* Quick Connect enabled on the Jellyfin server, which is
+    /// off by default. Every step therefore probes and falls back to the
+    /// password path instead of surfacing an error the user cannot act on.
+    pub fn link_start(&self) -> Result<Value, SeerrError> {
+        let client = self.link_client()?;
+        let settings = probe_public(&client)?;
+        let Some(jellyfin) = self.jellyfin_client() else {
+            return Ok(password_required(
+                "there is no Jellyfin session to approve with",
+            ));
+        };
+        // Asked before Seerr is involved, so a server with Quick Connect off
+        // never leaves an orphaned handshake behind.
+        if !jellyfin_auth::quick_connect_enabled(&jellyfin) {
+            return Ok(password_required(
+                "Quick Connect is turned off on the Jellyfin server",
+            ));
+        }
+        let handshake: QuickConnectHandshake =
+            match client.post_json(QUICK_CONNECT_INITIATE, &json!({})) {
+                Ok(handshake) => handshake,
+                // An unreachable instance is not a missing feature: the password
+                // path would fail the same way, so it is reported rather than hidden.
+                Err(error @ SeerrError::Transport(_)) => return Err(error),
+                Err(error) => {
+                    return Ok(password_required(&format!(
+                        "this Seerr has no Quick Connect login ({error})"
+                    )));
+                }
+            };
+        if !handshake.is_usable() {
+            return Ok(password_required(
+                "Seerr answered without a usable handshake",
+            ));
+        }
+        // The one call that makes this password-less, and the one that proves
+        // the handshake belongs to *our* server: a code minted elsewhere is not
+        // one this server will approve.
+        match jellyfin_auth::quick_connect_authorize(&jellyfin, &handshake.code) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Ok(password_required(
+                    "the Jellyfin server did not recognize the Seerr handshake",
+                ));
+            }
+            Err(error) => {
+                return Ok(password_required(&format!(
+                    "the Jellyfin server would not approve the handshake ({error})"
+                )));
+            }
+        }
+        // The initiate may have rotated the CSRF pair, and the poll that can
+        // follow is a separate request built from what is stored.
+        self.persist_cookies(&client);
+        self.complete_quick_connect(&client, &handshake.secret, Some(&settings))
+    }
+
+    /// Retries the redemption half of [`Self::link_start`]. The code is already
+    /// approved by the time that call returns, so this exists for a Seerr that
+    /// has not caught up yet rather than for a user who has still to act.
+    pub fn link_poll(&self, secret: &str) -> Result<Value, SeerrError> {
+        let secret = secret.trim();
+        if secret.is_empty() {
+            return Err(SeerrError::Unusable(
+                "there is no Quick Connect attempt to finish".to_string(),
+            ));
+        }
+        let client = self.link_client()?;
+        let settings = probe_public(&client)?;
+        self.complete_quick_connect(&client, secret, Some(&settings))
+    }
+
+    fn complete_quick_connect(
+        &self,
+        client: &SeerrClient,
+        secret: &str,
+        settings: Option<&PublicSettings>,
+    ) -> Result<Value, SeerrError> {
+        match client.post_json::<_, Value>(QUICK_CONNECT_AUTHENTICATE, &json!({ "secret": secret }))
+        {
+            Ok(_) => {}
+            // Seerr has not observed the approval yet. The caller polls; it is
+            // not told to type a password, because none is needed.
+            Err(SeerrError::Status { status }) if is_pending(status) => {
+                return Ok(json!({
+                    "method": "quickconnect",
+                    "linked": false,
+                    "secret": secret,
+                }));
+            }
+            Err(error) => return Err(map_login_error(error)),
+        }
+        let status = self.finish_link(client, settings)?;
+        Ok(json!({ "method": "quickconnect", "linked": true, "status": status }))
+    }
+
+    /// Ends the session at the instance, then forgets it locally. The address
+    /// stays, so re-linking does not mean retyping it.
+    pub fn unlink(&self) -> Value {
+        self.revalidate();
+        self.discard_remote_session(&self.read());
+        self.unlink_locally();
+        tracing::info!(target: "seerr.session", "unlinked from Seerr");
+        self.status()
+    }
+
+    /// Turns a session Seerr has just handed us into a stored link, or refuses
+    /// it outright.
+    ///
+    /// The guard is the point of this function. `/api/v1/status` exposes no
+    /// media-server identity and every `/settings` route is admin-only, so an
+    /// unauthenticated probe cannot tell which Jellyfin server an instance is
+    /// wired to. What *can* be checked is the account behind the session that
+    /// was just established — and if it is not the one this app is signed in
+    /// as, nothing about it is worth keeping.
+    fn finish_link(
+        &self,
+        client: &SeerrClient,
+        settings: Option<&PublicSettings>,
+    ) -> Result<Value, SeerrError> {
+        let user: SeerrUser = client.get_json("auth/me", &[]).map_err(map_login_error)?;
+        let credentials = self.library.credentials();
+        let Some(signed_in_as) = credentials.user_id.clone() else {
+            return Err(self.refuse(client, "this app is not signed in to Jellyfin"));
+        };
+        let Some(linked_to) = user.jellyfin_user_id.clone() else {
+            return Err(self.refuse(
+                client,
+                "Seerr did not say which media-server account that login belongs to",
+            ));
+        };
+        if !same_media_server_user(&linked_to, &signed_in_as) {
+            return Err(self.refuse(
+                client,
+                "that Seerr account belongs to a different media-server user \
+                 than the one signed in here",
+            ));
+        }
+
+        let name = user.preferred_name().to_string();
+        if !self.store_link(client, &user, &credentials, settings) {
+            return Err(self.refuse(
+                client,
+                "the stored Seerr link changed while signing in; try again",
+            ));
+        }
+        tracing::info!(target: "seerr.session", user = %name, "linked to Seerr");
+        Ok(self.status())
+    }
+
+    /// Fails closed: a session that will not be kept is ended at the instance
+    /// too, and nothing about it reaches the database.
+    fn refuse(&self, client: &SeerrClient, message: &str) -> SeerrError {
+        if let Err(error) = client.post_empty("auth/logout") {
+            tracing::debug!(
+                target: "seerr.session",
+                "could not discard the refused Seerr session: {error}"
+            );
+        }
+        tracing::warn!(target: "seerr.session", "refused a Seerr link: {message}");
+        SeerrError::Unusable(message.to_string())
+    }
+
+    /// Writes the new session against the link as it now stands, retrying a
+    /// revision that moved underneath — but only while it is still the same
+    /// instance, since a link that moved elsewhere must not be overwritten.
+    fn store_link(
+        &self,
+        client: &SeerrClient,
+        user: &SeerrUser,
+        credentials: &StoredCredentials,
+        settings: Option<&PublicSettings>,
+    ) -> bool {
+        for _ in 0..3 {
+            let mut next = self.read();
+            if next.base_url.as_deref() != Some(client.base_url()) {
+                return false;
+            }
+            next.cookies = client.cookies();
+            next.user_id = Some(user.id);
+            next.user_name = Some(user.preferred_name().to_string());
+            next.jellyfin_server_id = credentials.server_id.clone();
+            next.jellyfin_user_id = credentials.user_id.clone();
+            if let Some(settings) = settings {
+                next.movie_4k_enabled = settings.movie_4k_enabled;
+                next.series_4k_enabled = settings.series_4k_enabled;
+                next.partial_requests_enabled = settings.partial_requests_enabled;
+            }
+            next.expired = false;
+            if self.commit(next) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A client for the configured instance whether or not a session is held —
+    /// unlike [`Self::client`], which refuses once one has lapsed. Linking is
+    /// exactly what a lapsed session needs.
+    fn link_client(&self) -> Result<SeerrClient, SeerrError> {
+        self.revalidate();
+        let state = self.read();
+        let base_url = state.base_url.ok_or(SeerrError::NotConfigured)?;
+        Ok(SeerrClient::new(&base_url, state.cookies))
+    }
+
+    /// The Jellyfin client used to approve a Quick Connect code. Built from the
+    /// stored credentials rather than from [`Session`](crate::jellyfin::session::Session),
+    /// which keeps this module free of a dependency on it — the same row
+    /// [`Self::revalidate`] already reads.
+    fn jellyfin_client(&self) -> Option<JellyfinClient> {
+        let credentials = self.library.credentials();
+        let (Some(server_url), Some(token)) = (credentials.server_url, credentials.token) else {
+            return None;
+        };
+        Some(JellyfinClient::new(
+            &server_url,
+            &credentials.device_id,
+            Some(&token),
+        ))
+    }
+
+    /// Keeps a rotated CSRF pair across a call boundary, so a request that
+    /// arrives later — and rebuilds its client from storage — still has it.
+    fn persist_cookies(&self, client: &SeerrClient) {
+        let revision = self.read().revision;
+        self.absorb_probe(client, revision);
+    }
+
+    // ------------------------------------------------------------------ reads
+
+    /// Titles matching `query`, joined against the local cache.
+    ///
+    /// `person` results are dropped: they carry no TMDB media id, have no
+    /// Jellyfin counterpart, and nothing about them can be requested.
+    pub fn search(&self, query: &str, page: i64) -> Result<Value, SeerrError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(empty_page());
+        }
+        let page = page.clamp(1, 1_000);
+        let results: SearchPage = self.call(|client| {
+            client.get_json(
+                "search",
+                &[
+                    ("query", query.to_string()),
+                    ("page", page.to_string()),
+                    ("language", "en".to_string()),
+                ],
+            )
+        })?;
+        Ok(self.joined_page(results))
+    }
+
+    /// One of Seerr's discovery rows. The kind is validated by the caller, so a
+    /// path segment from the UI never reaches the address unchecked.
+    pub fn discover(&self, kind: DiscoverKind, page: i64) -> Result<Value, SeerrError> {
+        let page = page.clamp(1, 1_000);
+        let results: SearchPage =
+            self.call(|client| client.get_json(kind.path(), &[("page", page.to_string())]))?;
+        Ok(self.joined_page(results))
+    }
+
+    /// One title in full, with the local item it corresponds to if the library
+    /// already has it.
+    pub fn media_detail(&self, media_type: &str, tmdb_id: i64) -> Result<Value, SeerrError> {
+        let Some(kind) = model::library_kind(media_type) else {
+            return Err(SeerrError::Unusable(format!(
+                "{media_type} is not a kind of title that can be requested"
+            )));
+        };
+        if tmdb_id <= 0 {
+            return Err(SeerrError::Unusable("that is not a TMDB id".to_string()));
+        }
+        let path = format!("{media_type}/{tmdb_id}");
+        let detail: MediaDetail = self.call(|client| client.get_json(&path, &[]))?;
+
+        let library_item_id = self
+            .library
+            .ids_by_tmdb(kind, &[tmdb_id.to_string()])
+            .unwrap_or_default()
+            .remove(&tmdb_id.to_string());
+        let info = detail.media_info.clone().unwrap_or_default();
+        Ok(json!({
+            "mediaType": media_type,
+            "tmdbId": detail.id,
+            "title": detail.display_title(),
+            "year": detail.year(),
+            "overview": detail.overview,
+            "posterPath": detail.poster_path,
+            "backdropPath": detail.backdrop_path,
+            "voteAverage": detail.vote_average,
+            "runtimeMinutes": detail.runtime_minutes(),
+            "genres": detail.genres.iter().map(|genre| genre.name.clone()).collect::<Vec<_>>(),
+            "status": model::status_name(info.status),
+            "status4k": model::status_name(info.status_4k),
+            "libraryItemId": library_item_id,
+            "seasons": season_list(&detail, &info),
+        }))
+    }
+
+    // ----------------------------------------------------------------- writes
+
+    /// Asks Seerr for a title. Never retried — see [`SeerrClient`] — because an
+    /// uncertain outcome must not become a second request.
+    ///
+    /// `seasons` is what makes a partial series requestable one season at a
+    /// time; `None` on a series means "everything Seerr does not already have",
+    /// which is Seerr's own `all`.
+    pub fn create_request(
+        &self,
+        media_type: &str,
+        tmdb_id: i64,
+        seasons: Option<Vec<i64>>,
+        is_4k: bool,
+    ) -> Result<Value, SeerrError> {
+        if model::library_kind(media_type).is_none() {
+            return Err(SeerrError::Unusable(format!(
+                "{media_type} is not a kind of title that can be requested"
+            )));
+        }
+        if tmdb_id <= 0 {
+            return Err(SeerrError::Unusable("that is not a TMDB id".to_string()));
+        }
+        let mut body = json!({
+            "mediaType": media_type,
+            "mediaId": tmdb_id,
+            "is4k": is_4k,
+        });
+        if media_type == model::TV {
+            body["seasons"] = match seasons {
+                Some(seasons) if !seasons.is_empty() => json!(seasons),
+                // Seerr expands this to whatever it does not already have,
+                // which is what an unqualified "request this show" means.
+                _ => json!("all"),
+            };
+        }
+        let created: MediaRequest = self.call(|client| client.post_json("request", &body))?;
+        tracing::info!(
+            target: "seerr.session",
+            media_type,
+            tmdb_id,
+            status = model::request_status_name(created.status),
+            "requested a title through Seerr"
+        );
+        Ok(self.request_json(&created))
+    }
+
+    /// The user's own requests. Deliberately never the household's: Seerr shows
+    /// everyone's to an administrator, and this is a personal view.
+    pub fn requests(&self, take: i64, skip: i64, filter: &str) -> Result<Value, SeerrError> {
+        self.revalidate();
+        let state = self.read();
+        if state.base_url.is_none() {
+            return Err(SeerrError::NotConfigured);
+        }
+        // Without an account there is nobody to scope the list to, and an
+        // unscoped one would be the household's.
+        let Some(user_id) = state.user_id else {
+            return Err(SeerrError::Unauthorized);
+        };
+        let take = take.clamp(1, 100);
+        let skip = skip.max(0);
+        let filter = match filter {
+            "all" | "pending" | "approved" | "processing" | "available" | "failed" => filter,
+            _ => "all",
+        }
+        .to_string();
+        let page: RequestPage = self.call(|client| {
+            client.get_json(
+                "request",
+                &[
+                    ("take", take.to_string()),
+                    ("skip", skip.to_string()),
+                    ("filter", filter),
+                    ("sort", "added".to_string()),
+                    ("requestedBy", user_id.to_string()),
+                ],
+            )
+        })?;
+
+        let results = page
+            .results
+            .iter()
+            .map(|request| self.request_json(request))
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "page": page.page_info.page,
+            "totalPages": page.page_info.pages,
+            "totalResults": page.page_info.results,
+            "results": results,
+        }))
+    }
+
+    /// Cancels one of the user's own pending requests.
+    ///
+    /// A refusal here is the case the 401 disambiguation exists for: Seerr
+    /// answers 401 — not 403 — when the session is valid but the request is not
+    /// the user's to cancel, and that must not read as a lapsed session.
+    pub fn cancel_request(&self, request_id: i64) -> Result<Value, SeerrError> {
+        if request_id <= 0 {
+            return Err(SeerrError::Unusable("that is not a request id".to_string()));
+        }
+        let path = format!("request/{request_id}");
+        self.call(|client| client.delete(&path))?;
+        tracing::info!(target: "seerr.session", request_id, "cancelled a Seerr request");
+        Ok(json!({ "cancelled": true, "id": request_id }))
+    }
+
+    /// One request in the shape the UI renders. The title is deliberately
+    /// absent: Seerr's request rows reference a TMDB id and nothing else, and
+    /// resolving each one here would be a blocking fan-out on this thread.
+    fn request_json(&self, request: &MediaRequest) -> Value {
+        let media = request.media.clone().unwrap_or_default();
+        let media_type = if request.media_type.is_empty() {
+            media.media_type.clone().unwrap_or_default()
+        } else {
+            request.media_type.clone()
+        };
+        let tmdb_id = media.tmdb_id;
+        let library_item_id = tmdb_id.and_then(|tmdb_id| {
+            self.local_ids(&media_type, &[tmdb_id.to_string()])
+                .remove(&tmdb_id.to_string())
+        });
+        json!({
+            "id": request.id,
+            "status": model::request_status_name(request.status),
+            "mediaType": media_type,
+            "tmdbId": tmdb_id,
+            "is4k": request.is4k,
+            "createdAt": request.created_at,
+            "updatedAt": request.updated_at,
+            "mediaStatus": model::status_name(if request.is4k {
+                media.status_4k
+            } else {
+                media.status
+            }),
+            "seasons": request
+                .seasons
+                .iter()
+                .map(|season| season.season_number)
+                .collect::<Vec<_>>(),
+            "libraryItemId": library_item_id,
+        })
+    }
+
+    /// Turns one page of Seerr results into the shape the UI renders, with the
+    /// local cache joined in.
+    ///
+    /// The join is one query per media type rather than one per result: a page
+    /// of twenty titles costs two lookups, not twenty.
+    fn joined_page(&self, page: SearchPage) -> Value {
+        let media = page
+            .results
+            .into_iter()
+            .filter(SearchResult::is_media)
+            .collect::<Vec<_>>();
+        let ids_of = |media_type: &str| {
+            media
+                .iter()
+                .filter(|result| result.media_type == media_type)
+                .map(|result| result.id.to_string())
+                .collect::<Vec<_>>()
+        };
+        let movies = self.local_ids(model::MOVIE, &ids_of(model::MOVIE));
+        let series = self.local_ids(model::TV, &ids_of(model::TV));
+
+        let results = media
+            .iter()
+            .map(|result| {
+                let owned = if result.media_type == model::MOVIE {
+                    &movies
+                } else {
+                    &series
+                };
+                let info = result.media_info.clone().unwrap_or_default();
+                json!({
+                    "mediaType": result.media_type,
+                    "tmdbId": result.id,
+                    "title": result.display_title(),
+                    "year": result.year(),
+                    "overview": result.overview,
+                    "posterPath": result.poster_path,
+                    "backdropPath": result.backdrop_path,
+                    "voteAverage": result.vote_average,
+                    "status": model::status_name(info.status),
+                    "status4k": model::status_name(info.status_4k),
+                    // The killer join: every result resolves to "play it" or
+                    // "request it", never to a dead end.
+                    "libraryItemId": owned.get(&result.id.to_string()),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        json!({
+            "page": page.page,
+            "totalPages": page.total_pages,
+            "totalResults": page.total_results,
+            "results": results,
+        })
+    }
+
+    /// TMDB id → Jellyfin id for one media type. A storage failure degrades to
+    /// "the library does not have it", which offers a request rather than
+    /// failing a whole page of results.
+    fn local_ids(
+        &self,
+        media_type: &str,
+        tmdb_ids: &[String],
+    ) -> std::collections::HashMap<String, String> {
+        let Some(kind) = model::library_kind(media_type) else {
+            return Default::default();
+        };
+        self.library
+            .ids_by_tmdb(kind, tmdb_ids)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    target: "seerr.session",
+                    "could not join Seerr results against the library: {error}"
+                );
+                Default::default()
+            })
+    }
+
+    /// Runs one call against the linked instance, keeping the stored cookies
+    /// fresh and disambiguating the 401 Seerr overloads.
+    ///
+    /// Seerr answers 401 both to a lapsed session *and* to a valid session that
+    /// merely lacks a permission — `DELETE /request/{id}` on somebody else's
+    /// request is the case that proved it. Taking the first at face value would
+    /// log the user out for pressing a button they were never allowed to press,
+    /// so a 401 is confirmed against `/auth/me` before it counts as an expiry.
+    fn call<T>(
+        &self,
+        call: impl FnOnce(&SeerrClient) -> Result<T, SeerrError>,
+    ) -> Result<T, SeerrError> {
+        let client = self.client()?;
+        let revision = self.read().revision;
+        let result = call(&client);
+        if !matches!(result, Err(SeerrError::Unauthorized)) {
+            self.absorb_probe(&client, revision);
+            return result;
+        }
+        match client.get_json::<SeerrUser>("auth/me", &[]) {
+            Err(SeerrError::Unauthorized) => {
+                if self.probe_is_current(revision) {
+                    self.mark_expired();
+                }
+                Err(SeerrError::Unauthorized)
+            }
+            // The session answered for itself, so the refusal was about the
+            // action, not the cookie.
+            _ => {
+                self.absorb_probe(&client, revision);
+                Err(SeerrError::PermissionDenied)
+            }
+        }
     }
 
     /// What the UI needs to decide whether to show the Seerr views at all.
@@ -451,11 +1067,123 @@ impl SeerrSession {
     }
 }
 
+/// Reads `/settings/public` and refuses an instance that must not be logged
+/// into.
+///
+/// `/settings/public` rather than `/status`, because an *uninitialized* Seerr
+/// treats `POST /auth/jellyfin` as its setup wizard — it would make whoever
+/// logs in the instance owner, with full administrator permissions. This gate
+/// is what keeps a client from silently becoming that wizard.
+///
+/// It is also the GET that every write is preceded by: a CSRF-protected
+/// instance hands out its `_csrf` / `XSRF-TOKEN` pair here, and the very next
+/// POST already needs it.
+fn probe_public(client: &SeerrClient) -> Result<PublicSettings, SeerrError> {
+    let settings: PublicSettings = client.get_json("settings/public", &[])?;
+    if !settings.initialized {
+        return Err(SeerrError::Unusable(
+            "this Seerr instance has not finished its setup wizard yet".to_string(),
+        ));
+    }
+    // Only present on an initialized instance, so it is checked, not required.
+    if settings
+        .media_server_type
+        .is_some_and(|kind| kind != MEDIA_SERVER_JELLYFIN)
+    {
+        return Err(SeerrError::Unusable(
+            "this Seerr instance is not connected to a Jellyfin server".to_string(),
+        ));
+    }
+    Ok(settings)
+}
+
+/// The answer for a search with nothing to search for, so an empty field costs
+/// no round trip.
+fn empty_page() -> Value {
+    json!({ "page": 1, "totalPages": 0, "totalResults": 0, "results": [] })
+}
+
+/// The seasons a series can be requested by, each carrying what Seerr already
+/// has of it.
+///
+/// Season 0 is left out, as Seerr's own request modal leaves it out: specials
+/// are not a season the *arr side tracks as requestable.
+fn season_list(detail: &MediaDetail, info: &MediaInfo) -> Vec<Value> {
+    detail
+        .seasons
+        .iter()
+        .filter(|season| season.season_number >= 1)
+        .map(|season| {
+            let status = info
+                .seasons
+                .iter()
+                .find(|entry| entry.season_number == season.season_number)
+                .map(|entry| entry.status)
+                .unwrap_or(model::media_status::UNKNOWN);
+            json!({
+                "seasonNumber": season.season_number,
+                "name": season.name,
+                "episodeCount": season.episode_count,
+                "airDate": season.air_date,
+                "status": model::status_name(status),
+            })
+        })
+        .collect()
+}
+
+/// The answer that sends the UI to the password form. The reason is logged
+/// rather than shown: a Quick Connect that is merely unavailable is not a
+/// failure the user can act on, and every release supports the password path.
+fn password_required(reason: &str) -> Value {
+    tracing::debug!(target: "seerr.session", "falling back to Seerr password login: {reason}");
+    json!({ "method": "password", "linked": false })
+}
+
+/// Failures of a *login*, which are not failures of a session.
+///
+/// A 401 here is a rejected credential, not a lapsed cookie, and must not put
+/// the UI into the re-link prompt it is already in. A 403 is Seerr's answer for
+/// a user it has never imported while "enable new sign-ins" is off — something
+/// only an administrator can fix, so it says so.
+fn map_login_error(error: SeerrError) -> SeerrError {
+    match error {
+        SeerrError::Unauthorized => SeerrError::LoginRejected,
+        SeerrError::Status { status: 403 } => SeerrError::UnknownUser,
+        other => other,
+    }
+}
+
+/// Whether a refused Quick Connect redemption is worth polling again. Seerr
+/// answers 404/405 when the route is absent and 401/403 when the login itself
+/// was refused; those are answers, not delays.
+fn is_pending(status: u16) -> bool {
+    matches!(status, 400 | 409 | 425)
+}
+
+/// Compares two media-server user ids. Jellyfin hands its GUIDs out both with
+/// and without dashes depending on the endpoint and version, so a plain string
+/// comparison would reject a match — and, worse, look like the account switch
+/// this guard exists to catch.
+fn same_media_server_user(left: &str, right: &str) -> bool {
+    let normalize = |value: &str| {
+        value
+            .chars()
+            .filter(|character| *character != '-')
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let (left, right) = (normalize(left), normalize(right));
+    !left.is_empty() && left == right
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SeerrClient, SeerrSession, SeerrState, SessionCookies};
+    use super::{
+        DiscoverKind, SeerrClient, SeerrError, SeerrSession, SeerrState, SessionCookies, Value,
+        json, same_media_server_user,
+    };
     use crate::library::{Library, SeerrConfig};
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
 
@@ -466,7 +1194,7 @@ mod tests {
     /// A throwaway HTTP server answering one canned response per request and
     /// recording the request heads it saw. The cookie plumbing is the part of
     /// this milestone that only a real socket can prove.
-    fn fake_seerr(responses: Vec<String>) -> (String, Arc<Mutex<Vec<String>>>) {
+    fn fake_server(responses: Vec<String>) -> (String, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let base_url = format!("http://{}", listener.local_addr().expect("address"));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -482,6 +1210,23 @@ mod tests {
                         Ok(0) | Err(_) => break,
                         Ok(_) if line == "\r\n" => break,
                         Ok(_) => head.push_str(&line),
+                    }
+                }
+                // Drain the request body before answering: closing a socket
+                // that still holds unread data resets the connection, and the
+                // client sees that as a transport failure rather than the
+                // response it was just sent. It is kept on the end of the head
+                // so a test can assert on what was actually sent.
+                let length = head
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+                    .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                if length > 0 {
+                    let mut body = vec![0u8; length];
+                    if reader.read_exact(&mut body).is_ok() {
+                        head.push_str(&String::from_utf8_lossy(&body));
                     }
                 }
                 seen.lock().expect("lock").push(head);
@@ -506,18 +1251,59 @@ mod tests {
         format!("{head}\r\n{body}")
     }
 
+    /// What a forward-auth proxy answers with: a 302 towards its own sign-on
+    /// flow, with an HTML body nothing should be reading.
+    fn redirect_response(location: &str) -> String {
+        let body = "<html><body>Found.</body></html>";
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\n\
+             Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// What a proxy, a sign-on page, or Seerr's own front end answers with.
+    fn html_response(status: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
     const INITIALIZED: &str = r#"{"initialized":true,"applicationTitle":"Seerr","mediaServerType":2,
         "localLogin":true,"mediaServerLogin":true,"newPlexLogin":true,"movie4kEnabled":false,
         "series4kEnabled":false,"partialRequestsEnabled":true}"#;
     const VERSION: &str = r#"{"version":"3.3.0","commitTag":"local"}"#;
+    /// `/auth/me` for a Seerr account backed by the Jellyfin user `uid`.
+    const ME: &str = r#"{"id":7,"displayName":"pho","jellyfinUserId":"uid","permissions":32}"#;
+    const QUOTA: &str = r#"{"movie":{"used":0},"tv":{"used":0}}"#;
+    /// The `Set-Cookie` an established Seerr session arrives on.
+    const SESSION: &str = "connect.sid=s%3Aabc.def; Path=/; HttpOnly";
 
     fn signed_in(library: &Library, user_id: &str) {
+        signed_in_to(library, "http://server:8096", user_id);
+    }
+
+    fn signed_in_to(library: &Library, server_url: &str, user_id: &str) {
         let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
+        credentials.server_url = Some(server_url.to_string());
         credentials.user_id = Some(user_id.to_string());
         credentials.server_id = Some("srv".to_string());
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("credentials");
+    }
+
+    /// An instance that has been connected to but not linked — the state
+    /// `POST /api/seerr/connect` leaves behind.
+    fn configured(library: &Library, base_url: &str) {
+        library
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some(base_url.to_string()),
+                ..SeerrConfig::default()
+            })
+            .expect("seerr config");
     }
 
     /// The link as the session itself sees it, once the account guard has run.
@@ -529,9 +1315,15 @@ mod tests {
     }
 
     fn linked(library: &Library, jellyfin_user_id: &str) {
+        linked_to(library, "https://seerr.test", jellyfin_user_id);
+    }
+
+    /// An established link, as the link flow leaves it: a session cookie, the
+    /// Seerr account, and the Jellyfin account it is bound to.
+    fn linked_to(library: &Library, base_url: &str, jellyfin_user_id: &str) {
         library
             .save_seerr_config(&SeerrConfig {
-                base_url: Some("https://seerr.test".to_string()),
+                base_url: Some(base_url.to_string()),
                 cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
@@ -541,6 +1333,21 @@ mod tests {
                 ..SeerrConfig::default()
             })
             .expect("seerr config");
+    }
+
+    /// Request bodies are pretty-printed on the wire, so what they contain is
+    /// asserted against a whitespace-free form of the whole recorded request.
+    fn compact(request: &str) -> String {
+        request.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// A signed-in machine with a live Seerr link against `base_url`.
+    fn session_linked_to(base_url: &str) -> (Arc<Library>, SeerrSession) {
+        let library = library();
+        signed_in(&library, "uid");
+        linked_to(&library, base_url, "uid");
+        let session = SeerrSession::restore(library.clone());
+        (library, session)
     }
 
     #[test]
@@ -642,7 +1449,7 @@ mod tests {
 
     #[test]
     fn connecting_captures_the_csrf_pair_from_the_very_first_probe() {
-        let (base_url, requests) = fake_seerr(vec![
+        let (base_url, requests) = fake_server(vec![
             response(
                 "200 OK",
                 INITIALIZED,
@@ -681,7 +1488,7 @@ mod tests {
 
     #[test]
     fn an_uninitialized_instance_is_refused_before_it_can_be_set_up_by_accident() {
-        let (base_url, _) = fake_seerr(vec![response(
+        let (base_url, _) = fake_server(vec![response(
             "200 OK",
             r#"{"initialized":false,"plexClientIdentifier":"abc"}"#,
             &[],
@@ -695,9 +1502,68 @@ mod tests {
         assert_eq!(library.seerr_config(), SeerrConfig::default());
     }
 
+    /// The commonest way a Seerr address goes wrong: it reaches a proxy, a
+    /// sign-on page, or Seerr's own web front end, all of which answer 200 with
+    /// HTML. A JSON parser position for that would send the user hunting for a
+    /// fault in Seerr rather than in what they typed.
+    #[test]
+    fn an_address_that_answers_with_a_web_page_says_so() {
+        let (base_url, _) = fake_server(vec![html_response(
+            "200 OK",
+            "<!DOCTYPE html>\n<html>\n<head>\n<title>Sign in</title>\n</head>\n<body>x</body>\n</html>",
+        )]);
+        let session = SeerrSession::restore(library());
+
+        let error = session.connect(&base_url).expect_err("refused");
+        assert!(matches!(error, SeerrError::Unusable(_)), "{error:?}");
+        let message = error.to_string();
+        assert!(message.contains("a web page"), "{message}");
+        // Never a parser position: that is a fact about our decoder, not about
+        // the address the user has to fix.
+        assert!(!message.contains("line"), "{message}");
+    }
+
+    /// An address behind a sign-on proxy — authentik, Authelia, oauth2-proxy,
+    /// Cloudflare Access — never reaches Seerr at all. Following the redirect
+    /// would land on a login page and fail somewhere deep in it, reporting a
+    /// fault that says nothing about the real problem.
+    #[test]
+    fn an_address_behind_a_sign_on_proxy_is_named_rather_than_chased() {
+        let (base_url, requests) = fake_server(vec![
+            redirect_response("https://auth.example.de/application/o/authorize/?state=jwt"),
+            // Never reached: chasing this is exactly what must not happen.
+            response("200 OK", INITIALIZED, &[]),
+        ]);
+        let session = SeerrSession::restore(library());
+
+        let error = session.connect(&base_url).expect_err("refused");
+        assert!(matches!(error, SeerrError::Unusable(_)), "{error:?}");
+        let message = error.to_string();
+        assert!(message.contains("auth.example.de"), "{message}");
+        assert!(message.contains("sign-on proxy"), "{message}");
+
+        assert_eq!(
+            requests.lock().expect("lock").len(),
+            1,
+            "the redirect was followed"
+        );
+    }
+
+    /// A body that really is JSON but the wrong shape is a different fault, and
+    /// must not be reported as a wrong address.
+    #[test]
+    fn a_json_body_of_the_wrong_shape_stays_a_decode_failure() {
+        let (base_url, _) = fake_server(vec![response("200 OK", "[1, 2, 3]", &[])]);
+        let session = SeerrSession::restore(library());
+        assert!(matches!(
+            session.connect(&base_url),
+            Err(SeerrError::Decode(_))
+        ));
+    }
+
     #[test]
     fn an_instance_wired_to_another_media_server_is_refused() {
-        let (base_url, _) = fake_seerr(vec![response(
+        let (base_url, _) = fake_server(vec![response(
             "200 OK",
             r#"{"initialized":true,"mediaServerType":1}"#,
             &[],
@@ -709,7 +1575,7 @@ mod tests {
 
     #[test]
     fn a_failing_version_probe_does_not_fail_the_connect() {
-        let (base_url, _) = fake_seerr(vec![
+        let (base_url, _) = fake_server(vec![
             response("200 OK", INITIALIZED, &[]),
             response("404 Not Found", "{}", &[]),
         ]);
@@ -720,8 +1586,8 @@ mod tests {
 
     #[test]
     fn moving_to_another_instance_logs_the_old_session_out_with_its_csrf_header() {
-        let (old_url, old_requests) = fake_seerr(vec![response("204 No Content", "", &[])]);
-        let (new_url, _) = fake_seerr(vec![
+        let (old_url, old_requests) = fake_server(vec![response("204 No Content", "", &[])]);
+        let (new_url, _) = fake_server(vec![
             response("200 OK", INITIALIZED, &[]),
             response("200 OK", VERSION, &[]),
         ]);
@@ -761,7 +1627,7 @@ mod tests {
 
     #[test]
     fn re_probing_the_same_instance_keeps_the_session_and_refreshes_the_csrf_pair() {
-        let (base_url, _) = fake_seerr(vec![
+        let (base_url, _) = fake_server(vec![
             response("200 OK", INITIALIZED, &["XSRF-TOKEN=rotated; Path=/"]),
             response("200 OK", VERSION, &[]),
         ]);
@@ -793,7 +1659,7 @@ mod tests {
 
     #[test]
     fn re_probing_after_an_account_switch_does_not_preserve_the_previous_link() {
-        let (base_url, _) = fake_seerr(vec![
+        let (base_url, _) = fake_server(vec![
             response("200 OK", INITIALIZED, &[]),
             response("200 OK", VERSION, &[]),
         ]);
@@ -925,6 +1791,693 @@ mod tests {
             session.read().base_url.as_deref(),
             Some("https://seerr.test")
         );
+    }
+
+    #[test]
+    fn linking_with_a_password_stores_the_session_and_the_account_it_belongs_to() {
+        let (base_url, requests) = fake_server(vec![
+            response("200 OK", INITIALIZED, &["XSRF-TOKEN=token123; Path=/"]),
+            response("200 OK", ME, &[SESSION]),
+            response("200 OK", ME, &[]),
+            response("200 OK", ME, &[]),
+            response("200 OK", QUOTA, &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &base_url);
+        let session = SeerrSession::restore(library.clone());
+
+        let result = session.link_with_password("pho", "hunter2").expect("link");
+        assert_eq!(result["method"], "password");
+        assert_eq!(result["linked"], true);
+        assert_eq!(result["status"]["linked"], true);
+        assert_eq!(result["status"]["user"]["name"], "pho");
+        assert_eq!(result["status"]["capabilities"]["movie"]["request"], true);
+
+        let requests = requests.lock().expect("lock");
+        // A GET precedes the write, so a rotated CSRF pair is in hand before
+        // the login needs it — and is echoed as the header csurf looks for.
+        assert!(requests[0].starts_with("GET /api/v1/settings/public HTTP/1.1"));
+        assert!(requests[1].starts_with("POST /api/v1/auth/jellyfin HTTP/1.1"));
+        assert!(requests[1].contains("x-xsrf-token: token123"));
+        assert!(requests[2].starts_with("GET /api/v1/auth/me HTTP/1.1"));
+        assert!(requests[2].contains("cookie: XSRF-TOKEN=token123; connect.sid=s%3Aabc.def"));
+
+        let stored = library.seerr_config();
+        assert_eq!(stored.user_id, Some(7));
+        assert_eq!(stored.user_name.as_deref(), Some("pho"));
+        assert_eq!(stored.jellyfin_user_id.as_deref(), Some("uid"));
+        assert_eq!(stored.jellyfin_server_id.as_deref(), Some("srv"));
+        assert!(stored.partial_requests_enabled);
+        assert!(
+            stored
+                .cookies
+                .as_deref()
+                .is_some_and(|cookies| cookies.contains("connect.sid"))
+        );
+        assert!(is_linked(&session));
+    }
+
+    /// The guard that password login rests on: Seerr cannot be asked which
+    /// Jellyfin server it is wired to before logging in, so the account behind
+    /// the session it hands back is what gets checked.
+    #[test]
+    fn a_login_as_a_different_media_server_user_is_refused_and_logged_out() {
+        let (base_url, requests) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", ME, &[SESSION]),
+            response(
+                "200 OK",
+                r#"{"id":9,"displayName":"someone","jellyfinUserId":"another-uid"}"#,
+                &[],
+            ),
+            response("204 No Content", "", &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &base_url);
+        let session = SeerrSession::restore(library.clone());
+
+        let error = session
+            .link_with_password("someone", "hunter2")
+            .expect_err("refused");
+        assert!(matches!(error, SeerrError::Unusable(_)));
+        assert!(error.to_string().contains("different media-server user"));
+
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 4, "the refused session was not logged out");
+        assert!(requests[3].starts_with("POST /api/v1/auth/logout HTTP/1.1"));
+
+        // Fail closed: nothing about the refused session is on disk.
+        let stored = library.seerr_config();
+        assert_eq!(stored.cookies, None);
+        assert_eq!(stored.user_id, None);
+        assert_eq!(stored.jellyfin_user_id, None);
+        assert!(!is_linked(&session));
+    }
+
+    #[test]
+    fn a_login_seerr_cannot_attribute_to_an_account_is_refused() {
+        let (base_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", "{}", &[SESSION]),
+            response("200 OK", r#"{"id":9,"displayName":"someone"}"#, &[]),
+            response("204 No Content", "", &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &base_url);
+
+        let error = SeerrSession::restore(library.clone())
+            .link_with_password("someone", "hunter2")
+            .expect_err("refused");
+        assert!(error.to_string().contains("did not say which"));
+        assert_eq!(library.seerr_config().cookies, None);
+    }
+
+    /// Jellyfin hands its GUIDs out both with and without dashes; a plain
+    /// comparison would read a match as the account switch this guard exists
+    /// to catch.
+    #[test]
+    fn the_account_guard_ignores_how_the_id_is_punctuated() {
+        assert!(same_media_server_user(
+            "8AB2E0F0-3B5C-4D3E-9F00-000000000001",
+            "8ab2e0f03b5c4d3e9f00000000000001"
+        ));
+        assert!(!same_media_server_user("uid", "other-uid"));
+        assert!(!same_media_server_user("", ""));
+    }
+
+    #[test]
+    fn a_user_seerr_has_never_imported_gets_its_own_message() {
+        let (base_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("403 Forbidden", r#"{"message":"Access denied"}"#, &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &base_url);
+
+        let error = SeerrSession::restore(library)
+            .link_with_password("pho", "hunter2")
+            .expect_err("refused");
+        assert_eq!(error, SeerrError::UnknownUser);
+        assert!(error.to_string().contains("administrator"));
+    }
+
+    /// A mistyped password must not read as a lapsed session: the user is
+    /// establishing one, and `Unauthorized` is what puts the UI into the
+    /// re-link prompt they are already in.
+    #[test]
+    fn a_rejected_password_is_not_reported_as_a_lapsed_session() {
+        let (base_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("401 Unauthorized", r#"{"message":"Unauthorized"}"#, &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &base_url);
+
+        let error = SeerrSession::restore(library)
+            .link_with_password("pho", "wrong")
+            .expect_err("rejected");
+        assert_eq!(error, SeerrError::LoginRejected);
+    }
+
+    #[test]
+    fn linking_needs_an_instance_and_credentials_before_anything_is_sent() {
+        let library = library();
+        signed_in(&library, "uid");
+        let session = SeerrSession::restore(library.clone());
+        assert!(matches!(
+            session.link_with_password("pho", "hunter2"),
+            Err(SeerrError::NotConfigured)
+        ));
+        assert!(matches!(
+            session.link_start(),
+            Err(SeerrError::NotConfigured)
+        ));
+
+        configured(&library, "https://seerr.test");
+        let session = SeerrSession::restore(library);
+        assert!(matches!(
+            session.link_with_password("  ", "hunter2"),
+            Err(SeerrError::Unusable(_))
+        ));
+        assert!(matches!(
+            session.link_poll("  "),
+            Err(SeerrError::Unusable(_))
+        ));
+    }
+
+    #[test]
+    fn unlinking_ends_the_session_at_the_instance_and_keeps_only_the_address() {
+        let (base_url, requests) = fake_server(vec![response("204 No Content", "", &[])]);
+        let library = library();
+        signed_in(&library, "uid");
+        library
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some(base_url.clone()),
+                cookies: Some(r#"{"XSRF-TOKEN":"token123","connect.sid":"abc"}"#.to_string()),
+                user_id: Some(7),
+                user_name: Some("pho".to_string()),
+                jellyfin_server_id: Some("srv".to_string()),
+                jellyfin_user_id: Some("uid".to_string()),
+                partial_requests_enabled: true,
+                ..SeerrConfig::default()
+            })
+            .expect("seerr config");
+        let session = SeerrSession::restore(library.clone());
+
+        let status = session.unlink();
+        assert_eq!(status["linked"], false);
+        assert_eq!(status["configured"], true);
+
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /api/v1/auth/logout HTTP/1.1"));
+        assert!(requests[0].contains("x-xsrf-token: token123"));
+
+        let stored = library.seerr_config();
+        assert_eq!(stored.base_url.as_deref(), Some(base_url.as_str()));
+        assert_eq!(stored.cookies, None);
+        assert_eq!(stored.user_id, None);
+        assert_eq!(stored.jellyfin_user_id, None);
+    }
+
+    #[test]
+    fn quick_connect_links_without_a_password_when_both_halves_support_it() {
+        let (seerr_url, seerr_requests) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", r#"{"code":"AB12CD","secret":"s3cret"}"#, &[]),
+            response("200 OK", ME, &[SESSION]),
+            response("200 OK", ME, &[]),
+            response("200 OK", ME, &[]),
+            response("200 OK", QUOTA, &[]),
+        ]);
+        let (jellyfin_url, jellyfin_requests) = fake_server(vec![
+            response("200 OK", "true", &[]),
+            response("200 OK", "true", &[]),
+        ]);
+        let library = library();
+        signed_in_to(&library, &jellyfin_url, "uid");
+        configured(&library, &seerr_url);
+        let session = SeerrSession::restore(library.clone());
+
+        let result = session.link_start().expect("link");
+        assert_eq!(result["method"], "quickconnect");
+        assert_eq!(result["linked"], true);
+        assert_eq!(result["status"]["user"]["name"], "pho");
+
+        let seerr_requests = seerr_requests.lock().expect("lock");
+        assert!(
+            seerr_requests[1]
+                .starts_with("POST /api/v1/auth/jellyfin/quickconnect/initiate HTTP/1.1")
+        );
+        assert!(
+            seerr_requests[2]
+                .starts_with("POST /api/v1/auth/jellyfin/quickconnect/authenticate HTTP/1.1")
+        );
+        // The code Seerr minted is approved on our own server, by us — this is
+        // the step that makes the flow password-less, and the one that proves
+        // the handshake belongs to the server we are signed in to.
+        let jellyfin_requests = jellyfin_requests.lock().expect("lock");
+        assert!(jellyfin_requests[0].starts_with("GET /QuickConnect/Enabled HTTP/1.1"));
+        assert!(
+            jellyfin_requests[1].starts_with("POST /QuickConnect/Authorize?code=AB12CD HTTP/1.1")
+        );
+
+        assert_eq!(library.seerr_config().user_id, Some(7));
+        assert!(is_linked(&session));
+    }
+
+    /// Quick Connect is off by default on Jellyfin, so this is the common case
+    /// — and it must not look like a failure.
+    #[test]
+    fn quick_connect_defers_to_the_password_path_when_the_server_has_it_off() {
+        let (seerr_url, seerr_requests) = fake_server(vec![response("200 OK", INITIALIZED, &[])]);
+        let (jellyfin_url, _) = fake_server(vec![response("200 OK", "false", &[])]);
+        let library = library();
+        signed_in_to(&library, &jellyfin_url, "uid");
+        configured(&library, &seerr_url);
+
+        let result = SeerrSession::restore(library)
+            .link_start()
+            .expect("no error surfaces");
+        assert_eq!(result["method"], "password");
+        assert_eq!(result["linked"], false);
+        // No handshake was started, so none is left dangling on the instance.
+        assert_eq!(seerr_requests.lock().expect("lock").len(), 1);
+    }
+
+    /// The Quick Connect login routes are absent from every stable release up
+    /// to and including v3.3.0.
+    #[test]
+    fn quick_connect_defers_to_the_password_path_when_seerr_has_no_such_route() {
+        let (seerr_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("404 Not Found", r#"{"message":"Not Found"}"#, &[]),
+        ]);
+        let (jellyfin_url, _) = fake_server(vec![response("200 OK", "true", &[])]);
+        let library = library();
+        signed_in_to(&library, &jellyfin_url, "uid");
+        configured(&library, &seerr_url);
+
+        let result = SeerrSession::restore(library)
+            .link_start()
+            .expect("no error surfaces");
+        assert_eq!(result["method"], "password");
+    }
+
+    /// A server that refuses to approve the code — because the handshake is not
+    /// its own — is the same fallback, not an error.
+    #[test]
+    fn a_handshake_our_server_will_not_approve_falls_back_to_the_password_path() {
+        let (seerr_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", r#"{"code":"AB12CD","secret":"s3cret"}"#, &[]),
+        ]);
+        let (jellyfin_url, _) = fake_server(vec![
+            response("200 OK", "true", &[]),
+            response("403 Forbidden", "{}", &[]),
+        ]);
+        let library = library();
+        signed_in_to(&library, &jellyfin_url, "uid");
+        configured(&library, &seerr_url);
+
+        let result = SeerrSession::restore(library)
+            .link_start()
+            .expect("no error surfaces");
+        assert_eq!(result["method"], "password");
+    }
+
+    #[test]
+    fn a_seerr_that_has_not_caught_up_yet_is_polled_rather_than_failed() {
+        let (seerr_url, _) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", r#"{"code":"AB12CD","secret":"s3cret"}"#, &[]),
+            response("400 Bad Request", r#"{"message":"not ready"}"#, &[]),
+        ]);
+        let (jellyfin_url, _) = fake_server(vec![
+            response("200 OK", "true", &[]),
+            response("200 OK", "true", &[]),
+        ]);
+        let library = library();
+        signed_in_to(&library, &jellyfin_url, "uid");
+        configured(&library, &seerr_url);
+
+        let result = SeerrSession::restore(library)
+            .link_start()
+            .expect("pending, not failed");
+        assert_eq!(result["method"], "quickconnect");
+        assert_eq!(result["linked"], false);
+        assert_eq!(result["secret"], "s3cret");
+    }
+
+    #[test]
+    fn polling_finishes_the_link_the_start_call_left_open() {
+        let (seerr_url, requests) = fake_server(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", ME, &[SESSION]),
+            response("200 OK", ME, &[]),
+            response("200 OK", ME, &[]),
+            response("200 OK", QUOTA, &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        configured(&library, &seerr_url);
+        let session = SeerrSession::restore(library.clone());
+
+        let result = session.link_poll("s3cret").expect("link");
+        assert_eq!(result["linked"], true);
+        assert_eq!(result["status"]["linked"], true);
+
+        let requests = requests.lock().expect("lock");
+        assert!(requests[1].starts_with("POST /api/v1/auth/jellyfin/quickconnect/authenticate"));
+        assert_eq!(
+            library.seerr_config().jellyfin_user_id.as_deref(),
+            Some("uid")
+        );
+    }
+
+    // ------------------------------------------------------------------ reads
+
+    const SEARCH: &str = r#"{"page":1,"totalPages":1,"totalResults":3,"results":[
+        {"id":603,"mediaType":"movie","title":"The Matrix","releaseDate":"1999-03-30",
+         "posterPath":"/matrix.jpg","mediaInfo":{"tmdbId":603,"status":5,"status4k":1}},
+        {"id":603,"mediaType":"tv","name":"Not The Matrix","firstAirDate":"2010-01-01"},
+        {"id":6384,"mediaType":"person","name":"Keanu Reeves"}]}"#;
+
+    fn seed_library(library: &Library) {
+        let dto = |json: &str| serde_json::from_str(json).expect("dto");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
+                        "ProviderIds":{"Tmdb":"603"}}"#),
+                dto(r#"{"Id":"s1","Name":"Severance","Type":"Series",
+                        "ProviderIds":{"Tmdb":"95396"}}"#),
+            ])
+            .expect("seed");
+    }
+
+    /// The join this whole chunk turns on: a result the library already has
+    /// resolves to that item, and one it does not resolves to a request.
+    #[test]
+    fn search_results_are_joined_to_the_library_by_kind_and_tmdb_id() {
+        let (base_url, requests) = fake_server(vec![response("200 OK", SEARCH, &[])]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let page = session.search("matrix", 1).expect("search");
+        let results = page["results"].as_array().expect("results");
+        // The person is gone: nothing to join, nothing to request.
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["mediaType"], "movie");
+        assert_eq!(results[0]["title"], "The Matrix");
+        assert_eq!(results[0]["year"], 1999);
+        assert_eq!(results[0]["status"], "available");
+        assert_eq!(results[0]["libraryItemId"], "m1");
+        // Same TMDB id, other namespace: it must not inherit the movie's item.
+        assert_eq!(results[1]["mediaType"], "tv");
+        assert_eq!(results[1]["libraryItemId"], Value::Null);
+        assert_eq!(results[1]["status"], "unknown");
+        assert_eq!(page["totalResults"], 3);
+
+        let requests = requests.lock().expect("lock");
+        assert!(requests[0].starts_with("GET /api/v1/search?query=matrix&page=1"));
+        assert!(requests[0].contains("cookie: connect.sid=abc"));
+    }
+
+    #[test]
+    fn an_empty_search_term_costs_no_round_trip() {
+        let (base_url, requests) = fake_server(Vec::new());
+        let (_library, session) = session_linked_to(&base_url);
+
+        let page = session.search("   ", 1).expect("search");
+        assert_eq!(page["results"].as_array().map(Vec::len), Some(0));
+        assert!(requests.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn discover_rows_are_named_rather_than_addressed() {
+        let (base_url, requests) = fake_server(vec![response("200 OK", SEARCH, &[])]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        session
+            .discover(super::DiscoverKind::Trending, 2)
+            .expect("discover");
+        assert!(
+            requests.lock().expect("lock")[0].starts_with("GET /api/v1/discover/trending?page=2")
+        );
+        assert_eq!(
+            super::DiscoverKind::from_id("movies"),
+            Some(DiscoverKind::Movies)
+        );
+        assert_eq!(super::DiscoverKind::from_id("../settings"), None);
+    }
+
+    #[test]
+    fn a_series_detail_offers_the_seasons_that_can_be_requested() {
+        let (base_url, requests) = fake_server(vec![response(
+            "200 OK",
+            r#"{"id":95396,"name":"Severance","firstAirDate":"2022-02-18",
+                "episodeRunTime":[45],"genres":[{"id":18,"name":"Drama"}],
+                "seasons":[{"id":1,"seasonNumber":0,"name":"Specials","episodeCount":2},
+                           {"id":2,"seasonNumber":1,"name":"Season 1","episodeCount":9},
+                           {"id":3,"seasonNumber":2,"name":"Season 2","episodeCount":10}],
+                "mediaInfo":{"tmdbId":95396,"status":4,"status4k":1,
+                             "seasons":[{"seasonNumber":1,"status":5,"status4k":1}]}}"#,
+            &[],
+        )]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let detail = session.media_detail("tv", 95396).expect("detail");
+        assert_eq!(detail["title"], "Severance");
+        assert_eq!(detail["status"], "partial");
+        assert_eq!(detail["runtimeMinutes"], 45);
+        assert_eq!(detail["genres"][0], "Drama");
+        assert_eq!(detail["libraryItemId"], "s1");
+
+        let seasons = detail["seasons"].as_array().expect("seasons");
+        // Specials are left out, exactly as Seerr's own request modal does.
+        assert_eq!(seasons.len(), 2);
+        assert_eq!(seasons[0]["seasonNumber"], 1);
+        assert_eq!(seasons[0]["status"], "available");
+        assert_eq!(seasons[1]["seasonNumber"], 2);
+        assert_eq!(seasons[1]["status"], "unknown");
+
+        assert!(requests.lock().expect("lock")[0].starts_with("GET /api/v1/tv/95396 HTTP/1.1"));
+    }
+
+    /// A `person` id in the media route would address an unrelated title, so it
+    /// is refused before a request is sent.
+    #[test]
+    fn a_detail_for_a_kind_that_is_not_requestable_is_refused_locally() {
+        let (base_url, requests) = fake_server(Vec::new());
+        let (_library, session) = session_linked_to(&base_url);
+
+        assert!(matches!(
+            session.media_detail("person", 6384),
+            Err(SeerrError::Unusable(_))
+        ));
+        assert!(matches!(
+            session.media_detail("movie", 0),
+            Err(SeerrError::Unusable(_))
+        ));
+        assert!(requests.lock().expect("lock").is_empty());
+    }
+
+    // ----------------------------------------------------------------- writes
+
+    #[test]
+    fn requesting_a_movie_sends_one_unretried_write() {
+        let (base_url, requests) = fake_server(vec![response(
+            "201 Created",
+            r#"{"id":12,"status":1,"type":"movie","is4k":false,"createdAt":"2026-07-27T10:00:00Z",
+                "media":{"tmdbId":603,"mediaType":"movie","status":2,"status4k":1}}"#,
+            &[],
+        )]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let created = session
+            .create_request("movie", 603, None, false)
+            .expect("request");
+        assert_eq!(created["id"], 12);
+        assert_eq!(created["status"], "pending");
+        assert_eq!(created["mediaStatus"], "pending");
+        assert_eq!(created["tmdbId"], 603);
+        assert_eq!(created["libraryItemId"], "m1");
+
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "a write must never be retried");
+        assert!(requests[0].starts_with("POST /api/v1/request HTTP/1.1"));
+        let body = compact(&requests[0]);
+        assert!(body.contains(r#""mediaType":"movie""#));
+        assert!(body.contains(r#""mediaId":603"#));
+        // Movies have no seasons; sending an empty list would be rejected.
+        assert!(!body.contains("seasons"));
+    }
+
+    #[test]
+    fn requesting_named_seasons_asks_for_exactly_those() {
+        let (base_url, requests) = fake_server(vec![response(
+            "201 Created",
+            r#"{"id":13,"status":1,"type":"tv","media":{"tmdbId":95396,"mediaType":"tv","status":2},
+                "seasons":[{"seasonNumber":2,"status":1}]}"#,
+            &[],
+        )]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        let created = session
+            .create_request("tv", 95396, Some(vec![2]), false)
+            .expect("request");
+        assert_eq!(created["seasons"], json!([2]));
+        assert!(compact(&requests.lock().expect("lock")[0]).contains(r#""seasons":[2]"#));
+    }
+
+    /// "Request this show" with no season named is Seerr's own `all`, which it
+    /// expands to whatever it does not already have.
+    #[test]
+    fn requesting_a_series_without_naming_seasons_asks_for_all_of_them() {
+        let (base_url, requests) = fake_server(vec![response(
+            "201 Created",
+            r#"{"id":14,"status":1,"type":"tv","media":{"tmdbId":95396,"mediaType":"tv"}}"#,
+            &[],
+        )]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        session
+            .create_request("tv", 95396, None, false)
+            .expect("request");
+        assert!(compact(&requests.lock().expect("lock")[0]).contains(r#""seasons":"all""#));
+    }
+
+    #[test]
+    fn requests_are_scoped_to_the_signed_in_seerr_user() {
+        let (base_url, requests) = fake_server(vec![response(
+            "200 OK",
+            r#"{"pageInfo":{"pages":1,"pageSize":20,"results":1,"page":1},
+                "results":[{"id":12,"status":2,"type":"movie","is4k":false,
+                            "media":{"tmdbId":603,"mediaType":"movie","status":5,"status4k":1}}]}"#,
+            &[],
+        )]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let page = session.requests(20, 0, "all").expect("requests");
+        assert_eq!(page["totalResults"], 1);
+        let first = &page["results"][0];
+        assert_eq!(first["status"], "approved");
+        assert_eq!(first["mediaStatus"], "available");
+        // Available and already in the library: the card links to the item.
+        assert_eq!(first["libraryItemId"], "m1");
+
+        let requests = requests.lock().expect("lock");
+        assert!(requests[0].starts_with("GET /api/v1/request?"));
+        assert!(requests[0].contains("requestedBy=7"), "{}", requests[0]);
+        assert!(requests[0].contains("take=20"));
+    }
+
+    /// A 4K request reports the 4K availability, not the ordinary one.
+    #[test]
+    fn a_four_k_request_reports_the_four_k_status() {
+        let (base_url, _) = fake_server(vec![response(
+            "200 OK",
+            r#"{"pageInfo":{"pages":1,"page":1,"results":1},
+                "results":[{"id":15,"status":1,"type":"movie","is4k":true,
+                            "media":{"tmdbId":603,"mediaType":"movie","status":5,"status4k":2}}]}"#,
+            &[],
+        )]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        let page = session
+            .requests(20, 0, "nonsense filter")
+            .expect("requests");
+        assert_eq!(page["results"][0]["mediaStatus"], "pending");
+    }
+
+    #[test]
+    fn cancelling_a_request_sends_a_delete_with_the_csrf_header() {
+        let (base_url, requests) = fake_server(vec![response("204 No Content", "", &[])]);
+        let library = library();
+        signed_in(&library, "uid");
+        library
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some(base_url.clone()),
+                cookies: Some(r#"{"XSRF-TOKEN":"token123","connect.sid":"abc"}"#.to_string()),
+                user_id: Some(7),
+                jellyfin_server_id: Some("srv".to_string()),
+                jellyfin_user_id: Some("uid".to_string()),
+                ..SeerrConfig::default()
+            })
+            .expect("seerr config");
+        let session = SeerrSession::restore(library);
+
+        assert_eq!(
+            session.cancel_request(12).expect("cancel")["cancelled"],
+            true
+        );
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 1, "a cancellation must never be retried");
+        assert!(requests[0].starts_with("DELETE /api/v1/request/12 HTTP/1.1"));
+        assert!(requests[0].contains("x-xsrf-token: token123"));
+    }
+
+    /// Seerr answers 401 — not 403 — to a valid session that may not cancel
+    /// somebody else's request. Taking that at face value would sign the user
+    /// out for pressing a button they were never allowed to press.
+    #[test]
+    fn a_refused_write_is_a_permission_error_not_a_lapsed_session() {
+        let (base_url, requests) = fake_server(vec![
+            response("401 Unauthorized", r#"{"message":"Unauthorized"}"#, &[]),
+            // `/auth/me` answers, so the session itself is fine.
+            response("200 OK", ME, &[]),
+        ]);
+        let (library, session) = session_linked_to(&base_url);
+
+        let error = session.cancel_request(12).expect_err("refused");
+        assert_eq!(error, SeerrError::PermissionDenied);
+
+        let requests = requests.lock().expect("lock");
+        assert!(requests[1].starts_with("GET /api/v1/auth/me HTTP/1.1"));
+        // The link survives: nothing about this was a session expiry.
+        assert!(!session.read().expired);
+        assert!(library.seerr_config().cookies.is_some());
+        assert!(is_linked(&session));
+    }
+
+    #[test]
+    fn a_lapsed_session_is_confirmed_before_the_re_link_prompt_appears() {
+        let (base_url, _) = fake_server(vec![
+            response("401 Unauthorized", r#"{"message":"Unauthorized"}"#, &[]),
+            response("401 Unauthorized", r#"{"message":"Unauthorized"}"#, &[]),
+        ]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        let error = session.cancel_request(12).expect_err("expired");
+        assert_eq!(error, SeerrError::Unauthorized);
+        assert!(session.read().expired);
+        // Every later acquisition refuses until the user re-links.
+        assert!(matches!(session.client(), Err(SeerrError::Unauthorized)));
+    }
+
+    #[test]
+    fn reads_need_a_linked_instance() {
+        let session = SeerrSession::restore(library());
+        assert!(matches!(
+            session.search("matrix", 1),
+            Err(SeerrError::NotConfigured)
+        ));
+        assert!(matches!(
+            session.requests(20, 0, "all"),
+            Err(SeerrError::NotConfigured)
+        ));
+        assert!(matches!(
+            session.cancel_request(0),
+            Err(SeerrError::Unusable(_))
+        ));
     }
 
     /// Guards against the credentials row disappearing under a live session.

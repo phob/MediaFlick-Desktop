@@ -99,15 +99,19 @@ impl BaseItemDto {
         self.name.as_deref().unwrap_or("Untitled")
     }
 
+    /// Finds a tag in Jellyfin's per-image-type map without relying on the
+    /// server's key casing.
+    pub fn image_tag(&self, image_type: &str) -> Option<&str> {
+        self.image_tags.iter().find_map(|(key, value)| {
+            key.eq_ignore_ascii_case(image_type)
+                .then_some(value.as_str())
+        })
+    }
+
     /// The image tag to use for the poster, falling back to the parent series
     /// so episodes still render art.
     pub fn primary_image_tag(&self) -> Option<&str> {
-        self.image_tags
-            .iter()
-            .find_map(|(key, value)| {
-                key.eq_ignore_ascii_case("Primary")
-                    .then_some(value.as_str())
-            })
+        self.image_tag("Primary")
             .or(self.series_primary_image_tag.as_deref())
     }
 }
@@ -248,9 +252,12 @@ mod tests {
             serde_json::from_str(r#"{"Id":"a","SeriesPrimaryImageTag":"series-tag"}"#).unwrap();
         assert_eq!(episode.primary_image_tag(), Some("series-tag"));
 
-        let movie: BaseItemDto =
-            serde_json::from_str(r#"{"Id":"a","ImageTags":{"Primary":"own-tag"}}"#).unwrap();
+        let movie: BaseItemDto = serde_json::from_str(
+            r#"{"Id":"a","ImageTags":{"Primary":"own-tag","thumb":"wide-tag"}}"#,
+        )
+        .unwrap();
         assert_eq!(movie.primary_image_tag(), Some("own-tag"));
+        assert_eq!(movie.image_tag("Thumb"), Some("wide-tag"));
     }
 
     #[test]

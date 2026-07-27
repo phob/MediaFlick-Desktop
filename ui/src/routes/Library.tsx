@@ -2,6 +2,8 @@ import { useCallback, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { ItemGrid } from "@/components/ItemGrid"
 import { LibraryFilters, type LibraryFilterState } from "@/components/LibraryFilters"
+import { PageHeader } from "@/components/PageHeader"
+import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
 
 export default function Library() {
   const [params, setParams] = useSearchParams()
@@ -47,14 +49,35 @@ export default function Library() {
     watched: filters.watched as "true" | "false" | "",
   }
 
+  const title = search
+    ? `Results for “${search}”`
+    : favorite
+      ? "My List"
+      : kind === "Series"
+        ? "Series"
+        : kind === "Movie"
+          ? "Movies"
+          : "Your library"
+  const description = search
+    ? "Everything in your library that matches, with requestable titles from Seerr below."
+    : favorite
+      ? "The films and shows you saved for later, all in one place."
+      : kind === "Series"
+        ? "Find your next episode, revisit a favorite, or start something new."
+        : "Your film collection, ready to browse and play."
+
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <PageHeader eyebrow={search ? "Search" : "Your library"} title={title} description={description} />
       <LibraryFilters value={filters} onChange={updateFilters} total={total} />
       <div className="min-h-0 flex-1">
         <ItemGrid
           query={query}
           onTotal={setTotal}
           empty={search ? `Nothing matches “${search}”.` : "No items match that query."}
+          // Inside the grid's own scroller: it owns the scroll container and
+          // the virtualized height, so the block cannot simply follow it.
+          footer={search ? <NotInYourLibrary term={search} /> : undefined}
         />
       </div>
     </div>

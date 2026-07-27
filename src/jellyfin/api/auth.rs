@@ -75,6 +75,22 @@ pub fn quick_connect_state(
     client.get_json("/QuickConnect/Connect", &[("secret", secret.to_string())])
 }
 
+/// Approves a Quick Connect code as an already-authenticated client.
+///
+/// The counterpart to the initiator side above, and the one call that makes a
+/// password-less Seerr link possible: Seerr starts a Quick Connect handshake
+/// against the same server, we approve its code on the user's behalf, and Seerr
+/// completes the login. The server answers `false` — or 403 — for a code it does
+/// not know, which is what keeps this from approving another server's handshake.
+pub fn quick_connect_authorize(client: &JellyfinClient, code: &str) -> Result<bool, ApiError> {
+    let approved: Value = client.post_json(
+        "/QuickConnect/Authorize",
+        &[("code", code.to_string())],
+        &json!({}),
+    )?;
+    Ok(approved.as_bool().unwrap_or(false))
+}
+
 pub fn authenticate_with_quick_connect(
     client: &JellyfinClient,
     secret: &str,

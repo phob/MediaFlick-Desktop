@@ -35,6 +35,26 @@ export const queryKeys = {
   media: (id: string) => ["item", id, "media"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,
   playerState: ["player", "state"] as const,
+  seerrStatus: ["seerr", "status"] as const,
+  seerrSearch: (term: string) => ["seerr", "search", term] as const,
+  seerrDiscover: (row: string) => ["seerr", "discover", row] as const,
+  seerrMedia: (mediaType: string, tmdbId: number) => ["seerr", "media", mediaType, tmdbId] as const,
+  seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
+}
+
+/**
+ * Everything that changes when a request is made or cancelled. Kept apart from
+ * `invalidateMediaSurfaces`: a Seerr write changes nothing about the local
+ * library, and refetching the grid over it would be wasted work.
+ */
+export function invalidateSeerrSurfaces() {
+  const active = { refetchType: "active" as const }
+  void queryClient.invalidateQueries({ queryKey: ["seerr", "requests"], ...active })
+  void queryClient.invalidateQueries({ queryKey: ["seerr", "search"], ...active })
+  void queryClient.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
+  void queryClient.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
+  // The quota moves with every request, and it lives on the status.
+  void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }
 
 /**

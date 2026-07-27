@@ -1,7 +1,15 @@
+import { Film } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   useLogin,
   useQuickConnectPoll,
@@ -32,10 +40,28 @@ export default function SignIn() {
   const quickError = quickConnect.error ?? poll.error
 
   return (
-    <div className="grid h-full place-items-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Sign in to Jellyfin</CardTitle>
+    <div className="signin-page relative grid h-full place-items-center overflow-hidden p-6">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(229,9,20,0.16),transparent_32rem),radial-gradient(circle_at_85%_80%,rgba(255,255,255,0.05),transparent_30rem)]" />
+      <div className="relative z-10 flex w-full max-w-md flex-col gap-7">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="grid size-14 place-items-center rounded-2xl bg-primary text-white shadow-2xl shadow-primary/20">
+            <Film className="size-7" />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-semibold tracking-[0.2em] text-foreground/60 uppercase">
+              MediaFlick Desktop
+            </p>
+            <h1 className="text-4xl font-black tracking-[-0.04em]">Your library. Your player.</h1>
+            <p className="text-sm text-muted-foreground">
+              Sign in to browse your Jellyfin library and play through your own media setup.
+            </p>
+          </div>
+        </div>
+
+      <Card className="cinematic-panel w-full gap-5 rounded-2xl py-7">
+        <CardHeader className="gap-2">
+          <CardTitle className="text-xl">Welcome back</CardTitle>
+          <CardDescription>Connect to your Jellyfin server to continue.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <form
@@ -45,34 +71,49 @@ export default function SignIn() {
               login.mutate({ server: serverValue, username, password })
             }}
           >
-            <Input
-              value={serverValue}
-              onChange={(event) => setServer(event.target.value)}
-              onBlur={(event) => {
-                const next = event.target.value.trim()
-                if (next === probed) return
-                setProbed(next)
-                // A code issued by the previous server is worthless now.
-                quickConnect.reset()
-              }}
-              placeholder="https://jellyfin.example.com"
-              autoComplete="url"
-            />
-            <Input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="Username"
-              autoComplete="username"
-            />
-            <Input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-              autoComplete="current-password"
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor="server">Server</Label>
+              <Input
+                id="server"
+                value={serverValue}
+                onChange={(event) => setServer(event.target.value)}
+                onBlur={(event) => {
+                  const next = event.target.value.trim()
+                  if (next === probed) return
+                  setProbed(next)
+                  // A code issued by the previous server is worthless now.
+                  quickConnect.reset()
+                }}
+                placeholder="https://jellyfin.example.com"
+                autoComplete="url"
+                className="h-11 border-white/10 bg-white/5"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="Your Jellyfin username"
+                autoComplete="username"
+                className="h-11 border-white/10 bg-white/5"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Your Jellyfin password"
+                autoComplete="current-password"
+                className="h-11 border-white/10 bg-white/5"
+              />
+            </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
-            <Button type="submit" disabled={login.isPending || !serverValue}>
+            <Button type="submit" size="lg" disabled={login.isPending || !serverValue}>
               {login.isPending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
@@ -86,7 +127,7 @@ export default function SignIn() {
           {/* Only offered where the server actually has it enabled — an
               always-visible button that answers 501 is worse than no button. */}
           {info.data?.quickConnect && (
-            <div className="flex flex-col gap-2 border-t pt-4">
+            <div className="flex flex-col gap-3 border-t border-white/8 pt-5">
               {quickConnect.data ? (
                 <div className="flex flex-col items-center gap-1">
                   <p className="text-sm text-muted-foreground">Enter this code in Jellyfin</p>
@@ -109,6 +150,7 @@ export default function SignIn() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }
