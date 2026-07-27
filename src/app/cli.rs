@@ -46,9 +46,9 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub library_stats: bool,
 
-    /// Print the Seer link state, probe it, and exit.
+    /// Print the Seerr link state, probe it, and exit.
     #[arg(long, default_value_t = false)]
-    pub seer_status: bool,
+    pub seerr_status: bool,
 }
 
 impl Cli {

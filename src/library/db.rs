@@ -258,18 +258,18 @@ CREATE TABLE meta (
 );
 "#;
 
-/// The Seer link, in the same single-row style as `credentials` and with the
+/// The Seerr link, in the same single-row style as `credentials` and with the
 /// same posture: plaintext, no OS keychain, exactly like the Jellyfin token
 /// next to it.
 ///
 /// `jellyfin_server_id` / `jellyfin_user_id` record the account the link was
 /// made under. Without them an in-process account switch would leave user A's
-/// Seer cookie serving user B.
+/// Seerr cookie serving user B.
 ///
 /// The Sonarr/Radarr pairs share the row: they are the same kind of optional,
 /// instance-wide configuration, and one row is one migration.
 const SCHEMA_V2: &str = r#"
-CREATE TABLE seer_config (
+CREATE TABLE seerr_config (
     id                       INTEGER PRIMARY KEY CHECK (id = 1),
     base_url                 TEXT,
     cookies                  TEXT,
@@ -301,17 +301,17 @@ mod tests {
         let table: i64 = database
             .with_connection(|connection| {
                 connection.query_row(
-                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'seer_config'",
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'seerr_config'",
                     [],
                     |row| row.get(0),
                 )
             })
-            .expect("seer_config");
+            .expect("seerr_config");
         assert_eq!(table, 1);
     }
 
     #[test]
-    fn a_v1_database_gains_seer_config_without_losing_its_session() {
+    fn a_v1_database_gains_seerr_config_without_losing_its_session() {
         let connection = Connection::open_in_memory().expect("open");
         connection.execute_batch(SCHEMA_V1).expect("v1 schema");
         connection
@@ -336,8 +336,8 @@ mod tests {
         assert_eq!(token, "tok");
         // The table exists and is empty: nothing is linked until the user says so.
         let rows: i64 = connection
-            .query_row("SELECT count(*) FROM seer_config", [], |row| row.get(0))
-            .expect("seer_config");
+            .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
+            .expect("seerr_config");
         assert_eq!(rows, 0);
     }
 
@@ -347,18 +347,20 @@ mod tests {
         migrate(&connection).expect("first migrate");
         connection
             .execute(
-                "INSERT INTO seer_config (id, base_url, updated_at)
-                 VALUES (1, 'https://seer.test', 0)",
+                "INSERT INTO seerr_config (id, base_url, updated_at)
+                 VALUES (1, 'https://seerr.test', 0)",
                 [],
             )
             .expect("seed");
         migrate(&connection).expect("second migrate");
         let url: String = connection
-            .query_row("SELECT base_url FROM seer_config WHERE id = 1", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT base_url FROM seerr_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .expect("row survived");
-        assert_eq!(url, "https://seer.test");
+        assert_eq!(url, "https://seerr.test");
     }
 
     #[test]

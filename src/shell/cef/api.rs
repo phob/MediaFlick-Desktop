@@ -17,7 +17,7 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::{ItemQuery, ItemSort};
 use crate::preferences::{AppSettings, StreamingQuality};
-use crate::seer::api::SeerError;
+use crate::seerr::api::SeerrError;
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -80,13 +80,16 @@ impl ApiResponse {
         )
     }
 
-    /// Seer failures get their own mapping: routed through [`Self::from_api_error`]
-    /// a lapsed Seer session would read to the UI as a lapsed *Jellyfin* one and
+    /// Seerr failures get their own mapping: routed through [`Self::from_api_error`]
+    /// a lapsed Seerr session would read to the UI as a lapsed *Jellyfin* one and
     /// send it to the sign-in screen.
-    fn from_seer_error(error: &SeerError) -> Self {
+    fn from_seerr_error(error: &SeerrError) -> Self {
         Self::json(
             error.client_status(),
-            json!({ "error": error.to_string(), "expired": *error == SeerError::Unauthorized }),
+            json!({
+                "error": error.to_string(),
+                "seerrExpired": *error == SeerrError::Unauthorized,
+            }),
         )
     }
 
@@ -142,8 +145,8 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             quick_connect_poll(services, request)
         }
         ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
-        ["seer", "status"] if request.is("GET") => ApiResponse::ok(services.seer.status()),
-        ["seer", "connect"] if request.is("POST") => seer_connect(services, request),
+        ["seerr", "status"] if request.is("GET") => ApiResponse::ok(services.seerr.status()),
+        ["seerr", "connect"] if request.is("POST") => seerr_connect(services, request),
         ["home"] if request.is("GET") => home(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["genres"] if request.is("GET") => match services.library.genres() {
@@ -229,8 +232,8 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     );
     match result {
         Ok(_) => {
-            // Signing in as somebody else must not inherit their Seer link.
-            services.seer.revalidate();
+            // Signing in as somebody else must not inherit their Seerr link.
+            services.seerr.revalidate();
             services.sync.request();
             status(services)
         }
@@ -258,7 +261,7 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
     match result {
         Ok(value) => {
             if value["authenticated"] == json!(true) {
-                services.seer.revalidate();
+                services.seerr.revalidate();
                 services.sync.request();
             }
             ApiResponse::ok(value)
@@ -270,23 +273,23 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let forget = request.json()["forgetLibrary"].as_bool().unwrap_or(false);
     services.session.logout(forget);
-    // The Seer link belongs to the account that just went away. Every read
+    // The Seerr link belongs to the account that just went away. Every read
     // path re-checks that anyway, but doing it here means a signed-out machine
-    // keeps no Seer cookie on disk.
-    services.seer.revalidate();
+    // keeps no Seerr cookie on disk.
+    services.seerr.revalidate();
     status(services)
 }
 
-// ---------------------------------------------------------------------- seer
+// ---------------------------------------------------------------------- seerr
 
-fn seer_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn seerr_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let body = request.json();
     match services
-        .seer
+        .seerr
         .connect(body["server"].as_str().unwrap_or_default())
     {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seer_error(&error),
+        Err(error) => ApiResponse::from_seerr_error(&error),
     }
 }
 
@@ -1307,6 +1310,17 @@ mod tests {
         assert_eq!(response.status, 404);
         let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
         assert_eq!(body["expired"], false);
+    }
+
+    #[test]
+    fn seerr_errors_do_not_carry_the_jellyfin_expiry_flag() {
+        use crate::seerr::api::SeerrError;
+
+        let response = ApiResponse::from_seerr_error(&SeerrError::Unauthorized);
+        assert_eq!(response.status, 401);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
+        assert!(body.get("expired").is_none());
+        assert_eq!(body["seerrExpired"], true);
     }
 
     #[test]
