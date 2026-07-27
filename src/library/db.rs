@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -141,6 +141,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.pragma_update(None, "user_version", 1)?;
         version = 1;
     }
+    if version < 2 {
+        connection.execute_batch(SCHEMA_V2)?;
+        connection.pragma_update(None, "user_version", 2)?;
+        version = 2;
+    }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
 }
@@ -253,15 +258,109 @@ CREATE TABLE meta (
 );
 "#;
 
+/// The Seerr link, in the same single-row style as `credentials` and with the
+/// same posture: plaintext, no OS keychain, exactly like the Jellyfin token
+/// next to it.
+///
+/// `jellyfin_server_id` / `jellyfin_user_id` record the account the link was
+/// made under. Without them an in-process account switch would leave user A's
+/// Seerr cookie serving user B.
+///
+/// The Sonarr/Radarr pairs share the row: they are the same kind of optional,
+/// instance-wide configuration, and one row is one migration.
+const SCHEMA_V2: &str = r#"
+CREATE TABLE seerr_config (
+    id                       INTEGER PRIMARY KEY CHECK (id = 1),
+    base_url                 TEXT,
+    cookies                  TEXT,
+    user_id                  INTEGER,
+    user_name                TEXT,
+    jellyfin_server_id       TEXT,
+    jellyfin_user_id         TEXT,
+    movie_4k_enabled         INTEGER NOT NULL DEFAULT 0,
+    series_4k_enabled        INTEGER NOT NULL DEFAULT 0,
+    partial_requests_enabled INTEGER NOT NULL DEFAULT 0,
+    sonarr_url               TEXT,
+    sonarr_api_key           TEXT,
+    radarr_url               TEXT,
+    radarr_api_key           TEXT,
+    updated_at               INTEGER NOT NULL
+);
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{Database, SCHEMA_VERSION, user_version};
+    use super::{Database, SCHEMA_V1, SCHEMA_VERSION, migrate, user_version};
+    use rusqlite::Connection;
 
     #[test]
     fn a_fresh_database_is_migrated_to_the_current_schema() {
         let database = Database::open_in_memory().expect("open");
         let version = database.with_connection(user_version).expect("version");
         assert_eq!(version, SCHEMA_VERSION);
+        let table: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'seerr_config'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("seerr_config");
+        assert_eq!(table, 1);
+    }
+
+    #[test]
+    fn a_v1_database_gains_seerr_config_without_losing_its_session() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection
+            .pragma_update(None, "user_version", 1)
+            .expect("stamp v1");
+        connection
+            .execute(
+                "INSERT INTO credentials (id, server_url, user_id, device_id, token, updated_at)
+                 VALUES (1, 'http://server:8096', 'uid', 'dev', 'tok', 0)",
+                [],
+            )
+            .expect("seed credentials");
+
+        migrate(&connection).expect("migrate");
+
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
+        let token: String = connection
+            .query_row("SELECT token FROM credentials WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .expect("credentials survived");
+        assert_eq!(token, "tok");
+        // The table exists and is empty: nothing is linked until the user says so.
+        let rows: i64 = connection
+            .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
+            .expect("seerr_config");
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn migrating_an_already_current_database_changes_nothing() {
+        let connection = Connection::open_in_memory().expect("open");
+        migrate(&connection).expect("first migrate");
+        connection
+            .execute(
+                "INSERT INTO seerr_config (id, base_url, updated_at)
+                 VALUES (1, 'https://seerr.test', 0)",
+                [],
+            )
+            .expect("seed");
+        migrate(&connection).expect("second migrate");
+        let url: String = connection
+            .query_row(
+                "SELECT base_url FROM seerr_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("row survived");
+        assert_eq!(url, "https://seerr.test");
     }
 
     #[test]
