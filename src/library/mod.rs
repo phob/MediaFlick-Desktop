@@ -39,13 +39,13 @@ impl StoredCredentials {
     }
 }
 
-/// The Seer link, persisted as the single row of `seer_config`.
+/// The Seerr link, persisted as the single row of `seerr_config`.
 ///
 /// `jellyfin_server_id` / `jellyfin_user_id` are the Jellyfin account the link
-/// was made under; everything that acquires a Seer client checks them, so an
-/// account switch cannot leave one user's Seer cookie serving another's.
+/// was made under; everything that acquires a Seerr client checks them, so an
+/// account switch cannot leave one user's Seerr cookie serving another's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SeerConfig {
+pub struct SeerrConfig {
     pub base_url: Option<String>,
     /// The whole cookie set as JSON, not just the session cookie: a
     /// CSRF-protected instance needs its `_csrf` / `XSRF-TOKEN` pair back too.
@@ -210,19 +210,34 @@ impl Library {
         })
     }
 
-    // ------------------------------------------------------------------- seer
+    // ------------------------------------------------------------------- seerr
 
-    pub fn seer_config(&self) -> SeerConfig {
-        self.db
-            .with_connection(|connection| {
-                connection.query_row(
-                    "SELECT base_url, cookies, user_id, user_name, jellyfin_server_id,
-                         jellyfin_user_id, movie_4k_enabled, series_4k_enabled,
-                         partial_requests_enabled
-                     FROM seer_config WHERE id = 1",
-                    [],
-                    |row| {
-                        Ok(SeerConfig {
+    #[cfg(test)]
+    pub fn seerr_config(&self) -> SeerrConfig {
+        self.seerr_config_snapshot().0
+    }
+
+    /// Reads the link together with the opaque revision used to prevent a
+    /// long-running status probe from overwriting a newer link.
+    pub(crate) fn seerr_config_snapshot(&self) -> (SeerrConfig, i64) {
+        self.try_seerr_config_snapshot()
+            .unwrap_or_default()
+            .unwrap_or_default()
+    }
+
+    /// Unlike [`Self::seerr_config_snapshot`], preserves storage failures so a
+    /// live session does not mistake a transient read error for an empty row.
+    pub(crate) fn try_seerr_config_snapshot(&self) -> rusqlite::Result<Option<(SeerrConfig, i64)>> {
+        match self.db.with_connection(|connection| {
+            connection.query_row(
+                "SELECT base_url, cookies, user_id, user_name, jellyfin_server_id,
+                     jellyfin_user_id, movie_4k_enabled, series_4k_enabled,
+                     partial_requests_enabled, updated_at
+                 FROM seerr_config WHERE id = 1",
+                [],
+                |row| {
+                    Ok((
+                        SeerrConfig {
                             base_url: row.get(0)?,
                             cookies: row.get(1)?,
                             user_id: row.get(2)?,
@@ -232,19 +247,25 @@ impl Library {
                             movie_4k_enabled: row.get(6)?,
                             series_4k_enabled: row.get(7)?,
                             partial_requests_enabled: row.get(8)?,
-                        })
-                    },
-                )
-            })
-            .unwrap_or_default()
+                        },
+                        row.get(9)?,
+                    ))
+                },
+            )
+        }) {
+            Ok(snapshot) => Ok(Some(snapshot)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     /// Upserts rather than updates: unlike `credentials`, this row is only
-    /// created when a Seer instance is first configured.
-    pub fn save_seer_config(&self, config: &SeerConfig) -> rusqlite::Result<()> {
+    /// created when a Seerr instance is first configured.
+    #[cfg(test)]
+    pub fn save_seerr_config(&self, config: &SeerrConfig) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
-                "INSERT INTO seer_config (id, base_url, cookies, user_id, user_name,
+                "INSERT INTO seerr_config (id, base_url, cookies, user_id, user_name,
                      jellyfin_server_id, jellyfin_user_id, movie_4k_enabled,
                      series_4k_enabled, partial_requests_enabled, updated_at)
                  VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -258,7 +279,7 @@ impl Library {
                      movie_4k_enabled = excluded.movie_4k_enabled,
                      series_4k_enabled = excluded.series_4k_enabled,
                      partial_requests_enabled = excluded.partial_requests_enabled,
-                     updated_at = excluded.updated_at",
+                     updated_at = seerr_config.updated_at + 1",
                 params![
                     config.base_url,
                     config.cookies,
@@ -269,22 +290,75 @@ impl Library {
                     config.movie_4k_enabled,
                     config.series_4k_enabled,
                     config.partial_requests_enabled,
-                    now_unix(),
+                    1,
                 ],
             )?;
             Ok(())
         })
     }
 
-    /// Drops the Seer session and the account binding, keeping the instance
+    /// Saves only if nobody has changed the link since `expected_revision` was
+    /// read. `None` means the caller's snapshot is stale and was not written.
+    pub(crate) fn save_seerr_config_if_revision(
+        &self,
+        config: &SeerrConfig,
+        expected_revision: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.db.with_connection(|connection| {
+            let changed = connection.execute(
+                "INSERT INTO seerr_config (id, base_url, cookies, user_id, user_name,
+                     jellyfin_server_id, jellyfin_user_id, movie_4k_enabled,
+                     series_4k_enabled, partial_requests_enabled, updated_at)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)
+                 ON CONFLICT(id) DO UPDATE SET
+                     base_url = excluded.base_url,
+                     cookies = excluded.cookies,
+                     user_id = excluded.user_id,
+                     user_name = excluded.user_name,
+                     jellyfin_server_id = excluded.jellyfin_server_id,
+                     jellyfin_user_id = excluded.jellyfin_user_id,
+                     movie_4k_enabled = excluded.movie_4k_enabled,
+                     series_4k_enabled = excluded.series_4k_enabled,
+                     partial_requests_enabled = excluded.partial_requests_enabled,
+                     updated_at = seerr_config.updated_at + 1
+                 WHERE seerr_config.updated_at = ?10",
+                params![
+                    config.base_url,
+                    config.cookies,
+                    config.user_id,
+                    config.user_name,
+                    config.jellyfin_server_id,
+                    config.jellyfin_user_id,
+                    config.movie_4k_enabled,
+                    config.series_4k_enabled,
+                    config.partial_requests_enabled,
+                    expected_revision,
+                ],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            connection
+                .query_row(
+                    "SELECT updated_at FROM seerr_config WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map(Some)
+        })
+    }
+
+    /// Drops the Seerr session and the account binding, keeping the instance
     /// address so re-linking does not mean retyping it.
-    pub fn clear_seer_link(&self) -> rusqlite::Result<()> {
+    #[cfg(test)]
+    pub fn clear_seerr_link(&self) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
-                "UPDATE seer_config SET cookies = NULL, user_id = NULL, user_name = NULL,
-                     jellyfin_server_id = NULL, jellyfin_user_id = NULL, updated_at = ?1
+                "UPDATE seerr_config SET cookies = NULL, user_id = NULL, user_name = NULL,
+                     jellyfin_server_id = NULL, jellyfin_user_id = NULL,
+                     updated_at = updated_at + 1
                  WHERE id = 1",
-                params![now_unix()],
+                [],
             )?;
             Ok(())
         })
@@ -999,7 +1073,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemQuery, ItemSort, Library, SeerConfig, civil_from_days, fts_match_expression};
+    use super::{ItemQuery, ItemSort, Library, SeerrConfig, civil_from_days, fts_match_expression};
     use crate::jellyfin::api::model::BaseItemDto;
     use std::collections::HashSet;
 
@@ -1039,16 +1113,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unconfigured_library_has_an_empty_seer_config() {
+    fn an_unconfigured_library_has_an_empty_seerr_config() {
         let library = Library::open_in_memory().expect("library");
-        assert_eq!(library.seer_config(), SeerConfig::default());
+        assert_eq!(library.seerr_config(), SeerrConfig::default());
     }
 
     #[test]
-    fn the_seer_config_round_trips_through_its_single_row() {
+    fn the_seerr_config_round_trips_through_its_single_row() {
         let library = Library::open_in_memory().expect("library");
-        let config = SeerConfig {
-            base_url: Some("https://seer.test".to_string()),
+        let config = SeerrConfig {
+            base_url: Some("https://seerr.test".to_string()),
             cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
             user_id: Some(7),
             user_name: Some("pho".to_string()),
@@ -1058,37 +1132,66 @@ mod tests {
             series_4k_enabled: false,
             partial_requests_enabled: true,
         };
-        library.save_seer_config(&config).expect("save");
-        assert_eq!(library.seer_config(), config);
+        library.save_seerr_config(&config).expect("save");
+        assert_eq!(library.seerr_config(), config);
 
         // Saving twice must update the row, not fail on the primary key.
-        let moved = SeerConfig {
+        let moved = SeerrConfig {
             base_url: Some("https://other.test".to_string()),
             ..config
         };
-        library.save_seer_config(&moved).expect("re-save");
-        assert_eq!(library.seer_config(), moved);
+        library.save_seerr_config(&moved).expect("re-save");
+        assert_eq!(library.seerr_config(), moved);
     }
 
     #[test]
-    fn clearing_the_seer_link_keeps_the_instance_address() {
+    fn a_stale_seerr_revision_cannot_replace_a_newer_config() {
+        let library = Library::open_in_memory().expect("library");
+        let original = SeerrConfig {
+            base_url: Some("https://old.test".to_string()),
+            ..SeerrConfig::default()
+        };
+        library.save_seerr_config(&original).expect("original");
+        let (_, original_revision) = library.seerr_config_snapshot();
+
+        let newer = SeerrConfig {
+            base_url: Some("https://new.test".to_string()),
+            ..SeerrConfig::default()
+        };
+        library.save_seerr_config(&newer).expect("newer");
+
+        let stale = SeerrConfig {
+            base_url: Some("https://stale.test".to_string()),
+            ..SeerrConfig::default()
+        };
+        assert_eq!(
+            library
+                .save_seerr_config_if_revision(&stale, original_revision)
+                .expect("conditional save"),
+            None
+        );
+        assert_eq!(library.seerr_config(), newer);
+    }
+
+    #[test]
+    fn clearing_the_seerr_link_keeps_the_instance_address() {
         let library = Library::open_in_memory().expect("library");
         library
-            .save_seer_config(&SeerConfig {
-                base_url: Some("https://seer.test".to_string()),
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
                 cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
                 jellyfin_server_id: Some("srv".to_string()),
                 jellyfin_user_id: Some("uid".to_string()),
                 partial_requests_enabled: true,
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
             .expect("save");
-        library.clear_seer_link().expect("clear");
+        library.clear_seerr_link().expect("clear");
 
-        let config = library.seer_config();
-        assert_eq!(config.base_url.as_deref(), Some("https://seer.test"));
+        let config = library.seerr_config();
+        assert_eq!(config.base_url.as_deref(), Some("https://seerr.test"));
         assert!(config.partial_requests_enabled);
         assert_eq!(config.cookies, None);
         assert_eq!(config.user_id, None);

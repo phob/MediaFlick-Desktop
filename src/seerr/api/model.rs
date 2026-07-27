@@ -1,7 +1,7 @@
-//! The subset of Seer's API shapes this app consumes.
+//! The subset of Seerr's API shapes this app consumes.
 //!
 //! Everything is `#[serde(default)]` for the same reason the Jellyfin models
-//! are: Seer renamed itself from Jellyseerr and keeps moving, and a field that
+//! are: Seerr renamed itself from Jellyseerr and keeps moving, and a field that
 //! appears or disappears between releases must degrade to missing metadata
 //! rather than fail the whole call.
 
@@ -23,7 +23,7 @@ pub struct PublicSettings {
     pub media_server_type: Option<i64>,
     pub local_login: bool,
     pub media_server_login: bool,
-    /// Seer's "enable new Jellyfin sign-in": when off, a user who has never
+    /// Seerr's "enable new Jellyfin sign-in": when off, a user who has never
     /// been imported gets a 403 from login instead of an account.
     /// The `Plex` in the name is a leftover from Overseerr.
     pub new_plex_login: bool,
@@ -45,7 +45,7 @@ pub struct StatusInfo {
 /// `GET /api/v1/auth/me`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-pub struct SeerUser {
+pub struct SeerrUser {
     pub id: i64,
     pub email: Option<String>,
     pub username: Option<String>,
@@ -53,13 +53,13 @@ pub struct SeerUser {
     pub display_name: Option<String>,
     pub avatar: Option<String>,
     pub permissions: u64,
-    /// The Jellyfin account this Seer user is backed by. The link is bound to
+    /// The Jellyfin account this Seerr user is backed by. The link is bound to
     /// it, which is what keeps user A's cookie from serving user B.
     pub jellyfin_user_id: Option<String>,
 }
 
-impl SeerUser {
-    /// What to show in the UI, in Seer's own order of preference.
+impl SeerrUser {
+    /// What to show in the UI, in Seerr's own order of preference.
     pub fn preferred_name(&self) -> &str {
         [
             self.display_name.as_deref(),
@@ -71,7 +71,7 @@ impl SeerUser {
         .flatten()
         .map(str::trim)
         .find(|value| !value.is_empty())
-        .unwrap_or("Seer user")
+        .unwrap_or("Seerr user")
     }
 }
 
@@ -92,11 +92,11 @@ pub struct QuotaStatus {
     pub limit: Option<i64>,
     pub used: i64,
     pub remaining: Option<i64>,
-    /// Seer's own verdict: the quota is currently exhausted.
+    /// Seerr's own verdict: the quota is currently exhausted.
     pub restricted: bool,
 }
 
-/// Seer's permission mask (`server/lib/permissions.ts`). Only the bits this
+/// Seerr's permission mask (`server/lib/permissions.ts`). Only the bits this
 /// app acts on are named.
 pub mod permission {
     pub const ADMIN: u64 = 2;
@@ -122,7 +122,7 @@ pub struct Capability {
     pub auto_approve: bool,
 }
 
-/// Seer's permissions are per-type — movie, TV, each with a 4K variant and an
+/// Seerr's permissions are per-type — movie, TV, each with a 4K variant and an
 /// auto-approve bit — so this cannot collapse to a `canRequest` boolean.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,7 +169,7 @@ impl Capabilities {
 
 #[cfg(test)]
 mod tests {
-    use super::{Capabilities, PublicSettings, SeerUser, permission};
+    use super::{Capabilities, PublicSettings, SeerrUser, permission};
 
     #[test]
     fn an_uninitialized_instance_still_deserializes() {
@@ -245,13 +245,13 @@ mod tests {
     }
 
     #[test]
-    fn the_display_name_falls_back_through_seers_own_order() {
-        let user: SeerUser = serde_json::from_str(
+    fn the_display_name_falls_back_through_seerrs_own_order() {
+        let user: SeerrUser = serde_json::from_str(
             r#"{"id":3,"email":"a@b.c","jellyfinUsername":"pho","displayName":"  ","permissions":32}"#,
         )
         .expect("user");
         assert_eq!(user.id, 3);
         assert_eq!(user.preferred_name(), "pho");
-        assert_eq!(SeerUser::default().preferred_name(), "Seer user");
+        assert_eq!(SeerrUser::default().preferred_name(), "Seerr user");
     }
 }

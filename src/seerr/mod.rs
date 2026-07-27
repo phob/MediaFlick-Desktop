@@ -1,13 +1,13 @@
-//! Seer — the project formerly called Jellyseerr — as a request backend.
+//! Seerr — the project formerly called Jellyseerr — as a request backend.
 //!
-//! MediaFlick is a *client* to Seer, not a second \*arr orchestrator: Seer owns
+//! MediaFlick is a *client* to Seerr, not a second \*arr orchestrator: Seerr owns
 //! the quality profiles, root folders, approval rules and quotas. The credential
 //! held here is the user's own session cookie, never an instance-wide API key,
-//! which by Seer's own documentation grants administrator access.
+//! which by Seerr's own documentation grants administrator access.
 //!
 //! The session is bound to one Jellyfin account. Every acquisition of a client
 //! re-checks that binding, so signing out — or signing in as somebody else —
-//! cannot leave user A's Seer cookie serving user B.
+//! cannot leave user A's Seerr cookie serving user B.
 
 pub mod api;
 pub mod headless;
@@ -16,17 +16,19 @@ use std::sync::{Arc, RwLock};
 
 use serde_json::{Value, json};
 
-use crate::library::{Library, SeerConfig};
+use crate::library::{Library, SeerrConfig};
 use crate::preferences::normalize_server_url;
 
-use api::client::{SeerClient, SessionCookies};
-use api::error::SeerError;
+use api::client::{SeerrClient, SessionCookies};
+use api::error::SeerrError;
 use api::model::{
-    Capabilities, MEDIA_SERVER_JELLYFIN, PublicSettings, SeerUser, StatusInfo, UserQuota,
+    Capabilities, MEDIA_SERVER_JELLYFIN, PublicSettings, SeerrUser, StatusInfo, UserQuota,
 };
 
 #[derive(Debug, Clone, Default)]
-struct SeerState {
+struct SeerrState {
+    /// Opaque `seerr_config.updated_at` revision used for optimistic writes.
+    revision: i64,
     base_url: Option<String>,
     cookies: SessionCookies,
     user_id: Option<i64>,
@@ -40,9 +42,10 @@ struct SeerState {
     expired: bool,
 }
 
-impl SeerState {
-    fn from_config(config: SeerConfig) -> Self {
+impl SeerrState {
+    fn from_config(config: SeerrConfig, revision: i64) -> Self {
         Self {
+            revision,
             base_url: config.base_url,
             cookies: config
                 .cookies
@@ -60,8 +63,8 @@ impl SeerState {
         }
     }
 
-    fn to_config(&self) -> SeerConfig {
-        SeerConfig {
+    fn to_config(&self) -> SeerrConfig {
+        SeerrConfig {
             base_url: self.base_url.clone(),
             cookies: (!self.cookies.is_empty()).then(|| self.cookies.to_json()),
             user_id: self.user_id,
@@ -79,53 +82,54 @@ impl SeerState {
     }
 }
 
-pub struct SeerSession {
+pub struct SeerrSession {
     library: Arc<Library>,
-    state: RwLock<SeerState>,
+    state: RwLock<SeerrState>,
 }
 
-impl SeerSession {
+impl SeerrSession {
     pub fn restore(library: Arc<Library>) -> Self {
-        let state = SeerState::from_config(library.seer_config());
+        let (config, revision) = library.seerr_config_snapshot();
+        let state = SeerrState::from_config(config, revision);
         Self {
             library,
             state: RwLock::new(state),
         }
     }
 
-    fn read(&self) -> SeerState {
+    fn read(&self) -> SeerrState {
         self.state
             .read()
-            .map(|state| state.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// A client carrying the stored session, or the reason one cannot be built.
-    pub fn client(&self) -> Result<SeerClient, SeerError> {
+    pub fn client(&self) -> Result<SeerrClient, SeerrError> {
         self.revalidate();
         let state = self.read();
         if state.expired {
-            return Err(SeerError::Unauthorized);
+            return Err(SeerrError::Unauthorized);
         }
-        let base_url = state.base_url.ok_or(SeerError::NotConfigured)?;
-        Ok(SeerClient::new(&base_url, state.cookies))
+        let base_url = state.base_url.ok_or(SeerrError::NotConfigured)?;
+        Ok(SeerrClient::new(&base_url, state.cookies))
     }
 
     /// Probes an instance and remembers it as the link target.
     ///
     /// `/settings/public` rather than `/status`, because an *uninitialized*
-    /// Seer treats `POST /auth/jellyfin` as its setup wizard — it would make
+    /// Seerr treats `POST /auth/jellyfin` as its setup wizard — it would make
     /// whoever logs in the instance owner. Requiring `initialized: true` here
     /// is what keeps a client from silently becoming that wizard. The probe is
     /// also where a CSRF-protected instance hands out the cookie pair the
     /// first POST will need.
-    pub fn connect(&self, server_url: &str) -> Result<Value, SeerError> {
-        let normalized = normalize_server_url(server_url).ok_or(SeerError::NotConfigured)?;
-        let client = SeerClient::new(&normalized, SessionCookies::default());
+    pub fn connect(&self, server_url: &str) -> Result<Value, SeerrError> {
+        let normalized = normalize_server_url(server_url).ok_or(SeerrError::NotConfigured)?;
+        let client = SeerrClient::new(&normalized, SessionCookies::default());
         let settings: PublicSettings = client.get_json("settings/public", &[])?;
         if !settings.initialized {
-            return Err(SeerError::Unusable(
-                "this Seer instance has not finished its setup wizard yet".to_string(),
+            return Err(SeerrError::Unusable(
+                "this Seerr instance has not finished its setup wizard yet".to_string(),
             ));
         }
         // Only present on an initialized instance, so it is checked, not required.
@@ -133,8 +137,8 @@ impl SeerSession {
             .media_server_type
             .is_some_and(|kind| kind != MEDIA_SERVER_JELLYFIN)
         {
-            return Err(SeerError::Unusable(
-                "this Seer instance is not connected to a Jellyfin server".to_string(),
+            return Err(SeerrError::Unusable(
+                "this Seerr instance is not connected to a Jellyfin server".to_string(),
             ));
         }
         // The version is informational and feature-detects the Quick Connect
@@ -144,6 +148,10 @@ impl SeerSession {
             .map(|status| status.version)
             .unwrap_or_default();
 
+        // The probes above can take minutes. Re-read the stored link and check
+        // its Jellyfin binding only after they finish, before preserving any
+        // part of the previous session.
+        self.revalidate();
         let previous = self.read();
         let same_instance = previous.base_url.as_deref() == Some(normalized.as_str());
         if !same_instance {
@@ -157,9 +165,10 @@ impl SeerSession {
             next.cookies.merge(client.cookies());
             next
         } else {
-            SeerState {
+            SeerrState {
+                revision: previous.revision,
                 cookies: client.cookies(),
-                ..SeerState::default()
+                ..SeerrState::default()
             }
         };
         next.base_url = Some(normalized.clone());
@@ -167,9 +176,17 @@ impl SeerSession {
         next.series_4k_enabled = settings.series_4k_enabled;
         next.partial_requests_enabled = settings.partial_requests_enabled;
         let linked = next.is_linked();
-        self.commit(next);
+        let linked = if self.commit(next) {
+            linked
+        } else {
+            tracing::debug!(
+                target: "seerr.session",
+                "discarded a stale Seerr connect result because the stored link changed"
+            );
+            false
+        };
 
-        tracing::info!(target: "seer.session", url = %normalized, "connected to Seer");
+        tracing::info!(target: "seerr.session", url = %normalized, "connected to Seerr");
         Ok(json!({
             "serverUrl": normalized,
             "version": version,
@@ -184,7 +201,7 @@ impl SeerSession {
         }))
     }
 
-    /// What the UI needs to decide whether to show the Seer views at all.
+    /// What the UI needs to decide whether to show the Seerr views at all.
     ///
     /// A linked session is confirmed against the instance rather than assumed:
     /// Express sessions lapse without warning, and the answer carries the
@@ -192,41 +209,35 @@ impl SeerSession {
     pub fn status(&self) -> Value {
         self.revalidate();
         let state = self.read();
-        let mut status = json!({
-            "configured": state.base_url.is_some(),
-            "linked": false,
-            "expired": state.expired,
-            "serverUrl": state.base_url,
-            "instance": {
-                "movie4kEnabled": state.movie_4k_enabled,
-                "series4kEnabled": state.series_4k_enabled,
-                "partialRequestsEnabled": state.partial_requests_enabled,
-            },
-            "user": Value::Null,
-            "capabilities": Value::Null,
-            "quota": Value::Null,
-        });
+        let mut status = Self::status_from_state(&state);
         if !state.is_linked() {
             return status;
         }
 
-        let Ok(client) = self.client() else {
-            return status;
+        let client = match self.client() {
+            Ok(client) => client,
+            Err(_) => return Self::status_from_state(&self.read()),
         };
-        let user: SeerUser = match client.get_json("auth/me", &[]) {
+        let user: SeerrUser = match client.get_json("auth/me", &[]) {
             Ok(user) => user,
-            Err(SeerError::Unauthorized) => {
-                // This *is* `/auth/me`, so a 401 here is unambiguous.
+            Err(SeerrError::Unauthorized) => {
+                // This *is* `/auth/me`, so a 401 here is unambiguous, provided
+                // the link probed is still the one stored now.
+                if !self.probe_is_current(state.revision) {
+                    return Self::status_from_state(&self.read());
+                }
                 self.mark_expired();
                 status["expired"] = json!(true);
                 return status;
             }
             Err(error) => {
-                tracing::debug!(target: "seer.session", "could not read the Seer user: {error}");
+                tracing::debug!(target: "seerr.session", "could not read the Seerr user: {error}");
+                if !self.probe_is_current(state.revision) {
+                    return Self::status_from_state(&self.read());
+                }
                 return status;
             }
         };
-        self.absorb(&client);
 
         let capabilities = Capabilities::derive(
             user.permissions,
@@ -238,6 +249,10 @@ impl SeerSession {
         let quota = client
             .get_json::<UserQuota>(&format!("user/{}/quota", user.id), &[])
             .ok();
+
+        if !self.absorb_probe(&client, state.revision) {
+            return Self::status_from_state(&self.read());
+        }
 
         status["linked"] = json!(true);
         status["user"] = json!({
@@ -253,11 +268,29 @@ impl SeerSession {
         status
     }
 
+    fn status_from_state(state: &SeerrState) -> Value {
+        json!({
+            "configured": state.base_url.is_some(),
+            "linked": false,
+            "expired": state.expired,
+            "serverUrl": state.base_url.clone(),
+            "instance": {
+                "movie4kEnabled": state.movie_4k_enabled,
+                "series4kEnabled": state.series_4k_enabled,
+                "partialRequestsEnabled": state.partial_requests_enabled,
+            },
+            "user": Value::Null,
+            "capabilities": Value::Null,
+            "quota": Value::Null,
+        })
+    }
+
     /// Drops the link when the Jellyfin account it was made under is no longer
     /// the one signed in. Cheap enough to run on every acquisition, and run
     /// eagerly by the sign-in and sign-out paths so a signed-out machine keeps
-    /// no Seer cookie on disk.
+    /// no Seerr cookie on disk.
     pub fn revalidate(&self) {
+        self.refresh_from_storage();
         let state = self.read();
         let Some(bound_user) = state.jellyfin_user_id.clone() else {
             // Nothing linked yet: only an instance address, which is not secret.
@@ -274,8 +307,8 @@ impl SeerSession {
             return;
         }
         tracing::info!(
-            target: "seer.session",
-            "dropping the Seer link: the Jellyfin account it was made under is no longer signed in"
+            target: "seerr.session",
+            "dropping the Seerr link: the Jellyfin account it was made under is no longer signed in"
         );
         self.unlink_locally();
     }
@@ -283,27 +316,24 @@ impl SeerSession {
     /// Forgets the session without touching the instance address, so re-linking
     /// does not mean retyping it.
     fn unlink_locally(&self) {
-        if let Ok(mut state) = self.state.write() {
-            state.cookies = SessionCookies::default();
-            state.user_id = None;
-            state.user_name = None;
-            state.jellyfin_server_id = None;
-            state.jellyfin_user_id = None;
-            state.expired = false;
-        }
-        if let Err(error) = self.library.clear_seer_link() {
-            tracing::warn!(target: "seer.session", "failed to clear the stored Seer link: {error}");
-        }
+        let mut next = self.read();
+        next.cookies = SessionCookies::default();
+        next.user_id = None;
+        next.user_name = None;
+        next.jellyfin_server_id = None;
+        next.jellyfin_user_id = None;
+        next.expired = false;
+        self.commit(next);
     }
 
     /// Best-effort server-side teardown before a stored session is abandoned.
-    fn discard_remote_session(&self, state: &SeerState) {
+    fn discard_remote_session(&self, state: &SeerrState) {
         let (Some(base_url), false) = (&state.base_url, state.cookies.is_empty()) else {
             return;
         };
-        let client = SeerClient::new(base_url, state.cookies.clone());
+        let client = SeerrClient::new(base_url, state.cookies.clone());
         if let Err(error) = client.post_empty("auth/logout") {
-            tracing::debug!(target: "seer.session", "server-side Seer logout failed: {error}");
+            tracing::debug!(target: "seerr.session", "server-side Seerr logout failed: {error}");
         }
     }
 
@@ -311,53 +341,107 @@ impl SeerSession {
         if self.read().expired {
             return;
         }
-        if let Ok(mut state) = self.state.write() {
-            state.expired = true;
-        }
+        self.state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .expired = true;
         tracing::warn!(
-            target: "seer.session",
-            "the Seer session has lapsed; re-linking is required"
+            target: "seerr.session",
+            "the Seerr session has lapsed; re-linking is required"
         );
     }
 
     /// Takes back whatever cookies a call rotated, so a refreshed CSRF pair
-    /// survives the restart.
-    fn absorb(&self, client: &SeerClient) {
+    /// survives the restart. The probe result is discarded if another process
+    /// changed the stored link while the request was in flight.
+    fn absorb_probe(&self, client: &SeerrClient, expected_revision: i64) -> bool {
+        if !self.probe_is_current(expected_revision) {
+            return false;
+        }
         let cookies = client.cookies();
-        let changed = {
-            let Ok(mut state) = self.state.write() else {
-                return;
-            };
-            if state.cookies == cookies {
-                false
-            } else {
-                state.cookies = cookies;
-                true
+        let mut next = self.read();
+        if next.revision != expected_revision {
+            return false;
+        }
+        if next.cookies == cookies {
+            return true;
+        }
+        next.cookies = cookies;
+        self.commit(next)
+    }
+
+    fn probe_is_current(&self, expected_revision: i64) -> bool {
+        let (config, revision) = match self.library.try_seerr_config_snapshot() {
+            Ok(snapshot) => snapshot.unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "seerr.session",
+                    "failed to verify the stored Seerr link revision: {error}"
+                );
+                return false;
             }
         };
-        if changed {
-            self.persist();
+        if revision == expected_revision {
+            return true;
+        }
+        self.replace_state(SeerrState::from_config(config, revision));
+        tracing::debug!(
+            target: "seerr.session",
+            "discarded a stale Seerr probe because the stored link changed"
+        );
+        false
+    }
+
+    fn refresh_from_storage(&self) {
+        let revision = self.read().revision;
+        let (config, stored_revision) = match self.library.try_seerr_config_snapshot() {
+            Ok(snapshot) => snapshot.unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "seerr.session",
+                    "failed to refresh the stored Seerr link: {error}"
+                );
+                return;
+            }
+        };
+        if stored_revision != revision {
+            self.replace_state(SeerrState::from_config(config, stored_revision));
         }
     }
 
-    fn commit(&self, next: SeerState) {
-        if let Ok(mut state) = self.state.write() {
-            *state = next;
-        }
-        self.persist();
+    fn replace_state(&self, next: SeerrState) {
+        *self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
     }
 
-    fn persist(&self) {
-        if let Err(error) = self.library.save_seer_config(&self.read().to_config()) {
-            tracing::warn!(target: "seer.session", "failed to persist the Seer link: {error}");
+    fn commit(&self, mut next: SeerrState) -> bool {
+        match self
+            .library
+            .save_seerr_config_if_revision(&next.to_config(), next.revision)
+        {
+            Ok(Some(revision)) => {
+                next.revision = revision;
+                self.replace_state(next);
+                true
+            }
+            Ok(None) => {
+                self.refresh_from_storage();
+                false
+            }
+            Err(error) => {
+                tracing::warn!(target: "seerr.session", "failed to persist the Seerr link: {error}");
+                false
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SeerSession, SeerState};
-    use crate::library::{Library, SeerConfig};
+    use super::{SeerrClient, SeerrSession, SeerrState, SessionCookies};
+    use crate::library::{Library, SeerrConfig};
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
@@ -369,7 +453,7 @@ mod tests {
     /// A throwaway HTTP server answering one canned response per request and
     /// recording the request heads it saw. The cookie plumbing is the part of
     /// this milestone that only a real socket can prove.
-    fn fake_seer(responses: Vec<String>) -> (String, Arc<Mutex<Vec<String>>>) {
+    fn fake_seerr(responses: Vec<String>) -> (String, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let base_url = format!("http://{}", listener.local_addr().expect("address"));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -426,36 +510,36 @@ mod tests {
     /// The link as the session itself sees it, once the account guard has run.
     /// Deliberately not `status()`: that confirms a live link against the
     /// instance, which these tests have no server for.
-    fn is_linked(session: &SeerSession) -> bool {
+    fn is_linked(session: &SeerrSession) -> bool {
         session.revalidate();
         session.read().is_linked()
     }
 
     fn linked(library: &Library, jellyfin_user_id: &str) {
         library
-            .save_seer_config(&SeerConfig {
-                base_url: Some("https://seer.test".to_string()),
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
                 cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
                 jellyfin_server_id: Some("srv".to_string()),
                 jellyfin_user_id: Some(jellyfin_user_id.to_string()),
                 partial_requests_enabled: true,
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
+            .expect("seerr config");
     }
 
     #[test]
     fn a_fresh_session_is_neither_configured_nor_linked() {
-        let session = SeerSession::restore(library());
+        let session = SeerrSession::restore(library());
         let status = session.status();
         assert_eq!(status["configured"], false);
         assert_eq!(status["linked"], false);
         assert_eq!(status["user"], serde_json::Value::Null);
         assert!(matches!(
             session.client(),
-            Err(super::SeerError::NotConfigured)
+            Err(super::SeerrError::NotConfigured)
         ));
     }
 
@@ -465,29 +549,29 @@ mod tests {
         signed_in(&library, "uid");
         linked(&library, "uid");
 
-        let session = SeerSession::restore(library);
+        let session = SeerrSession::restore(library);
         let client = session.client().expect("client");
         assert_eq!(
             client.url("auth/me", &[]),
-            "https://seer.test/api/v1/auth/me"
+            "https://seerr.test/api/v1/auth/me"
         );
         assert!(client.cookies().has_session());
     }
 
     #[test]
     fn an_unusable_address_is_rejected_before_any_request() {
-        let session = SeerSession::restore(library());
+        let session = SeerrSession::restore(library());
         assert!(matches!(
             session.connect("file:///etc/passwd"),
-            Err(super::SeerError::NotConfigured)
+            Err(super::SeerrError::NotConfigured)
         ));
         assert!(matches!(
             session.connect("javascript:alert(1)"),
-            Err(super::SeerError::NotConfigured)
+            Err(super::SeerrError::NotConfigured)
         ));
         assert!(matches!(
             session.connect("  "),
-            Err(super::SeerError::NotConfigured)
+            Err(super::SeerrError::NotConfigured)
         ));
     }
 
@@ -496,7 +580,7 @@ mod tests {
         let library = library();
         signed_in(&library, "uid");
         linked(&library, "uid");
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
         assert!(is_linked(&session));
 
         // Somebody else signs in on the same machine.
@@ -504,11 +588,11 @@ mod tests {
 
         assert!(!is_linked(&session));
         assert_eq!(session.status()["linked"], false);
-        let stored = library.seer_config();
+        let stored = library.seerr_config();
         assert_eq!(stored.cookies, None);
         assert_eq!(stored.user_id, None);
         // The instance address survives, so re-linking needs no retyping.
-        assert_eq!(stored.base_url.as_deref(), Some("https://seer.test"));
+        assert_eq!(stored.base_url.as_deref(), Some("https://seerr.test"));
     }
 
     #[test]
@@ -516,12 +600,12 @@ mod tests {
         let library = library();
         signed_in(&library, "uid");
         linked(&library, "uid");
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
 
         library.clear_session(false).expect("sign out");
 
         assert!(!is_linked(&session));
-        assert_eq!(library.seer_config().cookies, None);
+        assert_eq!(library.seerr_config().cookies, None);
     }
 
     #[test]
@@ -529,23 +613,23 @@ mod tests {
         let library = library();
         signed_in(&library, "uid");
         library
-            .save_seer_config(&SeerConfig {
-                base_url: Some("https://seer.test".to_string()),
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
                 cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
                 jellyfin_server_id: Some("a-different-server".to_string()),
                 jellyfin_user_id: Some("uid".to_string()),
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
+            .expect("seerr config");
 
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
         assert!(!is_linked(&session));
-        assert_eq!(library.seer_config().cookies, None);
+        assert_eq!(library.seerr_config().cookies, None);
     }
 
     #[test]
     fn connecting_captures_the_csrf_pair_from_the_very_first_probe() {
-        let (base_url, requests) = fake_seer(vec![
+        let (base_url, requests) = fake_seerr(vec![
             response(
                 "200 OK",
                 INITIALIZED,
@@ -557,7 +641,7 @@ mod tests {
             response("200 OK", VERSION, &[]),
         ]);
         let library = library();
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
 
         let result = session.connect(&base_url).expect("connect");
         assert_eq!(result["serverUrl"], base_url);
@@ -571,7 +655,7 @@ mod tests {
         // The pair the probe handed out is already on the second request, and
         // is persisted so the first write after a restart still has it.
         assert!(requests[1].contains("cookie: XSRF-TOKEN=token123; _csrf=secret"));
-        let stored = library.seer_config();
+        let stored = library.seerr_config();
         assert_eq!(stored.base_url.as_deref(), Some(base_url.as_str()));
         assert!(
             stored
@@ -584,61 +668,61 @@ mod tests {
 
     #[test]
     fn an_uninitialized_instance_is_refused_before_it_can_be_set_up_by_accident() {
-        let (base_url, _) = fake_seer(vec![response(
+        let (base_url, _) = fake_seerr(vec![response(
             "200 OK",
             r#"{"initialized":false,"plexClientIdentifier":"abc"}"#,
             &[],
         )]);
         let library = library();
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
 
         let error = session.connect(&base_url).expect_err("refused");
-        assert!(matches!(error, super::SeerError::Unusable(_)));
+        assert!(matches!(error, super::SeerrError::Unusable(_)));
         assert!(error.to_string().contains("setup wizard"));
-        assert_eq!(library.seer_config(), SeerConfig::default());
+        assert_eq!(library.seerr_config(), SeerrConfig::default());
     }
 
     #[test]
     fn an_instance_wired_to_another_media_server_is_refused() {
-        let (base_url, _) = fake_seer(vec![response(
+        let (base_url, _) = fake_seerr(vec![response(
             "200 OK",
             r#"{"initialized":true,"mediaServerType":1}"#,
             &[],
         )]);
-        let session = SeerSession::restore(library());
+        let session = SeerrSession::restore(library());
         let error = session.connect(&base_url).expect_err("refused");
         assert!(error.to_string().contains("Jellyfin"));
     }
 
     #[test]
     fn a_failing_version_probe_does_not_fail_the_connect() {
-        let (base_url, _) = fake_seer(vec![
+        let (base_url, _) = fake_seerr(vec![
             response("200 OK", INITIALIZED, &[]),
             response("404 Not Found", "{}", &[]),
         ]);
-        let session = SeerSession::restore(library());
+        let session = SeerrSession::restore(library());
         let result = session.connect(&base_url).expect("connect");
         assert_eq!(result["version"], "");
     }
 
     #[test]
     fn moving_to_another_instance_logs_the_old_session_out_with_its_csrf_header() {
-        let (old_url, old_requests) = fake_seer(vec![response("204 No Content", "", &[])]);
-        let (new_url, _) = fake_seer(vec![
+        let (old_url, old_requests) = fake_seerr(vec![response("204 No Content", "", &[])]);
+        let (new_url, _) = fake_seerr(vec![
             response("200 OK", INITIALIZED, &[]),
             response("200 OK", VERSION, &[]),
         ]);
         let library = library();
         library
-            .save_seer_config(&SeerConfig {
+            .save_seerr_config(&SeerrConfig {
                 base_url: Some(old_url.clone()),
                 cookies: Some(r#"{"XSRF-TOKEN":"token123","connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
-        let session = SeerSession::restore(library.clone());
+            .expect("seerr config");
+        let session = SeerrSession::restore(library.clone());
 
         session.connect(&new_url).expect("connect");
 
@@ -651,7 +735,7 @@ mod tests {
         assert!(logout[0].contains("x-xsrf-token: token123"));
 
         // Nothing of the old link survives the move.
-        let stored = library.seer_config();
+        let stored = library.seerr_config();
         assert_eq!(stored.base_url.as_deref(), Some(new_url.as_str()));
         assert_eq!(stored.user_id, None);
         assert!(
@@ -664,29 +748,29 @@ mod tests {
 
     #[test]
     fn re_probing_the_same_instance_keeps_the_session_and_refreshes_the_csrf_pair() {
-        let (base_url, _) = fake_seer(vec![
+        let (base_url, _) = fake_seerr(vec![
             response("200 OK", INITIALIZED, &["XSRF-TOKEN=rotated; Path=/"]),
             response("200 OK", VERSION, &[]),
         ]);
         let library = library();
         signed_in(&library, "uid");
         library
-            .save_seer_config(&SeerConfig {
+            .save_seerr_config(&SeerrConfig {
                 base_url: Some(base_url.clone()),
                 cookies: Some(r#"{"XSRF-TOKEN":"stale","connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
                 jellyfin_server_id: Some("srv".to_string()),
                 jellyfin_user_id: Some("uid".to_string()),
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
-        let session = SeerSession::restore(library.clone());
+            .expect("seerr config");
+        let session = SeerrSession::restore(library.clone());
 
         let result = session.connect(&base_url).expect("connect");
         assert_eq!(result["linked"], true);
 
-        let stored = library.seer_config();
+        let stored = library.seerr_config();
         assert_eq!(stored.user_id, Some(7));
         let cookies = stored.cookies.expect("cookies");
         assert!(cookies.contains(r#""connect.sid":"abc""#));
@@ -695,21 +779,90 @@ mod tests {
     }
 
     #[test]
+    fn re_probing_after_an_account_switch_does_not_preserve_the_previous_link() {
+        let (base_url, _) = fake_seerr(vec![
+            response("200 OK", INITIALIZED, &[]),
+            response("200 OK", VERSION, &[]),
+        ]);
+        let library = library();
+        signed_in(&library, "uid");
+        library
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some(base_url.clone()),
+                cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
+                user_id: Some(7),
+                user_name: Some("pho".to_string()),
+                jellyfin_server_id: Some("srv".to_string()),
+                jellyfin_user_id: Some("uid".to_string()),
+                ..SeerrConfig::default()
+            })
+            .expect("seerr config");
+        let session = SeerrSession::restore(library.clone());
+
+        signed_in(&library, "other-uid");
+        let result = session.connect(&base_url).expect("connect");
+
+        assert_eq!(result["linked"], false);
+        let stored = library.seerr_config();
+        assert_eq!(stored.base_url.as_deref(), Some(base_url.as_str()));
+        assert_eq!(stored.cookies, None);
+        assert_eq!(stored.user_id, None);
+        assert_eq!(stored.jellyfin_user_id, None);
+    }
+
+    #[test]
+    fn a_stale_probe_cannot_overwrite_a_newer_stored_link() {
+        let library = library();
+        signed_in(&library, "uid");
+        linked(&library, "uid");
+        let session = SeerrSession::restore(library.clone());
+        let stale_revision = session.read().revision;
+        let stale_client = SeerrClient::new(
+            "https://seerr.test",
+            SessionCookies::from_json(r#"{"connect.sid":"stale"}"#),
+        );
+
+        library
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://new.test".to_string()),
+                cookies: Some(r#"{"connect.sid":"new"}"#.to_string()),
+                user_id: Some(99),
+                user_name: Some("new user".to_string()),
+                jellyfin_server_id: Some("srv".to_string()),
+                jellyfin_user_id: Some("uid".to_string()),
+                ..SeerrConfig::default()
+            })
+            .expect("new link");
+
+        assert!(!session.absorb_probe(&stale_client, stale_revision));
+        let stored = library.seerr_config();
+        assert_eq!(stored.base_url.as_deref(), Some("https://new.test"));
+        assert_eq!(stored.user_id, Some(99));
+        assert!(
+            stored
+                .cookies
+                .as_deref()
+                .is_some_and(|cookies| cookies.contains(r#""connect.sid":"new""#))
+        );
+        assert_eq!(session.read().base_url.as_deref(), Some("https://new.test"));
+    }
+
+    #[test]
     fn a_configured_but_unlinked_instance_reports_its_switches() {
         let library = library();
         library
-            .save_seer_config(&SeerConfig {
-                base_url: Some("https://seer.test".to_string()),
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
                 movie_4k_enabled: true,
                 partial_requests_enabled: true,
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
+            .expect("seerr config");
 
-        let status = SeerSession::restore(library).status();
+        let status = SeerrSession::restore(library).status();
         assert_eq!(status["configured"], true);
         assert_eq!(status["linked"], false);
-        assert_eq!(status["serverUrl"], "https://seer.test");
+        assert_eq!(status["serverUrl"], "https://seerr.test");
         assert_eq!(status["instance"]["movie4kEnabled"], true);
         assert_eq!(status["instance"]["series4kEnabled"], false);
         assert_eq!(status["instance"]["partialRequestsEnabled"], true);
@@ -717,8 +870,8 @@ mod tests {
 
     #[test]
     fn the_state_round_trips_through_its_stored_form() {
-        let config = SeerConfig {
-            base_url: Some("https://seer.test".to_string()),
+        let config = SeerrConfig {
+            base_url: Some("https://seerr.test".to_string()),
             cookies: Some(r#"{"XSRF-TOKEN":"t","connect.sid":"abc"}"#.to_string()),
             user_id: Some(7),
             user_name: Some("pho".to_string()),
@@ -728,16 +881,37 @@ mod tests {
             series_4k_enabled: true,
             partial_requests_enabled: true,
         };
-        assert_eq!(SeerState::from_config(config.clone()).to_config(), config);
+        assert_eq!(
+            SeerrState::from_config(config.clone(), 42).to_config(),
+            config
+        );
     }
 
     #[test]
     fn an_empty_cookie_jar_is_stored_as_no_cookies_at_all() {
-        let state = SeerState::from_config(SeerConfig {
-            base_url: Some("https://seer.test".to_string()),
-            ..SeerConfig::default()
-        });
+        let state = SeerrState::from_config(
+            SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
+                ..SeerrConfig::default()
+            },
+            0,
+        );
         assert_eq!(state.to_config().cookies, None);
+    }
+
+    #[test]
+    fn a_poisoned_state_lock_keeps_the_existing_state() {
+        let session = SeerrSession::restore(library());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut state = session.state.write().expect("state");
+            state.base_url = Some("https://seerr.test".to_string());
+            panic!("poison the state lock");
+        }));
+
+        assert_eq!(
+            session.read().base_url.as_deref(),
+            Some("https://seerr.test")
+        );
     }
 
     /// Guards against the credentials row disappearing under a live session.
@@ -746,15 +920,15 @@ mod tests {
         let library = library();
         signed_in(&library, "uid");
         library
-            .save_seer_config(&SeerConfig {
-                base_url: Some("https://seer.test".to_string()),
+            .save_seerr_config(&SeerrConfig {
+                base_url: Some("https://seerr.test".to_string()),
                 cookies: Some(r#"{"XSRF-TOKEN":"t"}"#.to_string()),
-                ..SeerConfig::default()
+                ..SeerrConfig::default()
             })
-            .expect("seer config");
+            .expect("seerr config");
 
-        let session = SeerSession::restore(library.clone());
+        let session = SeerrSession::restore(library.clone());
         session.revalidate();
-        assert!(library.seer_config().cookies.is_some());
+        assert!(library.seerr_config().cookies.is_some());
     }
 }

@@ -7,7 +7,7 @@ mod maintenance;
 mod playback;
 mod players;
 mod preferences;
-mod seer;
+mod seerr;
 mod shell;
 mod windows;
 
@@ -55,8 +55,8 @@ fn main() {
     if cli.library_sync_once {
         std::process::exit(library::headless::sync_once());
     }
-    if cli.seer_status {
-        std::process::exit(seer::headless::print_status());
+    if cli.seerr_status {
+        std::process::exit(seerr::headless::print_status());
     }
 
     let instance_id = crate::app::instance::instance_id();

@@ -1,4 +1,4 @@
-//! Headless entry point for verifying the Seer link without starting CEF.
+//! Headless entry point for verifying the Seerr link without starting CEF.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -6,9 +6,9 @@ use std::sync::Arc;
 use crate::app::paths;
 use crate::library::Library;
 
-use super::SeerSession;
+use super::SeerrSession;
 
-/// Backs `--seer-status`: prints the stored link and a live probe of it.
+/// Backs `--seerr-status`: prints the stored link and a live probe of it.
 pub fn print_status() -> i32 {
     let path = paths::library_db_path();
     let library = match Library::open(Path::new(&path)) {
@@ -26,13 +26,13 @@ pub fn print_status() -> i32 {
         credentials.user_name.as_deref().unwrap_or("signed out")
     );
 
-    let session = SeerSession::restore(library);
+    let session = SeerrSession::restore(library);
     let status = session.status();
     let Some(server_url) = status["serverUrl"].as_str() else {
-        println!("seer:        not configured");
+        println!("seerr:        not configured");
         return 2;
     };
-    println!("seer:        {server_url}");
+    println!("seerr:        {server_url}");
     println!(
         "link:        {}",
         match (
