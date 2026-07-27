@@ -221,7 +221,13 @@ impl Library {
     /// long-running status probe from overwriting a newer link.
     pub(crate) fn seerr_config_snapshot(&self) -> (SeerrConfig, i64) {
         self.try_seerr_config_snapshot()
-            .unwrap_or_default()
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    target: "library.db",
+                    "could not read the Seerr config: {error}"
+                );
+                None
+            })
             .unwrap_or_default()
     }
 
