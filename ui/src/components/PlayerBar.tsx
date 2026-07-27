@@ -49,7 +49,7 @@ export function PlayerBar() {
   }
 
   return (
-    <footer className="flex shrink-0 items-center gap-4 border-t bg-card px-4 py-2">
+    <footer className="player-bar relative z-20 flex shrink-0 items-center gap-4 border-t border-white/8 bg-card/92 px-4 py-2.5 shadow-[0_-16px_40px_rgba(0,0,0,0.28)] backdrop-blur-xl">
       {item?.primaryImageTag && (
         <img src={imageUrl(item)} alt="" className="h-12 w-8 shrink-0 rounded object-cover" />
       )}

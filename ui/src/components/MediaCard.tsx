@@ -1,6 +1,12 @@
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
-import { imageUrl, progressFraction, type ItemSummary } from "@/lib/api"
+import {
+  imageUrl,
+  landscapeImageCandidates,
+  progressFraction,
+  type ItemSummary,
+} from "@/lib/api"
+import { formatRemaining } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 function subtitleFor(item: ItemSummary) {
@@ -25,30 +31,44 @@ function subtitleFor(item: ItemSummary) {
 export const MediaCard = memo(function MediaCard({
   item,
   className,
+  landscape = false,
 }: {
   item: ItemSummary
   className?: string
+  landscape?: boolean
 }) {
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
+  const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
   // A cached `primaryImageTag` can outlive the artwork on the server, and a
   // failing <img> re-requests on every re-render — which means a fresh round
   // trip to Jellyfin each time. Fall back to the title placeholder instead.
-  const [imageFailed, setImageFailed] = useState(false)
-  const showImage = Boolean(item.primaryImageTag) && !imageFailed
+  const [imageIndex, setImageIndex] = useState(0)
+  const images = landscape
+    ? landscapeImageCandidates(item)
+    : item.primaryImageTag
+      ? [imageUrl(item)]
+      : []
+  const image = images[imageIndex]
 
   return (
     <Link
       to={`/item/${encodeURIComponent(item.id)}`}
       className={cn(
-        "group flex w-poster-w flex-col gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group flex flex-col gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        landscape ? "w-landscape-w" : "w-poster-w",
         className,
       )}
     >
-      <div className="relative h-poster-h w-poster-w overflow-hidden rounded-lg bg-card">
-        {showImage ? (
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-lg bg-card",
+          landscape ? "h-landscape-h w-landscape-w" : "h-poster-h w-poster-w",
+        )}
+      >
+        {image ? (
           <img
-            src={imageUrl(item)}
+            src={image}
             alt=""
             // No `loading="lazy"`: the virtualizer already mounts only the rows
             // near the viewport, so lazy loading just adds a second deferral —
@@ -57,7 +77,7 @@ export const MediaCard = memo(function MediaCard({
             // already on screen. `decoding="async"` keeps the decode off the
             // main thread so a newly revealed row cannot drop a scroll frame.
             decoding="async"
-            onError={() => setImageFailed(true)}
+            onError={() => setImageIndex((current) => current + 1)}
             className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
           />
         ) : (
@@ -77,8 +97,14 @@ export const MediaCard = memo(function MediaCard({
         )}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-sm">{item.name}</div>
-        {subtitle && <div className="truncate text-xs text-muted-foreground">{subtitle}</div>}
+        <div className="truncate text-sm font-medium">{item.name}</div>
+        {(subtitle || remaining) && (
+          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {subtitle && <span className="truncate">{subtitle}</span>}
+            {subtitle && remaining && <span className="shrink-0" aria-hidden>·</span>}
+            {remaining && <span className="shrink-0">{remaining}</span>}
+          </div>
+        )}
       </div>
     </Link>
   )

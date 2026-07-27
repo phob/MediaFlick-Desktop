@@ -16,7 +16,7 @@
   --popover-foreground: #e8ecf2;
 
   /* Interaction */
-  --primary: #4f8cff;
+  --primary: #e50914;
   --primary-foreground: #ffffff;
   --secondary: #1e242e;
   --secondary-foreground: #e8ecf2;
@@ -30,13 +30,15 @@
   /* Lines */
   --border: #262d38;
   --input: #262d38;
-  --ring: #4f8cff;
+  --ring: #e50914;
 
   --radius: 0.625rem;
 
   /* Media-grid geometry, carried over verbatim. */
   --poster-width: 168px;
   --poster-height: 252px;
+  --landscape-width: 280px;
+  --landscape-height: 158px;
   --card-gap: 18px;
   --card-height: 306px;
   --header-height: 56px;
@@ -45,12 +47,12 @@
      because the app is dark-only and never sets the `.dark` class. */
   --sidebar: #12161d;
   --sidebar-foreground: #e8ecf2;
-  --sidebar-primary: #4f8cff;
+  --sidebar-primary: #e50914;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: #1e242e;
   --sidebar-accent-foreground: #e8ecf2;
   --sidebar-border: #262d38;
-  --sidebar-ring: #4f8cff;
+  --sidebar-ring: #e50914;
 }
 
 @theme inline {
@@ -81,6 +83,8 @@
 
   --spacing-poster-w: var(--poster-width);
   --spacing-poster-h: var(--poster-height);
+  --spacing-landscape-w: var(--landscape-width);
+  --spacing-landscape-h: var(--landscape-height);
   --spacing-header: var(--header-height);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -111,5 +115,144 @@
       system-ui,
       -apple-system,
       sans-serif;
+  }
+}
+
+.home-media-rail {
+  overscroll-behavior-inline: contain;
+  scroll-padding-inline: 1.5rem;
+  scrollbar-width: none;
+}
+
+.home-media-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.media-strip {
+  overscroll-behavior-inline: contain;
+  scroll-padding-inline: 1.5rem;
+  scrollbar-width: none;
+}
+
+.media-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.home-media-card {
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    filter 180ms ease;
+}
+
+.home-media-card:hover,
+.home-media-card:focus-visible {
+  z-index: 10;
+  transform: translateY(-3px) scale(1.025);
+  filter: drop-shadow(0 16px 18px rgb(0 0 0 / 45%));
+}
+
+/* The fixed sidebar must stay above cards that lift on hover. The inset forms
+   its own paint boundary as well, so artwork and rails cannot leak left even
+   if a future component introduces a larger transform. */
+.app-sidebar-container {
+  z-index: 40;
+  box-shadow: 16px 0 40px rgb(0 0 0 / 18%);
+}
+
+.content-viewport {
+  contain: paint;
+}
+
+.app-experience [data-slot="sidebar-inner"] {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 2%), transparent 28%),
+    var(--sidebar);
+}
+
+.app-experience [data-sidebar="menu-button"][data-active="true"] {
+  background: linear-gradient(90deg, rgb(229 9 20 / 24%), rgb(255 255 255 / 5%));
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.app-experience [data-sidebar="menu-button"][data-active="true"] svg {
+  color: #fff;
+}
+
+.page-header {
+  position: relative;
+  isolation: isolate;
+}
+
+.page-header::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    radial-gradient(circle at 12% 0%, rgb(229 9 20 / 11%), transparent 32rem),
+    linear-gradient(180deg, rgb(255 255 255 / 1.5%), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.cinematic-panel,
+.app-experience [data-slot="dialog-content"] {
+  border-color: rgb(255 255 255 / 8%);
+  background: rgb(22 26 33 / 92%);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+  backdrop-filter: blur(20px);
+}
+
+.catalog-card {
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    filter 180ms ease;
+}
+
+.catalog-card:hover,
+.catalog-card:focus-visible {
+  z-index: 10;
+  transform: translateY(-4px) scale(1.025);
+  filter: drop-shadow(0 16px 18px rgb(0 0 0 / 45%));
+}
+
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+@media (width >= 40rem) {
+  .home-media-rail,
+  .media-strip {
+    scroll-padding-inline: 2.5rem;
+  }
+}
+
+@media (width >= 64rem) {
+  .home-media-rail,
+  .media-strip {
+    scroll-padding-inline: 3.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-media-card {
+    transition: none;
+  }
+
+  .catalog-card {
+    transition: none;
+  }
+
+  .home-media-card:hover,
+  .home-media-card:focus-visible {
+    transform: none;
+  }
+
+  .catalog-card:hover,
+  .catalog-card:focus-visible {
+    transform: none;
   }
 }

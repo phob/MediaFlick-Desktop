@@ -21,6 +21,20 @@ pub enum SeerrError {
     /// The instance answered, but cannot be used: its setup wizard is
     /// unfinished, or it is wired to a media server that is not Jellyfin.
     Unusable(String),
+    /// Seerr refused the credentials offered while linking. Kept apart from
+    /// [`Self::Unauthorized`] so a mistyped password is not reported to the UI
+    /// as a lapsed session — the user is *establishing* one.
+    LoginRejected,
+    /// Seerr has no account for this user and will not create one on the fly,
+    /// which is the 403 its login answers when "enable new sign-ins" is off.
+    /// A generic login failure would send the user hunting for a typo that is
+    /// not there; only an administrator can resolve this one.
+    UnknownUser,
+    /// The session is fine but the account may not do this. Seerr answers 401
+    /// here as well as for a lapsed cookie, so this is what a 401 becomes once
+    /// `/auth/me` has confirmed the session is still good — the disambiguation
+    /// that keeps a refused cancellation from logging the user out.
+    PermissionDenied,
     /// Any other non-success HTTP status.
     Status { status: u16 },
     /// Connection, DNS, TLS, or timeout failure.
@@ -36,14 +50,21 @@ impl SeerrError {
         match self {
             Self::Transport(_) => true,
             Self::Status { status } => *status >= 500 || *status == 429,
-            Self::Unauthorized | Self::Unusable(_) | Self::Decode(_) | Self::NotConfigured => false,
+            Self::Unauthorized
+            | Self::Unusable(_)
+            | Self::LoginRejected
+            | Self::UnknownUser
+            | Self::PermissionDenied
+            | Self::Decode(_)
+            | Self::NotConfigured => false,
         }
     }
 
     /// HTTP status to surface to our own UI for this failure.
     pub fn client_status(&self) -> u16 {
         match self {
-            Self::Unauthorized => 401,
+            Self::Unauthorized | Self::LoginRejected => 401,
+            Self::UnknownUser | Self::PermissionDenied => 403,
             Self::Status { status } => *status,
             Self::NotConfigured | Self::Unusable(_) => 409,
             Self::Transport(_) | Self::Decode(_) => 502,
@@ -56,6 +77,15 @@ impl fmt::Display for SeerrError {
         match self {
             Self::Unauthorized => write!(formatter, "the Seerr server rejected the session"),
             Self::Unusable(message) => write!(formatter, "{message}"),
+            Self::LoginRejected => write!(formatter, "Seerr rejected that username or password"),
+            Self::UnknownUser => write!(
+                formatter,
+                "Seerr has no account for this user. Ask your Seerr administrator to import it, \
+                 or to allow new sign-ins."
+            ),
+            Self::PermissionDenied => {
+                write!(formatter, "your Seerr account is not allowed to do that")
+            }
             Self::Status { status } => write!(formatter, "Seerr returned HTTP {status}"),
             Self::Transport(message) => write!(formatter, "could not reach Seerr: {message}"),
             Self::Decode(message) => write!(formatter, "unexpected Seerr response: {message}"),
@@ -78,6 +108,37 @@ mod tests {
         assert!(!SeerrError::Status { status: 404 }.is_retryable());
         assert!(!SeerrError::Unauthorized.is_retryable());
         assert!(!SeerrError::Unusable("setup".to_string()).is_retryable());
+        assert!(!SeerrError::LoginRejected.is_retryable());
+        assert!(!SeerrError::UnknownUser.is_retryable());
+        assert!(!SeerrError::PermissionDenied.is_retryable());
+    }
+
+    /// Seerr answers 401 both to a lapsed session and to a permission it will
+    /// not grant, so the two must stay distinguishable all the way to the UI:
+    /// only one of them means "sign in again".
+    #[test]
+    fn a_refused_permission_is_not_a_lapsed_session() {
+        assert_ne!(SeerrError::PermissionDenied, SeerrError::Unauthorized);
+        assert_eq!(SeerrError::PermissionDenied.client_status(), 403);
+        assert!(
+            SeerrError::PermissionDenied
+                .to_string()
+                .contains("not allowed")
+        );
+    }
+
+    /// A failed *link* is not a lapsed session: only `Unauthorized` sets the
+    /// re-link flag, so the two must stay distinct values as well as messages.
+    #[test]
+    fn a_refused_login_is_not_the_same_value_as_a_lapsed_session() {
+        assert_ne!(SeerrError::LoginRejected, SeerrError::Unauthorized);
+        assert_eq!(SeerrError::LoginRejected.client_status(), 401);
+        assert_eq!(SeerrError::UnknownUser.client_status(), 403);
+        assert!(
+            SeerrError::UnknownUser
+                .to_string()
+                .contains("administrator")
+        );
     }
 
     #[test]
@@ -100,6 +161,9 @@ mod tests {
             SeerrError::Transport("reset".to_string()),
             SeerrError::Decode("bad".to_string()),
             SeerrError::NotConfigured,
+            SeerrError::LoginRejected,
+            SeerrError::UnknownUser,
+            SeerrError::PermissionDenied,
         ] {
             assert!(
                 !error.to_string().to_ascii_lowercase().contains("jellyfin"),

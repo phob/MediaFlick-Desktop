@@ -8,9 +8,16 @@ import {
   type ItemQuery,
   type PlayerCommand,
   type QuickConnectStart,
+  type SeerrDiscoverRow,
+  type SeerrMediaType,
   type StreamingQualityId,
 } from "./api"
-import { invalidateMediaSurfaces, queryClient, queryKeys } from "./query-client"
+import {
+  invalidateMediaSurfaces,
+  invalidateSeerrSurfaces,
+  queryClient,
+  queryKeys,
+} from "./query-client"
 
 /**
  * Shared mutation failure handler. Without this a failed action is completely
@@ -253,6 +260,160 @@ export function useLogout() {
       queryClient.setQueryData(queryKeys.status, status)
       queryClient.removeQueries({ queryKey: ["items"] })
       queryClient.removeQueries({ queryKey: queryKeys.home })
+      // The Seerr link belonged to the account that just went away; the shell
+      // has already dropped it, so nothing of it may stay in the cache either.
+      queryClient.removeQueries({ queryKey: ["seerr"] })
+    },
+  })
+}
+
+// -------------------------------------------------------------------- seerr
+
+/**
+ * Seerr's own failure handler. Deliberately not `reportError`: that invalidates
+ * the *Jellyfin* status on a 401, which would bounce the user to the sign-in
+ * screen because a Seerr cookie lapsed. Only the Seerr status is re-read, which
+ * is what puts the re-link prompt on screen.
+ */
+function reportSeerrError(error: Error) {
+  toast.error(error.message)
+  if (error instanceof ApiError && (error.seerrExpired || error.status === 401)) {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
+  }
+}
+
+/**
+ * Whether Seerr is linked, and what this user may ask for. Every Seerr surface
+ * gates on it, so it is fetched once and shared.
+ */
+export function useSeerrStatus() {
+  return useQuery({
+    queryKey: queryKeys.seerrStatus,
+    queryFn: api.seerr.status,
+    // The answer costs a round trip to Seerr, and it only changes when the user
+    // links, unlinks, or the session lapses.
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
+export function useSeerrConnect() {
+  return useMutation({ mutationFn: (server: string) => api.seerr.connect(server) })
+}
+
+export function useSeerrLink() {
+  return useMutation({
+    mutationFn: () => api.seerr.link(),
+    onSuccess: (result) => {
+      if (result.linked) void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
+    },
+  })
+}
+
+export function useSeerrLinkPassword() {
+  return useMutation({
+    mutationFn: ({ username, password }: { username: string; password: string }) =>
+      api.seerr.linkPassword(username, password),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
+    },
+  })
+}
+
+export function useSeerrUnlink() {
+  return useMutation({
+    mutationFn: api.seerr.unlink,
+    onError: reportSeerrError,
+    onSuccess: (status) => {
+      queryClient.setQueryData(queryKeys.seerrStatus, status)
+      queryClient.removeQueries({ queryKey: ["seerr", "requests"] })
+      queryClient.removeQueries({ queryKey: ["seerr", "discover"] })
+      queryClient.removeQueries({ queryKey: ["seerr", "search"] })
+    },
+  })
+}
+
+/**
+ * The "not in your library" search, which is a *separate* query from the local
+ * one on purpose: local FTS answers at SQLite speed and must never wait on a
+ * round trip to Seerr.
+ */
+export function useSeerrSearch(term: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seerrSearch(term),
+    queryFn: ({ signal }) => api.seerr.search(term, 1, signal),
+    enabled: enabled && term.trim().length > 1,
+    retry: false,
+  })
+}
+
+export function useSeerrDiscover(row: SeerrDiscoverRow, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seerrDiscover(row),
+    queryFn: ({ signal }) => api.seerr.discover(row, 1, signal),
+    enabled,
+    retry: false,
+  })
+}
+
+/** One title in full. Also how a request card resolves its own title. */
+export function useSeerrMedia(
+  mediaType: SeerrMediaType | undefined,
+  tmdbId: number | null | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.seerrMedia(mediaType ?? "", tmdbId ?? 0),
+    queryFn: () => api.seerr.media(mediaType!, tmdbId!),
+    enabled: enabled && Boolean(mediaType) && Boolean(tmdbId),
+    // A title's own facts barely move; its availability is what changes, and a
+    // request invalidates this key anyway.
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+}
+
+/**
+ * The user's own requests. Polled while the view is mounted — Seerr has no push
+ * channel, so an approval or a finished download only lands on a refetch — and
+ * nothing polls once the view is gone.
+ */
+export function useSeerrRequests(filter: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seerrRequests(filter),
+    queryFn: ({ signal }) => api.seerr.requests(filter, 40, signal),
+    enabled,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  })
+}
+
+export function useSeerrRequest() {
+  return useMutation({
+    mutationFn: (body: {
+      mediaType: SeerrMediaType
+      tmdbId: number
+      seasons?: number[]
+      is4k?: boolean
+    }) => api.seerr.request(body),
+    onError: reportSeerrError,
+    onSuccess: (created) => {
+      // The dialog is kept even for an auto-approving user (chunk 11's resolved
+      // default), so the outcome is reported from what Seerr actually did.
+      toast.success(created.status === "approved" ? "Approved" : "Requested")
+      invalidateSeerrSurfaces()
+    },
+  })
+}
+
+export function useSeerrCancelRequest() {
+  return useMutation({
+    mutationFn: (id: number) => api.seerr.cancelRequest(id),
+    onError: reportSeerrError,
+    onSuccess: () => {
+      toast.success("Request cancelled")
+      invalidateSeerrSurfaces()
     },
   })
 }

@@ -49,7 +49,7 @@ function EpisodeRow({ episode, parentId }: { episode: ItemSummary; parentId: str
   const runtime = formatRuntime(episode.runtimeTicks)
 
   return (
-    <li className="group flex gap-4 rounded-lg p-3 transition-colors hover:bg-card">
+    <li className="group flex gap-4 rounded-xl border border-transparent p-3 transition hover:border-white/5 hover:bg-card/75">
       <Link
         to={`/item/${encodeURIComponent(episode.id)}`}
         className="shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -115,11 +115,11 @@ function EpisodeRow({ episode, parentId }: { episode: ItemSummary; parentId: str
 export function EpisodeList({ episodes, parentId }: { episodes: ItemSummary[]; parentId: string }) {
   if (!episodes.length) return null
   return (
-    <section className="flex flex-col gap-3 px-6">
-      <h2 className="text-base font-medium">Episodes</h2>
+    <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
+      <h2 className="section-title">Episodes</h2>
       {/* Capped: a synopsis set in a 2800px line is unreadable, and the app
           window is as wide as the desktop. */}
-      <ul className="flex max-w-6xl flex-col divide-y divide-border/60">
+      <ul className="flex max-w-6xl flex-col gap-1">
         {episodes.map((episode) => (
           <EpisodeRow key={episode.id} episode={episode} parentId={parentId} />
         ))}

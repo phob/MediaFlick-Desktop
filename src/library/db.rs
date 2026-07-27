@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -146,6 +146,18 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.pragma_update(None, "user_version", 2)?;
         version = 2;
     }
+    if version < 3 {
+        // Pre-release builds created this table under the project's old
+        // spelling. Those databases are already at version 2, so the arm above
+        // never runs for them and the renamed table would never appear —
+        // leaving Seerr permanently unconfigurable on that machine. Nothing
+        // was ever released under the old name, so the stale table is dropped
+        // rather than migrated.
+        connection.execute_batch("DROP TABLE IF EXISTS seer_config;")?;
+        connection.execute_batch(SCHEMA_V2)?;
+        connection.pragma_update(None, "user_version", 3)?;
+        version = 3;
+    }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
 }
@@ -268,8 +280,11 @@ CREATE TABLE meta (
 ///
 /// The Sonarr/Radarr pairs share the row: they are the same kind of optional,
 /// instance-wide configuration, and one row is one migration.
+///
+/// `IF NOT EXISTS` because the v3 arm replays this batch to repair a database
+/// that reached version 2 without it.
 const SCHEMA_V2: &str = r#"
-CREATE TABLE seerr_config (
+CREATE TABLE IF NOT EXISTS seerr_config (
     id                       INTEGER PRIMARY KEY CHECK (id = 1),
     base_url                 TEXT,
     cookies                  TEXT,
@@ -339,6 +354,37 @@ mod tests {
             .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
             .expect("seerr_config");
         assert_eq!(rows, 0);
+    }
+
+    /// A pre-release build stamped version 2 while creating the table under the
+    /// project's old spelling, which left the renamed one absent for good —
+    /// every Seerr read answered "no such table" and nothing could be linked.
+    #[test]
+    fn a_database_stamped_v2_by_a_pre_rename_build_is_repaired() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection
+            .execute_batch("CREATE TABLE seer_config (id INTEGER PRIMARY KEY, base_url TEXT);")
+            .expect("old table");
+        connection
+            .pragma_update(None, "user_version", 2)
+            .expect("stamp v2");
+
+        migrate(&connection).expect("migrate");
+
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
+        let rows: i64 = connection
+            .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
+            .expect("seerr_config exists");
+        assert_eq!(rows, 0);
+        let stale: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'seer_config'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master");
+        assert_eq!(stale, 0, "the pre-rename table was left behind");
     }
 
     #[test]

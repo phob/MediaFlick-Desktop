@@ -28,11 +28,11 @@ function DetailSkeleton() {
 function SeasonGrid({ seasons }: { seasons: ItemSummary[] }) {
   if (!seasons.length) return null
   return (
-    <section className="flex flex-col gap-3 px-6">
-      <h2 className="text-base font-medium">Seasons</h2>
+    <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
+      <h2 className="section-title">Seasons</h2>
       <div className="flex flex-wrap gap-[var(--card-gap)]">
         {seasons.map((season) => (
-          <MediaCard key={season.id} item={season} />
+          <MediaCard key={season.id} item={season} className="catalog-card" />
         ))}
       </div>
     </section>
@@ -107,7 +107,7 @@ export default function ItemDetail() {
     // z-index: it has to sit behind every section on this page and in front of the
     // app shell's opaque background, and this stacking context is what pins it
     // between the two.
-    <div className="relative isolate flex flex-col gap-10 pb-12">
+    <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
       <DetailHero item={item} episodeCount={episodeCount || null}>
         {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
         <DetailActions
@@ -122,7 +122,7 @@ export default function ItemDetail() {
 
       <CastRow people={item.people} />
 
-      <div className="grid max-w-7xl gap-8 px-6 lg:grid-cols-2">
+      <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <DetailFacts item={item} />
         <MediaInfo sources={media.data?.sources} isPending={!isContainer && media.isPending} />
       </div>

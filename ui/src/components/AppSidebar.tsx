@@ -1,4 +1,16 @@
-import { ChevronsUpDown, Film, Heart, House, LogOut, RefreshCw, Search, Tv } from "lucide-react"
+import {
+  ChevronsUpDown,
+  Compass,
+  Film,
+  Heart,
+  House,
+  Inbox,
+  LogOut,
+  RefreshCw,
+  Search,
+  Ticket,
+  Tv,
+} from "lucide-react"
 import { useRef, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
@@ -26,14 +38,21 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { api } from "@/lib/api"
-import { useLogout, useStatus } from "@/lib/queries"
+import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
   { title: "Movies", to: "/library?kind=Movie", icon: Film },
   { title: "Series", to: "/library?kind=Series", icon: Tv },
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
+]
+
+/** Shown only once Seerr is linked — there is nothing behind them until then. */
+const SEERR_NAV = [
+  { title: "Discover", to: "/discover", icon: Compass },
+  { title: "Requests", to: "/requests", icon: Inbox },
 ]
 
 /** `http://jellyfin.local:8096/` → `jellyfin.local:8096`, unparseable → as-is. */
@@ -97,7 +116,9 @@ function SearchBox() {
 
 function UserMenu() {
   const { data: status } = useStatus()
+  const { data: seerr } = useSeerrStatus()
   const logout = useLogout()
+  const [setup, setSetup] = useState(false)
   const name = status?.userName ?? "Signed in"
 
   return (
@@ -144,12 +165,20 @@ function UserMenu() {
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
+            {/* Seerr setup lives here rather than in the native Client
+                Settings dialog: there is no `POST /api/settings` behind that
+                one, and this flow is interactive. */}
+            <DropdownMenuItem onSelect={() => setSetup(true)}>
+              <Ticket />
+              {seerr?.linked ? "Seerr requests" : "Set up Seerr…"}
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => logout.mutate()}>
               <LogOut />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {setup && <SeerrSetupDialog onClose={() => setSetup(false)} />}
       </SidebarMenuItem>
     </SidebarMenu>
   )
@@ -158,9 +187,10 @@ function UserMenu() {
 export function AppSidebar() {
   const location = useLocation()
   const current = `${location.pathname}${location.search}`
+  const { data: seerr } = useSeerrStatus()
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="icon" className="app-sidebar-container">
       <SidebarHeader>
         <div className="flex items-center gap-2">
           <Link
@@ -200,6 +230,30 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {seerr?.linked && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Seerr</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {SEERR_NAV.map((item) => (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname === item.to}
+                      tooltip={item.title}
+                    >
+                      <Link to={item.to}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter>

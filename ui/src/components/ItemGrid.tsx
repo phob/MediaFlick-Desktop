@@ -1,6 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual"
+import { LibraryBig } from "lucide-react"
+import type React from "react"
 import { useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { MediaCard } from "@/components/MediaCard"
+import { PageEmptyState } from "@/components/PageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
 import { useItemPages } from "@/lib/queries"
@@ -59,6 +62,13 @@ interface ItemGridProps {
   /** Reports the result count so the caller can label the view. */
   onTotal?: (total: number | null) => void
   empty?: string
+  /**
+   * Rendered inside the scroller, below the last virtual row. It has to live in
+   * here rather than after the grid: this component owns an `h-full` scroll
+   * container and the virtualizer's total height, so anything appended outside
+   * would either sit off-screen or need a second scrollbar.
+   */
+  footer?: React.ReactNode
 }
 
 /**
@@ -67,7 +77,12 @@ interface ItemGridProps {
  * scrollbar never resizes as pages load — scrolling does not snap back the way
  * an append-as-you-go list does.
  */
-export function ItemGrid({ query, onTotal, empty = "No items match that query." }: ItemGridProps) {
+export function ItemGrid({
+  query,
+  onTotal,
+  empty = "No items match that query.",
+  footer,
+}: ItemGridProps) {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   // Measured on the content box, not the scroller: the scroller carries the
   // horizontal padding, which would otherwise be counted as usable width.
@@ -140,14 +155,21 @@ export function ItemGrid({ query, onTotal, empty = "No items match that query." 
   const itemAt = (index: number) => loaded.get(Math.floor(index / PAGE_SIZE))?.[index % PAGE_SIZE]
 
   return (
-    <div ref={setScroller} className="h-full overflow-y-auto px-6 pb-6">
+    <div
+      ref={setScroller}
+      className="h-full overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14"
+    >
       <div ref={setContent}>
         {error ? (
           <p className="py-4 text-sm text-destructive">{error.message}</p>
         ) : total === null ? (
           <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
         ) : total === 0 ? (
-          <p className="py-4 text-sm text-muted-foreground">{empty}</p>
+          <PageEmptyState
+            icon={<LibraryBig className="size-6" />}
+            title="Nothing to show"
+            description={empty}
+          />
         ) : (
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {items.map((row) => (
@@ -165,7 +187,7 @@ export function ItemGrid({ query, onTotal, empty = "No items match that query." 
                   if (index >= total) return null
                   const item = itemAt(index)
                   return item ? (
-                    <MediaCard key={item.id} item={item} className="shrink-0" />
+                    <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
                   ) : (
                     // An unloaded slot keeps its space rather than reflowing
                     // the row once its page lands.
@@ -176,6 +198,7 @@ export function ItemGrid({ query, onTotal, empty = "No items match that query." 
             ))}
           </div>
         )}
+        {footer}
       </div>
     </div>
   )

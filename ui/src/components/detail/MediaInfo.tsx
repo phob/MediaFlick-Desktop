@@ -84,7 +84,7 @@ function SourceCard({ source }: { source: MediaSource }) {
   const label = source.fileName ?? source.name
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg bg-card/60 p-4">
+    <div className="flex flex-col gap-4 rounded-xl border border-white/5 bg-card/55 p-4 shadow-lg shadow-black/10">
       {headline.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {headline.map((part) => (
@@ -142,7 +142,7 @@ export function MediaInfo({
   if (isPending) {
     return (
       <section className="flex flex-col gap-3">
-        <h2 className="text-base font-medium">Media</h2>
+        <h2 className="section-title">Media</h2>
         <Skeleton className="h-40 rounded-lg" />
       </section>
     )
@@ -151,7 +151,7 @@ export function MediaInfo({
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-base font-medium">Media</h2>
+      <h2 className="section-title">Media</h2>
       <div className="flex flex-col gap-3">
         {sources.map((source, index) => (
           <SourceCard key={source.id ?? index} source={source} />

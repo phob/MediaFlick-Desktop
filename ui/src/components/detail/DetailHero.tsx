@@ -185,7 +185,7 @@ export function DetailHero({
 
       <div
         className={cn(
-          "relative flex gap-8 px-6 pb-10",
+          "relative flex gap-8 px-6 pb-12 sm:px-10 lg:px-14",
           // Unchanged by the backdrop, which is what keeps everything below this
           // header exactly where it was.
           showBackdrop ? "min-h-[26rem] pt-14" : "pt-6",
@@ -209,7 +209,9 @@ export function DetailHero({
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <Breadcrumb item={item} />
           <div className="flex flex-col gap-1">
-            <h1 className="text-3xl font-semibold tracking-tight text-balance">{item.name}</h1>
+            <h1 className="max-w-4xl text-4xl leading-[0.98] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
+              {item.name}
+            </h1>
             {item.originalTitle && item.originalTitle !== item.name && (
               <p className="text-sm text-muted-foreground">{item.originalTitle}</p>
             )}

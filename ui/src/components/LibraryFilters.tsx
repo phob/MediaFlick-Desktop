@@ -43,9 +43,13 @@ export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) 
   const genres = useGenres()
 
   return (
-    <div className="flex flex-wrap items-center gap-2 px-6 py-4">
+    <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-6 pb-5 sm:px-10 lg:px-14">
       <Select value={value.sort || "name"} onValueChange={(sort) => onChange({ sort })}>
-        <SelectTrigger size="sm" aria-label="Sort by">
+        <SelectTrigger
+          size="sm"
+          aria-label="Sort by"
+          className="border-white/10 bg-white/5 shadow-none hover:bg-white/8"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -61,7 +65,11 @@ export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) 
         value={value.watched || ANY}
         onValueChange={(watched) => onChange({ watched: watched === ANY ? "" : watched })}
       >
-        <SelectTrigger size="sm" aria-label="Filter by watched state">
+        <SelectTrigger
+          size="sm"
+          aria-label="Filter by watched state"
+          className="border-white/10 bg-white/5 shadow-none hover:bg-white/8"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -77,7 +85,11 @@ export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) 
         value={value.genre || ANY}
         onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
       >
-        <SelectTrigger size="sm" aria-label="Filter by genre">
+        <SelectTrigger
+          size="sm"
+          aria-label="Filter by genre"
+          className="border-white/10 bg-white/5 shadow-none hover:bg-white/8"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

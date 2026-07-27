@@ -9,7 +9,7 @@ pub mod headless;
 pub mod model;
 pub mod sync;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -489,6 +489,39 @@ impl Library {
             .ok()
     }
 
+    /// Resolves TMDB ids to the cached items that carry them, for one item kind.
+    ///
+    /// The kind is a parameter rather than an afterthought because TMDB numbers
+    /// movies and series in separate namespaces: id 603 is *The Matrix* and also
+    /// a completely unrelated series, so a join on the id alone would offer
+    /// Play on the wrong title. Callers pass `Movie` or `Series` and get back
+    /// only ids of that kind.
+    pub fn ids_by_tmdb(
+        &self,
+        kind: &str,
+        tmdb_ids: &[String],
+    ) -> rusqlite::Result<HashMap<String, String>> {
+        if tmdb_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.db.with_connection(|connection| {
+            let placeholders = vec!["?"; tmdb_ids.len()].join(", ");
+            let mut statement = connection.prepare(&format!(
+                "SELECT tmdb_id, jellyfin_id FROM items
+                 WHERE kind = ?1 AND tmdb_id IN ({placeholders})"
+            ))?;
+            let arguments = std::iter::once(kind)
+                .chain(tmdb_ids.iter().map(String::as_str))
+                .collect::<Vec<_>>();
+            let rows = statement
+                .query_map(params_from_iter(arguments), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+            Ok(rows)
+        })
+    }
+
     /// Drops one item the server has authoritatively disowned.
     ///
     /// Jellyfin re-creates an item with a new id when its file is replaced, so
@@ -778,17 +811,18 @@ const SUMMARY_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_
 i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
-COALESCE(u.is_favorite, 0)";
+COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag";
 
 const DETAIL_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
 i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
-COALESCE(u.is_favorite, 0), i.overview, i.genres, i.tags, i.studios, i.people, \
-i.backdrop_image_tag, i.critic_rating, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, \
+COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, i.overview, i.genres, i.tags, \
+i.studios, i.people, i.critic_rating, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, \
 i.parent_id, i.date_created";
 
 fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
+    let image_tags = parsed_json(row.get::<_, String>(19)?);
     Ok(json!({
         "id": row.get::<_, String>(0)?,
         "kind": row.get::<_, String>(1)?,
@@ -809,6 +843,12 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         "playCount": row.get::<_, i64>(16)?,
         "positionTicks": row.get::<_, i64>(17)?,
         "favorite": row.get::<_, i64>(18)? != 0,
+        "thumbImageTag": image_tags
+            .as_object()
+            .and_then(|tags| tags.iter().find_map(|(key, value)| {
+                key.eq_ignore_ascii_case("Thumb").then(|| value.as_str()).flatten()
+            })),
+        "backdropImageTag": row.get::<_, Option<String>>(20)?,
     }))
 }
 
@@ -818,7 +858,7 @@ fn child_row(row: &Row<'_>) -> rusqlite::Result<Value> {
     if let Some(object) = value.as_object_mut() {
         object.insert(
             "overview".to_string(),
-            json!(row.get::<_, Option<String>>(19)?),
+            json!(row.get::<_, Option<String>>(21)?),
         );
     }
     Ok(value)
@@ -831,42 +871,38 @@ fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         .expect("summary rows serialize as objects");
     object.insert(
         "overview".to_string(),
-        json!(row.get::<_, Option<String>>(19)?),
+        json!(row.get::<_, Option<String>>(21)?),
     );
-    object.insert("genres".to_string(), parsed_json(row.get::<_, String>(20)?));
-    object.insert("tags".to_string(), parsed_json(row.get::<_, String>(21)?));
+    object.insert("genres".to_string(), parsed_json(row.get::<_, String>(22)?));
+    object.insert("tags".to_string(), parsed_json(row.get::<_, String>(23)?));
     object.insert(
         "studios".to_string(),
-        parsed_json(row.get::<_, String>(22)?),
+        parsed_json(row.get::<_, String>(24)?),
     );
-    object.insert("people".to_string(), parsed_json(row.get::<_, String>(23)?));
-    object.insert(
-        "backdropImageTag".to_string(),
-        json!(row.get::<_, Option<String>>(24)?),
-    );
+    object.insert("people".to_string(), parsed_json(row.get::<_, String>(25)?));
     object.insert(
         "criticRating".to_string(),
-        json!(row.get::<_, Option<f64>>(25)?),
+        json!(row.get::<_, Option<f64>>(26)?),
     );
     object.insert(
         "originalTitle".to_string(),
-        json!(row.get::<_, Option<String>>(26)?),
+        json!(row.get::<_, Option<String>>(27)?),
     );
     object.insert(
         "providerIds".to_string(),
         json!({
-            "tmdb": row.get::<_, Option<String>>(27)?,
-            "imdb": row.get::<_, Option<String>>(28)?,
-            "tvdb": row.get::<_, Option<String>>(29)?,
+            "tmdb": row.get::<_, Option<String>>(28)?,
+            "imdb": row.get::<_, Option<String>>(29)?,
+            "tvdb": row.get::<_, Option<String>>(30)?,
         }),
     );
     object.insert(
         "parentId".to_string(),
-        json!(row.get::<_, Option<String>>(30)?),
+        json!(row.get::<_, Option<String>>(31)?),
     );
     object.insert(
         "dateCreated".to_string(),
-        json!(row.get::<_, Option<String>>(31)?),
+        json!(row.get::<_, Option<String>>(32)?),
     );
     Ok(value)
 }
@@ -1094,6 +1130,8 @@ mod tests {
                 dto(
                     r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
                         "Genres":["Action"],"DateCreated":"2024-01-02","CommunityRating":8.7,
+                        "ImageTags":{"Primary":"poster-tag","Thumb":"thumb-tag"},
+                        "BackdropImageTags":["backdrop-tag"],
                         "People":[{"Name":"Keanu Reeves"}],
                         "UserData":{"Played":false,"PlaybackPositionTicks":600000000}}"#,
                 ),
@@ -1116,6 +1154,41 @@ mod tests {
             ])
             .expect("seed");
         library
+    }
+
+    /// TMDB numbers movies and series separately, so id 603 addresses two
+    /// unrelated titles. A join on the id alone would offer Play on the wrong
+    /// one, which is why the kind is part of the lookup.
+    #[test]
+    fn tmdb_ids_resolve_only_within_the_kind_they_were_asked_for() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
+                        "ProviderIds":{"Tmdb":"603"}}"#),
+                dto(r#"{"Id":"s1","Name":"Not The Matrix","Type":"Series",
+                        "ProviderIds":{"Tmdb":"603"}}"#),
+                dto(r#"{"Id":"m2","Name":"Arrival","Type":"Movie",
+                        "ProviderIds":{"Tmdb":"329865"}}"#),
+            ])
+            .expect("seed");
+
+        let ids = ["603".to_string(), "329865".to_string(), "1".to_string()];
+        let movies = library.ids_by_tmdb("Movie", &ids).expect("movies");
+        assert_eq!(movies.get("603").map(String::as_str), Some("m1"));
+        assert_eq!(movies.get("329865").map(String::as_str), Some("m2"));
+        // Not in the library at all: the caller offers a request for this one.
+        assert_eq!(movies.get("1"), None);
+
+        let series = library.ids_by_tmdb("Series", &ids).expect("series");
+        assert_eq!(series.get("603").map(String::as_str), Some("s1"));
+        assert_eq!(series.get("329865"), None);
+    }
+
+    #[test]
+    fn asking_for_no_tmdb_ids_costs_no_query() {
+        let library = Library::open_in_memory().expect("library");
+        assert!(library.ids_by_tmdb("Movie", &[]).expect("empty").is_empty());
     }
 
     #[test]
@@ -1305,6 +1378,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["id"], "m1");
         assert_eq!(rows[0]["positionTicks"], 600_000_000i64);
+        assert_eq!(rows[0]["thumbImageTag"], "thumb-tag");
+        assert_eq!(rows[0]["backdropImageTag"], "backdrop-tag");
     }
 
     #[test]

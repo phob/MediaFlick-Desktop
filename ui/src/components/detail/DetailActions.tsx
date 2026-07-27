@@ -1,5 +1,6 @@
 import { Check, ExternalLink, Heart, Play, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
+import { RequestSeasonsButton } from "@/components/seerr/RequestSeasonsButton"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -142,6 +143,7 @@ export function DetailActions({
         {target && (
           <Button
             size="lg"
+            className="min-w-28 bg-white text-black shadow-lg hover:bg-white/85"
             disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: resumable, quality })}
           >
@@ -153,6 +155,7 @@ export function DetailActions({
           <Button
             variant="secondary"
             size="lg"
+            className="bg-white/15 hover:bg-white/25"
             disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: false, quality })}
           >
@@ -163,6 +166,7 @@ export function DetailActions({
         <Button
           variant="secondary"
           size="lg"
+          className="bg-white/15 hover:bg-white/25"
           onClick={() => setPlayed.mutate({ id: item.id, played: !item.played })}
         >
           <Check className="size-4" />
@@ -171,6 +175,7 @@ export function DetailActions({
         <Button
           variant="secondary"
           size="icon-lg"
+          className="bg-white/15 hover:bg-white/25"
           aria-label={item.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-pressed={item.favorite}
           onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
@@ -179,6 +184,7 @@ export function DetailActions({
             className={item.favorite ? "size-4 fill-current text-destructive" : "size-4"}
           />
         </Button>
+        <RequestSeasonsButton item={item} />
         <ExternalLinks item={item} />
         {!isContainer && <QualityPicker />}
       </div>
