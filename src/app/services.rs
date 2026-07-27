@@ -8,6 +8,7 @@ use crate::jellyfin::session::Session;
 use crate::library::Library;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
+use crate::seer::SeerSession;
 
 static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
 static INIT_ERROR: OnceLock<String> = OnceLock::new();
@@ -18,6 +19,7 @@ static INIT_LOCK: Mutex<()> = Mutex::new(());
 pub struct Services {
     pub library: Arc<Library>,
     pub session: Arc<Session>,
+    pub seer: Arc<SeerSession>,
     pub sync: SyncHandle,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
@@ -66,6 +68,10 @@ pub fn init() -> Option<Arc<Services>> {
     };
     let restored = library.credentials().is_authenticated();
     let session = Arc::new(Session::restore(library.clone()));
+    let seer = Arc::new(SeerSession::restore(library.clone()));
+    // A link left behind by a Jellyfin account that is no longer signed in is
+    // dropped before anything can reach it.
+    seer.revalidate();
     let sync = sync::spawn(library.clone(), session.clone());
     tracing::info!(
         target: "jellyfin.session",
@@ -75,6 +81,7 @@ pub fn init() -> Option<Arc<Services>> {
     let services = Arc::new(Services {
         library,
         session,
+        seer,
         sync,
         playback: RwLock::new(None),
     });

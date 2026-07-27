@@ -39,6 +39,26 @@ impl StoredCredentials {
     }
 }
 
+/// The Seer link, persisted as the single row of `seer_config`.
+///
+/// `jellyfin_server_id` / `jellyfin_user_id` are the Jellyfin account the link
+/// was made under; everything that acquires a Seer client checks them, so an
+/// account switch cannot leave one user's Seer cookie serving another's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SeerConfig {
+    pub base_url: Option<String>,
+    /// The whole cookie set as JSON, not just the session cookie: a
+    /// CSRF-protected instance needs its `_csrf` / `XSRF-TOKEN` pair back too.
+    pub cookies: Option<String>,
+    pub user_id: Option<i64>,
+    pub user_name: Option<String>,
+    pub jellyfin_server_id: Option<String>,
+    pub jellyfin_user_id: Option<String>,
+    pub movie_4k_enabled: bool,
+    pub series_4k_enabled: bool,
+    pub partial_requests_enabled: bool,
+}
+
 /// How the library grid is ordered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ItemSort {
@@ -186,6 +206,86 @@ impl Library {
                 transaction.execute("DELETE FROM user_data", [])?;
                 transaction.execute("DELETE FROM meta", [])?;
             }
+            Ok(())
+        })
+    }
+
+    // ------------------------------------------------------------------- seer
+
+    pub fn seer_config(&self) -> SeerConfig {
+        self.db
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT base_url, cookies, user_id, user_name, jellyfin_server_id,
+                         jellyfin_user_id, movie_4k_enabled, series_4k_enabled,
+                         partial_requests_enabled
+                     FROM seer_config WHERE id = 1",
+                    [],
+                    |row| {
+                        Ok(SeerConfig {
+                            base_url: row.get(0)?,
+                            cookies: row.get(1)?,
+                            user_id: row.get(2)?,
+                            user_name: row.get(3)?,
+                            jellyfin_server_id: row.get(4)?,
+                            jellyfin_user_id: row.get(5)?,
+                            movie_4k_enabled: row.get(6)?,
+                            series_4k_enabled: row.get(7)?,
+                            partial_requests_enabled: row.get(8)?,
+                        })
+                    },
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    /// Upserts rather than updates: unlike `credentials`, this row is only
+    /// created when a Seer instance is first configured.
+    pub fn save_seer_config(&self, config: &SeerConfig) -> rusqlite::Result<()> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO seer_config (id, base_url, cookies, user_id, user_name,
+                     jellyfin_server_id, jellyfin_user_id, movie_4k_enabled,
+                     series_4k_enabled, partial_requests_enabled, updated_at)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(id) DO UPDATE SET
+                     base_url = excluded.base_url,
+                     cookies = excluded.cookies,
+                     user_id = excluded.user_id,
+                     user_name = excluded.user_name,
+                     jellyfin_server_id = excluded.jellyfin_server_id,
+                     jellyfin_user_id = excluded.jellyfin_user_id,
+                     movie_4k_enabled = excluded.movie_4k_enabled,
+                     series_4k_enabled = excluded.series_4k_enabled,
+                     partial_requests_enabled = excluded.partial_requests_enabled,
+                     updated_at = excluded.updated_at",
+                params![
+                    config.base_url,
+                    config.cookies,
+                    config.user_id,
+                    config.user_name,
+                    config.jellyfin_server_id,
+                    config.jellyfin_user_id,
+                    config.movie_4k_enabled,
+                    config.series_4k_enabled,
+                    config.partial_requests_enabled,
+                    now_unix(),
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Drops the Seer session and the account binding, keeping the instance
+    /// address so re-linking does not mean retyping it.
+    pub fn clear_seer_link(&self) -> rusqlite::Result<()> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE seer_config SET cookies = NULL, user_id = NULL, user_name = NULL,
+                     jellyfin_server_id = NULL, jellyfin_user_id = NULL, updated_at = ?1
+                 WHERE id = 1",
+                params![now_unix()],
+            )?;
             Ok(())
         })
     }
@@ -899,7 +999,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemQuery, ItemSort, Library, civil_from_days, fts_match_expression};
+    use super::{ItemQuery, ItemSort, Library, SeerConfig, civil_from_days, fts_match_expression};
     use crate::jellyfin::api::model::BaseItemDto;
     use std::collections::HashSet;
 
@@ -936,6 +1036,63 @@ mod tests {
             ])
             .expect("seed");
         library
+    }
+
+    #[test]
+    fn an_unconfigured_library_has_an_empty_seer_config() {
+        let library = Library::open_in_memory().expect("library");
+        assert_eq!(library.seer_config(), SeerConfig::default());
+    }
+
+    #[test]
+    fn the_seer_config_round_trips_through_its_single_row() {
+        let library = Library::open_in_memory().expect("library");
+        let config = SeerConfig {
+            base_url: Some("https://seer.test".to_string()),
+            cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
+            user_id: Some(7),
+            user_name: Some("pho".to_string()),
+            jellyfin_server_id: Some("srv".to_string()),
+            jellyfin_user_id: Some("uid".to_string()),
+            movie_4k_enabled: true,
+            series_4k_enabled: false,
+            partial_requests_enabled: true,
+        };
+        library.save_seer_config(&config).expect("save");
+        assert_eq!(library.seer_config(), config);
+
+        // Saving twice must update the row, not fail on the primary key.
+        let moved = SeerConfig {
+            base_url: Some("https://other.test".to_string()),
+            ..config
+        };
+        library.save_seer_config(&moved).expect("re-save");
+        assert_eq!(library.seer_config(), moved);
+    }
+
+    #[test]
+    fn clearing_the_seer_link_keeps_the_instance_address() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .save_seer_config(&SeerConfig {
+                base_url: Some("https://seer.test".to_string()),
+                cookies: Some(r#"{"connect.sid":"abc"}"#.to_string()),
+                user_id: Some(7),
+                user_name: Some("pho".to_string()),
+                jellyfin_server_id: Some("srv".to_string()),
+                jellyfin_user_id: Some("uid".to_string()),
+                partial_requests_enabled: true,
+                ..SeerConfig::default()
+            })
+            .expect("save");
+        library.clear_seer_link().expect("clear");
+
+        let config = library.seer_config();
+        assert_eq!(config.base_url.as_deref(), Some("https://seer.test"));
+        assert!(config.partial_requests_enabled);
+        assert_eq!(config.cookies, None);
+        assert_eq!(config.user_id, None);
+        assert_eq!(config.jellyfin_user_id, None);
     }
 
     #[test]

@@ -17,6 +17,7 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::{ItemQuery, ItemSort};
 use crate::preferences::{AppSettings, StreamingQuality};
+use crate::seer::api::SeerError;
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -79,6 +80,16 @@ impl ApiResponse {
         )
     }
 
+    /// Seer failures get their own mapping: routed through [`Self::from_api_error`]
+    /// a lapsed Seer session would read to the UI as a lapsed *Jellyfin* one and
+    /// send it to the sign-in screen.
+    fn from_seer_error(error: &SeerError) -> Self {
+        Self::json(
+            error.client_status(),
+            json!({ "error": error.to_string(), "expired": *error == SeerError::Unauthorized }),
+        )
+    }
+
     fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
         Self {
             status: 200,
@@ -131,6 +142,8 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             quick_connect_poll(services, request)
         }
         ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
+        ["seer", "status"] if request.is("GET") => ApiResponse::ok(services.seer.status()),
+        ["seer", "connect"] if request.is("POST") => seer_connect(services, request),
         ["home"] if request.is("GET") => home(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["genres"] if request.is("GET") => match services.library.genres() {
@@ -216,6 +229,8 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     );
     match result {
         Ok(_) => {
+            // Signing in as somebody else must not inherit their Seer link.
+            services.seer.revalidate();
             services.sync.request();
             status(services)
         }
@@ -243,6 +258,7 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
     match result {
         Ok(value) => {
             if value["authenticated"] == json!(true) {
+                services.seer.revalidate();
                 services.sync.request();
             }
             ApiResponse::ok(value)
@@ -254,7 +270,24 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let forget = request.json()["forgetLibrary"].as_bool().unwrap_or(false);
     services.session.logout(forget);
+    // The Seer link belongs to the account that just went away. Every read
+    // path re-checks that anyway, but doing it here means a signed-out machine
+    // keeps no Seer cookie on disk.
+    services.seer.revalidate();
     status(services)
+}
+
+// ---------------------------------------------------------------------- seer
+
+fn seer_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    match services
+        .seer
+        .connect(body["server"].as_str().unwrap_or_default())
+    {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_seer_error(&error),
+    }
 }
 
 // ------------------------------------------------------------------ browsing
