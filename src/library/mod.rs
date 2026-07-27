@@ -236,7 +236,12 @@ impl Library {
                     },
                 )
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|error| {
+                if !matches!(error, rusqlite::Error::QueryReturnedNoRows) {
+                    tracing::warn!(target: "library.db", "could not read the Seer config: {error}");
+                }
+                SeerConfig::default()
+            })
     }
 
     /// Upserts rather than updates: unlike `credentials`, this row is only
