@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod companion;
 mod jellyfin;
 mod library;
 mod maintenance;

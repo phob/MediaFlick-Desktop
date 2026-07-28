@@ -30,6 +30,23 @@ ui:
     pnpm --dir ui install --frozen-lockfile
     pnpm --dir ui build
 
+# Build the server-side MediaFlick Companion plugin
+[group('build')]
+plugin:
+    dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+
+# Run the companion plugin unit tests
+[group('test')]
+plugin-test:
+    dotnet test plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+
+# Deploy the plugin to the configured Jellyfin development host and restart it
+[group('run')]
+plugin-deploy: plugin
+    ssh pho@archlinux 'mkdir -p /opt/jellyfin/library/data/plugins/MediaFlick'
+    scp plugin/bin/Release/publish/* pho@archlinux:/opt/jellyfin/library/data/plugins/MediaFlick/
+    ssh pho@archlinux 'docker restart jellyfin'
+
 # Run the Vite dev server against the UI bundle
 [group('run')]
 ui-dev:

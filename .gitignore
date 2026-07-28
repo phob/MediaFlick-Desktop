@@ -10,6 +10,11 @@
 /ui/node_modules/
 /ui/dist/
 
+# Companion plugin build and NuGet restore outputs
+/plugin/bin/
+/plugin/*/bin/
+/plugin/*/obj/
+
 # Scratch/vendor checkouts
 /tmp/
 /.cache/

@@ -8,6 +8,8 @@ Building is mainly intended for developers and advanced users.
 - `just`
 - CMake and Ninja, required by `cef-dll-sys`
 - A CEF cache. By default, `just` downloads/caches CEF in this checkout at `.cache/cef`; set `CEF_PATH=...` to override it.
+- Node and pnpm for the embedded React UI.
+- .NET 9 SDK for the optional server-side Companion plugin.
 
 ## Build a local debug app
 
@@ -26,6 +28,19 @@ Run it with:
 ```sh
 just run --url http://localhost:8096
 ```
+
+## Build and test the Companion plugin
+
+The plugin has a separate toolchain and is not part of `cargo build`:
+
+```sh
+just plugin-test
+just plugin
+```
+
+The publish output is written to `plugin/bin/Release/publish`. Maintainers with
+access to the configured Tailscale development host can install it and restart
+Jellyfin with `just plugin-deploy`.
 
 ## Build a release app
 

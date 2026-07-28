@@ -123,15 +123,33 @@ jobs:
       - name: Build
         run: cargo build --bin mediaflick-desktop
 
+  plugin:
+    name: Companion plugin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Test
+        run: dotnet test plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+
+      - name: Publish
+        run: dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+
   ci:
     name: CI
     if: ${{ always() }}
-    needs: [fmt, build-and-test]
+    needs: [fmt, build-and-test, plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs succeeded
         run: |
-          if [ "${{ needs.fmt.result }}" != "success" ] || [ "${{ needs.build-and-test.result }}" != "success" ]; then
+          if [ "${{ needs.fmt.result }}" != "success" ] || [ "${{ needs.build-and-test.result }}" != "success" ] || [ "${{ needs.plugin.result }}" != "success" ]; then
             echo "One or more required CI jobs failed."
             exit 1
           fi

@@ -8,6 +8,7 @@ import Home from "@/routes/Home"
 import ItemDetail from "@/routes/ItemDetail"
 import Library from "@/routes/Library"
 import Requests from "@/routes/Requests"
+import Calendar from "@/routes/Calendar"
 import SignIn from "@/routes/SignIn"
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/library" element={<Library />} />
         <Route path="/item/:id" element={<ItemDetail />} />
+        <Route path="/calendar" element={<Calendar />} />
         {/* Registered whether or not Seerr is linked: the sidebar hides them
             until it is, but a deep link or a session that lapsed mid-use must
             land on the offer to set it up rather than on a blank page. */}

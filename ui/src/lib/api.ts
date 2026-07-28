@@ -149,7 +149,60 @@ export interface Status {
   syncing?: boolean
   lastSync?: string | null
   bootstrapped?: boolean
+  companion?: CompanionStatus
   [key: string]: unknown
+}
+
+export interface CompanionInfo {
+  pluginVersion: string
+  apiVersion: number
+  capabilities: string[]
+  services: Record<"sonarr" | "radarr" | "seerr", boolean>
+}
+
+export interface CompanionStatus {
+  available: boolean
+  compatible: boolean
+  checked: boolean
+  info: CompanionInfo | null
+  error: string | null
+  supportedApi: { min: number; max: number }
+}
+
+export type CalendarEntryKind = "episode" | "movie"
+export type CalendarDateKind = "air" | "digital" | "physical" | "cinema"
+
+export interface CalendarEntry {
+  kind: CalendarEntryKind
+  date: string
+  dateKind: CalendarDateKind
+  title: string
+  seriesTitle: string | null
+  season: number | null
+  episode: number | null
+  tmdbId: number | null
+  tvdbId: number | null
+  monitored: boolean
+  hasFile: boolean
+  posterUrl: string | null
+  libraryItemId: string | null
+}
+
+export interface CalendarSource {
+  enabled: boolean
+  available: boolean
+  stale: boolean
+  refreshedAt: string | null
+  error: string | null
+}
+
+export interface ReleaseCalendar {
+  entries: CalendarEntry[]
+  refreshedAt: string | null
+  sources: Record<string, CalendarSource>
+  windowStart: string
+  windowEnd: string
+  provider: "plugin" | "metadata"
 }
 
 export interface ClientSettings {
@@ -278,6 +331,7 @@ export interface SeerrStatusInfo {
   user: { id: number; name: string; avatar: string | null; jellyfinUserId: string | null } | null
   capabilities: SeerrCapabilities | null
   quota: { movie: SeerrQuotaStatus; tv: SeerrQuotaStatus } | null
+  mapped?: boolean
 }
 
 /** What `POST /api/seerr/connect` reports about the instance it probed. */
@@ -478,6 +532,10 @@ function queryString(params: object) {
 
 export const api = {
   status: () => request<Status>("/api/status"),
+  companion: {
+    info: () => request<CompanionStatus>("/api/companion/info"),
+    probe: () => request<CompanionStatus>("/api/companion/probe", { method: "POST" }),
+  },
   settings: () => request<ClientSettings>("/api/settings"),
 
   connect: (server: string, signal?: AbortSignal) =>
@@ -536,6 +594,8 @@ export const api = {
     request<unknown>("/api/player/command", { method: "POST", body: command }),
 
   sync: () => request<{ requested: boolean }>("/api/sync", { method: "POST" }),
+  calendar: (start: string, end: string, signal?: AbortSignal) =>
+    request<ReleaseCalendar>(`/api/calendar${queryString({ start, end })}`, { signal }),
 
   seerr: {
     status: () => request<SeerrStatusInfo>("/api/seerr/status"),

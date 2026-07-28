@@ -1,0 +1,54 @@
+name: Draft Companion Release
+
+on:
+  push:
+    tags:
+      - "companion-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Test plugin
+        run: dotnet test plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+
+      - name: Publish plugin
+        run: dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+
+      - name: Package plugin and repository manifest
+        env:
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          version="${TAG#companion-v}"
+          asset="mediaflick-companion_${version}.zip"
+          python scripts/package_plugin.py \
+            --version "$version" \
+            --publish-dir plugin/bin/Release/publish \
+            --output-dir plugin/bin/Release/package \
+            --source-url "https://github.com/${REPOSITORY}/releases/download/${TAG}/${asset}"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#companion-v}"
+          gh release create "$TAG" \
+            --draft \
+            --title "MediaFlick Companion v${version}" \
+            --notes "MediaFlick Companion v${version}" \
+            plugin/bin/Release/package/mediaflick-companion_${version}.zip \
+            plugin/bin/Release/package/meta.json \
+            plugin/bin/Release/package/manifest.json

@@ -10,6 +10,8 @@
 
 ### Added
 
+- Added the optional MediaFlick Companion server plugin for Jellyfin 10.11.11. It exposes a versioned, authenticated `/MediaFlick` API; keeps Sonarr, Radarr, and Seerr API keys on the server; provides an admin dashboard page with redacted keys and connection tests; refreshes a stale-preserving Sonarr/Radarr calendar every 15 minutes; and mediates Seerr calls as the mapped Jellyfin user, with opt-in first-use import. The plugin has independent build, test, deploy, CI, and draft-release packaging flows.
+- Added a Releases route with agenda and month views, per-release-type filters, stale-source warnings, local-library Play/Open actions, and film request actions. It uses the Companion calendar when available and falls back to Jellyfin's metadata-only Upcoming feed when the plugin is absent.
 - Added native Jellyfin authentication: username/password sign-in and Quick Connect, a persistent per-installation device id shown in Jellyfin's Devices dashboard, session restore across restarts, and automatic return to the sign-in screen when the server rejects the stored token.
 - Added a local SQLite metadata cache (`library.db`) covering movies, series, seasons, and episodes, with FTS5 full-text search over titles, overviews, genres, and cast, dedicated indexed columns for TMDB/IMDb/TVDB ids, and a background sync thread that runs a resumable bootstrap, an incremental `DateCreated` sweep, and an hourly identity sweep that both mirrors watch state and drops items deleted on the server.
 - Added the app's own UI on the `mediaflick-desktop://app/` scheme: sign-in, a home screen with a combined Continue Watching / Next Up row and a Recently Added row, a virtualized library grid with instant type-ahead search plus sort, genre, and watched filters, a details view with cast, seasons, and episodes, and mark-watched/favorite round-trips.
@@ -41,6 +43,7 @@
 
 ### Changed
 
+- Seerr discovery, requests, status, and cancellation now use a provider abstraction. A compatible Companion plugin is preferred automatically, results are joined to the local library on the desktop, and the existing direct per-user Seerr session remains the fallback when the plugin is absent. Companion-mediated writes are never retried after an uncertain result, and Seerr permission failures cannot expire the Jellyfin login.
 - Replaced the hand-written ES-module UI with a React application. The bundle is emitted with fixed `app.js`/`app.css` names and no code splitting — the assets are embedded in the binary and served from memory, so content hashing and chunking buy nothing — and `static_asset` embeds them from `OUT_DIR` instead of the source tree. Client-side routing moved from hash URLs to `pushState`, which the app scheme already supported.
 - Building the app now requires Node and pnpm, and CI and the release workflow install both before the Rust steps. Set `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` to embed a bundle that was built out of band.
 

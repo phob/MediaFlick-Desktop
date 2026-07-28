@@ -44,6 +44,24 @@ export function useHome(enabled = true) {
   return useQuery({ queryKey: queryKeys.home, queryFn: api.home, enabled })
 }
 
+export function useCompanion() {
+  return useQuery({
+    queryKey: queryKeys.companion,
+    queryFn: api.companion.info,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
+export function useReleaseCalendar(start: string, end: string) {
+  return useQuery({
+    queryKey: queryKeys.calendar(start, end),
+    queryFn: ({ signal }) => api.calendar(start, end, signal),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
 export function useBillboard() {
   return useQuery({
     queryKey: queryKeys.billboard,

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::app::services::{self, Services};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
+use crate::companion::ProviderError;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
@@ -104,6 +105,13 @@ impl ApiResponse {
         )
     }
 
+    fn from_provider_error(error: &ProviderError) -> Self {
+        match error {
+            ProviderError::Companion(error) => Self::from_api_error(error),
+            ProviderError::Direct(error) => Self::from_seerr_error(error),
+        }
+    }
+
     fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
         Self {
             status: 200,
@@ -171,6 +179,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
     let segments = path.split('/').collect::<Vec<_>>();
     match segments.as_slice() {
         ["status"] => status(services),
+        ["companion", "info"] if request.is("GET") => companion_info(services, false),
+        ["companion", "probe"] if request.is("POST") => companion_info(services, true),
+        ["calendar"] if request.is("GET") => calendar(services, request),
         ["settings"] if request.is("GET") => client_settings(),
         ["auth", "connect"] if request.is("POST") => auth_connect(services, request),
         ["auth", "login"] if request.is("POST") => auth_login(services, request),
@@ -181,7 +192,10 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             quick_connect_poll(services, request)
         }
         ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
-        ["seerr", "status"] if request.is("GET") => ApiResponse::ok(services.seerr.status()),
+        ["seerr", "status"] if request.is("GET") => match services.requests_provider().status() {
+            Ok(value) => ApiResponse::ok(value),
+            Err(error) => ApiResponse::from_provider_error(&error),
+        },
         ["seerr", "connect"] if request.is("POST") => seerr_connect(services, request),
         ["seerr", "link"] if request.is("POST") => seerr_link(services),
         ["seerr", "link", "poll"] if request.is("POST") => seerr_link_poll(services, request),
@@ -264,6 +278,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
             "bootstrapped".to_string(),
             json!(services.library.meta("sync.bootstrap_done").as_deref() == Some("1")),
         );
+        object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)
 }
@@ -298,6 +313,11 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
         Ok(_) => {
             // Signing in as somebody else must not inherit their Seerr link.
             services.seerr.revalidate();
+            services.companion.clear();
+            if let Err(error) = services.companion.probe(true) {
+                services.session.note_error(&error);
+                tracing::debug!(target: "companion", "post-login probe failed: {error}");
+            }
             services.sync.request();
             status(services)
         }
@@ -326,6 +346,11 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
         Ok(value) => {
             if value["authenticated"] == json!(true) {
                 services.seerr.revalidate();
+                services.companion.clear();
+                if let Err(error) = services.companion.probe(true) {
+                    services.session.note_error(&error);
+                    tracing::debug!(target: "companion", "post-login probe failed: {error}");
+                }
                 services.sync.request();
             }
             ApiResponse::ok(value)
@@ -337,11 +362,54 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let forget = request.json()["forgetLibrary"].as_bool().unwrap_or(false);
     services.session.logout(forget);
+    services.companion.clear();
     // The Seerr link belongs to the account that just went away. Every read
     // path re-checks that anyway, but doing it here means a signed-out machine
     // keeps no Seerr cookie on disk.
     services.seerr.revalidate();
     status(services)
+}
+
+fn companion_info(services: &Arc<Services>, force: bool) -> ApiResponse {
+    match services.companion.probe(force) {
+        Ok(_) => ApiResponse::ok(services.companion.status()),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+fn calendar(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let Some(start) = request.param("start") else {
+        return ApiResponse::error(400, "calendar start is required");
+    };
+    let Some(end) = request.param("end") else {
+        return ApiResponse::error(400, "calendar end is required");
+    };
+    if !is_iso_date(&start) || !is_iso_date(&end) || end < start {
+        return ApiResponse::error(
+            400,
+            "calendar dates must be YYYY-MM-DD with end after start",
+        );
+    }
+    match services.companion.calendar(&start, &end) {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+fn is_iso_date(value: &str) -> bool {
+    value.len() == 10
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[7] == b'-'
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
 }
 
 // ---------------------------------------------------------------------- seerr
@@ -392,9 +460,12 @@ fn seerr_link_password(services: &Arc<Services>, request: &ApiRequest) -> ApiRes
 
 fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let query = request.param("q").unwrap_or_default();
-    match services.seerr.search(&query, page_param(request)) {
+    match services
+        .requests_provider()
+        .search(&query, page_param(request))
+    {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -402,9 +473,12 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
     let Some(kind) = DiscoverKind::from_id(kind) else {
         return ApiResponse::error(404, "unknown discover row");
     };
-    match services.seerr.discover(kind, page_param(request)) {
+    match services
+        .requests_provider()
+        .discover(kind, page_param(request))
+    {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -412,9 +486,9 @@ fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Api
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a TMDB id");
     };
-    match services.seerr.media_detail(media_type, tmdb_id) {
+    match services.requests_provider().media(media_type, tmdb_id) {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -428,7 +502,7 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
             .filter_map(serde_json::Value::as_i64)
             .collect::<Vec<_>>()
     });
-    let result = services.seerr.create_request(
+    let result = services.requests_provider().create(
         body["mediaType"].as_str().unwrap_or_default(),
         body["tmdbId"].as_i64().unwrap_or_default(),
         seasons,
@@ -436,7 +510,7 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
     );
     match result {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -447,14 +521,14 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
             .and_then(|value| value.parse().ok())
             .unwrap_or(fallback)
     };
-    let result = services.seerr.requests(
+    let result = services.requests_provider().requests(
         number("take", 20),
         number("skip", 0),
         &request.param("filter").unwrap_or_else(|| "all".to_string()),
     );
     match result {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -462,9 +536,9 @@ fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiRespon
     let Ok(request_id) = request_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a request id");
     };
-    match services.seerr.cancel_request(request_id) {
+    match services.requests_provider().cancel(request_id) {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => ApiResponse::from_provider_error(&error),
     }
 }
 
@@ -1527,8 +1601,8 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 mod tests {
     use super::{
         ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key, external_url,
-        file_name_of, handle, media_source_json, merge_next_up, mime_for_image, summary_from_dto,
-        youtube_embed_url,
+        file_name_of, handle, is_iso_date, media_source_json, merge_next_up, mime_for_image,
+        summary_from_dto, youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
@@ -1583,6 +1657,14 @@ mod tests {
         assert_eq!(request.param("search").as_deref(), Some("the matrix"));
         assert_eq!(request.param("genre"), None);
         assert_eq!(request.param("limit").as_deref(), Some("20"));
+    }
+
+    #[test]
+    fn calendar_dates_are_strict_iso_days() {
+        assert!(is_iso_date("2026-08-02"));
+        assert!(!is_iso_date("2026-8-2"));
+        assert!(!is_iso_date("2026/08/02"));
+        assert!(!is_iso_date("../../etc"));
     }
 
     #[test]

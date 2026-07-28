@@ -4,6 +4,7 @@
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use crate::app::paths;
+use crate::companion::{CompanionSession, RequestsProvider};
 use crate::jellyfin::session::Session;
 use crate::library::Library;
 use crate::library::sync::{self, SyncHandle};
@@ -19,6 +20,7 @@ static INIT_LOCK: Mutex<()> = Mutex::new(());
 pub struct Services {
     pub library: Arc<Library>,
     pub session: Arc<Session>,
+    pub companion: Arc<CompanionSession>,
     pub seerr: Arc<SeerrSession>,
     pub sync: SyncHandle,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
@@ -35,6 +37,13 @@ impl Services {
 
     pub fn playback(&self) -> Option<Arc<PlaybackCoordinator>> {
         self.playback.read().ok().and_then(|slot| slot.clone())
+    }
+
+    pub fn requests_provider(&self) -> RequestsProvider {
+        // Cached once probed; only the first caller after a sign-in (or one
+        // racing the startup warm-up) pays a network round-trip.
+        let _ = self.companion.probe(false);
+        RequestsProvider::select(self.companion.clone(), self.seerr.clone())
     }
 }
 
@@ -68,10 +77,24 @@ pub fn init() -> Option<Arc<Services>> {
     };
     let restored = library.credentials().is_authenticated();
     let session = Arc::new(Session::restore(library.clone()));
+    let companion = Arc::new(CompanionSession::new(session.clone(), library.clone()));
     let seerr = Arc::new(SeerrSession::restore(library.clone()));
     // A link left behind by a Jellyfin account that is no longer signed in is
     // dropped before anything can reach it.
     seerr.revalidate();
+    if restored {
+        // `init` runs on the CEF UI thread and holds INIT_LOCK, so the probe
+        // must not wait on the network here; it warms the cache from its own
+        // thread and the API paths re-check lazily.
+        let companion = companion.clone();
+        let session = session.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = companion.probe(false) {
+                session.note_error(&error);
+                tracing::debug!(target: "companion", "initial companion probe failed: {error}");
+            }
+        });
+    }
     let sync = sync::spawn(library.clone(), session.clone());
     tracing::info!(
         target: "jellyfin.session",
@@ -81,6 +104,7 @@ pub fn init() -> Option<Arc<Services>> {
     let services = Arc::new(Services {
         library,
         session,
+        companion,
         seerr,
         sync,
         playback: RwLock::new(None),

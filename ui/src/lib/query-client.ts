@@ -24,6 +24,8 @@ export const queryClient = new QueryClient({
 
 export const queryKeys = {
   status: ["status"] as const,
+  companion: ["companion"] as const,
+  calendar: (start: string, end: string) => ["calendar", start, end] as const,
   settings: ["settings"] as const,
   home: ["home"] as const,
   billboard: ["billboard"] as const,
