@@ -40,6 +40,9 @@ pub enum ApiError {
     Unauthorized,
     /// Any other non-success HTTP status.
     Status { status: u16 },
+    /// A typed companion endpoint refused the action and supplied a safe
+    /// user-facing explanation.
+    Remote { status: u16, message: String },
     /// Connection, DNS, TLS, or timeout failure.
     Transport(String),
     /// The response body did not match the expected shape.
@@ -53,7 +56,9 @@ impl ApiError {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::Transport(_) => true,
-            Self::Status { status } => *status >= 500 || *status == 429,
+            Self::Status { status } | Self::Remote { status, .. } => {
+                *status >= 500 || *status == 429
+            }
             Self::Unauthorized | Self::Decode(_) | Self::NotConfigured => false,
         }
     }
@@ -62,7 +67,7 @@ impl ApiError {
     pub fn client_status(&self) -> u16 {
         match self {
             Self::Unauthorized => 401,
-            Self::Status { status } => *status,
+            Self::Status { status } | Self::Remote { status, .. } => *status,
             Self::NotConfigured => 409,
             Self::Transport(_) | Self::Decode(_) => 502,
         }
@@ -74,6 +79,7 @@ impl fmt::Display for ApiError {
         match self {
             Self::Unauthorized => write!(formatter, "the Jellyfin server rejected the session"),
             Self::Status { status } => write!(formatter, "Jellyfin returned HTTP {status}"),
+            Self::Remote { message, .. } => write!(formatter, "{message}"),
             Self::Transport(message) => write!(formatter, "could not reach Jellyfin: {message}"),
             Self::Decode(message) => {
                 write!(formatter, "unexpected Jellyfin response: {message}")
@@ -89,6 +95,7 @@ impl std::error::Error for ApiError {}
 #[derive(Clone)]
 pub struct JellyfinClient {
     agent: ureq::Agent,
+    companion_agent: ureq::Agent,
     base_url: String,
     device_id: String,
     device_name: String,
@@ -97,14 +104,18 @@ pub struct JellyfinClient {
 
 impl JellyfinClient {
     pub fn new(base_url: &str, device_id: &str, token: Option<&str>) -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .timeout_connect(Some(CONNECT_TIMEOUT))
-            .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
-            .build()
-            .into();
+        let build_agent = |http_status_as_error| -> ureq::Agent {
+            ureq::Agent::config_builder()
+                .timeout_global(Some(HTTP_TIMEOUT))
+                .timeout_connect(Some(CONNECT_TIMEOUT))
+                .http_status_as_error(http_status_as_error)
+                .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
+                .build()
+                .into()
+        };
         Self {
-            agent,
+            agent: build_agent(true),
+            companion_agent: build_agent(false),
             base_url: base_url.trim_end_matches('/').to_string(),
             device_id: device_id.to_string(),
             device_name: device_name(),
@@ -254,6 +265,30 @@ impl JellyfinClient {
         })
     }
 
+    /// Authenticated plugin GET that preserves a 403 as an action refusal.
+    ///
+    /// Core Jellyfin calls historically treat 401 and 403 alike as a rejected
+    /// session. Companion endpoints sit behind that session but may themselves
+    /// return 403 for an upstream Seerr permission, which must not sign the
+    /// user out of Jellyfin.
+    pub fn companion_get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T, ApiError> {
+        let url = self.url(path, query);
+        self.with_retry(path, || {
+            let response = self
+                .companion_agent
+                .get(url.as_str())
+                .header("Accept", "application/json")
+                .header("Authorization", self.authorization_header())
+                .call()
+                .map_err(map_companion_ureq_error)?;
+            companion_json(response)
+        })
+    }
+
     pub fn post_json<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
@@ -274,6 +309,22 @@ impl JellyfinClient {
                 .read_json::<T>()
                 .map_err(|error| ApiError::Decode(error.to_string()))
         })
+    }
+
+    pub fn companion_post_json_once<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, ApiError> {
+        let url = self.url(path, &[]);
+        let response = self
+            .companion_agent
+            .post(url.as_str())
+            .header("Accept", "application/json")
+            .header("Authorization", self.authorization_header())
+            .send_json(body)
+            .map_err(map_companion_ureq_error)?;
+        companion_json(response)
     }
 
     /// POST that ignores the response body (Jellyfin often answers 204).
@@ -306,6 +357,18 @@ impl JellyfinClient {
                 .map(|_| ())
                 .map_err(map_ureq_error)
         })
+    }
+
+    pub fn companion_delete_once(&self, path: &str) -> Result<(), ApiError> {
+        let url = self.url(path, &[]);
+        let response = self
+            .companion_agent
+            .delete(url.as_str())
+            .header("Accept", "application/json")
+            .header("Authorization", self.authorization_header())
+            .call()
+            .map_err(map_companion_ureq_error)?;
+        companion_empty(response)
     }
 
     fn with_retry<T>(
@@ -359,6 +422,55 @@ fn map_ureq_error(error: ureq::Error) -> ApiError {
     }
 }
 
+fn map_companion_ureq_error(error: ureq::Error) -> ApiError {
+    match error {
+        ureq::Error::StatusCode(401) => ApiError::Unauthorized,
+        ureq::Error::StatusCode(status) => ApiError::Status { status },
+        other => ApiError::Transport(other.to_string()),
+    }
+}
+
+fn companion_json<T: DeserializeOwned>(
+    mut response: ureq::http::Response<ureq::Body>,
+) -> Result<T, ApiError> {
+    let status = response.status().as_u16();
+    if status == 401 {
+        return Err(ApiError::Unauthorized);
+    }
+    if status >= 400 {
+        return Err(companion_status_error(&mut response, status));
+    }
+    response
+        .body_mut()
+        .read_json::<T>()
+        .map_err(|error| ApiError::Decode(error.to_string()))
+}
+
+fn companion_empty(mut response: ureq::http::Response<ureq::Body>) -> Result<(), ApiError> {
+    let status = response.status().as_u16();
+    if status == 401 {
+        return Err(ApiError::Unauthorized);
+    }
+    if status >= 400 {
+        return Err(companion_status_error(&mut response, status));
+    }
+    Ok(())
+}
+
+fn companion_status_error(
+    response: &mut ureq::http::Response<ureq::Body>,
+    status: u16,
+) -> ApiError {
+    let message = response
+        .body_mut()
+        .read_json::<serde_json::Value>()
+        .ok()
+        .and_then(|body| body["error"].as_str().map(str::to_string))
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or_else(|| format!("the companion returned HTTP {status}"));
+    ApiError::Remote { status, message }
+}
+
 /// Jellyfin shows this in the Devices dashboard; the hostname keeps it useful.
 fn device_name() -> String {
     for variable in ["COMPUTERNAME", "HOSTNAME", "HOST"] {
@@ -383,7 +495,7 @@ fn quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiError, JellyfinClient, map_ureq_error, quote};
+    use super::{ApiError, JellyfinClient, map_companion_ureq_error, map_ureq_error, quote};
 
     fn client() -> JellyfinClient {
         JellyfinClient::new("http://server:8096/", "device-1", Some("secret"))
@@ -449,6 +561,18 @@ mod tests {
     }
 
     #[test]
+    fn companion_permissions_do_not_expire_the_jellyfin_session() {
+        assert_eq!(
+            map_companion_ureq_error(ureq::Error::StatusCode(401)),
+            ApiError::Unauthorized
+        );
+        assert_eq!(
+            map_companion_ureq_error(ureq::Error::StatusCode(403)),
+            ApiError::Status { status: 403 }
+        );
+    }
+
+    #[test]
     fn only_transport_and_server_errors_are_retried() {
         assert!(ApiError::Transport("reset".to_string()).is_retryable());
         assert!(ApiError::Status { status: 503 }.is_retryable());
@@ -462,6 +586,14 @@ mod tests {
         assert_eq!(ApiError::Unauthorized.client_status(), 401);
         assert_eq!(ApiError::NotConfigured.client_status(), 409);
         assert_eq!(ApiError::Status { status: 404 }.client_status(), 404);
+        assert_eq!(
+            ApiError::Remote {
+                status: 409,
+                message: "not mapped".to_string()
+            }
+            .client_status(),
+            409
+        );
         assert_eq!(ApiError::Transport("x".to_string()).client_status(), 502);
     }
 }

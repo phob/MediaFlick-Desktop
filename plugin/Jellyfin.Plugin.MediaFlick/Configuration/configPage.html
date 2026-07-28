@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>MediaFlick Companion</title>
+</head>
+<body>
+<div id="MediaFlickCompanionConfigPage"
+     data-role="page"
+     class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <h2>MediaFlick Companion</h2>
+            <p>Service keys stay on this server. A blank key keeps the saved value.</p>
+            <form id="MediaFlickCompanionConfigForm">
+                <div id="MediaFlickServices"></div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label class="emby-checkbox-label">
+                        <input id="AutoImportSeerrUsers" type="checkbox" is="emby-checkbox">
+                        <span>Automatically import unmapped Jellyfin users into Seerr</span>
+                    </label>
+                    <div class="fieldDescription">
+                        Off by default. When off, an unmapped user is told to ask an administrator.
+                    </div>
+                </div>
+                <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                    <span>Save</span>
+                </button>
+            </form>
+        </div>
+    </div>
+    <script type="text/javascript">
+        (function () {
+            // The dashboard pipes this whole page through its localization
+            // template step, which eats every dollar-brace token — including
+            // inside this script — so nothing here may use template literals.
+            const names = ["sonarr", "radarr", "seerr"];
+            const defaultPorts = { sonarr: "8989", radarr: "7878", seerr: "5055" };
+            const root = document.querySelector("#MediaFlickServices");
+
+            function field(name, suffix) {
+                return document.querySelector("#" + name + suffix);
+            }
+
+            function block(name) {
+                const title = name.slice(0, 1).toUpperCase() + name.slice(1);
+                return '<fieldset style="margin: 1.5em 0; padding: 1em;">'
+                    + '<legend>' + title + '</legend>'
+                    + '<label class="emby-checkbox-label">'
+                    + '<input id="' + name + 'Enabled" type="checkbox" is="emby-checkbox">'
+                    + '<span>Enabled</span>'
+                    + '</label>'
+                    + '<div class="inputContainer">'
+                    + '<label class="inputLabel inputLabelUnfocused" for="' + name + 'Url">Base URL</label>'
+                    + '<input id="' + name + 'Url" type="url" is="emby-input"'
+                    + ' placeholder="http://' + name + ':' + defaultPorts[name] + '">'
+                    + '</div>'
+                    + '<div class="inputContainer">'
+                    + '<label class="inputLabel inputLabelUnfocused" for="' + name + 'Key">API key</label>'
+                    + '<input id="' + name + 'Key" type="password" is="emby-input"'
+                    + ' autocomplete="new-password" placeholder="Leave blank to keep saved key">'
+                    + '</div>'
+                    + '<button id="' + name + 'Test" is="emby-button" type="button"'
+                    + ' class="raised emby-button">Test connection</button>'
+                    + '<span id="' + name + 'Result" style="margin-left: .75em;"></span>'
+                    + '</fieldset>';
+            }
+
+            root.innerHTML = names.map(block).join("");
+
+            async function api(path, options) {
+                const response = await ApiClient.ajax({
+                    type: options?.method || "GET",
+                    url: ApiClient.getUrl(path),
+                    data: options?.body ? JSON.stringify(options.body) : undefined,
+                    contentType: options?.body ? "application/json" : undefined,
+                    dataType: "json"
+                });
+                return response;
+            }
+
+            function readService(name) {
+                return {
+                    enabled: field(name, "Enabled").checked,
+                    baseUrl: field(name, "Url").value,
+                    apiKey: field(name, "Key").value || null
+                };
+            }
+
+            document.querySelector("#MediaFlickCompanionConfigPage")
+                .addEventListener("pageshow", async function () {
+                    Dashboard.showLoadingMsg();
+                    try {
+                        const config = await api("MediaFlick/admin/config");
+                        names.forEach(name => {
+                            field(name, "Enabled").checked = config[name].enabled;
+                            field(name, "Url").value = config[name].baseUrl || "";
+                            field(name, "Key").placeholder = config[name].hasApiKey
+                                ? "Saved — leave blank to keep it"
+                                : "API key";
+                        });
+                        document.querySelector("#AutoImportSeerrUsers").checked =
+                            config.autoImportSeerrUsers;
+                    } finally {
+                        Dashboard.hideLoadingMsg();
+                    }
+                });
+
+            names.forEach(name => {
+                field(name, "Test").addEventListener("click", async function () {
+                    const result = field(name, "Result");
+                    result.textContent = "Testing…";
+                    try {
+                        const candidate = readService(name);
+                        candidate.enabled = true;
+                        const response = await api("MediaFlick/admin/test/" + name, {
+                            method: "POST",
+                            body: candidate
+                        });
+                        result.textContent = response.version
+                            ? "Connected (" + response.version + ")"
+                            : "Connected";
+                    } catch (error) {
+                        let message = "Connection failed";
+                        try {
+                            message = (await error.json()).error || message;
+                        } catch {
+                            // The rejection was not an HTTP response body.
+                        }
+                        result.textContent = message;
+                    }
+                });
+            });
+
+            document.querySelector("#MediaFlickCompanionConfigForm")
+                .addEventListener("submit", async function (event) {
+                    event.preventDefault();
+                    Dashboard.showLoadingMsg();
+                    try {
+                        await api("MediaFlick/admin/config", {
+                            method: "POST",
+                            body: {
+                                sonarr: readService("sonarr"),
+                                radarr: readService("radarr"),
+                                seerr: readService("seerr"),
+                                autoImportSeerrUsers:
+                                    document.querySelector("#AutoImportSeerrUsers").checked
+                            }
+                        });
+                        Dashboard.processPluginConfigurationUpdateResult();
+                    } catch (error) {
+                        let message = "Saving the configuration failed";
+                        try {
+                            message = (await error.json()).error || message;
+                        } catch {
+                            // The rejection was not an HTTP response body.
+                        }
+                        Dashboard.alert(message);
+                    } finally {
+                        Dashboard.hideLoadingMsg();
+                    }
+                    return false;
+                });
+        }());
+    </script>
+</div>
+</body>
+</html>

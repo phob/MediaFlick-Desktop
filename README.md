@@ -37,6 +37,8 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Skip markers on the seek bar** — the mpv timeline shows exactly where segments are skipped, merged with the file's own chapters.
 - **Its own native UI** — sign-in (password or Quick Connect), home rows for Continue Watching / Next Up / Recently Added, a virtualized poster grid, and a details view with cast, seasons, and episodes.
 - **Local metadata cache** — your library is mirrored into SQLite with full-text search over titles, overviews, genres, and cast, kept current by a background sync.
+- **Release calendar** — agenda and month views of upcoming episodes and film releases. It works from Jellyfin metadata alone and gains monitored/file truth from the optional Companion plugin.
+- **Server-mediated requests** — the optional MediaFlick Companion keeps Sonarr, Radarr, and Seerr credentials on the Jellyfin server, runs Seerr calls as the signed-in user, and works when those services are not exposed outside the LAN.
 - **Server administration in your browser** — anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
 - **One-click mpv download on Windows** — no manual setup; Linux and macOS auto-detect a system `mpv`.
 - **Optional MPC-HC backend on Windows** — switchable live from Client Settings (mpv stays the default).
@@ -54,6 +56,14 @@ On first launch, enter your Jellyfin server address and sign in. Right-click any
 ## Build it yourself
 
 See [BUILDING.md](BUILDING.md).
+
+## MediaFlick Companion
+
+The optional server plugin lives in [`plugin/`](plugin/README.md). It targets
+Jellyfin 10.11.11 and exposes only typed, authenticated operations—there is no
+generic service proxy. Configure Sonarr, Radarr, and Seerr once from Jellyfin's
+plugin dashboard; desktop clients discover it automatically through Jellyfin
+and never receive the service API keys.
 
 ## A note on AI assistance
 

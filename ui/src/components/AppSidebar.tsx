@@ -1,5 +1,6 @@
 import {
   ChevronsUpDown,
+  CalendarDays,
   Compass,
   Film,
   Heart,
@@ -119,7 +120,11 @@ function UserMenu() {
   const { data: seerr } = useSeerrStatus()
   const logout = useLogout()
   const [setup, setSetup] = useState(false)
+  const navigate = useNavigate()
   const name = status?.userName ?? "Signed in"
+  const companionSeerr =
+    status?.companion?.compatible &&
+    status.companion.info?.capabilities.includes("seerr")
 
   return (
     <SidebarMenu>
@@ -168,17 +173,31 @@ function UserMenu() {
             {/* Seerr setup lives here rather than in the native Client
                 Settings dialog: there is no `POST /api/settings` behind that
                 one, and this flow is interactive. */}
-            <DropdownMenuItem onSelect={() => setSetup(true)}>
+            <DropdownMenuItem
+              onSelect={() => {
+                if (companionSeerr) navigate("/requests")
+                else setSetup(true)
+              }}
+            >
               <Ticket />
-              {seerr?.linked ? "Seerr requests" : "Set up Seerr…"}
+              {companionSeerr
+                ? "Requests via Companion"
+                : seerr?.linked
+                  ? "Seerr requests"
+                  : "Set up Seerr…"}
             </DropdownMenuItem>
+            {status?.companion?.available && (
+              <DropdownMenuItem disabled>
+                Companion {status.companion.info?.pluginVersion ?? "detected"}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => logout.mutate()}>
               <LogOut />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {setup && <SeerrSetupDialog onClose={() => setSetup(false)} />}
+        {setup && !companionSeerr && <SeerrSetupDialog onClose={() => setSetup(false)} />}
       </SidebarMenuItem>
     </SidebarMenu>
   )
@@ -188,6 +207,10 @@ export function AppSidebar() {
   const location = useLocation()
   const current = `${location.pathname}${location.search}`
   const { data: seerr } = useSeerrStatus()
+  const { data: status } = useStatus()
+  const companionSeerr =
+    status?.companion?.compatible &&
+    status.companion.info?.capabilities.includes("seerr")
 
   return (
     <Sidebar collapsible="icon" className="app-sidebar-container">
@@ -231,11 +254,23 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  asChild
+                  isActive={location.pathname === "/calendar"}
+                  tooltip="Releases"
+                >
+                  <Link to="/calendar">
+                    <CalendarDays />
+                    <span>Releases</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {seerr?.linked && (
+        {(seerr?.linked || companionSeerr) && (
           <SidebarGroup>
             <SidebarGroupLabel>Seerr</SidebarGroupLabel>
             <SidebarGroupContent>

@@ -1,0 +1,16 @@
+---
+name: "MediaFlick Companion"
+guid: "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
+version: "0.1.0.0"
+targetAbi: "10.11.11.0"
+framework: "net9.0"
+overview: "Secure gateway from MediaFlick clients to Sonarr, Radarr, and Seerr"
+description: >
+  Adds an authenticated MediaFlick API to Jellyfin, including a cached release
+  calendar and user-scoped Seerr requests without exposing service credentials
+  to desktop clients.
+category: "General"
+owner: "phob"
+artifacts:
+  - "Jellyfin.Plugin.MediaFlick.dll"
+changelog: "Initial companion API, calendar, and Seerr mediation."

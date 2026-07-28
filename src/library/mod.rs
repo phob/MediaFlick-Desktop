@@ -501,17 +501,37 @@ impl Library {
         kind: &str,
         tmdb_ids: &[String],
     ) -> rusqlite::Result<HashMap<String, String>> {
-        if tmdb_ids.is_empty() {
+        self.ids_by_provider(kind, "tmdb_id", tmdb_ids)
+    }
+
+    /// Resolves TVDB ids to cached items of one kind. Calendar episodes often
+    /// have a TVDB id even where Sonarr cannot provide a TMDB episode id.
+    pub fn ids_by_tvdb(
+        &self,
+        kind: &str,
+        tvdb_ids: &[String],
+    ) -> rusqlite::Result<HashMap<String, String>> {
+        self.ids_by_provider(kind, "tvdb_id", tvdb_ids)
+    }
+
+    fn ids_by_provider(
+        &self,
+        kind: &str,
+        column: &str,
+        provider_ids: &[String],
+    ) -> rusqlite::Result<HashMap<String, String>> {
+        if provider_ids.is_empty() {
             return Ok(HashMap::new());
         }
+        debug_assert!(matches!(column, "tmdb_id" | "tvdb_id"));
         self.db.with_connection(|connection| {
-            let placeholders = vec!["?"; tmdb_ids.len()].join(", ");
+            let placeholders = vec!["?"; provider_ids.len()].join(", ");
             let mut statement = connection.prepare(&format!(
-                "SELECT tmdb_id, jellyfin_id FROM items
-                 WHERE kind = ?1 AND tmdb_id IN ({placeholders})"
+                "SELECT {column}, jellyfin_id FROM items
+                 WHERE kind = ?1 AND {column} IN ({placeholders})"
             ))?;
             let arguments = std::iter::once(kind)
-                .chain(tmdb_ids.iter().map(String::as_str))
+                .chain(provider_ids.iter().map(String::as_str))
                 .collect::<Vec<_>>();
             let rows = statement
                 .query_map(params_from_iter(arguments), |row| {
@@ -1240,6 +1260,25 @@ mod tests {
         let series = library.ids_by_tmdb("Series", &ids).expect("series");
         assert_eq!(series.get("603").map(String::as_str), Some("s1"));
         assert_eq!(series.get("329865"), None);
+    }
+
+    #[test]
+    fn tvdb_episode_ids_resolve_for_calendar_entries() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[dto(r#"{"Id":"e1","Name":"Half Loop","Type":"Episode",
+                    "ProviderIds":{"Tvdb":"5161348"}}"#)])
+            .expect("seed");
+
+        let ids = ["5161348".to_string()];
+        let episodes = library.ids_by_tvdb("Episode", &ids).expect("episodes");
+        assert_eq!(episodes.get("5161348").map(String::as_str), Some("e1"));
+        assert!(
+            library
+                .ids_by_tvdb("Movie", &ids)
+                .expect("movies")
+                .is_empty()
+        );
     }
 
     #[test]

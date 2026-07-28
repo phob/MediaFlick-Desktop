@@ -247,6 +247,26 @@ pub fn fetch_next_up(
     client.get_json("/Shows/NextUp", &query)
 }
 
+/// Jellyfin's metadata-only calendar fallback. Unlike the companion calendar
+/// this has no Sonarr truth (monitored/file state) and covers episodes only,
+/// but it keeps the releases surface useful when the plugin is absent.
+pub fn fetch_upcoming(
+    client: &JellyfinClient,
+    user_id: &str,
+    limit: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Shows/Upcoming",
+        &[
+            user_query(user_id),
+            ("Limit", limit.clamp(1, 500).to_string()),
+            ("Fields", SYNC_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+        ],
+    )
+}
+
 pub fn set_played(
     client: &JellyfinClient,
     user_id: &str,

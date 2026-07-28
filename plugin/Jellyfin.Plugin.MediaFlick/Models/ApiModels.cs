@@ -1,0 +1,70 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace Jellyfin.Plugin.MediaFlick.Models;
+
+/// <summary>
+/// The MediaFlick API contract is camelCase. Jellyfin's host-wide MVC options
+/// serialize PascalCase, so every typed response must opt in explicitly.
+/// </summary>
+public static class CompanionJson
+{
+    public static JsonSerializerOptions CamelCase { get; } = new(JsonSerializerDefaults.Web);
+}
+
+public sealed record PluginInfoResponse(
+    string PluginVersion,
+    int ApiVersion,
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyDictionary<string, bool> Services);
+
+public sealed record SourceStatus(
+    bool Enabled,
+    bool Available,
+    bool Stale,
+    DateTimeOffset? RefreshedAt,
+    string? Error);
+
+public sealed record CalendarEntry(
+    string Kind,
+    string Date,
+    string DateKind,
+    string Title,
+    string? SeriesTitle,
+    int? Season,
+    int? Episode,
+    int? TmdbId,
+    int? TvdbId,
+    bool Monitored,
+    bool HasFile,
+    string? PosterUrl,
+    string? LibraryItemId = null);
+
+public sealed record CalendarResponse(
+    IReadOnlyList<CalendarEntry> Entries,
+    DateTimeOffset? RefreshedAt,
+    IReadOnlyDictionary<string, SourceStatus> Sources,
+    string WindowStart,
+    string WindowEnd,
+    string Provider);
+
+public sealed record SeerrRequestBody(
+    string MediaType,
+    int TmdbId,
+    IReadOnlyList<int>? Seasons,
+    bool Is4k);
+
+public sealed record ServiceConfigurationUpdate(
+    bool Enabled,
+    string BaseUrl,
+    string? ApiKey);
+
+public sealed record CompanionConfigurationUpdate(
+    ServiceConfigurationUpdate Sonarr,
+    ServiceConfigurationUpdate Radarr,
+    ServiceConfigurationUpdate Seerr,
+    bool AutoImportSeerrUsers);
+
+public sealed record ConnectionTestResponse(string Service, bool Connected, string? Version);
+
+public sealed record GatewayResult(int StatusCode, JsonNode? Body);
