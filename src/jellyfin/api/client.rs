@@ -25,6 +25,15 @@ const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
 /// Value reported to the Jellyfin Devices dashboard as the client name.
 pub const CLIENT_NAME: &str = build_info::APP_NAME;
 
+#[derive(Debug, Clone)]
+pub struct ByteResponse {
+    pub status: u16,
+    pub content_type: String,
+    pub content_range: Option<String>,
+    pub accept_ranges: Option<String>,
+    pub body: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
     /// The server rejected our token. The session must be re-established.
@@ -187,27 +196,61 @@ impl JellyfinClient {
         path: &str,
         query: &[(&str, String)],
     ) -> Result<(Vec<u8>, String), ApiError> {
+        let response = self.get_bytes_range(path, query, None)?;
+        Ok((response.body, response.content_type))
+    }
+
+    /// Fetches one bounded byte range without ever placing the token in a URL.
+    ///
+    /// Video elements seek by issuing range requests. Keeping the upstream
+    /// status and range headers lets the app scheme behave like the Jellyfin
+    /// resource while still authenticating it natively.
+    pub fn get_bytes_range(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        range: Option<&str>,
+    ) -> Result<ByteResponse, ApiError> {
         let url = self.url(path, query);
         self.with_retry(path, || {
-            let mut response = self
+            let mut request = self
                 .agent
                 .get(url.as_str())
-                .header("Authorization", self.authorization_header())
-                .call()
-                .map_err(map_ureq_error)?;
+                .header("Authorization", self.authorization_header());
+            if let Some(range) = range {
+                request = request.header("Range", range);
+            }
+            let mut response = request.call().map_err(map_ureq_error)?;
+            let status = response.status().as_u16();
             let content_type = response
                 .headers()
                 .get("content-type")
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("application/octet-stream")
                 .to_string();
+            let content_range = response
+                .headers()
+                .get("content-range")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            let accept_ranges = response
+                .headers()
+                .get("accept-ranges")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
             let bytes = response
                 .body_mut()
                 .with_config()
                 .limit(64 * 1024 * 1024)
                 .read_to_vec()
                 .map_err(|error| ApiError::Transport(error.to_string()))?;
-            Ok((bytes, content_type))
+            Ok(ByteResponse {
+                status,
+                content_type,
+                content_range,
+                accept_ranges,
+                body: bytes,
+            })
         })
     }
 

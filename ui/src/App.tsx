@@ -17,7 +17,7 @@ export default function App() {
     return (
       <div className="signin-page grid h-full place-items-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="grid size-12 animate-pulse place-items-center rounded-xl bg-primary text-white">
+          <div className="grid size-12 animate-pulse place-items-center rounded-media bg-primary text-primary-foreground">
             <Film className="size-6" />
           </div>
           <span className="text-sm font-medium tracking-wide text-muted-foreground">MediaFlick</span>

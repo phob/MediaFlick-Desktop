@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
+import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
 
@@ -38,7 +39,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
         {/* The shell never scrolls; the content pane does. */}
         <div className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
-          {children}
+          {/* Wraps the routed content because every card that can expand is in
+              it. The panel itself is portalled to the body, so this subtree's
+              clipping — `content-viewport` and the rails — does not reach it. */}
+          <PreviewProvider>{children}</PreviewProvider>
         </div>
         <PlayerBar />
       </SidebarInset>

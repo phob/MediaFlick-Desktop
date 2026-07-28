@@ -44,6 +44,15 @@ export function useHome(enabled = true) {
   return useQuery({ queryKey: queryKeys.home, queryFn: api.home, enabled })
 }
 
+export function useBillboard() {
+  return useQuery({
+    queryKey: queryKeys.billboard,
+    queryFn: api.billboard,
+    // Keep one random selection stable while the user moves around the app.
+    staleTime: 10 * 60_000,
+  })
+}
+
 export function useGenres() {
   return useQuery({
     queryKey: queryKeys.genres,
@@ -104,6 +113,17 @@ export function useMediaInfo(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.media(id ?? ""),
     queryFn: () => api.media(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
+/** Resolves only the small trailer record; video bytes stay lazy until mounted. */
+export function useTrailer(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.trailer(id ?? ""),
+    queryFn: () => api.trailer(id!),
     enabled: Boolean(id) && enabled,
     staleTime: 30 * 60_000,
     retry: false,

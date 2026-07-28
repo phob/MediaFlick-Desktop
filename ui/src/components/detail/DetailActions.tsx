@@ -130,11 +130,11 @@ export function DetailActions({
     <div className="flex flex-col gap-3">
       {progress > 0 && (
         <div className="flex max-w-md items-center gap-3">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-secondary">
-            <div className="h-full rounded-full bg-primary" style={{ width: `${progress * 100}%` }} />
+          <div className="h-[3px] flex-1 overflow-hidden bg-secondary">
+            <div className="h-full bg-primary" style={{ width: `${progress * 100}%` }} />
           </div>
           {remaining && (
-            <span className="text-xs whitespace-nowrap text-muted-foreground">{remaining}</span>
+            <span className="data-value whitespace-nowrap text-muted-foreground">{remaining}</span>
           )}
         </div>
       )}
@@ -143,7 +143,7 @@ export function DetailActions({
         {target && (
           <Button
             size="lg"
-            className="min-w-28 bg-white text-black shadow-lg hover:bg-white/85"
+            className="min-w-28 shadow-lg shadow-primary/20 hover:bg-primary/85"
             disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: resumable, quality })}
           >
@@ -155,7 +155,7 @@ export function DetailActions({
           <Button
             variant="secondary"
             size="lg"
-            className="bg-white/15 hover:bg-white/25"
+            className="hover:text-primary"
             disabled={play.isPending}
             onClick={() => play.mutate({ id: target.id, resume: false, quality })}
           >
@@ -166,7 +166,7 @@ export function DetailActions({
         <Button
           variant="secondary"
           size="lg"
-          className="bg-white/15 hover:bg-white/25"
+          className="hover:text-primary"
           onClick={() => setPlayed.mutate({ id: item.id, played: !item.played })}
         >
           <Check className="size-4" />
@@ -175,14 +175,14 @@ export function DetailActions({
         <Button
           variant="secondary"
           size="icon-lg"
-          className="bg-white/15 hover:bg-white/25"
+          className="hover:text-primary"
           aria-label={item.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-pressed={item.favorite}
           onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
         >
-          <Heart
-            className={item.favorite ? "size-4 fill-current text-destructive" : "size-4"}
-          />
+          {/* The accent, not the conventional red heart: destructive is the one
+              colour in this palette that means something has gone wrong. */}
+          <Heart className={item.favorite ? "size-4 fill-current text-primary" : "size-4"} />
         </Button>
         <RequestSeasonsButton item={item} />
         <ExternalLinks item={item} />

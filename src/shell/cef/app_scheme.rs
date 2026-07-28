@@ -83,6 +83,16 @@ fn read_post_body(request: &Request) -> Vec<u8> {
     body
 }
 
+fn request_header(request: &Request, name: &str) -> Option<String> {
+    let mut headers = CefStringMultimap::new();
+    request.header_map(Some(&mut headers));
+    headers.into_iter().find_map(|(key, values)| {
+        key.eq_ignore_ascii_case(name)
+            .then(|| values.into_iter().next())
+            .flatten()
+    })
+}
+
 #[derive(Default)]
 struct ResponseState {
     response: Option<ApiResponse>,
@@ -108,6 +118,7 @@ wrap_scheme_handler_factory! {
                 path,
                 query,
                 body: read_post_body(request),
+                range: request_header(request, "Range"),
             };
             Some(AppResourceHandler::new(
                 api_request,
@@ -174,6 +185,7 @@ wrap_resource_handler! {
                     content_type: "text/plain; charset=utf-8".to_string(),
                     body: b"internal error".to_vec(),
                     cache_control: "no-store",
+                    headers: Vec::new(),
                 });
 
             response.set_status(i32::from(prepared.status));
@@ -194,6 +206,13 @@ wrap_resource_handler! {
                 Some(&CefString::from(CONTENT_SECURITY_POLICY)),
                 1,
             );
+            for (name, value) in &prepared.headers {
+                response.set_header_by_name(
+                    Some(&CefString::from(name.as_str())),
+                    Some(&CefString::from(value.as_str())),
+                    1,
+                );
+            }
             if let Some(response_length) = response_length {
                 *response_length = prepared.body.len() as i64;
             }
@@ -242,14 +261,16 @@ wrap_resource_handler! {
     }
 }
 
-/// Scripts and styles ship inside the binary and images come from our own
-/// proxy, so nothing may be pulled from the web. The whole
+/// Scripts and styles ship inside the binary and images and local trailers come
+/// from our own proxy. The sole remote exception is a validated,
+/// privacy-enhanced YouTube trailer frame. The whole
 /// `mediaflick-desktop:` scheme is allowed to connect because the native
 /// dialogs call the shell on other hosts of it (`client-settings-save`,
 /// `mpv-download`, …), and only our own handlers can answer those.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
 style-src 'self' 'unsafe-inline'; script-src 'self'; \
-connect-src 'self' mediaflick-desktop:; frame-src mediaflick-desktop:; \
+connect-src 'self' mediaflick-desktop:; \
+frame-src mediaflick-desktop: https://www.youtube-nocookie.com; \
 object-src 'none'; base-uri 'none'; form-action 'none'";
 
 fn split_content_type(content_type: &str) -> (&str, Option<&str>) {
@@ -262,11 +283,13 @@ fn split_content_type(content_type: &str) -> (&str, Option<&str>) {
 fn status_text(status: u16) -> &'static str {
     match status {
         200 => "OK",
+        206 => "Partial Content",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
         409 => "Conflict",
+        416 => "Range Not Satisfiable",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
         503 => "Service Unavailable",
@@ -317,6 +340,7 @@ mod tests {
     #[test]
     fn status_texts_cover_the_codes_the_api_returns() {
         assert_eq!(status_text(200), "OK");
+        assert_eq!(status_text(206), "Partial Content");
         assert_eq!(status_text(401), "Unauthorized");
         assert_eq!(status_text(409), "Conflict");
         assert_eq!(status_text(418), "Error");

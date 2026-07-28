@@ -6,6 +6,7 @@ import {
   DETAIL_POSTER_WIDTH,
   backdropUrl,
   imageUrl,
+  logoUrl,
   progressFraction,
   type ItemDetail,
 } from "@/lib/api"
@@ -127,8 +128,11 @@ export function DetailHero({
   children?: ReactNode
 }) {
   const [backdropFailed, setBackdropFailed] = useState(false)
+  const [logoFailed, setLogoFailed] = useState(false)
   const backdrop = backdropUrl(item)
   const showBackdrop = Boolean(backdrop) && !backdropFailed
+  const logo = logoUrl(item)
+  const showLogo = Boolean(logo) && !logoFailed
 
   const episodeCode =
     item.kind === "Episode" && item.parentIndexNumber != null && item.indexNumber != null
@@ -209,20 +213,46 @@ export function DetailHero({
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <Breadcrumb item={item} />
           <div className="flex flex-col gap-1">
-            <h1 className="max-w-4xl text-4xl leading-[0.98] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
-              {item.name}
+            {/* The heading stays in the document whatever is drawn: a wordmark
+                is artwork, and a page whose <h1> is an image is a page with no
+                title. Where the server has one it takes the heading's place
+                visually and the text remains for anything reading the page
+                rather than looking at it. */}
+            <h1 className={cn(showLogo && "sr-only")}>
+              <span className="block max-w-4xl text-4xl leading-[0.98] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
+                {item.name}
+              </span>
             </h1>
+            {showLogo && (
+              <img
+                src={logo!}
+                alt=""
+                decoding="async"
+                onError={() => setLogoFailed(true)}
+                className="max-h-24 w-auto max-w-md self-start object-contain object-left drop-shadow-2xl sm:max-h-28"
+              />
+            )}
             {item.originalTitle && item.originalTitle !== item.name && (
               <p className="text-sm text-muted-foreground">{item.originalTitle}</p>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-            {facts.map((fact) => (
-              <span key={fact}>{fact}</span>
+          {/* Facts in the data face, divided by accent slashes — the same
+              treatment the billboard and the hover card use, so a measured
+              value looks the same wherever it appears. */}
+          <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-2 text-muted-foreground">
+            {facts.map((fact, index) => (
+              <span key={fact} className="flex items-center gap-2">
+                {index > 0 && (
+                  <span className="text-primary/45" aria-hidden>
+                    /
+                  </span>
+                )}
+                {fact}
+              </span>
             ))}
             {item.officialRating && (
-              <Badge variant="outline" className="border-muted-foreground/40">
+              <Badge variant="outline" className="data-label border-muted-foreground/40 px-1.5 py-0.5">
                 {item.officialRating}
               </Badge>
             )}

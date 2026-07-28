@@ -44,7 +44,7 @@ export default function SignIn() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(229,9,20,0.16),transparent_32rem),radial-gradient(circle_at_85%_80%,rgba(255,255,255,0.05),transparent_30rem)]" />
       <div className="relative z-10 flex w-full max-w-md flex-col gap-7">
         <div className="flex flex-col items-center gap-4 text-center">
-          <div className="grid size-14 place-items-center rounded-2xl bg-primary text-white shadow-2xl shadow-primary/20">
+          <div className="grid size-14 place-items-center rounded-media bg-primary text-primary-foreground shadow-2xl shadow-primary/25">
             <Film className="size-7" />
           </div>
           <div className="space-y-2">

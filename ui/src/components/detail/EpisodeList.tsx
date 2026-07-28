@@ -27,13 +27,16 @@ function Thumbnail({ episode }: { episode: ItemSummary }) {
           {episode.indexNumber != null ? `Episode ${episode.indexNumber}` : episode.name}
         </div>
       )}
+      {/* A still is small enough that a corner mark still reads, but it is the
+          quiet variant of the accent — a watched episode is the resting state
+          in a season anyone is working through. */}
       {episode.played && (
-        <div className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground">
-          <Check className="size-3" aria-hidden />
+        <div className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-media bg-background/80 text-primary ring-1 ring-primary/40">
+          <Check className="size-3" strokeWidth={3} aria-hidden />
         </div>
       )}
       {progress > 0 && (
-        <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
+        <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/60">
           <div className="h-full bg-primary" style={{ width: `${progress * 100}%` }} />
         </div>
       )}

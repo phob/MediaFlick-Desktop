@@ -746,6 +746,36 @@ impl Library {
         })
     }
 
+    /// A fresh set of films for the home billboard.
+    ///
+    /// The artwork predicate lives in the query rather than in the UI so five
+    /// blank candidates cannot crowd out five useful ones. Image tag keys are
+    /// case-insensitive in Jellyfin, hence the small `json_each` lookup for a
+    /// Thumb fallback.
+    pub fn random_billboard_movies(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {SUMMARY_COLUMNS} FROM items i
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 WHERE i.kind = 'Movie'
+                   AND (
+                       COALESCE(i.backdrop_image_tag, '') <> ''
+                       OR EXISTS (
+                           SELECT 1 FROM json_each(i.image_tags) image
+                           WHERE lower(image.key) = 'thumb'
+                             AND COALESCE(image.value, '') <> ''
+                       )
+                   )
+                 ORDER BY random()
+                 LIMIT ?1"
+            ))?;
+            let rows = statement
+                .query_map(params![limit.clamp(1, 50)], summary_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+    }
+
     pub fn genres(&self) -> rusqlite::Result<Vec<String>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(
@@ -821,6 +851,18 @@ COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, i.overview, i.ge
 i.studios, i.people, i.critic_rating, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, \
 i.parent_id, i.date_created";
 
+/// Reads one entry out of Jellyfin's per-image-type map, whose key casing the
+/// server does not guarantee. The live-DTO path in `src/shell/cef/api.rs` goes
+/// through `BaseItemDto::image_tag` for the same types; this is the cached
+/// equivalent, working on the map as it was stored.
+fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a str> {
+    image_tags.as_object()?.iter().find_map(|(key, value)| {
+        key.eq_ignore_ascii_case(image_type)
+            .then(|| value.as_str())
+            .flatten()
+    })
+}
+
 fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
     let image_tags = parsed_json(row.get::<_, String>(19)?);
     Ok(json!({
@@ -843,11 +885,11 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         "playCount": row.get::<_, i64>(16)?,
         "positionTicks": row.get::<_, i64>(17)?,
         "favorite": row.get::<_, i64>(18)? != 0,
-        "thumbImageTag": image_tags
-            .as_object()
-            .and_then(|tags| tags.iter().find_map(|(key, value)| {
-                key.eq_ignore_ascii_case("Thumb").then(|| value.as_str()).flatten()
-            })),
+        "thumbImageTag": cached_image_tag(&image_tags, "Thumb"),
+        // The title treatment — the show's own wordmark on transparency. The
+        // billboard and the hover preview draw it in place of typeset text,
+        // which is what makes a hero read as artwork rather than as a heading.
+        "logoImageTag": cached_image_tag(&image_tags, "Logo"),
         "backdropImageTag": row.get::<_, Option<String>>(20)?,
     }))
 }
@@ -1115,12 +1157,27 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemQuery, ItemSort, Library, SeerrConfig, civil_from_days, fts_match_expression};
+    use super::{
+        ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag, civil_from_days,
+        fts_match_expression,
+    };
     use crate::jellyfin::api::model::BaseItemDto;
+    use serde_json::json;
     use std::collections::HashSet;
 
     fn dto(json: &str) -> BaseItemDto {
         serde_json::from_str(json).expect("dto")
+    }
+
+    #[test]
+    fn cached_image_tags_are_found_whatever_the_server_capitalised() {
+        let tags = json!({ "primary": "p", "THUMB": "t", "Logo": "l" });
+        assert_eq!(cached_image_tag(&tags, "Primary"), Some("p"));
+        assert_eq!(cached_image_tag(&tags, "Thumb"), Some("t"));
+        assert_eq!(cached_image_tag(&tags, "Logo"), Some("l"));
+        assert_eq!(cached_image_tag(&tags, "Banner"), None);
+        // A row stored before the column existed parses to `null`, not a map.
+        assert_eq!(cached_image_tag(&json!(null), "Logo"), None);
     }
 
     fn seeded() -> Library {
@@ -1387,6 +1444,14 @@ mod tests {
         let rows = seeded().recently_added(10).expect("rows");
         assert_eq!(rows[0]["id"], "m2");
         assert_eq!(rows[1]["id"], "s1");
+    }
+
+    #[test]
+    fn billboard_movies_are_random_films_with_landscape_artwork() {
+        let rows = seeded().random_billboard_movies(5).expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "m1");
+        assert_eq!(rows[0]["kind"], "Movie");
     }
 
     #[test]

@@ -19,6 +19,17 @@ export function formatRemaining(positionTicks: number, runtimeTicks: number | nu
   return hours ? `${hours}h ${minutes % 60}m left` : `${minutes}m left`
 }
 
+/**
+ * The community score restated as the "% Match" the browsing surfaces lead
+ * with. It is the same ten-point number the detail page prints beside a star —
+ * not a personalised prediction — so anything without a score gets no badge at
+ * all rather than an invented one.
+ */
+export function formatMatch(communityRating: number | null | undefined) {
+  if (communityRating == null || communityRating <= 0) return null
+  return `${Math.min(99, Math.round(communityRating * 10))}% match`
+}
+
 /** Jellyfin dates are ISO 8601; an unparsable one is not worth a row. */
 export function formatDate(value: string | null | undefined) {
   if (!value) return null
