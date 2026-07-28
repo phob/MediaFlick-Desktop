@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{Value, json};
 
 use crate::app::services::{self, Services};
-use crate::app::urls::{percent_decode, query_param};
+use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
@@ -23,6 +23,10 @@ use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
+/// Films rotating through the top billboard.
+const BILLBOARD_LIMIT: i64 = 5;
+/// Bound each proxied video request so a trailer is never buffered wholesale.
+const TRAILER_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 /// Posters are content-addressed by image tag, so they never go stale.
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 const NO_STORE: &str = "no-store";
@@ -33,6 +37,9 @@ pub struct ApiRequest {
     pub path: String,
     pub query: String,
     pub body: Vec<u8>,
+    /// Browser media requests use this to seek without downloading a trailer
+    /// wholesale. Other request headers are intentionally not forwarded.
+    pub range: Option<String>,
 }
 
 impl ApiRequest {
@@ -55,6 +62,7 @@ pub struct ApiResponse {
     pub content_type: String,
     pub body: Vec<u8>,
     pub cache_control: &'static str,
+    pub headers: Vec<(String, String)>,
 }
 
 impl ApiResponse {
@@ -64,6 +72,7 @@ impl ApiResponse {
             content_type: "application/json; charset=utf-8".to_string(),
             body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec()),
             cache_control: NO_STORE,
+            headers: Vec::new(),
         }
     }
 
@@ -101,6 +110,7 @@ impl ApiResponse {
             content_type: content_type.to_string(),
             body: body.to_vec(),
             cache_control,
+            headers: Vec::new(),
         }
     }
 
@@ -110,6 +120,30 @@ impl ApiResponse {
             content_type,
             body,
             cache_control,
+            headers: Vec::new(),
+        }
+    }
+
+    fn ranged_bytes(
+        status: u16,
+        content_type: String,
+        body: Vec<u8>,
+        content_range: Option<String>,
+        accept_ranges: Option<String>,
+    ) -> Self {
+        let mut headers = vec![(
+            "Accept-Ranges".to_string(),
+            accept_ranges.unwrap_or_else(|| "bytes".to_string()),
+        )];
+        if let Some(content_range) = content_range {
+            headers.push(("Content-Range".to_string(), content_range));
+        }
+        Self {
+            status,
+            content_type,
+            body,
+            cache_control: NO_STORE,
+            headers,
         }
     }
 }
@@ -173,6 +207,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             seerr_image(&percent_decode(size), &percent_decode(file))
         }
         ["home"] if request.is("GET") => home(services),
+        ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["genres"] if request.is("GET") => match services.library.genres() {
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
@@ -181,6 +216,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
         ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
+        ["item", id, "trailer"] if request.is("GET") => trailer_info(services, &percent_decode(id)),
         ["item", id, "nextup"] if request.is("GET") => next_up(services, &percent_decode(id)),
         ["item", id, "external"] if request.is("POST") => {
             open_external(services, &percent_decode(id), request)
@@ -197,6 +233,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             &percent_decode(image_type),
             request,
         ),
+        ["trailer", id, "stream"] if request.is("GET") => {
+            trailer_stream(services, &percent_decode(id), request)
+        }
         ["play"] if request.is("POST") => play_item(services, request),
         ["play", "next"] if request.is("POST") => play_next(services, request),
         ["player", "state"] if request.is("GET") => player_state(services),
@@ -502,6 +541,13 @@ fn home(services: &Arc<Services>) -> ApiResponse {
     }))
 }
 
+fn billboard(services: &Arc<Services>) -> ApiResponse {
+    match services.library.random_billboard_movies(BILLBOARD_LIMIT) {
+        Ok(items) => ApiResponse::ok(json!({ "items": items })),
+        Err(error) => storage_failure(&error),
+    }
+}
+
 /// Continue Watching and Next Up share one row: half-watched items first, in the
 /// order the cache returned them, then the next unwatched episode of everything
 /// else.
@@ -728,6 +774,147 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
             ApiResponse::from_api_error(&error)
         }
     }
+}
+
+/// The first local trailer attached to an item, if the server has one.
+fn trailer_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    match items::fetch_local_trailers(&client, &user_id, item_id) {
+        Ok(trailers) => match trailers
+            .into_iter()
+            .find(|trailer| !trailer.id.trim().is_empty())
+        {
+            Some(trailer) => ApiResponse::ok(json!({
+                "trailer": {
+                    "id": trailer.id,
+                    "name": trailer.display_name(),
+                    "embedUrl": Value::Null,
+                }
+            })),
+            None => remote_trailer_info(services, &client, &user_id, item_id),
+        },
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+fn remote_trailer_info(
+    services: &Arc<Services>,
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> ApiResponse {
+    match items::fetch_remote_trailers(client, user_id, item_id) {
+        Ok(trailers) => {
+            let trailer = trailers.into_iter().find_map(|trailer| {
+                youtube_embed_url(&trailer.url).map(|embed_url| {
+                    json!({
+                        "id": Value::Null,
+                        "name": trailer.name.unwrap_or_else(|| "Trailer".to_string()),
+                        "embedUrl": embed_url,
+                    })
+                })
+            });
+            ApiResponse::ok(json!({ "trailer": trailer }))
+        }
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+/// Converts only a plain YouTube watch/share/embed URL into the privacy-enhanced
+/// player. Jellyfin metadata is external input, so it never becomes an iframe
+/// address verbatim.
+fn youtube_embed_url(value: &str) -> Option<String> {
+    let value = value.trim();
+    let prefixes = [
+        "https://www.youtube.com/watch?v=",
+        "https://youtube.com/watch?v=",
+        "https://m.youtube.com/watch?v=",
+        "https://youtu.be/",
+        "https://www.youtube.com/embed/",
+        "https://www.youtube-nocookie.com/embed/",
+    ];
+    let remainder = prefixes
+        .iter()
+        .find_map(|prefix| value.strip_prefix(prefix))?;
+    let id = remainder.split(['&', '?', '#', '/']).next()?;
+    if id.len() != 11
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return None;
+    }
+    Some(format!(
+        "https://www.youtube-nocookie.com/embed/{id}?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&iv_load_policy=3&modestbranding=1&playsinline=1&rel=0&showinfo=0&start=5"
+    ))
+}
+
+/// Authenticated, byte-range-aware access to one local trailer.
+///
+/// The UI receives only an opaque item id. The Jellyfin token stays in the
+/// native client, just as it does for artwork and full playback.
+fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiRequest) -> ApiResponse {
+    let client = match services.session.client() {
+        Ok(client) => client,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
+    let range = bounded_byte_range(request.range.as_deref());
+    match client.get_bytes_range(&path, &[("static", "true".to_string())], Some(&range)) {
+        Ok(response) => ApiResponse::ranged_bytes(
+            response.status,
+            response.content_type,
+            response.body,
+            response.content_range,
+            response.accept_ranges,
+        ),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+/// Accept one simple `bytes=` range and cap it to a small proxy chunk.
+fn bounded_byte_range(value: Option<&str>) -> String {
+    let fallback = format!("bytes=0-{}", TRAILER_CHUNK_SIZE - 1);
+    let Some(spec) = value
+        .and_then(|value| value.trim().strip_prefix("bytes="))
+        .filter(|value| !value.contains(','))
+    else {
+        return fallback;
+    };
+    let Some((start, end)) = spec.split_once('-') else {
+        return fallback;
+    };
+    if let Ok(start) = start.parse::<u64>() {
+        let max_end = start.saturating_add(TRAILER_CHUNK_SIZE - 1);
+        let end = if end.is_empty() {
+            max_end
+        } else {
+            match end.parse::<u64>() {
+                Ok(end) if end >= start => end.min(max_end),
+                _ => return fallback,
+            }
+        };
+        return format!("bytes={start}-{end}");
+    }
+    if start.is_empty()
+        && let Ok(suffix) = end.parse::<u64>()
+        && suffix > 0
+    {
+        return format!("bytes=-{}", suffix.min(TRAILER_CHUNK_SIZE));
+    }
+    fallback
 }
 
 fn media_source_json(source: &MediaSourceInfo) -> Value {
@@ -1296,6 +1483,7 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
         "parentIndexNumber": dto.parent_index_number,
         "primaryImageTag": dto.primary_image_tag(),
         "thumbImageTag": dto.image_tag("Thumb"),
+        "logoImageTag": dto.image_tag("Logo"),
         "backdropImageTag": dto.backdrop_image_tags.first(),
         "childCount": dto.child_count,
         "premiereDate": dto.premiere_date,
@@ -1338,8 +1526,9 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiRequest, ApiResponse, HOME_ROW_LIMIT, cache_key, external_url, file_name_of, handle,
-        media_source_json, merge_next_up, mime_for_image, summary_from_dto,
+        ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key, external_url,
+        file_name_of, handle, media_source_json, merge_next_up, mime_for_image, summary_from_dto,
+        youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
@@ -1350,6 +1539,7 @@ mod tests {
             path: path.to_string(),
             query: String::new(),
             body: Vec::new(),
+            range: None,
         })
     }
 
@@ -1376,6 +1566,7 @@ mod tests {
             path: "/api/auth/login".to_string(),
             query: String::new(),
             body: b"not json".to_vec(),
+            range: None,
         };
         assert_eq!(request.json(), json!({}));
     }
@@ -1387,6 +1578,7 @@ mod tests {
             path: "/api/items".to_string(),
             query: "search=the%20matrix&genre=&limit=20".to_string(),
             body: Vec::new(),
+            range: None,
         };
         assert_eq!(request.param("search").as_deref(), Some("the matrix"));
         assert_eq!(request.param("genre"), None);
@@ -1410,11 +1602,39 @@ mod tests {
     }
 
     #[test]
+    fn trailer_ranges_are_bounded_and_malformed_ranges_fall_back() {
+        assert_eq!(bounded_byte_range(None), "bytes=0-4194303");
+        assert_eq!(bounded_byte_range(Some("bytes=100-")), "bytes=100-4194403");
+        assert_eq!(
+            bounded_byte_range(Some("bytes=100-9999999")),
+            "bytes=100-4194403"
+        );
+        assert_eq!(bounded_byte_range(Some("bytes=100-200")), "bytes=100-200");
+        assert_eq!(bounded_byte_range(Some("bytes=-9999999")), "bytes=-4194304");
+        assert_eq!(bounded_byte_range(Some("not-a-range")), "bytes=0-4194303");
+    }
+
+    #[test]
+    fn only_plain_youtube_trailers_become_privacy_enhanced_embeds() {
+        assert_eq!(
+            youtube_embed_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share"),
+            Some(
+                "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&iv_load_policy=3&modestbranding=1&playsinline=1&rel=0&showinfo=0&start=5"
+                    .to_string()
+            )
+        );
+        assert!(youtube_embed_url("https://youtu.be/dQw4w9WgXcQ").is_some());
+        assert!(youtube_embed_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ").is_none());
+        assert!(youtube_embed_url("https://example.com/embed/dQw4w9WgXcQ").is_none());
+        assert!(youtube_embed_url("https://youtu.be/not-valid").is_none());
+    }
+
+    #[test]
     fn next_up_entries_are_shaped_like_cached_rows() {
         let dto: BaseItemDto = serde_json::from_str(
             r#"{"Id":"e1","Name":"Half Loop","Type":"Episode","SeriesName":"Severance",
                 "IndexNumber":2,"ParentIndexNumber":1,
-                "ImageTags":{"Primary":"still-tag","Thumb":"thumb-tag"},
+                "ImageTags":{"Primary":"still-tag","Thumb":"thumb-tag","Logo":"logo-tag"},
                 "BackdropImageTags":["backdrop-tag"],
                 "UserData":{"Played":false,"PlaybackPositionTicks":42}}"#,
         )
@@ -1428,6 +1648,7 @@ mod tests {
         assert_eq!(summary["favorite"], false);
         assert_eq!(summary["primaryImageTag"], "still-tag");
         assert_eq!(summary["thumbImageTag"], "thumb-tag");
+        assert_eq!(summary["logoImageTag"], "logo-tag");
         assert_eq!(summary["backdropImageTag"], "backdrop-tag");
     }
 

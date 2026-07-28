@@ -7,6 +7,7 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatRemaining } from "@/lib/format"
+import { usePreview } from "@/lib/preview"
 import { cn } from "@/lib/utils"
 
 function subtitleFor(item: ItemSummary) {
@@ -32,11 +33,18 @@ export const MediaCard = memo(function MediaCard({
   item,
   className,
   landscape = false,
+  ribbon,
+  preview = true,
 }: {
   item: ItemSummary
   className?: string
   landscape?: boolean
+  /** A corner flag — "Top 10", "New" — drawn over the artwork. */
+  ribbon?: string
+  /** Off for cards the expanded panel would sit badly on, such as a Top 10 rank. */
+  preview?: boolean
 }) {
+  const { handlers, expanded } = usePreview(item, preview)
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
@@ -54,15 +62,23 @@ export const MediaCard = memo(function MediaCard({
   return (
     <Link
       to={`/item/${encodeURIComponent(item.id)}`}
+      {...handlers}
+      // While the expanded panel is over this card, its own lift would push the
+      // artwork out from under an opaque panel that is not going to move with
+      // it — a sliver of the poster creeping past the panel's edge.
+      data-expanded={expanded || undefined}
       className={cn(
-        "group flex flex-col gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "signal-card group flex flex-col gap-2 outline-none",
         landscape ? "w-landscape-w" : "w-poster-w",
         className,
       )}
     >
+      {/* `media-frame` carries the corner brackets on hover. They are drawn
+          inside its own box, so clipping the artwork here does not touch
+          them. */}
       <div
         className={cn(
-          "relative overflow-hidden rounded-lg bg-card",
+          "media-frame relative overflow-hidden rounded-media bg-card ring-1 ring-white/5",
           landscape ? "h-landscape-h w-landscape-w" : "h-poster-h w-poster-w",
         )}
       >
@@ -76,32 +92,52 @@ export const MediaCard = memo(function MediaCard({
             // fetching ahead, and the poster would land after the row is
             // already on screen. `decoding="async"` keeps the decode off the
             // main thread so a newly revealed row cannot drop a scroll frame.
+            // No zoom on hover: the card is framed rather than enlarged, so a
+            // shelf keeps its rhythm while the pointer runs along it.
             decoding="async"
             onError={() => setImageIndex((current) => current + 1)}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+            className="h-full w-full object-cover"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
             {item.name}
           </div>
         )}
-        {item.played && (
-          <div className="absolute right-2 top-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
-            Watched
+        {ribbon && (
+          <div className="data-label absolute top-0 left-0 bg-primary px-1.5 py-1 leading-none text-primary-foreground">
+            {ribbon}
           </div>
         )}
-        {progress > 0 && (
-          <div className="absolute inset-x-0 bottom-0 h-1 bg-black/50">
-            <div className="h-full bg-primary" style={{ width: `${progress * 100}%` }} />
+        {/* Watched is drawn as a finished progress rule rather than a corner
+            badge. In a library that is mostly watched, a badge per poster put
+            eighty bright marks on one screen and the artwork lost; the two
+            states also mean the same thing, so they may as well use the same
+            mark. Dimmed, because "seen" is the resting state and an
+            in-progress title is the one worth spotting. */}
+        {(progress > 0 || item.played) && (
+          <div
+            className="absolute inset-x-0 bottom-0 h-[3px] bg-black/65"
+            title={progress > 0 ? undefined : "Watched"}
+          >
+            <div
+              className={cn("h-full", item.played && progress === 0 ? "bg-primary/45" : "bg-primary")}
+              style={{ width: `${(progress || 1) * 100}%` }}
+            />
           </div>
         )}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium">{item.name}</div>
+        <div className="truncate text-sm font-medium transition-colors group-hover:text-primary">
+          {item.name}
+        </div>
         {(subtitle || remaining) && (
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="data-value flex min-w-0 items-center gap-1.5 text-muted-foreground">
             {subtitle && <span className="truncate">{subtitle}</span>}
-            {subtitle && remaining && <span className="shrink-0" aria-hidden>·</span>}
+            {subtitle && remaining && (
+              <span className="shrink-0 text-primary/50" aria-hidden>
+                /
+              </span>
+            )}
             {remaining && <span className="shrink-0">{remaining}</span>}
           </div>
         )}

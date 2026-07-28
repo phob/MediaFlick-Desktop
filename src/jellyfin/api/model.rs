@@ -83,6 +83,7 @@ pub struct BaseItemDto {
     pub date_last_saved: Option<String>,
     pub user_data: Option<UserItemDataDto>,
     pub media_sources: Vec<MediaSourceInfo>,
+    pub remote_trailers: Vec<MediaUrl>,
     pub is_folder: Option<bool>,
 }
 
@@ -114,6 +115,13 @@ impl BaseItemDto {
         self.image_tag("Primary")
             .or(self.series_primary_image_tag.as_deref())
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct MediaUrl {
+    pub name: Option<String>,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

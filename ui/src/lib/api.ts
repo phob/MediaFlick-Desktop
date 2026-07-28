@@ -12,6 +12,8 @@ export const BACKDROP_WIDTH = 1920
 export const DETAIL_POSTER_WIDTH = 600
 export const THUMBNAIL_WIDTH = 480
 export const HEADSHOT_WIDTH = 200
+/** Title treatments are drawn at most ~28rem wide; twice that covers HiDPI. */
+export const LOGO_WIDTH = 800
 export const PAGE_SIZE = 60
 
 export type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
@@ -30,6 +32,8 @@ export interface ItemSummary {
   parentIndexNumber: number | null
   primaryImageTag: string | null
   thumbImageTag: string | null
+  /** The title treatment — the wordmark on transparency, where the server has one. */
+  logoImageTag: string | null
   backdropImageTag: string | null
   childCount: number | null
   premiereDate: string | null
@@ -92,6 +96,12 @@ export interface MediaSource {
   video: MediaStream[]
   audio: MediaStream[]
   subtitles: MediaStream[]
+}
+
+export interface TrailerSummary {
+  id: string | null
+  name: string
+  embedUrl: string | null
 }
 
 /**
@@ -488,6 +498,7 @@ export const api = {
   logout: () => request<Status>("/api/auth/logout", { method: "POST" }),
 
   home: () => request<{ rows: HomeRow[] }>("/api/home"),
+  billboard: () => request<{ items: ItemSummary[] }>("/api/billboard"),
   genres: () => request<{ genres: string[] }>("/api/genres"),
   items: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
@@ -496,6 +507,9 @@ export const api = {
     request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
   media: (id: string) =>
     request<{ sources: MediaSource[] }>(`/api/item/${encodeURIComponent(id)}/media`),
+  trailer: (id: string) =>
+    request<{ trailer: TrailerSummary | null }>(`/api/item/${encodeURIComponent(id)}/trailer`),
+  trailerStreamUrl: (id: string) => `/api/trailer/${encodeURIComponent(id)}/stream`,
   nextUp: (id: string) =>
     request<{ item: ItemSummary | null }>(`/api/item/${encodeURIComponent(id)}/nextup`),
   openExternal: (id: string, provider: ExternalProvider) =>
@@ -611,6 +625,27 @@ export function landscapeImageCandidates(
   add("Backdrop", item.backdropImageTag)
   if (item.kind !== "Episode") add("Primary", item.primaryImageTag)
   return [...new Set(candidates)]
+}
+
+/**
+ * The item's own title treatment, or null where the server has none — which is
+ * most of a typical library, so every caller has to keep its typeset heading as
+ * the fallback rather than treating this as the primary path.
+ *
+ * An episode borrows nothing here on purpose: the logo that matters over an
+ * episode still is the *show's*, and the caller knows its id.
+ */
+export function logoUrl(
+  item: Pick<ItemSummary, "id" | "logoImageTag">,
+  maxWidth = LOGO_WIDTH,
+) {
+  if (!item.logoImageTag) return null
+  return imageUrl(
+    { id: item.id, primaryImageTag: null },
+    "Logo",
+    maxWidth,
+    item.logoImageTag,
+  )
 }
 
 /** Cast headshots go through the same proxy: people are items in Jellyfin. */

@@ -11,7 +11,7 @@ use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
-use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, PlaybackInfoResponse};
+use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse};
 
 /// Item types the local cache mirrors. Music and live TV are out of scope.
 pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
@@ -175,6 +175,55 @@ pub fn fetch_media_sources(
         .into_iter()
         .next()
         .map(|item| item.media_sources)
+        .unwrap_or_default())
+}
+
+/// Local trailer items attached to one film.
+///
+/// Remote trailer URLs are deliberately not returned: the app scheme's
+/// content policy keeps browsing self-contained, while local trailers can be
+/// fetched through the authenticated byte-range proxy.
+pub fn fetch_local_trailers(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Vec<BaseItemDto>, ApiError> {
+    let path = format!("/Items/{}/LocalTrailers", encode_path_segment(item_id));
+    match client.get_json(&path, &[user_query(user_id)]) {
+        Err(ApiError::Status { status }) if status == 404 || status == 405 => {
+            let legacy = format!(
+                "/Users/{}/Items/{}/LocalTrailers",
+                encode_path_segment(user_id),
+                encode_path_segment(item_id)
+            );
+            client.get_json(&legacy, &[])
+        }
+        result => result,
+    }
+}
+
+/// Remote trailers recorded on one item. This is a separate, on-demand field:
+/// it has no place in every row of the local metadata mirror.
+pub fn fetch_remote_trailers(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Vec<MediaUrl>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", "RemoteTrailers".to_string()),
+            ("EnableUserData", "false".to_string()),
+            ("EnableImages", "false".to_string()),
+        ],
+    )?;
+    Ok(response
+        .items
+        .into_iter()
+        .next()
+        .map(|item| item.remote_trailers)
         .unwrap_or_default())
 }
 

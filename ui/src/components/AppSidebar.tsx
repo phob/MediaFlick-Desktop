@@ -197,10 +197,14 @@ export function AppSidebar() {
             to="/"
             className="flex min-w-0 items-center gap-2 font-medium group-data-[collapsible=icon]:hidden"
           >
-            <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-media bg-primary text-primary-foreground shadow-lg shadow-primary/25">
               <Film className="size-4" />
             </div>
-            <span className="truncate">MediaFlick</span>
+            {/* "Flick" carries the accent, so the wordmark states the palette
+                the rest of the shell is built from. */}
+            <span className="truncate text-[0.95rem] font-semibold tracking-tight">
+              Media<span className="text-primary">Flick</span>
+            </span>
           </Link>
           {/* Stays visible collapsed — it is the only always-on way back to the
               expanded rail besides the hover rail and Ctrl+B. */}

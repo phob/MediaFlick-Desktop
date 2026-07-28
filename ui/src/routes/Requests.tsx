@@ -120,7 +120,7 @@ export default function Requests() {
               <TabsTrigger
                 key={entry.id}
                 value={entry.id}
-                className="h-full rounded-lg px-4 data-[state=active]:bg-primary data-[state=active]:text-white"
+                className="h-full rounded-media px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
               >
                 {entry.label}
               </TabsTrigger>

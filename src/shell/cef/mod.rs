@@ -1403,6 +1403,13 @@ wrap_request_handler! {
             let request_url = CefString::from(&request.url()).to_string();
             let mut browser = browser;
             let mut frame = frame;
+            if request_url.starts_with("https://www.youtube-nocookie.com/embed/") {
+                request.set_referrer(
+                    Some(&CefString::from("http://localhost/")),
+                    ReferrerPolicy::NEVER_CLEAR_REFERRER,
+                );
+                return 0;
+            }
             // Our own UI is served by the app-scheme handler; let it through.
             if app_scheme::is_app_url(&request_url) {
                 return 0;
@@ -1473,6 +1480,19 @@ wrap_resource_request_handler! {
             let request_url = CefString::from(&request.url()).to_string();
             // The app scheme is served by our resource handler, not here.
             if app_scheme::is_app_url(&request_url) {
+                return ReturnValue::CONTINUE;
+            }
+            // YouTube rejects embeds from custom schemes with player error 153
+            // because Chromium has no HTTP origin to send as the referrer.
+            // This one validated frame is the app's only remote embed; give its
+            // initial request a conventional local-app HTTP origin so YouTube
+            // receives the client identity it requires. Nested player requests
+            // then carry their normal web referrer.
+            if request_url.starts_with("https://www.youtube-nocookie.com/embed/") {
+                request.set_referrer(
+                    Some(&CefString::from("http://localhost/")),
+                    ReferrerPolicy::NEVER_CLEAR_REFERRER,
+                );
                 return ReturnValue::CONTINUE;
             }
             if !request_url.starts_with("mediaflick-desktop://") {
