@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQueries, useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ApiError,
@@ -386,9 +386,12 @@ export function useSeerrSearch(term: string, enabled = true) {
 }
 
 export function useSeerrDiscover(row: SeerrDiscoverRow, enabled = true) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: queryKeys.seerrDiscover(row),
-    queryFn: ({ signal }) => api.seerr.discover(row, 1, signal),
+    queryFn: ({ pageParam, signal }) => api.seerr.discover(row, pageParam, signal),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled,
     retry: false,
   })

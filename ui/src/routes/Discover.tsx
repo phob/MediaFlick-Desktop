@@ -1,24 +1,65 @@
 import { Search } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { PageHeader } from "@/components/PageHeader"
 import { SeerrResults } from "@/components/seerr/SeerrResults"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SEERR_DISCOVER_ROWS, type SeerrDiscoverRow } from "@/lib/api"
 import { useSeerrDiscover, useSeerrSearch } from "@/lib/queries"
 
 function DiscoverRow({ row, active }: { row: SeerrDiscoverRow; active: boolean }) {
-  // Only the visible tab fetches: each row is a round trip to Seerr, which
-  // proxies TMDB, and three of them on mount would be two wasted.
   const results = useSeerrDiscover(row, active)
+  const sentinel = useRef<HTMLDivElement>(null)
+  const {
+    data,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isPending,
+  } = results
+  const pages = data?.pages
+
+  // The sentinel sits just below the poster wall. A generous lead means the
+  // next page is already arriving before the user reaches the bottom; if the
+  // first page is too short to fill the window, it remains visible and pages
+  // continue loading until the screen is full.
+  useEffect(() => {
+    const node = sentinel.current
+    if (!node || !active || !hasNextPage || isFetchingNextPage) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void fetchNextPage()
+      },
+      { rootMargin: "600px 0px" },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [active, fetchNextPage, hasNextPage, isFetchingNextPage])
+
+  const items = pages?.flatMap((page) => page.results)
+
   return (
-    <SeerrResults
-      results={results.data?.results}
-      isPending={results.isPending}
-      error={results.error}
-      empty="Seerr returned nothing for this row."
-    />
+    <div className="flex flex-col gap-6">
+      <SeerrResults
+        results={items}
+        isPending={isPending}
+        error={error}
+        empty="Seerr returned nothing for this row."
+        placeholders={12}
+      />
+      {isFetchingNextPage ? (
+        <div className="flex flex-wrap gap-[var(--card-gap)]" aria-label="Loading more titles">
+          {Array.from({ length: 6 }, (_, index) => (
+            <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+          ))}
+        </div>
+      ) : null}
+      {hasNextPage ? <div ref={sentinel} className="h-px" aria-hidden /> : null}
+    </div>
   )
 }
 

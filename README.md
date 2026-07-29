@@ -64,7 +64,3 @@ Jellyfin 10.11.11 and exposes only typed, authenticated operations—there is no
 generic service proxy. Configure Sonarr, Radarr, and Seerr once from Jellyfin's
 plugin dashboard; desktop clients discover it automatically through Jellyfin
 and never receive the service API keys.
-
-## A note on AI assistance
-
-This is a personal project I built to scratch my own itch. The Rust and JavaScript that make up the app are written and reviewed by hand; AI tooling helped with the cross-platform Linux/macOS builds, the GitHub Actions release automation, and code review. Mentioning it because I'd rather be upfront than have you wonder.
