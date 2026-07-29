@@ -327,18 +327,18 @@
 }
 
 /*
- * The trailer owns the full height of the hero: a 16:9 panel sized from the
- * hero's height and flush with its right, top, and bottom edges, so the
- * footage fills the banner exactly rather than floating inside it. Only on a
- * hero too narrow for that does the width clamp win, and the panel then
- * centres vertically in whatever height its aspect leaves it.
+ * The trailer owns the full height of the hero and runs a little wider than
+ * 16:9 so the moving image has more presence beside the still. Its media keeps
+ * its native proportions and crops gently to fill that canvas. On a hero too
+ * narrow for the wider stage, it falls back to an ordinary 16:9 frame centred
+ * vertically.
  */
 .billboard-trailer-stage {
   position: absolute;
   top: 50%;
   right: 0;
-  width: min(100cqw, calc(100cqh * 16 / 9));
-  aspect-ratio: 16 / 9;
+  width: min(100cqw, calc(100cqh * 1.92));
+  height: min(100cqh, calc(100cqw * 9 / 16));
   overflow: hidden;
   container-type: size;
   opacity: 0;
@@ -350,29 +350,60 @@
 
 /*
  * Only the left edge feathers, dissolving the footage into the still so the
- * two read as one composition. Every other edge sits flush with the hero, so
- * masking them would only reveal background at the frame line.
+ * two read as one composition. The alpha silhouette is deliberately uneven:
+ * its broad, blurred bends feel more like a film burn than a gradient laid
+ * straight down the frame. Every other edge stays solid and flush with the
+ * hero.
  */
 .billboard-trailer-feather {
+  --billboard-trailer-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' preserveAspectRatio='none'%3E%3Cdefs%3E%3Cfilter id='soft' x='-50%25' y='-20%25' width='180%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='5.5'/%3E%3C/filter%3E%3C/defs%3E%3Cpath d='M21-10C27 2 9 11 15 24C21 36 28 39 14 51C1 63 11 72 22 78C32 86 10 98 17 110H112V-10Z' fill='black' filter='url(%23soft)'/%3E%3C/svg%3E");
   position: absolute;
   inset: 0;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgb(0 0 0 / 45%) 8%,
-    rgb(0 0 0 / 90%) 15%,
-    black 22%,
-    black 100%
-  );
-  mask-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgb(0 0 0 / 45%) 8%,
-    rgb(0 0 0 / 90%) 15%,
-    black 22%,
-    black 100%
-  );
+  -webkit-mask-image: var(--billboard-trailer-mask);
+  mask-image: var(--billboard-trailer-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+/*
+ * Three low-key blooms catch the irregular overlap like light refracting at
+ * the edge of a lens. They borrow the app's signal green but stay translucent
+ * enough to take their colour from the footage underneath.
+ */
+.billboard-trailer-feather::after {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 18% 25% at 16% 18%,
+      color-mix(in srgb, var(--primary) 16%, transparent),
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 20% 30% at 10% 55%,
+      color-mix(in srgb, var(--primary) 12%, transparent),
+      transparent 76%
+    ),
+    radial-gradient(
+      ellipse 19% 24% at 19% 86%,
+      color-mix(in srgb, var(--primary) 9%, transparent),
+      transparent 72%
+    );
+  content: "";
+  mix-blend-mode: screen;
+  opacity: 0;
+  transform: translateX(-1.5rem);
+  transition:
+    opacity 900ms ease 320ms,
+    transform 1200ms cubic-bezier(0.33, 1, 0.68, 1) 200ms;
+}
+
+.billboard-trailer-stage[data-playing="true"] .billboard-trailer-feather::after {
+  opacity: 0.7;
+  transform: translateX(0);
 }
 
 .billboard-trailer-stage[data-playing="true"] {
