@@ -260,16 +260,40 @@ pub struct MediaDetail {
     pub id: i64,
     pub title: Option<String>,
     pub name: Option<String>,
+    pub original_title: Option<String>,
+    pub original_name: Option<String>,
     pub overview: Option<String>,
+    pub tagline: Option<String>,
     pub poster_path: Option<String>,
     pub backdrop_path: Option<String>,
     pub release_date: Option<String>,
     pub first_air_date: Option<String>,
+    pub last_air_date: Option<String>,
+    pub status: Option<String>,
+    #[serde(rename = "type")]
+    pub series_type: Option<String>,
+    pub in_production: bool,
     pub runtime: Option<i64>,
     pub episode_run_time: Vec<i64>,
     pub genres: Vec<NamedId>,
     pub vote_average: Option<f64>,
+    pub vote_count: Option<i64>,
     pub number_of_seasons: Option<i64>,
+    pub number_of_episodes: Option<i64>,
+    pub original_language: Option<String>,
+    pub homepage: Option<String>,
+    pub budget: Option<i64>,
+    pub revenue: Option<i64>,
+    pub production_companies: Vec<NamedId>,
+    pub networks: Vec<NamedId>,
+    pub created_by: Vec<NamedId>,
+    pub production_countries: Vec<ProductionCountry>,
+    pub spoken_languages: Vec<SpokenLanguage>,
+    pub related_videos: Vec<RelatedVideo>,
+    pub credits: Credits,
+    pub releases: MovieReleases,
+    pub content_ratings: ContentRatings,
+    pub next_episode_to_air: Option<NextEpisode>,
     pub seasons: Vec<SeasonDetail>,
     pub media_info: Option<MediaInfo>,
 }
@@ -303,6 +327,125 @@ impl MediaDetail {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NamedId {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProductionCountry {
+    #[serde(rename = "iso_3166_1")]
+    pub code: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SpokenLanguage {
+    #[serde(rename = "iso_639_1")]
+    pub code: String,
+    pub name: String,
+    pub english_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RelatedVideo {
+    pub site: String,
+    pub key: String,
+    pub name: String,
+    pub size: i64,
+    #[serde(rename = "type")]
+    pub video_type: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Credits {
+    pub cast: Vec<Credit>,
+    pub crew: Vec<Credit>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Credit {
+    pub id: i64,
+    pub name: String,
+    pub character: Option<String>,
+    pub job: Option<String>,
+    pub department: Option<String>,
+    pub profile_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct MovieReleases {
+    pub results: Vec<ReleaseCountry>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ReleaseCountry {
+    #[serde(rename = "iso_3166_1")]
+    pub region: String,
+    pub release_dates: Vec<ReleaseDate>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ReleaseDate {
+    pub certification: String,
+    pub release_date: String,
+    #[serde(rename = "type")]
+    pub release_type: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ContentRatings {
+    pub results: Vec<ContentRating>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ContentRating {
+    #[serde(rename = "iso_3166_1")]
+    pub region: String,
+    pub rating: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NextEpisode {
+    pub name: String,
+    pub air_date: Option<String>,
+    pub season_number: Option<i64>,
+    pub episode_number: Option<i64>,
+}
+
+/// One linked Radarr or Sonarr instance from `GET /api/v1/service/{kind}`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DownloadService {
+    pub id: i64,
+    pub name: String,
+    #[serde(rename = "is4k")]
+    pub is_4k: bool,
+    pub is_default: bool,
+    pub active_profile_id: i64,
+}
+
+/// The quality profiles Seerr reads from one linked Radarr/Sonarr instance.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DownloadServiceDetail {
+    pub server: DownloadService,
+    pub profiles: Vec<QualityProfile>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct QualityProfile {
     pub id: i64,
     pub name: String,
 }
@@ -379,6 +522,7 @@ pub mod permission {
     pub const REQUEST_4K: u64 = 1024;
     pub const REQUEST_4K_MOVIE: u64 = 2048;
     pub const REQUEST_4K_TV: u64 = 4096;
+    pub const REQUEST_ADVANCED: u64 = 8192;
     pub const AUTO_APPROVE_4K: u64 = 32768;
     pub const AUTO_APPROVE_4K_MOVIE: u64 = 65536;
     pub const AUTO_APPROVE_4K_TV: u64 = 131072;
@@ -405,6 +549,7 @@ pub struct Capabilities {
     pub movie_4k: Capability,
     #[serde(rename = "tv4k")]
     pub tv_4k: Capability,
+    pub advanced_request: bool,
 }
 
 impl Capabilities {
@@ -435,6 +580,7 @@ impl Capabilities {
                 auto_approve: series_4k_enabled
                     && has(permission::AUTO_APPROVE_4K | permission::AUTO_APPROVE_4K_TV),
             },
+            advanced_request: has(permission::REQUEST_ADVANCED),
         }
     }
 }
@@ -498,6 +644,15 @@ mod tests {
         assert!(capabilities.movie.request && capabilities.movie.auto_approve);
         assert!(capabilities.tv.request && capabilities.tv.auto_approve);
         assert!(capabilities.movie_4k.request && capabilities.tv_4k.request);
+        assert!(capabilities.advanced_request);
+    }
+
+    #[test]
+    fn advanced_request_permission_is_reported_without_granting_media_permissions() {
+        let capabilities = Capabilities::derive(permission::REQUEST_ADVANCED, true, true);
+        assert!(capabilities.advanced_request);
+        assert!(!capabilities.movie.request);
+        assert!(!capabilities.tv.request);
     }
 
     #[test]

@@ -1,7 +1,6 @@
-import { ArrowUpRight, Plus } from "lucide-react"
+import { ArrowUpRight } from "lucide-react"
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
-import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Badge } from "@/components/ui/badge"
 import { seerrImageUrl, type SeerrResult } from "@/lib/api"
@@ -41,10 +40,10 @@ function Poster({ result }: { result: SeerrResult }) {
  * A title from Seerr, in the same geometry as [`MediaCard`] so a row of them
  * sits level with the library's own posters.
  *
- * The card is one of two things depending on the join the shell already did: a
- * link to the cached item when the library has it, and the request dialog when
- * it does not. There is no third, dead-end state — which is the point of keying
- * the join on (kind, TMDB id) in the first place.
+ * Every card opens Seerr's full title record first. A title already in the
+ * library can continue into the local detail page from there; a missing title
+ * offers the request flow alongside its synopsis, release information, cast,
+ * trailer, and availability.
  */
 export const SeerrCard = memo(function SeerrCard({
   result,
@@ -53,7 +52,6 @@ export const SeerrCard = memo(function SeerrCard({
   result: SeerrResult
   className?: string
 }) {
-  const [requesting, setRequesting] = useState(false)
   const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Film"]
     .filter(Boolean)
     .join(" · ")
@@ -74,35 +72,18 @@ export const SeerrCard = memo(function SeerrCard({
         <span>{subtitle}</span>
       </div>
       <div className="data-label mt-1 flex h-4 items-center gap-1 text-foreground/65">
-        {result.libraryItemId ? (
-          <>
-            <ArrowUpRight className="size-3" /> Open details
-          </>
-        ) : (
-          <>
-            <Plus className="size-3" /> Request
-          </>
-        )}
+        <ArrowUpRight className="size-3" /> View details
       </div>
     </div>
   )
 
-  if (result.libraryItemId) {
-    return (
-      <Link to={`/item/${encodeURIComponent(result.libraryItemId)}`} className={shell}>
-        <Poster result={result} />
-        {caption}
-      </Link>
-    )
-  }
-
   return (
-    <>
-      <button type="button" className={shell} onClick={() => setRequesting(true)}>
-        <Poster result={result} />
-        {caption}
-      </button>
-      {requesting && <RequestDialog result={result} onClose={() => setRequesting(false)} />}
-    </>
+    <Link
+      to={`/discover/${result.mediaType}/${result.tmdbId}`}
+      className={shell}
+    >
+      <Poster result={result} />
+      {caption}
+    </Link>
   )
 })

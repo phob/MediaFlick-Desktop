@@ -15,6 +15,7 @@ public sealed class SeerrGateway
     private const ulong Request4k = 1024;
     private const ulong Request4kMovie = 2048;
     private const ulong Request4kTv = 4096;
+    private const ulong RequestAdvanced = 8192;
     private const ulong AutoApprove4k = 32768;
     private const ulong AutoApprove4kMovie = 65536;
     private const ulong AutoApprove4kTv = 131072;
@@ -274,6 +275,51 @@ public sealed class SeerrGateway
         return ShapeMedia(response, type);
     }
 
+    public async Task<JsonNode> RequestOptionsAsync(
+        Guid jellyfinUserId,
+        string mediaType,
+        bool is4k,
+        CancellationToken cancellationToken)
+    {
+        var type = ValidateMediaType(mediaType);
+        var service = type == "movie" ? "radarr" : "sonarr";
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        await RequireAdvancedRequestAsync(user, cancellationToken).ConfigureAwait(false);
+        var servers = await SendMappedAsync(
+            HttpMethod.Get,
+            $"api/v1/service/{service}",
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false) as JsonArray ?? new JsonArray();
+
+        var destinations = new List<JsonNode>();
+        foreach (var server in servers
+            .OfType<JsonObject>()
+            .Where(server => BoolValue(server, "is4k") == is4k)
+            .OrderByDescending(server => BoolValue(server, "isDefault"))
+            .ThenBy(server => StringValue(server, "name"), StringComparer.OrdinalIgnoreCase))
+        {
+            var serverId = IntValue(server, "id");
+            if (serverId is null or < 0)
+            {
+                continue;
+            }
+
+            var detail = await SendMappedAsync(
+                HttpMethod.Get,
+                $"api/v1/service/{service}/{serverId.Value}",
+                null,
+                user,
+                cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+            destinations.Add(ShapeRequestDestination(server, detail));
+        }
+
+        return new JsonObject
+        {
+            ["destinations"] = new JsonArray(destinations.ToArray())
+        };
+    }
+
     public async Task<JsonNode> RequestAsync(
         Guid jellyfinUserId,
         SeerrRequestBody body,
@@ -282,6 +328,18 @@ public sealed class SeerrGateway
         var type = ValidateMediaType(body.MediaType);
         ValidatePositive(body.TmdbId, "TMDB id");
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        if (body.ServerId.HasValue != body.ProfileId.HasValue
+            || body.ServerId is < 0
+            || body.ProfileId is <= 0)
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "the download destination and quality profile must be selected together");
+        }
+        if (body.ServerId is not null)
+        {
+            await RequireAdvancedRequestAsync(user, cancellationToken).ConfigureAwait(false);
+        }
         var seasons = body.Seasons is { Count: > 0 }
             ? new JsonArray(body.Seasons.Where(static season => season > 0)
                 .Distinct()
@@ -295,6 +353,11 @@ public sealed class SeerrGateway
             ["mediaId"] = body.TmdbId,
             ["is4k"] = body.Is4k
         };
+        if (body.ServerId is { } serverId && body.ProfileId is { } profileId)
+        {
+            request["serverId"] = serverId;
+            request["profileId"] = profileId;
+        }
         if (type == "tv")
         {
             request["seasons"] = seasons ?? (JsonNode?)JsonValue.Create("all");
@@ -448,6 +511,25 @@ public sealed class SeerrGateway
             seerrUserId,
             cancellationToken);
 
+    private async Task RequireAdvancedRequestAsync(
+        int seerrUserId,
+        CancellationToken cancellationToken)
+    {
+        var user = await SendMappedAsync(
+            HttpMethod.Get,
+            "api/v1/auth/me",
+            null,
+            seerrUserId,
+            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+        var permissions = ULongValue(user, "permissions") ?? 0;
+        if (!HasPermission(permissions, RequestAdvanced))
+        {
+            throw new GatewayException(
+                StatusCodes.Status403Forbidden,
+                "your Seerr account is not allowed to choose download quality profiles");
+        }
+    }
+
     private static Configuration.ServiceConfiguration Configuration()
         => Plugin.Instance?.Configuration.Seerr
             ?? throw new GatewayException(
@@ -513,7 +595,33 @@ public sealed class SeerrGateway
         };
     }
 
-    private static JsonNode ShapeMedia(JsonObject detail, string mediaType)
+    internal static JsonNode ShapeRequestDestination(JsonObject server, JsonObject detail)
+    {
+        var activeProfile = IntValue(server, "activeProfileId") ?? 0;
+        var profiles = new JsonArray(
+            (detail["profiles"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(static profile =>
+                    (IntValue(profile, "id") ?? 0) > 0
+                    && !string.IsNullOrWhiteSpace(StringValue(profile, "name")))
+                .OrderBy(profile => StringValue(profile, "name"), StringComparer.OrdinalIgnoreCase)
+                .Select(profile => (JsonNode)new JsonObject
+                {
+                    ["id"] = IntValue(profile, "id"),
+                    ["name"] = StringValue(profile, "name"),
+                    ["isDefault"] = IntValue(profile, "id") == activeProfile
+                })
+                .ToArray());
+        return new JsonObject
+        {
+            ["id"] = IntValue(server, "id"),
+            ["name"] = StringValue(server, "name") ?? "Download service",
+            ["isDefault"] = BoolValue(server, "isDefault"),
+            ["profiles"] = profiles
+        };
+    }
+
+    internal static JsonNode ShapeMedia(JsonObject detail, string mediaType)
     {
         var mediaInfo = detail["mediaInfo"] as JsonObject;
         var genres = new JsonArray(
@@ -537,7 +645,8 @@ public sealed class SeerrGateway
                         ["name"] = Clone(season["name"]),
                         ["episodeCount"] = IntValue(season, "episodeCount") ?? 0,
                         ["airDate"] = Clone(season["airDate"]),
-                        ["status"] = StatusName(IntValue(known, "status") ?? 1)
+                        ["status"] = StatusName(IntValue(known, "status") ?? 1),
+                        ["status4k"] = StatusName(IntValue(known, "status4k") ?? 1)
                     };
                 })
                 .ToArray());
@@ -551,20 +660,234 @@ public sealed class SeerrGateway
             ["mediaType"] = mediaType,
             ["tmdbId"] = IntValue(detail, "id"),
             ["title"] = StringValue(detail, mediaType == "movie" ? "title" : "name") ?? "Untitled",
+            ["originalTitle"] = Clone(
+                detail[mediaType == "movie" ? "originalTitle" : "originalName"]),
             ["year"] = YearOf(StringValue(
                 detail,
                 mediaType == "movie" ? "releaseDate" : "firstAirDate")),
             ["overview"] = Clone(detail["overview"]),
+            ["tagline"] = Clone(detail["tagline"]),
             ["posterPath"] = Clone(detail["posterPath"]),
             ["backdropPath"] = Clone(detail["backdropPath"]),
             ["voteAverage"] = Clone(detail["voteAverage"]),
+            ["voteCount"] = Clone(detail["voteCount"]),
             ["status"] = StatusName(IntValue(mediaInfo, "status") ?? 1),
             ["status4k"] = StatusName(IntValue(mediaInfo, "status4k") ?? 1),
             ["libraryItemId"] = null,
             ["runtimeMinutes"] = runtime,
             ["genres"] = genres,
-            ["seasons"] = seasons
+            ["seasons"] = seasons,
+            ["releaseDate"] = Clone(
+                detail[mediaType == "movie" ? "releaseDate" : "firstAirDate"]),
+            ["firstAirDate"] = Clone(detail["firstAirDate"]),
+            ["lastAirDate"] = Clone(detail["lastAirDate"]),
+            ["productionStatus"] = Clone(detail["status"]),
+            ["inProduction"] = Clone(detail["inProduction"]),
+            ["seriesType"] = Clone(detail["type"]),
+            ["numberOfSeasons"] = Clone(detail["numberOfSeasons"]),
+            ["numberOfEpisodes"] = Clone(detail["numberOfEpisodes"]),
+            ["originalLanguage"] = Clone(detail["originalLanguage"]),
+            ["homepage"] = Clone(detail["homepage"]),
+            ["budget"] = PositiveInt(detail, "budget"),
+            ["revenue"] = PositiveInt(detail, "revenue"),
+            ["studios"] = StringArray(Names(detail["productionCompanies"])),
+            ["networks"] = StringArray(Names(detail["networks"])),
+            ["creators"] = StringArray(UniqueStrings(
+                Names(detail["createdBy"]).Concat(CrewNames(detail, "Creator", null)))),
+            ["directors"] = StringArray(UniqueStrings(CrewNames(detail, "Director", null))),
+            ["writers"] = StringArray(UniqueStrings(CrewNames(detail, null, "Writing"))),
+            ["productionCountries"] = ShapeNamedCodes(
+                detail["productionCountries"],
+                "iso_3166_1"),
+            ["spokenLanguages"] = ShapeLanguages(detail["spokenLanguages"]),
+            ["cast"] = ShapeCast(detail),
+            ["trailer"] = ShapeTrailer(detail),
+            ["releaseDates"] = ShapeReleaseDates(detail),
+            ["contentRatings"] = ShapeContentRatings(detail),
+            ["nextEpisode"] = ShapeNextEpisode(detail)
         };
+    }
+
+    private static JsonNode? PositiveInt(JsonObject value, string name)
+    {
+        var number = IntValue(value, name);
+        return number is > 0 ? JsonValue.Create(number.Value) : null;
+    }
+
+    private static IEnumerable<string> Names(JsonNode? node)
+        => (node as JsonArray ?? new JsonArray())
+            .OfType<JsonObject>()
+            .Select(value => StringValue(value, "name")?.Trim())
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value!);
+
+    private static IEnumerable<string> CrewNames(
+        JsonObject detail,
+        string? job,
+        string? department)
+    {
+        var credits = detail["credits"] as JsonObject;
+        return (credits?["crew"] as JsonArray ?? new JsonArray())
+            .OfType<JsonObject>()
+            .Where(person =>
+                (job is null || StringValue(person, "job") == job)
+                && (department is null || StringValue(person, "department") == department))
+            .Select(person => StringValue(person, "name")?.Trim())
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value!);
+    }
+
+    private static IEnumerable<string> UniqueStrings(IEnumerable<string> values)
+        => values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static JsonArray StringArray(IEnumerable<string> values)
+        => new(values.Select(static value => (JsonNode?)JsonValue.Create(value)).ToArray());
+
+    private static JsonNode ShapeNamedCodes(JsonNode? node, string codeName)
+        => new JsonArray(
+            (node as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(value =>
+                    !string.IsNullOrWhiteSpace(StringValue(value, codeName))
+                    || !string.IsNullOrWhiteSpace(StringValue(value, "name")))
+                .Select(value => (JsonNode)new JsonObject
+                {
+                    ["code"] = StringValue(value, codeName),
+                    ["name"] = StringValue(value, "name")
+                })
+                .ToArray());
+
+    private static JsonNode ShapeLanguages(JsonNode? node)
+        => new JsonArray(
+            (node as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(value =>
+                    !string.IsNullOrWhiteSpace(StringValue(value, "iso_639_1"))
+                    || !string.IsNullOrWhiteSpace(StringValue(value, "name")))
+                .Select(value => (JsonNode)new JsonObject
+                {
+                    ["code"] = StringValue(value, "iso_639_1"),
+                    ["name"] = StringValue(value, "englishName")
+                        ?? StringValue(value, "name")
+                })
+                .ToArray());
+
+    private static JsonNode ShapeCast(JsonObject detail)
+    {
+        var credits = detail["credits"] as JsonObject;
+        return new JsonArray(
+            (credits?["cast"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(static person => !string.IsNullOrWhiteSpace(StringValue(person, "name")))
+                .Take(20)
+                .Select(person => (JsonNode)new JsonObject
+                {
+                    ["id"] = IntValue(person, "id"),
+                    ["name"] = StringValue(person, "name"),
+                    ["character"] = StringValue(person, "character"),
+                    ["profilePath"] = Clone(person["profilePath"])
+                })
+                .ToArray());
+    }
+
+    private static JsonNode? ShapeTrailer(JsonObject detail)
+    {
+        var trailer = (detail["relatedVideos"] as JsonArray ?? new JsonArray())
+            .OfType<JsonObject>()
+            .Where(static video =>
+                StringValue(video, "site") == "YouTube"
+                && StringValue(video, "type") == "Trailer"
+                && IsYoutubeKey(StringValue(video, "key")))
+            .OrderByDescending(static video => IntValue(video, "size") ?? 0)
+            .FirstOrDefault();
+        return trailer is null
+            ? null
+            : new JsonObject
+            {
+                ["name"] = StringValue(trailer, "name") ?? "Trailer",
+                ["key"] = StringValue(trailer, "key")
+            };
+    }
+
+    private static bool IsYoutubeKey(string? value)
+        => value is { Length: 11 }
+            && value.All(static character => char.IsAsciiLetterOrDigit(character)
+                || character is '-' or '_');
+
+    private static JsonNode ShapeReleaseDates(JsonObject detail)
+    {
+        var results = (detail["releases"] as JsonObject)?["results"] as JsonArray
+            ?? new JsonArray();
+        var releases = new List<JsonNode>();
+        foreach (var country in results.OfType<JsonObject>())
+        {
+            var region = StringValue(country, "iso_3166_1");
+            if (string.IsNullOrWhiteSpace(region))
+            {
+                continue;
+            }
+            foreach (var release in (country["release_dates"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>())
+            {
+                var type = (IntValue(release, "type") ?? 0) switch
+                {
+                    1 => "premiere",
+                    2 => "limited-cinema",
+                    3 => "cinema",
+                    4 => "digital",
+                    5 => "physical",
+                    6 => "tv",
+                    _ => null
+                };
+                var date = StringValue(release, "release_date");
+                if (type is null || string.IsNullOrWhiteSpace(date))
+                {
+                    continue;
+                }
+                releases.Add(new JsonObject
+                {
+                    ["region"] = region,
+                    ["type"] = type,
+                    ["date"] = date,
+                    ["certification"] = StringValue(release, "certification")
+                });
+            }
+        }
+        return new JsonArray(releases.ToArray());
+    }
+
+    private static JsonNode ShapeContentRatings(JsonObject detail)
+    {
+        var results = (detail["contentRatings"] as JsonObject)?["results"] as JsonArray
+            ?? new JsonArray();
+        return new JsonArray(
+            results
+                .OfType<JsonObject>()
+                .Where(static rating =>
+                    !string.IsNullOrWhiteSpace(StringValue(rating, "iso_3166_1"))
+                    && !string.IsNullOrWhiteSpace(StringValue(rating, "rating")))
+                .Select(rating => (JsonNode)new JsonObject
+                {
+                    ["region"] = StringValue(rating, "iso_3166_1"),
+                    ["rating"] = StringValue(rating, "rating")
+                })
+                .ToArray());
+    }
+
+    private static JsonNode? ShapeNextEpisode(JsonObject detail)
+    {
+        var episode = detail["nextEpisodeToAir"] as JsonObject;
+        return episode is null
+            ? null
+            : new JsonObject
+            {
+                ["name"] = StringValue(episode, "name"),
+                ["airDate"] = Clone(episode["airDate"]),
+                ["seasonNumber"] = IntValue(episode, "seasonNumber"),
+                ["episodeNumber"] = IntValue(episode, "episodeNumber")
+            };
     }
 
     private static JsonNode ShapeRequest(JsonObject request)
@@ -617,9 +940,13 @@ public sealed class SeerrGateway
                 movie4k && Has(AutoApprove4k | AutoApprove4kMovie)),
             ["tv4k"] = Capability(
                 tv4k && Has(Request4k | Request4kTv),
-                tv4k && Has(AutoApprove4k | AutoApprove4kTv))
+                tv4k && Has(AutoApprove4k | AutoApprove4kTv)),
+            ["advancedRequest"] = Has(RequestAdvanced)
         };
     }
+
+    private static bool HasPermission(ulong permissions, ulong permission)
+        => (permissions & Admin) != 0 || (permissions & permission) != 0;
 
     private static string PreferredUserName(JsonObject user)
         => new[]

@@ -347,7 +347,14 @@ export function useSeerrStatus() {
 }
 
 export function useSeerrConnect() {
-  return useMutation({ mutationFn: (server: string) => api.seerr.connect(server) })
+  return useMutation({
+    mutationFn: (server: string) => api.seerr.connect(server),
+    onSuccess: () => {
+      // Destination ids are local to one Seerr instance. Never carry a
+      // Radarr/Sonarr profile list across an instance switch.
+      queryClient.removeQueries({ queryKey: ["seerr", "request-options"] })
+    },
+  })
 }
 
 export function useSeerrLink() {
@@ -378,6 +385,7 @@ export function useSeerrUnlink() {
       queryClient.removeQueries({ queryKey: ["seerr", "requests"] })
       queryClient.removeQueries({ queryKey: ["seerr", "discover"] })
       queryClient.removeQueries({ queryKey: ["seerr", "search"] })
+      queryClient.removeQueries({ queryKey: ["seerr", "request-options"] })
     },
   })
 }
@@ -451,6 +459,20 @@ export function useSeerrMedia(
   })
 }
 
+export function useSeerrRequestOptions(
+  mediaType: SeerrMediaType,
+  is4k: boolean,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.seerrRequestOptions(mediaType, is4k),
+    queryFn: () => api.seerr.requestOptions(mediaType, is4k),
+    enabled,
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+}
+
 /**
  * The user's own requests. Polled while the view is mounted — Seerr has no push
  * channel, so an approval or a finished download only lands on a refetch — and
@@ -474,6 +496,8 @@ export function useSeerrRequest() {
       tmdbId: number
       seasons?: number[]
       is4k?: boolean
+      serverId?: number
+      profileId?: number
     }) => api.seerr.request(body),
     onError: reportSeerrError,
     onSuccess: (created) => {

@@ -46,6 +46,8 @@ export const queryKeys = {
     ["seerr", "discover", row, filters] as const,
   seerrGenres: (mediaType: string) => ["seerr", "genres", mediaType] as const,
   seerrMedia: (mediaType: string, tmdbId: number) => ["seerr", "media", mediaType, tmdbId] as const,
+  seerrRequestOptions: (mediaType: string, is4k: boolean) =>
+    ["seerr", "request-options", mediaType, is4k] as const,
   seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
 }
 

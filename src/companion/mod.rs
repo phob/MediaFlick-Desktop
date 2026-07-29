@@ -13,9 +13,8 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::Session;
 use crate::library::Library;
-use crate::seerr::SeerrSession;
 use crate::seerr::api::error::SeerrError;
-use crate::seerr::{DiscoverKind, DiscoverOptions};
+use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, SeerrSession};
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
@@ -351,12 +350,27 @@ impl RequestsProvider {
         }
     }
 
+    pub fn request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, ProviderError> {
+        match self {
+            Self::Companion(companion) => companion
+                .get_seerr(
+                    &format!("/MediaFlick/seerr/request-options/{media_type}"),
+                    &[("is4k", is_4k.to_string())],
+                )
+                .map_err(ProviderError::Companion),
+            Self::Direct(direct) => direct
+                .request_options(media_type, is_4k)
+                .map_err(ProviderError::Direct),
+        }
+    }
+
     pub fn create(
         &self,
         media_type: &str,
         tmdb_id: i64,
         seasons: Option<Vec<i64>>,
         is_4k: bool,
+        profile: Option<RequestProfileSelection>,
     ) -> Result<Value, ProviderError> {
         match self {
             Self::Companion(companion) => {
@@ -368,6 +382,8 @@ impl RequestsProvider {
                             "tmdbId": tmdb_id,
                             "seasons": seasons,
                             "is4k": is_4k,
+                            "serverId": profile.map(|selection| selection.server_id),
+                            "profileId": profile.map(|selection| selection.profile_id),
                         }),
                     )
                     .map_err(ProviderError::Companion)?;
@@ -375,7 +391,7 @@ impl RequestsProvider {
                 Ok(value)
             }
             Self::Direct(direct) => direct
-                .create_request(media_type, tmdb_id, seasons, is_4k)
+                .create_request(media_type, tmdb_id, seasons, is_4k, profile)
                 .map_err(ProviderError::Direct),
         }
     }

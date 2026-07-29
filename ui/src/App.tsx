@@ -5,6 +5,7 @@ import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { useStatus } from "@/lib/queries"
 import Discover from "@/routes/Discover"
+import DiscoverDetail from "@/routes/DiscoverDetail"
 import Home from "@/routes/Home"
 import ItemDetail from "@/routes/ItemDetail"
 import Library from "@/routes/Library"
@@ -42,6 +43,14 @@ export default function App() {
               element={
                 <SeerrGate>
                   <Discover />
+                </SeerrGate>
+              }
+            />
+            <Route
+              path="/discover/:mediaType/:tmdbId"
+              element={
+                <SeerrGate>
+                  <DiscoverDetail />
                 </SeerrGate>
               }
             />

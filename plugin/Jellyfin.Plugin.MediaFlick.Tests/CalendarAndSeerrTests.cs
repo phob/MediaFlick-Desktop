@@ -166,4 +166,55 @@ public sealed class CalendarAndSeerrTests
             "api/v1/discover/tv/upcoming?page=2",
             SeerrGateway.BuildDiscoverPath("upcoming-tv", 2, null, null, null, null, null));
     }
+
+    [Fact]
+    public void SeerrMediaKeepsRichDetailAndRejectsUnsafeTrailerKeys()
+    {
+        var source = Assert.IsType<JsonObject>(JsonNode.Parse(
+            """
+            {
+              "id":603,"title":"The Matrix","releaseDate":"1999-03-30",
+              "overview":"A hacker discovers the truth.","status":"Released",
+              "voteAverage":8.2,"voteCount":26000,
+              "productionCompanies":[{"id":79,"name":"Village Roadshow Pictures"}],
+              "credits":{
+                "cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo"}],
+                "crew":[{"id":1,"name":"Lana Wachowski","job":"Director","department":"Directing"}]
+              },
+              "relatedVideos":[
+                {"site":"YouTube","type":"Trailer","key":"abcdefghijk","name":"Official Trailer","size":1080},
+                {"site":"YouTube","type":"Trailer","key":"not/a/key","name":"Unsafe","size":2160}
+              ],
+              "releases":{"results":[{"iso_3166_1":"US","release_dates":[
+                {"type":4,"release_date":"1999-09-21T00:00:00.000Z","certification":"R"}
+              ]}]},
+              "mediaInfo":{"status":5,"status4k":1}
+            }
+            """));
+
+        var detail = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(source, "movie"));
+        Assert.Equal("A hacker discovers the truth.", detail["overview"]?.GetValue<string>());
+        Assert.Equal("Released", detail["productionStatus"]?.GetValue<string>());
+        Assert.Equal("Lana Wachowski", detail["directors"]?[0]?.GetValue<string>());
+        Assert.Equal("Neo", detail["cast"]?[0]?["character"]?.GetValue<string>());
+        Assert.Equal("abcdefghijk", detail["trailer"]?["key"]?.GetValue<string>());
+        Assert.Equal("digital", detail["releaseDates"]?[0]?["type"]?.GetValue<string>());
+        Assert.Equal("R", detail["releaseDates"]?[0]?["certification"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void SeerrRequestDestinationsMarkAndSortTheActiveQualityProfile()
+    {
+        var server = Assert.IsType<JsonObject>(JsonNode.Parse(
+            """{"id":0,"name":"Movies","isDefault":true,"activeProfileId":2}"""));
+        var detail = Assert.IsType<JsonObject>(JsonNode.Parse(
+            """{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"""));
+
+        var destination = Assert.IsType<JsonObject>(
+            SeerrGateway.ShapeRequestDestination(server, detail));
+        Assert.Equal(0, destination["id"]?.GetValue<int>());
+        Assert.Equal("Movies", destination["name"]?.GetValue<string>());
+        Assert.Equal("Any", destination["profiles"]?[0]?["name"]?.GetValue<string>());
+        Assert.True(destination["profiles"]?[1]?["isDefault"]?.GetValue<bool>());
+    }
 }
