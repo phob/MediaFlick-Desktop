@@ -1,5 +1,5 @@
-import { Film } from "lucide-react"
 import { useState } from "react"
+import appIcon from "../../../resources/app-icon.png?inline"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -43,20 +43,11 @@ export default function SignIn() {
     <div className="signin-page relative grid h-full place-items-center overflow-hidden p-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(229,9,20,0.16),transparent_32rem),radial-gradient(circle_at_85%_80%,rgba(255,255,255,0.05),transparent_30rem)]" />
       <div className="relative z-10 flex w-full max-w-md flex-col gap-7">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="grid size-14 place-items-center rounded-media bg-primary text-primary-foreground shadow-2xl shadow-primary/25">
-            <Film className="size-7" />
-          </div>
-          <div className="space-y-2">
-            <p className="text-xs font-semibold tracking-[0.2em] text-foreground/60 uppercase">
-              MediaFlick Desktop
-            </p>
-            <h1 className="text-4xl font-black tracking-[-0.04em]">Your library. Your player.</h1>
-            <p className="text-sm text-muted-foreground">
-              Sign in to browse your Jellyfin library and play through your own media setup.
-            </p>
-          </div>
-        </div>
+        <img
+          src={appIcon}
+          alt="MediaFlick"
+          className="mx-auto size-28 drop-shadow-[0_1.25rem_2rem_rgb(0_0_0/45%)]"
+        />
 
       <Card className="cinematic-panel w-full gap-5 rounded-2xl py-7">
         <CardHeader className="gap-2">
