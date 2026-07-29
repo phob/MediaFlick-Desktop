@@ -16,7 +16,7 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
-use crate::library::{ItemQuery, ItemSort};
+use crate::library::{ItemQuery, ItemSort, sync};
 use crate::preferences::{AppSettings, StreamingQuality};
 use crate::seerr::DiscoverKind;
 use crate::seerr::api::SeerrError;
@@ -267,6 +267,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
 fn status(services: &Arc<Services>) -> ApiResponse {
     let mut status = services.session.status();
     let stats = services.library.stats();
+    let bootstrap = sync::bootstrap_progress(&services.library);
     if let Some(object) = status.as_object_mut() {
         object.insert("library".to_string(), json!(stats));
         object.insert("syncing".to_string(), json!(services.sync.is_running()));
@@ -274,10 +275,8 @@ fn status(services: &Arc<Services>) -> ApiResponse {
             "lastSync".to_string(),
             json!(services.library.meta("sync.completed_at")),
         );
-        object.insert(
-            "bootstrapped".to_string(),
-            json!(services.library.meta("sync.bootstrap_done").as_deref() == Some("1")),
-        );
+        object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
+        object.insert("bootstrap".to_string(), json!(bootstrap));
         object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)
