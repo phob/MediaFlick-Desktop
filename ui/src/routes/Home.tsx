@@ -130,8 +130,8 @@ function RowSkeleton({ landscape = false }: { landscape?: boolean }) {
 
 function HomeSkeleton() {
   return (
-    <div className="flex flex-col gap-9 pb-12">
-      <div className="relative flex min-h-[32rem] items-end px-10 pb-28">
+    <div className="flex h-full flex-col gap-9">
+      <div className="relative flex h-1/2 min-h-[30rem] shrink-0 items-end px-10 pb-28">
         <Skeleton className="absolute inset-0 rounded-none" />
         <div className="relative z-10 flex w-full max-w-xl flex-col gap-4">
           <Skeleton className="h-3 w-32" />
@@ -141,7 +141,7 @@ function HomeSkeleton() {
           <Skeleton className="h-10 w-64" />
         </div>
       </div>
-      <div className="-mt-20 flex flex-col gap-9">
+      <div className="-mt-20 flex flex-col gap-9 pb-12">
         <RowSkeleton landscape />
         <RowSkeleton />
       </div>
@@ -223,10 +223,15 @@ export default function Home() {
   if (!featured.length && !rows.length && !favoriteRow) return <EmptyHome />
 
   return (
-    <div className="home-page flex min-h-full flex-col pb-12">
+    <div className="home-page flex h-full flex-col">
       {featured.length > 0 && <Billboard items={featured} />}
 
-      <div className={cn("relative z-10 flex flex-col gap-9", featured.length > 0 && "-mt-20")}>
+      <div
+        className={cn(
+          "relative z-10 flex flex-col gap-9 pb-12",
+          featured.length > 0 && "-mt-20",
+        )}
+      >
         {resume && <Row row={resume} />}
 
         {seed && seedGenre && <BecauseYouWatched seed={seed} genre={seedGenre} />}
