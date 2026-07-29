@@ -141,6 +141,13 @@ export interface LibraryStats {
   [key: string]: unknown
 }
 
+export interface BootstrapProgress {
+  complete: boolean
+  processed: number
+  total: number | null
+  initial: boolean
+}
+
 export interface Status {
   authenticated?: boolean
   serverUrl?: string | null
@@ -149,6 +156,7 @@ export interface Status {
   syncing?: boolean
   lastSync?: string | null
   bootstrapped?: boolean
+  bootstrap?: BootstrapProgress
   companion?: CompanionStatus
   [key: string]: unknown
 }

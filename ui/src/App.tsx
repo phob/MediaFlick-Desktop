@@ -15,10 +15,11 @@ import SignIn from "@/routes/SignIn"
 export default function App() {
   const { data: status, isPending } = useStatus()
   const fetching = useIsFetching()
+  const waitingForLibrary = Boolean(status?.authenticated && !status.bootstrapped)
 
   return (
     <>
-      {isPending ? (
+      {isPending || waitingForLibrary ? (
         <div className="h-full bg-background" aria-hidden />
       ) : !status?.authenticated ? (
         // One gate for the whole app: the Rust session is the source of truth,
@@ -56,7 +57,15 @@ export default function App() {
           </Routes>
         </AppShell>
       )}
-      <LoadingScreen ready={!isPending && fetching === 0} />
+      <LoadingScreen
+        // The startup screen may already have completed while the sign-in form
+        // was visible. A successful login begins a second loading phase for the
+        // first library bootstrap, so give that authenticated phase a fresh
+        // instance rather than exposing the blank route underneath it.
+        key={status?.authenticated ? "authenticated" : "anonymous"}
+        ready={!isPending && !waitingForLibrary && fetching === 0}
+        bootstrap={status?.authenticated ? status.bootstrap : undefined}
+      />
     </>
   )
 }

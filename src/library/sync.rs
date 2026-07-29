@@ -49,11 +49,41 @@ const MAX_BOOTSTRAP_PAGES: usize = 1_000;
 const MAX_IDENTITY_PAGES: usize = 1_000;
 
 const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
+const META_BOOTSTRAP_TOTAL: &str = "sync.bootstrap_total";
 const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
 const META_WATERMARK: &str = "sync.watermark";
 const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
 const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 const META_LAST_SYNC: &str = "sync.completed_at";
+
+/// Durable progress for the resumable initial cache fill.
+///
+/// Both values live in SQLite rather than in the worker handle so a restarted
+/// app can report the same progress before the next page request begins.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapProgress {
+    pub complete: bool,
+    pub processed: i64,
+    pub total: Option<i64>,
+    pub initial: bool,
+}
+
+pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
+    BootstrapProgress {
+        complete: library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1"),
+        processed: meta_count(library, META_BOOTSTRAP_OFFSET).unwrap_or(0),
+        total: meta_count(library, META_BOOTSTRAP_TOTAL),
+        initial: library.meta(META_LAST_BOOTSTRAP).is_none(),
+    }
+}
+
+fn meta_count(library: &Library, key: &str) -> Option<i64> {
+    library
+        .meta(key)
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(|value| value.max(0))
+}
 
 /// What a single cycle changed; surfaced by `/api/status` and `--library-stats`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -261,11 +291,15 @@ pub fn run_cycle(
     let mut report = SyncReport::default();
 
     let result = (|| -> Result<(), ApiError> {
-        if due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL) {
+        if full_bootstrap_due(library) {
             // Re-page everything. Upserts are idempotent, so this refreshes
             // metadata in place rather than churning rows.
             let _ = library.set_meta(META_BOOTSTRAP_DONE, "0");
             let _ = library.set_meta(META_BOOTSTRAP_OFFSET, "0");
+            // An empty value deliberately means "the first page has not told
+            // us the new total yet"; retaining the previous week's total would
+            // make the determinate bar move against stale information.
+            let _ = library.set_meta(META_BOOTSTRAP_TOTAL, "");
         }
         report.bootstrapped = bootstrap(library, &client, &user_id)?;
         report.updated = incremental(library, &client, &user_id)?;
@@ -315,6 +349,15 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
             break true;
         }
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")?;
+        // Jellyfin normally reports the total on every page. Preserve the last
+        // useful value if a trailing empty page omits it, while still recording
+        // a real zero for an empty library.
+        if page.total_record_count > 0 || offset == 0 {
+            let _ = library.set_meta(
+                META_BOOTSTRAP_TOTAL,
+                &page.total_record_count.max(0).to_string(),
+            );
+        }
         if page.items.is_empty() {
             break false;
         }
@@ -492,6 +535,15 @@ fn due(library: &Library, key: &str, interval: Duration) -> bool {
     now_unix().saturating_sub(last) >= interval.as_secs()
 }
 
+fn full_bootstrap_due(library: &Library) -> bool {
+    // A missing/false done marker means the resumable initial pass is already
+    // underway. Reset only a previously completed cache whose weekly refresh
+    // is due; otherwise a retry after a network failure would jump back to
+    // zero and make both the stored offset and the progress UI dishonest.
+    library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+        && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)
+}
+
 fn touch(library: &Library, key: &str) {
     let _ = library.set_meta(key, &now_unix().to_string());
 }
@@ -519,10 +571,13 @@ fn jittered(base: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        Flags, MAX_INCREMENTAL_PAGES, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle, SyncReport,
-        Trigger, Wake, advance_watermark, is_newer, jittered, wait,
+        Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
+        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle,
+        SyncReport, Trigger, Wake, advance_watermark, bootstrap_progress, full_bootstrap_due,
+        is_newer, jittered, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
+    use crate::library::Library;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
@@ -536,6 +591,64 @@ mod tests {
                     .expect("dto")
             })
             .collect()
+    }
+
+    #[test]
+    fn bootstrap_progress_is_durable_and_distinguishes_the_initial_fill() {
+        let library = Library::open_in_memory().expect("library");
+        assert_eq!(
+            bootstrap_progress(&library),
+            super::BootstrapProgress {
+                complete: false,
+                processed: 0,
+                total: None,
+                initial: true,
+            }
+        );
+
+        library
+            .set_meta(META_BOOTSTRAP_OFFSET, "400")
+            .expect("offset");
+        library
+            .set_meta(META_BOOTSTRAP_TOTAL, "1250")
+            .expect("total");
+        assert_eq!(bootstrap_progress(&library).processed, 400);
+        assert_eq!(bootstrap_progress(&library).total, Some(1250));
+
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .expect("complete");
+        library
+            .set_meta(META_LAST_BOOTSTRAP, "123")
+            .expect("last bootstrap");
+        let completed = bootstrap_progress(&library);
+        assert!(completed.complete);
+        assert!(!completed.initial);
+    }
+
+    #[test]
+    fn an_incomplete_bootstrap_resumes_instead_of_resetting_its_progress() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .set_meta(META_BOOTSTRAP_OFFSET, "400")
+            .expect("offset");
+        library
+            .set_meta(META_BOOTSTRAP_TOTAL, "1250")
+            .expect("total");
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "0")
+            .expect("incomplete");
+        assert!(!full_bootstrap_due(&library));
+
+        // Only an old pass which actually completed is eligible for the
+        // periodic reset.
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .expect("complete");
+        library
+            .set_meta(META_LAST_BOOTSTRAP, "0")
+            .expect("old bootstrap");
+        assert!(full_bootstrap_due(&library));
     }
 
     #[test]

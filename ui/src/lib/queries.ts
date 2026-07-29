@@ -33,7 +33,17 @@ function reportError(error: Error) {
 }
 
 export function useStatus() {
-  return useQuery({ queryKey: queryKeys.status, queryFn: api.status })
+  return useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+    // A fresh login only queues the SQLite bootstrap. Keep observing its
+    // completion so App can hold the media routes back until their first read
+    // can return the complete catalog and mirrored playback positions.
+    refetchInterval: (query) => {
+      const status = query.state.data
+      return status?.authenticated && !status.bootstrapped ? 500 : false
+    },
+  })
 }
 
 export function useSettings() {
