@@ -101,7 +101,7 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
 
   return (
     <section
-      className="relative flex min-h-[30rem] items-end overflow-hidden sm:min-h-[34rem] lg:min-h-[38rem]"
+      className="relative flex h-1/2 min-h-[30rem] shrink-0 items-end overflow-hidden"
       aria-labelledby="billboard-title"
       // Pausing while the pointer is in the hero is what makes the action
       // buttons usable: a rotation underneath a reaching cursor swaps the
