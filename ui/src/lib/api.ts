@@ -369,12 +369,57 @@ export interface SeerrLinkResult {
 }
 
 export const SEERR_DISCOVER_ROWS = [
-  { id: "trending", label: "Trending" },
-  { id: "movies", label: "Movies" },
-  { id: "tv", label: "Series" },
+  {
+    id: "trending",
+    label: "Trending",
+    title: "What everyone is watching",
+    description: "The films and series gaining momentum on TMDB right now.",
+  },
+  {
+    id: "movies",
+    label: "Popular films",
+    title: "Popular films",
+    description: "Shape Seerr’s movie catalogue by genre, score, and release date.",
+  },
+  {
+    id: "tv",
+    label: "Popular series",
+    title: "Popular series",
+    description: "Find the shows people keep coming back to.",
+  },
+  {
+    id: "upcoming-movies",
+    label: "Upcoming films",
+    title: "Films on the horizon",
+    description: "Get requests in before the next wave of premieres lands.",
+  },
+  {
+    id: "upcoming-tv",
+    label: "Upcoming series",
+    title: "Series on the horizon",
+    description: "New and returning shows with their first air dates ahead.",
+  },
 ] as const
 
 export type SeerrDiscoverRow = (typeof SEERR_DISCOVER_ROWS)[number]["id"]
+
+export type SeerrDiscoverSort = "popular" | "rating" | "newest"
+export type SeerrTrendingMediaType = "all" | SeerrMediaType
+export type SeerrTrendingWindow = "day" | "week"
+
+export interface SeerrDiscoverFilters {
+  genre?: number
+  sort?: SeerrDiscoverSort
+  minRating?: number
+  mediaType?: SeerrTrendingMediaType
+  timeWindow?: SeerrTrendingWindow
+}
+
+export interface SeerrGenre {
+  id: number
+  name: string
+  backdrops: string[]
+}
 
 /**
  * TMDB art through the Rust proxy. The size is a name from the allowlist in
@@ -622,10 +667,18 @@ export const api = {
 
     search: (q: string, page = 1, signal?: AbortSignal) =>
       request<SeerrPage<SeerrResult>>(`/api/seerr/search${queryString({ q, page })}`, { signal }),
-    discover: (row: SeerrDiscoverRow, page = 1, signal?: AbortSignal) =>
-      request<SeerrPage<SeerrResult>>(`/api/seerr/discover/${row}${queryString({ page })}`, {
-        signal,
-      }),
+    discover: (
+      row: SeerrDiscoverRow,
+      filters: SeerrDiscoverFilters = {},
+      page = 1,
+      signal?: AbortSignal,
+    ) =>
+      request<SeerrPage<SeerrResult>>(
+        `/api/seerr/discover/${row}${queryString({ page, ...filters })}`,
+        { signal },
+      ),
+    genres: (mediaType: SeerrMediaType, signal?: AbortSignal) =>
+      request<SeerrGenre[]>(`/api/seerr/genres/${mediaType}`, { signal }),
     media: (mediaType: SeerrMediaType, tmdbId: number) =>
       request<SeerrMediaDetail>(`/api/seerr/media/${mediaType}/${tmdbId}`),
 

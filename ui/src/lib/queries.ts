@@ -9,6 +9,7 @@ import {
   type PlayerCommand,
   type QuickConnectStart,
   type SeerrDiscoverRow,
+  type SeerrDiscoverFilters,
   type SeerrMediaType,
   type StreamingQualityId,
 } from "./api"
@@ -395,14 +396,40 @@ export function useSeerrSearch(term: string, enabled = true) {
   })
 }
 
-export function useSeerrDiscover(row: SeerrDiscoverRow, enabled = true) {
+export function useInfiniteSeerrSearch(term: string, enabled = true) {
   return useInfiniteQuery({
-    queryKey: queryKeys.seerrDiscover(row),
-    queryFn: ({ pageParam, signal }) => api.seerr.discover(row, pageParam, signal),
+    queryKey: queryKeys.seerrSearchInfinite(term),
+    queryFn: ({ pageParam, signal }) => api.seerr.search(term, pageParam, signal),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
+    enabled: enabled && term.trim().length > 1,
+    retry: false,
+  })
+}
+
+export function useSeerrDiscover(
+  row: SeerrDiscoverRow,
+  filters: SeerrDiscoverFilters = {},
+  enabled = true,
+) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.seerrDiscover(row, filters),
+    queryFn: ({ pageParam, signal }) => api.seerr.discover(row, filters, pageParam, signal),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled,
+    retry: false,
+  })
+}
+
+export function useSeerrGenres(mediaType: SeerrMediaType, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seerrGenres(mediaType),
+    queryFn: ({ signal }) => api.seerr.genres(mediaType, signal),
+    enabled,
+    staleTime: 30 * 60_000,
     retry: false,
   })
 }

@@ -133,4 +133,37 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal("available", movie["status"]?.GetValue<string>());
         Assert.Null(movie["libraryItemId"]);
     }
+
+    [Fact]
+    public void SeerrGenresDropMalformedRowsAndKeepBackdropChoices()
+    {
+        var source = JsonNode.Parse(
+            """
+            [
+              {"id":18,"name":"Drama","backdrops":["/one.jpg","/two.jpg"]},
+              {"id":0,"name":"Broken","backdrops":[]},
+              {"id":35,"name":"","backdrops":[]}
+            ]
+            """);
+
+        var genres = Assert.IsType<JsonArray>(SeerrGateway.ShapeGenres(source));
+        var drama = Assert.IsType<JsonObject>(Assert.Single(genres));
+        Assert.Equal(18, drama["id"]?.GetValue<int>());
+        Assert.Equal("Drama", drama["name"]?.GetValue<string>());
+        Assert.Equal(2, Assert.IsType<JsonArray>(drama["backdrops"]).Count);
+    }
+
+    [Fact]
+    public void SeerrDiscoveryPathsPreserveTheAllowlistedDesktopFilters()
+    {
+        Assert.Equal(
+            "api/v1/discover/movies?page=4&genre=18&sortBy=vote_average.desc&voteCountGte=50&voteAverageGte=7",
+            SeerrGateway.BuildDiscoverPath("movies", 4, 18, "vote_average.desc", 7, null, null));
+        Assert.Equal(
+            "api/v1/discover/trending?page=1&mediaType=tv&timeWindow=week",
+            SeerrGateway.BuildDiscoverPath("trending", -1, null, null, null, "tv", "week"));
+        Assert.Equal(
+            "api/v1/discover/tv/upcoming?page=2",
+            SeerrGateway.BuildDiscoverPath("upcoming-tv", 2, null, null, null, null, null));
+    }
 }

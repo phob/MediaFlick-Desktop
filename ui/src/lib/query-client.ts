@@ -41,7 +41,10 @@ export const queryKeys = {
   playerState: ["player", "state"] as const,
   seerrStatus: ["seerr", "status"] as const,
   seerrSearch: (term: string) => ["seerr", "search", term] as const,
-  seerrDiscover: (row: string) => ["seerr", "discover", row] as const,
+  seerrSearchInfinite: (term: string) => ["seerr", "search", term, "infinite"] as const,
+  seerrDiscover: (row: string, filters: object = {}) =>
+    ["seerr", "discover", row, filters] as const,
+  seerrGenres: (mediaType: string) => ["seerr", "genres", mediaType] as const,
   seerrMedia: (mediaType: string, tmdbId: number) => ["seerr", "media", mediaType, tmdbId] as const,
   seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
 }
