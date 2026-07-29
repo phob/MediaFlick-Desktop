@@ -13,9 +13,9 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::Session;
 use crate::library::Library;
-use crate::seerr::DiscoverKind;
 use crate::seerr::SeerrSession;
 use crate::seerr::api::error::SeerrError;
+use crate::seerr::{DiscoverKind, DiscoverOptions};
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
@@ -300,24 +300,36 @@ impl RequestsProvider {
         }
     }
 
-    pub fn discover(&self, kind: DiscoverKind, page: i64) -> Result<Value, ProviderError> {
+    pub fn discover(
+        &self,
+        kind: DiscoverKind,
+        page: i64,
+        options: &DiscoverOptions,
+    ) -> Result<Value, ProviderError> {
         match self {
             Self::Companion(companion) => {
-                let kind = match kind {
-                    DiscoverKind::Trending => "trending",
-                    DiscoverKind::Movies => "movies",
-                    DiscoverKind::Tv => "tv",
-                };
+                let query = options.query_pairs(kind, page);
                 let mut value = companion
                     .get_seerr(
-                        &format!("/MediaFlick/seerr/discover/{kind}"),
-                        &[("page", page.to_string())],
+                        &format!("/MediaFlick/seerr/discover/{}", kind.id()),
+                        query.as_slice(),
                     )
                     .map_err(ProviderError::Companion)?;
                 join_seerr_results(&companion.library, &mut value);
                 Ok(value)
             }
-            Self::Direct(direct) => direct.discover(kind, page).map_err(ProviderError::Direct),
+            Self::Direct(direct) => direct
+                .discover(kind, page, options)
+                .map_err(ProviderError::Direct),
+        }
+    }
+
+    pub fn genres(&self, media_type: &str) -> Result<Value, ProviderError> {
+        match self {
+            Self::Companion(companion) => companion
+                .get_seerr(&format!("/MediaFlick/seerr/genres/{media_type}"), &[])
+                .map_err(ProviderError::Companion),
+            Self::Direct(direct) => direct.genres(media_type).map_err(ProviderError::Direct),
         }
     }
 

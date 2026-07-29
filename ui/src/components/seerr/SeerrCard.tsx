@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react"
+import { ArrowUpRight, Plus } from "lucide-react"
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
@@ -57,6 +57,10 @@ export const SeerrCard = memo(function SeerrCard({
   const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Film"]
     .filter(Boolean)
     .join(" · ")
+  const match =
+    result.voteAverage && result.voteAverage > 0
+      ? `${Math.round(result.voteAverage * 10)}% match`
+      : null
   const shell = cn(
     "catalog-card group flex w-poster-w flex-col gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
     className,
@@ -64,8 +68,21 @@ export const SeerrCard = memo(function SeerrCard({
   const caption = (
     <div className="min-w-0">
       <div className="truncate text-sm font-medium">{result.title}</div>
-      <div className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-        {result.libraryItemId ? subtitle : <><Plus className="size-3" /> Request · {subtitle}</>}
+      <div className="data-value flex items-center gap-1.5 truncate text-muted-foreground">
+        {match ? <span className="text-primary">{match}</span> : null}
+        {match && subtitle ? <span className="text-border">/</span> : null}
+        <span>{subtitle}</span>
+      </div>
+      <div className="data-label mt-1 flex h-4 items-center gap-1 text-foreground/65">
+        {result.libraryItemId ? (
+          <>
+            <ArrowUpRight className="size-3" /> Open details
+          </>
+        ) : (
+          <>
+            <Plus className="size-3" /> Request
+          </>
+        )}
       </div>
     </div>
   )

@@ -42,6 +42,8 @@ pub enum DiscoverKind {
     Trending,
     Movies,
     Tv,
+    UpcomingMovies,
+    UpcomingTv,
 }
 
 impl DiscoverKind {
@@ -50,7 +52,19 @@ impl DiscoverKind {
             "trending" => Some(Self::Trending),
             "movies" => Some(Self::Movies),
             "tv" => Some(Self::Tv),
+            "upcoming-movies" => Some(Self::UpcomingMovies),
+            "upcoming-tv" => Some(Self::UpcomingTv),
             _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Trending => "trending",
+            Self::Movies => "movies",
+            Self::Tv => "tv",
+            Self::UpcomingMovies => "upcoming-movies",
+            Self::UpcomingTv => "upcoming-tv",
         }
     }
 
@@ -59,7 +73,159 @@ impl DiscoverKind {
             Self::Trending => "discover/trending",
             Self::Movies => "discover/movies",
             Self::Tv => "discover/tv",
+            Self::UpcomingMovies => "discover/movies/upcoming",
+            Self::UpcomingTv => "discover/tv/upcoming",
         }
+    }
+}
+
+/// The small, allowlisted set of Seerr discovery controls exposed by the UI.
+///
+/// Keeping these as application-level names means neither the app scheme nor
+/// the Companion plugin becomes a general query-string proxy to Seerr.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiscoverOptions {
+    genre: Option<i64>,
+    sort: Option<DiscoverSort>,
+    min_rating: Option<u8>,
+    media_type: Option<TrendingMediaType>,
+    time_window: Option<TrendingWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscoverSort {
+    Popular,
+    Rating,
+    Newest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrendingMediaType {
+    All,
+    Movie,
+    Tv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrendingWindow {
+    Day,
+    Week,
+}
+
+impl DiscoverOptions {
+    pub fn from_values(
+        genre: Option<&str>,
+        sort: Option<&str>,
+        min_rating: Option<&str>,
+        media_type: Option<&str>,
+        time_window: Option<&str>,
+    ) -> Result<Self, String> {
+        let genre = genre
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| "genre must be a positive number".to_string())
+            })
+            .transpose()?;
+        let sort = sort
+            .map(|value| match value {
+                "popular" => Ok(DiscoverSort::Popular),
+                "rating" => Ok(DiscoverSort::Rating),
+                "newest" => Ok(DiscoverSort::Newest),
+                _ => Err("unknown discovery sort".to_string()),
+            })
+            .transpose()?;
+        let min_rating = min_rating
+            .map(|value| {
+                value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|value| *value <= 10)
+                    .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
+            })
+            .transpose()?;
+        let media_type = media_type
+            .map(|value| match value {
+                "all" => Ok(TrendingMediaType::All),
+                "movie" => Ok(TrendingMediaType::Movie),
+                "tv" => Ok(TrendingMediaType::Tv),
+                _ => Err("unknown trending media type".to_string()),
+            })
+            .transpose()?;
+        let time_window = time_window
+            .map(|value| match value {
+                "day" => Ok(TrendingWindow::Day),
+                "week" => Ok(TrendingWindow::Week),
+                _ => Err("unknown trending time window".to_string()),
+            })
+            .transpose()?;
+
+        Ok(Self {
+            genre,
+            sort,
+            min_rating,
+            media_type,
+            time_window,
+        })
+    }
+
+    /// Query pairs accepted by Seerr's documented discovery routes.
+    pub fn query_pairs(&self, kind: DiscoverKind, page: i64) -> Vec<(&'static str, String)> {
+        let mut query = vec![("page", page.clamp(1, 1_000).to_string())];
+
+        match kind {
+            DiscoverKind::Trending => {
+                if let Some(media_type) = self.media_type {
+                    query.push((
+                        "mediaType",
+                        match media_type {
+                            TrendingMediaType::All => "all",
+                            TrendingMediaType::Movie => "movie",
+                            TrendingMediaType::Tv => "tv",
+                        }
+                        .to_string(),
+                    ));
+                }
+                if let Some(time_window) = self.time_window {
+                    query.push((
+                        "timeWindow",
+                        match time_window {
+                            TrendingWindow::Day => "day",
+                            TrendingWindow::Week => "week",
+                        }
+                        .to_string(),
+                    ));
+                }
+            }
+            DiscoverKind::Movies | DiscoverKind::Tv => {
+                if let Some(genre) = self.genre {
+                    query.push(("genre", genre.to_string()));
+                }
+                if let Some(sort) = self.sort {
+                    let value = match (sort, kind) {
+                        (DiscoverSort::Popular, _) => "popularity.desc",
+                        (DiscoverSort::Rating, _) => "vote_average.desc",
+                        (DiscoverSort::Newest, DiscoverKind::Movies) => "primary_release_date.desc",
+                        (DiscoverSort::Newest, DiscoverKind::Tv) => "first_air_date.desc",
+                        (DiscoverSort::Newest, _) => unreachable!(),
+                    };
+                    query.push(("sortBy", value.to_string()));
+                    // TMDB's vote-average sort otherwise promotes titles with
+                    // a single perfect vote above established favourites.
+                    if sort == DiscoverSort::Rating {
+                        query.push(("voteCountGte", "50".to_string()));
+                    }
+                }
+                if let Some(min_rating) = self.min_rating {
+                    query.push(("voteAverageGte", min_rating.to_string()));
+                }
+            }
+            DiscoverKind::UpcomingMovies | DiscoverKind::UpcomingTv => {}
+        }
+
+        query
     }
 }
 
@@ -514,11 +680,30 @@ impl SeerrSession {
 
     /// One of Seerr's discovery rows. The kind is validated by the caller, so a
     /// path segment from the UI never reaches the address unchecked.
-    pub fn discover(&self, kind: DiscoverKind, page: i64) -> Result<Value, SeerrError> {
-        let page = page.clamp(1, 1_000);
+    pub fn discover(
+        &self,
+        kind: DiscoverKind,
+        page: i64,
+        options: &DiscoverOptions,
+    ) -> Result<Value, SeerrError> {
+        let query = options.query_pairs(kind, page);
         let results: SearchPage =
-            self.call(|client| client.get_json(kind.path(), &[("page", page.to_string())]))?;
+            self.call(|client| client.get_json(kind.path(), query.as_slice()))?;
         Ok(self.joined_page(results))
+    }
+
+    /// The genre cards Seerr builds from TMDB, including their backdrop art.
+    pub fn genres(&self, media_type: &str) -> Result<Value, SeerrError> {
+        let path = match media_type {
+            model::MOVIE => "discover/genreslider/movie",
+            model::TV => "discover/genreslider/tv",
+            _ => {
+                return Err(SeerrError::Unusable(
+                    "genres are only available for movies and series".to_string(),
+                ));
+            }
+        };
+        self.call(|client| client.get_json(path, &[]))
     }
 
     /// One title in full, with the local item it corresponds to if the library
@@ -1179,8 +1364,8 @@ fn same_media_server_user(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiscoverKind, SeerrClient, SeerrError, SeerrSession, SeerrState, SessionCookies, Value,
-        json, same_media_server_user,
+        DiscoverKind, DiscoverOptions, SeerrClient, SeerrError, SeerrSession, SeerrState,
+        SessionCookies, Value, json, same_media_server_user,
     };
     use crate::library::{Library, SeerrConfig};
     use std::io::{BufRead, BufReader, Read, Write};
@@ -2222,18 +2407,50 @@ mod tests {
     fn discover_rows_are_named_rather_than_addressed() {
         let (base_url, requests) = fake_server(vec![response("200 OK", SEARCH, &[])]);
         let (_library, session) = session_linked_to(&base_url);
+        let options = DiscoverOptions::from_values(None, None, None, Some("movie"), Some("week"))
+            .expect("options");
 
         session
-            .discover(super::DiscoverKind::Trending, 2)
+            .discover(super::DiscoverKind::Trending, 2, &options)
             .expect("discover");
         assert!(
-            requests.lock().expect("lock")[0].starts_with("GET /api/v1/discover/trending?page=2")
+            requests.lock().expect("lock")[0].starts_with(
+                "GET /api/v1/discover/trending?page=2&mediaType=movie&timeWindow=week"
+            )
         );
         assert_eq!(
             super::DiscoverKind::from_id("movies"),
             Some(DiscoverKind::Movies)
         );
+        assert_eq!(
+            super::DiscoverKind::from_id("upcoming-tv").map(DiscoverKind::path),
+            Some("discover/tv/upcoming")
+        );
         assert_eq!(super::DiscoverKind::from_id("../settings"), None);
+    }
+
+    #[test]
+    fn discover_filters_are_allowlisted_and_shaped_for_each_media_kind() {
+        let movie = DiscoverOptions::from_values(Some("18"), Some("rating"), Some("7"), None, None)
+            .expect("movie options")
+            .query_pairs(DiscoverKind::Movies, 4);
+        assert_eq!(
+            movie,
+            vec![
+                ("page", "4".to_string()),
+                ("genre", "18".to_string()),
+                ("sortBy", "vote_average.desc".to_string()),
+                ("voteCountGte", "50".to_string()),
+                ("voteAverageGte", "7".to_string()),
+            ]
+        );
+
+        let tv = DiscoverOptions::from_values(None, Some("newest"), None, None, None)
+            .expect("tv options")
+            .query_pairs(DiscoverKind::Tv, 1);
+        assert!(tv.contains(&("sortBy", "first_air_date.desc".to_string())));
+        assert!(DiscoverOptions::from_values(Some("../settings"), None, None, None, None).is_err());
+        assert!(DiscoverOptions::from_values(None, Some("random"), None, None, None).is_err());
     }
 
     #[test]

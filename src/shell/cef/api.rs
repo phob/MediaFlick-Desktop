@@ -18,9 +18,9 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::{ItemQuery, ItemSort, sync};
 use crate::preferences::{AppSettings, StreamingQuality};
-use crate::seerr::DiscoverKind;
 use crate::seerr::api::SeerrError;
 use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
+use crate::seerr::{DiscoverKind, DiscoverOptions};
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -206,6 +206,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
         ["seerr", "discover", kind] if request.is("GET") => {
             seerr_discover(services, &percent_decode(kind), request)
+        }
+        ["seerr", "genres", media_type] if request.is("GET") => {
+            seerr_genres(services, &percent_decode(media_type))
         }
         ["seerr", "media", media_type, tmdb_id] if request.is("GET") => seerr_media(
             services,
@@ -472,10 +475,30 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
     let Some(kind) = DiscoverKind::from_id(kind) else {
         return ApiResponse::error(404, "unknown discover row");
     };
+    let options = match DiscoverOptions::from_values(
+        request.param("genre").as_deref(),
+        request.param("sort").as_deref(),
+        request.param("minRating").as_deref(),
+        request.param("mediaType").as_deref(),
+        request.param("timeWindow").as_deref(),
+    ) {
+        Ok(options) => options,
+        Err(error) => return ApiResponse::error(400, &error),
+    };
     match services
         .requests_provider()
-        .discover(kind, page_param(request))
+        .discover(kind, page_param(request), &options)
     {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_provider_error(&error),
+    }
+}
+
+fn seerr_genres(services: &Arc<Services>, media_type: &str) -> ApiResponse {
+    if !matches!(media_type, "movie" | "tv") {
+        return ApiResponse::error(404, "unknown genre kind");
+    }
+    match services.requests_provider().genres(media_type) {
         Ok(value) => ApiResponse::ok(value),
         Err(error) => ApiResponse::from_provider_error(&error),
     }

@@ -36,6 +36,7 @@ public sealed class InfoController : ControllerBase
         if (IsConfigured(configuration.Seerr))
         {
             capabilities.Add("seerr");
+            capabilities.Add("seerr-discovery-v2");
         }
 
         var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
@@ -115,8 +116,26 @@ public sealed class SeerrController : ControllerBase
     public Task<IActionResult> Discover(
         string kind,
         [FromQuery] int page = 1,
+        [FromQuery] int? genre = null,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] int? voteAverageGte = null,
+        [FromQuery] string? mediaType = null,
+        [FromQuery] string? timeWindow = null,
         CancellationToken cancellationToken = default)
-        => RunAsync(userId => _gateway.DiscoverAsync(userId, kind, page, cancellationToken));
+        => RunAsync(userId => _gateway.DiscoverAsync(
+            userId,
+            kind,
+            page,
+            genre,
+            sortBy,
+            voteAverageGte,
+            mediaType,
+            timeWindow,
+            cancellationToken));
+
+    [HttpGet("genres/{mediaType}")]
+    public Task<IActionResult> Genres(string mediaType, CancellationToken cancellationToken)
+        => RunAsync(userId => _gateway.GenresAsync(userId, mediaType, cancellationToken));
 
     [HttpGet("media/{mediaType}/{tmdbId:int}")]
     public Task<IActionResult> Media(

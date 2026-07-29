@@ -119,25 +119,141 @@ public sealed class SeerrGateway
         Guid jellyfinUserId,
         string kind,
         int page,
+        int? genre,
+        string? sortBy,
+        int? voteAverageGte,
+        string? mediaType,
+        string? timeWindow,
         CancellationToken cancellationToken)
+    {
+        var path = BuildDiscoverPath(
+            kind,
+            page,
+            genre,
+            sortBy,
+            voteAverageGte,
+            mediaType,
+            timeWindow);
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        var response = await SendMappedAsync(
+            HttpMethod.Get,
+            path,
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false);
+        return ShapeSearchPage(response);
+    }
+
+    internal static string BuildDiscoverPath(
+        string kind,
+        int page,
+        int? genre,
+        string? sortBy,
+        int? voteAverageGte,
+        string? mediaType,
+        string? timeWindow)
     {
         var endpoint = kind.ToLowerInvariant() switch
         {
             "trending" => "trending",
             "movies" => "movies",
             "tv" => "tv",
+            "upcoming-movies" => "movies/upcoming",
+            "upcoming-tv" => "tv/upcoming",
             _ => throw new GatewayException(StatusCodes.Status404NotFound, "unknown discover kind")
         };
+        if (genre is <= 0)
+        {
+            throw new GatewayException(StatusCodes.Status400BadRequest, "genre must be positive");
+        }
+        if (voteAverageGte is < 0 or > 10)
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "minimum rating must be between 0 and 10");
+        }
+        var safeSortBy = sortBy?.ToLowerInvariant() switch
+        {
+            null or "" => null,
+            "popularity.desc" => "popularity.desc",
+            "vote_average.desc" => "vote_average.desc",
+            "primary_release_date.desc" when endpoint == "movies" => "primary_release_date.desc",
+            "first_air_date.desc" when endpoint == "tv" => "first_air_date.desc",
+            _ => throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "unknown discovery sort")
+        };
+        var safeMediaType = mediaType?.ToLowerInvariant() switch
+        {
+            null or "" => null,
+            "all" => "all",
+            "movie" => "movie",
+            "tv" => "tv",
+            _ => throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "unknown trending media type")
+        };
+        var safeTimeWindow = timeWindow?.ToLowerInvariant() switch
+        {
+            null or "" => null,
+            "day" => "day",
+            "week" => "week",
+            _ => throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "unknown trending time window")
+        };
+        var query = new List<string>
+        {
+            string.Create(CultureInfo.InvariantCulture, $"page={Math.Max(1, page)}")
+        };
+        if (endpoint is "movies" or "tv")
+        {
+            if (genre is { } genreId)
+            {
+                query.Add(string.Create(CultureInfo.InvariantCulture, $"genre={genreId}"));
+            }
+            if (safeSortBy is not null)
+            {
+                query.Add($"sortBy={safeSortBy}");
+                if (safeSortBy == "vote_average.desc")
+                {
+                    query.Add("voteCountGte=50");
+                }
+            }
+            if (voteAverageGte is { } score)
+            {
+                query.Add(string.Create(CultureInfo.InvariantCulture, $"voteAverageGte={score}"));
+            }
+        }
+        else if (endpoint == "trending")
+        {
+            if (safeMediaType is not null)
+            {
+                query.Add($"mediaType={safeMediaType}");
+            }
+            if (safeTimeWindow is not null)
+            {
+                query.Add($"timeWindow={safeTimeWindow}");
+            }
+        }
+
+        return $"api/v1/discover/{endpoint}?{string.Join('&', query)}";
+    }
+
+    public async Task<JsonNode> GenresAsync(
+        Guid jellyfinUserId,
+        string mediaType,
+        CancellationToken cancellationToken)
+    {
+        var type = ValidateMediaType(mediaType);
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
         var response = await SendMappedAsync(
             HttpMethod.Get,
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"api/v1/discover/{endpoint}?page={Math.Max(1, page)}"),
+            $"api/v1/discover/genreslider/{type}",
             null,
             user,
             cancellationToken).ConfigureAwait(false);
-        return ShapeSearchPage(response);
+        return ShapeGenres(response);
     }
 
     public async Task<JsonNode> MediaAsync(
@@ -355,6 +471,25 @@ public sealed class SeerrGateway
             ["results"] = results
         };
     }
+
+    internal static JsonNode ShapeGenres(JsonNode? node)
+        => new JsonArray(
+            (node as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(static genre =>
+                    (IntValue(genre, "id") ?? 0) > 0
+                    && !string.IsNullOrWhiteSpace(StringValue(genre, "name")))
+                .Select(genre => (JsonNode)new JsonObject
+                {
+                    ["id"] = IntValue(genre, "id"),
+                    ["name"] = StringValue(genre, "name"),
+                    ["backdrops"] = new JsonArray(
+                        (genre["backdrops"] as JsonArray ?? new JsonArray())
+                            .Select(Clone)
+                            .Where(static backdrop => backdrop is not null)
+                            .ToArray())
+                })
+                .ToArray());
 
     private static JsonNode ShapeSearchResult(JsonObject result)
     {
