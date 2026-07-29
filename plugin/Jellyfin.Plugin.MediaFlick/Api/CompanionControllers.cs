@@ -37,6 +37,7 @@ public sealed class InfoController : ControllerBase
         {
             capabilities.Add("seerr");
             capabilities.Add("seerr-discovery-v2");
+            capabilities.Add("seerr-request-profiles");
         }
 
         var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
@@ -146,6 +147,17 @@ public sealed class SeerrController : ControllerBase
             userId,
             mediaType,
             tmdbId,
+            cancellationToken));
+
+    [HttpGet("request-options/{mediaType}")]
+    public Task<IActionResult> RequestOptions(
+        string mediaType,
+        [FromQuery] bool is4k = false,
+        CancellationToken cancellationToken = default)
+        => RunAsync(userId => _gateway.RequestOptionsAsync(
+            userId,
+            mediaType,
+            is4k,
             cancellationToken));
 
     [HttpPost("request")]

@@ -276,12 +276,69 @@ export interface SeerrSeason {
   episodeCount: number
   airDate: string | null
   status: SeerrStatus
+  status4k: SeerrStatus
+}
+
+export interface SeerrCastMember {
+  id: number
+  name: string
+  character: string | null
+  profilePath: string | null
+}
+
+export interface SeerrReleaseDate {
+  region: string
+  type: "premiere" | "limited-cinema" | "cinema" | "digital" | "physical" | "tv"
+  date: string
+  certification: string | null
+}
+
+export interface SeerrContentRating {
+  region: string
+  rating: string
+}
+
+export interface SeerrTrailer {
+  name: string
+  key: string
 }
 
 export interface SeerrMediaDetail extends SeerrResult {
   runtimeMinutes: number | null
   genres: string[]
   seasons: SeerrSeason[]
+  tagline: string | null
+  originalTitle: string | null
+  voteCount: number | null
+  releaseDate: string | null
+  firstAirDate: string | null
+  lastAirDate: string | null
+  productionStatus: string | null
+  inProduction: boolean
+  seriesType: string | null
+  numberOfSeasons: number | null
+  numberOfEpisodes: number | null
+  originalLanguage: string | null
+  homepage: string | null
+  budget: number | null
+  revenue: number | null
+  studios: string[]
+  networks: string[]
+  creators: string[]
+  directors: string[]
+  writers: string[]
+  productionCountries: { code: string; name: string }[]
+  spokenLanguages: { code: string; name: string }[]
+  cast: SeerrCastMember[]
+  trailer: SeerrTrailer | null
+  releaseDates: SeerrReleaseDate[]
+  contentRatings: SeerrContentRating[]
+  nextEpisode: {
+    name: string
+    airDate: string | null
+    seasonNumber: number | null
+    episodeNumber: number | null
+  } | null
 }
 
 export interface SeerrPage<T> {
@@ -315,6 +372,25 @@ export interface SeerrCapabilities {
   tv: SeerrCapability
   movie4k: SeerrCapability
   tv4k: SeerrCapability
+  /** Seerr's REQUEST_ADVANCED bit: may choose a Radarr/Sonarr profile. */
+  advancedRequest: boolean
+}
+
+export interface SeerrQualityProfile {
+  id: number
+  name: string
+  isDefault: boolean
+}
+
+export interface SeerrRequestDestination {
+  id: number
+  name: string
+  isDefault: boolean
+  profiles: SeerrQualityProfile[]
+}
+
+export interface SeerrRequestOptions {
+  destinations: SeerrRequestDestination[]
 }
 
 export interface SeerrQuotaStatus {
@@ -681,6 +757,10 @@ export const api = {
       request<SeerrGenre[]>(`/api/seerr/genres/${mediaType}`, { signal }),
     media: (mediaType: SeerrMediaType, tmdbId: number) =>
       request<SeerrMediaDetail>(`/api/seerr/media/${mediaType}/${tmdbId}`),
+    requestOptions: (mediaType: SeerrMediaType, is4k = false) =>
+      request<SeerrRequestOptions>(
+        `/api/seerr/request-options/${mediaType}${queryString({ is4k })}`,
+      ),
 
     requests: (filter = "all", take = 40, signal?: AbortSignal) =>
       request<SeerrPage<SeerrRequest>>(`/api/seerr/requests${queryString({ filter, take })}`, {
@@ -692,6 +772,8 @@ export const api = {
       tmdbId: number
       seasons?: number[]
       is4k?: boolean
+      serverId?: number
+      profileId?: number
     }) => request<SeerrRequest>("/api/seerr/request", { method: "POST", body }),
     cancelRequest: (id: number) =>
       request<{ cancelled: boolean }>(`/api/seerr/request/${id}`, { method: "DELETE" }),

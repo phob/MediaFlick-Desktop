@@ -52,7 +52,9 @@ public sealed record SeerrRequestBody(
     string MediaType,
     int TmdbId,
     IReadOnlyList<int>? Seasons,
-    bool Is4k);
+    bool Is4k,
+    int? ServerId,
+    int? ProfileId);
 
 public sealed record ServiceConfigurationUpdate(
     bool Enabled,

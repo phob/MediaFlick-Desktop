@@ -20,7 +20,7 @@ use crate::library::{ItemQuery, ItemSort, sync};
 use crate::preferences::{AppSettings, StreamingQuality};
 use crate::seerr::api::SeerrError;
 use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
-use crate::seerr::{DiscoverKind, DiscoverOptions};
+use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -215,6 +215,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             &percent_decode(media_type),
             &percent_decode(tmdb_id),
         ),
+        ["seerr", "request-options", media_type] if request.is("GET") => {
+            seerr_request_options(services, &percent_decode(media_type), request)
+        }
         ["seerr", "request"] if request.is("POST") => seerr_request(services, request),
         ["seerr", "requests"] if request.is("GET") => seerr_requests(services, request),
         ["seerr", "request", id] if request.is("DELETE") => {
@@ -514,6 +517,23 @@ fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Api
     }
 }
 
+fn seerr_request_options(
+    services: &Arc<Services>,
+    media_type: &str,
+    request: &ApiRequest,
+) -> ApiResponse {
+    let is_4k = request
+        .param("is4k")
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    match services
+        .requests_provider()
+        .request_options(media_type, is_4k)
+    {
+        Ok(value) => ApiResponse::ok(value),
+        Err(error) => ApiResponse::from_provider_error(&error),
+    }
+}
+
 fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let body = request.json();
     // An explicit list means "these seasons"; its absence means "the whole
@@ -524,11 +544,29 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
             .filter_map(serde_json::Value::as_i64)
             .collect::<Vec<_>>()
     });
+    let server_id = body["serverId"].as_i64();
+    let profile_id = body["profileId"].as_i64();
+    let profile = match (server_id, profile_id) {
+        (None, None) => None,
+        (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
+            Some(RequestProfileSelection {
+                server_id,
+                profile_id,
+            })
+        }
+        _ => {
+            return ApiResponse::error(
+                400,
+                "the download destination and quality profile must be selected together",
+            );
+        }
+    };
     let result = services.requests_provider().create(
         body["mediaType"].as_str().unwrap_or_default(),
         body["tmdbId"].as_i64().unwrap_or_default(),
         seasons,
         body["is4k"].as_bool().unwrap_or(false),
+        profile,
     );
     match result {
         Ok(value) => ApiResponse::ok(value),

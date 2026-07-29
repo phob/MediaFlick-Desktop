@@ -24,9 +24,9 @@ use crate::preferences::normalize_server_url;
 use api::client::{SeerrClient, SessionCookies};
 use api::error::SeerrError;
 use api::model::{
-    self as model, Capabilities, MEDIA_SERVER_JELLYFIN, MediaDetail, MediaInfo, MediaRequest,
-    PublicSettings, QuickConnectHandshake, RequestPage, SearchPage, SearchResult, SeerrUser,
-    StatusInfo, UserQuota,
+    self as model, Capabilities, DownloadService, DownloadServiceDetail, MEDIA_SERVER_JELLYFIN,
+    MediaDetail, MediaInfo, MediaRequest, PublicSettings, QuickConnectHandshake, RequestPage,
+    SearchPage, SearchResult, SeerrUser, StatusInfo, UserQuota,
 };
 
 /// Seerr's own login, present in every release.
@@ -34,6 +34,14 @@ const LOGIN_PATH: &str = "auth/jellyfin";
 /// The Quick Connect login pair, present only on builds newer than v3.3.0.
 const QUICK_CONNECT_INITIATE: &str = "auth/jellyfin/quickconnect/initiate";
 const QUICK_CONNECT_AUTHENTICATE: &str = "auth/jellyfin/quickconnect/authenticate";
+
+/// An advanced Seerr request pins the title to one linked Radarr/Sonarr
+/// destination and one quality profile owned by that destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestProfileSelection {
+    pub server_id: i64,
+    pub profile_id: i64,
+}
 
 /// The discovery rows the UI can ask for. An enum rather than a string so a
 /// path segment from the page can never reach the address unchecked.
@@ -726,22 +734,171 @@ impl SeerrSession {
             .unwrap_or_default()
             .remove(&tmdb_id.to_string());
         let info = detail.media_info.clone().unwrap_or_default();
+        let title = detail.display_title().to_string();
+        let year = detail.year();
+        let runtime = detail.runtime_minutes();
+        let original_title = detail
+            .original_title
+            .clone()
+            .or_else(|| detail.original_name.clone());
+        let release_date = detail
+            .release_date
+            .clone()
+            .or_else(|| detail.first_air_date.clone());
+        let studios = names_of(&detail.production_companies);
+        let networks = names_of(&detail.networks);
+        let creators = unique_names(
+            detail
+                .created_by
+                .iter()
+                .map(|person| person.name.as_str())
+                .chain(crew_names(&detail, |credit| {
+                    credit.job.as_deref() == Some("Creator")
+                })),
+        );
+        let directors = unique_names(crew_names(&detail, |credit| {
+            credit.job.as_deref() == Some("Director")
+        }));
+        let writers = unique_names(crew_names(&detail, |credit| {
+            credit.department.as_deref() == Some("Writing")
+                || matches!(
+                    credit.job.as_deref(),
+                    Some("Writer" | "Screenplay" | "Story" | "Teleplay")
+                )
+        }));
+        let production_countries = detail
+            .production_countries
+            .iter()
+            .map(|country| {
+                json!({
+                    "code": country.code,
+                    "name": country.name,
+                })
+            })
+            .collect::<Vec<_>>();
+        let spoken_languages = detail
+            .spoken_languages
+            .iter()
+            .map(|language| {
+                json!({
+                    "code": language.code,
+                    "name": language.english_name.as_deref().unwrap_or(&language.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        let cast = detail
+            .credits
+            .cast
+            .iter()
+            .take(20)
+            .map(|person| {
+                json!({
+                    "id": person.id,
+                    "name": person.name,
+                    "character": person.character,
+                    "profilePath": person.profile_path,
+                })
+            })
+            .collect::<Vec<_>>();
+        let genres = names_of(&detail.genres);
+        let seasons = season_list(&detail, &info);
+        let trailer = trailer_of(&detail);
+        let release_dates = release_dates_of(&detail);
+        let content_ratings = content_ratings_of(&detail);
+        let next_episode = detail.next_episode_to_air.as_ref().map(|episode| {
+            json!({
+                "name": episode.name,
+                "airDate": episode.air_date,
+                "seasonNumber": episode.season_number,
+                "episodeNumber": episode.episode_number,
+            })
+        });
         Ok(json!({
             "mediaType": media_type,
             "tmdbId": detail.id,
-            "title": detail.display_title(),
-            "year": detail.year(),
+            "title": title,
+            "year": year,
             "overview": detail.overview,
+            "tagline": detail.tagline,
+            "originalTitle": original_title,
             "posterPath": detail.poster_path,
             "backdropPath": detail.backdrop_path,
             "voteAverage": detail.vote_average,
-            "runtimeMinutes": detail.runtime_minutes(),
-            "genres": detail.genres.iter().map(|genre| genre.name.clone()).collect::<Vec<_>>(),
+            "voteCount": detail.vote_count,
+            "runtimeMinutes": runtime,
+            "genres": genres,
             "status": model::status_name(info.status),
             "status4k": model::status_name(info.status_4k),
             "libraryItemId": library_item_id,
-            "seasons": season_list(&detail, &info),
+            "seasons": seasons,
+            "releaseDate": release_date,
+            "firstAirDate": detail.first_air_date,
+            "lastAirDate": detail.last_air_date,
+            "productionStatus": detail.status,
+            "inProduction": detail.in_production,
+            "seriesType": detail.series_type,
+            "numberOfSeasons": detail.number_of_seasons,
+            "numberOfEpisodes": detail.number_of_episodes,
+            "originalLanguage": detail.original_language,
+            "homepage": detail.homepage,
+            "budget": positive(detail.budget),
+            "revenue": positive(detail.revenue),
+            "studios": studios,
+            "networks": networks,
+            "creators": creators,
+            "directors": directors,
+            "writers": writers,
+            "productionCountries": production_countries,
+            "spokenLanguages": spoken_languages,
+            "cast": cast,
+            "trailer": trailer,
+            "releaseDates": release_dates,
+            "contentRatings": content_ratings,
+            "nextEpisode": next_episode,
         }))
+    }
+
+    /// The quality profiles on the linked Radarr or Sonarr destinations that
+    /// can receive this request. Seerr exposes these only as an advanced
+    /// request choice, so the user's permission is checked before returning
+    /// any destination metadata.
+    pub fn request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, SeerrError> {
+        let service = request_service(media_type)?;
+        let user: SeerrUser = self.call(|client| client.get_json("auth/me", &[]))?;
+        let capabilities = Capabilities::derive(user.permissions, true, true);
+        if !capabilities.advanced_request {
+            return Err(SeerrError::PermissionDenied);
+        }
+
+        let path = format!("service/{service}");
+        let mut servers: Vec<DownloadService> = self.call(|client| client.get_json(&path, &[]))?;
+        servers.retain(|server| server.id >= 0 && server.is_4k == is_4k);
+        servers.sort_by_key(|server| (!server.is_default, server.name.to_lowercase()));
+
+        let mut destinations = Vec::with_capacity(servers.len());
+        for server in servers {
+            let path = format!("service/{service}/{}", server.id);
+            let mut detail: DownloadServiceDetail =
+                self.call(|client| client.get_json(&path, &[]))?;
+            detail
+                .profiles
+                .retain(|profile| profile.id > 0 && !profile.name.trim().is_empty());
+            detail
+                .profiles
+                .sort_by_key(|profile| profile.name.to_lowercase());
+            destinations.push(json!({
+                "id": server.id,
+                "name": server.name,
+                "isDefault": server.is_default,
+                "profiles": detail.profiles.iter().map(|profile| json!({
+                    "id": profile.id,
+                    "name": profile.name,
+                    "isDefault": profile.id == server.active_profile_id,
+                })).collect::<Vec<_>>(),
+            }));
+        }
+
+        Ok(json!({ "destinations": destinations }))
     }
 
     // ----------------------------------------------------------------- writes
@@ -758,6 +915,7 @@ impl SeerrSession {
         tmdb_id: i64,
         seasons: Option<Vec<i64>>,
         is_4k: bool,
+        profile: Option<RequestProfileSelection>,
     ) -> Result<Value, SeerrError> {
         if model::library_kind(media_type).is_none() {
             return Err(SeerrError::Unusable(format!(
@@ -772,6 +930,20 @@ impl SeerrSession {
             "mediaId": tmdb_id,
             "is4k": is_4k,
         });
+        if let Some(profile) = profile {
+            if profile.server_id < 0 || profile.profile_id <= 0 {
+                return Err(SeerrError::Unusable(
+                    "the download destination must be non-negative and the quality profile must be positive"
+                        .to_string(),
+                ));
+            }
+            let user: SeerrUser = self.call(|client| client.get_json("auth/me", &[]))?;
+            if !Capabilities::derive(user.permissions, true, true).advanced_request {
+                return Err(SeerrError::PermissionDenied);
+            }
+            body["serverId"] = json!(profile.server_id);
+            body["profileId"] = json!(profile.profile_id);
+        }
         if media_type == model::TV {
             body["seasons"] = match seasons {
                 Some(seasons) if !seasons.is_empty() => json!(seasons),
@@ -1288,6 +1460,121 @@ fn empty_page() -> Value {
     json!({ "page": 1, "totalPages": 0, "totalResults": 0, "results": [] })
 }
 
+fn request_service(media_type: &str) -> Result<&'static str, SeerrError> {
+    match media_type {
+        model::MOVIE => Ok("radarr"),
+        model::TV => Ok("sonarr"),
+        _ => Err(SeerrError::Unusable(format!(
+            "{media_type} is not a kind of title that can be requested"
+        ))),
+    }
+}
+
+fn positive(value: Option<i64>) -> Option<i64> {
+    value.filter(|value| *value > 0)
+}
+
+fn names_of(values: &[model::NamedId]) -> Vec<String> {
+    unique_names(values.iter().map(|value| value.name.as_str()))
+}
+
+fn crew_names<'a>(
+    detail: &'a MediaDetail,
+    predicate: impl Fn(&model::Credit) -> bool + 'a,
+) -> impl Iterator<Item = &'a str> + 'a {
+    detail
+        .credits
+        .crew
+        .iter()
+        .filter(move |credit| predicate(credit))
+        .map(|credit| credit.name.as_str())
+}
+
+fn unique_names<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut names = Vec::new();
+    for value in values.map(str::trim).filter(|value| !value.is_empty()) {
+        if !names
+            .iter()
+            .any(|known: &String| known.eq_ignore_ascii_case(value))
+        {
+            names.push(value.to_string());
+        }
+    }
+    names
+}
+
+fn trailer_of(detail: &MediaDetail) -> Option<Value> {
+    detail
+        .related_videos
+        .iter()
+        .filter(|video| {
+            video.site == "YouTube"
+                && video.video_type == "Trailer"
+                && video.key.len() == 11
+                && video
+                    .key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
+        .max_by_key(|video| video.size)
+        .map(|video| {
+            json!({
+                "name": if video.name.trim().is_empty() {
+                    "Trailer"
+                } else {
+                    video.name.as_str()
+                },
+                "key": video.key,
+            })
+        })
+}
+
+fn release_dates_of(detail: &MediaDetail) -> Vec<Value> {
+    detail
+        .releases
+        .results
+        .iter()
+        .flat_map(|country| {
+            country.release_dates.iter().filter_map(|release| {
+                let kind = match release.release_type {
+                    1 => "premiere",
+                    2 => "limited-cinema",
+                    3 => "cinema",
+                    4 => "digital",
+                    5 => "physical",
+                    6 => "tv",
+                    _ => return None,
+                };
+                (!country.region.trim().is_empty() && !release.release_date.trim().is_empty()).then(
+                    || {
+                        json!({
+                            "region": country.region,
+                            "type": kind,
+                            "date": release.release_date,
+                            "certification": release.certification,
+                        })
+                    },
+                )
+            })
+        })
+        .collect()
+}
+
+fn content_ratings_of(detail: &MediaDetail) -> Vec<Value> {
+    detail
+        .content_ratings
+        .results
+        .iter()
+        .filter(|rating| !rating.region.trim().is_empty() && !rating.rating.trim().is_empty())
+        .map(|rating| {
+            json!({
+                "region": rating.region,
+                "rating": rating.rating,
+            })
+        })
+        .collect()
+}
+
 /// The seasons a series can be requested by, each carrying what Seerr already
 /// has of it.
 ///
@@ -1299,11 +1586,15 @@ fn season_list(detail: &MediaDetail, info: &MediaInfo) -> Vec<Value> {
         .iter()
         .filter(|season| season.season_number >= 1)
         .map(|season| {
-            let status = info
+            let known = info
                 .seasons
                 .iter()
-                .find(|entry| entry.season_number == season.season_number)
+                .find(|entry| entry.season_number == season.season_number);
+            let status = known
                 .map(|entry| entry.status)
+                .unwrap_or(model::media_status::UNKNOWN);
+            let status_4k = known
+                .map(|entry| entry.status_4k)
                 .unwrap_or(model::media_status::UNKNOWN);
             json!({
                 "seasonNumber": season.season_number,
@@ -1311,6 +1602,7 @@ fn season_list(detail: &MediaDetail, info: &MediaInfo) -> Vec<Value> {
                 "episodeCount": season.episode_count,
                 "airDate": season.air_date,
                 "status": model::status_name(status),
+                "status4k": model::status_name(status_4k),
             })
         })
         .collect()
@@ -1364,8 +1656,8 @@ fn same_media_server_user(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiscoverKind, DiscoverOptions, SeerrClient, SeerrError, SeerrSession, SeerrState,
-        SessionCookies, Value, json, same_media_server_user,
+        DiscoverKind, DiscoverOptions, RequestProfileSelection, SeerrClient, SeerrError,
+        SeerrSession, SeerrState, SessionCookies, Value, json, same_media_server_user,
     };
     use crate::library::{Library, SeerrConfig};
     use std::io::{BufRead, BufReader, Read, Write};
@@ -2487,6 +2779,50 @@ mod tests {
         assert!(requests.lock().expect("lock")[0].starts_with("GET /api/v1/tv/95396 HTTP/1.1"));
     }
 
+    #[test]
+    fn a_movie_detail_keeps_rich_metadata_and_safe_trailer_release_data() {
+        let (base_url, _) = fake_server(vec![response(
+            "200 OK",
+            r#"{"id":603,"title":"The Matrix","originalTitle":"The Matrix",
+                "releaseDate":"1999-03-30","status":"Released","runtime":136,
+                "overview":"A hacker discovers the truth.","tagline":"Welcome to the Real World.",
+                "voteAverage":8.2,"voteCount":26000,"originalLanguage":"en",
+                "budget":63000000,"revenue":467200000,
+                "genres":[{"id":28,"name":"Action"}],
+                "productionCompanies":[{"id":79,"name":"Village Roadshow Pictures"}],
+                "productionCountries":[{"iso_3166_1":"US","name":"United States"}],
+                "spokenLanguages":[{"iso_639_1":"en","name":"English","englishName":"English"}],
+                "credits":{"cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo",
+                                    "profilePath":"/keanu.jpg"}],
+                           "crew":[{"id":1,"name":"Lana Wachowski","job":"Director",
+                                    "department":"Directing"},
+                                   {"id":2,"name":"Lilly Wachowski","job":"Screenplay",
+                                    "department":"Writing"}]},
+                "relatedVideos":[{"site":"YouTube","type":"Trailer","key":"abcdefghijk",
+                                  "name":"Official Trailer","size":1080},
+                                 {"site":"YouTube","type":"Trailer","key":"not/a/key",
+                                  "name":"Unsafe","size":2160}],
+                "releases":{"results":[{"iso_3166_1":"US","release_dates":[
+                    {"type":3,"release_date":"1999-03-31T00:00:00.000Z","certification":"R"}]}]},
+                "mediaInfo":{"tmdbId":603,"status":5,"status4k":1}}"#,
+            &[],
+        )]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let detail = session.media_detail("movie", 603).expect("detail");
+        assert_eq!(detail["overview"], "A hacker discovers the truth.");
+        assert_eq!(detail["productionStatus"], "Released");
+        assert_eq!(detail["voteAverage"], 8.2);
+        assert_eq!(detail["voteCount"], 26_000);
+        assert_eq!(detail["directors"], json!(["Lana Wachowski"]));
+        assert_eq!(detail["writers"], json!(["Lilly Wachowski"]));
+        assert_eq!(detail["cast"][0]["character"], "Neo");
+        assert_eq!(detail["trailer"]["key"], "abcdefghijk");
+        assert_eq!(detail["releaseDates"][0]["type"], "cinema");
+        assert_eq!(detail["releaseDates"][0]["certification"], "R");
+    }
+
     /// A `person` id in the media route would address an unrelated title, so it
     /// is refused before a request is sent.
     #[test]
@@ -2519,7 +2855,7 @@ mod tests {
         seed_library(&library);
 
         let created = session
-            .create_request("movie", 603, None, false)
+            .create_request("movie", 603, None, false, None)
             .expect("request");
         assert_eq!(created["id"], 12);
         assert_eq!(created["status"], "pending");
@@ -2548,10 +2884,90 @@ mod tests {
         let (_library, session) = session_linked_to(&base_url);
 
         let created = session
-            .create_request("tv", 95396, Some(vec![2]), false)
+            .create_request("tv", 95396, Some(vec![2]), false, None)
             .expect("request");
         assert_eq!(created["seasons"], json!([2]));
         assert!(compact(&requests.lock().expect("lock")[0]).contains(r#""seasons":[2]"#));
+    }
+
+    #[test]
+    fn advanced_request_options_are_scoped_to_the_matching_download_service() {
+        let (base_url, requests) = fake_server(vec![
+            response(
+                "200 OK",
+                r#"{"id":7,"displayName":"pho","jellyfinUserId":"uid","permissions":8224}"#,
+                &[],
+            ),
+            response(
+                "200 OK",
+                r#"[{"id":0,"name":"Movies","is4k":false,"isDefault":true,"activeProfileId":2},
+                    {"id":1,"name":"Movies 4K","is4k":true,"isDefault":false,"activeProfileId":3}]"#,
+                &[],
+            ),
+            response(
+                "200 OK",
+                r#"{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"#,
+                &[],
+            ),
+        ]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        let options = session.request_options("movie", false).expect("options");
+        let destination = &options["destinations"][0];
+        assert_eq!(destination["id"], 0);
+        assert_eq!(destination["name"], "Movies");
+        assert_eq!(destination["profiles"][0]["name"], "Any");
+        assert_eq!(destination["profiles"][1]["isDefault"], true);
+
+        let requests = requests.lock().expect("lock");
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /api/v1/auth/me HTTP/1.1"));
+        assert!(requests[1].starts_with("GET /api/v1/service/radarr HTTP/1.1"));
+        assert!(requests[2].starts_with("GET /api/v1/service/radarr/0 HTTP/1.1"));
+    }
+
+    #[test]
+    fn a_selected_profile_is_permission_checked_and_sent_with_one_write() {
+        let (base_url, requests) = fake_server(vec![
+            response(
+                "200 OK",
+                r#"{"id":7,"displayName":"pho","jellyfinUserId":"uid","permissions":8224}"#,
+                &[],
+            ),
+            response(
+                "201 Created",
+                r#"{"id":15,"status":1,"type":"movie",
+                    "media":{"tmdbId":603,"mediaType":"movie","status":2}}"#,
+                &[],
+            ),
+        ]);
+        let (_library, session) = session_linked_to(&base_url);
+
+        session
+            .create_request(
+                "movie",
+                603,
+                None,
+                false,
+                Some(RequestProfileSelection {
+                    server_id: 0,
+                    profile_id: 2,
+                }),
+            )
+            .expect("request");
+
+        let requests = requests.lock().expect("lock");
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST "))
+                .count(),
+            1,
+            "a write must never be retried"
+        );
+        let body = compact(&requests[1]);
+        assert!(body.contains(r#""serverId":0"#));
+        assert!(body.contains(r#""profileId":2"#));
     }
 
     /// "Request this show" with no season named is Seerr's own `all`, which it
@@ -2566,7 +2982,7 @@ mod tests {
         let (_library, session) = session_linked_to(&base_url);
 
         session
-            .create_request("tv", 95396, None, false)
+            .create_request("tv", 95396, None, false, None)
             .expect("request");
         assert!(compact(&requests.lock().expect("lock")[0]).contains(r#""seasons":"all""#));
     }
