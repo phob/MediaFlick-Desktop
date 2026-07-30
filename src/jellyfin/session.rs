@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use serde_json::{Value, json};
 
 use crate::library::{Library, StoredCredentials};
-use crate::preferences::{AppSettings, FileSettingsStore, SettingsStore, normalize_server_url};
+use crate::preferences::{AppSettings, normalize_server_url};
 
 use super::api::auth::{self, Credentials};
 use super::api::{ApiError, JellyfinClient};
@@ -213,13 +213,14 @@ impl Session {
     /// Keeps `config.json` in step so the "Open Jellyfin dashboard" action and
     /// upgrades from older releases keep working.
     fn remember_server_url(&self, server_url: &str) {
-        let mut settings = AppSettings::load();
-        if settings.jellyfin_url.as_deref() == Some(server_url) {
+        let Some(services) = crate::app::services::services() else {
+            tracing::warn!(target: "jellyfin.session", "preferences service was unavailable while saving the server URL");
+            return;
+        };
+        if services.preferences.snapshot().jellyfin_url.as_deref() == Some(server_url) {
             return;
         }
-        settings.jellyfin_url = Some(server_url.to_string());
-        settings.sanitize();
-        if let Err(error) = FileSettingsStore.save(&settings) {
+        if let Err(error) = services.preferences.set_server_url(server_url.to_string()) {
             tracing::warn!(target: "jellyfin.session", "failed to save the server URL: {error}");
         }
     }

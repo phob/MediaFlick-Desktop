@@ -1,7 +1,7 @@
 //! Process-wide services the app-scheme API reaches from CEF's background
 //! threads, where the UI-thread browser state is not available.
 
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 
 use crate::app::paths;
 use crate::companion::{CompanionSession, RequestsProvider};
@@ -9,6 +9,7 @@ use crate::jellyfin::session::Session;
 use crate::library::Library;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
+use crate::preferences::{AppSettings, PreferencesService};
 use crate::seerr::SeerrSession;
 
 static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
@@ -23,7 +24,61 @@ pub struct Services {
     pub companion: Arc<CompanionSession>,
     pub seerr: Arc<SeerrSession>,
     pub sync: SyncHandle,
+    pub preferences: Arc<PreferencesService>,
+    pub shell: ShellBridge,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
+}
+
+/// Native work requested by the React application. The app-scheme API runs on
+/// CEF background threads, while file dialogs and player installation must run
+/// on CEF's UI thread; this narrow queue is the boundary between the two.
+#[derive(Debug, Clone)]
+pub enum ShellRequest {
+    FilePicker {
+        request_id: String,
+        target: ShellFilePickerTarget,
+    },
+    InstallMpv {
+        request_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellFilePickerTarget {
+    Mpv,
+    Mpchc,
+}
+
+pub struct ShellBridge {
+    sender: Mutex<Option<mpsc::Sender<ShellRequest>>>,
+}
+
+impl ShellBridge {
+    fn new() -> Self {
+        Self {
+            sender: Mutex::new(None),
+        }
+    }
+
+    pub fn subscribe(&self) -> mpsc::Receiver<ShellRequest> {
+        let (sender, receiver) = mpsc::channel();
+        if let Ok(mut slot) = self.sender.lock() {
+            *slot = Some(sender);
+        }
+        receiver
+    }
+
+    pub fn request(&self, request: ShellRequest) -> Result<(), &'static str> {
+        let sender = self
+            .sender
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .ok_or("the desktop shell is not ready")?;
+        sender
+            .send(request)
+            .map_err(|_| "the desktop shell is unavailable")
+    }
 }
 
 impl Services {
@@ -50,6 +105,12 @@ impl Services {
 /// Opens the library database and restores the session. Safe to call twice;
 /// only the first call does the work.
 pub fn init() -> Option<Arc<Services>> {
+    init_with_settings(AppSettings::load())
+}
+
+/// Same initialization path, with the already-normalized launch settings CEF
+/// will use. This keeps CLI overrides and API writes in one snapshot.
+pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>> {
     if let Some(services) = SERVICES.get() {
         return Some(services.clone());
     }
@@ -107,6 +168,8 @@ pub fn init() -> Option<Arc<Services>> {
         companion,
         seerr,
         sync,
+        preferences: Arc::new(PreferencesService::new(initial_settings)),
+        shell: ShellBridge::new(),
         playback: RwLock::new(None),
     });
     let _ = SERVICES.set(services.clone());

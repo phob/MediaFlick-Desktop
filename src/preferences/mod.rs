@@ -5,5 +5,8 @@ pub mod service;
 pub mod store;
 
 pub use model::*;
-pub use service::SettingsApplyPlan;
+pub use service::{
+    AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch,
+    PreferencesService, SettingsChange,
+};
 pub use store::{FileSettingsStore, SettingsStore};

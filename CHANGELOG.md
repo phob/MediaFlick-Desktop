@@ -5,11 +5,14 @@
 ### Breaking Changes
 
 - Replaced the embedded Jellyfin Web client with MediaFlick Desktop's own UI. The app no longer loads jellyfin-web at all: it now signs in against the Jellyfin server itself and serves its own login, home, library, and details views from `mediaflick-desktop://app/`. Existing users keep their configured server URL and must sign in once on the new login screen; browsing, searching, and starting playback all happen in the new UI. Server administration is not rebuilt and opens in the system browser through the new "Open Jellyfin dashboard" context-menu item.
-- Removed the jellyfin-web injection bridge (`bridge.js` and its stream-URL interception). Playback is now negotiated natively through `PlaybackInfo` and handed to mpv/MPC-HC directly, so third-party scripts or workflows that relied on the injected `window.__mediaFlickDesktop*` playback hooks in jellyfin-web no longer apply. The native dialogs (Client Settings, About, update toast, mpv setup) are unchanged.
-- Removed the welcome/setup screen. The server address is entered on the sign-in screen and the media player is configured in Client Settings.
+- Removed the jellyfin-web injection bridge (`bridge.js` and its stream-URL interception). Playback is now negotiated natively through `PlaybackInfo` and handed to mpv/MPC-HC directly, so third-party scripts or workflows that relied on the injected `window.__mediaFlickDesktop*` playback hooks in jellyfin-web no longer apply. The native About and update-toast dialogs are unchanged.
+- Removed the welcome/setup screen. The server address is entered on the sign-in screen and the media player is configured in Settings.
 
 ### Added
 
+- Added an in-app `/settings/*` dashboard with anonymous Client and Appearance pages, account-scoped Letterboxd and Seerr pages, a permanent sidebar entry, local drafts, and Save/Discard/Reset controls. Typed section PATCH endpoints now share a preference service with CEF, apply player/segment/scrollbar changes at runtime, and return normalized settings and platform capabilities.
+- Added Appearance preferences for system/dark/light mode, signal/cobalt/amber/violet accents, compact density, artwork/backdrop intensity, and reduced motion.
+- Added account-scoped Letterboxd public-profile connections in SQLite. Profiles accept usernames or canonical URLs only, are normalized to `letterboxd.com`, verified through bounded RSS requests, and support refresh, enable/disable, external open, and removal.
 - Added the optional MediaFlick Companion server plugin for Jellyfin 10.11.11. It exposes a versioned, authenticated `/MediaFlick` API; keeps Sonarr, Radarr, and Seerr API keys on the server; provides an admin dashboard page with redacted keys and connection tests; refreshes a stale-preserving Sonarr/Radarr calendar every 15 minutes; and mediates Seerr calls as the mapped Jellyfin user, with opt-in first-use import. The plugin has independent build, test, deploy, CI, and draft-release packaging flows.
 - Added a Releases route with agenda and month views, per-release-type filters, stale-source warnings, local-library Play/Open actions, and film request actions. It uses the Companion calendar when available and falls back to Jellyfin's metadata-only Upcoming feed when the plugin is absent.
 - Added native Jellyfin authentication: username/password sign-in and Quick Connect, a persistent per-installation device id shown in Jellyfin's Devices dashboard, session restore across restarts, and automatic return to the sign-in screen when the server rejects the stored token.
@@ -47,6 +50,9 @@
 
 ### Changed
 
+- Renamed the right-click “Client Settings” shortcut to “Settings”; it now opens the React Player settings page rather than a native modal. Native file selection and mpv installation are request-correlated shell events owned visibly by the settings UI.
+- Continue Watching now refreshes a stopped item from Jellyfin after its final playback report, so MediaFlick follows the server's configured resume thresholds instead of treating every non-zero position as resumable.
+- Replaced misleading "% match" labels on browsing cards with familiar ten-point star ratings, making clear that they are community or TMDB metadata rather than personal recommendations.
 - Removed the README's special AI-assistance disclosure; AI-supported development is treated as part of the normal project workflow rather than called out separately.
 - Discovery tabs now fill the screen and continue loading titles automatically as the user scrolls, while retaining the separate Trending, Movies, and Series navigation.
 - The home billboard now occupies half of the available content viewport instead of stepping through three fixed breakpoint heights, while retaining a minimum height on short windows so its controls remain usable. Its loading skeleton follows the same geometry, and the active player bar is accounted for automatically.
@@ -96,9 +102,13 @@
 - Clearing the server address on the sign-in screen now leaves the field blank so it can be retyped; it used to snap back to the saved URL on every keystroke.
 - Fixed the detail page's backdrop ending on a hard edge on any window narrower than about 1560px. The gradient that takes the artwork back to the page colour started at a fixed distance down the picture, but the backdrop is sized 16:9 against the window width — so unless the window was wide enough to make it that tall, the image was cut off partway through the fade. That stop is now a proportion of the backdrop, so the fade lands on its last line at every width.
 - Fixed every CI and release job failing at "Install pnpm". `pnpm/action-setup` needs a version and looks for it in a root `package.json`, which this repo does not have — the UI manifest lives in `ui/`. The manifest now pins `packageManager` and both workflows point the action at it, so the pnpm version is stated once and CI uses the same one as local builds.
+- Fixed Player settings saves sending the computed `playerConfigured` field, native file-picker cancellation clearing executable drafts, and stale or mismatched picker/installer completions changing the wrong request. Native completion errors now retain their request and target identity and are shown in the settings UI.
+- Fixed settings changes rolling back an unsaved live window resize, post-playback surfaces refetching before Jellyfin's cache refresh completed, and mark-watched hotkey changes waiting for an mpv restart. Live bounds now survive preference snapshots, refresh completion drives query invalidation, and a running mpv redefines its input section immediately when the binding changes or is disabled.
+- Fixed Appearance artwork/backdrop intensity values having no visual effect and the saved reduced-motion preference being ignored by billboard autoplay. Image layers now honor both intensity controls, motion is disabled by either the app or operating-system preference, and Appearance includes a contained live draft preview for theme, accent, density, artwork, backdrop, and motion.
 
 ### Removed
 
+- Removed the native Client Settings dialog and its injected script.
 - Removed the settings machinery that only existed to reconfigure the injected jellyfin-web bridge (`SettingsApplyPlan::update_bridge_profile`, `AppSettings::is_complete`, and the playback-context correlation registry).
 - Removed the Top 10 shelf. It could only be ranked by community score, which barely moves, so the row showed the same ten titles indefinitely and earned none of the space it took.
 - Removed the superseded hand-written ES-module UI (`src/shell/ui/app/`). It was kept as a porting reference after the React swap; the last views that depended on it — the windowed library grid, the filter controls, Quick Connect, and the streaming-quality picker — have all landed, and nothing built or shipped referenced it. The native dialogs under `src/shell/ui/` are unaffected.

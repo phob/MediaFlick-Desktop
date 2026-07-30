@@ -37,7 +37,7 @@ import {
 const FROM_SETTINGS = "__settings__"
 
 /**
- * A per-session override of the streaming quality saved in Client Settings.
+ * A per-session override of the streaming quality saved in Settings.
  * It applies from the next playback on, so it lives next to the Play button
  * rather than in a settings dialog.
  */

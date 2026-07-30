@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Play, Plus, ThumbsUp } from "lucide-react"
+import { Check, ChevronDown, Play, Plus, Star, ThumbsUp } from "lucide-react"
 import {
   useCallback,
   useEffect,
@@ -17,7 +17,7 @@ import {
   progressFraction,
   type ItemSummary,
 } from "@/lib/api"
-import { formatMatch, formatRemaining, formatRuntime } from "@/lib/format"
+import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
 import { PreviewContext, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -206,7 +206,7 @@ function PreviewPanel({
   )
   const progress = progressFraction(item)
   const remaining = formatRemaining(item.positionTicks, item.runtimeTicks)
-  const match = formatMatch(item.communityRating)
+  const communityRating = formatCommunityRating(item.communityRating)
   const logo = logoUrl(item) ?? (series.data ? logoUrl(series.data) : null)
 
   const seasons =
@@ -293,7 +293,15 @@ function PreviewPanel({
         </div>
 
         <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          {match && <span className="font-semibold text-primary">{match}</span>}
+          {communityRating && (
+            <span
+              className="inline-flex items-center gap-1 font-semibold text-primary"
+              title={`Community rating: ${communityRating}/10`}
+            >
+              <Star className="size-3.5 fill-current" aria-hidden />
+              {communityRating}
+            </span>
+          )}
           {item.officialRating && (
             <span className="data-label border border-foreground/25 px-1.5 py-0.5 text-foreground/75">
               {item.officialRating}
@@ -354,7 +362,7 @@ function PreviewArt({
           alt=""
           decoding="async"
           onError={() => setImageIndex((current) => current + 1)}
-          className="h-full w-full object-cover"
+          className="media-artwork-image h-full w-full object-cover"
         />
       )}
       <div className="absolute inset-0 bg-linear-to-t from-card via-card/25 to-transparent" />

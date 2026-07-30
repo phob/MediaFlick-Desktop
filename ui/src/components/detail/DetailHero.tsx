@@ -95,7 +95,7 @@ function Poster({ item }: { item: ItemDetail }) {
         alt=""
         decoding="async"
         onError={() => setFailed(true)}
-        className={cn("w-full object-cover", isStill ? "aspect-video" : "aspect-2/3")}
+        className={cn("media-artwork-image w-full object-cover", isStill ? "aspect-video" : "aspect-2/3")}
       />
       {progress > 0 && (
         <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">
@@ -164,7 +164,7 @@ export function DetailHero({
             alt=""
             decoding="async"
             onError={() => setBackdropFailed(true)}
-            className="h-full w-full object-cover"
+            className="media-backdrop-image h-full w-full object-cover"
           />
           {/* Two passes over the part of the picture that lies behind the page's
               own content. The first drops it back to a steady wash just past the

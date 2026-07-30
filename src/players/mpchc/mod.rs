@@ -23,6 +23,10 @@ impl PlayerBackend for MpcHcController {
         self.control(command);
     }
 
+    fn refresh_input_bindings(&self) {
+        // MPC-HC does not install MediaFlick's mpv input section.
+    }
+
     fn set_segment_skip_config(&self, config: SegmentSkipConfig) {
         self.set_segment_skip_config(config);
     }

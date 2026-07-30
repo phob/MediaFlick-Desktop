@@ -3,7 +3,7 @@
 //! The jellyfin-web injection bridge is gone: the own UI talks to Rust over
 //! `mediaflick-desktop://app/api/*`. What remains here is the small
 //! `mediaflick-desktop://<action>` protocol that the injected native dialogs
-//! (client settings, update toast, mpv setup) use to call back into the shell,
+//! (the About and update-toast dialogs) use to call back into the shell,
 //! plus the per-session token that authenticates those calls.
 
 use std::sync::OnceLock;
@@ -13,16 +13,10 @@ const BRIDGE_TOKEN_ENV: &str = "MEDIAFLICK_BRIDGE_TOKEN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeAction<'a> {
-    SelectMpv,
-    SelectMpcHc,
     About,
-    DownloadMpv,
-    MpvHelp,
-    ClientSettings,
     Exit,
     DownloadUpdate(&'a str),
     OpenUpdateRelease,
-    SaveClientSettings(&'a str),
 }
 
 pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction<'_>> {
@@ -37,16 +31,10 @@ pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction<'_>> {
     }
 
     Some(match action {
-        "select-mpv" => BridgeAction::SelectMpv,
-        "select-mpchc" => BridgeAction::SelectMpcHc,
         "app-about" => BridgeAction::About,
-        "mpv-download" => BridgeAction::DownloadMpv,
-        "mpv-help" => BridgeAction::MpvHelp,
-        "client-settings" => BridgeAction::ClientSettings,
         "app-exit" => BridgeAction::Exit,
         "update-download" => BridgeAction::DownloadUpdate(query),
         "update-release" => BridgeAction::OpenUpdateRelease,
-        "client-settings-save" => BridgeAction::SaveClientSettings(query),
         _ => return None,
     })
 }
@@ -82,14 +70,14 @@ mod tests {
     use super::{BridgeAction, bridge_token, parse_bridge_action};
 
     #[test]
-    fn parses_dialog_actions_exactly() {
-        assert_eq!(
-            parse_bridge_action("mediaflick-desktop://client-settings/"),
-            Some(BridgeAction::ClientSettings)
-        );
+    fn parses_remaining_native_actions_exactly() {
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://update-download?token=x&version=1#ignored"),
             Some(BridgeAction::DownloadUpdate("token=x&version=1"))
+        );
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://client-settings/"),
+            None
         );
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://app-exit-malicious"),

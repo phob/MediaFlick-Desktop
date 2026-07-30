@@ -20,7 +20,7 @@ function Thumbnail({ episode }: { episode: ItemSummary }) {
           alt=""
           decoding="async"
           onError={() => setFailed(true)}
-          className="h-full w-full object-cover"
+          className="media-artwork-image h-full w-full object-cover"
         />
       ) : (
         <div className="grid h-full place-items-center px-2 text-center text-xs text-muted-foreground">

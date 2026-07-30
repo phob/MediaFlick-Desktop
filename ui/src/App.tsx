@@ -1,5 +1,5 @@
 import { useIsFetching } from "@tanstack/react-query"
-import { Route, Routes } from "react-router-dom"
+import { Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
@@ -12,17 +12,24 @@ import Library from "@/routes/Library"
 import Requests from "@/routes/Requests"
 import Calendar from "@/routes/Calendar"
 import SignIn from "@/routes/SignIn"
+import Settings, { AppearanceSync } from "@/routes/Settings"
 
 export default function App() {
   const { data: status, isPending } = useStatus()
   const fetching = useIsFetching()
+  const location = useLocation()
   const waitingForLibrary = Boolean(status?.authenticated && !status.bootstrapped)
+  // Player and appearance configuration has always been available from the
+  // sign-in screen. Keep that promise while the rest of the app remains
+  // account-gated: a direct /settings link is a real anonymous route.
+  const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
+  const showShell = Boolean(status?.authenticated || showingSettings)
 
   return (
     <>
-      {isPending || waitingForLibrary ? (
+      {isPending || (waitingForLibrary && !showingSettings) ? (
         <div className="h-full bg-background" aria-hidden />
-      ) : !status?.authenticated ? (
+      ) : !showShell ? (
         // One gate for the whole app: the Rust session is the source of truth,
         // and `/api/status` re-reports it after the server rejects a stored
         // token.
@@ -30,6 +37,7 @@ export default function App() {
       ) : (
         <AppShell>
           <Routes>
+            <Route path="/settings/*" element={<Settings />} />
             <Route path="/" element={<Home />} />
             <Route path="/library" element={<Library />} />
             <Route path="/item/:id" element={<ItemDetail />} />
@@ -62,7 +70,7 @@ export default function App() {
                 </SeerrGate>
               }
             />
-            <Route path="*" element={<Home />} />
+            <Route path="*" element={status?.authenticated ? <Home /> : <SignIn />} />
           </Routes>
         </AppShell>
       )}
@@ -72,9 +80,10 @@ export default function App() {
         // first library bootstrap, so give that authenticated phase a fresh
         // instance rather than exposing the blank route underneath it.
         key={status?.authenticated ? "authenticated" : "anonymous"}
-        ready={!isPending && !waitingForLibrary && fetching === 0}
+        ready={!isPending && (!waitingForLibrary || showingSettings) && fetching === 0}
         bootstrap={status?.authenticated ? status.bootstrap : undefined}
       />
+      <AppearanceSync />
     </>
   )
 }

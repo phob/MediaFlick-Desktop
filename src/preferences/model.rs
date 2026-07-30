@@ -44,6 +44,147 @@ pub struct AppSettings {
     pub skip_recap: SegmentSkipMode,
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
+    /// Visual preferences intentionally live with the otherwise flat legacy
+    /// configuration. The API exposes them as a coherent section without
+    /// forcing existing installations through a risky file migration.
+    #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
+    pub appearance: AppearanceSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppearanceSettings {
+    #[serde(default, skip_serializing_if = "AppearanceTheme::is_default")]
+    pub theme: AppearanceTheme,
+    #[serde(default, skip_serializing_if = "AppearanceAccent::is_default")]
+    pub accent: AppearanceAccent,
+    #[serde(default, skip_serializing_if = "AppearanceDensity::is_default")]
+    pub density: AppearanceDensity,
+    #[serde(
+        default = "default_artwork_intensity",
+        skip_serializing_if = "is_default_artwork_intensity"
+    )]
+    pub artwork_intensity: u8,
+    #[serde(
+        default = "default_backdrop_intensity",
+        skip_serializing_if = "is_default_backdrop_intensity"
+    )]
+    pub backdrop_intensity: u8,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reduced_motion: bool,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            theme: AppearanceTheme::default(),
+            accent: AppearanceAccent::default(),
+            density: AppearanceDensity::default(),
+            artwork_intensity: default_artwork_intensity(),
+            backdrop_intensity: default_backdrop_intensity(),
+            reduced_motion: false,
+        }
+    }
+}
+
+impl AppearanceSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn sanitize(&mut self) {
+        self.artwork_intensity = self.artwork_intensity.min(100);
+        self.backdrop_intensity = self.backdrop_intensity.min(100);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceTheme {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl AppearanceTheme {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "system" => Some(Self::System),
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceAccent {
+    #[default]
+    Signal,
+    Cobalt,
+    Amber,
+    Violet,
+}
+
+impl AppearanceAccent {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Signal => "signal",
+            Self::Cobalt => "cobalt",
+            Self::Amber => "amber",
+            Self::Violet => "violet",
+        }
+    }
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "signal" => Some(Self::Signal),
+            "cobalt" => Some(Self::Cobalt),
+            "amber" => Some(Self::Amber),
+            "violet" => Some(Self::Violet),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceDensity {
+    Compact,
+    #[default]
+    Comfortable,
+}
+
+impl AppearanceDensity {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Comfortable => "comfortable",
+        }
+    }
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "compact" => Some(Self::Compact),
+            "comfortable" => Some(Self::Comfortable),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +293,15 @@ impl SegmentSkipMode {
             Self::Always => "always",
         }
     }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "disabled" => Some(Self::Disabled),
+            "prompt" => Some(Self::Prompt),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +387,14 @@ impl FullscreenBehavior {
             Self::Windowed => "windowed",
         }
     }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fullscreen" => Some(Self::Fullscreen),
+            "windowed" => Some(Self::Windowed),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,6 +414,14 @@ impl CloseBehavior {
         match self {
             Self::ExitApp => "exit_app",
             Self::MinimizeWindow => "minimize_window",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "exit_app" => Some(Self::ExitApp),
+            "minimize_window" => Some(Self::MinimizeWindow),
+            _ => None,
         }
     }
 }
@@ -323,6 +489,7 @@ impl Default for AppSettings {
             skip_credits: SegmentSkipMode::default(),
             skip_recap: SegmentSkipMode::default(),
             skip_commercial: SegmentSkipMode::default(),
+            appearance: AppearanceSettings::default(),
         }
     }
 }
@@ -404,6 +571,7 @@ impl AppSettings {
             self.log_level = DEFAULT_LOG_LEVEL.to_string();
         }
         self.webui_window.sanitize();
+        self.appearance.sanitize();
     }
 }
 
@@ -493,6 +661,22 @@ fn is_default_log_level(value: &str) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_artwork_intensity() -> u8 {
+    100
+}
+
+fn default_backdrop_intensity() -> u8 {
+    100
+}
+
+fn is_default_artwork_intensity(value: &u8) -> bool {
+    *value == default_artwork_intensity()
+}
+
+fn is_default_backdrop_intensity(value: &u8) -> bool {
+    *value == default_backdrop_intensity()
 }
 
 fn default_webui_window_width() -> i32 {

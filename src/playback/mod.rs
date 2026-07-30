@@ -46,6 +46,8 @@ pub trait PlayerBackend: Send {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
+    /// Re-read backend-specific hotkeys without restarting a running player.
+    fn refresh_input_bindings(&self);
     fn set_segment_skip_config(&self, config: SegmentSkipConfig);
     fn update_playback_context(&self, context: PlaybackContext);
     fn snapshot(&self) -> PlayerSnapshot;
