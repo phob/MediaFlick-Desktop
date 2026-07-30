@@ -48,13 +48,13 @@ function RequestCard({ request }: { request: SeerrRequest }) {
     <li className="group relative flex min-h-32 items-center gap-4 overflow-hidden rounded-xl border border-white/5 bg-card/55 p-4 shadow-lg shadow-black/10 transition hover:border-white/10 hover:bg-card/75">
       {backdrop && (
         <div className="pointer-events-none absolute inset-y-0 right-0 w-2/3 opacity-15 transition-opacity group-hover:opacity-20">
-          <img src={backdrop} alt="" decoding="async" className="h-full w-full object-cover" />
+          <img src={backdrop} alt="" decoding="async" className="media-backdrop-image h-full w-full object-cover" />
           <div className="absolute inset-0 bg-linear-to-r from-card via-card/50 to-transparent" />
           <div className="absolute inset-0 bg-linear-to-t from-card/70 to-transparent" />
         </div>
       )}
       <div className="relative z-10 h-28 w-[4.7rem] shrink-0 overflow-hidden rounded-lg bg-card shadow-xl ring-1 ring-white/10">
-        {poster && <img src={poster} alt="" decoding="async" className="h-full w-full object-cover" />}
+        {poster && <img src={poster} alt="" decoding="async" className="media-artwork-image h-full w-full object-cover" />}
       </div>
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col gap-1.5">

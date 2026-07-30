@@ -1,4 +1,4 @@
-import { Check, Info, Play, Plus } from "lucide-react"
+import { Check, Info, Play, Plus, Star } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -10,8 +10,9 @@ import {
   api,
   type ItemSummary,
 } from "@/lib/api"
-import { formatMatch, formatRemaining, formatRuntime } from "@/lib/format"
-import { useItem, useNextUp, usePlay, useSetFavorite, useTrailer } from "@/lib/queries"
+import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
+import { useItem, useNextUp, usePlay, useSetFavorite, useSettings, useTrailer } from "@/lib/queries"
+import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { cn } from "@/lib/utils"
 
 /** How long a title without a usable trailer holds before the next takes over. */
@@ -21,20 +22,6 @@ const TRAILER_DELAY_MS = 5_000
 /** A broken remote player must not strand the billboard forever. */
 const REMOTE_TRAILER_WATCHDOG_MS = 3 * 60_000
 const YOUTUBE_ORIGINS = new Set(["https://www.youtube-nocookie.com", "https://www.youtube.com"])
-
-function usePrefersReducedMotion() {
-  const [reduced, setReduced] = useState(
-    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-  )
-  useEffect(() => {
-    const query = window.matchMedia?.("(prefers-reduced-motion: reduce)")
-    if (!query) return
-    const update = () => setReduced(query.matches)
-    query.addEventListener("change", update)
-    return () => query.removeEventListener("change", update)
-  }, [])
-  return reduced
-}
 
 function episodeLabel(item: ItemSummary) {
   if (item.kind !== "Episode") return null
@@ -56,7 +43,11 @@ function episodeLabel(item: ItemSummary) {
  * dwell or trailer instead.
  */
 export function Billboard({ items }: { items: ItemSummary[] }) {
-  const reducedMotion = usePrefersReducedMotion()
+  const systemReducedMotion = usePrefersReducedMotion()
+  const { data: settings } = useSettings()
+  // Do not start automatic movement until the saved setting is known. Once it
+  // is, either the in-app preference or the operating system can veto motion.
+  const reducedMotion = systemReducedMotion || settings?.appearance.reducedMotion !== false
   const [paused, setPaused] = useState(false)
   const [index, setIndex] = useState(0)
   const [advancePending, setAdvancePending] = useState(false)
@@ -309,7 +300,7 @@ function BillboardBackdrop({
         alt=""
         decoding="async"
         onError={() => setImageIndex((current) => current + 1)}
-        className="billboard-backdrop-image"
+        className="billboard-backdrop-image media-backdrop-image"
       />
       {trailerArmed && trailerId && (
         <div
@@ -386,7 +377,7 @@ function BillboardCopy({
   const isPlayable = Boolean(target && (target.kind === "Movie" || target.kind === "Episode"))
   const title = isEpisode && item.seriesName ? item.seriesName : item.name
   const secondaryTitle = episodeLabel(item)
-  const match = formatMatch(item.communityRating)
+  const communityRating = formatCommunityRating(item.communityRating)
   const logo = logoUrl(item)
   const kicker =
     item.positionTicks > 0 ? "Continue watching" : item.played ? "Watch it again" : "Featured"
@@ -426,7 +417,15 @@ function BillboardCopy({
       {/* Facts, in the data face and divided by accent slashes. Titles are
           typeset; everything known about them is measured. */}
       <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-2 text-foreground/80">
-        {match && <span className="font-semibold text-primary">{match}</span>}
+        {communityRating && (
+          <span
+            className="inline-flex items-center gap-1 font-semibold text-primary"
+            title={`Community rating: ${communityRating}/10`}
+          >
+            <Star className="size-3.5 fill-current" aria-hidden />
+            {communityRating}
+          </span>
+        )}
         {[
           item.year != null ? String(item.year) : null,
           formatRuntime(item.runtimeTicks),

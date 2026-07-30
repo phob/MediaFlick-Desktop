@@ -7,6 +7,11 @@ declare global {
   interface Window {
     /** Called by `dispatch_playback_event` in `src/shell/cef/mod.rs`. */
     __mediaFlickDesktopPlaybackStopped?: (payload: PlayerState) => void
+    /** Called after the shell's post-playback Jellyfin/cache refresh settles. */
+    __mediaFlickDesktopPlaybackCacheRefreshed?: (payload: {
+      itemId: string
+      status: "refreshed" | "deferred"
+    }) => void
   }
 }
 
@@ -18,16 +23,13 @@ declare global {
  */
 export function usePlaybackStoppedBridge() {
   useEffect(() => {
-    let pending: ReturnType<typeof setTimeout> | undefined
-
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
       queryClient.setQueryData(queryKeys.playerState, { active: false })
 
-      // The shell mirrors the final position into the cache on a background
-      // thread, so an immediate refetch can still read the pre-stop row and
-      // leave Continue Watching stale.
-      clearTimeout(pending)
-      pending = setTimeout(() => invalidateMediaSurfaces(payload?.itemId ?? undefined), 500)
+      // An item-bearing stop is invalidated by the completion callback below,
+      // after Jellyfin's final playstate has actually reached SQLite. Stops
+      // without an item cannot start that refresh, so clear their surfaces now.
+      if (!payload?.itemId) invalidateMediaSurfaces()
 
       const finished = payload?.stopReason === "eof" || payload?.stopReason === "watched-next"
       if (!finished || !payload?.itemId) return
@@ -42,9 +44,16 @@ export function usePlaybackStoppedBridge() {
         .catch((error: Error) => toast.error(error.message))
     }
 
+    window.__mediaFlickDesktopPlaybackCacheRefreshed = (payload) => {
+      // Deferred means the focused refresh failed and the shell queued a full
+      // sync. Invalidating here still avoids treating the pre-stop cache as
+      // fresh; the ordinary query lifecycle can pick up that sync afterward.
+      invalidateMediaSurfaces(payload?.itemId)
+    }
+
     return () => {
-      clearTimeout(pending)
       delete window.__mediaFlickDesktopPlaybackStopped
+      delete window.__mediaFlickDesktopPlaybackCacheRefreshed
     }
   }, [])
 }

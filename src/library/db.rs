@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -158,6 +158,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.pragma_update(None, "user_version", 3)?;
         version = 3;
     }
+    if version < 4 {
+        connection.execute_batch(SCHEMA_V4)?;
+        connection.pragma_update(None, "user_version", 4)?;
+        version = 4;
+    }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
 }
@@ -303,6 +308,28 @@ CREATE TABLE IF NOT EXISTS seerr_config (
 );
 "#;
 
+/// Public integrations are user-associated application data, not process
+/// configuration.  A household sharing one desktop must never inherit another
+/// Jellyfin user's connected profile.
+const SCHEMA_V4: &str = r#"
+CREATE TABLE IF NOT EXISTS external_profiles (
+    id                  TEXT PRIMARY KEY,
+    provider            TEXT NOT NULL,
+    profile_key         TEXT NOT NULL,
+    display_name        TEXT NOT NULL,
+    canonical_url       TEXT NOT NULL,
+    jellyfin_server_id  TEXT NOT NULL,
+    jellyfin_user_id    TEXT NOT NULL,
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    verification_status TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    last_checked_at     INTEGER,
+    UNIQUE(provider, profile_key, jellyfin_server_id, jellyfin_user_id)
+);
+CREATE INDEX IF NOT EXISTS external_profiles_account
+    ON external_profiles (jellyfin_server_id, jellyfin_user_id, provider);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::{Database, SCHEMA_V1, SCHEMA_VERSION, migrate, user_version};
@@ -323,6 +350,16 @@ mod tests {
             })
             .expect("seerr_config");
         assert_eq!(table, 1);
+        let profiles: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'external_profiles'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("external_profiles");
+        assert_eq!(profiles, 1);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { ArrowUpRight } from "lucide-react"
+import { ArrowUpRight, Star } from "lucide-react"
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
@@ -18,7 +18,7 @@ function Poster({ result }: { result: SeerrResult }) {
           alt=""
           decoding="async"
           onError={() => setFailed(true)}
-          className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+          className="media-artwork-image h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
@@ -55,9 +55,9 @@ export const SeerrCard = memo(function SeerrCard({
   const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Film"]
     .filter(Boolean)
     .join(" · ")
-  const match =
+  const rating =
     result.voteAverage && result.voteAverage > 0
-      ? `${Math.round(result.voteAverage * 10)}% match`
+      ? result.voteAverage.toFixed(1)
       : null
   const shell = cn(
     "catalog-card group flex w-poster-w flex-col gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -67,8 +67,16 @@ export const SeerrCard = memo(function SeerrCard({
     <div className="min-w-0">
       <div className="truncate text-sm font-medium">{result.title}</div>
       <div className="data-value flex items-center gap-1.5 truncate text-muted-foreground">
-        {match ? <span className="text-primary">{match}</span> : null}
-        {match && subtitle ? <span className="text-border">/</span> : null}
+        {rating ? (
+          <span
+            className="inline-flex items-center gap-1 text-primary"
+            title={`TMDB rating: ${rating}/10`}
+          >
+            <Star className="size-3.5 fill-current" aria-hidden />
+            {rating}
+          </span>
+        ) : null}
+        {rating && subtitle ? <span className="text-border">/</span> : null}
         <span>{subtitle}</span>
       </div>
       <div className="data-label mt-1 flex h-4 items-center gap-1 text-foreground/65">

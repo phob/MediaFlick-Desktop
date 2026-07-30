@@ -96,7 +96,7 @@ export const MediaCard = memo(function MediaCard({
             // shelf keeps its rhythm while the pointer runs along it.
             decoding="async"
             onError={() => setImageIndex((current) => current + 1)}
-            className="h-full w-full object-cover"
+            className="media-artwork-image h-full w-full object-cover"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">

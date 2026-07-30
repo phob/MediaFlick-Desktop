@@ -33,6 +33,25 @@ pub struct StoredCredentials {
     pub token: Option<String>,
 }
 
+/// An optional, public profile associated with one Jellyfin account.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalProfile {
+    pub id: String,
+    pub provider: String,
+    pub profile_key: String,
+    pub display_name: String,
+    pub canonical_url: String,
+    pub enabled: bool,
+    pub verification_status: String,
+    pub created_at: i64,
+    pub last_checked_at: Option<i64>,
+    #[serde(skip)]
+    pub jellyfin_server_id: String,
+    #[serde(skip)]
+    pub jellyfin_user_id: String,
+}
+
 impl StoredCredentials {
     pub fn is_authenticated(&self) -> bool {
         self.token.is_some() && self.user_id.is_some() && self.server_url.is_some()
@@ -207,6 +226,125 @@ impl Library {
                 transaction.execute("DELETE FROM meta", [])?;
             }
             Ok(())
+        })
+    }
+
+    // -------------------------------------------------------- external profiles
+
+    pub fn external_profiles(
+        &self,
+        provider: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<Vec<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                        verification_status, created_at, last_checked_at,
+                        jellyfin_server_id, jellyfin_user_id
+                 FROM external_profiles
+                 WHERE provider = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3
+                 ORDER BY created_at DESC",
+            )?;
+            statement
+                .query_map(
+                    params![provider, jellyfin_server_id, jellyfin_user_id],
+                    external_profile_from_row,
+                )?
+                .collect()
+        })
+    }
+
+    pub fn save_external_profile(
+        &self,
+        profile: &ExternalProfile,
+    ) -> rusqlite::Result<ExternalProfile> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO external_profiles (
+                     id, provider, profile_key, display_name, canonical_url,
+                     jellyfin_server_id, jellyfin_user_id, enabled,
+                     verification_status, created_at, last_checked_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(provider, profile_key, jellyfin_server_id, jellyfin_user_id)
+                 DO UPDATE SET display_name = excluded.display_name,
+                               canonical_url = excluded.canonical_url,
+                               enabled = excluded.enabled,
+                               verification_status = excluded.verification_status,
+                               last_checked_at = excluded.last_checked_at",
+                params![
+                    profile.id,
+                    profile.provider,
+                    profile.profile_key,
+                    profile.display_name,
+                    profile.canonical_url,
+                    profile.jellyfin_server_id,
+                    profile.jellyfin_user_id,
+                    profile.enabled,
+                    profile.verification_status,
+                    profile.created_at,
+                    profile.last_checked_at,
+                ],
+            )?;
+            connection.query_row(
+                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                        verification_status, created_at, last_checked_at,
+                        jellyfin_server_id, jellyfin_user_id
+                 FROM external_profiles
+                 WHERE provider = ?1 AND profile_key = ?2
+                   AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
+                params![
+                    profile.provider,
+                    profile.profile_key,
+                    profile.jellyfin_server_id,
+                    profile.jellyfin_user_id,
+                ],
+                external_profile_from_row,
+            )
+        })
+    }
+
+    pub fn set_external_profile_enabled(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+        enabled: bool,
+    ) -> rusqlite::Result<Option<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE external_profiles SET enabled = ?1
+                 WHERE id = ?2 AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
+                params![enabled, id, jellyfin_server_id, jellyfin_user_id],
+            )?;
+            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
+        })
+    }
+
+    pub fn remove_external_profile(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<bool> {
+        self.db.with_connection(|connection| {
+            let changed = connection.execute(
+                "DELETE FROM external_profiles
+                 WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
+                params![id, jellyfin_server_id, jellyfin_user_id],
+            )?;
+            Ok(changed > 0)
+        })
+    }
+
+    pub fn external_profile(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<Option<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
         })
     }
 
@@ -595,40 +733,6 @@ impl Library {
                  ON CONFLICT(jellyfin_id) DO UPDATE SET
                      is_favorite = excluded.is_favorite, updated_at = excluded.updated_at",
                 params![item_id, favorite, now_unix()],
-            )?;
-            Ok(())
-        })
-    }
-
-    /// Mirrors our own playback reporting so Continue Watching reacts as soon
-    /// as the player stops, without waiting for the next user-data sweep.
-    pub fn record_playback_progress(
-        &self,
-        item_id: &str,
-        position_ticks: i64,
-        finished: bool,
-    ) -> rusqlite::Result<()> {
-        let position = if finished { 0 } else { position_ticks.max(0) };
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
-                     last_played_date, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(jellyfin_id) DO UPDATE SET
-                     played = max(user_data.played, excluded.played),
-                     play_count = CASE WHEN excluded.played = 1
-                         THEN max(user_data.play_count, 1) ELSE user_data.play_count END,
-                     playback_position_ticks = excluded.playback_position_ticks,
-                     last_played_date = excluded.last_played_date,
-                     updated_at = excluded.updated_at",
-                params![
-                    item_id,
-                    finished,
-                    i64::from(finished),
-                    position,
-                    iso_now(),
-                    now_unix(),
-                ],
             )?;
             Ok(())
         })
@@ -1142,21 +1246,45 @@ fn now_unix() -> i64 {
         .unwrap_or_default()
 }
 
-/// Jellyfin timestamps are ISO-8601 UTC; this is enough precision for ordering.
-fn iso_now() -> String {
-    let seconds = now_unix();
-    let days = seconds.div_euclid(86_400);
-    let time_of_day = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.0000000Z",
-        time_of_day / 3600,
-        (time_of_day % 3600) / 60,
-        time_of_day % 60
-    )
+fn external_profile_by_id(
+    connection: &Connection,
+    id: &str,
+    jellyfin_server_id: &str,
+    jellyfin_user_id: &str,
+) -> rusqlite::Result<Option<ExternalProfile>> {
+    match connection.query_row(
+        "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                verification_status, created_at, last_checked_at,
+                jellyfin_server_id, jellyfin_user_id
+         FROM external_profiles
+         WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
+        params![id, jellyfin_server_id, jellyfin_user_id],
+        external_profile_from_row,
+    ) {
+        Ok(profile) => Ok(Some(profile)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn external_profile_from_row(row: &Row<'_>) -> rusqlite::Result<ExternalProfile> {
+    Ok(ExternalProfile {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        profile_key: row.get(2)?,
+        display_name: row.get(3)?,
+        canonical_url: row.get(4)?,
+        enabled: row.get::<_, i64>(5)? != 0,
+        verification_status: row.get(6)?,
+        created_at: row.get(7)?,
+        last_checked_at: row.get(8)?,
+        jellyfin_server_id: row.get(9)?,
+        jellyfin_user_id: row.get(10)?,
+    })
 }
 
 /// Howard Hinnant's `civil_from_days`, the standard days-to-date conversion.
+#[cfg(test)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -1178,8 +1306,8 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag, civil_from_days,
-        fts_match_expression,
+        ExternalProfile, ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag,
+        civil_from_days, fts_match_expression,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use serde_json::json;
@@ -1291,6 +1419,45 @@ mod tests {
     fn an_unconfigured_library_has_an_empty_seerr_config() {
         let library = Library::open_in_memory().expect("library");
         assert_eq!(library.seerr_config(), SeerrConfig::default());
+    }
+
+    #[test]
+    fn external_profiles_are_scoped_to_the_jellyfin_account() {
+        let library = Library::open_in_memory().expect("library");
+        let profile = ExternalProfile {
+            id: "profile-a".to_string(),
+            provider: "letterboxd".to_string(),
+            profile_key: "alice".to_string(),
+            display_name: "alice".to_string(),
+            canonical_url: "https://letterboxd.com/alice/".to_string(),
+            enabled: true,
+            verification_status: "verified".to_string(),
+            created_at: 1,
+            last_checked_at: Some(2),
+            jellyfin_server_id: "server-a".to_string(),
+            jellyfin_user_id: "user-a".to_string(),
+        };
+        let saved = library.save_external_profile(&profile).expect("save");
+        assert_eq!(saved.profile_key, "alice");
+        assert_eq!(
+            library
+                .external_profiles("letterboxd", "server-a", "user-a")
+                .expect("profiles")
+                .len(),
+            1
+        );
+        assert!(
+            library
+                .external_profiles("letterboxd", "server-a", "user-b")
+                .expect("other account")
+                .is_empty()
+        );
+        assert!(
+            library
+                .set_external_profile_enabled("profile-a", "server-a", "user-b", false)
+                .expect("set other account")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1606,41 +1773,18 @@ mod tests {
     #[test]
     fn forget_drops_a_single_item_and_its_user_data() {
         let library = seeded();
-        library
-            .record_playback_progress("e1", 1_200_000_000, false)
-            .expect("progress");
 
-        assert!(library.forget("e1").expect("forget"));
-        assert!(library.item("e1").expect("query").is_none());
+        assert!(library.forget("m1").expect("forget"));
+        assert!(library.item("m1").expect("query").is_none());
         assert!(
             !library
                 .continue_watching(10)
                 .expect("rows")
                 .iter()
-                .any(|row| row["id"] == "e1")
+                .any(|row| row["id"] == "m1")
         );
         // Idempotent: a second eviction is not an error and reports no change.
-        assert!(!library.forget("e1").expect("forget"));
-    }
-
-    #[test]
-    fn playback_progress_updates_continue_watching_then_clears_on_finish() {
-        let library = seeded();
-        library
-            .record_playback_progress("e1", 1_200_000_000, false)
-            .expect("progress");
-        let resuming = library.continue_watching(10).expect("rows");
-        assert!(resuming.iter().any(|row| row["id"] == "e1"));
-
-        library
-            .record_playback_progress("e1", 0, true)
-            .expect("finished");
-        let after = library.continue_watching(10).expect("rows");
-        assert!(!after.iter().any(|row| row["id"] == "e1"));
-        assert_eq!(
-            library.item("e1").expect("item").expect("row")["played"],
-            true
-        );
+        assert!(!library.forget("m1").expect("forget"));
     }
 
     #[test]

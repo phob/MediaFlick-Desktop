@@ -195,7 +195,7 @@ function GenreBrowser({
                         alt=""
                         loading="lazy"
                         decoding="async"
-                        className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
+                        className="media-backdrop-image absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
                       />
                     ) : null}
                     <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />

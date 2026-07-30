@@ -9,7 +9,7 @@ import {
   LogOut,
   RefreshCw,
   Search,
-  Ticket,
+  Settings,
   Tv,
 } from "lucide-react"
 import { useRef, useState } from "react"
@@ -39,7 +39,6 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { api } from "@/lib/api"
 import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
@@ -117,14 +116,8 @@ function SearchBox() {
 
 function UserMenu() {
   const { data: status } = useStatus()
-  const { data: seerr } = useSeerrStatus()
   const logout = useLogout()
-  const [setup, setSetup] = useState(false)
-  const navigate = useNavigate()
   const name = status?.userName ?? "Signed in"
-  const companionSeerr =
-    status?.companion?.compatible &&
-    status.companion.info?.capabilities.includes("seerr")
 
   return (
     <SidebarMenu>
@@ -170,22 +163,6 @@ function UserMenu() {
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
-            {/* Seerr setup lives here rather than in the native Client
-                Settings dialog: there is no `POST /api/settings` behind that
-                one, and this flow is interactive. */}
-            <DropdownMenuItem
-              onSelect={() => {
-                if (companionSeerr) navigate("/requests")
-                else setSetup(true)
-              }}
-            >
-              <Ticket />
-              {companionSeerr
-                ? "Requests via Companion"
-                : seerr?.linked
-                  ? "Seerr requests"
-                  : "Set up Seerr…"}
-            </DropdownMenuItem>
             {status?.companion?.available && (
               <DropdownMenuItem disabled>
                 Companion {status.companion.info?.pluginVersion ?? "detected"}
@@ -197,7 +174,6 @@ function UserMenu() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {setup && !companionSeerr && <SeerrSetupDialog onClose={() => setSetup(false)} />}
       </SidebarMenuItem>
     </SidebarMenu>
   )
@@ -296,6 +272,16 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={location.pathname.startsWith("/settings")} tooltip="Settings">
+              <Link to="/settings">
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <UserMenu />
       </SidebarFooter>
       <SidebarRail />

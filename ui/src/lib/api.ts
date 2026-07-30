@@ -213,11 +213,78 @@ export interface ReleaseCalendar {
   provider: "plugin" | "metadata"
 }
 
+export interface PlayerSettings {
+  playerBackend: "mpv" | "mpchc"
+  mpvPath: string | null
+  mpchcPath: string | null
+  defaultFullscreen: "fullscreen" | "windowed"
+  markWatchedNext: string | null
+  /** Computed by the shell from the selected backend/path; never writable. */
+  playerConfigured: boolean
+}
+
+export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
+
+export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
+  return {
+    playerBackend: settings.playerBackend,
+    mpvPath: settings.mpvPath,
+    mpchcPath: settings.mpchcPath,
+    defaultFullscreen: settings.defaultFullscreen,
+    markWatchedNext: settings.markWatchedNext,
+  }
+}
+
 export interface ClientSettings {
-  streamingQuality: string
-  playerBackend: string
+  client: {
+    player: PlayerSettings
+    playback: {
+      streamingQuality: StreamingQualityId
+      skipIntro: SegmentSkipMode
+      skipCredits: SegmentSkipMode
+      skipRecap: SegmentSkipMode
+      skipCommercial: SegmentSkipMode
+    }
+    application: {
+      closeBehavior: "exit_app" | "minimize_window"
+      showScrollbars: boolean
+      logLevel: "trace" | "debug" | "info" | "warn" | "error"
+    }
+  }
+  appearance: AppearanceSettings
+  capabilities: {
+    platform: "windows" | "macos" | "linux" | "other"
+    mpchc: boolean
+    mpvInstaller: boolean
+  }
+  /** Legacy aliases retained by the shell during the API transition. */
+  streamingQuality: StreamingQualityId
+  playerBackend: "mpv" | "mpchc"
   playerConfigured: boolean
   serverUrl: string | null
+}
+
+export type SegmentSkipMode = "disabled" | "prompt" | "always"
+
+export interface AppearanceSettings {
+  theme: "system" | "dark" | "light"
+  accent: "signal" | "cobalt" | "amber" | "violet"
+  density: "compact" | "comfortable"
+  artworkIntensity: number
+  backdropIntensity: number
+  reducedMotion: boolean
+}
+
+export interface LetterboxdProfile {
+  id: string
+  provider: "letterboxd"
+  profileKey: string
+  displayName: string
+  canonicalUrl: string
+  enabled: boolean
+  verificationStatus: "verified" | "unverified"
+  createdAt: number
+  lastCheckedAt: number | null
 }
 
 /** Mirrors the JSON `Session::connect` answers. */
@@ -666,6 +733,56 @@ export const api = {
     probe: () => request<CompanionStatus>("/api/companion/probe", { method: "POST" }),
   },
   settings: () => request<ClientSettings>("/api/settings"),
+  settingsPatch: {
+    player: (body: PlayerSettingsWrite) =>
+      request<ClientSettings>("/api/settings/client/player", { method: "PATCH", body }),
+    playback: (body: ClientSettings["client"]["playback"]) =>
+      request<ClientSettings>("/api/settings/client/playback", { method: "PATCH", body }),
+    application: (body: ClientSettings["client"]["application"]) =>
+      request<ClientSettings>("/api/settings/client/application", { method: "PATCH", body }),
+    appearance: (body: AppearanceSettings) =>
+      request<ClientSettings>("/api/settings/appearance", { method: "PATCH", body }),
+  },
+  shell: {
+    filePicker: (requestId: string, target: "mpv" | "mpchc") =>
+      request<{ requestId: string; queued: boolean }>("/api/shell/file-picker", {
+        method: "POST",
+        body: { requestId, target },
+      }),
+    installMpv: (requestId: string) =>
+      request<{ requestId: string; queued: boolean }>("/api/shell/mpv/install", {
+        method: "POST",
+        body: { requestId },
+      }),
+    mpvHelp: () => request<{ opened: boolean }>("/api/shell/mpv/help", { method: "POST" }),
+  },
+  letterboxd: {
+    profiles: () => request<{ profiles: LetterboxdProfile[] }>("/api/integrations/letterboxd"),
+    add: (profile: string) =>
+      request<{ profile: LetterboxdProfile }>("/api/integrations/letterboxd", {
+        method: "POST",
+        body: { profile },
+      }),
+    setEnabled: (id: string, enabled: boolean) =>
+      request<{ profile: LetterboxdProfile }>(`/api/integrations/letterboxd/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { enabled },
+      }),
+    refresh: (id: string) =>
+      request<{ profile: LetterboxdProfile }>(
+        `/api/integrations/letterboxd/${encodeURIComponent(id)}/refresh`,
+        { method: "POST" },
+      ),
+    remove: (id: string) =>
+      request<{ removed: boolean }>(`/api/integrations/letterboxd/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    open: (id: string) =>
+      request<{ opened: boolean; url: string }>(
+        `/api/integrations/letterboxd/${encodeURIComponent(id)}/open`,
+        { method: "POST" },
+      ),
+  },
 
   connect: (server: string, signal?: AbortSignal) =>
     request<ServerInfo>("/api/auth/connect", { method: "POST", body: { server }, signal }),
@@ -712,7 +829,7 @@ export const api = {
       body: { favorite },
     }),
 
-  /** `quality` overrides the saved Client Settings default for this play only. */
+  /** `quality` overrides the saved Settings default for this play only. */
   play: (itemId: string, resume: boolean, quality?: StreamingQualityId) =>
     request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } }),
   playNext: (itemId: string) =>

@@ -19,10 +19,9 @@ import {
 } from "@/lib/queries"
 
 /**
- * Seerr setup, as a React dialog off the user menu rather than a page in the
- * native Client Settings: there is no `POST /api/settings` to hang it on, and
- * the flow is interactive — probe, then link, with a password step that only
- * appears when the password-less path is unavailable.
+ * Seerr setup is hosted by the Settings integration page. It remains a dialog
+ * because the flow is interactive — probe, then link, with a password step
+ * that only appears when the password-less path is unavailable.
  */
 export function SeerrSetupDialog({ onClose }: { onClose: () => void }) {
   const status = useSeerrStatus()
