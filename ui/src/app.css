@@ -718,7 +718,8 @@ html[data-reduced-motion="true"] *::after {
 .home-media-card:hover,
 .home-media-card:focus-visible,
 .catalog-card:hover,
-.catalog-card:focus-visible {
+.catalog-card:focus-visible,
+.catalog-card:focus-within {
   z-index: 10;
   transform: translateY(-3px);
   filter: drop-shadow(0 14px 20px rgb(0 0 0 / 55%));
@@ -759,6 +760,24 @@ html[data-reduced-motion="true"] *::after {
 .signal-card:hover .media-frame::after,
 .signal-card:focus-visible .media-frame::after {
   opacity: 1;
+}
+
+/* Quick request is a poster action, not a replacement for the card link. It
+   sits over the lower artwork edge and appears as soon as either the pointer
+   or keyboard enters the card. The component mirrors those interaction states
+   into utility classes so the behavior remains focused and testable. */
+.quick-request-action {
+  top: calc(var(--poster-height) - 3.25rem);
+}
+
+/* A touchscreen cannot manufacture hover. Keep the action in the same overlay
+   position, but leave it visible for coarse/no-hover primary pointers. */
+@media (hover: none), (pointer: coarse) {
+  .quick-request-action {
+    pointer-events: auto;
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* ==========================================================================
@@ -1135,8 +1154,13 @@ html[data-reduced-motion="true"] *::after {
   .home-media-card:hover,
   .home-media-card:focus-visible,
   .catalog-card:hover,
-  .catalog-card:focus-visible {
+  .catalog-card:focus-visible,
+  .catalog-card:focus-within {
     transform: none;
+  }
+
+  .quick-request-action {
+    transition: none;
   }
 
   /* The brackets stay — they are the hover state, not decoration on it. */
