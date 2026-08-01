@@ -24,7 +24,7 @@ import {
 } from "@/lib/api"
 import {
   DISCOVERY_FILTER_KEYS,
-  RELEASE_CENTURIES,
+  RELEASE_DECADES,
   defaultDiscoveryFilters,
   readDiscoveryFilters,
   writeDiscoveryFilters,
@@ -226,7 +226,7 @@ function DiscoveryControls({
   availability,
   onAvailabilityChange,
   advancedDiscovery = true,
-  centuryDiscovery = true,
+  decadeDiscovery = true,
 }: {
   row: SeerrDiscoverRow
   filters: SeerrDiscoverFilters
@@ -234,7 +234,7 @@ function DiscoveryControls({
   availability: AvailabilityFilter
   onAvailabilityChange: (value: AvailabilityFilter) => void
   advancedDiscovery?: boolean
-  centuryDiscovery?: boolean
+  decadeDiscovery?: boolean
 }) {
   const catalogue = row === "movies" || row === "tv"
   const catalogueMediaType = row === "movies" ? "movie" : "tv"
@@ -312,28 +312,28 @@ function DiscoveryControls({
               </SelectContent>
             </Select>
           </FilterField>
-          {centuryDiscovery ? (
-            <FilterField label="Release century">
+          {decadeDiscovery ? (
+            <FilterField label="Release decade">
               <Select
-                value={filters.century ? String(filters.century) : "all"}
-                onValueChange={(century) =>
+                value={filters.decade ? String(filters.decade) : "all"}
+                onValueChange={(decade) =>
                   onFiltersChange({
                     ...filters,
-                    century: century === "all" ? undefined : Number(century) as 19 | 20 | 21,
+                    decade: decade === "all" ? undefined : Number(decade),
                   })
                 }
               >
                 <SelectTrigger
-                  aria-label="Filter by release century"
+                  aria-label="Filter by release decade"
                   className="h-10 min-w-52 border-white/10 bg-white/5"
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Any century</SelectItem>
-                  {RELEASE_CENTURIES[catalogueMediaType].map((century) => (
-                    <SelectItem key={century.value} value={String(century.value)}>
-                      {century.label}
+                  <SelectItem value="all">Any decade</SelectItem>
+                  {RELEASE_DECADES[catalogueMediaType].map((decade) => (
+                    <SelectItem key={decade.value} value={String(decade.value)}>
+                      {decade.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -498,14 +498,16 @@ export default function Discover() {
   const companionManaged =
     companion.data?.compatible && companionCapabilities.includes("seerr")
   const companionDiscoveryV3 = companionCapabilities.includes("seerr-discovery-v3")
+  const companionDiscoveryV4 = companionCapabilities.includes("seerr-discovery-v4")
   const advancedDiscovery =
     !companion.isPending &&
     (!companionManaged ||
       companionCapabilities.includes("seerr-discovery-v2") ||
-      companionDiscoveryV3)
-  // An older v2 Companion ignores the new semantic. Do not offer a control
-  // that would appear active while having no effect on its upstream request.
-  const centuryDiscovery = advancedDiscovery && (!companionManaged || companionDiscoveryV3)
+      companionDiscoveryV3 ||
+      companionDiscoveryV4)
+  // v3 carried the superseded century parameter. Only v4 understands decade;
+  // older Companions still keep their otherwise-supported discovery controls.
+  const decadeDiscovery = advancedDiscovery && (!companionManaged || companionDiscoveryV4)
   const discoveryRows = advancedDiscovery
     ? SEERR_DISCOVER_ROWS
     : BASIC_DISCOVERY_ROWS
@@ -514,7 +516,7 @@ export default function Discover() {
   const row = discoveryRows.some((entry) => entry.id === requestedRow)
     ? requestedRow
     : "trending"
-  const filters = readDiscoveryFilters(params, row, advancedDiscovery, centuryDiscovery)
+  const filters = readDiscoveryFilters(params, row, advancedDiscovery, decadeDiscovery)
   const availability = availabilityFilter(params.get("library"))
 
   useEffect(() => setDraft(term), [term])
@@ -529,8 +531,16 @@ export default function Discover() {
       !discoveryRows.some((entry) => entry.id === requestedRowValue)
     const hasAdvancedFilters = DISCOVERY_FILTER_KEYS.some((key) => params.has(key))
     const clearAdvancedFilters = !advancedDiscovery && hasAdvancedFilters
-    const clearUnsupportedCentury = !centuryDiscovery && params.has("century")
-    if (!unsupportedRow && !clearAdvancedFilters && !clearUnsupportedCentury) return
+    const clearUnsupportedDecade = !decadeDiscovery && params.has("decade")
+    const clearLegacyCentury = params.has("century")
+    if (
+      !unsupportedRow &&
+      !clearAdvancedFilters &&
+      !clearUnsupportedDecade &&
+      !clearLegacyCentury
+    ) {
+      return
+    }
 
     setParams(
       (previous) => {
@@ -538,16 +548,17 @@ export default function Discover() {
         if (unsupportedRow) next.delete("row")
         if (unsupportedRow || clearAdvancedFilters) {
           for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
-        } else if (clearUnsupportedCentury) {
-          next.delete("century")
+        } else if (clearUnsupportedDecade) {
+          next.delete("decade")
         }
+        next.delete("century")
         return next
       },
       { replace: true },
     )
   }, [
     advancedDiscovery,
-    centuryDiscovery,
+    decadeDiscovery,
     companion.isPending,
     discoveryRows,
     params,
@@ -697,7 +708,7 @@ export default function Discover() {
                 availability={availability}
                 onAvailabilityChange={updateAvailability}
                 advancedDiscovery={advancedDiscovery}
-                centuryDiscovery={centuryDiscovery}
+                decadeDiscovery={decadeDiscovery}
               />
               <DiscoverRow row={row} filters={filters} availability={availability} />
             </TabsContent>
