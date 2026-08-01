@@ -173,9 +173,16 @@ public sealed class CalendarAndSeerrTests
             "api/v1/discover/tv?page=1&genre=18&firstAirDateGte=2020-01-01&firstAirDateLte=2026-08-01",
             SeerrGateway.BuildDiscoverPath(
                 "tv", 1, 18, null, null, 2020, null, null, today));
+        Assert.Equal(
+            "api/v1/discover/movies?page=1&primaryReleaseDateGte=1900-01-01&primaryReleaseDateLte=1909-12-31&sortBy=popularity.desc",
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, "popularity.desc", null, 1900, null, null, today));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
                 "movies", 1, null, null, null, 1995, null, null, today));
+        Assert.Throws<GatewayException>(() =>
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, null, null, 1890, null, null, today));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
                 "movies", 1, null, null, null, 2030, null, null, today));
