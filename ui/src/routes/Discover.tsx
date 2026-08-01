@@ -26,7 +26,10 @@ import {
   DISCOVERY_FILTER_KEYS,
   RELEASE_DECADES,
   defaultDiscoveryFilters,
+  discoveryResultSetKey,
+  discoveryResultsForSet,
   readDiscoveryFilters,
+  type DiscoveryAvailability,
   writeDiscoveryFilters,
 } from "@/lib/discovery"
 import {
@@ -37,7 +40,7 @@ import {
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-type AvailabilityFilter = "all" | "outside" | "library"
+type AvailabilityFilter = DiscoveryAvailability
 type SearchMediaFilter = "all" | SeerrMediaType
 const BASIC_DISCOVERY_ROWS = SEERR_DISCOVER_ROWS.filter((entry) =>
   ["trending", "movies", "tv"].includes(entry.id),
@@ -373,17 +376,19 @@ function DiscoverRow({
   row,
   filters,
   availability,
+  resultSetKey,
 }: {
   row: SeerrDiscoverRow
   filters: SeerrDiscoverFilters
   availability: AvailabilityFilter
+  resultSetKey: string
 }) {
-  const results = useSeerrDiscover(row, filters)
+  const results = useSeerrDiscover(row, filters, availability)
   const pages = results.data?.pages
-  const items = pages?.flatMap((page) => page.results)
+  const items = discoveryResultsForSet(resultSetKey, pages)
   const visible = filterResults(items, availability)
   const metadata = SEERR_DISCOVER_ROWS.find((entry) => entry.id === row)!
-  const total = pages?.[0]?.totalResults
+  const total = pages?.find((page) => page.resultSetKey === resultSetKey)?.totalResults
 
   return (
     <section className="flex flex-col gap-5" aria-labelledby="discover-results">
@@ -406,6 +411,7 @@ function DiscoverRow({
         error={results.error}
         empty="No titles in this feed match the current discovery filters."
         placeholders={12}
+        resultSetKey={resultSetKey}
       />
       <PaginationTail
         hasNextPage={Boolean(results.hasNextPage)}
@@ -518,6 +524,7 @@ export default function Discover() {
     : "trending"
   const filters = readDiscoveryFilters(params, row, advancedDiscovery, decadeDiscovery)
   const availability = availabilityFilter(params.get("library"))
+  const resultSetKey = discoveryResultSetKey(row, filters, availability)
 
   useEffect(() => setDraft(term), [term])
 
@@ -710,7 +717,13 @@ export default function Discover() {
                 advancedDiscovery={advancedDiscovery}
                 decadeDiscovery={decadeDiscovery}
               />
-              <DiscoverRow row={row} filters={filters} availability={availability} />
+              <DiscoverRow
+                key={resultSetKey}
+                row={row}
+                filters={filters}
+                availability={availability}
+                resultSetKey={resultSetKey}
+              />
             </TabsContent>
           </Tabs>
         )}

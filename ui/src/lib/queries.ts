@@ -19,6 +19,10 @@ import {
   queryClient,
   queryKeys,
 } from "./query-client"
+import {
+  discoveryResultSetKey,
+  type DiscoveryAvailability,
+} from "./discovery"
 
 /**
  * Shared mutation failure handler. Without this a failed action is completely
@@ -419,16 +423,27 @@ export function useInfiniteSeerrSearch(term: string, enabled = true) {
 export function useSeerrDiscover(
   row: SeerrDiscoverRow,
   filters: SeerrDiscoverFilters = {},
+  availability: DiscoveryAvailability = "all",
   enabled = true,
 ) {
+  const resultSetKey = discoveryResultSetKey(row, filters, availability)
   return useInfiniteQuery({
-    queryKey: queryKeys.seerrDiscover(row, filters),
-    queryFn: ({ pageParam, signal }) => api.seerr.discover(row, filters, pageParam, signal),
+    queryKey: queryKeys.seerrDiscover(row, resultSetKey),
+    queryFn: async ({ pageParam, signal }) => ({
+      ...(await api.seerr.discover(row, filters, pageParam, signal)),
+      resultSetKey,
+    }),
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled,
     retry: false,
+    // A filter transition is a replacement, not a place to resurrect an
+    // inactive infinite query. Once its observer goes away, abort its fetch
+    // through `signal` and discard every page together.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
   })
 }
 

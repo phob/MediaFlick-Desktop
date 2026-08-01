@@ -101,7 +101,7 @@ pub struct DiscoverOptions {
     time_window: Option<TrendingWindow>,
 }
 
-const EARLIEST_RELEASE_DECADE: u16 = 1800;
+const EARLIEST_RELEASE_DECADE: u16 = 1900;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UtcDate {
@@ -204,9 +204,8 @@ impl DiscoverOptions {
                     .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
             })
             .transpose()?;
-        // Keep the public contract narrower than arbitrary upstream dates.
-        // The UI starts film at 1800 and television at 1900, while this shared
-        // boundary safely accepts both media types and rejects future decades.
+        // Keep the public contract narrower than arbitrary upstream dates and
+        // use the same twentieth-century boundary for films and television.
         let current_decade = UtcDate::today().decade();
         let release_decade = release_decade
             .map(|value| {
@@ -2884,7 +2883,14 @@ mod tests {
             DiscoverOptions::from_values(None, Some("random"), None, None, None, None).is_err()
         );
         assert!(DiscoverOptions::from_values(None, None, None, Some("1995"), None, None).is_err());
+        assert!(DiscoverOptions::from_values(None, None, None, Some("1890"), None, None).is_err());
         assert!(DiscoverOptions::from_values(None, None, None, Some("9990"), None, None).is_err());
+        let earliest =
+            DiscoverOptions::from_values(None, Some("popular"), None, Some("1900"), None, None)
+                .expect("earliest decade");
+        let earliest_movie = earliest.query_pairs_for(DiscoverKind::Movies, 1, false, today);
+        assert!(earliest_movie.contains(&("primaryReleaseDateGte", "1900-01-01".to_string())));
+        assert!(earliest_movie.contains(&("primaryReleaseDateLte", "1909-12-31".to_string())));
         assert_eq!(
             UtcDate::from_unix_days(0),
             UtcDate {

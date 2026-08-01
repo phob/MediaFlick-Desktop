@@ -180,7 +180,7 @@ public sealed class SeerrGateway
                 "minimum rating must be between 0 and 10");
         }
         if (releaseDecade is { } requestedDecade
-            && (requestedDecade < 1800
+            && (requestedDecade < 1900
                 || requestedDecade > currentDecade
                 || requestedDecade % 10 != 0))
         {
@@ -188,7 +188,7 @@ public sealed class SeerrGateway
                 StatusCodes.Status400BadRequest,
                 string.Create(
                     CultureInfo.InvariantCulture,
-                    $"release decade must be a ten-year start from 1800 through {currentDecade}"));
+                    $"release decade must be a ten-year start from 1900 through {currentDecade}"));
         }
         var safeSortBy = sortBy?.ToLowerInvariant() switch
         {

@@ -1,8 +1,11 @@
 import type {
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
+  SeerrResult,
   SeerrReleaseDecade,
 } from "./api"
+
+export type DiscoveryAvailability = "all" | "outside" | "library"
 
 export const DISCOVERY_FILTER_KEYS = [
   "genre",
@@ -25,19 +28,72 @@ function releaseDecades(firstDecade: number): readonly {
   for (let decade = CURRENT_DECADE; decade >= firstDecade; decade -= 10) {
     options.push({
       value: decade,
-      label:
-        decade === CURRENT_DECADE
-          ? `${decade}s (${decade}–present)`
-          : `${decade}s (${decade}–${decade + 9})`,
+      // "80s" and "90s" are universally understood; spelling out the
+      // century everywhere else keeps "00s" and "10s" unambiguous.
+      label: decade === 1980 || decade === 1990 ? `${decade % 100}s` : `${decade}s`,
     })
   }
   return options
 }
 
 export const RELEASE_DECADES = {
-  // Preserve the historical catalogue coverage of the former broad filter.
-  movie: releaseDecades(1800),
+  movie: releaseDecades(1900),
   tv: releaseDecades(1900),
+}
+
+/**
+ * One immutable identity for everything that can change a discovery wall.
+ *
+ * TanStack hashes objects stably, but making this boundary a scalar also lets
+ * React key the whole result subtree to the exact same identity. In
+ * particular, the local library filter must be represented even though it is
+ * applied after the Seerr response has been joined to the local library.
+ */
+export function discoveryResultSetKey(
+  row: SeerrDiscoverRow,
+  filters: SeerrDiscoverFilters,
+  availability: DiscoveryAvailability = "all",
+) {
+  return [
+    `row=${row}`,
+    `genre=${filters.genre ?? ""}`,
+    `decade=${filters.decade ?? ""}`,
+    `sort=${filters.sort ?? ""}`,
+    `rating=${filters.minRating ?? ""}`,
+    `media=${filters.mediaType ?? ""}`,
+    `window=${filters.timeWindow ?? ""}`,
+    `library=${availability}`,
+  ].join("&")
+}
+
+/** Force card-local state (including poster failures) to belong to one result
+ * set, not merely to a TMDB id that happens to occur in consecutive sets. */
+export function discoveryCardKey(resultSetKey: string, result: SeerrResult) {
+  return `${resultSetKey}:${result.mediaType}-${result.tmdbId}`
+}
+
+/**
+ * Flatten only pages fetched for the currently rendered result set. The query
+ * key already isolates these in normal operation; retaining the identity on
+ * each page makes that invariant explicit at the final infinite-page join and
+ * also removes an upstream duplicate if a moving catalogue straddles pages.
+ */
+export function discoveryResultsForSet(
+  resultSetKey: string,
+  pages: readonly { resultSetKey: string; results: SeerrResult[] }[] | undefined,
+) {
+  if (!pages) return undefined
+
+  const seen = new Set<string>()
+  return pages.flatMap((page) => {
+    if (page.resultSetKey !== resultSetKey) return []
+    return page.results.filter((result) => {
+      const key = `${result.mediaType}-${result.tmdbId}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  })
 }
 
 export function defaultDiscoveryFilters(
