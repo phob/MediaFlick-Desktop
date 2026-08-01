@@ -96,6 +96,7 @@ pub struct DiscoverOptions {
     genre: Option<i64>,
     sort: Option<DiscoverSort>,
     min_rating: Option<u8>,
+    release_century: Option<u8>,
     media_type: Option<TrendingMediaType>,
     time_window: Option<TrendingWindow>,
 }
@@ -125,6 +126,7 @@ impl DiscoverOptions {
         genre: Option<&str>,
         sort: Option<&str>,
         min_rating: Option<&str>,
+        release_century: Option<&str>,
         media_type: Option<&str>,
         time_window: Option<&str>,
     ) -> Result<Self, String> {
@@ -154,6 +156,18 @@ impl DiscoverOptions {
                     .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
             })
             .transpose()?;
+        // TMDB's supported title history starts with nineteenth-century film;
+        // accepting a century rather than arbitrary dates keeps this public
+        // contract narrow while still producing an exact inclusive range.
+        let release_century = release_century
+            .map(|value| {
+                value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|value| matches!(value, 19..=21))
+                    .ok_or_else(|| "release century must be 19, 20, or 21".to_string())
+            })
+            .transpose()?;
         let media_type = media_type
             .map(|value| match value {
                 "all" => Ok(TrendingMediaType::All),
@@ -174,6 +188,7 @@ impl DiscoverOptions {
             genre,
             sort,
             min_rating,
+            release_century,
             media_type,
             time_window,
         })
@@ -181,6 +196,26 @@ impl DiscoverOptions {
 
     /// Query pairs accepted by Seerr's documented discovery routes.
     pub fn query_pairs(&self, kind: DiscoverKind, page: i64) -> Vec<(&'static str, String)> {
+        self.query_pairs_for(kind, page, false)
+    }
+
+    /// The Companion API keeps the application-level century allowlist rather
+    /// than exposing arbitrary upstream date strings. A current plugin expands
+    /// this value to the same Seerr date pair as a direct session.
+    pub fn companion_query_pairs(
+        &self,
+        kind: DiscoverKind,
+        page: i64,
+    ) -> Vec<(&'static str, String)> {
+        self.query_pairs_for(kind, page, true)
+    }
+
+    fn query_pairs_for(
+        &self,
+        kind: DiscoverKind,
+        page: i64,
+        companion: bool,
+    ) -> Vec<(&'static str, String)> {
         let mut query = vec![("page", page.clamp(1, 1_000).to_string())];
 
         match kind {
@@ -210,6 +245,23 @@ impl DiscoverOptions {
             DiscoverKind::Movies | DiscoverKind::Tv => {
                 if let Some(genre) = self.genre {
                     query.push(("genre", genre.to_string()));
+                }
+                if let Some(century) = self.release_century {
+                    if companion {
+                        query.push(("releaseCentury", century.to_string()));
+                    } else {
+                        let first_year = u16::from(century - 1) * 100 + 1;
+                        let last_year = u16::from(century) * 100;
+                        let (gte, lte) = match kind {
+                            DiscoverKind::Movies => {
+                                ("primaryReleaseDateGte", "primaryReleaseDateLte")
+                            }
+                            DiscoverKind::Tv => ("firstAirDateGte", "firstAirDateLte"),
+                            _ => unreachable!(),
+                        };
+                        query.push((gte, format!("{first_year:04}-01-01")));
+                        query.push((lte, format!("{last_year:04}-12-31")));
+                    }
                 }
                 if let Some(sort) = self.sort {
                     let value = match (sort, kind) {
@@ -2699,8 +2751,9 @@ mod tests {
     fn discover_rows_are_named_rather_than_addressed() {
         let (base_url, requests) = fake_server(vec![response("200 OK", SEARCH, &[])]);
         let (_library, session) = session_linked_to(&base_url);
-        let options = DiscoverOptions::from_values(None, None, None, Some("movie"), Some("week"))
-            .expect("options");
+        let options =
+            DiscoverOptions::from_values(None, None, None, None, Some("movie"), Some("week"))
+                .expect("options");
 
         session
             .discover(super::DiscoverKind::Trending, 2, &options)
@@ -2723,26 +2776,49 @@ mod tests {
 
     #[test]
     fn discover_filters_are_allowlisted_and_shaped_for_each_media_kind() {
-        let movie = DiscoverOptions::from_values(Some("18"), Some("rating"), Some("7"), None, None)
-            .expect("movie options")
-            .query_pairs(DiscoverKind::Movies, 4);
+        let options = DiscoverOptions::from_values(
+            Some("18"),
+            Some("rating"),
+            Some("7"),
+            Some("20"),
+            None,
+            None,
+        )
+        .expect("movie options");
+        let movie = options.query_pairs(DiscoverKind::Movies, 4);
         assert_eq!(
             movie,
             vec![
                 ("page", "4".to_string()),
                 ("genre", "18".to_string()),
+                ("primaryReleaseDateGte", "1901-01-01".to_string()),
+                ("primaryReleaseDateLte", "2000-12-31".to_string()),
                 ("sortBy", "vote_average.desc".to_string()),
                 ("voteCountGte", "50".to_string()),
                 ("voteAverageGte", "7".to_string()),
             ]
         );
+        assert!(
+            options
+                .companion_query_pairs(DiscoverKind::Movies, 4)
+                .contains(&("releaseCentury", "20".to_string()))
+        );
 
-        let tv = DiscoverOptions::from_values(None, Some("newest"), None, None, None)
+        let tv = DiscoverOptions::from_values(None, Some("newest"), None, Some("21"), None, None)
             .expect("tv options")
             .query_pairs(DiscoverKind::Tv, 1);
         assert!(tv.contains(&("sortBy", "first_air_date.desc".to_string())));
-        assert!(DiscoverOptions::from_values(Some("../settings"), None, None, None, None).is_err());
-        assert!(DiscoverOptions::from_values(None, Some("random"), None, None, None).is_err());
+        assert!(tv.contains(&("firstAirDateGte", "2001-01-01".to_string())));
+        assert!(tv.contains(&("firstAirDateLte", "2100-12-31".to_string())));
+        assert!(
+            DiscoverOptions::from_values(Some("../settings"), None, None, None, None, None)
+                .is_err()
+        );
+        assert!(
+            DiscoverOptions::from_values(None, Some("random"), None, None, None, None).is_err()
+        );
+        assert!(DiscoverOptions::from_values(None, None, None, Some("18"), None, None).is_err());
+        assert!(DiscoverOptions::from_values(None, None, None, Some("22"), None, None).is_err());
     }
 
     #[test]

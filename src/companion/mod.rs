@@ -307,7 +307,7 @@ impl RequestsProvider {
     ) -> Result<Value, ProviderError> {
         match self {
             Self::Companion(companion) => {
-                let query = options.query_pairs(kind, page);
+                let query = options.companion_query_pairs(kind, page);
                 let mut value = companion
                     .get_seerr(
                         &format!("/MediaFlick/seerr/discover/{}", kind.id()),

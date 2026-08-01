@@ -1,6 +1,6 @@
 import { ArrowUpRight, Star } from "lucide-react"
 import { memo, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Badge } from "@/components/ui/badge"
 import { seerrImageUrl, type SeerrResult } from "@/lib/api"
@@ -52,6 +52,7 @@ export const SeerrCard = memo(function SeerrCard({
   result: SeerrResult
   className?: string
 }) {
+  const location = useLocation()
   const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Film"]
     .filter(Boolean)
     .join(" · ")
@@ -87,7 +88,12 @@ export const SeerrCard = memo(function SeerrCard({
 
   return (
     <Link
-      to={`/discover/${result.mediaType}/${result.tmdbId}`}
+      to={{
+        pathname: `/discover/${result.mediaType}/${result.tmdbId}`,
+        // Keeping the browse query on the detail URL makes the explicit Back
+        // link as reliable as browser Back, including after a reload.
+        search: location.pathname === "/discover" ? location.search : "",
+      }}
       className={shell}
     >
       <Poster result={result} />

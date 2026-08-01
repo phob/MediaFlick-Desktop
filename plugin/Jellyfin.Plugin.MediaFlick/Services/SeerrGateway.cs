@@ -123,6 +123,7 @@ public sealed class SeerrGateway
         int? genre,
         string? sortBy,
         int? voteAverageGte,
+        int? releaseCentury,
         string? mediaType,
         string? timeWindow,
         CancellationToken cancellationToken)
@@ -133,6 +134,7 @@ public sealed class SeerrGateway
             genre,
             sortBy,
             voteAverageGte,
+            releaseCentury,
             mediaType,
             timeWindow);
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
@@ -151,6 +153,7 @@ public sealed class SeerrGateway
         int? genre,
         string? sortBy,
         int? voteAverageGte,
+        int? releaseCentury,
         string? mediaType,
         string? timeWindow)
     {
@@ -172,6 +175,12 @@ public sealed class SeerrGateway
             throw new GatewayException(
                 StatusCodes.Status400BadRequest,
                 "minimum rating must be between 0 and 10");
+        }
+        if (releaseCentury is not null and not (>= 19 and <= 21))
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "release century must be 19, 20, or 21");
         }
         var safeSortBy = sortBy?.ToLowerInvariant() switch
         {
@@ -212,6 +221,18 @@ public sealed class SeerrGateway
             if (genre is { } genreId)
             {
                 query.Add(string.Create(CultureInfo.InvariantCulture, $"genre={genreId}"));
+            }
+            if (releaseCentury is { } century)
+            {
+                var firstYear = ((century - 1) * 100) + 1;
+                var lastYear = century * 100;
+                var dateName = endpoint == "movies" ? "primaryReleaseDate" : "firstAirDate";
+                query.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{dateName}Gte={firstYear:D4}-01-01"));
+                query.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{dateName}Lte={lastYear:D4}-12-31"));
             }
             if (safeSortBy is not null)
             {
