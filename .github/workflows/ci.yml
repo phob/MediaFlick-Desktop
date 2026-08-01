@@ -81,6 +81,9 @@ jobs:
       - name: Install UI dependencies
         run: pnpm --dir ui install --frozen-lockfile
 
+      - name: Test UI
+        run: pnpm --dir ui test
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |

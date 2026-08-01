@@ -9,7 +9,7 @@ import {
   UserRound,
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useLocation, useParams } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Badge } from "@/components/ui/badge"
@@ -211,6 +211,7 @@ function requestable(detail: SeerrMediaDetail, capabilities: SeerrCapabilities |
 }
 
 export default function DiscoverDetail() {
+  const location = useLocation()
   const { mediaType, tmdbId } = useParams<{ mediaType: string; tmdbId: string }>()
   const validMediaType = mediaType === "movie" || mediaType === "tv" ? mediaType : undefined
   const parsedId = Number(tmdbId)
@@ -321,7 +322,7 @@ export default function DiscoverDetail() {
           )}
           <div className="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
             <Button variant="ghost" size="sm" className="w-fit px-0 text-muted-foreground" asChild>
-              <Link to="/discover">
+              <Link to={{ pathname: "/discover", search: location.search }}>
                 <ArrowLeft />
                 Back to discovery
               </Link>
