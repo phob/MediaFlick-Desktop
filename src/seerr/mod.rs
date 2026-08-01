@@ -96,9 +96,57 @@ pub struct DiscoverOptions {
     genre: Option<i64>,
     sort: Option<DiscoverSort>,
     min_rating: Option<u8>,
-    release_century: Option<u8>,
+    release_decade: Option<u16>,
     media_type: Option<TrendingMediaType>,
     time_window: Option<TrendingWindow>,
+}
+
+const EARLIEST_RELEASE_DECADE: u16 = 1800;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UtcDate {
+    year: u16,
+    month: u8,
+    day: u8,
+}
+
+impl UtcDate {
+    fn today() -> Self {
+        let days = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() / 86_400)
+            .unwrap_or_default();
+        Self::from_unix_days(i64::try_from(days).unwrap_or_default())
+    }
+
+    // Gregorian civil date conversion by Howard Hinnant. Keeping this tiny
+    // avoids adding a date-time dependency solely to cap one query parameter.
+    fn from_unix_days(days: i64) -> Self {
+        let days = days + 719_468;
+        let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+        let day_of_era = days - era * 146_097;
+        let year_of_era =
+            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+        let mut year = year_of_era + era * 400;
+        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+        let month_prime = (5 * day_of_year + 2) / 153;
+        let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+        let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+        year += i64::from(month <= 2);
+        Self {
+            year: u16::try_from(year).unwrap_or_default(),
+            month: u8::try_from(month).unwrap_or_default(),
+            day: u8::try_from(day).unwrap_or_default(),
+        }
+    }
+
+    fn decade(self) -> u16 {
+        self.year / 10 * 10
+    }
+
+    fn iso8601(self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +174,7 @@ impl DiscoverOptions {
         genre: Option<&str>,
         sort: Option<&str>,
         min_rating: Option<&str>,
-        release_century: Option<&str>,
+        release_decade: Option<&str>,
         media_type: Option<&str>,
         time_window: Option<&str>,
     ) -> Result<Self, String> {
@@ -156,16 +204,24 @@ impl DiscoverOptions {
                     .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
             })
             .transpose()?;
-        // TMDB's supported title history starts with nineteenth-century film;
-        // accepting a century rather than arbitrary dates keeps this public
-        // contract narrow while still producing an exact inclusive range.
-        let release_century = release_century
+        // Keep the public contract narrower than arbitrary upstream dates.
+        // The UI starts film at 1800 and television at 1900, while this shared
+        // boundary safely accepts both media types and rejects future decades.
+        let current_decade = UtcDate::today().decade();
+        let release_decade = release_decade
             .map(|value| {
                 value
-                    .parse::<u8>()
+                    .parse::<u16>()
                     .ok()
-                    .filter(|value| matches!(value, 19..=21))
-                    .ok_or_else(|| "release century must be 19, 20, or 21".to_string())
+                    .filter(|value| {
+                        value.is_multiple_of(10)
+                            && (EARLIEST_RELEASE_DECADE..=current_decade).contains(value)
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "release decade must be a ten-year start from {EARLIEST_RELEASE_DECADE} through {current_decade}"
+                        )
+                    })
             })
             .transpose()?;
         let media_type = media_type
@@ -188,7 +244,7 @@ impl DiscoverOptions {
             genre,
             sort,
             min_rating,
-            release_century,
+            release_decade,
             media_type,
             time_window,
         })
@@ -196,10 +252,10 @@ impl DiscoverOptions {
 
     /// Query pairs accepted by Seerr's documented discovery routes.
     pub fn query_pairs(&self, kind: DiscoverKind, page: i64) -> Vec<(&'static str, String)> {
-        self.query_pairs_for(kind, page, false)
+        self.query_pairs_for(kind, page, false, UtcDate::today())
     }
 
-    /// The Companion API keeps the application-level century allowlist rather
+    /// The Companion API keeps the application-level decade allowlist rather
     /// than exposing arbitrary upstream date strings. A current plugin expands
     /// this value to the same Seerr date pair as a direct session.
     pub fn companion_query_pairs(
@@ -207,7 +263,7 @@ impl DiscoverOptions {
         kind: DiscoverKind,
         page: i64,
     ) -> Vec<(&'static str, String)> {
-        self.query_pairs_for(kind, page, true)
+        self.query_pairs_for(kind, page, true, UtcDate::today())
     }
 
     fn query_pairs_for(
@@ -215,6 +271,7 @@ impl DiscoverOptions {
         kind: DiscoverKind,
         page: i64,
         companion: bool,
+        today: UtcDate,
     ) -> Vec<(&'static str, String)> {
         let mut query = vec![("page", page.clamp(1, 1_000).to_string())];
 
@@ -246,12 +303,15 @@ impl DiscoverOptions {
                 if let Some(genre) = self.genre {
                     query.push(("genre", genre.to_string()));
                 }
-                if let Some(century) = self.release_century {
+                if let Some(decade) = self.release_decade {
                     if companion {
-                        query.push(("releaseCentury", century.to_string()));
+                        query.push(("releaseDecade", decade.to_string()));
                     } else {
-                        let first_year = u16::from(century - 1) * 100 + 1;
-                        let last_year = u16::from(century) * 100;
+                        let upper_bound = if decade == today.decade() {
+                            today.iso8601()
+                        } else {
+                            format!("{}-12-31", decade + 9)
+                        };
                         let (gte, lte) = match kind {
                             DiscoverKind::Movies => {
                                 ("primaryReleaseDateGte", "primaryReleaseDateLte")
@@ -259,8 +319,8 @@ impl DiscoverOptions {
                             DiscoverKind::Tv => ("firstAirDateGte", "firstAirDateLte"),
                             _ => unreachable!(),
                         };
-                        query.push((gte, format!("{first_year:04}-01-01")));
-                        query.push((lte, format!("{last_year:04}-12-31")));
+                        query.push((gte, format!("{decade:04}-01-01")));
+                        query.push((lte, upper_bound));
                     }
                 }
                 if let Some(sort) = self.sort {
@@ -1709,7 +1769,7 @@ fn same_media_server_user(left: &str, right: &str) -> bool {
 mod tests {
     use super::{
         DiscoverKind, DiscoverOptions, RequestProfileSelection, SeerrClient, SeerrError,
-        SeerrSession, SeerrState, SessionCookies, Value, json, same_media_server_user,
+        SeerrSession, SeerrState, SessionCookies, UtcDate, Value, json, same_media_server_user,
     };
     use crate::library::{Library, SeerrConfig};
     use std::io::{BufRead, BufReader, Read, Write};
@@ -2780,19 +2840,24 @@ mod tests {
             Some("18"),
             Some("rating"),
             Some("7"),
-            Some("20"),
+            Some("1990"),
             None,
             None,
         )
         .expect("movie options");
-        let movie = options.query_pairs(DiscoverKind::Movies, 4);
+        let today = UtcDate {
+            year: 2026,
+            month: 8,
+            day: 1,
+        };
+        let movie = options.query_pairs_for(DiscoverKind::Movies, 4, false, today);
         assert_eq!(
             movie,
             vec![
                 ("page", "4".to_string()),
                 ("genre", "18".to_string()),
-                ("primaryReleaseDateGte", "1901-01-01".to_string()),
-                ("primaryReleaseDateLte", "2000-12-31".to_string()),
+                ("primaryReleaseDateGte", "1990-01-01".to_string()),
+                ("primaryReleaseDateLte", "1999-12-31".to_string()),
                 ("sortBy", "vote_average.desc".to_string()),
                 ("voteCountGte", "50".to_string()),
                 ("voteAverageGte", "7".to_string()),
@@ -2801,15 +2866,16 @@ mod tests {
         assert!(
             options
                 .companion_query_pairs(DiscoverKind::Movies, 4)
-                .contains(&("releaseCentury", "20".to_string()))
+                .contains(&("releaseDecade", "1990".to_string()))
         );
 
-        let tv = DiscoverOptions::from_values(None, Some("newest"), None, Some("21"), None, None)
-            .expect("tv options")
-            .query_pairs(DiscoverKind::Tv, 1);
+        let tv_options =
+            DiscoverOptions::from_values(None, Some("newest"), None, Some("2020"), None, None)
+                .expect("tv options");
+        let tv = tv_options.query_pairs_for(DiscoverKind::Tv, 1, false, today);
         assert!(tv.contains(&("sortBy", "first_air_date.desc".to_string())));
-        assert!(tv.contains(&("firstAirDateGte", "2001-01-01".to_string())));
-        assert!(tv.contains(&("firstAirDateLte", "2100-12-31".to_string())));
+        assert!(tv.contains(&("firstAirDateGte", "2020-01-01".to_string())));
+        assert!(tv.contains(&("firstAirDateLte", "2026-08-01".to_string())));
         assert!(
             DiscoverOptions::from_values(Some("../settings"), None, None, None, None, None)
                 .is_err()
@@ -2817,8 +2883,16 @@ mod tests {
         assert!(
             DiscoverOptions::from_values(None, Some("random"), None, None, None, None).is_err()
         );
-        assert!(DiscoverOptions::from_values(None, None, None, Some("18"), None, None).is_err());
-        assert!(DiscoverOptions::from_values(None, None, None, Some("22"), None, None).is_err());
+        assert!(DiscoverOptions::from_values(None, None, None, Some("1995"), None, None).is_err());
+        assert!(DiscoverOptions::from_values(None, None, None, Some("9990"), None, None).is_err());
+        assert_eq!(
+            UtcDate::from_unix_days(0),
+            UtcDate {
+                year: 1970,
+                month: 1,
+                day: 1,
+            }
+        );
     }
 
     #[test]

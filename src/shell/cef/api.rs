@@ -834,7 +834,7 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
         request.param("genre").as_deref(),
         request.param("sort").as_deref(),
         request.param("minRating").as_deref(),
-        request.param("century").as_deref(),
+        request.param("decade").as_deref(),
         request.param("mediaType").as_deref(),
         request.param("timeWindow").as_deref(),
     ) {

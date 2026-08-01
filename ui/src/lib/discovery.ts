@@ -1,33 +1,43 @@
 import type {
   SeerrDiscoverFilters,
   SeerrDiscoverRow,
-  SeerrReleaseCentury,
+  SeerrReleaseDecade,
 } from "./api"
 
 export const DISCOVERY_FILTER_KEYS = [
   "genre",
   "sort",
   "minRating",
-  "century",
+  "decade",
   "mediaType",
   "timeWindow",
 ] as const
 
-export const RELEASE_CENTURIES: Record<"movie" | "tv", readonly {
-  value: SeerrReleaseCentury
+const LEGACY_DISCOVERY_FILTER_KEYS = ["century"] as const
+const CURRENT_YEAR = new Date().getUTCFullYear()
+const CURRENT_DECADE = Math.floor(CURRENT_YEAR / 10) * 10
+
+function releaseDecades(firstDecade: number): readonly {
+  value: SeerrReleaseDecade
   label: string
-}[]> = {
-  // TMDB's film catalogue reaches into the nineteenth century.
-  movie: [
-    { value: 21, label: "21st century (2001–2100)" },
-    { value: 20, label: "20th century (1901–2000)" },
-    { value: 19, label: "19th century (1801–1900)" },
-  ],
-  // Television release records begin in the twentieth century.
-  tv: [
-    { value: 21, label: "21st century (2001–2100)" },
-    { value: 20, label: "20th century (1901–2000)" },
-  ],
+}[] {
+  const options = []
+  for (let decade = CURRENT_DECADE; decade >= firstDecade; decade -= 10) {
+    options.push({
+      value: decade,
+      label:
+        decade === CURRENT_DECADE
+          ? `${decade}s (${decade}–present)`
+          : `${decade}s (${decade}–${decade + 9})`,
+    })
+  }
+  return options
+}
+
+export const RELEASE_DECADES = {
+  // Preserve the historical catalogue coverage of the former broad filter.
+  movie: releaseDecades(1800),
+  tv: releaseDecades(1900),
 }
 
 export function defaultDiscoveryFilters(
@@ -52,7 +62,7 @@ export function readDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,
   advancedDiscovery: boolean,
-  centuryDiscovery: boolean,
+  decadeDiscovery: boolean,
 ): SeerrDiscoverFilters {
   const filters = defaultDiscoveryFilters(row, advancedDiscovery)
   if (!advancedDiscovery) return filters
@@ -76,13 +86,13 @@ export function readDiscoveryFilters(
   const minRating = positiveInteger(params.get("minRating"))
   if (minRating === 6 || minRating === 7 || minRating === 8) filters.minRating = minRating
 
-  const century = positiveInteger(params.get("century"))
+  const decade = positiveInteger(params.get("decade"))
   const mediaType = row === "movies" ? "movie" : "tv"
   if (
-    centuryDiscovery &&
-    RELEASE_CENTURIES[mediaType].some((option) => option.value === century)
+    decadeDiscovery &&
+    RELEASE_DECADES[mediaType].some((option) => option.value === decade)
   ) {
-    filters.century = century as SeerrReleaseCentury
+    filters.decade = decade as SeerrReleaseDecade
   }
   return filters
 }
@@ -96,6 +106,9 @@ export function writeDiscoveryFilters(
 ) {
   const next = new URLSearchParams(params)
   for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
+  // Intermediate builds briefly serialized the superseded century control.
+  // Never reinterpret that much broader selection as one particular decade.
+  for (const key of LEGACY_DISCOVERY_FILTER_KEYS) next.delete(key)
 
   if (row === "trending") {
     if (filters.mediaType && filters.mediaType !== "all") {
@@ -111,6 +124,6 @@ export function writeDiscoveryFilters(
   if (filters.genre) next.set("genre", String(filters.genre))
   if (filters.sort && filters.sort !== "popular") next.set("sort", filters.sort)
   if (filters.minRating) next.set("minRating", String(filters.minRating))
-  if (filters.century) next.set("century", String(filters.century))
+  if (filters.decade) next.set("decade", String(filters.decade))
   return next
 }

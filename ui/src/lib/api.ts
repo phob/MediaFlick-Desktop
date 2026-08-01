@@ -547,7 +547,7 @@ export const SEERR_DISCOVER_ROWS = [
 export type SeerrDiscoverRow = (typeof SEERR_DISCOVER_ROWS)[number]["id"]
 
 export type SeerrDiscoverSort = "popular" | "rating" | "newest"
-export type SeerrReleaseCentury = 19 | 20 | 21
+export type SeerrReleaseDecade = number
 export type SeerrTrendingMediaType = "all" | SeerrMediaType
 export type SeerrTrendingWindow = "day" | "week"
 
@@ -555,7 +555,7 @@ export interface SeerrDiscoverFilters {
   genre?: number
   sort?: SeerrDiscoverSort
   minRating?: number
-  century?: SeerrReleaseCentury
+  decade?: SeerrReleaseDecade
   mediaType?: SeerrTrendingMediaType
   timeWindow?: SeerrTrendingWindow
 }
