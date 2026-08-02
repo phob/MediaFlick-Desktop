@@ -10,14 +10,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{Value, json};
 
 use crate::app::services::{self, Services};
+use crate::app::services::{ShellFilePickerTarget, ShellRequest};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::companion::ProviderError;
+use crate::integrations::letterboxd;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
+use crate::library::ExternalProfile;
 use crate::library::{ItemQuery, ItemSort, sync};
-use crate::preferences::{AppSettings, StreamingQuality};
+use crate::maintenance::player_setup;
+use crate::players::mpv::input::MpvInputBindings;
+use crate::preferences::{
+    AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch,
+    PlayerSettingsPatch, StreamingQuality,
+};
 use crate::seerr::api::SeerrError;
 use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
@@ -182,7 +190,38 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["companion", "info"] if request.is("GET") => companion_info(services, false),
         ["companion", "probe"] if request.is("POST") => companion_info(services, true),
         ["calendar"] if request.is("GET") => calendar(services, request),
-        ["settings"] if request.is("GET") => client_settings(),
+        ["settings"] if request.is("GET") => settings_snapshot(services),
+        ["settings", "client", "player"] if request.is("PATCH") => {
+            patch_player_settings(services, request)
+        }
+        ["settings", "client", "playback"] if request.is("PATCH") => {
+            patch_playback_settings(services, request)
+        }
+        ["settings", "client", "application"] if request.is("PATCH") => {
+            patch_application_settings(services, request)
+        }
+        ["settings", "appearance"] if request.is("PATCH") => {
+            patch_appearance_settings(services, request)
+        }
+        ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
+        ["shell", "mpv", "install"] if request.is("POST") => shell_install_mpv(services, request),
+        ["shell", "mpv", "help"] if request.is("POST") => shell_mpv_help(),
+        ["integrations", "letterboxd"] if request.is("GET") => letterboxd_profiles(services),
+        ["integrations", "letterboxd"] if request.is("POST") => {
+            letterboxd_add_profile(services, request)
+        }
+        ["integrations", "letterboxd", id] if request.is("PATCH") => {
+            letterboxd_set_enabled(services, &percent_decode(id), request)
+        }
+        ["integrations", "letterboxd", id] if request.is("DELETE") => {
+            letterboxd_remove_profile(services, &percent_decode(id))
+        }
+        ["integrations", "letterboxd", id, "refresh"] if request.is("POST") => {
+            letterboxd_refresh_profile(services, &percent_decode(id))
+        }
+        ["integrations", "letterboxd", id, "open"] if request.is("POST") => {
+            letterboxd_open_profile(services, &percent_decode(id))
+        }
         ["auth", "connect"] if request.is("POST") => auth_connect(services, request),
         ["auth", "login"] if request.is("POST") => auth_login(services, request),
         ["auth", "quickconnect", "start"] if request.is("POST") => {
@@ -283,19 +322,336 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         );
         object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
         object.insert("bootstrap".to_string(), json!(bootstrap));
+        object.insert(
+            "convergence".to_string(),
+            json!(services.library.convergence_diagnostics()),
+        );
         object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)
 }
 
-fn client_settings() -> ApiResponse {
-    let settings = AppSettings::load();
+fn settings_snapshot(services: &Arc<Services>) -> ApiResponse {
+    settings_response(services.preferences.snapshot())
+}
+
+fn settings_response(settings: AppSettings) -> ApiResponse {
+    let bindings = MpvInputBindings::load();
     ApiResponse::ok(json!({
+        "client": {
+            "player": {
+                "playerBackend": settings.effective_backend().as_str(),
+                "mpvPath": settings.mpv_path,
+                "mpchcPath": settings.mpchc_path,
+                "defaultFullscreen": settings.default_fullscreen.as_str(),
+                "markWatchedNext": bindings.mark_watched_next,
+                "playerConfigured": settings.player_path().is_some(),
+            },
+            "playback": {
+                "streamingQuality": settings.streaming_quality.as_str(),
+                "skipIntro": settings.skip_intro.as_str(),
+                "skipCredits": settings.skip_credits.as_str(),
+                "skipRecap": settings.skip_recap.as_str(),
+                "skipCommercial": settings.skip_commercial.as_str(),
+            },
+            "application": {
+                "closeBehavior": settings.close_behavior.as_str(),
+                "showScrollbars": settings.show_scrollbars,
+                "logLevel": settings.log_level,
+            },
+        },
+        "appearance": {
+            "theme": settings.appearance.theme.as_str(),
+            "accent": settings.appearance.accent.as_str(),
+            "density": settings.appearance.density.as_str(),
+            "artworkIntensity": settings.appearance.artwork_intensity,
+            "backdropIntensity": settings.appearance.backdrop_intensity,
+            "reducedMotion": settings.appearance.reduced_motion,
+        },
+        "capabilities": {
+            "platform": player_setup::platform_id(),
+            "mpchc": cfg!(target_os = "windows"),
+            "mpvInstaller": player_setup::supported(),
+        },
+        // Retained for small existing consumers while they move to the
+        // sectioned shape above.
         "streamingQuality": settings.streaming_quality.as_str(),
         "playerBackend": settings.effective_backend().as_str(),
         "playerConfigured": settings.player_path().is_some(),
         "serverUrl": settings.jellyfin_url,
     }))
+}
+
+fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let patch = match serde_json::from_value::<PlayerSettingsPatch>(request.json()) {
+        Ok(patch) => patch,
+        Err(error) => return ApiResponse::error(400, format!("invalid player settings: {error}")),
+    };
+    match services.preferences.patch_player(patch) {
+        Ok(change) => settings_response(change.settings),
+        Err(error) => ApiResponse::error(400, error.to_string()),
+    }
+}
+
+fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let patch = match serde_json::from_value::<PlaybackSettingsPatch>(request.json()) {
+        Ok(patch) => patch,
+        Err(error) => {
+            return ApiResponse::error(400, format!("invalid playback settings: {error}"));
+        }
+    };
+    match services.preferences.patch_playback(patch) {
+        Ok(change) => settings_response(change.settings),
+        Err(error) => ApiResponse::error(400, error.to_string()),
+    }
+}
+
+fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let patch = match serde_json::from_value::<ApplicationSettingsPatch>(request.json()) {
+        Ok(patch) => patch,
+        Err(error) => {
+            return ApiResponse::error(400, format!("invalid application settings: {error}"));
+        }
+    };
+    match services.preferences.patch_application(patch) {
+        Ok(change) => settings_response(change.settings),
+        Err(error) => ApiResponse::error(400, error.to_string()),
+    }
+}
+
+fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let patch = match serde_json::from_value::<AppearanceSettingsPatch>(request.json()) {
+        Ok(patch) => patch,
+        Err(error) => {
+            return ApiResponse::error(400, format!("invalid appearance settings: {error}"));
+        }
+    };
+    match services.preferences.patch_appearance(patch) {
+        Ok(change) => settings_response(change.settings),
+        Err(error) => ApiResponse::error(400, error.to_string()),
+    }
+}
+
+fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = request.json();
+    let request_id = match shell_request_id(body.get("requestId").and_then(Value::as_str)) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let target = match body.get("target").and_then(Value::as_str) {
+        Some("mpv") => ShellFilePickerTarget::Mpv,
+        Some("mpchc") => ShellFilePickerTarget::Mpchc,
+        _ => return ApiResponse::error(400, "target must be mpv or mpchc"),
+    };
+    match services.shell.request(ShellRequest::FilePicker {
+        request_id: request_id.clone(),
+        target,
+    }) {
+        Ok(()) => ApiResponse::ok(json!({ "requestId": request_id, "queued": true })),
+        Err(error) => ApiResponse::error(503, error),
+    }
+}
+
+fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    if !player_setup::supported() {
+        return ApiResponse::error(
+            409,
+            "automatic mpv installation is not available on this platform",
+        );
+    }
+    let body = request.json();
+    let request_id = match shell_request_id(body.get("requestId").and_then(Value::as_str)) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    match services.shell.request(ShellRequest::InstallMpv {
+        request_id: request_id.clone(),
+    }) {
+        Ok(()) => ApiResponse::ok(json!({ "requestId": request_id, "queued": true })),
+        Err(error) => ApiResponse::error(503, error),
+    }
+}
+
+fn shell_mpv_help() -> ApiResponse {
+    super::open_external_link(player_setup::MPV_HELP_URL);
+    ApiResponse::ok(json!({ "opened": true }))
+}
+
+fn shell_request_id(value: Option<&str>) -> Result<String, ApiResponse> {
+    let value = value.unwrap_or_default().trim();
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(ApiResponse::error(
+            400,
+            "requestId must be a short URL-safe identifier",
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn letterboxd_scope(services: &Arc<Services>) -> Result<(String, String), ApiResponse> {
+    if !services.session.is_authenticated() {
+        return Err(ApiResponse::error(
+            401,
+            "sign in to manage connected profiles",
+        ));
+    }
+    let credentials = services.library.credentials();
+    match (credentials.server_id, credentials.user_id) {
+        (Some(server_id), Some(user_id)) => Ok((server_id, user_id)),
+        _ => Err(ApiResponse::error(
+            401,
+            "sign in to manage connected profiles",
+        )),
+    }
+}
+
+fn valid_profile_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn letterboxd_profiles(services: &Arc<Services>) -> ApiResponse {
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    match services
+        .library
+        .external_profiles("letterboxd", &server_id, &user_id)
+    {
+        Ok(profiles) => ApiResponse::ok(json!({ "profiles": profiles })),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let profile =
+        match letterboxd::normalize_profile(request.json()["profile"].as_str().unwrap_or_default())
+        {
+            Ok(profile) => profile,
+            Err(error) => return ApiResponse::error(400, error),
+        };
+    let verification = letterboxd::verify(&profile);
+    let now = unix_now();
+    let record = ExternalProfile {
+        id: crate::app::ids::random_hex(16),
+        provider: "letterboxd".to_string(),
+        profile_key: profile.username.clone(),
+        display_name: profile.username,
+        canonical_url: profile.canonical_url,
+        enabled: true,
+        verification_status: verification.as_str().to_string(),
+        created_at: now,
+        last_checked_at: Some(now),
+        jellyfin_server_id: server_id,
+        jellyfin_user_id: user_id,
+    };
+    match services.library.save_external_profile(&record) {
+        Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiRequest) -> ApiResponse {
+    if !valid_profile_id(id) {
+        return ApiResponse::error(404, "profile not found");
+    }
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let Some(enabled) = request.json()["enabled"].as_bool() else {
+        return ApiResponse::error(400, "enabled must be true or false");
+    };
+    match services
+        .library
+        .set_external_profile_enabled(id, &server_id, &user_id, enabled)
+    {
+        Ok(Some(profile)) => ApiResponse::ok(json!({ "profile": profile })),
+        Ok(None) => ApiResponse::error(404, "profile not found"),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn letterboxd_remove_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
+    if !valid_profile_id(id) {
+        return ApiResponse::error(404, "profile not found");
+    }
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    match services
+        .library
+        .remove_external_profile(id, &server_id, &user_id)
+    {
+        Ok(true) => ApiResponse::ok(json!({ "removed": true })),
+        Ok(false) => ApiResponse::error(404, "profile not found"),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
+    if !valid_profile_id(id) {
+        return ApiResponse::error(404, "profile not found");
+    }
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let existing = match services.library.external_profile(id, &server_id, &user_id) {
+        Ok(Some(profile)) if profile.provider == "letterboxd" => profile,
+        Ok(_) => return ApiResponse::error(404, "profile not found"),
+        Err(error) => return storage_failure(&error),
+    };
+    let source = match letterboxd::normalize_profile(&existing.profile_key) {
+        Ok(profile) => profile,
+        Err(_) => return ApiResponse::error(409, "stored Letterboxd profile is invalid"),
+    };
+    let verification = letterboxd::verify(&source);
+    let record = ExternalProfile {
+        canonical_url: source.canonical_url,
+        verification_status: verification.as_str().to_string(),
+        last_checked_at: Some(unix_now()),
+        ..existing
+    };
+    match services.library.save_external_profile(&record) {
+        Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
+    if !valid_profile_id(id) {
+        return ApiResponse::error(404, "profile not found");
+    }
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    match services.library.external_profile(id, &server_id, &user_id) {
+        Ok(Some(profile)) if profile.provider == "letterboxd" => {
+            super::open_external_link(&profile.canonical_url);
+            ApiResponse::ok(json!({ "opened": true, "url": profile.canonical_url }))
+        }
+        Ok(_) => ApiResponse::error(404, "profile not found"),
+        Err(error) => storage_failure(&error),
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -482,6 +838,7 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
         request.param("genre").as_deref(),
         request.param("sort").as_deref(),
         request.param("minRating").as_deref(),
+        request.param("decade").as_deref(),
         request.param("mediaType").as_deref(),
         request.param("timeWindow").as_deref(),
     ) {
@@ -736,6 +1093,10 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             })
             .unwrap_or_default(),
         genre: request.param("genre"),
+        release_decade: request
+            .param("decade")
+            .as_deref()
+            .and_then(crate::library::release_decade_from_id),
         parent_id: request.param("parentId"),
         series_id: request.param("seriesId"),
         watched: request
@@ -1419,11 +1780,11 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 }
 
 fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiResponse {
-    let settings = AppSettings::load();
+    let settings = services.preferences.snapshot();
     let Some(player_path) = settings.player_path().map(str::to_string) else {
         return ApiResponse::error(
             409,
-            "No media player is configured. Open Client Settings to set up mpv or MPC-HC.",
+            "No media player is configured. Open Settings to set up mpv or MPC-HC.",
         );
     };
     let Some(playback) = services.playback() else {

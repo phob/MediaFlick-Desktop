@@ -9,7 +9,7 @@ import {
   LogOut,
   RefreshCw,
   Search,
-  Ticket,
+  Settings,
   Tv,
 } from "lucide-react"
 import { useRef, useState } from "react"
@@ -39,14 +39,14 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { api } from "@/lib/api"
+import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
-  { title: "Movies", to: "/library?kind=Movie", icon: Film },
-  { title: "Series", to: "/library?kind=Series", icon: Tv },
+  { title: "Movies", to: libraryKindPath("Movie"), icon: Film },
+  { title: "Series", to: libraryKindPath("Series"), icon: Tv },
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
 
@@ -117,14 +117,8 @@ function SearchBox() {
 
 function UserMenu() {
   const { data: status } = useStatus()
-  const { data: seerr } = useSeerrStatus()
   const logout = useLogout()
-  const [setup, setSetup] = useState(false)
-  const navigate = useNavigate()
   const name = status?.userName ?? "Signed in"
-  const companionSeerr =
-    status?.companion?.compatible &&
-    status.companion.info?.capabilities.includes("seerr")
 
   return (
     <SidebarMenu>
@@ -170,22 +164,6 @@ function UserMenu() {
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
-            {/* Seerr setup lives here rather than in the native Client
-                Settings dialog: there is no `POST /api/settings` behind that
-                one, and this flow is interactive. */}
-            <DropdownMenuItem
-              onSelect={() => {
-                if (companionSeerr) navigate("/requests")
-                else setSetup(true)
-              }}
-            >
-              <Ticket />
-              {companionSeerr
-                ? "Requests via Companion"
-                : seerr?.linked
-                  ? "Seerr requests"
-                  : "Set up Seerr…"}
-            </DropdownMenuItem>
             {status?.companion?.available && (
               <DropdownMenuItem disabled>
                 Companion {status.companion.info?.pluginVersion ?? "detected"}
@@ -197,7 +175,6 @@ function UserMenu() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {setup && !companionSeerr && <SeerrSetupDialog onClose={() => setSetup(false)} />}
       </SidebarMenuItem>
     </SidebarMenu>
   )
@@ -205,7 +182,17 @@ function UserMenu() {
 
 export function AppSidebar() {
   const location = useLocation()
-  const current = `${location.pathname}${location.search}`
+  const libraryParams = new URLSearchParams(location.search)
+  const activeLibraryNav = (title: string) => {
+    if (location.pathname !== "/library") return false
+    if (title === "Movies") return libraryKind(libraryParams) === "Movie"
+    if (title === "Series") return libraryKind(libraryParams) === "Series"
+    return (
+      title === "Favorites"
+      && libraryParams.get("favorite") === "true"
+      && !libraryParams.has("kind")
+    )
+  }
   const { data: seerr } = useSeerrStatus()
   const { data: status } = useStatus()
   const companionSeerr =
@@ -246,7 +233,15 @@ export function AppSidebar() {
             <SidebarMenu>
               {NAV.map((item) => (
                 <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton asChild isActive={current === item.to} tooltip={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      item.title === "Home"
+                        ? location.pathname === "/"
+                        : activeLibraryNav(item.title)
+                    }
+                    tooltip={item.title}
+                  >
                     <Link to={item.to}>
                       <item.icon />
                       <span>{item.title}</span>
@@ -296,6 +291,16 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={location.pathname.startsWith("/settings")} tooltip="Settings">
+              <Link to="/settings">
+                <Settings />
+                <span>Settings</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <UserMenu />
       </SidebarFooter>
       <SidebarRail />

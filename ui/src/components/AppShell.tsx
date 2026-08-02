@@ -4,6 +4,7 @@ import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
+import { useLibraryMetadataBridge } from "@/lib/library-events"
 
 const SIDEBAR_OPEN_KEY = "mediaflick.sidebar.open"
 
@@ -21,6 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // that write silently no-ops. Drive the provider instead.
   const [open, setOpen] = useState(storedSidebarOpen)
   usePlaybackStoppedBridge()
+  useLibraryMetadataBridge()
 
   return (
     <SidebarProvider

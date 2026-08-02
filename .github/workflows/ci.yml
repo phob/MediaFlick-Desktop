@@ -61,7 +61,7 @@ jobs:
           package_json_file: ui/package.json
 
       - name: Install Node toolchain
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -80,6 +80,9 @@ jobs:
 
       - name: Install UI dependencies
         run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Test UI
+        run: pnpm --dir ui test
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

@@ -3,6 +3,8 @@ import { PageEmptyState } from "@/components/PageHeader"
 import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SeerrResult } from "@/lib/api"
+import { discoveryCardKey } from "@/lib/discovery"
+import { useSeerrStatus } from "@/lib/queries"
 
 /**
  * A wrapped row of Seerr results. Not virtualized on purpose: a Seerr page is
@@ -14,13 +16,17 @@ export function SeerrResults({
   error,
   empty = "Nothing found.",
   placeholders = 6,
+  resultSetKey,
 }: {
   results: SeerrResult[] | undefined
   isPending?: boolean
   error?: Error | null
   empty?: string
   placeholders?: number
+  resultSetKey?: string
 }) {
+  const status = useSeerrStatus()
+
   if (error) return <p className="py-4 text-sm text-destructive">{error.message}</p>
   if (isPending) {
     return (
@@ -44,7 +50,15 @@ export function SeerrResults({
   return (
     <div className="flex flex-wrap gap-[var(--card-gap)]">
       {results.map((result) => (
-        <SeerrCard key={`${result.mediaType}-${result.tmdbId}`} result={result} />
+        <SeerrCard
+          key={
+            resultSetKey
+              ? discoveryCardKey(resultSetKey, result)
+              : `${result.mediaType}-${result.tmdbId}`
+          }
+          result={result}
+          capabilities={status.data?.capabilities}
+        />
       ))}
     </div>
   )

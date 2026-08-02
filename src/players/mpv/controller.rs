@@ -75,6 +75,7 @@ enum ControllerMessage {
     },
     PlaybackContext(Box<PlaybackContext>),
     Control(PlayerCommand),
+    RefreshInputBindings,
     SegmentSkipConfig(SegmentSkipConfig),
     MediaSegmentsFetched {
         playback_id: i64,
@@ -330,6 +331,10 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
+    pub fn refresh_input_bindings(&self) {
+        let _ = self.tx.send(ControllerMessage::RefreshInputBindings);
+    }
+
     pub fn set_segment_skip_config(&self, config: SegmentSkipConfig) {
         let _ = self.tx.send(ControllerMessage::SegmentSkipConfig(config));
     }
@@ -441,6 +446,18 @@ impl ControllerState {
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
                     self.control(command);
+                }
+                Ok(ControllerMessage::RefreshInputBindings) => {
+                    if self
+                        .ipc_worker
+                        .as_ref()
+                        .is_some_and(IpcWorker::is_writer_alive)
+                    {
+                        tracing::debug!(target: "mpv.ipc", "refreshing live mpv input bindings");
+                        self.install_input_bindings();
+                    } else {
+                        tracing::debug!(target: "mpv.ipc", "saved mpv input bindings for the next player start");
+                    }
                 }
                 Ok(ControllerMessage::SegmentSkipConfig(config)) => {
                     tracing::debug!(target: "playback", ?config, "updated segment skip settings");

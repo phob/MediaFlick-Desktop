@@ -7,7 +7,7 @@ import type { StreamingQualityId } from "./api"
  * Settings (the native dialog); this only redirects the *next* playback, so it
  * is deliberately module state rather than something written back to disk.
  *
- * `null` means "use whatever Client Settings says".
+ * `null` means "use the saved Settings default".
  */
 let override: StreamingQualityId | null = null
 const listeners = new Set<() => void>()

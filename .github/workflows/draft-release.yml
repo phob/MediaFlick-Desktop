@@ -96,7 +96,7 @@ jobs:
           package_json_file: ui/package.json
 
       - name: Install Node toolchain
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -191,7 +191,7 @@ jobs:
           package_json_file: ui/package.json
 
       - name: Install Node toolchain
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -297,7 +297,7 @@ jobs:
           package_json_file: ui/package.json
 
       - name: Install Node toolchain
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm

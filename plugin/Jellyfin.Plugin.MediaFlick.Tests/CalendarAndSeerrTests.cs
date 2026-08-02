@@ -156,15 +156,36 @@ public sealed class CalendarAndSeerrTests
     [Fact]
     public void SeerrDiscoveryPathsPreserveTheAllowlistedDesktopFilters()
     {
+        var today = new DateOnly(2026, 8, 1);
         Assert.Equal(
-            "api/v1/discover/movies?page=4&genre=18&sortBy=vote_average.desc&voteCountGte=50&voteAverageGte=7",
-            SeerrGateway.BuildDiscoverPath("movies", 4, 18, "vote_average.desc", 7, null, null));
+            "api/v1/discover/movies?page=4&genre=18&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31&sortBy=vote_average.desc&voteCountGte=50&voteAverageGte=7",
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, today));
         Assert.Equal(
             "api/v1/discover/trending?page=1&mediaType=tv&timeWindow=week",
-            SeerrGateway.BuildDiscoverPath("trending", -1, null, null, null, "tv", "week"));
+            SeerrGateway.BuildDiscoverPath(
+                "trending", -1, null, null, null, null, "tv", "week", today));
         Assert.Equal(
             "api/v1/discover/tv/upcoming?page=2",
-            SeerrGateway.BuildDiscoverPath("upcoming-tv", 2, null, null, null, null, null));
+            SeerrGateway.BuildDiscoverPath(
+                "upcoming-tv", 2, null, null, null, null, null, null, today));
+        Assert.Equal(
+            "api/v1/discover/tv?page=1&genre=18&firstAirDateGte=2020-01-01&firstAirDateLte=2026-08-01",
+            SeerrGateway.BuildDiscoverPath(
+                "tv", 1, 18, null, null, 2020, null, null, today));
+        Assert.Equal(
+            "api/v1/discover/movies?page=1&primaryReleaseDateGte=1900-01-01&primaryReleaseDateLte=1909-12-31&sortBy=popularity.desc",
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, "popularity.desc", null, 1900, null, null, today));
+        Assert.Throws<GatewayException>(() =>
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, null, null, 1995, null, null, today));
+        Assert.Throws<GatewayException>(() =>
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, null, null, 1890, null, null, today));
+        Assert.Throws<GatewayException>(() =>
+            SeerrGateway.BuildDiscoverPath(
+                "movies", 1, null, null, null, 2030, null, null, today));
     }
 
     [Fact]

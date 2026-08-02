@@ -42,8 +42,8 @@ export const queryKeys = {
   seerrStatus: ["seerr", "status"] as const,
   seerrSearch: (term: string) => ["seerr", "search", term] as const,
   seerrSearchInfinite: (term: string) => ["seerr", "search", term, "infinite"] as const,
-  seerrDiscover: (row: string, filters: object = {}) =>
-    ["seerr", "discover", row, filters] as const,
+  seerrDiscover: (row: string, resultSetKey: string) =>
+    ["seerr", "discover", row, resultSetKey] as const,
   seerrGenres: (mediaType: string) => ["seerr", "genres", mediaType] as const,
   seerrMedia: (mediaType: string, tmdbId: number) => ["seerr", "media", mediaType, tmdbId] as const,
   seerrRequestOptions: (mediaType: string, is4k: boolean) =>
@@ -96,4 +96,25 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
     if (!itemId) continue
     void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...active })
   }
+}
+
+/**
+ * One committed native batch becomes one React Query invalidation operation.
+ * The predicate covers aggregate projections, diagnostics/status, changed
+ * details, and parent/series/season contexts while preserving active-only
+ * refetch behavior.
+ */
+export function invalidateLibraryChanged(
+  itemIds: readonly string[],
+  contextIds: readonly string[] = [],
+) {
+  const relevant = new Set([...itemIds, ...contextIds])
+  void queryClient.invalidateQueries({
+    refetchType: "active",
+    predicate: (query) => {
+      const [root, id] = query.queryKey
+      if (["home", "items", "billboard", "genres", "status"].includes(String(root))) return true
+      return root === "item" && typeof id === "string" && relevant.has(id)
+    },
+  })
 }

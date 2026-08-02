@@ -37,6 +37,10 @@ public sealed class InfoController : ControllerBase
         {
             capabilities.Add("seerr");
             capabilities.Add("seerr-discovery-v2");
+            // v3 was the short-lived century contract. A distinct capability
+            // prevents mixed desktop/plugin versions from silently ignoring
+            // or misinterpreting the replacement parameter.
+            capabilities.Add("seerr-discovery-v4");
             capabilities.Add("seerr-request-profiles");
         }
 
@@ -120,6 +124,7 @@ public sealed class SeerrController : ControllerBase
         [FromQuery] int? genre = null,
         [FromQuery] string? sortBy = null,
         [FromQuery] int? voteAverageGte = null,
+        [FromQuery] int? releaseDecade = null,
         [FromQuery] string? mediaType = null,
         [FromQuery] string? timeWindow = null,
         CancellationToken cancellationToken = default)
@@ -130,6 +135,7 @@ public sealed class SeerrController : ControllerBase
             genre,
             sortBy,
             voteAverageGte,
+            releaseDecade,
             mediaType,
             timeWindow,
             cancellationToken));
