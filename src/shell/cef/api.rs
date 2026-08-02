@@ -1089,6 +1089,10 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             })
             .unwrap_or_default(),
         genre: request.param("genre"),
+        release_decade: request
+            .param("decade")
+            .as_deref()
+            .and_then(crate::library::release_decade_from_id),
         parent_id: request.param("parentId"),
         series_id: request.param("seriesId"),
         watched: request

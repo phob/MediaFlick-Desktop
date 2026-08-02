@@ -101,11 +101,11 @@ impl ItemSort {
 
     fn order_clause(self) -> &'static str {
         match self {
-            Self::Name => "i.sort_name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC",
-            Self::Year => "i.year DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC",
+            Self::Name => "i.sort_name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC, i.id ASC",
+            Self::Year => "i.year DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC",
             Self::DateAdded => "i.date_created DESC NULLS LAST, i.id DESC",
             Self::CommunityRating => {
-                "i.community_rating DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC"
+                "i.community_rating DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC"
             }
         }
     }
@@ -117,6 +117,8 @@ pub struct ItemQuery {
     pub search: Option<String>,
     pub kinds: Vec<String>,
     pub genre: Option<String>,
+    /// Inclusive first year of a standard ten-year release decade.
+    pub release_decade: Option<i64>,
     pub parent_id: Option<String>,
     pub series_id: Option<String>,
     pub watched: Option<bool>,
@@ -124,6 +126,26 @@ pub struct ItemQuery {
     pub sort: ItemSort,
     pub offset: i64,
     pub limit: i64,
+}
+
+pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
+
+/// The newest standard decade that can be selected by the library UI.
+pub fn current_release_decade() -> i64 {
+    let days = now_unix().div_euclid(86_400);
+    let (year, _, _) = civil_from_days(days);
+    year.div_euclid(10) * 10
+}
+
+/// Parses only decade starts that the library UI can represent. Keeping this
+/// at the API boundary means hand-written URLs cannot turn a future or
+/// five-year bucket into an accidental query contract.
+pub fn release_decade_from_id(value: &str) -> Option<i64> {
+    let decade = value.trim().parse::<i64>().ok()?;
+    (decade >= EARLIEST_RELEASE_DECADE
+        && decade <= current_release_decade()
+        && decade.rem_euclid(10) == 0)
+        .then_some(decade)
 }
 
 #[derive(Debug, Clone)]
@@ -780,7 +802,7 @@ impl Library {
 
         // Relevance beats alphabetical order while the user is typing.
         let order = if query.search.is_some() {
-            "bm25(items_fts)".to_string()
+            "bm25(items_fts), i.id ASC".to_string()
         } else {
             query.sort.order_clause().to_string()
         };
@@ -1107,6 +1129,13 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
             .push("EXISTS (SELECT 1 FROM json_each(i.genres) AS g WHERE g.value = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
     }
+    if let Some(decade) = query.release_decade {
+        // Two bound comparisons intentionally avoid strftime/substr so the
+        // (kind, year) index remains usable for large libraries.
+        conditions.push("i.year >= ? AND i.year < ?".to_string());
+        arguments.push(SqlValue::Integer(decade));
+        arguments.push(SqlValue::Integer(decade.saturating_add(10)));
+    }
     if let Some(parent_id) = &query.parent_id {
         conditions.push("i.parent_id = ?".to_string());
         arguments.push(SqlValue::Text(parent_id.clone()));
@@ -1122,8 +1151,12 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
             "COALESCE(u.played, 0) = 0".to_string()
         });
     }
-    if query.favorite == Some(true) {
-        conditions.push("COALESCE(u.is_favorite, 0) = 1".to_string());
+    if let Some(favorite) = query.favorite {
+        conditions.push(if favorite {
+            "COALESCE(u.is_favorite, 0) = 1".to_string()
+        } else {
+            "COALESCE(u.is_favorite, 0) = 0".to_string()
+        });
     }
 
     (from_clause, conditions, arguments)
@@ -1284,7 +1317,6 @@ fn external_profile_from_row(row: &Row<'_>) -> rusqlite::Result<ExternalProfile>
 }
 
 /// Howard Hinnant's `civil_from_days`, the standard days-to-date conversion.
-#[cfg(test)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -1307,7 +1339,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::{
         ExternalProfile, ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag,
-        civil_from_days, fts_match_expression,
+        civil_from_days, current_release_decade, fts_match_expression, release_decade_from_id,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use serde_json::json;
@@ -1607,6 +1639,138 @@ mod tests {
             .expect("query");
         assert_eq!(watched.total, 1);
         assert_eq!(watched.items[0]["id"], "m2");
+    }
+
+    #[test]
+    fn favorite_filter_uses_the_mirrored_my_list_state() {
+        let library = seeded();
+        library.set_local_favorite("m1", true).expect("favorite");
+
+        let favorites = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                favorite: Some(true),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("favorites");
+        assert_eq!(favorites.total, 1);
+        assert_eq!(favorites.items[0]["id"], "m1");
+
+        let not_favorites = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                favorite: Some(false),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("not favorites");
+        assert_eq!(not_favorites.total, 1);
+        assert_eq!(not_favorites.items[0]["id"], "m2");
+    }
+
+    #[test]
+    fn release_decade_is_bounded_and_composes_with_every_library_filter() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"previous","Name":"Previous Decade","Type":"Movie","ProductionYear":1989,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"start","Name":"Decade Start","Type":"Movie","ProductionYear":1990,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"end","Name":"Decade End","Type":"Movie","ProductionYear":1999,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"next","Name":"Next Decade","Type":"Movie","ProductionYear":2000,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"watched","Name":"Watched","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Action"],"UserData":{"Played":true,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"drama","Name":"Drama","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Drama"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"not-listed","Name":"Not Listed","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":false}}"#),
+                dto(r#"{"Id":"unknown","Name":"Unknown Year","Type":"Movie",
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+            ])
+            .expect("seed");
+
+        let page = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                genre: Some("Action".to_string()),
+                release_decade: Some(1990),
+                watched: Some(false),
+                favorite: Some(true),
+                limit: 1,
+                ..Default::default()
+            })
+            .expect("combined filters");
+
+        // The count is over the complete filtered library even though only a
+        // one-item page is returned, and both decade boundary years match.
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 1);
+        let all = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                genre: Some("Action".to_string()),
+                release_decade: Some(1990),
+                watched: Some(false),
+                favorite: Some(true),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("all combined filters");
+        assert_eq!(
+            all.items
+                .iter()
+                .map(|item| item["id"].as_str().expect("id"))
+                .collect::<HashSet<_>>(),
+            HashSet::from(["start", "end"])
+        );
+    }
+
+    #[test]
+    fn movie_and_series_decades_use_release_and_first_air_years() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProductionYear":1999}"#),
+                // A PremiereDate-only series exercises the first-air fallback.
+                dto(r#"{"Id":"series","Name":"Show","Type":"Series",
+                    "PremiereDate":"2017-02-15T00:00:00.0000000Z"}"#),
+            ])
+            .expect("seed");
+
+        let movies = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                release_decade: Some(1990),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("movies");
+        let series = library
+            .query(&ItemQuery {
+                kinds: vec!["Series".to_string()],
+                release_decade: Some(2010),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("series");
+
+        assert_eq!(movies.items[0]["id"], "movie");
+        assert_eq!(series.items[0]["id"], "series");
+        assert_eq!(series.items[0]["year"], 2017);
+    }
+
+    #[test]
+    fn release_decade_ids_are_standard_and_not_in_the_future() {
+        let current = current_release_decade();
+        assert_eq!(release_decade_from_id("1900"), Some(1900));
+        assert_eq!(release_decade_from_id(&current.to_string()), Some(current));
+        assert_eq!(release_decade_from_id("1995"), None);
+        assert_eq!(release_decade_from_id("1890"), None);
+        assert_eq!(release_decade_from_id(&(current + 10).to_string()), None);
     }
 
     #[test]

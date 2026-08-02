@@ -1,25 +1,25 @@
 import { useCallback, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { ItemGrid } from "@/components/ItemGrid"
-import { LibraryFilters, type LibraryFilterState } from "@/components/LibraryFilters"
+import { LibraryFilters } from "@/components/LibraryFilters"
 import { PageHeader } from "@/components/PageHeader"
 import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
+import {
+  libraryItemQuery,
+  libraryKind,
+  readLibraryFilters,
+  type LibraryFilterState,
+  writeLibraryFilters,
+} from "@/lib/library-filters"
 
 export default function Library() {
   const [params, setParams] = useSearchParams()
   const [total, setTotal] = useState<number | null>(null)
 
   const search = params.get("search") ?? ""
-  const favorite = params.get("favorite") === "true"
-  // A search or a favorites view spans the whole library; plain browsing
-  // defaults to movies.
-  const kind = params.has("kind") ? (params.get("kind") ?? "") : search || favorite ? "" : "Movie"
-
-  const filters: LibraryFilterState = {
-    sort: params.get("sort") ?? "name",
-    genre: params.get("genre") ?? "",
-    watched: params.get("watched") ?? "",
-  }
+  const filters = readLibraryFilters(params)
+  const favorite = filters.favorite
+  const kind = libraryKind(params)
 
   // The URL is the filter state, so a filtered view is linkable and survives a
   // reload — the app scheme already serves `index.html` for unknown paths.
@@ -27,31 +27,23 @@ export default function Library() {
     (patch: Partial<LibraryFilterState>) => {
       setParams(
         (previous) => {
-          const next = new URLSearchParams(previous)
-          for (const [key, value] of Object.entries(patch)) {
-            if (value) next.set(key, value)
-            else next.delete(key)
-          }
-          return next
+          return writeLibraryFilters(previous, patch)
         },
-        { replace: true },
+        // Each committed choice is navigable. Back/forward therefore restores
+        // both the chips and the server query instead of skipping filter state.
+        { replace: false },
       )
     },
     [setParams],
   )
 
-  const query = {
-    search,
-    kind,
-    favorite: favorite || undefined,
-    genre: filters.genre,
-    sort: filters.sort,
-    watched: filters.watched as "true" | "false" | "",
-  }
+  const query = libraryItemQuery(params)
+
+  const globalFavoritesView = favorite && !params.has("kind")
 
   const title = search
     ? `Results for “${search}”`
-    : favorite
+    : globalFavoritesView
       ? "My List"
       : kind === "Series"
         ? "Series"
@@ -60,7 +52,7 @@ export default function Library() {
           : "Your library"
   const description = search
     ? "Everything in your library that matches, with requestable titles from Seerr below."
-    : favorite
+    : globalFavoritesView
       ? "The films and shows you saved for later, all in one place."
       : kind === "Series"
         ? "Find your next episode, revisit a favorite, or start something new."
