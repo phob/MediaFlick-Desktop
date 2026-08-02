@@ -41,6 +41,15 @@ pub enum ShellRequest {
     InstallMpv {
         request_id: String,
     },
+    /// A background exact-ID repair changed metadata/artwork already queried
+    /// by React. The shell relays this after SQLite commits so active cache
+    /// surfaces can invalidate without deleting any local data.
+    MetadataRepaired {
+        item_ids: Vec<String>,
+    },
+    /// The one-shot background repair observed an authorization rejection.
+    /// Relay it so the UI re-reads the canonical session state immediately.
+    SessionExpired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +188,26 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
 
 pub fn services() -> Option<Arc<Services>> {
     SERVICES.get().cloned()
+}
+
+/// Best-effort UI notification for background cache repair. If CEF has not
+/// subscribed yet, no query could have observed the old row through that
+/// browser, so dropping the event is safe.
+pub fn notify_metadata_repaired(item_ids: Vec<String>) {
+    if item_ids.is_empty() {
+        return;
+    }
+    if let Some(services) = services() {
+        let _ = services
+            .shell
+            .request(ShellRequest::MetadataRepaired { item_ids });
+    }
+}
+
+pub fn notify_session_expired() {
+    if let Some(services) = services() {
+        let _ = services.shell.request(ShellRequest::SessionExpired);
+    }
 }
 
 /// Why [`init`] failed, for the error the UI shows instead of a blank window.

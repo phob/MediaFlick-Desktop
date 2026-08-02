@@ -145,6 +145,7 @@ pub fn fetch_item(
             ("ids", item_id.to_string()),
             ("Fields", SYNC_FIELDS.to_string()),
             ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
         ],
     )?;
     Ok(response.items.into_iter().next())

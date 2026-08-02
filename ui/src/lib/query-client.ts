@@ -97,3 +97,11 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
     void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...active })
   }
 }
+
+/** Metadata/artwork repair also changes the genre and billboard projections. */
+export function invalidateLibraryMetadata(...itemIds: (string | null | undefined)[]) {
+  invalidateMediaSurfaces(...itemIds)
+  const active = { refetchType: "active" as const }
+  void queryClient.invalidateQueries({ queryKey: queryKeys.billboard, ...active })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.genres, ...active })
+}
