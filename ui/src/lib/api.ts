@@ -157,6 +157,7 @@ export interface Status {
   lastSync?: string | null
   bootstrapped?: boolean
   bootstrap?: BootstrapProgress
+  convergence?: ConvergenceDiagnostics
   companion?: CompanionStatus
   [key: string]: unknown
 }
@@ -558,6 +559,26 @@ export interface SeerrDiscoverFilters {
   decade?: SeerrReleaseDecade
   mediaType?: SeerrTrendingMediaType
   timeWindow?: SeerrTrendingWindow
+}
+
+export interface ConvergenceRunReport {
+  selected: number
+  requests: number
+  completed: number
+  progressed: number
+  unchanged: number
+  dormant: number
+  failed: number
+  elapsedMs: number
+}
+
+export interface ConvergenceDiagnostics {
+  pending: number
+  due: number
+  dormant: number
+  oldestPendingAt: number | null
+  nextDueAt: number | null
+  lastRun: ConvergenceRunReport | null
 }
 
 export interface SeerrGenre {

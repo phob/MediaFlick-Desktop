@@ -7,6 +7,7 @@ use crate::app::paths;
 use crate::companion::{CompanionSession, RequestsProvider};
 use crate::jellyfin::session::Session;
 use crate::library::Library;
+use crate::library::LibraryChangeBatch;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{AppSettings, PreferencesService};
@@ -41,13 +42,12 @@ pub enum ShellRequest {
     InstallMpv {
         request_id: String,
     },
-    /// A background exact-ID repair changed metadata/artwork already queried
-    /// by React. The shell relays this after SQLite commits so active cache
-    /// surfaces can invalidate without deleting any local data.
-    MetadataRepaired {
+    /// A committed ordinary-sync or convergence batch changed cached metadata.
+    LibraryChanged {
         item_ids: Vec<String>,
+        context_ids: Vec<String>,
     },
-    /// The one-shot background repair observed an authorization rejection.
+    /// Background synchronization observed an authorization rejection.
     /// Relay it so the UI re-reads the canonical session state immediately.
     SessionExpired,
 }
@@ -190,17 +190,18 @@ pub fn services() -> Option<Arc<Services>> {
     SERVICES.get().cloned()
 }
 
-/// Best-effort UI notification for background cache repair. If CEF has not
+/// Best-effort UI notification for a committed cache batch. If CEF has not
 /// subscribed yet, no query could have observed the old row through that
 /// browser, so dropping the event is safe.
-pub fn notify_metadata_repaired(item_ids: Vec<String>) {
-    if item_ids.is_empty() {
+pub fn notify_library_changed(changes: LibraryChangeBatch) {
+    if changes.item_ids.is_empty() {
         return;
     }
     if let Some(services) = services() {
-        let _ = services
-            .shell
-            .request(ShellRequest::MetadataRepaired { item_ids });
+        let _ = services.shell.request(ShellRequest::LibraryChanged {
+            item_ids: changes.item_ids,
+            context_ids: changes.context_ids,
+        });
     }
 }
 

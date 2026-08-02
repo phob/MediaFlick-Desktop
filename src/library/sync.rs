@@ -25,7 +25,7 @@ use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::Session;
 
-use super::{Library, UserDataRecord};
+use super::{Library, LibraryChangeBatch, UserDataRecord};
 
 /// Base delay between incremental sweeps; jittered per cycle.
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -52,6 +52,7 @@ const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 const META_BOOTSTRAP_TOTAL: &str = "sync.bootstrap_total";
 const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
 const META_WATERMARK: &str = "sync.watermark";
+const META_WATERMARK_IDS: &str = "sync.watermark_ids";
 const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
 const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 const META_LAST_SYNC: &str = "sync.completed_at";
@@ -94,6 +95,8 @@ pub struct SyncReport {
     pub user_data_refreshed: usize,
     pub deleted: usize,
     pub elapsed_ms: u64,
+    #[serde(skip)]
+    pub changes: LibraryChangeBatch,
 }
 
 impl SyncReport {
@@ -187,10 +190,8 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 
 fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
-    let mut startup_repair = StartupRepair::default();
-    // The cycle that runs at start-up is an ordinary one. `due` already forces
-    // the identity sweep whenever the app was closed for longer than the sweep
-    // interval, which is every launch that could have missed a deletion.
+    let mut normal_deadline = Instant::now();
+    let mut convergence_not_before = Instant::now();
     let mut trigger = Trigger::Scheduled;
     loop {
         if !session.is_authenticated() {
@@ -204,99 +205,99 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
             continue;
         }
 
-        handle.running.store(true, Ordering::Relaxed);
-        let outcome = run_cycle(&library, &session, trigger);
-        trigger = Trigger::Scheduled;
+        let normal_due = trigger == Trigger::Requested || Instant::now() >= normal_deadline;
+        let convergence_due = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+            && Instant::now() >= convergence_not_before
+            && library.convergence_diagnostics().due > 0;
+        handle
+            .running
+            .store(normal_due || convergence_due, Ordering::Relaxed);
 
-        // Repair only after a successful ordinary cycle and a completed
-        // bootstrap. That serializes its small exact-ID budget behind the
-        // watermark/bootstrap/identity work instead of competing with it, and
-        // still lets a first sign-in run the pass as soon as its initial fill
-        // has established durable candidates.
-        if startup_repair.claim(
-            outcome.is_ok(),
-            session.is_authenticated(),
-            library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1"),
-        ) {
-            match super::repair::repair_once(&library, &session) {
+        if normal_due {
+            let outcome = run_cycle(&library, &session, trigger);
+            trigger = Trigger::Scheduled;
+            let delay = match outcome {
                 Ok(report) => {
-                    if !report.repaired_ids.is_empty() {
-                        crate::app::services::notify_metadata_repaired(report.repaired_ids.clone());
+                    backoff = SYNC_INTERVAL;
+                    if report.changed() {
+                        tracing::info!(
+                            target: "library.sync",
+                            bootstrapped = report.bootstrapped,
+                            updated = report.updated,
+                            deleted = report.deleted,
+                            elapsed_ms = report.elapsed_ms,
+                            "library sync cycle finished"
+                        );
+                    }
+                    jittered(SYNC_INTERVAL)
+                }
+                Err(ApiError::Unauthorized) => {
+                    session.mark_expired();
+                    crate::app::services::notify_session_expired();
+                    IDLE_INTERVAL
+                }
+                Err(error) => {
+                    tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
+                    backoff = (backoff * 2).min(Duration::from_secs(30 * 60));
+                    jittered(backoff)
+                }
+            };
+            normal_deadline = Instant::now() + delay;
+        }
+
+        if session.is_authenticated()
+            && library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+            && Instant::now() >= convergence_not_before
+            && library.convergence_diagnostics().due > 0
+        {
+            match super::convergence::process_due(&library, &session) {
+                Ok(report) => {
+                    if !report.changes.is_empty() {
+                        crate::app::services::notify_library_changed(report.changes);
                     }
                     if !session.is_authenticated() {
                         crate::app::services::notify_session_expired();
                     }
-                    tracing::info!(
-                        target: "library.repair",
-                        candidates = report.candidates,
-                        repaired = report.repaired_ids.len(),
-                        incomplete = report.incomplete_responses,
-                        failed = report.failed,
-                        "startup metadata repair pass finished"
-                    );
+                    convergence_not_before = if report.more_due {
+                        Instant::now()
+                            + Duration::from_secs(super::convergence::DRAIN_COOLDOWN_SECS)
+                    } else {
+                        Instant::now()
+                    };
+                }
+                Err(ApiError::Unauthorized) => {
+                    session.mark_expired();
+                    crate::app::services::notify_session_expired();
                 }
                 Err(error) => {
-                    session.note_error(&error);
-                    if error == ApiError::Unauthorized {
-                        crate::app::services::notify_session_expired();
-                    }
                     tracing::warn!(
-                        target: "library.repair",
-                        "could not start the metadata repair pass: {error}"
+                        target: "library.convergence",
+                        "could not process metadata convergence: {error}"
                     );
                 }
             }
         }
         handle.running.store(false, Ordering::Relaxed);
 
-        let delay = match outcome {
-            Ok(report) => {
-                backoff = SYNC_INTERVAL;
-                if report.changed() {
-                    tracing::info!(
-                        target: "library.sync",
-                        bootstrapped = report.bootstrapped,
-                        updated = report.updated,
-                        deleted = report.deleted,
-                        elapsed_ms = report.elapsed_ms,
-                        "library sync cycle finished"
-                    );
-                }
-                jittered(SYNC_INTERVAL)
-            }
-            Err(ApiError::Unauthorized) => {
-                session.mark_expired();
-                IDLE_INTERVAL
-            }
-            Err(error) => {
-                tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
-                backoff = (backoff * 2).min(Duration::from_secs(30 * 60));
-                jittered(backoff)
-            }
+        let diagnostics = library.convergence_diagnostics();
+        let convergence_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
+            diagnostics.next_due_at.map_or(SYNC_INTERVAL, |next| {
+                let seconds = next.saturating_sub(now_unix() as i64).max(0) as u64;
+                Duration::from_secs(seconds)
+            })
+        } else {
+            SYNC_INTERVAL
         };
+        let convergence_delay =
+            convergence_delay.max(convergence_not_before.saturating_duration_since(Instant::now()));
+        let delay = normal_deadline
+            .saturating_duration_since(Instant::now())
+            .min(convergence_delay);
         match wait(&handle, delay) {
             Wake::Stopped => return,
             Wake::Requested => trigger = Trigger::Requested,
             Wake::Elapsed => {}
         }
-    }
-}
-
-/// Process-local lifecycle gate. It is consumed even when there are no
-/// candidates, but not while signed out, offline synchronization failed, or
-/// the resumable initial bootstrap is incomplete.
-#[derive(Debug, Default)]
-struct StartupRepair {
-    consumed: bool,
-}
-
-impl StartupRepair {
-    fn claim(&mut self, sync_succeeded: bool, authenticated: bool, bootstrapped: bool) -> bool {
-        let ready = !self.consumed && sync_succeeded && authenticated && bootstrapped;
-        if ready {
-            self.consumed = true;
-        }
-        ready
     }
 }
 
@@ -360,8 +361,8 @@ pub fn run_cycle(
             // make the determinate bar move against stale information.
             let _ = library.set_meta(META_BOOTSTRAP_TOTAL, "");
         }
-        report.bootstrapped = bootstrap(library, &client, &user_id)?;
-        report.updated = incremental(library, &client, &user_id)?;
+        report.bootstrapped = bootstrap(library, &client, &user_id, &mut report.changes)?;
+        report.updated = incremental(library, &client, &user_id, &mut report.changes)?;
         if trigger.forces_identity_sweep()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
         {
@@ -375,6 +376,12 @@ pub fn run_cycle(
 
     if let Err(error) = &result {
         session.note_error(error);
+        // Bootstrap/incremental pages commit independently. A later network
+        // failure must not strand already-visible SQLite changes without the
+        // same batched UI notification a fully successful cycle receives.
+        if !report.changes.is_empty() {
+            crate::app::services::notify_library_changed(report.changes.clone());
+        }
     }
     result?;
 
@@ -384,12 +391,20 @@ pub fn run_cycle(
         "sync.last_report",
         &serde_json::to_string(&report).unwrap_or_default(),
     );
+    if !report.changes.is_empty() {
+        crate::app::services::notify_library_changed(report.changes.clone());
+    }
     Ok(report)
 }
 
 /// Pages the whole library once, resuming from the stored offset after a crash
 /// or a mid-sync sign-out.
-fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Result<usize, ApiError> {
+fn bootstrap(
+    library: &Library,
+    client: &JellyfinClient,
+    user_id: &str,
+    changes: &mut LibraryChangeBatch,
+) -> Result<usize, ApiError> {
     if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
         return Ok(0);
     }
@@ -401,6 +416,7 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
         .max(0);
     let mut written = 0;
     let mut watermark = library.meta(META_WATERMARK);
+    let mut watermark_ids = read_watermark_ids(library);
 
     let mut pages = 0;
     let truncated = loop {
@@ -420,8 +436,11 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
         if page.items.is_empty() {
             break false;
         }
-        advance_watermark(&mut watermark, &page.items);
-        written += library.upsert_page(&page.items).map_err(storage_error)?;
+        advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
+        let page_changes = library.ingest_page(&page.items).map_err(storage_error)?;
+        written += page.items.len();
+        // The caller emits one event after the complete ordinary cycle.
+        changes.merge(page_changes);
         offset += page.items.len() as i64;
         pages += 1;
         let _ = library.set_meta(META_BOOTSTRAP_OFFSET, &offset.to_string());
@@ -441,6 +460,7 @@ fn bootstrap(library: &Library, client: &JellyfinClient, user_id: &str) -> Resul
 
     if let Some(watermark) = watermark {
         let _ = library.set_meta(META_WATERMARK, &watermark);
+        write_watermark_ids(library, &watermark_ids);
     }
     if truncated {
         // The offset is stored, so the next cycle picks up where this one
@@ -468,27 +488,40 @@ fn incremental(
     library: &Library,
     client: &JellyfinClient,
     user_id: &str,
+    changes: &mut LibraryChangeBatch,
 ) -> Result<usize, ApiError> {
     let watermark = library.meta(META_WATERMARK);
+    let known_watermark_ids = read_watermark_ids(library);
     let mut offset = 0;
     let mut written = 0;
     let mut newest = watermark.clone();
+    let mut newest_ids = known_watermark_ids.clone();
 
     for _ in 0..MAX_INCREMENTAL_PAGES {
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")?;
         if page.items.is_empty() {
             break;
         }
-        advance_watermark(&mut newest, &page.items);
+        advance_watermark_with_ids(&mut newest, &mut newest_ids, &page.items);
 
         let fresh = page
             .items
             .iter()
-            .take_while(|item| is_newer(item.date_created.as_deref(), watermark.as_deref()))
+            .filter(|item| {
+                is_incremental_candidate(item, watermark.as_deref(), &known_watermark_ids)
+            })
             .cloned()
             .collect::<Vec<_>>();
-        let reached_watermark = fresh.len() < page.items.len();
-        written += library.upsert_page(&fresh).map_err(storage_error)?;
+        let reached_watermark = page.items.iter().any(|item| {
+            item.date_created
+                .as_deref()
+                .zip(watermark.as_deref())
+                .is_some_and(|(candidate, watermark)| candidate < watermark)
+                || item.date_created.is_none()
+        });
+        let page_changes = library.ingest_page(&fresh).map_err(storage_error)?;
+        written += fresh.len();
+        changes.merge(page_changes);
 
         if reached_watermark || (page.items.len() as i64) < PAGE_SIZE {
             break;
@@ -498,6 +531,7 @@ fn incremental(
 
     if let Some(newest) = newest {
         let _ = library.set_meta(META_WATERMARK, &newest);
+        write_watermark_ids(library, &newest_ids);
     }
     Ok(written)
 }
@@ -564,15 +598,47 @@ fn identity_sweep(
     Ok((refreshed, deleted))
 }
 
-fn advance_watermark(
+fn advance_watermark_with_ids(
     watermark: &mut Option<String>,
+    ids: &mut HashSet<String>,
     items: &[crate::jellyfin::api::model::BaseItemDto],
 ) {
     for item in items {
-        if is_newer(item.date_created.as_deref(), watermark.as_deref()) {
-            *watermark = item.date_created.clone();
+        match (item.date_created.as_deref(), watermark.as_deref()) {
+            (Some(candidate), Some(current)) if candidate > current => {
+                *watermark = Some(candidate.to_string());
+                ids.clear();
+                ids.insert(item.id.clone());
+            }
+            (Some(candidate), Some(current)) if candidate == current => {
+                ids.insert(item.id.clone());
+            }
+            (Some(candidate), None) => {
+                *watermark = Some(candidate.to_string());
+                ids.clear();
+                ids.insert(item.id.clone());
+            }
+            _ => {}
         }
     }
+}
+
+fn read_watermark_ids(library: &Library) -> HashSet<String> {
+    library
+        .meta(META_WATERMARK_IDS)
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+}
+
+fn write_watermark_ids(library: &Library, ids: &HashSet<String>) {
+    let mut ids = ids.iter().cloned().collect::<Vec<_>>();
+    ids.sort_unstable();
+    let _ = library.set_meta(
+        META_WATERMARK_IDS,
+        &serde_json::to_string(&ids).unwrap_or_default(),
+    );
 }
 
 /// Jellyfin timestamps are ISO-8601 UTC, so lexicographic order is chronological.
@@ -582,6 +648,15 @@ fn is_newer(candidate: Option<&str>, watermark: Option<&str>) -> bool {
         (Some(_), None) => true,
         (None, _) => false,
     }
+}
+
+fn is_incremental_candidate(
+    item: &crate::jellyfin::api::model::BaseItemDto,
+    watermark: Option<&str>,
+    known_watermark_ids: &HashSet<String>,
+) -> bool {
+    is_newer(item.date_created.as_deref(), watermark)
+        || (item.date_created.as_deref() == watermark && !known_watermark_ids.contains(&item.id))
 }
 
 fn due(library: &Library, key: &str, interval: Duration) -> bool {
@@ -631,12 +706,13 @@ fn jittered(base: Duration) -> Duration {
 mod tests {
     use super::{
         Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
-        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, StartupRepair,
-        SyncHandle, SyncReport, Trigger, Wake, advance_watermark, bootstrap_progress,
-        full_bootstrap_due, is_newer, jittered, wait,
+        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle,
+        SyncReport, Trigger, Wake, advance_watermark_with_ids, bootstrap_progress,
+        full_bootstrap_due, is_incremental_candidate, is_newer, jittered, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
+    use std::collections::HashSet;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
@@ -713,17 +789,24 @@ mod tests {
     #[test]
     fn watermark_advances_to_the_newest_timestamp_seen() {
         let mut watermark = Some("2024-01-01T00:00:00Z".to_string());
-        advance_watermark(
+        let mut ids = HashSet::new();
+        advance_watermark_with_ids(
             &mut watermark,
+            &mut ids,
             &items(&["2024-03-01T00:00:00Z", "2024-02-01T00:00:00Z"]),
         );
         assert_eq!(watermark.as_deref(), Some("2024-03-01T00:00:00Z"));
+        assert_eq!(ids, HashSet::from(["item0".to_string()]));
     }
 
     #[test]
     fn watermark_starts_from_the_first_timestamp_when_unset() {
         let mut watermark = None;
-        advance_watermark(&mut watermark, &items(&["2024-01-01T00:00:00Z"]));
+        advance_watermark_with_ids(
+            &mut watermark,
+            &mut HashSet::new(),
+            &items(&["2024-01-01T00:00:00Z"]),
+        );
         assert_eq!(watermark.as_deref(), Some("2024-01-01T00:00:00Z"));
     }
 
@@ -731,7 +814,7 @@ mod tests {
     fn watermark_ignores_items_without_a_timestamp() {
         let mut watermark = Some("2024-01-01T00:00:00Z".to_string());
         let undated: Vec<BaseItemDto> = vec![serde_json::from_str(r#"{"Id":"a"}"#).expect("dto")];
-        advance_watermark(&mut watermark, &undated);
+        advance_watermark_with_ids(&mut watermark, &mut HashSet::new(), &undated);
         assert_eq!(watermark.as_deref(), Some("2024-01-01T00:00:00Z"));
     }
 
@@ -745,7 +828,7 @@ mod tests {
             serde_json::from_str(r#"{"Id":"a","DateLastSaved":"2024-05-01T00:00:00Z"}"#)
                 .expect("dto"),
         ];
-        advance_watermark(&mut watermark, &saved_only);
+        advance_watermark_with_ids(&mut watermark, &mut HashSet::new(), &saved_only);
         assert_eq!(watermark, None);
     }
 
@@ -756,6 +839,21 @@ mod tests {
         assert!(!is_newer(Some("2023-12-31"), Some("2024-01-01")));
         assert!(is_newer(Some("2024-01-01"), None));
         assert!(!is_newer(None, Some("2024-01-01")));
+    }
+
+    #[test]
+    fn an_unseen_id_tied_at_the_watermark_is_not_skipped() {
+        let tied = items(&["2024-01-01"]).remove(0);
+        assert!(is_incremental_candidate(
+            &tied,
+            Some("2024-01-01"),
+            &HashSet::new()
+        ));
+        assert!(!is_incremental_candidate(
+            &tied,
+            Some("2024-01-01"),
+            &HashSet::from([tied.id.clone()])
+        ));
     }
 
     #[test]
@@ -792,25 +890,6 @@ mod tests {
     fn only_a_requested_cycle_forces_the_identity_sweep() {
         assert!(Trigger::Requested.forces_identity_sweep());
         assert!(!Trigger::Scheduled.forces_identity_sweep());
-    }
-
-    #[test]
-    fn metadata_repair_is_claimed_once_only_after_authenticated_bootstrap() {
-        let mut repair = StartupRepair::default();
-        assert!(
-            !repair.claim(false, true, true),
-            "a failed sync is not ready"
-        );
-        assert!(!repair.claim(true, false, true), "sign-in is still pending");
-        assert!(
-            !repair.claim(true, true, false),
-            "bootstrap is still running"
-        );
-        assert!(repair.claim(true, true, true), "first ready cycle runs it");
-        assert!(
-            !repair.claim(true, true, true),
-            "later cycles cannot rerun it"
-        );
     }
 
     /// The refresh button is only a "reconcile now" lever if the request

@@ -1288,11 +1288,14 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
         ShellRequest::InstallMpv { request_id } => {
             start_mpv_download_for_settings(state, request_id)
         }
-        ShellRequest::MetadataRepaired { item_ids } => {
+        ShellRequest::LibraryChanged {
+            item_ids,
+            context_ids,
+        } => {
             dispatch_shell_event(
                 state,
-                "library-metadata-repaired",
-                json!({ "itemIds": item_ids }),
+                "library-changed",
+                json!({ "itemIds": item_ids, "contextIds": context_ids }),
             );
         }
         ShellRequest::SessionExpired => {

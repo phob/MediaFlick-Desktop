@@ -98,10 +98,23 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
   }
 }
 
-/** Metadata/artwork repair also changes the genre and billboard projections. */
-export function invalidateLibraryMetadata(...itemIds: (string | null | undefined)[]) {
-  invalidateMediaSurfaces(...itemIds)
-  const active = { refetchType: "active" as const }
-  void queryClient.invalidateQueries({ queryKey: queryKeys.billboard, ...active })
-  void queryClient.invalidateQueries({ queryKey: queryKeys.genres, ...active })
+/**
+ * One committed native batch becomes one React Query invalidation operation.
+ * The predicate covers aggregate projections, diagnostics/status, changed
+ * details, and parent/series/season contexts while preserving active-only
+ * refetch behavior.
+ */
+export function invalidateLibraryChanged(
+  itemIds: readonly string[],
+  contextIds: readonly string[] = [],
+) {
+  const relevant = new Set([...itemIds, ...contextIds])
+  void queryClient.invalidateQueries({
+    refetchType: "active",
+    predicate: (query) => {
+      const [root, id] = query.queryKey
+      if (["home", "items", "billboard", "genres", "status"].includes(String(root))) return true
+      return root === "item" && typeof id === "string" && relevant.has(id)
+    },
+  })
 }

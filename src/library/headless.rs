@@ -44,6 +44,28 @@ pub fn print_stats() -> i32 {
     if let Some(report) = library.meta("sync.last_report") {
         println!("last sync:   {report}");
     }
+    let convergence = library.convergence_diagnostics();
+    println!(
+        "convergence: pending {} · due {} · dormant {} · oldest {:?} · next {:?}",
+        convergence.pending,
+        convergence.due,
+        convergence.dormant,
+        convergence.oldest_pending_at,
+        convergence.next_due_at
+    );
+    if let Some(report) = convergence.last_run {
+        println!(
+            "last converge: selected {} · requests {} · completed {} · progressed {} · unchanged {} · dormant {} · failed {} · {} ms",
+            report.selected,
+            report.requests,
+            report.completed,
+            report.progressed,
+            report.unchanged,
+            report.dormant,
+            report.failed,
+            report.elapsed_ms
+        );
+    }
     0
 }
 
