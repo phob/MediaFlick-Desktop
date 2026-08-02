@@ -56,14 +56,16 @@ test("switching discovery rows resets catalogue filters but keeps local state", 
 
 test("available decade labels reflect release history and stop at the current decade", () => {
   const currentDecade = Math.floor(new Date().getUTCFullYear() / 10) * 10
-  assert.equal(RELEASE_DECADES.movie[0].value, currentDecade)
-  assert.equal(RELEASE_DECADES.movie.at(-1).value, 1900)
-  assert.equal(RELEASE_DECADES.tv.at(-1).value, 1900)
-  assert.equal(RELEASE_DECADES.movie.find(({ value }) => value === 1980)?.label, "80s")
-  assert.equal(RELEASE_DECADES.movie.find(({ value }) => value === 1990)?.label, "90s")
-  assert.equal(RELEASE_DECADES.movie.find(({ value }) => value === 1970)?.label, "1970s")
-  assert.equal(RELEASE_DECADES.movie.find(({ value }) => value === 2000)?.label, "2000s")
-  assert.equal(RELEASE_DECADES.movie[0].label, `${currentDecade}s`)
+  const expected = Array.from(
+    { length: (currentDecade - 1900) / 10 + 1 },
+    (_, index) => {
+      const decade = currentDecade - index * 10
+      return { value: decade, label: `${decade}s` }
+    },
+  )
+
+  assert.deepEqual(RELEASE_DECADES.movie, expected)
+  assert.deepEqual(RELEASE_DECADES.tv, expected)
 })
 
 test("every discovery criterion replaces the complete infinite result-set identity", () => {
