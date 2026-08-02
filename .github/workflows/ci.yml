@@ -56,7 +56,7 @@ jobs:
       # The UI bundle is embedded in the binary, so every Rust job needs it.
       # build.rs shells out to pnpm unless MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: ui/package.json
 
