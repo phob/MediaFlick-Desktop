@@ -78,6 +78,7 @@
 
 ### Fixed
 
+- Updated ID generation to use the current `getrandom` fill API.
 - Fixed discovery filter changes retaining stale leading cards or infinite pages from the previous result set. Every server-side filter and the local-library filter now gets one immutable result-set identity, filter changes abort and discard the prior infinite query, and React remounts the complete result wall instead of reconciling card-local state across sets. Release-decade choices now use consistent full labels and share a 1900 lower bound for films and series across the desktop and Companion contracts.
 - Fixed an interrupted initial library bootstrap restarting from zero on its next attempt even though its page offset was stored. An incomplete pass now resumes from the last committed page, so the new item counter cannot jump backwards after a transient server or network failure.
 - Fixed the first home screen opened after signing in showing only Continue Watching, without playback progress, until the app was restarted. Authentication queued the initial metadata bootstrap but mounted and cached the empty local home queries before that bootstrap ran; the authenticated loading gate now waits for the cache to be ready before any media route can read it.
