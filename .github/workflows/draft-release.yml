@@ -91,7 +91,7 @@ jobs:
 
       # The UI bundle is embedded in the binary; build.rs shells out to pnpm.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: ui/package.json
 
@@ -186,7 +186,7 @@ jobs:
 
       # The UI bundle is embedded in the binary; build.rs shells out to pnpm.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: ui/package.json
 
@@ -292,7 +292,7 @@ jobs:
 
       # The UI bundle is embedded in the binary; build.rs shells out to pnpm.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: ui/package.json
 
