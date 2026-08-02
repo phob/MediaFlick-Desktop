@@ -28,9 +28,7 @@ function releaseDecades(firstDecade: number): readonly {
   for (let decade = CURRENT_DECADE; decade >= firstDecade; decade -= 10) {
     options.push({
       value: decade,
-      // "80s" and "90s" are universally understood; spelling out the
-      // century everywhere else keeps "00s" and "10s" unambiguous.
-      label: decade === 1980 || decade === 1990 ? `${decade % 100}s` : `${decade}s`,
+      label: `${decade}s`,
     })
   }
   return options
