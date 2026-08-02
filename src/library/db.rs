@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -162,6 +162,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(SCHEMA_V4)?;
         connection.pragma_update(None, "user_version", 4)?;
         version = 4;
+    }
+    if version < 5 {
+        connection.execute_batch(SCHEMA_V5)?;
+        connection.pragma_update(None, "user_version", 5)?;
+        version = 5;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -330,9 +335,22 @@ CREATE INDEX IF NOT EXISTS external_profiles_account
     ON external_profiles (jellyfin_server_id, jellyfin_user_id, provider);
 "#;
 
+/// Release-decade filtering starts with kind and then applies a bounded year
+/// range, so this composite index keeps both the count and each 60-item page
+/// efficient. The update repairs older rows for which Jellyfin supplied only
+/// PremiereDate; new writes perform the same fallback in `ItemRecord`.
+const SCHEMA_V5: &str = r#"
+UPDATE items
+SET year = CAST(substr(premiere_date, 1, 4) AS INTEGER)
+WHERE year IS NULL
+  AND premiere_date GLOB '[0-9][0-9][0-9][0-9]-*'
+  AND CAST(substr(premiere_date, 1, 4) AS INTEGER) BETWEEN 1900 AND 9999;
+CREATE INDEX IF NOT EXISTS items_kind_year ON items (kind, year);
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{Database, SCHEMA_V1, SCHEMA_VERSION, migrate, user_version};
+    use super::{Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_VERSION, migrate, user_version};
     use rusqlite::Connection;
 
     #[test]
@@ -360,6 +378,16 @@ mod tests {
             })
             .expect("external_profiles");
         assert_eq!(profiles, 1);
+        let year_index: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_kind_year'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("items_kind_year");
+        assert_eq!(year_index, 1);
     }
 
     #[test]
@@ -391,6 +419,48 @@ mod tests {
             .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
             .expect("seerr_config");
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_v4_database_backfills_release_years_and_adds_the_filter_index() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection
+            .execute(
+                "INSERT INTO items (jellyfin_id, kind, name, premiere_date, synced_at)
+                 VALUES ('series', 'Series', 'Premiere-only', '2017-02-15T00:00:00Z', 0)",
+                [],
+            )
+            .expect("seed item");
+        connection
+            .pragma_update(None, "user_version", 4)
+            .expect("stamp v4");
+
+        migrate(&connection).expect("migrate");
+
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT year FROM items WHERE jellyfin_id = 'series'",
+                    [],
+                    |row| { row.get::<_, i64>(0) }
+                )
+                .expect("year"),
+            2017
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_kind_year'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("index"),
+            1
+        );
     }
 
     /// A pre-release build stamped version 2 while creating the table under the

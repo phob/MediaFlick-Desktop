@@ -80,7 +80,16 @@ impl ItemRecord {
             original_title: non_empty(dto.original_title.as_deref()),
             sort_name: non_empty(dto.sort_name.as_deref())
                 .or_else(|| Some(dto.display_name().to_lowercase())),
-            year: dto.production_year,
+            // Jellyfin normally supplies ProductionYear for both films and
+            // series (for a series it is the first-air year). Older servers
+            // and some metadata providers only supply PremiereDate, so keep a
+            // small fallback here. The v5 database migration applies the same
+            // fallback to rows that were cached before this code existed.
+            year: dto.production_year.or_else(|| {
+                dto.premiere_date
+                    .as_deref()
+                    .and_then(release_year_from_date)
+            }),
             premiere_date: non_empty(dto.premiere_date.as_deref()),
             runtime_ticks: dto.run_time_ticks.filter(|ticks| *ticks > 0),
             overview: non_empty(dto.overview.as_deref()),
@@ -170,6 +179,11 @@ fn non_empty(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn release_year_from_date(value: &str) -> Option<i64> {
+    let year = value.get(..4)?.parse::<i64>().ok()?;
+    (1900..=9999).contains(&year).then_some(year)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ItemRecord, UserDataRecord};
@@ -190,6 +204,23 @@ mod tests {
         assert_eq!(record.tvdb_id, None);
         assert_eq!(record.year, Some(1999));
         assert_eq!(record.kind, "Movie");
+    }
+
+    #[test]
+    fn release_year_prefers_production_year_and_falls_back_to_premiere_date() {
+        let movie = ItemRecord::from_dto(&dto(
+            r#"{"Id":"m","Name":"Movie","Type":"Movie","ProductionYear":1999,
+                "PremiereDate":"2000-01-01T00:00:00Z"}"#,
+        ));
+        let series = ItemRecord::from_dto(&dto(r#"{"Id":"s","Name":"Series","Type":"Series",
+                "PremiereDate":"2017-02-15T00:00:00Z"}"#));
+        let invalid = ItemRecord::from_dto(&dto(
+            r#"{"Id":"x","Name":"Unknown","Type":"Series","PremiereDate":"unknown"}"#,
+        ));
+
+        assert_eq!(movie.year, Some(1999));
+        assert_eq!(series.year, Some(2017));
+        assert_eq!(invalid.year, None);
     }
 
     #[test]

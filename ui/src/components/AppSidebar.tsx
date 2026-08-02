@@ -40,12 +40,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { api } from "@/lib/api"
+import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
-  { title: "Movies", to: "/library?kind=Movie", icon: Film },
-  { title: "Series", to: "/library?kind=Series", icon: Tv },
+  { title: "Movies", to: libraryKindPath("Movie"), icon: Film },
+  { title: "Series", to: libraryKindPath("Series"), icon: Tv },
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
 
@@ -181,7 +182,17 @@ function UserMenu() {
 
 export function AppSidebar() {
   const location = useLocation()
-  const current = `${location.pathname}${location.search}`
+  const libraryParams = new URLSearchParams(location.search)
+  const activeLibraryNav = (title: string) => {
+    if (location.pathname !== "/library") return false
+    if (title === "Movies") return libraryKind(libraryParams) === "Movie"
+    if (title === "Series") return libraryKind(libraryParams) === "Series"
+    return (
+      title === "Favorites"
+      && libraryParams.get("favorite") === "true"
+      && !libraryParams.has("kind")
+    )
+  }
   const { data: seerr } = useSeerrStatus()
   const { data: status } = useStatus()
   const companionSeerr =
@@ -222,7 +233,15 @@ export function AppSidebar() {
             <SidebarMenu>
               {NAV.map((item) => (
                 <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton asChild isActive={current === item.to} tooltip={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      item.title === "Home"
+                        ? location.pathname === "/"
+                        : activeLibraryNav(item.title)
+                    }
+                    tooltip={item.title}
+                  >
                     <Link to={item.to}>
                       <item.icon />
                       <span>{item.title}</span>
