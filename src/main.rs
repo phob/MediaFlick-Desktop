@@ -2,6 +2,7 @@
 
 mod app;
 mod companion;
+mod integrations;
 mod jellyfin;
 mod library;
 mod maintenance;

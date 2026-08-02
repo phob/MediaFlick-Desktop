@@ -53,6 +53,10 @@ impl PlaybackCoordinator {
         self.backend().control(command);
     }
 
+    pub fn refresh_input_bindings(&self) {
+        self.backend().refresh_input_bindings();
+    }
+
     pub fn configure_segments(&self, config: SegmentSkipConfig) {
         self.backend().set_segment_skip_config(config);
     }
@@ -71,5 +75,56 @@ impl PlaybackCoordinator {
 
     pub fn shutdown(&self) {
         self.backend().shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::playback::Capabilities;
+
+    struct RecordingBackend {
+        binding_refreshes: Arc<AtomicUsize>,
+    }
+
+    impl PlayerBackend for RecordingBackend {
+        fn warm(&self, _path: String, _fullscreen: FullscreenBehavior) {}
+
+        fn load(&self, _path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {}
+
+        fn control(&self, _command: PlayerCommand) {}
+
+        fn refresh_input_bindings(&self) {
+            self.binding_refreshes.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn set_segment_skip_config(&self, _config: SegmentSkipConfig) {}
+
+        fn update_playback_context(&self, _context: PlaybackContext) {}
+
+        fn snapshot(&self) -> PlayerSnapshot {
+            PlayerSnapshot::default()
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    #[test]
+    fn input_binding_refresh_reaches_the_running_backend() {
+        let refreshes = Arc::new(AtomicUsize::new(0));
+        let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
+            binding_refreshes: refreshes.clone(),
+        }));
+
+        coordinator.refresh_input_bindings();
+
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
     }
 }

@@ -265,8 +265,9 @@ wrap_resource_handler! {
 /// from our own proxy. The sole remote exception is a validated,
 /// privacy-enhanced YouTube trailer frame. The whole
 /// `mediaflick-desktop:` scheme is allowed to connect because the native
-/// dialogs call the shell on other hosts of it (`client-settings-save`,
-/// `mpv-download`, …), and only our own handlers can answer those.
+/// remaining native dialogs call the shell on other hosts of it
+/// (`update-download`, `app-about`, …), and only our own handlers can answer
+/// those.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
 style-src 'self' 'unsafe-inline'; script-src 'self'; \
 connect-src 'self' mediaflick-desktop:; \

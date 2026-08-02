@@ -4,6 +4,7 @@
 //! play path need the server at request time. A background thread ([`sync`])
 //! keeps the cache current.
 
+pub mod convergence;
 pub mod db;
 pub mod headless;
 pub mod model;
@@ -20,6 +21,7 @@ use serde_json::{Value, json};
 use crate::app::ids::new_device_id;
 use crate::jellyfin::api::model::BaseItemDto;
 
+pub use convergence::LibraryChangeBatch;
 pub use model::{ItemRecord, LibraryStats, UserDataRecord};
 
 /// Session details persisted across restarts.
@@ -31,6 +33,25 @@ pub struct StoredCredentials {
     pub server_id: Option<String>,
     pub device_id: String,
     pub token: Option<String>,
+}
+
+/// An optional, public profile associated with one Jellyfin account.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalProfile {
+    pub id: String,
+    pub provider: String,
+    pub profile_key: String,
+    pub display_name: String,
+    pub canonical_url: String,
+    pub enabled: bool,
+    pub verification_status: String,
+    pub created_at: i64,
+    pub last_checked_at: Option<i64>,
+    #[serde(skip)]
+    pub jellyfin_server_id: String,
+    #[serde(skip)]
+    pub jellyfin_user_id: String,
 }
 
 impl StoredCredentials {
@@ -82,11 +103,11 @@ impl ItemSort {
 
     fn order_clause(self) -> &'static str {
         match self {
-            Self::Name => "i.sort_name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC",
-            Self::Year => "i.year DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC",
+            Self::Name => "i.sort_name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC, i.id ASC",
+            Self::Year => "i.year DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC",
             Self::DateAdded => "i.date_created DESC NULLS LAST, i.id DESC",
             Self::CommunityRating => {
-                "i.community_rating DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC"
+                "i.community_rating DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC"
             }
         }
     }
@@ -98,6 +119,8 @@ pub struct ItemQuery {
     pub search: Option<String>,
     pub kinds: Vec<String>,
     pub genre: Option<String>,
+    /// Inclusive first year of a standard ten-year release decade.
+    pub release_decade: Option<i64>,
     pub parent_id: Option<String>,
     pub series_id: Option<String>,
     pub watched: Option<bool>,
@@ -105,6 +128,26 @@ pub struct ItemQuery {
     pub sort: ItemSort,
     pub offset: i64,
     pub limit: i64,
+}
+
+pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
+
+/// The newest standard decade that can be selected by the library UI.
+pub fn current_release_decade() -> i64 {
+    let days = now_unix().div_euclid(86_400);
+    let (year, _, _) = civil_from_days(days);
+    year.div_euclid(10) * 10
+}
+
+/// Parses only decade starts that the library UI can represent. Keeping this
+/// at the API boundary means hand-written URLs cannot turn a future or
+/// five-year bucket into an accidental query contract.
+pub fn release_decade_from_id(value: &str) -> Option<i64> {
+    let decade = value.trim().parse::<i64>().ok()?;
+    (decade >= EARLIEST_RELEASE_DECADE
+        && decade <= current_release_decade()
+        && decade.rem_euclid(10) == 0)
+        .then_some(decade)
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +250,125 @@ impl Library {
                 transaction.execute("DELETE FROM meta", [])?;
             }
             Ok(())
+        })
+    }
+
+    // -------------------------------------------------------- external profiles
+
+    pub fn external_profiles(
+        &self,
+        provider: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<Vec<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                        verification_status, created_at, last_checked_at,
+                        jellyfin_server_id, jellyfin_user_id
+                 FROM external_profiles
+                 WHERE provider = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3
+                 ORDER BY created_at DESC",
+            )?;
+            statement
+                .query_map(
+                    params![provider, jellyfin_server_id, jellyfin_user_id],
+                    external_profile_from_row,
+                )?
+                .collect()
+        })
+    }
+
+    pub fn save_external_profile(
+        &self,
+        profile: &ExternalProfile,
+    ) -> rusqlite::Result<ExternalProfile> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO external_profiles (
+                     id, provider, profile_key, display_name, canonical_url,
+                     jellyfin_server_id, jellyfin_user_id, enabled,
+                     verification_status, created_at, last_checked_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(provider, profile_key, jellyfin_server_id, jellyfin_user_id)
+                 DO UPDATE SET display_name = excluded.display_name,
+                               canonical_url = excluded.canonical_url,
+                               enabled = excluded.enabled,
+                               verification_status = excluded.verification_status,
+                               last_checked_at = excluded.last_checked_at",
+                params![
+                    profile.id,
+                    profile.provider,
+                    profile.profile_key,
+                    profile.display_name,
+                    profile.canonical_url,
+                    profile.jellyfin_server_id,
+                    profile.jellyfin_user_id,
+                    profile.enabled,
+                    profile.verification_status,
+                    profile.created_at,
+                    profile.last_checked_at,
+                ],
+            )?;
+            connection.query_row(
+                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                        verification_status, created_at, last_checked_at,
+                        jellyfin_server_id, jellyfin_user_id
+                 FROM external_profiles
+                 WHERE provider = ?1 AND profile_key = ?2
+                   AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
+                params![
+                    profile.provider,
+                    profile.profile_key,
+                    profile.jellyfin_server_id,
+                    profile.jellyfin_user_id,
+                ],
+                external_profile_from_row,
+            )
+        })
+    }
+
+    pub fn set_external_profile_enabled(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+        enabled: bool,
+    ) -> rusqlite::Result<Option<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE external_profiles SET enabled = ?1
+                 WHERE id = ?2 AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
+                params![enabled, id, jellyfin_server_id, jellyfin_user_id],
+            )?;
+            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
+        })
+    }
+
+    pub fn remove_external_profile(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<bool> {
+        self.db.with_connection(|connection| {
+            let changed = connection.execute(
+                "DELETE FROM external_profiles
+                 WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
+                params![id, jellyfin_server_id, jellyfin_user_id],
+            )?;
+            Ok(changed > 0)
+        })
+    }
+
+    pub fn external_profile(
+        &self,
+        id: &str,
+        jellyfin_server_id: &str,
+        jellyfin_user_id: &str,
+    ) -> rusqlite::Result<Option<ExternalProfile>> {
+        self.db.with_connection(|connection| {
+            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
         })
     }
 
@@ -399,20 +561,8 @@ impl Library {
 
     /// Upserts a page of items (and their user data) in one transaction.
     pub fn upsert_page(&self, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
-        self.db.with_transaction(|transaction| {
-            let mut written = 0;
-            for dto in items {
-                if dto.id.trim().is_empty() {
-                    continue;
-                }
-                upsert_item(transaction, &ItemRecord::from_dto(dto))?;
-                if let Some(user_data) = &dto.user_data {
-                    upsert_user_data(transaction, &UserDataRecord::from_dto(&dto.id, user_data))?;
-                }
-                written += 1;
-            }
-            Ok(written)
-        })
+        self.ingest_page(items)
+            .map(|_| items.iter().filter(|dto| !dto.id.trim().is_empty()).count())
     }
 
     pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
@@ -600,40 +750,6 @@ impl Library {
         })
     }
 
-    /// Mirrors our own playback reporting so Continue Watching reacts as soon
-    /// as the player stops, without waiting for the next user-data sweep.
-    pub fn record_playback_progress(
-        &self,
-        item_id: &str,
-        position_ticks: i64,
-        finished: bool,
-    ) -> rusqlite::Result<()> {
-        let position = if finished { 0 } else { position_ticks.max(0) };
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
-                     last_played_date, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(jellyfin_id) DO UPDATE SET
-                     played = max(user_data.played, excluded.played),
-                     play_count = CASE WHEN excluded.played = 1
-                         THEN max(user_data.play_count, 1) ELSE user_data.play_count END,
-                     playback_position_ticks = excluded.playback_position_ticks,
-                     last_played_date = excluded.last_played_date,
-                     updated_at = excluded.updated_at",
-                params![
-                    item_id,
-                    finished,
-                    i64::from(finished),
-                    position,
-                    iso_now(),
-                    now_unix(),
-                ],
-            )?;
-            Ok(())
-        })
-    }
-
     // -------------------------------------------------------------------read
 
     pub fn stats(&self) -> LibraryStats {
@@ -676,7 +792,7 @@ impl Library {
 
         // Relevance beats alphabetical order while the user is typing.
         let order = if query.search.is_some() {
-            "bm25(items_fts)".to_string()
+            "bm25(items_fts), i.id ASC".to_string()
         } else {
             query.sort.order_clause().to_string()
         };
@@ -1003,6 +1119,13 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
             .push("EXISTS (SELECT 1 FROM json_each(i.genres) AS g WHERE g.value = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
     }
+    if let Some(decade) = query.release_decade {
+        // Two bound comparisons intentionally avoid strftime/substr so the
+        // (kind, year) index remains usable for large libraries.
+        conditions.push("i.year >= ? AND i.year < ?".to_string());
+        arguments.push(SqlValue::Integer(decade));
+        arguments.push(SqlValue::Integer(decade.saturating_add(10)));
+    }
     if let Some(parent_id) = &query.parent_id {
         conditions.push("i.parent_id = ?".to_string());
         arguments.push(SqlValue::Text(parent_id.clone()));
@@ -1018,8 +1141,12 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
             "COALESCE(u.played, 0) = 0".to_string()
         });
     }
-    if query.favorite == Some(true) {
-        conditions.push("COALESCE(u.is_favorite, 0) = 1".to_string());
+    if let Some(favorite) = query.favorite {
+        conditions.push(if favorite {
+            "COALESCE(u.is_favorite, 0) = 1".to_string()
+        } else {
+            "COALESCE(u.is_favorite, 0) = 0".to_string()
+        });
     }
 
     (from_clause, conditions, arguments)
@@ -1036,7 +1163,11 @@ fn fts_match_expression(input: &str) -> Option<String> {
     (!tokens.is_empty()).then(|| tokens.join(" AND "))
 }
 
-fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<()> {
+fn upsert_item(
+    connection: &Connection,
+    record: &ItemRecord,
+    preserve_missing: bool,
+) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO items (
             jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
@@ -1050,24 +1181,38 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34
         )
         ON CONFLICT(jellyfin_id) DO UPDATE SET
-            kind = excluded.kind, name = excluded.name,
-            original_title = excluded.original_title, sort_name = excluded.sort_name,
-            year = excluded.year, premiere_date = excluded.premiere_date,
-            runtime_ticks = excluded.runtime_ticks, overview = excluded.overview,
-            community_rating = excluded.community_rating,
-            critic_rating = excluded.critic_rating,
-            official_rating = excluded.official_rating, parent_id = excluded.parent_id,
-            series_id = excluded.series_id, series_name = excluded.series_name,
-            season_id = excluded.season_id, index_number = excluded.index_number,
-            parent_index_number = excluded.parent_index_number,
-            child_count = excluded.child_count, tmdb_id = excluded.tmdb_id,
-            imdb_id = excluded.imdb_id, tvdb_id = excluded.tvdb_id,
-            genres = excluded.genres, tags = excluded.tags, studios = excluded.studios,
-            people = excluded.people, image_tags = excluded.image_tags,
-            primary_image_tag = excluded.primary_image_tag,
-            backdrop_image_tag = excluded.backdrop_image_tag,
-            search_genres = excluded.search_genres, search_people = excluded.search_people,
-            date_created = excluded.date_created, date_last_saved = excluded.date_last_saved,
+            kind = CASE WHEN ?35 AND excluded.kind = 'Unknown' THEN items.kind ELSE excluded.kind END,
+            name = CASE WHEN ?35 AND excluded.name = 'Untitled' THEN items.name ELSE excluded.name END,
+            original_title = CASE WHEN ?35 THEN COALESCE(excluded.original_title, items.original_title) ELSE excluded.original_title END,
+            sort_name = CASE WHEN ?35 THEN COALESCE(excluded.sort_name, items.sort_name) ELSE excluded.sort_name END,
+            year = CASE WHEN ?35 THEN COALESCE(excluded.year, items.year) ELSE excluded.year END,
+            premiere_date = CASE WHEN ?35 THEN COALESCE(excluded.premiere_date, items.premiere_date) ELSE excluded.premiere_date END,
+            runtime_ticks = CASE WHEN ?35 THEN COALESCE(excluded.runtime_ticks, items.runtime_ticks) ELSE excluded.runtime_ticks END,
+            overview = CASE WHEN ?35 THEN COALESCE(excluded.overview, items.overview) ELSE excluded.overview END,
+            community_rating = CASE WHEN ?35 THEN COALESCE(excluded.community_rating, items.community_rating) ELSE excluded.community_rating END,
+            critic_rating = CASE WHEN ?35 THEN COALESCE(excluded.critic_rating, items.critic_rating) ELSE excluded.critic_rating END,
+            official_rating = CASE WHEN ?35 THEN COALESCE(excluded.official_rating, items.official_rating) ELSE excluded.official_rating END,
+            parent_id = CASE WHEN ?35 THEN COALESCE(excluded.parent_id, items.parent_id) ELSE excluded.parent_id END,
+            series_id = CASE WHEN ?35 THEN COALESCE(excluded.series_id, items.series_id) ELSE excluded.series_id END,
+            series_name = CASE WHEN ?35 THEN COALESCE(excluded.series_name, items.series_name) ELSE excluded.series_name END,
+            season_id = CASE WHEN ?35 THEN COALESCE(excluded.season_id, items.season_id) ELSE excluded.season_id END,
+            index_number = CASE WHEN ?35 THEN COALESCE(excluded.index_number, items.index_number) ELSE excluded.index_number END,
+            parent_index_number = CASE WHEN ?35 THEN COALESCE(excluded.parent_index_number, items.parent_index_number) ELSE excluded.parent_index_number END,
+            child_count = CASE WHEN ?35 THEN COALESCE(excluded.child_count, items.child_count) ELSE excluded.child_count END,
+            tmdb_id = CASE WHEN ?35 THEN COALESCE(excluded.tmdb_id, items.tmdb_id) ELSE excluded.tmdb_id END,
+            imdb_id = CASE WHEN ?35 THEN COALESCE(excluded.imdb_id, items.imdb_id) ELSE excluded.imdb_id END,
+            tvdb_id = CASE WHEN ?35 THEN COALESCE(excluded.tvdb_id, items.tvdb_id) ELSE excluded.tvdb_id END,
+            genres = CASE WHEN ?35 AND excluded.genres = '[]' THEN items.genres ELSE excluded.genres END,
+            tags = CASE WHEN ?35 AND excluded.tags = '[]' THEN items.tags ELSE excluded.tags END,
+            studios = CASE WHEN ?35 AND excluded.studios = '[]' THEN items.studios ELSE excluded.studios END,
+            people = CASE WHEN ?35 AND excluded.people = '[]' THEN items.people ELSE excluded.people END,
+            image_tags = CASE WHEN ?35 AND excluded.image_tags = '{}' THEN items.image_tags ELSE excluded.image_tags END,
+            primary_image_tag = CASE WHEN ?35 THEN COALESCE(excluded.primary_image_tag, items.primary_image_tag) ELSE excluded.primary_image_tag END,
+            backdrop_image_tag = CASE WHEN ?35 THEN COALESCE(excluded.backdrop_image_tag, items.backdrop_image_tag) ELSE excluded.backdrop_image_tag END,
+            search_genres = CASE WHEN ?35 AND excluded.search_genres = '' THEN items.search_genres ELSE excluded.search_genres END,
+            search_people = CASE WHEN ?35 AND excluded.search_people = '' THEN items.search_people ELSE excluded.search_people END,
+            date_created = CASE WHEN ?35 THEN COALESCE(excluded.date_created, items.date_created) ELSE excluded.date_created END,
+            date_last_saved = CASE WHEN ?35 THEN COALESCE(excluded.date_last_saved, items.date_last_saved) ELSE excluded.date_last_saved END,
             synced_at = excluded.synced_at",
         params![
             record.jellyfin_id,
@@ -1104,6 +1249,7 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             record.date_created,
             record.date_last_saved,
             now_unix(),
+            preserve_missing,
         ],
     )?;
     Ok(())
@@ -1142,18 +1288,41 @@ fn now_unix() -> i64 {
         .unwrap_or_default()
 }
 
-/// Jellyfin timestamps are ISO-8601 UTC; this is enough precision for ordering.
-fn iso_now() -> String {
-    let seconds = now_unix();
-    let days = seconds.div_euclid(86_400);
-    let time_of_day = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.0000000Z",
-        time_of_day / 3600,
-        (time_of_day % 3600) / 60,
-        time_of_day % 60
-    )
+fn external_profile_by_id(
+    connection: &Connection,
+    id: &str,
+    jellyfin_server_id: &str,
+    jellyfin_user_id: &str,
+) -> rusqlite::Result<Option<ExternalProfile>> {
+    match connection.query_row(
+        "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
+                verification_status, created_at, last_checked_at,
+                jellyfin_server_id, jellyfin_user_id
+         FROM external_profiles
+         WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
+        params![id, jellyfin_server_id, jellyfin_user_id],
+        external_profile_from_row,
+    ) {
+        Ok(profile) => Ok(Some(profile)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn external_profile_from_row(row: &Row<'_>) -> rusqlite::Result<ExternalProfile> {
+    Ok(ExternalProfile {
+        id: row.get(0)?,
+        provider: row.get(1)?,
+        profile_key: row.get(2)?,
+        display_name: row.get(3)?,
+        canonical_url: row.get(4)?,
+        enabled: row.get::<_, i64>(5)? != 0,
+        verification_status: row.get(6)?,
+        created_at: row.get(7)?,
+        last_checked_at: row.get(8)?,
+        jellyfin_server_id: row.get(9)?,
+        jellyfin_user_id: row.get(10)?,
+    })
 }
 
 /// Howard Hinnant's `civil_from_days`, the standard days-to-date conversion.
@@ -1178,8 +1347,8 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag, civil_from_days,
-        fts_match_expression,
+        ExternalProfile, ItemQuery, ItemSort, Library, SeerrConfig, cached_image_tag,
+        civil_from_days, current_release_decade, fts_match_expression, release_decade_from_id,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use serde_json::json;
@@ -1291,6 +1460,45 @@ mod tests {
     fn an_unconfigured_library_has_an_empty_seerr_config() {
         let library = Library::open_in_memory().expect("library");
         assert_eq!(library.seerr_config(), SeerrConfig::default());
+    }
+
+    #[test]
+    fn external_profiles_are_scoped_to_the_jellyfin_account() {
+        let library = Library::open_in_memory().expect("library");
+        let profile = ExternalProfile {
+            id: "profile-a".to_string(),
+            provider: "letterboxd".to_string(),
+            profile_key: "alice".to_string(),
+            display_name: "alice".to_string(),
+            canonical_url: "https://letterboxd.com/alice/".to_string(),
+            enabled: true,
+            verification_status: "verified".to_string(),
+            created_at: 1,
+            last_checked_at: Some(2),
+            jellyfin_server_id: "server-a".to_string(),
+            jellyfin_user_id: "user-a".to_string(),
+        };
+        let saved = library.save_external_profile(&profile).expect("save");
+        assert_eq!(saved.profile_key, "alice");
+        assert_eq!(
+            library
+                .external_profiles("letterboxd", "server-a", "user-a")
+                .expect("profiles")
+                .len(),
+            1
+        );
+        assert!(
+            library
+                .external_profiles("letterboxd", "server-a", "user-b")
+                .expect("other account")
+                .is_empty()
+        );
+        assert!(
+            library
+                .set_external_profile_enabled("profile-a", "server-a", "user-b", false)
+                .expect("set other account")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1440,6 +1648,138 @@ mod tests {
             .expect("query");
         assert_eq!(watched.total, 1);
         assert_eq!(watched.items[0]["id"], "m2");
+    }
+
+    #[test]
+    fn favorite_filter_uses_the_mirrored_my_list_state() {
+        let library = seeded();
+        library.set_local_favorite("m1", true).expect("favorite");
+
+        let favorites = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                favorite: Some(true),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("favorites");
+        assert_eq!(favorites.total, 1);
+        assert_eq!(favorites.items[0]["id"], "m1");
+
+        let not_favorites = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                favorite: Some(false),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("not favorites");
+        assert_eq!(not_favorites.total, 1);
+        assert_eq!(not_favorites.items[0]["id"], "m2");
+    }
+
+    #[test]
+    fn release_decade_is_bounded_and_composes_with_every_library_filter() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"previous","Name":"Previous Decade","Type":"Movie","ProductionYear":1989,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"start","Name":"Decade Start","Type":"Movie","ProductionYear":1990,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"end","Name":"Decade End","Type":"Movie","ProductionYear":1999,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"next","Name":"Next Decade","Type":"Movie","ProductionYear":2000,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"watched","Name":"Watched","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Action"],"UserData":{"Played":true,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"drama","Name":"Drama","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Drama"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+                dto(r#"{"Id":"not-listed","Name":"Not Listed","Type":"Movie","ProductionYear":1995,
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":false}}"#),
+                dto(r#"{"Id":"unknown","Name":"Unknown Year","Type":"Movie",
+                    "Genres":["Action"],"UserData":{"Played":false,"IsFavorite":true}}"#),
+            ])
+            .expect("seed");
+
+        let page = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                genre: Some("Action".to_string()),
+                release_decade: Some(1990),
+                watched: Some(false),
+                favorite: Some(true),
+                limit: 1,
+                ..Default::default()
+            })
+            .expect("combined filters");
+
+        // The count is over the complete filtered library even though only a
+        // one-item page is returned, and both decade boundary years match.
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 1);
+        let all = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                genre: Some("Action".to_string()),
+                release_decade: Some(1990),
+                watched: Some(false),
+                favorite: Some(true),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("all combined filters");
+        assert_eq!(
+            all.items
+                .iter()
+                .map(|item| item["id"].as_str().expect("id"))
+                .collect::<HashSet<_>>(),
+            HashSet::from(["start", "end"])
+        );
+    }
+
+    #[test]
+    fn movie_and_series_decades_use_release_and_first_air_years() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProductionYear":1999}"#),
+                // A PremiereDate-only series exercises the first-air fallback.
+                dto(r#"{"Id":"series","Name":"Show","Type":"Series",
+                    "PremiereDate":"2017-02-15T00:00:00.0000000Z"}"#),
+            ])
+            .expect("seed");
+
+        let movies = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                release_decade: Some(1990),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("movies");
+        let series = library
+            .query(&ItemQuery {
+                kinds: vec!["Series".to_string()],
+                release_decade: Some(2010),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("series");
+
+        assert_eq!(movies.items[0]["id"], "movie");
+        assert_eq!(series.items[0]["id"], "series");
+        assert_eq!(series.items[0]["year"], 2017);
+    }
+
+    #[test]
+    fn release_decade_ids_are_standard_and_not_in_the_future() {
+        let current = current_release_decade();
+        assert_eq!(release_decade_from_id("1900"), Some(1900));
+        assert_eq!(release_decade_from_id(&current.to_string()), Some(current));
+        assert_eq!(release_decade_from_id("1995"), None);
+        assert_eq!(release_decade_from_id("1890"), None);
+        assert_eq!(release_decade_from_id(&(current + 10).to_string()), None);
     }
 
     #[test]
@@ -1606,41 +1946,18 @@ mod tests {
     #[test]
     fn forget_drops_a_single_item_and_its_user_data() {
         let library = seeded();
-        library
-            .record_playback_progress("e1", 1_200_000_000, false)
-            .expect("progress");
 
-        assert!(library.forget("e1").expect("forget"));
-        assert!(library.item("e1").expect("query").is_none());
+        assert!(library.forget("m1").expect("forget"));
+        assert!(library.item("m1").expect("query").is_none());
         assert!(
             !library
                 .continue_watching(10)
                 .expect("rows")
                 .iter()
-                .any(|row| row["id"] == "e1")
+                .any(|row| row["id"] == "m1")
         );
         // Idempotent: a second eviction is not an error and reports no change.
-        assert!(!library.forget("e1").expect("forget"));
-    }
-
-    #[test]
-    fn playback_progress_updates_continue_watching_then_clears_on_finish() {
-        let library = seeded();
-        library
-            .record_playback_progress("e1", 1_200_000_000, false)
-            .expect("progress");
-        let resuming = library.continue_watching(10).expect("rows");
-        assert!(resuming.iter().any(|row| row["id"] == "e1"));
-
-        library
-            .record_playback_progress("e1", 0, true)
-            .expect("finished");
-        let after = library.continue_watching(10).expect("rows");
-        assert!(!after.iter().any(|row| row["id"] == "e1"));
-        assert_eq!(
-            library.item("e1").expect("item").expect("row")["played"],
-            true
-        );
+        assert!(!library.forget("m1").expect("forget"));
     }
 
     #[test]

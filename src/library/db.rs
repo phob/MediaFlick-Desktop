@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -158,6 +158,26 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.pragma_update(None, "user_version", 3)?;
         version = 3;
     }
+    if version < 4 {
+        connection.execute_batch(SCHEMA_V4)?;
+        connection.pragma_update(None, "user_version", 4)?;
+        version = 4;
+    }
+    if version < 5 {
+        connection.execute_batch(SCHEMA_V5)?;
+        connection.pragma_update(None, "user_version", 5)?;
+        version = 5;
+    }
+    if version < 6 {
+        connection.execute_batch(SCHEMA_V6)?;
+        connection.pragma_update(None, "user_version", 6)?;
+        version = 6;
+    }
+    if version < 7 {
+        connection.execute_batch(SCHEMA_V7)?;
+        connection.pragma_update(None, "user_version", 7)?;
+        version = 7;
+    }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
 }
@@ -303,9 +323,151 @@ CREATE TABLE IF NOT EXISTS seerr_config (
 );
 "#;
 
+/// Public integrations are user-associated application data, not process
+/// configuration.  A household sharing one desktop must never inherit another
+/// Jellyfin user's connected profile.
+const SCHEMA_V4: &str = r#"
+CREATE TABLE IF NOT EXISTS external_profiles (
+    id                  TEXT PRIMARY KEY,
+    provider            TEXT NOT NULL,
+    profile_key         TEXT NOT NULL,
+    display_name        TEXT NOT NULL,
+    canonical_url       TEXT NOT NULL,
+    jellyfin_server_id  TEXT NOT NULL,
+    jellyfin_user_id    TEXT NOT NULL,
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    verification_status TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    last_checked_at     INTEGER,
+    UNIQUE(provider, profile_key, jellyfin_server_id, jellyfin_user_id)
+);
+CREATE INDEX IF NOT EXISTS external_profiles_account
+    ON external_profiles (jellyfin_server_id, jellyfin_user_id, provider);
+"#;
+
+/// Release-decade filtering starts with kind and then applies a bounded year
+/// range, so this composite index keeps both the count and each 60-item page
+/// efficient. The update repairs older rows for which Jellyfin supplied only
+/// PremiereDate; new writes perform the same fallback in `ItemRecord`.
+const SCHEMA_V5: &str = r#"
+UPDATE items
+SET year = CAST(substr(premiere_date, 1, 4) AS INTEGER)
+WHERE year IS NULL
+  AND premiere_date GLOB '[0-9][0-9][0-9][0-9]-*'
+  AND CAST(substr(premiere_date, 1, 4) AS INTEGER) BETWEEN 1900 AND 9999;
+CREATE INDEX IF NOT EXISTS items_kind_year ON items (kind, year);
+"#;
+
+/// Durable discovery for items cached during Jellyfin's enrichment window.
+///
+/// The flag is updated by every subsequent full DTO upsert. Existing databases
+/// need the equivalent conservative predicate once so rows stranded by the old
+/// `DateCreated` watermark become eligible without title- or time-specific
+/// code. Attempt ordering rotates a bounded batch across launches while leaving
+/// unresolved rows eligible indefinitely.
+const SCHEMA_V6: &str = r#"
+ALTER TABLE items ADD COLUMN metadata_repair_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN metadata_repair_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN metadata_repair_last_attempt_at INTEGER;
+
+UPDATE items
+SET metadata_repair_pending = 1
+WHERE kind IN ('Movie', 'Series')
+  AND COALESCE(primary_image_tag, '') = ''
+  AND COALESCE(backdrop_image_tag, '') = ''
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(image_tags) THEN image_tags ELSE '{}' END) image
+      WHERE trim(COALESCE(CAST(image.value AS TEXT), '')) <> ''
+  )
+  AND COALESCE(trim(overview), '') = ''
+  AND COALESCE(trim(tmdb_id), '') = ''
+  AND COALESCE(trim(imdb_id), '') = ''
+  AND COALESCE(trim(tvdb_id), '') = ''
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(genres) THEN genres ELSE '[]' END) genre
+      WHERE trim(COALESCE(CAST(genre.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(tags) THEN tags ELSE '[]' END) tag
+      WHERE trim(COALESCE(CAST(tag.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(studios) THEN studios ELSE '[]' END) studio
+      WHERE trim(COALESCE(CAST(studio.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(people) THEN people ELSE '[]' END) person
+      WHERE CASE WHEN person.type = 'object'
+                 THEN COALESCE(trim(json_extract(person.value, '$.name')), '')
+                 ELSE '' END <> ''
+  )
+  AND COALESCE(trim(official_rating), '') = ''
+  AND community_rating IS NULL
+  AND critic_rating IS NULL;
+
+CREATE INDEX items_metadata_repair_candidates
+    ON items (metadata_repair_pending, metadata_repair_last_attempt_at, date_created DESC)
+    WHERE metadata_repair_pending = 1 AND kind IN ('Movie', 'Series');
+"#;
+
+/// Per-item metadata convergence is deliberately separate from `items`.
+///
+/// The v6 columns remain physically present for safe forward migration, but no
+/// current code reads or writes them. A foreign key makes every cache eviction
+/// clean up queue state in the same transaction. `next_attempt_at` is wall-clock
+/// time so restart/offline time preserves, rather than resets, backoff.
+const SCHEMA_V7: &str = r#"
+CREATE TABLE metadata_convergence (
+    jellyfin_id          TEXT PRIMARY KEY
+                          REFERENCES items(jellyfin_id) ON DELETE CASCADE,
+    state                TEXT NOT NULL CHECK (state IN ('pending', 'complete', 'dormant')),
+    missing_quality      INTEGER NOT NULL DEFAULT 0,
+    quality_score        INTEGER NOT NULL DEFAULT 0,
+    first_observed_at    INTEGER NOT NULL,
+    last_observed_at     INTEGER NOT NULL,
+    last_progress_at     INTEGER NOT NULL,
+    next_attempt_at      INTEGER,
+    attempt_count        INTEGER NOT NULL DEFAULT 0,
+    unchanged_count      INTEGER NOT NULL DEFAULT 0,
+    error_count          INTEGER NOT NULL DEFAULT 0,
+    successful_unchanged INTEGER NOT NULL DEFAULT 0,
+    signature            TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX metadata_convergence_due
+    ON metadata_convergence (next_attempt_at, first_observed_at, jellyfin_id)
+    WHERE state = 'pending' AND next_attempt_at IS NOT NULL;
+
+DROP INDEX IF EXISTS items_metadata_repair_candidates;
+
+-- Preserve every unresolved v6 candidate. Its first v7 observation will
+-- replace the conservative score/signature with the pure quality model.
+INSERT INTO metadata_convergence (
+    jellyfin_id, state, missing_quality, quality_score,
+    first_observed_at, last_observed_at, last_progress_at, next_attempt_at,
+    attempt_count, unchanged_count, error_count, successful_unchanged, signature
+)
+SELECT jellyfin_id, 'pending', 127, 0,
+       synced_at, synced_at, synced_at,
+       max(synced_at, CAST(strftime('%s', 'now') AS INTEGER))
+           + 120 + (length(jellyfin_id) * 17) % 30,
+       metadata_repair_attempts, 0, 0, 0, ''
+FROM items
+WHERE metadata_repair_pending = 1
+  AND kind IN ('Movie', 'Series');
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{Database, SCHEMA_V1, SCHEMA_VERSION, migrate, user_version};
+    use super::{
+        Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_VERSION, migrate,
+        user_version,
+    };
     use rusqlite::Connection;
 
     #[test]
@@ -323,6 +485,36 @@ mod tests {
             })
             .expect("seerr_config");
         assert_eq!(table, 1);
+        let profiles: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'external_profiles'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("external_profiles");
+        assert_eq!(profiles, 1);
+        let year_index: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_kind_year'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("items_kind_year");
+        assert_eq!(year_index, 1);
+        let convergence_table: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata_convergence'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("metadata convergence table");
+        assert_eq!(convergence_table, 1);
     }
 
     #[test]
@@ -354,6 +546,143 @@ mod tests {
             .query_row("SELECT count(*) FROM seerr_config", [], |row| row.get(0))
             .expect("seerr_config");
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn a_v4_database_backfills_release_years_and_adds_the_filter_index() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection
+            .execute(
+                "INSERT INTO items (jellyfin_id, kind, name, premiere_date, synced_at)
+                 VALUES ('series', 'Series', 'Premiere-only', '2017-02-15T00:00:00Z', 0)",
+                [],
+            )
+            .expect("seed item");
+        connection
+            .pragma_update(None, "user_version", 4)
+            .expect("stamp v4");
+
+        migrate(&connection).expect("migrate");
+
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT year FROM items WHERE jellyfin_id = 'series'",
+                    [],
+                    |row| { row.get::<_, i64>(0) }
+                )
+                .expect("year"),
+            2017
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'items_kind_year'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("index"),
+            1
+        );
+    }
+
+    #[test]
+    fn a_v5_database_discovers_existing_sparse_movies_without_title_rules() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection.execute_batch(SCHEMA_V5).expect("v5 schema");
+        connection
+            .execute_batch(
+                "INSERT INTO items (jellyfin_id, kind, name, year, date_created, synced_at)
+                 VALUES
+                   ('6627a9641b7d3db806eb2f2545b6f6dc', 'Movie', 'Krull', 1983,
+                    '2024-01-01T00:00:00Z', 1),
+                   ('b0b16f465f948879b6932d56bd6bfec3', 'Movie', 'The Blob', 1988,
+                    '2024-01-02T00:00:00Z', 2),
+                   ('complete', 'Movie', 'Complete', 2000,
+                    '2024-01-03T00:00:00Z', 3);
+                 UPDATE items SET image_tags = '{\"Primary\":\"poster\"}'
+                 WHERE jellyfin_id = 'complete';",
+            )
+            .expect("seed v5 items");
+        connection
+            .pragma_update(None, "user_version", 5)
+            .expect("stamp v5");
+
+        migrate(&connection).expect("migrate");
+
+        let pending = |id: &str| {
+            connection
+                .query_row(
+                    "SELECT metadata_repair_pending FROM items WHERE jellyfin_id = ?1",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .expect("pending flag")
+        };
+        assert!(pending("6627a9641b7d3db806eb2f2545b6f6dc"));
+        assert!(pending("b0b16f465f948879b6932d56bd6bfec3"));
+        assert!(!pending("complete"));
+    }
+
+    #[test]
+    fn a_v6_database_backfills_pending_candidates_and_cascades_eviction() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection.execute_batch(SCHEMA_V5).expect("v5 schema");
+        connection.execute_batch(SCHEMA_V6).expect("v6 schema");
+        connection
+            .execute(
+                "INSERT INTO items (jellyfin_id, kind, name, synced_at,
+                                    metadata_repair_pending, metadata_repair_attempts)
+                 VALUES ('pending', 'Movie', 'Sparse', 10, 1, 3),
+                        ('complete', 'Movie', 'Rich', 11, 0, 0)",
+                [],
+            )
+            .expect("seed");
+        connection
+            .pragma_update(None, "user_version", 6)
+            .expect("stamp v6");
+
+        migrate(&connection).expect("migrate");
+
+        let row: (String, i64) = connection
+            .query_row(
+                "SELECT state, attempt_count FROM metadata_convergence WHERE jellyfin_id = 'pending'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("backfilled row");
+        assert_eq!(row, ("pending".to_string(), 3));
+        let complete_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM metadata_convergence WHERE jellyfin_id = 'complete'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("complete rows");
+        assert_eq!(complete_rows, 0);
+
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+        connection
+            .execute("DELETE FROM items WHERE jellyfin_id = 'pending'", [])
+            .expect("delete item");
+        let queued: i64 = connection
+            .query_row("SELECT count(*) FROM metadata_convergence", [], |row| {
+                row.get(0)
+            })
+            .expect("queue rows");
+        assert_eq!(queued, 0);
     }
 
     /// A pre-release build stamped version 2 while creating the table under the

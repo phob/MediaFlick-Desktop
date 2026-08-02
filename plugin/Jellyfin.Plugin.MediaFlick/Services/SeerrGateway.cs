@@ -123,6 +123,7 @@ public sealed class SeerrGateway
         int? genre,
         string? sortBy,
         int? voteAverageGte,
+        int? releaseDecade,
         string? mediaType,
         string? timeWindow,
         CancellationToken cancellationToken)
@@ -133,6 +134,7 @@ public sealed class SeerrGateway
             genre,
             sortBy,
             voteAverageGte,
+            releaseDecade,
             mediaType,
             timeWindow);
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
@@ -151,9 +153,13 @@ public sealed class SeerrGateway
         int? genre,
         string? sortBy,
         int? voteAverageGte,
+        int? releaseDecade,
         string? mediaType,
-        string? timeWindow)
+        string? timeWindow,
+        DateOnly? currentDate = null)
     {
+        var today = currentDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
+        var currentDecade = (today.Year / 10) * 10;
         var endpoint = kind.ToLowerInvariant() switch
         {
             "trending" => "trending",
@@ -172,6 +178,17 @@ public sealed class SeerrGateway
             throw new GatewayException(
                 StatusCodes.Status400BadRequest,
                 "minimum rating must be between 0 and 10");
+        }
+        if (releaseDecade is { } requestedDecade
+            && (requestedDecade < 1900
+                || requestedDecade > currentDecade
+                || requestedDecade % 10 != 0))
+        {
+            throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"release decade must be a ten-year start from 1900 through {currentDecade}"));
         }
         var safeSortBy = sortBy?.ToLowerInvariant() switch
         {
@@ -212,6 +229,19 @@ public sealed class SeerrGateway
             if (genre is { } genreId)
             {
                 query.Add(string.Create(CultureInfo.InvariantCulture, $"genre={genreId}"));
+            }
+            if (releaseDecade is { } decade)
+            {
+                var dateName = endpoint == "movies" ? "primaryReleaseDate" : "firstAirDate";
+                var lastDate = decade == currentDecade
+                    ? today
+                    : new DateOnly(decade + 9, 12, 31);
+                query.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{dateName}Gte={decade:D4}-01-01"));
+                query.Add(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{dateName}Lte={lastDate:yyyy-MM-dd}"));
             }
             if (safeSortBy is not null)
             {

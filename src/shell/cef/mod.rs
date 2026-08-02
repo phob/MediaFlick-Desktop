@@ -3,30 +3,31 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use cef::*;
 use serde_json::json;
 
 use crate::app::paths::app_data_dir;
-use crate::app::services;
-use crate::app::urls::query_param;
+use crate::app::services::{self, ShellFilePickerTarget, ShellRequest};
 use crate::app::{logger, urls};
+use crate::jellyfin::api::items;
 use crate::jellyfin::bridge as jellyfin_bridge;
+use crate::jellyfin::playback_reporter::flush_playstate_reports;
 use crate::maintenance::player_setup::{self as mpv_setup, MpvSetupPhase};
 use crate::maintenance::updater::{self, UpdateRelease};
 use crate::playback::{PlaybackCoordinator, PlaybackEvent};
 use crate::players::build_backend;
-use crate::players::mpv::input::MpvInputBindings;
-use crate::preferences::{
-    AppSettings, CloseBehavior, FileSettingsStore, FullscreenBehavior,
-    PlayerBackend as PlayerBackendKind, SegmentSkipMode, SettingsApplyPlan, SettingsStore,
-    StreamingQuality, WebUiWindowSettings,
-};
-use crate::shell::ui::{about, client_settings, error_toast};
+use crate::preferences::{AppSettings, CloseBehavior, SettingsChange, WebUiWindowSettings};
+use crate::shell::ui::{about, error_toast};
 use crate::windows::set_window_icon;
 
 pub mod api;
 pub mod app_scheme;
+
+/// Enough time to send the final Jellyfin playstate request before reading the
+/// server's resolved user data back into the local cache.
+const PLAYSTATE_CACHE_REFRESH_TIMEOUT: Duration = Duration::from_secs(11);
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -289,11 +290,13 @@ wrap_browser_process_handler! {
             // The own UI is the only UI: it is served from our own scheme and
             // talks to the library cache and the player through /api/*.
             app_scheme::register();
-            services::init();
+            services::init_with_settings(self.config.settings.clone());
 
             let handler_state = new_browser_state(
                 self.config.title.clone(),
-                self.config.settings.clone(),
+                services::services()
+                    .map(|services| services.preferences.snapshot())
+                    .unwrap_or_else(|| self.config.settings.clone()),
             );
             {
                 let mut client = self.client.borrow_mut();
@@ -529,7 +532,10 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
             return;
         }
     };
-    if let Err(error) = FileSettingsStore.save(&settings) {
+    let Some(services) = services::services() else {
+        return;
+    };
+    if let Err(error) = services.preferences.record_window(settings.webui_window) {
         tracing::warn!(target: "config", "failed to save mediaflick-desktop config on window close: {error}");
     }
 }
@@ -581,6 +587,8 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         force_close_requested: false,
     }));
     start_playback_event_bridge(state.clone(), playback_event_rx);
+    start_preferences_event_bridge(state.clone());
+    start_shell_request_bridge(state.clone());
     start_update_check_bridge(state.clone());
     state
 }
@@ -604,6 +612,47 @@ fn start_playback_event_bridge(state: BrowserState, rx: Receiver<PlaybackEvent>)
             let mut task = PlaybackEventTask::new(state, event);
             if post_task(ThreadId::UI, Some(&mut task)) == 0 {
                 tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+            }
+        }
+    });
+}
+
+/// Settings are persisted from an app-scheme background thread.  CEF's player
+/// and frame APIs are UI-thread-only, so relay its apply plan before touching
+/// either of them.
+fn start_preferences_event_bridge(state: BrowserState) {
+    let Some(services) = services::services() else {
+        return;
+    };
+    let receiver = services.preferences.subscribe();
+    let state = Arc::downgrade(&state);
+    thread::spawn(move || {
+        while let Ok(change) = receiver.recv() {
+            let Some(state) = state.upgrade() else {
+                break;
+            };
+            let mut task = PreferencesChangeTask::new(state, change);
+            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+                tracing::warn!(target: "config", "failed to post preference change to CEF UI thread");
+            }
+        }
+    });
+}
+
+fn start_shell_request_bridge(state: BrowserState) {
+    let Some(services) = services::services() else {
+        return;
+    };
+    let receiver = services.shell.subscribe();
+    let state = Arc::downgrade(&state);
+    thread::spawn(move || {
+        while let Ok(request) = receiver.recv() {
+            let Some(state) = state.upgrade() else {
+                break;
+            };
+            let mut task = ShellRequestTask::new(state, request);
+            if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+                tracing::warn!(target: "shell", "failed to post shell request to CEF UI thread");
             }
         }
     });
@@ -641,10 +690,37 @@ enum UpdateEvent {
 
 #[derive(Debug, Clone)]
 enum MpvSetupEvent {
-    Progress { downloaded: u64, total: Option<u64> },
-    Extracting,
-    Ready(PathBuf),
-    Error(String),
+    Progress {
+        request_id: Option<String>,
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    Extracting {
+        request_id: Option<String>,
+    },
+    Ready {
+        request_id: Option<String>,
+        path: PathBuf,
+    },
+    Error {
+        request_id: Option<String>,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackCacheRefreshOutcome {
+    Refreshed,
+    Deferred,
+}
+
+impl PlaybackCacheRefreshOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Refreshed => "refreshed",
+            Self::Deferred => "deferred",
+        }
+    }
 }
 
 wrap_task! {
@@ -656,6 +732,20 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             dispatch_playback_event(&self.state, self.event.clone());
+        }
+    }
+}
+
+wrap_task! {
+    struct PlaybackCacheRefreshTask {
+        state: BrowserState,
+        item_id: String,
+        outcome: PlaybackCacheRefreshOutcome,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            dispatch_playback_cache_refreshed(&self.state, &self.item_id, self.outcome);
         }
     }
 }
@@ -682,6 +772,32 @@ wrap_task! {
     impl Task {
         fn execute(&self) {
             handle_mpv_setup_event(&self.state, self.event.clone());
+        }
+    }
+}
+
+wrap_task! {
+    struct PreferencesChangeTask {
+        state: BrowserState,
+        change: SettingsChange,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            apply_preference_change(&self.state, self.change.clone());
+        }
+    }
+}
+
+wrap_task! {
+    struct ShellRequestTask {
+        state: BrowserState,
+        request: ShellRequest,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            handle_shell_request(&self.state, self.request.clone());
         }
     }
 }
@@ -746,7 +862,7 @@ fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
     }
 
     if let PlaybackEvent::Stopped(snapshot) = &event {
-        mirror_playback_progress(snapshot);
+        mirror_playback_progress(state, snapshot);
     }
 
     let browsers = state
@@ -784,29 +900,119 @@ fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
     );
 }
 
-/// Mirrors what we just reported to Jellyfin into the local cache so Continue
-/// Watching updates immediately instead of waiting for the next sync sweep.
-/// Runs off the UI thread because a sync write may hold the database briefly.
-fn mirror_playback_progress(snapshot: &crate::playback::PlayerSnapshot) {
+/// Refreshes the stopped item from Jellyfin after its final playstate report.
+/// This lets the server — including any administrator-configured resume
+/// thresholds — decide whether the item belongs in Continue Watching.
+///
+/// Runs off the UI thread because both network and database work can block.
+fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::PlayerSnapshot) {
     let (Some(item_id), Some(services)) = (snapshot.item_id.clone(), services::services()) else {
         return;
     };
-    let finished = matches!(snapshot.stop_reason, Some("eof") | Some("watched-next"));
-    let position_ticks = (snapshot.position_ms.max(0.0) * 10_000.0) as i64;
+    let refresh_state = state.clone();
+    let spawn_failure_item_id = item_id.clone();
     if let Err(error) = thread::Builder::new()
         .name("library-progress".to_string())
         .spawn(move || {
-            if let Err(error) =
-                services
-                    .library
-                    .record_playback_progress(&item_id, position_ticks, finished)
-            {
-                tracing::warn!(target: "library.db", "failed to mirror playback progress: {error}");
-            }
+            let outcome = if !flush_playstate_reports(PLAYSTATE_CACHE_REFRESH_TIMEOUT) {
+                tracing::warn!(
+                    target: "jellyfin.playstate",
+                    item_id,
+                    "timed out sending final playback state; scheduled a library refresh"
+                );
+                services.sync.request();
+                PlaybackCacheRefreshOutcome::Deferred
+            } else {
+                let result = (|| {
+                    let (client, user_id) = services.session.client_and_user()?;
+                    items::fetch_item(&client, &user_id, &item_id)
+                })();
+                match result {
+                    Ok(Some(item)) => {
+                        if let Err(error) = services.library.upsert_page(&[item]) {
+                            tracing::warn!(
+                                target: "library.db",
+                                item_id,
+                                "failed to cache Jellyfin's resolved playback state: {error}"
+                            );
+                            services.sync.request();
+                            PlaybackCacheRefreshOutcome::Deferred
+                        } else {
+                            PlaybackCacheRefreshOutcome::Refreshed
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            target: "jellyfin.playstate",
+                            item_id,
+                            "stopped item was absent from Jellyfin's playback-state refresh"
+                        );
+                        services.sync.request();
+                        PlaybackCacheRefreshOutcome::Deferred
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            target: "jellyfin.playstate",
+                            item_id,
+                            "could not refresh Jellyfin's resolved playback state: {error}"
+                        );
+                        services.sync.request();
+                        PlaybackCacheRefreshOutcome::Deferred
+                    }
+                }
+            };
+            post_playback_cache_refreshed(refresh_state, item_id, outcome);
         })
     {
         tracing::warn!(target: "library.db", "failed to spawn the progress mirror thread: {error}");
+        dispatch_playback_cache_refreshed(
+            state,
+            &spawn_failure_item_id,
+            PlaybackCacheRefreshOutcome::Deferred,
+        );
     }
+}
+
+fn post_playback_cache_refreshed(
+    state: BrowserState,
+    item_id: String,
+    outcome: PlaybackCacheRefreshOutcome,
+) {
+    let mut task = PlaybackCacheRefreshTask::new(state, item_id, outcome);
+    if post_task(ThreadId::UI, Some(&mut task)) == 0 {
+        tracing::warn!(target: "library.db", "failed to post playback cache refresh completion to CEF UI thread");
+    }
+}
+
+fn dispatch_playback_cache_refreshed(
+    state: &BrowserState,
+    item_id: &str,
+    outcome: PlaybackCacheRefreshOutcome,
+) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let script = playback_cache_refresh_script(item_id, outcome);
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            frame.execute_java_script(
+                Some(&CefString::from(script.as_str())),
+                Some(&CefString::from(
+                    "mediaflick-desktop://playback-cache-refreshed",
+                )),
+                1,
+            );
+        }
+    }
+}
+
+fn playback_cache_refresh_script(item_id: &str, outcome: PlaybackCacheRefreshOutcome) -> String {
+    let payload = json!({ "itemId": item_id, "status": outcome.as_str() });
+    format!(
+        "window.__mediaFlickDesktopPlaybackCacheRefreshed&&window.__mediaFlickDesktopPlaybackCacheRefreshed({});",
+        js_json(&payload)
+    )
 }
 
 fn playback_event_script(event: &PlaybackEvent) -> String {
@@ -910,39 +1116,98 @@ fn dispatch_update_progress(state: &BrowserState, status: &str, payload: serde_j
 
 fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
     match event {
-        MpvSetupEvent::Progress { downloaded, total } => {
+        MpvSetupEvent::Progress {
+            request_id,
+            downloaded,
+            total,
+        } => {
             dispatch_mpv_setup(
                 state,
                 "downloading",
                 json!({ "downloaded": downloaded, "total": total }),
             );
+            if let Some(request_id) = request_id {
+                dispatch_shell_event(
+                    state,
+                    "mpv-install-progress",
+                    json!({
+                        "requestId": request_id, "state": "downloading", "downloaded": downloaded, "total": total,
+                    }),
+                );
+            }
         }
-        MpvSetupEvent::Extracting => {
+        MpvSetupEvent::Extracting { request_id } => {
             dispatch_mpv_setup(state, "extracting", json!({}));
+            if let Some(request_id) = request_id {
+                dispatch_shell_event(
+                    state,
+                    "mpv-install-progress",
+                    json!({
+                        "requestId": request_id, "state": "extracting",
+                    }),
+                );
+            }
         }
-        MpvSetupEvent::Ready(path) => {
+        MpvSetupEvent::Ready { request_id, path } => {
             let mpv_path = path.to_string_lossy().into_owned();
             tracing::info!(target: "mpv.setup", path = %mpv_path, "mpv installed");
-            let runtime_update = state.lock().ok().map(|mut state| {
+            if let Ok(mut state) = state.lock() {
                 state.mpv_setup_started = false;
-                state.settings.mpv_path = Some(mpv_path.clone());
-                state.settings.sanitize();
-                (state.settings.clone(), state.playback.clone())
-            });
-            if let Some((settings, playback)) = runtime_update {
-                if let Err(error) = FileSettingsStore.save(&settings) {
-                    tracing::warn!(target: "mpv.setup", "failed to save mpv path: {error}");
-                }
-                warm_configured_player(&playback, &settings);
             }
-            dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
+            let save_result: Result<(), String> = match services::services() {
+                Some(services) => services
+                    .preferences
+                    .set_mpv_path(mpv_path.clone())
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+                None => Err("preferences service is unavailable".to_string()),
+            };
+            match save_result {
+                Ok(()) => {
+                    dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
+                    if let Some(request_id) = request_id {
+                        dispatch_shell_event(
+                            state,
+                            "mpv-install-progress",
+                            json!({
+                                "requestId": request_id, "state": "completed", "path": mpv_path,
+                            }),
+                        );
+                    }
+                }
+                Err(message) => {
+                    tracing::warn!(target: "mpv.setup", "failed to save installed mpv path: {message}");
+                    dispatch_mpv_setup(state, "error", json!({ "message": message }));
+                    if let Some(request_id) = request_id {
+                        dispatch_shell_event(
+                            state,
+                            "mpv-install-progress",
+                            json!({
+                                "requestId": request_id, "state": "failed", "message": message,
+                            }),
+                        );
+                    }
+                }
+            }
         }
-        MpvSetupEvent::Error(message) => {
+        MpvSetupEvent::Error {
+            request_id,
+            message,
+        } => {
             tracing::warn!(target: "mpv.setup", "mpv setup failed: {message}");
             if let Ok(mut state) = state.lock() {
                 state.mpv_setup_started = false;
             }
             dispatch_mpv_setup(state, "error", json!({ "message": message }));
+            if let Some(request_id) = request_id {
+                dispatch_shell_event(
+                    state,
+                    "mpv-install-progress",
+                    json!({
+                        "requestId": request_id, "state": "failed", "message": message,
+                    }),
+                );
+            }
         }
     }
 }
@@ -956,6 +1221,106 @@ fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: serde_json::V
     for browser in browsers {
         if let Some(frame) = browser.main_frame() {
             execute_mpv_setup_script(&frame, &script);
+        }
+    }
+}
+
+fn apply_preference_change(state: &BrowserState, change: SettingsChange) {
+    let (playback, event_tx, browsers) = match state.lock() {
+        Ok(mut state) => {
+            apply_settings_snapshot_preserving_live_window(
+                &mut state.settings,
+                change.settings.clone(),
+            );
+            (
+                state.playback.clone(),
+                state.playback_event_tx.clone(),
+                state.browsers.clone(),
+            )
+        }
+        Err(error) => {
+            tracing::warn!(target: "config", "failed to apply settings to browser state: {error}");
+            return;
+        }
+    };
+
+    if change.plan.rebuild_player {
+        tracing::info!(
+            target: "playback",
+            backend = change.settings.effective_backend().as_str(),
+            "rebuilding player backend after settings change"
+        );
+        playback.replace(build_backend(&change.settings, event_tx));
+        warm_configured_player(&playback, &change.settings);
+    } else {
+        if change.plan.update_input_bindings {
+            playback.refresh_input_bindings();
+        }
+        if change.plan.update_segment_policy {
+            playback.configure_segments(change.settings.segment_skip_config());
+        }
+    }
+    if change.plan.update_shell_css {
+        for browser in browsers {
+            if let Some(frame) = browser.main_frame() {
+                apply_scrollbar_settings_to_frame(&frame, state);
+            }
+        }
+    }
+}
+
+fn apply_settings_snapshot_preserving_live_window(
+    current: &mut AppSettings,
+    mut incoming: AppSettings,
+) {
+    // Bounds are intentionally persisted only on close/minimize. Until then the
+    // BrowserState copy is newer than the preference service's disk snapshot,
+    // so a settings PATCH must not replace it with the last launched size.
+    incoming.webui_window = current.webui_window;
+    *current = incoming;
+}
+
+fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
+    match request {
+        ShellRequest::FilePicker { request_id, target } => {
+            open_settings_file_dialog(state, request_id, target);
+        }
+        ShellRequest::InstallMpv { request_id } => {
+            start_mpv_download_for_settings(state, request_id)
+        }
+        ShellRequest::LibraryChanged {
+            item_ids,
+            context_ids,
+        } => {
+            dispatch_shell_event(
+                state,
+                "library-changed",
+                json!({ "itemIds": item_ids, "contextIds": context_ids }),
+            );
+        }
+        ShellRequest::SessionExpired => {
+            dispatch_shell_event(state, "jellyfin-session-expired", json!({}));
+        }
+    }
+}
+
+fn dispatch_shell_event(state: &BrowserState, kind: &str, payload: serde_json::Value) {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let event = json!({ "type": kind, "payload": payload });
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
+        js_json(&event)
+    );
+    for browser in browsers {
+        if let Some(frame) = browser.main_frame() {
+            frame.execute_java_script(
+                Some(&CefString::from(script.as_str())),
+                Some(&CefString::from("mediaflick-desktop://shell-event")),
+                1,
+            );
         }
     }
 }
@@ -1127,7 +1492,7 @@ wrap_context_menu_handler! {
                 model.add_separator();
             }
             model.add_item(MENU_ID_FULLSCREEN, Some(&CefString::from("Fullscreen")));
-            model.add_item(MENU_ID_CLIENT_SETTINGS, Some(&CefString::from("Client Settings")));
+            model.add_item(MENU_ID_CLIENT_SETTINGS, Some(&CefString::from("Settings")));
             model.add_item(
                 MENU_ID_DASHBOARD,
                 Some(&CefString::from("Open Jellyfin dashboard")),
@@ -1145,7 +1510,7 @@ wrap_context_menu_handler! {
         ) -> i32 {
             match command_id {
                 MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser),
-                MENU_ID_CLIENT_SETTINGS => show_client_settings_dialog(browser, frame, &self.state),
+                MENU_ID_CLIENT_SETTINGS => open_settings_page(browser, frame),
                 MENU_ID_DASHBOARD => open_server_dashboard(&self.state),
                 MENU_ID_ABOUT => show_about_dialog(browser, frame),
                 _ => return 0,
@@ -1524,9 +1889,10 @@ wrap_resource_request_handler! {
     }
 }
 
-/// The native dialogs (client settings, update toast, mpv setup) still talk to
-/// the shell over `mediaflick-desktop://<action>` URLs. Only first-party
-/// documents holding this session's token may trigger them.
+/// The remaining native About and update dialogs talk to the shell over
+/// `mediaflick-desktop://<action>` URLs. Settings-specific native operations
+/// use the typed API and shell queue instead. Only first-party documents
+/// holding this session's token may trigger these legacy actions.
 fn bridge_request_is_trusted(
     request_url: &str,
     browser: Option<&mut Browser>,
@@ -1566,18 +1932,10 @@ fn route_bridge_action(
         return false;
     };
     match action {
-        BridgeAction::SelectMpv => open_mpv_dialog(browser, frame, state),
-        BridgeAction::SelectMpcHc => open_mpchc_dialog(browser, frame, state),
         BridgeAction::About => show_about_dialog(browser, frame),
-        BridgeAction::DownloadMpv => start_mpv_download(state),
-        BridgeAction::MpvHelp => open_external_link(mpv_setup::MPV_HELP_URL),
-        BridgeAction::ClientSettings => show_client_settings_dialog(browser, frame, state),
         BridgeAction::Exit => initiate_app_exit(browser, state),
         BridgeAction::DownloadUpdate(query) => start_update_download(query, state),
         BridgeAction::OpenUpdateRelease => open_update_release_page(),
-        BridgeAction::SaveClientSettings(query) => {
-            save_client_settings(query, browser, frame, state);
-        }
     }
     true
 }
@@ -1703,26 +2061,16 @@ fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     }
 }
 
-fn show_client_settings_dialog(
-    browser: Option<&mut Browser>,
-    frame: Option<&mut Frame>,
-    state: &BrowserState,
-) {
-    let settings = state
-        .lock()
-        .map(|state| state.settings.clone())
-        .unwrap_or_default();
-    let bindings = MpvInputBindings::load();
-    let script = client_settings::dialog_script(&settings, &bindings);
+/// Kept as a bridge target for an older update-toast document, but it now
+/// performs an in-app navigation rather than injecting a native modal.
+fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     let target_frame = browser
         .and_then(|browser| browser.main_frame())
         .or_else(|| frame.map(|frame| frame.clone()));
     if let Some(frame) = target_frame {
-        frame.execute_java_script(
-            Some(&CefString::from(script.as_str())),
-            Some(&CefString::from("mediaflick-desktop://client-settings")),
-            1,
-        );
+        frame.load_url(Some(&CefString::from(
+            "mediaflick-desktop://app/settings/client/player",
+        )));
     }
 }
 
@@ -1816,28 +2164,55 @@ fn start_update_download(_query: &str, state: &BrowserState) {
     });
 }
 
-fn start_mpv_download(state: &BrowserState) {
+fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
     if !mpv_setup::supported() {
         dispatch_mpv_setup(
             state,
             "error",
             json!({ "message": "Automatic mpv download is only available on Windows." }),
         );
+        if let Some(request_id) = request_id {
+            dispatch_shell_event(
+                state,
+                "mpv-install-progress",
+                json!({
+                    "requestId": request_id,
+                    "state": "failed",
+                    "message": "Automatic mpv download is only available on Windows.",
+                }),
+            );
+        }
         return;
     }
 
-    match state.lock() {
+    let already_running = match state.lock() {
         Ok(mut state) => {
             if state.mpv_setup_started {
-                tracing::debug!(target: "mpv.setup", "ignored duplicate mpv download request");
-                return;
+                true
+            } else {
+                state.mpv_setup_started = true;
+                false
             }
-            state.mpv_setup_started = true;
         }
         Err(error) => {
             tracing::warn!(target: "mpv.setup", "failed to lock browser state for mpv download: {error}");
             return;
         }
+    };
+    if already_running {
+        tracing::debug!(target: "mpv.setup", "ignored duplicate mpv download request");
+        if let Some(request_id) = request_id.as_ref() {
+            dispatch_shell_event(
+                state,
+                "mpv-install-progress",
+                json!({
+                    "requestId": request_id,
+                    "state": "failed",
+                    "message": "An mpv installation is already running.",
+                }),
+            );
+        }
+        return;
     }
 
     tracing::info!(target: "mpv.setup", "starting mpv download");
@@ -1850,331 +2225,174 @@ fn start_mpv_download(state: &BrowserState) {
     let state_for_thread = state.clone();
     thread::spawn(move || {
         let progress_state = state_for_thread.clone();
+        let progress_request_id = request_id.clone();
         let result = mpv_setup::download_and_install(move |phase| match phase {
             MpvSetupPhase::Downloading { downloaded, total } => post_mpv_setup_event(
                 progress_state.clone(),
-                MpvSetupEvent::Progress { downloaded, total },
+                MpvSetupEvent::Progress {
+                    request_id: progress_request_id.clone(),
+                    downloaded,
+                    total,
+                },
             ),
-            MpvSetupPhase::Extracting => {
-                post_mpv_setup_event(progress_state.clone(), MpvSetupEvent::Extracting)
-            }
+            MpvSetupPhase::Extracting => post_mpv_setup_event(
+                progress_state.clone(),
+                MpvSetupEvent::Extracting {
+                    request_id: progress_request_id.clone(),
+                },
+            ),
         });
         match result {
-            Ok(path) => post_mpv_setup_event(state_for_thread, MpvSetupEvent::Ready(path)),
-            Err(error) => {
-                post_mpv_setup_event(state_for_thread, MpvSetupEvent::Error(error.to_string()))
+            Ok(path) => {
+                post_mpv_setup_event(state_for_thread, MpvSetupEvent::Ready { request_id, path })
             }
+            Err(error) => post_mpv_setup_event(
+                state_for_thread,
+                MpvSetupEvent::Error {
+                    request_id,
+                    message: error.to_string(),
+                },
+            ),
         }
     });
 }
 
+fn start_mpv_download_for_settings(state: &BrowserState, request_id: String) {
+    start_mpv_download(state, Some(request_id));
+}
+
 wrap_run_file_dialog_callback! {
-    struct MpvFileDialogCallback {
+    struct SettingsFileDialogCallback {
         frame: Option<Frame>,
+        request_id: String,
+        target: ShellFilePickerTarget,
     }
 
     impl RunFileDialogCallback {
         fn on_file_dialog_dismissed(&self, file_paths: Option<&mut CefStringList>) {
-            let Some(frame) = &self.frame else {
-                return;
-            };
-            let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
-                execute_client_settings_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
-                return;
-            };
-            execute_client_settings_js(
+            let Some(frame) = &self.frame else { return; };
+            let path = file_paths
+                .and_then(|paths| std::mem::take(paths).into_iter().next());
+            dispatch_shell_event_to_frame(
                 frame,
-                &format!(
-                    "window.__mediaFlickDesktopSetMpvPath({});",
-                    js_string_literal(&path)
+                "file-picker-completed",
+                file_picker_completion_payload(
+                    &self.request_id,
+                    self.target,
+                    path,
+                    None,
                 ),
             );
         }
     }
 }
 
-wrap_run_file_dialog_callback! {
-    struct MpchcFileDialogCallback {
-        frame: Option<Frame>,
-    }
-
-    impl RunFileDialogCallback {
-        fn on_file_dialog_dismissed(&self, file_paths: Option<&mut CefStringList>) {
-            let Some(frame) = &self.frame else {
-                return;
-            };
-            let Some(path) = file_paths.and_then(|paths| std::mem::take(paths).into_iter().next()) else {
-                execute_client_settings_js(frame, "window.__mediaFlickDesktopSetBusy(false);");
-                return;
-            };
-            execute_client_settings_js(
-                frame,
-                &format!(
-                    "window.__mediaFlickDesktopSetMpchcPath({});",
-                    js_string_literal(&path)
-                ),
-            );
-        }
+fn file_picker_target_id(target: ShellFilePickerTarget) -> &'static str {
+    match target {
+        ShellFilePickerTarget::Mpv => "mpv",
+        ShellFilePickerTarget::Mpchc => "mpchc",
     }
 }
 
-fn open_mpv_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>, state: &BrowserState) {
+fn file_picker_completion_payload(
+    request_id: &str,
+    target: ShellFilePickerTarget,
+    path: Option<String>,
+    error: Option<&str>,
+) -> serde_json::Value {
+    json!({
+        "requestId": request_id,
+        "target": file_picker_target_id(target),
+        "path": path,
+        "error": error,
+    })
+}
+
+fn open_settings_file_dialog(
+    state: &BrowserState,
+    request_id: String,
+    target: ShellFilePickerTarget,
+) {
+    let browser = state
+        .lock()
+        .ok()
+        .and_then(|state| state.browsers.first().cloned());
     let Some(browser) = browser else {
+        dispatch_shell_event(
+            state,
+            "file-picker-completed",
+            file_picker_completion_payload(
+                &request_id,
+                target,
+                None,
+                Some("The browser is not ready."),
+            ),
+        );
         return;
     };
     let Some(host) = browser.host() else {
+        dispatch_shell_event(
+            state,
+            "file-picker-completed",
+            file_picker_completion_payload(
+                &request_id,
+                target,
+                None,
+                Some("The browser is unavailable."),
+            ),
+        );
         return;
     };
-    let frame = frame.map(|frame| frame.clone());
-
-    let default_path = state
-        .lock()
-        .ok()
-        .and_then(|state| state.settings.mpv_path.clone())
-        .map(|path| CefString::from(path.as_str()));
-    let mut filters = CefStringList::new();
-    #[cfg(target_os = "windows")]
-    filters.append(".exe");
-    let filters = if cfg!(target_os = "windows") {
-        Some(&mut filters)
-    } else {
-        None
-    };
-    let title = CefString::from("Select mpv executable");
-    let mut callback = MpvFileDialogCallback::new(frame);
-    host.run_file_dialog(
-        FileDialogMode::OPEN,
-        Some(&title),
-        default_path.as_ref(),
-        filters,
-        Some(&mut callback),
-    );
-}
-
-fn open_mpchc_dialog(
-    browser: Option<&mut Browser>,
-    frame: Option<&mut Frame>,
-    state: &BrowserState,
-) {
-    let Some(browser) = browser else {
-        return;
-    };
-    let Some(host) = browser.host() else {
-        return;
-    };
-    let frame = frame.map(|frame| frame.clone());
-
-    let default_path = state
-        .lock()
-        .ok()
-        .and_then(|state| state.settings.mpchc_path.clone())
-        .map(|path| CefString::from(path.as_str()));
-    let mut filters = CefStringList::new();
-    #[cfg(target_os = "windows")]
-    filters.append(".exe");
-    let filters = if cfg!(target_os = "windows") {
-        Some(&mut filters)
-    } else {
-        None
-    };
-    let title = CefString::from("Select MPC-HC executable");
-    let mut callback = MpchcFileDialogCallback::new(frame);
-    host.run_file_dialog(
-        FileDialogMode::OPEN,
-        Some(&title),
-        default_path.as_ref(),
-        filters,
-        Some(&mut callback),
-    );
-}
-
-fn save_client_settings(
-    query: &str,
-    browser: Option<&mut Browser>,
-    frame: Option<&mut Frame>,
-    state: &BrowserState,
-) {
-    let target_frame = browser
-        .and_then(|browser| browser.main_frame())
-        .or_else(|| frame.map(|frame| frame.clone()));
-    let Some(frame) = target_frame else {
-        return;
-    };
-
-    let mut settings = state
-        .lock()
-        .map(|state| state.settings.clone())
+    let settings = services::services()
+        .map(|services| services.preferences.snapshot())
         .unwrap_or_default();
-    settings.player_backend = query_param(query, "playerBackend")
-        .as_deref()
-        .and_then(PlayerBackendKind::from_id)
-        .unwrap_or(settings.player_backend);
-    if let Some(mpv_path) = query_param(query, "mpv")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        settings.mpv_path = Some(mpv_path);
-    }
-    if let Some(mpchc_path) = query_param(query, "mpchc")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        settings.mpchc_path = Some(mpchc_path);
-    }
-    if settings.player_path().is_none() {
-        let message = match settings.effective_backend() {
-            PlayerBackendKind::Mpchc => "Choose an MPC-HC executable.",
-            PlayerBackendKind::Mpv => "Choose an mpv executable.",
-        };
-        notify_client_settings_error(&frame, message);
-        return;
-    }
-    if let Some(log_level) = query_param(query, "logLevel")
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        settings.log_level = log_level;
-    }
-    settings.default_fullscreen = query_param(query, "defaultFullscreen")
-        .as_deref()
-        .and_then(parse_fullscreen_behavior)
-        .unwrap_or(settings.default_fullscreen);
-    settings.streaming_quality = query_param(query, "streamingQuality")
-        .as_deref()
-        .and_then(StreamingQuality::from_id)
-        .unwrap_or(settings.streaming_quality);
-    settings.close_behavior = query_param(query, "closeBehavior")
-        .as_deref()
-        .and_then(parse_close_behavior)
-        .unwrap_or(settings.close_behavior);
-    settings.show_scrollbars = query_param(query, "scrollbars")
-        .as_deref()
-        .map(|value| value == "visible")
-        .unwrap_or(settings.show_scrollbars);
-    settings.skip_intro = query_param(query, "skipIntro")
-        .as_deref()
-        .and_then(parse_segment_skip_mode)
-        .unwrap_or(settings.skip_intro);
-    settings.skip_credits = query_param(query, "skipCredits")
-        .as_deref()
-        .and_then(parse_segment_skip_mode)
-        .unwrap_or(settings.skip_credits);
-    settings.skip_recap = query_param(query, "skipRecap")
-        .as_deref()
-        .and_then(parse_segment_skip_mode)
-        .unwrap_or(settings.skip_recap);
-    settings.skip_commercial = query_param(query, "skipCommercial")
-        .as_deref()
-        .and_then(parse_segment_skip_mode)
-        .unwrap_or(settings.skip_commercial);
-    settings.sanitize();
-
-    let bindings = MpvInputBindings {
-        mark_watched_next: query_param(query, "markWatchedNext")
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
+    let (title, initial_path) = match target {
+        ShellFilePickerTarget::Mpv => ("Select mpv executable", settings.mpv_path),
+        ShellFilePickerTarget::Mpchc => ("Select MPC-HC executable", settings.mpchc_path),
     };
-
-    if let Err(error) = FileSettingsStore.save(&settings) {
-        notify_client_settings_error(&frame, &format!("Could not save config: {error}"));
-        return;
-    }
-    if let Err(error) = bindings.save() {
-        notify_client_settings_error(&frame, &format!("Could not save input bindings: {error}"));
-        return;
-    }
-
-    let runtime_update = state.lock().ok().map(|mut state| {
-        let apply_plan = SettingsApplyPlan::between(&state.settings, &settings);
-        state.settings = settings.clone();
-        (
-            apply_plan,
-            state.playback.clone(),
-            state.playback_event_tx.clone(),
-        )
-    });
-    let Some((apply_plan, playback, event_tx)) = runtime_update else {
-        tracing::warn!(target: "config", "failed to lock browser state while applying saved client settings");
-        notify_client_settings_error(
-            &frame,
-            "Saved, but the running app could not apply the new settings.",
-        );
-        return;
-    };
-
-    if apply_plan.rebuild_player {
-        tracing::info!(
-            target: "playback",
-            backend = settings.effective_backend().as_str(),
-            "rebuilding player backend after settings change"
-        );
-        playback.replace(build_backend(&settings, event_tx));
-        warm_configured_player(&playback, &settings);
-    } else if apply_plan.update_segment_policy {
-        playback.configure_segments(settings.segment_skip_config());
-    }
-    if apply_plan.update_shell_css {
-        apply_scrollbar_settings_to_frame(&frame, state);
-    }
-    let saved_message = if apply_plan.restart_required {
-        "Saved. Restart MediaFlick Desktop to apply the new log level."
+    let mut filters = CefStringList::new();
+    #[cfg(target_os = "windows")]
+    filters.append(".exe");
+    let filters = if cfg!(target_os = "windows") {
+        Some(&mut filters)
     } else {
-        ""
+        None
     };
-    execute_client_settings_js(
-        &frame,
-        &format!(
-            "window.__mediaFlickDesktopClientSettingsSaved&&window.__mediaFlickDesktopClientSettingsSaved({});",
-            js_string_literal(saved_message)
-        ),
+    let Some(frame) = browser.main_frame() else {
+        dispatch_shell_event(
+            state,
+            "file-picker-completed",
+            file_picker_completion_payload(
+                &request_id,
+                target,
+                None,
+                Some("The settings page is not ready."),
+            ),
+        );
+        return;
+    };
+    let default_path = initial_path.as_deref().map(CefString::from);
+    let mut callback = SettingsFileDialogCallback::new(Some(frame), request_id, target);
+    host.run_file_dialog(
+        FileDialogMode::OPEN,
+        Some(&CefString::from(title)),
+        default_path.as_ref(),
+        filters,
+        Some(&mut callback),
     );
 }
 
-fn parse_fullscreen_behavior(value: &str) -> Option<FullscreenBehavior> {
-    match value {
-        "fullscreen" => Some(FullscreenBehavior::Fullscreen),
-        "windowed" => Some(FullscreenBehavior::Windowed),
-        _ => None,
-    }
-}
-
-fn parse_close_behavior(value: &str) -> Option<CloseBehavior> {
-    match value {
-        "exit_app" => Some(CloseBehavior::ExitApp),
-        "minimize_window" => Some(CloseBehavior::MinimizeWindow),
-        _ => None,
-    }
-}
-
-fn parse_segment_skip_mode(value: &str) -> Option<SegmentSkipMode> {
-    match value {
-        "disabled" => Some(SegmentSkipMode::Disabled),
-        "prompt" => Some(SegmentSkipMode::Prompt),
-        "always" => Some(SegmentSkipMode::Always),
-        _ => None,
-    }
-}
-
-fn notify_client_settings_error(frame: &Frame, message: &str) {
-    execute_client_settings_js(
-        frame,
-        &format!(
-            "window.__mediaFlickDesktopClientSettingsSaveFailed&&window.__mediaFlickDesktopClientSettingsSaveFailed({});",
-            js_string_literal(message)
-        ),
+fn dispatch_shell_event_to_frame(frame: &Frame, kind: &str, payload: serde_json::Value) {
+    let event = json!({ "type": kind, "payload": payload });
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
+        js_json(&event)
     );
-}
-
-fn execute_client_settings_js(frame: &Frame, script: &str) {
     frame.execute_java_script(
-        Some(&CefString::from(script)),
-        Some(&CefString::from("mediaflick-desktop://client-settings")),
+        Some(&CefString::from(script.as_str())),
+        Some(&CefString::from("mediaflick-desktop://shell-event")),
         1,
     );
-}
-
-fn js_string_literal(value: &str) -> String {
-    escape_js_line_separators(&serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string()))
 }
 
 fn js_json(value: &serde_json::Value) -> String {
@@ -2216,9 +2434,12 @@ fn html_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_token_is_valid, escape_js_line_separators, html_escape, is_browser_openable_url,
-        is_safe_external_link, js_string_literal, url_scheme,
+        PlaybackCacheRefreshOutcome, ShellFilePickerTarget,
+        apply_settings_snapshot_preserving_live_window, bridge_token_is_valid,
+        escape_js_line_separators, file_picker_completion_payload, html_escape,
+        is_browser_openable_url, is_safe_external_link, playback_cache_refresh_script, url_scheme,
     };
+    use crate::preferences::{AppSettings, AppearanceTheme, WebUiWindowSettings};
 
     #[test]
     fn url_scheme_lowercases_known_schemes() {
@@ -2268,12 +2489,6 @@ mod tests {
     }
 
     #[test]
-    fn js_string_literal_escapes_quotes_and_terminators() {
-        let literal = js_string_literal("say \"hi\"\u{2028}now");
-        assert_eq!(literal, "\"say \\\"hi\\\"\\u2028now\"");
-    }
-
-    #[test]
     fn html_escape_encodes_all_markup_characters() {
         assert_eq!(
             html_escape("<a href=\"x\">'&'</a>"),
@@ -2282,15 +2497,68 @@ mod tests {
     }
 
     #[test]
+    fn settings_snapshots_do_not_roll_back_live_window_geometry() {
+        let mut live = AppSettings {
+            webui_window: WebUiWindowSettings {
+                width: 1536,
+                height: 864,
+                maximized: false,
+            },
+            ..AppSettings::default()
+        };
+        let mut stale_preference_snapshot = AppSettings::default();
+        stale_preference_snapshot.appearance.theme = AppearanceTheme::Light;
+
+        apply_settings_snapshot_preserving_live_window(&mut live, stale_preference_snapshot);
+
+        // This is the snapshot the close lifecycle persists after resize ->
+        // unrelated settings change -> close.
+        assert_eq!(live.webui_window.size(), (1536, 864));
+        assert_eq!(live.appearance.theme, AppearanceTheme::Light);
+    }
+
+    #[test]
+    fn playback_cache_completion_script_carries_item_and_outcome() {
+        let script = playback_cache_refresh_script(
+            "item-after-a-slow-refresh",
+            PlaybackCacheRefreshOutcome::Refreshed,
+        );
+
+        assert!(script.contains("__mediaFlickDesktopPlaybackCacheRefreshed"));
+        assert!(script.contains("item-after-a-slow-refresh"));
+        assert!(script.contains("refreshed"));
+    }
+
+    #[test]
+    fn file_picker_completion_keeps_cancellation_and_errors_correlatable() {
+        let cancelled =
+            file_picker_completion_payload("request-one", ShellFilePickerTarget::Mpv, None, None);
+        assert_eq!(cancelled["requestId"], "request-one");
+        assert_eq!(cancelled["target"], "mpv");
+        assert!(cancelled["path"].is_null());
+        assert!(cancelled["error"].is_null());
+
+        let failed = file_picker_completion_payload(
+            "request-two",
+            ShellFilePickerTarget::Mpchc,
+            None,
+            Some("dialog failed"),
+        );
+        assert_eq!(failed["requestId"], "request-two");
+        assert_eq!(failed["target"], "mpchc");
+        assert_eq!(failed["error"], "dialog failed");
+    }
+
+    #[test]
     fn dialog_requests_must_carry_this_session_token() {
         let token = crate::jellyfin::bridge::bridge_token();
-        let url = format!("mediaflick-desktop://client-settings-save?token={token}&mpv=x");
+        let url = format!("mediaflick-desktop://update-download?token={token}&version=1");
         assert!(bridge_token_is_valid(&url));
         assert!(!bridge_token_is_valid(
-            "mediaflick-desktop://client-settings-save?token=deadbeef"
+            "mediaflick-desktop://update-download?token=deadbeef&version=1"
         ));
         assert!(!bridge_token_is_valid(
-            "mediaflick-desktop://client-settings-save?mpv=x"
+            "mediaflick-desktop://update-download?version=1"
         ));
         assert!(!bridge_token_is_valid("mediaflick-desktop://app-exit"));
     }

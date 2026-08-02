@@ -1,5 +1,5 @@
 import { Filter, Search, X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { PageHeader } from "@/components/PageHeader"
 import { SeerrResults } from "@/components/seerr/SeerrResults"
@@ -23,6 +23,16 @@ import {
   type SeerrResult,
 } from "@/lib/api"
 import {
+  DISCOVERY_FILTER_KEYS,
+  RELEASE_DECADES,
+  defaultDiscoveryFilters,
+  discoveryResultSetKey,
+  discoveryResultsForSet,
+  readDiscoveryFilters,
+  type DiscoveryAvailability,
+  writeDiscoveryFilters,
+} from "@/lib/discovery"
+import {
   useCompanion,
   useInfiniteSeerrSearch,
   useSeerrDiscover,
@@ -30,17 +40,18 @@ import {
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-type AvailabilityFilter = "all" | "outside" | "library"
+type AvailabilityFilter = DiscoveryAvailability
 type SearchMediaFilter = "all" | SeerrMediaType
+const BASIC_DISCOVERY_ROWS = SEERR_DISCOVER_ROWS.filter((entry) =>
+  ["trending", "movies", "tv"].includes(entry.id),
+)
 
-function defaultFilters(
-  row: SeerrDiscoverRow,
-  advancedDiscovery = true,
-): SeerrDiscoverFilters {
-  if (!advancedDiscovery) return {}
-  if (row === "trending") return { mediaType: "all", timeWindow: "day" }
-  if (row === "movies" || row === "tv") return { sort: "popular" }
-  return {}
+function discoverRow(value: string | null): SeerrDiscoverRow {
+  return SEERR_DISCOVER_ROWS.find((row) => row.id === value)?.id ?? "trending"
+}
+
+function availabilityFilter(value: string | null): AvailabilityFilter {
+  return value === "outside" || value === "library" ? value : "all"
 }
 
 function filterResults(
@@ -195,7 +206,7 @@ function GenreBrowser({
                         alt=""
                         loading="lazy"
                         decoding="async"
-                        className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
+                        className="media-backdrop-image absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
                       />
                     ) : null}
                     <span className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-black/10" />
@@ -218,6 +229,7 @@ function DiscoveryControls({
   availability,
   onAvailabilityChange,
   advancedDiscovery = true,
+  decadeDiscovery = true,
 }: {
   row: SeerrDiscoverRow
   filters: SeerrDiscoverFilters
@@ -225,8 +237,10 @@ function DiscoveryControls({
   availability: AvailabilityFilter
   onAvailabilityChange: (value: AvailabilityFilter) => void
   advancedDiscovery?: boolean
+  decadeDiscovery?: boolean
 }) {
   const catalogue = row === "movies" || row === "tv"
+  const catalogueMediaType = row === "movies" ? "movie" : "tv"
 
   return (
     <div className="flex flex-wrap items-end gap-3 border-y border-white/5 bg-white/[0.025] px-4 py-3">
@@ -301,6 +315,34 @@ function DiscoveryControls({
               </SelectContent>
             </Select>
           </FilterField>
+          {decadeDiscovery ? (
+            <FilterField label="Release decade">
+              <Select
+                value={filters.decade ? String(filters.decade) : "all"}
+                onValueChange={(decade) =>
+                  onFiltersChange({
+                    ...filters,
+                    decade: decade === "all" ? undefined : Number(decade),
+                  })
+                }
+              >
+                <SelectTrigger
+                  aria-label="Filter by release decade"
+                  className="h-10 min-w-52 border-white/10 bg-white/5"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Any decade</SelectItem>
+                  {RELEASE_DECADES[catalogueMediaType].map((decade) => (
+                    <SelectItem key={decade.value} value={String(decade.value)}>
+                      {decade.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FilterField>
+          ) : null}
           <FilterField label="Minimum score">
             <Select
               value={String(filters.minRating ?? 0)}
@@ -334,17 +376,19 @@ function DiscoverRow({
   row,
   filters,
   availability,
+  resultSetKey,
 }: {
   row: SeerrDiscoverRow
   filters: SeerrDiscoverFilters
   availability: AvailabilityFilter
+  resultSetKey: string
 }) {
-  const results = useSeerrDiscover(row, filters)
+  const results = useSeerrDiscover(row, filters, availability)
   const pages = results.data?.pages
-  const items = pages?.flatMap((page) => page.results)
+  const items = discoveryResultsForSet(resultSetKey, pages)
   const visible = filterResults(items, availability)
   const metadata = SEERR_DISCOVER_ROWS.find((entry) => entry.id === row)!
-  const total = pages?.[0]?.totalResults
+  const total = pages?.find((page) => page.resultSetKey === resultSetKey)?.totalResults
 
   return (
     <section className="flex flex-col gap-5" aria-labelledby="discover-results">
@@ -365,8 +409,9 @@ function DiscoverRow({
         results={visible}
         isPending={results.isPending}
         error={results.error}
-        empty="No titles in this feed match the current library filter."
+        empty="No titles in this feed match the current discovery filters."
         placeholders={12}
+        resultSetKey={resultSetKey}
       />
       <PaginationTail
         hasNextPage={Boolean(results.hasNextPage)}
@@ -455,34 +500,112 @@ export default function Discover() {
   const companion = useCompanion()
   const term = params.get("q") ?? ""
   const [draft, setDraft] = useState(term)
-  const [row, setRow] = useState<SeerrDiscoverRow>("trending")
-  const [filters, setFilters] = useState<SeerrDiscoverFilters>(() => defaultFilters(row))
-  const [availability, setAvailability] = useState<AvailabilityFilter>("all")
   const companionCapabilities = companion.data?.info?.capabilities ?? []
   const companionManaged =
     companion.data?.compatible && companionCapabilities.includes("seerr")
+  const companionDiscoveryV3 = companionCapabilities.includes("seerr-discovery-v3")
+  const companionDiscoveryV4 = companionCapabilities.includes("seerr-discovery-v4")
   const advancedDiscovery =
     !companion.isPending &&
-    (!companionManaged || companionCapabilities.includes("seerr-discovery-v2"))
+    (!companionManaged ||
+      companionCapabilities.includes("seerr-discovery-v2") ||
+      companionDiscoveryV3 ||
+      companionDiscoveryV4)
+  // v3 carried the superseded century parameter. Only v4 understands decade;
+  // older Companions still keep their otherwise-supported discovery controls.
+  const decadeDiscovery = advancedDiscovery && (!companionManaged || companionDiscoveryV4)
   const discoveryRows = advancedDiscovery
     ? SEERR_DISCOVER_ROWS
-    : SEERR_DISCOVER_ROWS.filter((entry) =>
-        ["trending", "movies", "tv"].includes(entry.id),
-      )
+    : BASIC_DISCOVERY_ROWS
+  const requestedRowValue = params.get("row")
+  const requestedRow = discoverRow(requestedRowValue)
+  const row = discoveryRows.some((entry) => entry.id === requestedRow)
+    ? requestedRow
+    : "trending"
+  const filters = readDiscoveryFilters(params, row, advancedDiscovery, decadeDiscovery)
+  const availability = availabilityFilter(params.get("library"))
+  const resultSetKey = discoveryResultSetKey(row, filters, availability)
 
   useEffect(() => setDraft(term), [term])
+
+  // Capability changes can make a deep-linked row or control unavailable.
+  // Canonicalize only after the probe settles; clearing during the pending
+  // frame would destroy valid persisted state before the plugin answered.
   useEffect(() => {
-    if (!advancedDiscovery) {
-      setRow((current) =>
-        current === "upcoming-movies" || current === "upcoming-tv" ? "trending" : current,
-      )
-      setFilters({})
+    if (companion.isPending) return
+    const unsupportedRow =
+      requestedRowValue !== null &&
+      !discoveryRows.some((entry) => entry.id === requestedRowValue)
+    const hasAdvancedFilters = DISCOVERY_FILTER_KEYS.some((key) => params.has(key))
+    const clearAdvancedFilters = !advancedDiscovery && hasAdvancedFilters
+    const clearUnsupportedDecade = !decadeDiscovery && params.has("decade")
+    const clearLegacyCentury = params.has("century")
+    if (
+      !unsupportedRow &&
+      !clearAdvancedFilters &&
+      !clearUnsupportedDecade &&
+      !clearLegacyCentury
+    ) {
+      return
     }
-  }, [advancedDiscovery])
+
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous)
+        if (unsupportedRow) next.delete("row")
+        if (unsupportedRow || clearAdvancedFilters) {
+          for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
+        } else if (clearUnsupportedDecade) {
+          next.delete("decade")
+        }
+        next.delete("century")
+        return next
+      },
+      { replace: true },
+    )
+  }, [
+    advancedDiscovery,
+    decadeDiscovery,
+    companion.isPending,
+    discoveryRows,
+    params,
+    requestedRowValue,
+    setParams,
+  ])
+
+  const updateFilters = useCallback(
+    (next: SeerrDiscoverFilters) => {
+      setParams((previous) => writeDiscoveryFilters(previous, row, next), { replace: true })
+    },
+    [row, setParams],
+  )
+
+  const updateAvailability = useCallback(
+    (nextAvailability: AvailabilityFilter) => {
+      setParams(
+        (previous) => {
+          const next = new URLSearchParams(previous)
+          if (nextAvailability === "all") next.delete("library")
+          else next.set("library", nextAvailability)
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setParams],
+  )
 
   const submitSearch = () => {
     const next = draft.trim()
-    setParams(next.length > 1 ? { q: next } : {}, { replace: true })
+    setParams(
+      (previous) => {
+        const nextParams = new URLSearchParams(previous)
+        if (next.length > 1) nextParams.set("q", next)
+        else nextParams.delete("q")
+        return nextParams
+      },
+      { replace: true },
+    )
   }
 
   const catalogueMediaType: SeerrMediaType | null =
@@ -520,7 +643,14 @@ export default function Discover() {
               aria-label="Clear search"
               onClick={() => {
                 setDraft("")
-                setParams({}, { replace: true })
+                setParams(
+                  (previous) => {
+                    const next = new URLSearchParams(previous)
+                    next.delete("q")
+                    return next
+                  },
+                  { replace: true },
+                )
               }}
               className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground"
             >
@@ -533,15 +663,26 @@ export default function Discover() {
           <SearchResults
             term={term}
             availability={availability}
-            onAvailabilityChange={setAvailability}
+            onAvailabilityChange={updateAvailability}
           />
         ) : (
           <Tabs
             value={row}
             onValueChange={(value) => {
               const next = value as SeerrDiscoverRow
-              setRow(next)
-              setFilters(defaultFilters(next, advancedDiscovery))
+              setParams(
+                (previous) => {
+                  const nextParams = new URLSearchParams(previous)
+                  if (next === "trending") nextParams.delete("row")
+                  else nextParams.set("row", next)
+                  return writeDiscoveryFilters(
+                    nextParams,
+                    next,
+                    defaultDiscoveryFilters(next, advancedDiscovery),
+                  )
+                },
+                { replace: true },
+              )
             }}
             className="gap-6"
           >
@@ -564,18 +705,25 @@ export default function Discover() {
                 <GenreBrowser
                   mediaType={catalogueMediaType}
                   selected={filters.genre}
-                  onSelect={(genre) => setFilters((current) => ({ ...current, genre }))}
+                  onSelect={(genre) => updateFilters({ ...filters, genre })}
                 />
               ) : null}
               <DiscoveryControls
                 row={row}
                 filters={filters}
-                onFiltersChange={setFilters}
+                onFiltersChange={updateFilters}
                 availability={availability}
-                onAvailabilityChange={setAvailability}
+                onAvailabilityChange={updateAvailability}
                 advancedDiscovery={advancedDiscovery}
+                decadeDiscovery={decadeDiscovery}
               />
-              <DiscoverRow row={row} filters={filters} availability={availability} />
+              <DiscoverRow
+                key={resultSetKey}
+                row={row}
+                filters={filters}
+                availability={availability}
+                resultSetKey={resultSetKey}
+              />
             </TabsContent>
           </Tabs>
         )}
