@@ -8,8 +8,11 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
+use super::model::{ItemRecord, metadata_convergence_initial_delay, persisted_metadata_quality};
+use super::now_unix;
+
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -177,6 +180,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(SCHEMA_V7)?;
         connection.pragma_update(None, "user_version", 7)?;
         version = 7;
+    }
+    if version < 8 {
+        migrate_v8(connection)?;
+        connection.pragma_update(None, "user_version", 8)?;
+        version = 8;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -462,11 +470,105 @@ WHERE metadata_repair_pending = 1
   AND kind IN ('Movie', 'Series');
 "#;
 
+/// Re-evaluates rows that v7 missed because its one-time backfill only trusted
+/// the obsolete v6 repair flag. This deliberately reads the current cache and
+/// applies the same quality dimensions as live DTO ingestion; see
+/// `persisted_metadata_quality` for the one conservative provider-id caveat.
+/// The production defect is confined to top-level Movie/Series rows. Seasons
+/// can already complete from hierarchy plus one provider signal, while a broad
+/// historical Episode backfill could enqueue an unbounded child library, so
+/// neither child kind is migrated without evidence of a similarly stranded set.
+///
+/// No table is rebuilt. Existing queue rows are excluded before insertion, so
+/// retry, progress, dormancy, and completion state survive byte-for-byte. If a
+/// migration is interrupted before `user_version` advances, `INSERT OR IGNORE`
+/// makes replay safe.
+fn migrate_v8(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare(
+        "SELECT jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
+                runtime_ticks, overview, community_rating, critic_rating, official_rating,
+                parent_id, series_id, series_name, season_id, index_number,
+                parent_index_number, child_count, tmdb_id, imdb_id, tvdb_id, genres, tags,
+                studios, people, image_tags, primary_image_tag, backdrop_image_tag,
+                search_genres, search_people, date_created, date_last_saved
+         FROM items
+         WHERE kind IN ('Movie', 'Series')
+           AND NOT EXISTS (
+               SELECT 1 FROM metadata_convergence convergence
+               WHERE convergence.jellyfin_id = items.jellyfin_id
+           )",
+    )?;
+    let records = statement
+        .query_map([], |row| {
+            Ok(ItemRecord {
+                jellyfin_id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                original_title: row.get(3)?,
+                sort_name: row.get(4)?,
+                year: row.get(5)?,
+                premiere_date: row.get(6)?,
+                runtime_ticks: row.get(7)?,
+                overview: row.get(8)?,
+                community_rating: row.get(9)?,
+                critic_rating: row.get(10)?,
+                official_rating: row.get(11)?,
+                parent_id: row.get(12)?,
+                series_id: row.get(13)?,
+                series_name: row.get(14)?,
+                season_id: row.get(15)?,
+                index_number: row.get(16)?,
+                parent_index_number: row.get(17)?,
+                child_count: row.get(18)?,
+                tmdb_id: row.get(19)?,
+                imdb_id: row.get(20)?,
+                tvdb_id: row.get(21)?,
+                genres: row.get(22)?,
+                tags: row.get(23)?,
+                studios: row.get(24)?,
+                people: row.get(25)?,
+                image_tags: row.get(26)?,
+                primary_image_tag: row.get(27)?,
+                backdrop_image_tag: row.get(28)?,
+                search_genres: row.get(29)?,
+                search_people: row.get(30)?,
+                date_created: row.get(31)?,
+                date_last_saved: row.get(32)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+
+    let now = now_unix();
+    for record in records {
+        let quality = persisted_metadata_quality(&record);
+        if quality.complete {
+            continue;
+        }
+        connection.execute(
+            "INSERT OR IGNORE INTO metadata_convergence (
+                 jellyfin_id, state, missing_quality, quality_score,
+                 first_observed_at, last_observed_at, last_progress_at, next_attempt_at,
+                 attempt_count, unchanged_count, error_count, successful_unchanged, signature
+             ) VALUES (?1, 'pending', ?2, ?3, ?4, ?4, ?4, ?5, 0, 0, 0, 0, ?6)",
+            rusqlite::params![
+                record.jellyfin_id,
+                i64::from(quality.missing),
+                i64::from(quality.score),
+                now,
+                now + metadata_convergence_initial_delay(&record.jellyfin_id),
+                quality.signature,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_VERSION, migrate,
-        user_version,
+        Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_VERSION,
+        migrate, migrate_v8, user_version,
     };
     use rusqlite::Connection;
 
@@ -641,10 +743,13 @@ mod tests {
         connection.execute_batch(SCHEMA_V6).expect("v6 schema");
         connection
             .execute(
-                "INSERT INTO items (jellyfin_id, kind, name, synced_at,
-                                    metadata_repair_pending, metadata_repair_attempts)
-                 VALUES ('pending', 'Movie', 'Sparse', 10, 1, 3),
-                        ('complete', 'Movie', 'Rich', 11, 0, 0)",
+                "INSERT INTO items (
+                     jellyfin_id, kind, name, year, overview, tmdb_id, image_tags, synced_at,
+                     metadata_repair_pending, metadata_repair_attempts
+                 ) VALUES
+                   ('pending', 'Movie', 'Sparse', NULL, NULL, NULL, '{}', 10, 1, 3),
+                   ('complete', 'Movie', 'Rich', 2000, 'Overview', '1',
+                    '{\"Primary\":\"poster\"}', 11, 0, 0)",
                 [],
             )
             .expect("seed");
@@ -683,6 +788,144 @@ mod tests {
             })
             .expect("queue rows");
         assert_eq!(queued, 0);
+    }
+
+    #[test]
+    fn a_v7_database_requeues_sparse_cached_items_without_overwriting_queue_state() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection.execute_batch(SCHEMA_V5).expect("v5 schema");
+        connection.execute_batch(SCHEMA_V6).expect("v6 schema");
+        connection.execute_batch(SCHEMA_V7).expect("v7 schema");
+        connection
+            .execute_batch(
+                "INSERT INTO items (
+                     jellyfin_id, kind, name, year, tmdb_id, tvdb_id, overview,
+                     image_tags, metadata_repair_pending, synced_at
+                 ) VALUES
+                   ('blob', 'Movie', 'The Blob', 1988, '9599', NULL, NULL, '{}', 0, 10),
+                   ('series', 'Series', 'Sparse Series', 2020, NULL, '42', NULL, '{}', 0, 11),
+                   ('rich', 'Movie', 'Rich', 2000, '1', NULL, 'Description',
+                    '{\"Primary\":\"poster\"}', 0, 12),
+                   ('pending', 'Movie', 'Existing Pending', NULL, NULL, NULL, NULL, '{}', 0, 13),
+                   ('dormant', 'Movie', 'Existing Dormant', NULL, NULL, NULL, NULL, '{}', 0, 14),
+                   ('complete', 'Movie', 'Existing Complete', 2001, '2', NULL, 'Overview',
+                    '{\"Primary\":\"art\"}', 0, 15);
+
+                 INSERT INTO metadata_convergence (
+                     jellyfin_id, state, missing_quality, quality_score,
+                     first_observed_at, last_observed_at, last_progress_at, next_attempt_at,
+                     attempt_count, unchanged_count, error_count, successful_unchanged, signature
+                 ) VALUES
+                   ('pending', 'pending', 125, 2, 101, 102, 103, 104, 5, 6, 7, 8, 'pending-sig'),
+                   ('dormant', 'dormant', 99, 3, 201, 202, 203, NULL, 9, 10, 11, 12, 'dormant-sig'),
+                   ('complete', 'complete', 0, 7, 301, 302, 303, NULL, 13, 14, 15, 16,
+                    'complete-sig');",
+            )
+            .expect("seed v7 data");
+        connection
+            .pragma_update(None, "user_version", 7)
+            .expect("stamp v7");
+        let retained_before = convergence_rows(&connection, "pending,dormant,complete");
+
+        migrate(&connection).expect("migrate");
+
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
+        assert_eq!(
+            convergence_rows(&connection, "pending,dormant,complete"),
+            retained_before,
+            "v8 changed existing retry/progress/dormancy state"
+        );
+        let backfilled: Vec<(String, i64, i64, i64, i64, i64, String)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT jellyfin_id, missing_quality, quality_score,
+                            first_observed_at, last_observed_at, last_progress_at, signature
+                     FROM metadata_convergence
+                     WHERE jellyfin_id IN ('blob', 'series')
+                     ORDER BY jellyfin_id",
+                )
+                .expect("prepare");
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                })
+                .expect("query")
+                .collect::<rusqlite::Result<_>>()
+                .expect("rows")
+        };
+        assert_eq!(backfilled.len(), 2);
+        for (id, missing, score, first, observed, progress, signature) in &backfilled {
+            assert_eq!((*missing, *score), (6, 5), "wrong quality for {id}");
+            assert_eq!((*observed, *progress), (*first, *first));
+            assert!(signature.starts_with("v8:"));
+            let next: i64 = connection
+                .query_row(
+                    "SELECT next_attempt_at FROM metadata_convergence WHERE jellyfin_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .expect("next attempt");
+            assert!((120..=149).contains(&(next - first)));
+        }
+        let rich_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM metadata_convergence WHERE jellyfin_id = 'rich'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("rich queue count");
+        assert_eq!(rich_rows, 0);
+
+        let all_before_replay = convergence_rows(&connection, "*");
+        migrate_v8(&connection).expect("replay v8 backfill");
+        assert_eq!(convergence_rows(&connection, "*"), all_before_replay);
+
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+        connection
+            .execute("DELETE FROM items WHERE jellyfin_id = 'blob'", [])
+            .expect("evict item");
+        let blob_queue_rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM metadata_convergence WHERE jellyfin_id = 'blob'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("blob queue count");
+        assert_eq!(blob_queue_rows, 0);
+    }
+
+    fn convergence_rows(connection: &Connection, ids: &str) -> Vec<String> {
+        let condition = if ids == "*" {
+            String::new()
+        } else {
+            format!("WHERE instr(',{ids},', ',' || jellyfin_id || ',') > 0")
+        };
+        let sql = format!(
+            "SELECT json_array(jellyfin_id, state, missing_quality, quality_score,
+                               first_observed_at, last_observed_at, last_progress_at,
+                               next_attempt_at, attempt_count, unchanged_count, error_count,
+                               successful_unchanged, signature)
+             FROM metadata_convergence {condition} ORDER BY jellyfin_id"
+        );
+        let mut statement = connection.prepare(&sql).expect("prepare queue snapshot");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("query queue snapshot")
+            .collect::<rusqlite::Result<_>>()
+            .expect("queue snapshot")
     }
 
     /// A pre-release build stamped version 2 while creating the table under the

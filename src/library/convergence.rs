@@ -18,7 +18,7 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::BaseItemDto;
 use crate::jellyfin::session::Session;
 
-use super::model::{MetadataQuality, metadata_quality};
+use super::model::{MetadataQuality, metadata_convergence_initial_delay, metadata_quality};
 use super::{ItemRecord, Library, UserDataRecord, now_unix, upsert_item, upsert_user_data};
 
 pub const REQUEST_BATCH_SIZE: usize = 20;
@@ -26,7 +26,6 @@ pub const MAX_BATCHES_PER_WAKE: usize = 2;
 pub const MAX_ITEMS_PER_WAKE: usize = REQUEST_BATCH_SIZE * MAX_BATCHES_PER_WAKE;
 pub const DRAIN_COOLDOWN_SECS: u64 = 10;
 
-const INITIAL_GRACE_SECS: i64 = 120;
 const DORMANCY_MIN_UNCHANGED: i64 = 8;
 const DORMANCY_MIN_AGE_SECS: i64 = 14 * 24 * 60 * 60;
 const META_LAST_RUN: &str = "convergence.last_run";
@@ -553,16 +552,7 @@ fn mark_error(connection: &rusqlite::Connection, item_id: &str, now: i64) -> rus
 }
 
 fn progress_delay(item_id: &str) -> i64 {
-    INITIAL_GRACE_SECS + deterministic_jitter(item_id)
-}
-
-fn deterministic_jitter(item_id: &str) -> i64 {
-    item_id
-        .bytes()
-        .fold(0_u64, |hash, byte| {
-            hash.wrapping_mul(33).wrapping_add(u64::from(byte))
-        })
-        .wrapping_rem(30) as i64
+    metadata_convergence_initial_delay(item_id)
 }
 
 fn unchanged_delay(unchanged: i64) -> i64 {
@@ -908,5 +898,74 @@ mod tests {
         assert_eq!(cached["runtimeTicks"], 123);
         assert_eq!(cached["dateCreated"], "2020-01-01");
         assert_eq!(cached["primaryImageTag"], "poster");
+    }
+
+    #[test]
+    fn a_rich_exact_id_observation_completes_a_v8_backfill_without_erasing_cache_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "mediaflick-v8-convergence-{}.sqlite",
+            crate::app::ids::random_hex(8)
+        ));
+        {
+            let library = Library::open(&path).expect("create library");
+            library
+                .db
+                .with_connection(|connection| {
+                    connection.execute(
+                        "INSERT INTO items (
+                             jellyfin_id, kind, name, year, runtime_ticks, tmdb_id,
+                             date_created, metadata_repair_pending, synced_at
+                         ) VALUES ('blob', 'Movie', 'The Blob', 1988, 123, '9599',
+                                   '2020-01-01', 0, 1)",
+                        [],
+                    )?;
+                    connection.pragma_update(None, "user_version", 7)?;
+                    Ok(())
+                })
+                .expect("seed v7 row");
+        }
+
+        let library = Library::open(&path).expect("migrate library");
+        let queued: (String, i64) = library
+            .db
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT state, missing_quality FROM metadata_convergence
+                     WHERE jellyfin_id = 'blob'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .expect("backfilled state");
+        assert_eq!(queued, ("pending".to_string(), 6));
+
+        let response = dto(r#"{"Id":"blob","Name":"The Blob (1988)","Type":"Movie",
+                "ProductionYear":1988,"Overview":"Rich server description",
+                "ProviderIds":{"Tmdb":"9599"},"ImageTags":{"Primary":"poster"}}"#);
+        let report = library
+            .apply_convergence_response(&["blob".to_string()], vec![response], 2)
+            .expect("apply rich response");
+        assert_eq!(report.completed, 1);
+        let cached = library.item("blob").unwrap().unwrap();
+        assert_eq!(cached["name"], "The Blob (1988)");
+        assert_eq!(cached["year"], 1988);
+        assert_eq!(cached["runtimeTicks"], 123);
+        assert_eq!(cached["dateCreated"], "2020-01-01");
+        assert_eq!(cached["primaryImageTag"], "poster");
+        let state: (String, Option<i64>) = library
+            .db
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT state, next_attempt_at FROM metadata_convergence
+                     WHERE jellyfin_id = 'blob'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+            })
+            .expect("complete state");
+        assert_eq!(state, ("complete".to_string(), None));
+
+        drop(library);
+        let _ = std::fs::remove_file(path);
     }
 }
