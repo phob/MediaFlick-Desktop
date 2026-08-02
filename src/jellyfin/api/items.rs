@@ -133,21 +133,29 @@ pub fn fetch_children(
 
 /// Fetch a single item through `/Items?ids=`, which every supported server
 /// version exposes.
+pub fn fetch_items(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_ids: &[String],
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_ids.join(",")),
+            ("Fields", SYNC_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+        ],
+    )
+}
+
 pub fn fetch_item(
     client: &JellyfinClient,
     user_id: &str,
     item_id: &str,
 ) -> Result<Option<BaseItemDto>, ApiError> {
-    let response: ItemsResponse = client.get_json(
-        "/Items",
-        &[
-            user_query(user_id),
-            ("ids", item_id.to_string()),
-            ("Fields", SYNC_FIELDS.to_string()),
-            ("EnableUserData", "true".to_string()),
-            ("EnableImages", "true".to_string()),
-        ],
-    )?;
+    let response = fetch_items(client, user_id, &[item_id.to_string()])?;
     Ok(response.items.into_iter().next())
 }
 
@@ -389,7 +397,7 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 mod tests {
     use super::{
         CHILDREN_PAGE_SIZE, PAGE_SIZE, SYNC_FIELDS, SYNCED_ITEM_TYPES, children_query, image_path,
-        items_page_query,
+        items_page_query, user_query,
     };
 
     #[test]
@@ -451,5 +459,24 @@ mod tests {
             image_path("../secret", "Primary"),
             "/Items/..%2Fsecret/Images/Primary"
         );
+    }
+
+    #[test]
+    fn multi_id_queries_are_one_bounded_items_read() {
+        let ids = (0..20)
+            .map(|index| format!("item-{index}"))
+            .collect::<Vec<_>>();
+        let query = [
+            user_query("uid"),
+            ("ids", ids.join(",")),
+            ("Fields", SYNC_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["ids"].split(',').count(), 20);
+        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["EnableImages"], "true");
     }
 }

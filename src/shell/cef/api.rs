@@ -322,6 +322,10 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         );
         object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
         object.insert("bootstrap".to_string(), json!(bootstrap));
+        object.insert(
+            "convergence".to_string(),
+            json!(services.library.convergence_diagnostics()),
+        );
         object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)
