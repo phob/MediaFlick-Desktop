@@ -42,6 +42,10 @@ pub struct ItemRecord {
     pub search_people: String,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
+    /// A top-level item was cached before Jellyfin's metadata providers had
+    /// supplied either artwork or any substantive descriptive metadata.
+    /// Kept on the row so an unchanged `DateCreated` cannot strand it forever.
+    pub metadata_repair_pending: bool,
 }
 
 /// Cast and crew kept for the details view; capped so a 200-person credit list
@@ -127,8 +131,54 @@ impl ItemRecord {
                 .join(", "),
             date_created: non_empty(dto.date_created.as_deref()),
             date_last_saved: non_empty(dto.date_last_saved.as_deref()),
+            metadata_repair_pending: materially_incomplete(dto),
         }
     }
+}
+
+/// Deliberately strict eligibility for the one-shot startup repair.
+///
+/// A missing poster alone is valid for home videos and obscure media. We only
+/// flag top-level movies/series that have no usable image tag *and* no
+/// substantive provider/descriptive signal. Name, year, runtime, and
+/// `DateCreated` can all arrive during Jellyfin's initial scan before metadata
+/// enrichment, so they do not prove that enrichment finished.
+pub(crate) fn materially_incomplete(dto: &BaseItemDto) -> bool {
+    let top_level = matches!(dto.item_type.as_deref(), Some("Movie" | "Series"));
+    let has_artwork = dto.image_tags.values().any(|tag| !tag.trim().is_empty())
+        || dto
+            .backdrop_image_tags
+            .iter()
+            .chain(dto.parent_backdrop_image_tags.iter())
+            .any(|tag| !tag.trim().is_empty())
+        || dto
+            .series_primary_image_tag
+            .as_deref()
+            .is_some_and(|tag| !tag.trim().is_empty());
+    let has_core_metadata = non_empty(dto.overview.as_deref()).is_some()
+        || dto
+            .provider_ids
+            .values()
+            .any(|provider_id| !provider_id.trim().is_empty())
+        || dto.genres.iter().any(|genre| !genre.trim().is_empty())
+        || dto.tags.iter().any(|tag| !tag.trim().is_empty())
+        || dto.studios.iter().any(|studio| {
+            studio
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+        })
+        || dto.people.iter().any(|person| {
+            person
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.trim().is_empty())
+        })
+        || non_empty(dto.official_rating.as_deref()).is_some()
+        || dto.community_rating.is_some()
+        || dto.critic_rating.is_some();
+
+    top_level && !has_artwork && !has_core_metadata
 }
 
 /// Watch state mirrored from the server and from our own playback reporting.
@@ -186,7 +236,7 @@ fn release_year_from_date(value: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemRecord, UserDataRecord};
+    use super::{ItemRecord, UserDataRecord, materially_incomplete};
     use crate::jellyfin::api::model::{BaseItemDto, UserItemDataDto};
 
     fn dto(json: &str) -> BaseItemDto {
@@ -228,6 +278,29 @@ mod tests {
         let record = ItemRecord::from_dto(&dto(r#"{"Id":"a","Name":"The Matrix"}"#));
         assert_eq!(record.sort_name.as_deref(), Some("the matrix"));
         assert_eq!(record.kind, "Unknown");
+    }
+
+    #[test]
+    fn only_materially_sparse_top_level_items_need_metadata_repair() {
+        let sparse_movie = dto(r#"{"Id":"m","Name":"A scan in progress","Type":"Movie",
+                "ProductionYear":1988,"RunTimeTicks":100,"DateCreated":"2024-01-01"}"#);
+        assert!(materially_incomplete(&sparse_movie));
+        assert!(ItemRecord::from_dto(&sparse_movie).metadata_repair_pending);
+
+        for enriched in [
+            r#"{"Id":"m","Type":"Movie","ImageTags":{"Primary":"poster"}}"#,
+            r#"{"Id":"m","Type":"Movie","Overview":"A description"}"#,
+            r#"{"Id":"m","Type":"Movie","ProviderIds":{"Tmdb":"1"}}"#,
+            r#"{"Id":"m","Type":"Movie","Genres":["Horror"]}"#,
+        ] {
+            assert!(!materially_incomplete(&dto(enriched)));
+        }
+
+        // Optional metadata is allowed to be absent on child/home media; the
+        // repair is intentionally scoped to the top-level ingestion race.
+        assert!(!materially_incomplete(&dto(
+            r#"{"Id":"e","Name":"Home video","Type":"Episode"}"#
+        )));
     }
 
     #[test]

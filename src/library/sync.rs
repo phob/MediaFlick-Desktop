@@ -187,6 +187,7 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 
 fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
+    let mut startup_repair = StartupRepair::default();
     // The cycle that runs at start-up is an ordinary one. `due` already forces
     // the identity sweep whenever the app was closed for longer than the sweep
     // interval, which is every launch that could have missed a deletion.
@@ -206,6 +207,46 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
         handle.running.store(true, Ordering::Relaxed);
         let outcome = run_cycle(&library, &session, trigger);
         trigger = Trigger::Scheduled;
+
+        // Repair only after a successful ordinary cycle and a completed
+        // bootstrap. That serializes its small exact-ID budget behind the
+        // watermark/bootstrap/identity work instead of competing with it, and
+        // still lets a first sign-in run the pass as soon as its initial fill
+        // has established durable candidates.
+        if startup_repair.claim(
+            outcome.is_ok(),
+            session.is_authenticated(),
+            library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1"),
+        ) {
+            match super::repair::repair_once(&library, &session) {
+                Ok(report) => {
+                    if !report.repaired_ids.is_empty() {
+                        crate::app::services::notify_metadata_repaired(report.repaired_ids.clone());
+                    }
+                    if !session.is_authenticated() {
+                        crate::app::services::notify_session_expired();
+                    }
+                    tracing::info!(
+                        target: "library.repair",
+                        candidates = report.candidates,
+                        repaired = report.repaired_ids.len(),
+                        incomplete = report.incomplete_responses,
+                        failed = report.failed,
+                        "startup metadata repair pass finished"
+                    );
+                }
+                Err(error) => {
+                    session.note_error(&error);
+                    if error == ApiError::Unauthorized {
+                        crate::app::services::notify_session_expired();
+                    }
+                    tracing::warn!(
+                        target: "library.repair",
+                        "could not start the metadata repair pass: {error}"
+                    );
+                }
+            }
+        }
         handle.running.store(false, Ordering::Relaxed);
 
         let delay = match outcome {
@@ -238,6 +279,24 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
             Wake::Requested => trigger = Trigger::Requested,
             Wake::Elapsed => {}
         }
+    }
+}
+
+/// Process-local lifecycle gate. It is consumed even when there are no
+/// candidates, but not while signed out, offline synchronization failed, or
+/// the resumable initial bootstrap is incomplete.
+#[derive(Debug, Default)]
+struct StartupRepair {
+    consumed: bool,
+}
+
+impl StartupRepair {
+    fn claim(&mut self, sync_succeeded: bool, authenticated: bool, bootstrapped: bool) -> bool {
+        let ready = !self.consumed && sync_succeeded && authenticated && bootstrapped;
+        if ready {
+            self.consumed = true;
+        }
+        ready
     }
 }
 
@@ -572,9 +631,9 @@ fn jittered(base: Duration) -> Duration {
 mod tests {
     use super::{
         Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
-        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle,
-        SyncReport, Trigger, Wake, advance_watermark, bootstrap_progress, full_bootstrap_due,
-        is_newer, jittered, wait,
+        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, StartupRepair,
+        SyncHandle, SyncReport, Trigger, Wake, advance_watermark, bootstrap_progress,
+        full_bootstrap_due, is_newer, jittered, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
@@ -733,6 +792,25 @@ mod tests {
     fn only_a_requested_cycle_forces_the_identity_sweep() {
         assert!(Trigger::Requested.forces_identity_sweep());
         assert!(!Trigger::Scheduled.forces_identity_sweep());
+    }
+
+    #[test]
+    fn metadata_repair_is_claimed_once_only_after_authenticated_bootstrap() {
+        let mut repair = StartupRepair::default();
+        assert!(
+            !repair.claim(false, true, true),
+            "a failed sync is not ready"
+        );
+        assert!(!repair.claim(true, false, true), "sign-in is still pending");
+        assert!(
+            !repair.claim(true, true, false),
+            "bootstrap is still running"
+        );
+        assert!(repair.claim(true, true, true), "first ready cycle runs it");
+        assert!(
+            !repair.claim(true, true, true),
+            "later cycles cannot rerun it"
+        );
     }
 
     /// The refresh button is only a "reconcile now" lever if the request

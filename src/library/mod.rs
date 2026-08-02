@@ -7,6 +7,7 @@
 pub mod db;
 pub mod headless;
 pub mod model;
+mod repair;
 pub mod sync;
 
 use std::collections::{HashMap, HashSet};
@@ -565,13 +566,72 @@ impl Library {
                 if dto.id.trim().is_empty() {
                     continue;
                 }
-                upsert_item(transaction, &ItemRecord::from_dto(dto))?;
+                upsert_item(transaction, &ItemRecord::from_dto(dto), false)?;
                 if let Some(user_data) = &dto.user_data {
                     upsert_user_data(transaction, &UserDataRecord::from_dto(&dto.id, user_data))?;
                 }
                 written += 1;
             }
             Ok(written)
+        })
+    }
+
+    /// Applies an exact-ID repair through the ordinary item/user-data
+    /// transaction while preserving cached fields omitted by a partial success
+    /// response. Normal sync upserts remain authoritative and can clear fields;
+    /// only this defensive repair path merges missing values.
+    pub(crate) fn upsert_metadata_repair(&self, dto: &BaseItemDto) -> rusqlite::Result<bool> {
+        if dto.id.trim().is_empty() {
+            return Ok(false);
+        }
+        self.db.with_transaction(|transaction| {
+            upsert_item(transaction, &ItemRecord::from_dto(dto), true)?;
+            if let Some(user_data) = &dto.user_data {
+                upsert_user_data(transaction, &UserDataRecord::from_dto(&dto.id, user_data))?;
+            }
+            Ok(true)
+        })
+    }
+
+    /// Selects a durable, bounded startup-repair batch.
+    ///
+    /// Never-attempted rows come first, newest ingestion first. Once all
+    /// pending rows have had a chance, the least recently attempted rotate
+    /// back in on later launches. There is intentionally no wall-clock cutoff:
+    /// a week of downtime must not make an enrichment race permanent.
+    pub(crate) fn metadata_repair_candidates(&self, limit: usize) -> rusqlite::Result<Vec<String>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT jellyfin_id FROM items
+                 WHERE metadata_repair_pending = 1
+                   AND kind IN ('Movie', 'Series')
+                 ORDER BY metadata_repair_last_attempt_at IS NOT NULL ASC,
+                          metadata_repair_last_attempt_at ASC,
+                          date_created DESC NULLS LAST,
+                          id DESC
+                 LIMIT ?1",
+            )?;
+            statement
+                .query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect()
+        })
+    }
+
+    /// Records that this launch spent one exact-item request on a candidate.
+    /// The row remains pending unless a later full DTO proves it is no longer
+    /// materially incomplete.
+    pub(crate) fn mark_metadata_repair_attempted(&self, item_id: &str) -> rusqlite::Result<()> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "UPDATE items
+                 SET metadata_repair_attempts = metadata_repair_attempts + 1,
+                     metadata_repair_last_attempt_at = ?2
+                 WHERE jellyfin_id = ?1 AND metadata_repair_pending = 1",
+                params![item_id, now_unix()],
+            )?;
+            Ok(())
         })
     }
 
@@ -1173,7 +1233,11 @@ fn fts_match_expression(input: &str) -> Option<String> {
     (!tokens.is_empty()).then(|| tokens.join(" AND "))
 }
 
-fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<()> {
+fn upsert_item(
+    connection: &Connection,
+    record: &ItemRecord,
+    preserve_missing: bool,
+) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO items (
             jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
@@ -1181,31 +1245,47 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             parent_id, series_id, series_name, season_id, index_number, parent_index_number,
             child_count, tmdb_id, imdb_id, tvdb_id, genres, tags, studios, people,
             image_tags, primary_image_tag, backdrop_image_tag, search_genres, search_people,
-            date_created, date_last_saved, synced_at
+            date_created, date_last_saved, synced_at, metadata_repair_pending
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34
+            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34,
+            ?35
         )
         ON CONFLICT(jellyfin_id) DO UPDATE SET
-            kind = excluded.kind, name = excluded.name,
-            original_title = excluded.original_title, sort_name = excluded.sort_name,
-            year = excluded.year, premiere_date = excluded.premiere_date,
-            runtime_ticks = excluded.runtime_ticks, overview = excluded.overview,
-            community_rating = excluded.community_rating,
-            critic_rating = excluded.critic_rating,
-            official_rating = excluded.official_rating, parent_id = excluded.parent_id,
-            series_id = excluded.series_id, series_name = excluded.series_name,
-            season_id = excluded.season_id, index_number = excluded.index_number,
-            parent_index_number = excluded.parent_index_number,
-            child_count = excluded.child_count, tmdb_id = excluded.tmdb_id,
-            imdb_id = excluded.imdb_id, tvdb_id = excluded.tvdb_id,
-            genres = excluded.genres, tags = excluded.tags, studios = excluded.studios,
-            people = excluded.people, image_tags = excluded.image_tags,
-            primary_image_tag = excluded.primary_image_tag,
-            backdrop_image_tag = excluded.backdrop_image_tag,
-            search_genres = excluded.search_genres, search_people = excluded.search_people,
-            date_created = excluded.date_created, date_last_saved = excluded.date_last_saved,
-            synced_at = excluded.synced_at",
+            kind = CASE WHEN ?36 AND excluded.kind = 'Unknown' THEN items.kind ELSE excluded.kind END,
+            name = CASE WHEN ?36 AND excluded.name = 'Untitled' THEN items.name ELSE excluded.name END,
+            original_title = CASE WHEN ?36 THEN COALESCE(excluded.original_title, items.original_title) ELSE excluded.original_title END,
+            sort_name = CASE WHEN ?36 THEN COALESCE(excluded.sort_name, items.sort_name) ELSE excluded.sort_name END,
+            year = CASE WHEN ?36 THEN COALESCE(excluded.year, items.year) ELSE excluded.year END,
+            premiere_date = CASE WHEN ?36 THEN COALESCE(excluded.premiere_date, items.premiere_date) ELSE excluded.premiere_date END,
+            runtime_ticks = CASE WHEN ?36 THEN COALESCE(excluded.runtime_ticks, items.runtime_ticks) ELSE excluded.runtime_ticks END,
+            overview = CASE WHEN ?36 THEN COALESCE(excluded.overview, items.overview) ELSE excluded.overview END,
+            community_rating = CASE WHEN ?36 THEN COALESCE(excluded.community_rating, items.community_rating) ELSE excluded.community_rating END,
+            critic_rating = CASE WHEN ?36 THEN COALESCE(excluded.critic_rating, items.critic_rating) ELSE excluded.critic_rating END,
+            official_rating = CASE WHEN ?36 THEN COALESCE(excluded.official_rating, items.official_rating) ELSE excluded.official_rating END,
+            parent_id = CASE WHEN ?36 THEN COALESCE(excluded.parent_id, items.parent_id) ELSE excluded.parent_id END,
+            series_id = CASE WHEN ?36 THEN COALESCE(excluded.series_id, items.series_id) ELSE excluded.series_id END,
+            series_name = CASE WHEN ?36 THEN COALESCE(excluded.series_name, items.series_name) ELSE excluded.series_name END,
+            season_id = CASE WHEN ?36 THEN COALESCE(excluded.season_id, items.season_id) ELSE excluded.season_id END,
+            index_number = CASE WHEN ?36 THEN COALESCE(excluded.index_number, items.index_number) ELSE excluded.index_number END,
+            parent_index_number = CASE WHEN ?36 THEN COALESCE(excluded.parent_index_number, items.parent_index_number) ELSE excluded.parent_index_number END,
+            child_count = CASE WHEN ?36 THEN COALESCE(excluded.child_count, items.child_count) ELSE excluded.child_count END,
+            tmdb_id = CASE WHEN ?36 THEN COALESCE(excluded.tmdb_id, items.tmdb_id) ELSE excluded.tmdb_id END,
+            imdb_id = CASE WHEN ?36 THEN COALESCE(excluded.imdb_id, items.imdb_id) ELSE excluded.imdb_id END,
+            tvdb_id = CASE WHEN ?36 THEN COALESCE(excluded.tvdb_id, items.tvdb_id) ELSE excluded.tvdb_id END,
+            genres = CASE WHEN ?36 AND excluded.genres = '[]' THEN items.genres ELSE excluded.genres END,
+            tags = CASE WHEN ?36 AND excluded.tags = '[]' THEN items.tags ELSE excluded.tags END,
+            studios = CASE WHEN ?36 AND excluded.studios = '[]' THEN items.studios ELSE excluded.studios END,
+            people = CASE WHEN ?36 AND excluded.people = '[]' THEN items.people ELSE excluded.people END,
+            image_tags = CASE WHEN ?36 AND excluded.image_tags = '{}' THEN items.image_tags ELSE excluded.image_tags END,
+            primary_image_tag = CASE WHEN ?36 THEN COALESCE(excluded.primary_image_tag, items.primary_image_tag) ELSE excluded.primary_image_tag END,
+            backdrop_image_tag = CASE WHEN ?36 THEN COALESCE(excluded.backdrop_image_tag, items.backdrop_image_tag) ELSE excluded.backdrop_image_tag END,
+            search_genres = CASE WHEN ?36 AND excluded.search_genres = '' THEN items.search_genres ELSE excluded.search_genres END,
+            search_people = CASE WHEN ?36 AND excluded.search_people = '' THEN items.search_people ELSE excluded.search_people END,
+            date_created = CASE WHEN ?36 THEN COALESCE(excluded.date_created, items.date_created) ELSE excluded.date_created END,
+            date_last_saved = CASE WHEN ?36 THEN COALESCE(excluded.date_last_saved, items.date_last_saved) ELSE excluded.date_last_saved END,
+            synced_at = excluded.synced_at,
+            metadata_repair_pending = excluded.metadata_repair_pending",
         params![
             record.jellyfin_id,
             record.kind,
@@ -1241,6 +1321,8 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             record.date_created,
             record.date_last_saved,
             now_unix(),
+            record.metadata_repair_pending,
+            preserve_missing,
         ],
     )?;
     Ok(())

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags};
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -167,6 +167,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(SCHEMA_V5)?;
         connection.pragma_update(None, "user_version", 5)?;
         version = 5;
+    }
+    if version < 6 {
+        connection.execute_batch(SCHEMA_V6)?;
+        connection.pragma_update(None, "user_version", 6)?;
+        version = 6;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -348,9 +353,68 @@ WHERE year IS NULL
 CREATE INDEX IF NOT EXISTS items_kind_year ON items (kind, year);
 "#;
 
+/// Durable discovery for items cached during Jellyfin's enrichment window.
+///
+/// The flag is updated by every subsequent full DTO upsert. Existing databases
+/// need the equivalent conservative predicate once so rows stranded by the old
+/// `DateCreated` watermark become eligible without title- or time-specific
+/// code. Attempt ordering rotates a bounded batch across launches while leaving
+/// unresolved rows eligible indefinitely.
+const SCHEMA_V6: &str = r#"
+ALTER TABLE items ADD COLUMN metadata_repair_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN metadata_repair_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE items ADD COLUMN metadata_repair_last_attempt_at INTEGER;
+
+UPDATE items
+SET metadata_repair_pending = 1
+WHERE kind IN ('Movie', 'Series')
+  AND COALESCE(primary_image_tag, '') = ''
+  AND COALESCE(backdrop_image_tag, '') = ''
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(image_tags) THEN image_tags ELSE '{}' END) image
+      WHERE trim(COALESCE(CAST(image.value AS TEXT), '')) <> ''
+  )
+  AND COALESCE(trim(overview), '') = ''
+  AND COALESCE(trim(tmdb_id), '') = ''
+  AND COALESCE(trim(imdb_id), '') = ''
+  AND COALESCE(trim(tvdb_id), '') = ''
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(genres) THEN genres ELSE '[]' END) genre
+      WHERE trim(COALESCE(CAST(genre.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(tags) THEN tags ELSE '[]' END) tag
+      WHERE trim(COALESCE(CAST(tag.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(studios) THEN studios ELSE '[]' END) studio
+      WHERE trim(COALESCE(CAST(studio.value AS TEXT), '')) <> ''
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(CASE WHEN json_valid(people) THEN people ELSE '[]' END) person
+      WHERE CASE WHEN person.type = 'object'
+                 THEN COALESCE(trim(json_extract(person.value, '$.name')), '')
+                 ELSE '' END <> ''
+  )
+  AND COALESCE(trim(official_rating), '') = ''
+  AND community_rating IS NULL
+  AND critic_rating IS NULL;
+
+CREATE INDEX items_metadata_repair_candidates
+    ON items (metadata_repair_pending, metadata_repair_last_attempt_at, date_created DESC)
+    WHERE metadata_repair_pending = 1 AND kind IN ('Movie', 'Series');
+"#;
+
 #[cfg(test)]
 mod tests {
-    use super::{Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_VERSION, migrate, user_version};
+    use super::{
+        Database, SCHEMA_V1, SCHEMA_V2, SCHEMA_V4, SCHEMA_V5, SCHEMA_VERSION, migrate, user_version,
+    };
     use rusqlite::Connection;
 
     #[test]
@@ -461,6 +525,47 @@ mod tests {
                 .expect("index"),
             1
         );
+    }
+
+    #[test]
+    fn a_v5_database_discovers_existing_sparse_movies_without_title_rules() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection.execute_batch(SCHEMA_V1).expect("v1 schema");
+        connection.execute_batch(SCHEMA_V2).expect("v2 schema");
+        connection.execute_batch(SCHEMA_V4).expect("v4 schema");
+        connection.execute_batch(SCHEMA_V5).expect("v5 schema");
+        connection
+            .execute_batch(
+                "INSERT INTO items (jellyfin_id, kind, name, year, date_created, synced_at)
+                 VALUES
+                   ('6627a9641b7d3db806eb2f2545b6f6dc', 'Movie', 'Krull', 1983,
+                    '2024-01-01T00:00:00Z', 1),
+                   ('b0b16f465f948879b6932d56bd6bfec3', 'Movie', 'The Blob', 1988,
+                    '2024-01-02T00:00:00Z', 2),
+                   ('complete', 'Movie', 'Complete', 2000,
+                    '2024-01-03T00:00:00Z', 3);
+                 UPDATE items SET image_tags = '{\"Primary\":\"poster\"}'
+                 WHERE jellyfin_id = 'complete';",
+            )
+            .expect("seed v5 items");
+        connection
+            .pragma_update(None, "user_version", 5)
+            .expect("stamp v5");
+
+        migrate(&connection).expect("migrate");
+
+        let pending = |id: &str| {
+            connection
+                .query_row(
+                    "SELECT metadata_repair_pending FROM items WHERE jellyfin_id = ?1",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .expect("pending flag")
+        };
+        assert!(pending("6627a9641b7d3db806eb2f2545b6f6dc"));
+        assert!(pending("b0b16f465f948879b6932d56bd6bfec3"));
+        assert!(!pending("complete"));
     }
 
     /// A pre-release build stamped version 2 while creating the table under the
