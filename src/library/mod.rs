@@ -1989,12 +1989,20 @@ mod tests {
         assert!(loaded.is_authenticated());
         assert_eq!(loaded.device_id, device_id);
 
+        library
+            .ingest_page(&[dto(
+                r#"{"Id":"sparse","Name":"Sparse","Type":"Movie","ProviderIds":{"Tmdb":"1"}}"#,
+            )])
+            .expect("queue sparse metadata");
+        assert_eq!(library.convergence_diagnostics().pending, 1);
+
         library.clear_session(true).expect("logout");
         let after = library.credentials();
         assert!(!after.is_authenticated());
         assert_eq!(after.device_id, device_id);
         assert_eq!(after.server_url.as_deref(), Some("http://server:8096"));
         assert_eq!(after.token, None);
+        assert_eq!(library.convergence_diagnostics().pending, 0);
     }
 
     #[test]

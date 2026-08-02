@@ -31,6 +31,9 @@ use super::{Library, LibraryChangeBatch, UserDataRecord};
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
+/// A storage failure can leave an already-due queue row unchanged. Without a
+/// local floor the worker computes a zero wait from that row and spins.
+const CONVERGENCE_FAILURE_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 /// How often the identity-only pass runs. It mirrors watch state *and* detects
 /// deletions from the same pages, so both stay this fresh for one pass' cost.
 const IDENTITY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -274,6 +277,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                         target: "library.convergence",
                         "could not process metadata convergence: {error}"
                     );
+                    convergence_not_before = convergence_failure_deadline(Instant::now());
                 }
             }
         }
@@ -299,6 +303,10 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
             Wake::Elapsed => {}
         }
     }
+}
+
+fn convergence_failure_deadline(now: Instant) -> Instant {
+    now + CONVERGENCE_FAILURE_COOLDOWN
 }
 
 /// Why the sync thread stopped waiting.
@@ -705,10 +713,11 @@ fn jittered(base: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
-        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle,
-        SyncReport, Trigger, Wake, advance_watermark_with_ids, bootstrap_progress,
-        full_bootstrap_due, is_incremental_candidate, is_newer, jittered, wait,
+        CONVERGENCE_FAILURE_COOLDOWN, Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE,
+        META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL,
+        Signal, SyncHandle, SyncReport, Trigger, Wake, advance_watermark_with_ids,
+        bootstrap_progress, convergence_failure_deadline, full_bootstrap_due,
+        is_incremental_candidate, is_newer, jittered, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
@@ -912,6 +921,16 @@ mod tests {
 
         handle.stop();
         assert_eq!(wait(&handle, Duration::ZERO), Wake::Stopped);
+    }
+
+    #[test]
+    fn convergence_failures_have_a_nonzero_local_retry_floor() {
+        let now = std::time::Instant::now();
+        assert_eq!(
+            convergence_failure_deadline(now).duration_since(now),
+            CONVERGENCE_FAILURE_COOLDOWN
+        );
+        assert!(!CONVERGENCE_FAILURE_COOLDOWN.is_zero());
     }
 
     #[test]
