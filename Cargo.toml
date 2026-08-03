@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 cef = { version = "=150.2.1", default-features = false }
-getrandom = "0.3"
+getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
