@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Play, Plus, Star, ThumbsUp } from "lucide-react"
+import { Check, Play, Plus, Star, ThumbsUp } from "lucide-react"
 import {
   useCallback,
   useEffect,
@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { createPortal } from "react-dom"
-import { useLocation, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LANDSCAPE_WIDTH,
   landscapeImageCandidates,
@@ -108,8 +108,8 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
     }
   }, [target, clearTimers])
 
-  // Navigating away — which the panel's own More Info button does — has to take
-  // the panel with it, or it outlives the row it was opened from.
+  // Navigating away through the panel's details target has to take the panel
+  // with it, or it outlives the row it was opened from.
   useEffect(() => {
     clearTimers()
     setTarget(null)
@@ -156,6 +156,8 @@ function PreviewPanel({
   const { item, rect } = target
   const navigate = useNavigate()
   const panel = useRef<HTMLDivElement>(null)
+  const pointerInside = useRef(false)
+  const focusInside = useRef(false)
   const [height, setHeight] = useState(ESTIMATED_HEIGHT)
 
   // The panel's height depends on how much metadata the item turns out to have,
@@ -185,7 +187,7 @@ function PreviewPanel({
   // Everything past the summary — genres, the overview, the series' own logo —
   // lives on the detail record. It is fetched only once a card has actually
   // been rested on, and the cache keeps it for the next hover and for the
-  // detail page the More Info button leads to.
+  // detail page the panel leads to.
   const { data: detail } = useItem(item.id)
   const isSeries = item.kind === "Series"
   const nextUp = useNextUp(item.id, isSeries)
@@ -218,21 +220,47 @@ function PreviewPanel({
     seasons ?? formatRuntime(item.runtimeTicks),
   ].filter(Boolean)
 
-  const goToDetail = () => navigate(`/item/${encodeURIComponent(item.id)}`)
+  const detailPath = `/item/${encodeURIComponent(item.id)}`
+  const goToDetail = () => navigate(detailPath)
 
   return (
     <div
       ref={panel}
-      // Not a dialog: nothing here is modal and nothing traps focus. It is a
-      // hover affordance over a link that already carries the same title, so it
-      // stays out of the accessibility tree rather than announcing a second
-      // copy of every card in the row.
-      aria-hidden
-      onPointerEnter={onHold}
-      onPointerLeave={onRelease}
+      // The stretched Link supplies the panel's details semantics without
+      // nesting the action buttons inside an interactive element. This fallback
+      // handler also makes clicks dispatched directly at any background node
+      // behave like that link; controls stop before reaching it.
+      onClick={(event) => {
+        const element = event.target instanceof Element ? event.target : null
+        if (event.defaultPrevented || element?.closest("a, button")) return
+        goToDetail()
+      }}
+      onPointerEnter={() => {
+        pointerInside.current = true
+        onHold()
+      }}
+      onPointerLeave={() => {
+        pointerInside.current = false
+        if (!focusInside.current) onRelease()
+      }}
+      onFocusCapture={() => {
+        focusInside.current = true
+        onHold()
+      }}
+      onBlurCapture={(event) => {
+        const next = event.relatedTarget
+        if (next instanceof Node && event.currentTarget.contains(next)) return
+        focusInside.current = false
+        if (!pointerInside.current) onRelease()
+      }}
       style={{ left, top, width: PANEL_WIDTH }}
       className="preview-panel fixed z-50 overflow-hidden rounded-media bg-card shadow-2xl shadow-black/80 ring-1 ring-primary/25"
     >
+      <Link
+        to={detailPath}
+        aria-label={`Open details for ${item.name}`}
+        className="absolute inset-0 z-10 cursor-pointer rounded-media outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      />
       <PreviewArt item={item} logo={logo} progress={progress} remaining={remaining} />
 
       <div className="flex flex-col gap-3 p-4">
@@ -242,10 +270,11 @@ function PreviewPanel({
               type="button"
               disabled={play.isPending}
               title={playTarget!.positionTicks > 0 ? "Resume" : "Play"}
-              onClick={() =>
+              onClick={(event) => {
+                event.stopPropagation()
                 play.mutate({ id: playTarget!.id, resume: playTarget!.positionTicks > 0 })
-              }
-              className="preview-action bg-primary text-primary-foreground hover:bg-primary/85"
+              }}
+              className="preview-action relative z-20 bg-primary text-primary-foreground hover:bg-primary/85"
             >
               <Play className="size-5 fill-current" />
             </button>
@@ -254,9 +283,12 @@ function PreviewPanel({
             type="button"
             disabled={setFavorite.isPending}
             title={item.favorite ? "Remove from My List" : "Add to My List"}
-            onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
+            onClick={(event) => {
+              event.stopPropagation()
+              setFavorite.mutate({ id: item.id, favorite: !item.favorite })
+            }}
             className={cn(
-              "preview-action border",
+              "preview-action relative z-20 border",
               item.favorite
                 ? "border-primary/70 text-primary"
                 : "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
@@ -270,25 +302,18 @@ function PreviewPanel({
             type="button"
             disabled={setPlayed.isPending}
             title={item.played ? "Mark as unwatched" : "Mark as watched"}
-            onClick={() =>
+            onClick={(event) => {
+              event.stopPropagation()
               setPlayed.mutate({ id: item.id, played: !item.played, context: item.seriesId })
-            }
+            }}
             className={cn(
-              "preview-action border",
+              "preview-action relative z-20 border",
               item.played
                 ? "border-primary/70 bg-primary/15 text-primary"
                 : "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
             )}
           >
             <ThumbsUp className={cn("size-5", item.played && "fill-current")} />
-          </button>
-          <button
-            type="button"
-            title="More info"
-            onClick={goToDetail}
-            className="preview-action ml-auto border border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary"
-          >
-            <ChevronDown className="size-5" />
           </button>
         </div>
 
