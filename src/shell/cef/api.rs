@@ -3,7 +3,7 @@
 //! Handlers run on a CEF background thread (never the UI or IO thread), so
 //! blocking SQLite and HTTP calls are safe here.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -42,6 +42,9 @@ const TRAILER_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 /// Posters are content-addressed by image tag, so they never go stale.
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 const NO_STORE: &str = "no-store";
+/// A pathological server must fail Discover safely rather than loop forever or
+/// return an ownership check it only partially completed.
+const MAX_PERSON_QUERY_PAGES: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct ApiRequest {
@@ -246,6 +249,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         }
         ["seerr", "unlink"] if request.is("POST") => ApiResponse::ok(services.seerr.unlink()),
         ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
+        ["seerr", "person", tmdb_id, "credits"] if request.is("GET") => {
+            seerr_person_credits(services, &percent_decode(tmdb_id), request)
+        }
         ["seerr", "discover", kind] if request.is("GET") => {
             seerr_discover(services, &percent_decode(kind), request)
         }
@@ -275,6 +281,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
         },
+        ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
         ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
@@ -841,6 +848,115 @@ fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     }
 }
 
+fn seerr_person_credits(
+    services: &Arc<Services>,
+    tmdb_id: &str,
+    request: &ApiRequest,
+) -> ApiResponse {
+    let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
+        return ApiResponse::error(400, "that is not a TMDB person id");
+    };
+    if tmdb_id <= 0 {
+        return ApiResponse::error(400, "that is not a TMDB person id");
+    }
+
+    let mut value = match services.requests_provider().person_credits(tmdb_id) {
+        Ok(value) => value,
+        Err(error) => return ApiResponse::from_provider_error(&error),
+    };
+    // During progressive catalog fill, SQLite cannot yet prove that every
+    // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
+    // section verify ownership against the live complete person relation. A
+    // failure hides Discover only; the independently loaded server grid stays.
+    if let Some(person_id) = request.param("personId")
+        && let Err(error) = join_server_person_availability(services, &person_id, &mut value)
+    {
+        services.session.note_error(&error);
+        return ApiResponse::from_api_error(&error);
+    }
+    ApiResponse::ok(value)
+}
+
+fn join_server_person_availability(
+    services: &Arc<Services>,
+    person_id: &str,
+    value: &mut Value,
+) -> Result<(), ApiError> {
+    let (client, user_id) = services.session.client_and_user()?;
+    // The provider first joined against SQLite, which can contain both unseen
+    // progressive rows and stale rows awaiting deletion reconciliation. The
+    // live exact-person pass is authoritative, so rebuild availability rather
+    // than only adding to that provisional answer.
+    clear_person_availability(value);
+    let mut offset = 0;
+    for _ in 0..MAX_PERSON_QUERY_PAGES {
+        let page = items::fetch_person_items(
+            &client,
+            &user_id,
+            person_id,
+            offset,
+            items::PERSON_PAGE_SIZE,
+        )?;
+        let received = i64::try_from(page.items.len()).unwrap_or(i64::MAX);
+        if received == 0 {
+            if page.total_record_count > offset {
+                return Err(ApiError::Decode(
+                    "the server omitted part of an exact person filmography".to_string(),
+                ));
+            }
+            return Ok(());
+        }
+        join_person_items(value, &page.items);
+        offset = offset.saturating_add(received);
+        if page.total_record_count > 0 && offset >= page.total_record_count {
+            return Ok(());
+        }
+        if page.total_record_count <= 0 && received < items::PERSON_PAGE_SIZE {
+            return Ok(());
+        }
+    }
+    Err(ApiError::Decode(
+        "the exact person filmography exceeded the safe paging limit".to_string(),
+    ))
+}
+
+fn clear_person_availability(value: &mut Value) {
+    if let Some(results) = value["results"].as_array_mut() {
+        for result in results {
+            result["libraryItemId"] = Value::Null;
+        }
+    }
+}
+
+fn join_person_items(value: &mut Value, server_items: &[BaseItemDto]) {
+    let local = server_items
+        .iter()
+        .filter_map(|item| {
+            let media_type = match item.item_type.as_deref() {
+                Some("Movie") => "movie",
+                Some("Series") => "tv",
+                _ => return None,
+            };
+            let tmdb_id = item.provider_id("Tmdb")?.parse::<i64>().ok()?;
+            (tmdb_id > 0).then(|| ((media_type.to_string(), tmdb_id), item.id.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    let Some(results) = value["results"].as_array_mut() else {
+        return;
+    };
+    for result in results {
+        let Some(media_type) = result["mediaType"].as_str() else {
+            continue;
+        };
+        let Some(tmdb_id) = result["tmdbId"].as_i64() else {
+            continue;
+        };
+        if let Some(item_id) = local.get(&(media_type.to_string(), tmdb_id)) {
+            result["libraryItemId"] = Value::String(item_id.clone());
+        }
+    }
+}
+
 fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) -> ApiResponse {
     let Some(kind) = DiscoverKind::from_id(kind) else {
         return ApiResponse::error(404, "unknown discover row");
@@ -1090,6 +1206,10 @@ fn merge_next_up(resume: Vec<Value>, next_up: Vec<Value>) -> Vec<Value> {
 }
 
 fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    if let Some(person_id) = request.param("personId") {
+        return query_person_items(services, &person_id, request);
+    }
+
     let query = ItemQuery {
         search: request.param("search"),
         kinds: request
@@ -1137,6 +1257,140 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     match services.library.query(&query) {
         Ok(page) => ApiResponse::ok(json!({ "items": page.items, "total": page.total })),
         Err(error) => storage_failure(&error),
+    }
+}
+
+fn query_person_items(
+    services: &Arc<Services>,
+    person_id: &str,
+    request: &ApiRequest,
+) -> ApiResponse {
+    let offset = request
+        .param("offset")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let limit = request
+        .param("limit")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(60);
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    match items::fetch_person_items(&client, &user_id, person_id, offset, limit) {
+        Ok(response) => ApiResponse::ok(json!({
+            "items": response.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
+            "total": response.total_record_count,
+        })),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> Value {
+    json!({
+        "jellyfinId": dto.id,
+        "tmdbId": dto
+            .provider_id("Tmdb")
+            .and_then(|id| id.parse::<i64>().ok())
+            .filter(|id| *id > 0)
+            .or(fallback_tmdb_id),
+        "name": dto.display_name(),
+        "imageTag": dto.primary_image_tag(),
+    })
+}
+
+/// Bridges Jellyfin and TMDB person namespaces without ever treating a fuzzy
+/// name match as identity. A missing provider id may use one unambiguous exact
+/// name; a known conflicting id is always excluded.
+fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let jellyfin_id = request.param("jellyfinId");
+    let tmdb_id = request
+        .param("tmdbId")
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0);
+    let name = request.param("name").unwrap_or_default();
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+
+    if let Some(jellyfin_id) = jellyfin_id {
+        return match items::fetch_item(&client, &user_id, &jellyfin_id) {
+            Ok(Some(person)) if person.item_type.as_deref() == Some("Person") => {
+                let provider_id = person
+                    .provider_id("Tmdb")
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .filter(|id| *id > 0);
+                if tmdb_id.is_some() && provider_id.is_some() && tmdb_id != provider_id {
+                    return ApiResponse::error(
+                        409,
+                        "the Jellyfin and TMDB person ids do not match",
+                    );
+                }
+                ApiResponse::ok(json!({
+                    "person": person_identity(&person, tmdb_id),
+                    "candidates": [],
+                    "ambiguous": false,
+                }))
+            }
+            Ok(Some(_)) => ApiResponse::error(409, "that Jellyfin id is not a person"),
+            Ok(None) => ApiResponse::error(404, "the server has no person with that id"),
+            Err(error) => {
+                services.session.note_error(&error);
+                ApiResponse::from_api_error(&error)
+            }
+        };
+    }
+
+    if name.trim().is_empty() {
+        return ApiResponse::error(400, "a person name is required to resolve that deep link");
+    }
+    match items::fetch_people(&client, &user_id, &name) {
+        Ok(response) => {
+            let mut seen = HashSet::new();
+            let exact = response
+                .items
+                .into_iter()
+                // `/Persons` is already type-scoped. Some older servers omit
+                // `Type` in this lightweight response, so require its stable id
+                // and exact name rather than rejecting a valid candidate.
+                .filter(|person| !person.id.trim().is_empty())
+                .filter(|person| person.display_name().eq_ignore_ascii_case(name.trim()))
+                .filter(|person| seen.insert(person.id.clone()))
+                .filter(|person| {
+                    tmdb_id.is_none_or(|id| {
+                        person
+                            .provider_id("Tmdb")
+                            .and_then(|value| value.parse::<i64>().ok())
+                            .filter(|value| *value > 0)
+                            .is_none_or(|provider_id| provider_id == id)
+                    })
+                })
+                .collect::<Vec<_>>();
+            if exact.len() == 1 {
+                return ApiResponse::ok(json!({
+                    "person": person_identity(&exact[0], tmdb_id),
+                    "candidates": [],
+                    "ambiguous": false,
+                }));
+            }
+            let candidates = exact
+                .iter()
+                .map(|person| person_identity(person, tmdb_id))
+                .collect::<Vec<_>>();
+            ApiResponse::ok(json!({
+                "person": Value::Null,
+                "ambiguous": candidates.len() > 1,
+                "candidates": candidates,
+            }))
+        }
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
     }
 }
 
@@ -2153,9 +2407,10 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key, external_url,
-        file_name_of, handle, is_iso_date, media_source_json, merge_next_up, mime_for_image,
-        summary_from_dto, youtube_embed_url,
+        ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key,
+        clear_person_availability, external_url, file_name_of, handle, is_iso_date,
+        join_person_items, media_source_json, merge_next_up, mime_for_image, summary_from_dto,
+        youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
@@ -2285,6 +2540,33 @@ mod tests {
         assert_eq!(summary["thumbImageTag"], "thumb-tag");
         assert_eq!(summary["logoImageTag"], "logo-tag");
         assert_eq!(summary["backdropImageTag"], "backdrop-tag");
+    }
+
+    #[test]
+    fn live_person_items_override_progressively_incomplete_local_availability() {
+        let dtos: Vec<BaseItemDto> = [
+            r#"{"Id":"m1","Name":"Movie","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
+            r#"{"Id":"s1","Name":"Series","Type":"Series","ProviderIds":{"tmdb":"603"}}"#,
+            r#"{"Id":"e1","Name":"Episode","Type":"Episode","ProviderIds":{"Tmdb":"603"}}"#,
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_str(value).expect("dto"))
+        .collect();
+        let mut credits = json!({ "results": [
+            { "mediaType": "movie", "tmdbId": 603, "libraryItemId": null },
+            { "mediaType": "tv", "tmdbId": 603, "libraryItemId": null },
+            { "mediaType": "movie", "tmdbId": 404, "libraryItemId": "stale" }
+        ] });
+
+        clear_person_availability(&mut credits);
+        join_person_items(&mut credits, &dtos);
+
+        assert_eq!(credits["results"][0]["libraryItemId"], "m1");
+        assert_eq!(credits["results"][1]["libraryItemId"], "s1");
+        assert_eq!(
+            credits["results"][2]["libraryItemId"],
+            serde_json::Value::Null
+        );
     }
 
     fn episode(id: &str, series_id: &str) -> serde_json::Value {

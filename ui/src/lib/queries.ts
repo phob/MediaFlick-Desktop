@@ -9,6 +9,7 @@ import {
   type PlayerCommand,
   type MediaInfoResponse,
   type PlaybackTrackPreferenceWrite,
+  type PersonResolveQuery,
   type QuickConnectStart,
   type SeerrDiscoverRow,
   type SeerrDiscoverFilters,
@@ -103,6 +104,19 @@ export function useItems(query: ItemQuery, enabled = true) {
     queryKey: queryKeys.items(query),
     queryFn: ({ signal }) => api.items(query, signal),
     enabled,
+  })
+}
+
+export function usePersonResolution(query: PersonResolveQuery, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.personResolution(
+      query.jellyfinId ?? "",
+      query.tmdbId ?? null,
+      query.name ?? "",
+    ),
+    queryFn: ({ signal }) => api.resolvePerson(query, signal),
+    enabled,
+    retry: false,
   })
 }
 
@@ -415,6 +429,7 @@ export function useSeerrUnlink() {
       queryClient.removeQueries({ queryKey: ["seerr", "requests"] })
       queryClient.removeQueries({ queryKey: ["seerr", "discover"] })
       queryClient.removeQueries({ queryKey: ["seerr", "search"] })
+      queryClient.removeQueries({ queryKey: ["seerr", "person"] })
       queryClient.removeQueries({ queryKey: ["seerr", "request-options"] })
     },
   })
@@ -430,6 +445,19 @@ export function useSeerrSearch(term: string, enabled = true) {
     queryKey: queryKeys.seerrSearch(term),
     queryFn: ({ signal }) => api.seerr.search(term, 1, signal),
     enabled: enabled && term.trim().length > 1,
+    retry: false,
+  })
+}
+
+export function useSeerrPersonCredits(
+  tmdbId: number | null,
+  jellyfinId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: queryKeys.seerrPersonCredits(tmdbId ?? 0, jellyfinId ?? ""),
+    queryFn: ({ signal }) => api.seerr.personCredits(tmdbId!, jellyfinId, signal),
+    enabled: enabled && tmdbId !== null,
     retry: false,
   })
 }

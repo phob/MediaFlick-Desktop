@@ -299,6 +299,29 @@ impl RequestsProvider {
         }
     }
 
+    pub fn person_credits(&self, tmdb_id: i64) -> Result<Value, ProviderError> {
+        match self {
+            Self::Companion(companion) => {
+                if !companion.supports("seerr-person-discovery") {
+                    return Err(ProviderError::Companion(ApiError::Remote {
+                        status: 409,
+                        message:
+                            "the MediaFlick Companion plugin must be updated for cast discovery"
+                                .to_string(),
+                    }));
+                }
+                let mut value = companion
+                    .get_seerr(&format!("/MediaFlick/seerr/person/{tmdb_id}/credits"), &[])
+                    .map_err(ProviderError::Companion)?;
+                join_seerr_results(&companion.library, &mut value);
+                Ok(value)
+            }
+            Self::Direct(direct) => direct
+                .person_credits(tmdb_id)
+                .map_err(ProviderError::Direct),
+        }
+    }
+
     pub fn discover(
         &self,
         kind: DiscoverKind,

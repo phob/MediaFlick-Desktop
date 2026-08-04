@@ -73,6 +73,8 @@ export function writeLibraryFilters(
 }
 
 export function libraryKind(params: URLSearchParams) {
+  // Person mode is a mixed movie/series/episode Search view, not a catalogue tab.
+  if (params.get("mode") === "person") return ""
   // The existing API accepts comma-separated kinds, and Home links use
   // `Movie,Series` for mixed genre pages. An explicit blank also historically
   // meant all kinds, so only an absent value receives the Movies default.

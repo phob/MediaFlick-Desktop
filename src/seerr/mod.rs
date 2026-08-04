@@ -25,8 +25,8 @@ use api::client::{SeerrClient, SessionCookies};
 use api::error::SeerrError;
 use api::model::{
     self as model, Capabilities, DownloadService, DownloadServiceDetail, MEDIA_SERVER_JELLYFIN,
-    MediaDetail, MediaInfo, MediaRequest, PublicSettings, QuickConnectHandshake, RequestPage,
-    SearchPage, SearchResult, SeerrUser, StatusInfo, UserQuota,
+    MediaDetail, MediaInfo, MediaRequest, PersonCombinedCredits, PublicSettings,
+    QuickConnectHandshake, RequestPage, SearchPage, SearchResult, SeerrUser, StatusInfo, UserQuota,
 };
 
 /// Seerr's own login, present in every release.
@@ -795,6 +795,58 @@ impl SeerrSession {
             )
         })?;
         Ok(self.joined_page(results))
+    }
+
+    /// Discoverable movie and series cast credits for one exact TMDB person.
+    /// Multiple character credits can repeat a title, so collapse them by the
+    /// stable media namespace and TMDB id before joining request/local state.
+    pub fn person_credits(&self, tmdb_id: i64) -> Result<Value, SeerrError> {
+        if tmdb_id <= 0 {
+            return Err(SeerrError::Unusable(
+                "that is not a TMDB person id".to_string(),
+            ));
+        }
+        let path = format!("person/{tmdb_id}/combined_credits");
+        let credits: PersonCombinedCredits =
+            self.call(|client| client.get_json(&path, &[("language", "en".to_string())]))?;
+        if credits.id != 0 && credits.id != tmdb_id {
+            return Err(SeerrError::Decode(
+                "person credits addressed a different TMDB person".to_string(),
+            ));
+        }
+
+        let mut positions: std::collections::HashMap<(String, i64), usize> =
+            std::collections::HashMap::new();
+        let mut results: Vec<SearchResult> = Vec::new();
+        for credit in credits.cast.into_iter().filter(|credit| {
+            credit.is_media()
+                && credit.id > 0
+                && !credit.adult
+                && !credit
+                    .character
+                    .as_deref()
+                    .is_some_and(|role| role.trim().eq_ignore_ascii_case("Thanks"))
+        }) {
+            let key = (credit.media_type.clone(), credit.id);
+            if let Some(index) = positions.get(&key).copied() {
+                // Duplicate character credits sometimes differ only in whether
+                // Seerr attached `mediaInfo`; retain that request state.
+                if results[index].media_info.is_none() && credit.media_info.is_some() {
+                    results[index].media_info = credit.media_info;
+                }
+                continue;
+            }
+            positions.insert(key, results.len());
+            results.push(credit);
+        }
+
+        let total = i64::try_from(results.len()).unwrap_or(i64::MAX);
+        Ok(self.joined_page(SearchPage {
+            page: 1,
+            total_pages: i64::from(total > 0),
+            total_results: total,
+            results,
+        }))
     }
 
     /// One of Seerr's discovery rows. The kind is validated by the caller, so a
@@ -2756,6 +2808,15 @@ mod tests {
         {"id":603,"mediaType":"tv","name":"Not The Matrix","firstAirDate":"2010-01-01"},
         {"id":6384,"mediaType":"person","name":"Keanu Reeves"}]}"#;
 
+    const PERSON_CREDITS: &str = r#"{"id":6384,"cast":[
+        {"id":603,"mediaType":"movie","title":"The Matrix","character":"Neo","adult":false},
+        {"id":603,"mediaType":"movie","title":"The Matrix","character":"Thomas Anderson",
+         "mediaInfo":{"status":5,"status4k":1}},
+        {"id":603,"mediaType":"tv","name":"A Different Namespace"},
+        {"id":7,"mediaType":"movie","title":"Special Thanks","character":" thanks "},
+        {"id":8,"mediaType":"movie","title":"Adult","adult":true}],
+        "crew":[{"id":9,"mediaType":"movie","title":"Directed"}]}"#;
+
     fn seed_library(library: &Library) {
         let dto = |json: &str| serde_json::from_str(json).expect("dto");
         library
@@ -2794,6 +2855,29 @@ mod tests {
         let requests = requests.lock().expect("lock");
         assert!(requests[0].starts_with("GET /api/v1/search?query=matrix&page=1"));
         assert!(requests[0].contains("cookie: connect.sid=abc"));
+    }
+
+    #[test]
+    fn exact_person_discovery_keeps_cast_deduplicated_and_joins_availability() {
+        let (base_url, requests) = fake_server(vec![response("200 OK", PERSON_CREDITS, &[])]);
+        let (library, session) = session_linked_to(&base_url);
+        seed_library(&library);
+
+        let page = session.person_credits(6384).expect("person credits");
+        let results = page["results"].as_array().expect("results");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["mediaType"], "movie");
+        assert_eq!(results[0]["libraryItemId"], "m1");
+        // Request/availability state came from the duplicate character row.
+        assert_eq!(results[0]["status"], "available");
+        assert_eq!(results[1]["mediaType"], "tv");
+        assert_eq!(results[1]["libraryItemId"], Value::Null);
+        assert_eq!(page["totalResults"], 2);
+
+        assert!(
+            requests.lock().expect("lock")[0]
+                .starts_with("GET /api/v1/person/6384/combined_credits?language=en")
+        );
     }
 
     #[test]

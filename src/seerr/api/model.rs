@@ -189,6 +189,11 @@ pub struct SearchResult {
     /// The TMDB id, which is only unique *within* `media_type`.
     pub id: i64,
     pub media_type: String,
+    /// Combined person credits repeat titles for separate characters. These
+    /// fields let the exact-person caller reject non-cast/adult rows before
+    /// deduplicating by the stable `(media_type, id)` identity.
+    pub adult: bool,
+    pub character: Option<String>,
     /// Movies carry `title`, series carry `name`; people carry `name` too,
     /// which is one reason they are dropped rather than rendered.
     pub title: Option<String>,
@@ -200,6 +205,15 @@ pub struct SearchResult {
     pub overview: Option<String>,
     pub vote_average: Option<f64>,
     pub media_info: Option<MediaInfo>,
+}
+
+/// Seerr's exact TMDB-person endpoint. Crew is intentionally not represented:
+/// an actor search consumes only `cast` relationships.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PersonCombinedCredits {
+    pub id: i64,
+    pub cast: Vec<SearchResult>,
 }
 
 impl SearchResult {

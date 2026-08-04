@@ -21,6 +21,7 @@ import {
   type SeerrMediaDetail,
   type SeerrReleaseDate,
 } from "@/lib/api"
+import { castSearchPath } from "@/lib/cast-search"
 import { formatDate, formatLanguage } from "@/lib/format"
 import { useSeerrMedia, useSeerrStatus } from "@/lib/queries"
 
@@ -115,7 +116,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function Cast({ detail }: { detail: SeerrMediaDetail }) {
+export function Cast({ detail }: { detail: SeerrMediaDetail }) {
   if (!detail.cast.length) return null
   return (
     <section className="flex min-w-0 flex-col gap-4">
@@ -124,9 +125,11 @@ function Cast({ detail }: { detail: SeerrMediaDetail }) {
         {detail.cast.map((person) => {
           const image = seerrImageUrl(person.profilePath, "w185")
           return (
-            <figure
+            <Link
               key={`${person.id}-${person.name}`}
-              className="flex w-28 shrink-0 flex-col items-center gap-2 text-center"
+              to={castSearchPath({ tmdbId: person.id, name: person.name })}
+              aria-label={`Find titles featuring ${person.name}`}
+              className="flex w-28 shrink-0 flex-col items-center gap-2 rounded-media text-center outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
             >
               {image ? (
                 <img
@@ -137,18 +140,18 @@ function Cast({ detail }: { detail: SeerrMediaDetail }) {
                 />
               ) : (
                 <div className="grid size-24 place-items-center rounded-full bg-card text-muted-foreground ring-1 ring-white/10">
-                  <UserRound className="size-8" />
+                  <UserRound className="size-8" aria-hidden />
                 </div>
               )}
-              <figcaption className="flex flex-col gap-0.5">
+              <span className="flex flex-col gap-0.5">
                 <span className="text-xs leading-tight">{person.name}</span>
                 {person.character && (
                   <span className="text-xs leading-tight text-muted-foreground">
                     {person.character}
                   </span>
                 )}
-              </figcaption>
-            </figure>
+              </span>
+            </Link>
           )
         })}
       </div>
