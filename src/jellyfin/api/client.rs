@@ -353,6 +353,42 @@ impl JellyfinClient {
         companion_json(response)
     }
 
+    /// Typed companion boundary for rating data. Unlike general companion
+    /// routes, no server response text is allowed to become an ApiError: the
+    /// plugin is the credential owner and an upstream diagnostic may contain
+    /// credential-shaped data.
+    pub fn companion_post_ratings_json_once<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, ApiError> {
+        let url = self.url(path, &[]);
+        let response = self
+            .companion_agent
+            .post(url.as_str())
+            .header("Accept", "application/json")
+            .header("Authorization", self.authorization_header())
+            .send_json(body)
+            .map_err(map_companion_ureq_error_safe)?;
+        companion_json_safe(response)
+    }
+
+    /// Info feeds the native capability/status surface. Keep malformed or
+    /// failed plugin diagnostics out of that publicly serialized state too.
+    pub fn companion_get_info_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
+        let url = self.url(path, &[]);
+        self.with_retry(path, || {
+            let response = self
+                .companion_agent
+                .get(url.as_str())
+                .header("Accept", "application/json")
+                .header("Authorization", self.authorization_header())
+                .call()
+                .map_err(map_companion_ureq_error_safe)?;
+            companion_json_safe(response)
+        })
+    }
+
     /// POST that ignores the response body (Jellyfin often answers 204).
     pub fn post_empty<B: Serialize>(
         &self,
@@ -484,6 +520,14 @@ fn map_companion_ureq_error(error: ureq::Error) -> ApiError {
     }
 }
 
+fn map_companion_ureq_error_safe(error: ureq::Error) -> ApiError {
+    match error {
+        ureq::Error::StatusCode(401) => ApiError::Unauthorized,
+        ureq::Error::StatusCode(status) => ApiError::Status { status },
+        _ => ApiError::Transport("could not reach the MediaFlick Companion plugin".to_string()),
+    }
+}
+
 fn companion_json<T: DeserializeOwned>(
     mut response: ureq::http::Response<ureq::Body>,
 ) -> Result<T, ApiError> {
@@ -498,6 +542,21 @@ fn companion_json<T: DeserializeOwned>(
         .body_mut()
         .read_json::<T>()
         .map_err(|error| ApiError::Decode(error.to_string()))
+}
+
+fn companion_json_safe<T: DeserializeOwned>(
+    mut response: ureq::http::Response<ureq::Body>,
+) -> Result<T, ApiError> {
+    let status = response.status().as_u16();
+    if status == 401 {
+        return Err(ApiError::Unauthorized);
+    }
+    if status >= 400 {
+        return Err(ApiError::Status { status });
+    }
+    response.body_mut().read_json::<T>().map_err(|_| {
+        ApiError::Decode("the companion returned an invalid rating response".to_string())
+    })
 }
 
 fn companion_empty(mut response: ureq::http::Response<ureq::Body>) -> Result<(), ApiError> {

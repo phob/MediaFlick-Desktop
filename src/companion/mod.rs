@@ -82,7 +82,7 @@ impl CompanionSession {
         }
 
         let client = self.session.client()?;
-        match client.companion_get_json::<CompanionInfo>("/MediaFlick/info", &[]) {
+        match client.companion_get_info_json::<CompanionInfo>("/MediaFlick/info") {
             Ok(info) => {
                 let compatible = info.is_compatible();
                 tracing::info!(
@@ -114,10 +114,13 @@ impl CompanionSession {
                 Ok(None)
             }
             Err(error) => {
+                // The capability/status object is browser-visible. The info
+                // client already strips HTTP diagnostics; retain only a fixed
+                // state label so logs and telemetry cannot reintroduce them.
                 self.replace(ProbeState {
                     checked: true,
                     info: None,
-                    error: Some(error.to_string()),
+                    error: Some("the MediaFlick Companion plugin could not be reached".to_string()),
                 });
                 Err(error)
             }
@@ -159,7 +162,7 @@ impl CompanionSession {
             return Err(ApiError::NotConfigured);
         }
         self.client()?
-            .companion_post_json_once("/MediaFlick/ratings/v1/batch", body)
+            .companion_post_ratings_json_once("/MediaFlick/ratings/v1/batch", body)
     }
 
     pub fn calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {

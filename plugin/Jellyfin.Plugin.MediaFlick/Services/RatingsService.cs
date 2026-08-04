@@ -213,17 +213,17 @@ public sealed class RatingsService : IDisposable
 
         var state = _cache.Health(provider);
         var validation = configured
-            ? readError is null ? state.Validation : "unreadable"
+            ? readError is null ? RatingsContract.NormalizeValidation(state.Validation) : "unreadable"
             : "absent";
         var valid = configured && readError is null && state.Valid;
         return new RatingProviderStatusResponse(
             configured,
             valid,
             validation,
-            readError ?? (configured ? state.Detail : null),
-            state.Quota,
-            state.RetryAt,
-            state.LastCheckedAt,
+            readError ?? (configured ? RatingsContract.StatusDetail(validation, provider) : null),
+            RatingsContract.NormalizeQuota(state.Quota),
+            RatingsContract.NormalizeTimestamp(state.RetryAt),
+            RatingsContract.NormalizeTimestamp(state.LastCheckedAt),
             "aspnet_data_protection",
             provider == RatingProviders.MdbList,
             provider == RatingProviders.Tmdb);
@@ -338,7 +338,9 @@ public sealed class RatingsService : IDisposable
                     _cache.SetHealth(RatingProviders.MdbList, state);
                     if (!response.StatusCode.IsSuccess())
                     {
-                        return state.Detail;
+                        // Never relay upstream response/transport text through
+                        // the desktop diagnostic boundary.
+                        return RatingsContract.StatusDetail(state.Validation, RatingProviders.MdbList);
                     }
 
                     CacheResponse(chunk, response.Body, Now());
@@ -377,7 +379,8 @@ public sealed class RatingsService : IDisposable
                     if (id is not null)
                     {
                         byIdentity[string.Join('|', provider, id)] =
-                            (RatingsContract.NormalizeMedia(item), NodeString(item["updated"]));
+                            (RatingsContract.NormalizeMedia(item),
+                                RatingsContract.NormalizeSourceUpdatedAt(item["updated"]));
                     }
                 }
             }
@@ -482,10 +485,10 @@ public sealed class RatingsService : IDisposable
     private static RatingQuotaResponse MergeQuota(
         RatingQuotaResponse current,
         RatingQuotaResponse previous)
-        => new(
+        => RatingsContract.NormalizeQuota(new(
             current.Limit ?? previous.Limit,
             current.Remaining ?? previous.Remaining,
-            current.ResetAt ?? previous.ResetAt);
+            current.ResetAt ?? previous.ResetAt));
 
     private static RatingQuotaResponse MergeBodyQuota(JsonNode? body, RatingQuotaResponse quota)
     {
@@ -507,10 +510,10 @@ public sealed class RatingsService : IDisposable
             remaining = Math.Max(0, maximum - used);
         }
 
-        return new RatingQuotaResponse(
+        return RatingsContract.NormalizeQuota(new(
             limit,
             remaining,
-            NodeLong(value["rate_limit_reset"]) ?? quota.ResetAt);
+            NodeLong(value["rate_limit_reset"]) ?? quota.ResetAt));
     }
 
     private static void ValidateSecret(string provider, string secret)

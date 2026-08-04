@@ -740,43 +740,75 @@ html[data-reduced-motion="true"] *::after {
   opacity: 1;
 }
 
-/* Ratings occupy the requested top-left corner as one compact, wrapping data
-   plate. Source abbreviations stay visible on the artwork; full source names,
-   scales, origin and stale state are exposed through semantics/tooltips. */
-.card-rating-overlay {
+/* Ratings use the same compact, icon-led metadata treatment as the technical
+   readout below. They deliberately share one open top gradient rather than
+   becoming a row of badges: source/value pairs wrap as one data line while
+   retaining their full labels, scale, origin and cache state in semantics and
+   native tooltips. */
+.card-rating-readout {
   position: absolute;
-  top: 0.42rem;
-  left: 0.42rem;
+  top: 0;
+  right: 0;
+  left: 0;
   z-index: 3;
-  display: flex;
-  max-width: calc(100% - 0.84rem);
-  flex-wrap: wrap;
-  gap: 0.22rem;
   margin: 0;
-  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 75%));
-  pointer-events: none;
+  padding: 0.42rem 0.55rem 1.55rem;
+  background: linear-gradient(to bottom, rgb(2 5 3 / 88%) 0%, rgb(2 5 3 / 62%) 48%, transparent);
+  color: rgb(244 248 246 / 92%);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.045em;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 90%);
+  font-variant-numeric: tabular-nums;
 }
 
-.card-rating-chip {
+.card-rating-readout[data-ribbon="true"] {
+  /* Keep a Top 10/New corner marker independent of the rating text. */
+  padding-right: 3.8rem;
+}
+
+.card-rating-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.card-rating-row > svg {
+  width: 0.72rem;
+  height: 0.72rem;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--primary) 80%, white);
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 90%));
+}
+
+.card-rating-values {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 0.16rem;
+}
+
+.card-rating-value {
   display: inline-flex;
   min-width: 0;
   align-items: baseline;
-  gap: 0.24rem;
-  padding: 0.2rem 0.3rem;
-  border: 1px solid rgb(255 255 255 / 24%);
-  border-radius: 2px;
-  background: rgb(3 6 5 / 88%);
-  color: rgb(250 252 251 / 96%);
-  font: 600 0.57rem/1 var(--font-mono);
-  letter-spacing: 0.015em;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 95%);
-  font-variant-numeric: tabular-nums;
-  backdrop-filter: blur(5px);
 }
 
-.card-rating-chip dt {
+.card-rating-value dd {
+  display: inline-flex;
+  min-width: 0;
+  gap: 0.24rem;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.card-rating-source {
   overflow: hidden;
-  max-width: 2.6rem;
+  max-width: 3.4rem;
   color: color-mix(in srgb, var(--primary) 78%, white);
   font-size: 0.49rem;
   letter-spacing: 0.04em;
@@ -785,8 +817,12 @@ html[data-reduced-motion="true"] *::after {
   white-space: nowrap;
 }
 
-.card-rating-chip dd { margin: 0; white-space: nowrap; }
-.card-rating-overlay[data-stale="true"] { opacity: 0.84; }
+.card-rating-separator {
+  margin-inline: 0.32rem;
+  color: color-mix(in srgb, var(--primary) 60%, transparent);
+}
+
+.card-rating-readout[data-stale="true"] { opacity: 0.84; }
 
 /* A single integrated data plate, never a row of pills. The open gradient keeps
    type readable over bright artwork without drawing a box around each fact;

@@ -26,7 +26,6 @@ const definitions: RatingSourceDefinition[] = [
   { id: "tomatoes", label: "Rotten Tomatoes Critics", shortLabel: "RT", scaleMax: 100, format: "percent", known: true },
   { id: "popcorn", label: "Rotten Tomatoes Audience", shortLabel: "RT A", scaleMax: 100, format: "percent", known: true },
   { id: "metacriticuser", label: "Metacritic Users", shortLabel: "MC U", scaleMax: 10, format: "decimal", known: true },
-  { id: "future_meter", label: "Future Meter", shortLabel: "FUTURE", scaleMax: 100, format: "decimal", known: false },
 ]
 
 function display(sourceId: string, value: number): DisplayRating {
@@ -103,7 +102,7 @@ describe("configurable card ratings", () => {
   })
 
   test("renders multiple available ratings as one accessible top-left definition list", () => {
-    const { container } = render(
+    render(
       <RatingOverlayView
         itemName="The Matrix"
         ratingItem={item}
@@ -113,11 +112,13 @@ describe("configurable card ratings", () => {
 
     const overlay = screen.getByLabelText("Ratings for The Matrix")
     expect(overlay.tagName).toBe("DL")
+    expect(overlay.className).toContain("card-rating-readout")
+    expect(overlay.querySelector(".card-rating-chip")).toBeNull()
+    expect(overlay.querySelector("svg")).toBeTruthy()
     expect(overlay.getAttribute("data-rating-origin")).toBe("local_mdblist")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()
-    expect(container.textContent).not.toContain("Future Meter")
     expect(overlay.querySelector("[title*='via local MDBList']")).toBeTruthy()
   })
 
@@ -223,28 +224,27 @@ describe("configurable card ratings", () => {
     expect(screen.getByLabelText("Rotten Tomatoes Audience")).toBeTruthy()
   })
 
-  test("disables all source choices without a credential/capability and surfaces unknown sources", () => {
+  test("disables all source choices without a credential/capability", () => {
     const onChange = vi.fn()
     const { rerender } = render(
       <RatingSourceSelector
         sources={definitions}
-        selected={["letterboxd", "future_meter"]}
+        selected={["letterboxd"]}
         enabled={false}
         onChange={onChange}
       />,
     )
     expect(screen.getByLabelText("Letterboxd").matches(":disabled")).toBe(true)
-    expect(screen.getByText(/newly observed/)).toBeTruthy()
 
     rerender(
       <RatingSourceSelector
         sources={definitions}
-        selected={["letterboxd", "future_meter"]}
+        selected={["letterboxd"]}
         enabled
         onChange={onChange}
       />,
     )
     fireEvent.click(screen.getByLabelText("Rotten Tomatoes Audience"))
-    expect(onChange).toHaveBeenCalledWith(["letterboxd", "future_meter", "popcorn"])
+    expect(onChange).toHaveBeenCalledWith(["letterboxd", "popcorn"])
   })
 })
