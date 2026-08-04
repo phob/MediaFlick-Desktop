@@ -16,7 +16,8 @@ public sealed record PluginInfoResponse(
     string PluginVersion,
     int ApiVersion,
     IReadOnlyList<string> Capabilities,
-    IReadOnlyDictionary<string, bool> Services);
+    IReadOnlyDictionary<string, bool> Services,
+    RatingsCapabilityResponse? Ratings = null);
 
 public sealed record SourceStatus(
     bool Enabled,

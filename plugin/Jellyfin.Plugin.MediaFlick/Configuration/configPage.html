@@ -25,9 +25,19 @@
                     </div>
                 </div>
                 <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                    <span>Save</span>
+                    <span>Save service settings</span>
                 </button>
             </form>
+            <section style="margin-top: 2em;">
+                <h3>Media rating providers</h3>
+                <p>
+                    These optional administrator credentials are encrypted at rest and are never
+                    returned to Media Flick clients. MDBList is a server fallback only when a client
+                    has no valid local MDBList key. TMDB is stored for future features and is not used
+                    for rating requests.
+                </p>
+                <div id="MediaFlickRatingProviders"></div>
+            </section>
         </div>
     </div>
     <script type="text/javascript">
@@ -36,8 +46,10 @@
             // template step, which eats every dollar-brace token — including
             // inside this script — so nothing here may use template literals.
             const names = ["sonarr", "radarr", "seerr"];
+            const ratingNames = ["mdblist", "tmdb"];
             const defaultPorts = { sonarr: "8989", radarr: "7878", seerr: "5055" };
             const root = document.querySelector("#MediaFlickServices");
+            const ratingsRoot = document.querySelector("#MediaFlickRatingProviders");
 
             function field(name, suffix) {
                 return document.querySelector("#" + name + suffix);
@@ -67,7 +79,30 @@
                     + '</fieldset>';
             }
 
+            function ratingBlock(name) {
+                const title = name === "mdblist" ? "MDBList" : "TMDB";
+                const preparation = name === "tmdb"
+                    ? '<div class="fieldDescription">Preparation only; this key is not sent by rating retrieval.</div>'
+                    : '<div class="fieldDescription">Validated with MDBList /user. Shared quota and retry state appear below.</div>';
+                return '<fieldset style="margin: 1.5em 0; padding: 1em;">'
+                    + '<legend>' + title + '</legend>'
+                    + '<div class="inputContainer">'
+                    + '<label class="inputLabel inputLabelUnfocused" for="rating-' + name + '-key">API key</label>'
+                    + '<input id="rating-' + name + '-key" type="password" is="emby-input"'
+                    + ' autocomplete="new-password" placeholder="API key">'
+                    + preparation
+                    + '</div>'
+                    + '<div style="display:flex; gap:.5em; flex-wrap:wrap;">'
+                    + '<button id="rating-' + name + '-save" is="emby-button" type="button" class="raised emby-button">Save / replace</button>'
+                    + '<button id="rating-' + name + '-validate" is="emby-button" type="button" class="emby-button">Validate</button>'
+                    + '<button id="rating-' + name + '-remove" is="emby-button" type="button" class="emby-button">Remove</button>'
+                    + '</div>'
+                    + '<div id="rating-' + name + '-status" class="fieldDescription" style="margin-top:.75em;"></div>'
+                    + '</fieldset>';
+            }
+
             root.innerHTML = names.map(block).join("");
+            ratingsRoot.innerHTML = ratingNames.map(ratingBlock).join("");
 
             async function api(path, options) {
                 const response = await ApiClient.ajax({
@@ -88,6 +123,52 @@
                 };
             }
 
+            function ratingField(name, suffix) {
+                return document.querySelector("#rating-" + name + "-" + suffix);
+            }
+
+            function renderRatingStatus(name, status) {
+                const target = ratingField(name, "status");
+                const key = ratingField(name, "key");
+                key.value = "";
+                key.placeholder = status.configured
+                    ? "Saved — enter a new key to replace it"
+                    : "API key";
+                ratingField(name, "validate").disabled = !status.configured;
+                ratingField(name, "remove").disabled = !status.configured;
+                let text = status.configured
+                    ? (status.valid ? "Valid" : status.validation)
+                    : "Not configured";
+                if (status.detail) {
+                    text += " — " + status.detail;
+                }
+                if (status.quota && status.quota.remaining !== null) {
+                    text += " Quota: " + status.quota.remaining;
+                    if (status.quota.limit !== null) {
+                        text += " / " + status.quota.limit;
+                    }
+                    text += ".";
+                }
+                if (status.retryAt) {
+                    text += " Retry after " + new Date(status.retryAt * 1000).toLocaleString() + ".";
+                }
+                target.textContent = text;
+            }
+
+            async function loadRatingStatus() {
+                const status = await api("MediaFlick/admin/ratings", {});
+                renderRatingStatus("mdblist", status.mdblist);
+                renderRatingStatus("tmdb", status.tmdb);
+            }
+
+            async function responseError(error, fallback) {
+                try {
+                    return (await error.json()).error || fallback;
+                } catch {
+                    return fallback;
+                }
+            }
+
             document.querySelector("#MediaFlickCompanionConfigPage")
                 .addEventListener("pageshow", async function () {
                     Dashboard.showLoadingMsg();
@@ -102,10 +183,59 @@
                         });
                         document.querySelector("#AutoImportSeerrUsers").checked =
                             config.autoImportSeerrUsers;
+                        await loadRatingStatus();
                     } finally {
                         Dashboard.hideLoadingMsg();
                     }
                 });
+
+            ratingNames.forEach(name => {
+                ratingField(name, "save").addEventListener("click", async function () {
+                    const key = ratingField(name, "key").value;
+                    if (!key) {
+                        Dashboard.alert("Enter an API key to save or replace.");
+                        return;
+                    }
+                    ratingField(name, "status").textContent = "Saving and validating…";
+                    try {
+                        const status = await api("MediaFlick/admin/ratings/" + name, {
+                            method: "PUT",
+                            body: { apiKey: key }
+                        });
+                        renderRatingStatus(name, status[name]);
+                    } catch (error) {
+                        ratingField(name, "key").value = "";
+                        ratingField(name, "status").textContent =
+                            await responseError(error, "Save failed");
+                    }
+                });
+
+                ratingField(name, "validate").addEventListener("click", async function () {
+                    ratingField(name, "status").textContent = "Validating…";
+                    try {
+                        const status = await api("MediaFlick/admin/ratings/" + name + "/validate", {
+                            method: "POST"
+                        });
+                        renderRatingStatus(name, status[name]);
+                    } catch (error) {
+                        ratingField(name, "status").textContent =
+                            await responseError(error, "Validation failed");
+                    }
+                });
+
+                ratingField(name, "remove").addEventListener("click", async function () {
+                    ratingField(name, "status").textContent = "Removing…";
+                    try {
+                        const status = await api("MediaFlick/admin/ratings/" + name, {
+                            method: "DELETE"
+                        });
+                        renderRatingStatus(name, status[name]);
+                    } catch (error) {
+                        ratingField(name, "status").textContent =
+                            await responseError(error, "Removal failed");
+                    }
+                });
+            });
 
             names.forEach(name => {
                 field(name, "Test").addEventListener("click", async function () {

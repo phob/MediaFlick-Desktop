@@ -16,10 +16,12 @@ namespace Jellyfin.Plugin.MediaFlick.Api;
 public sealed class InfoController : ControllerBase
 {
     private readonly ServiceHealthStore _health;
+    private readonly RatingsService _ratings;
 
-    public InfoController(ServiceHealthStore health)
+    public InfoController(ServiceHealthStore health, RatingsService ratings)
     {
         _health = health;
+        _ratings = ratings;
     }
 
     [HttpGet("info")]
@@ -45,7 +47,13 @@ public sealed class InfoController : ControllerBase
             capabilities.Add("seerr-request-profiles");
         }
 
-        var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
+        var ratings = _ratings.Capability();
+        if (ratings.Available)
+        {
+            capabilities.Add("ratings-v1");
+        }
+
+        var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.2.0";
         var info = new PluginInfoResponse(
             version,
             1,
@@ -54,8 +62,11 @@ public sealed class InfoController : ControllerBase
             {
                 ["sonarr"] = IsConfigured(configuration.Sonarr) && _health.IsHealthy("sonarr"),
                 ["radarr"] = IsConfigured(configuration.Radarr) && _health.IsHealthy("radarr"),
-                ["seerr"] = IsConfigured(configuration.Seerr) && _health.IsHealthy("seerr")
-            });
+                ["seerr"] = IsConfigured(configuration.Seerr) && _health.IsHealthy("seerr"),
+                ["mdblist"] = ratings.Available,
+                ["tmdb"] = ratings.Tmdb.Configured && ratings.Tmdb.Valid
+            },
+            ratings);
         return new JsonResult(info, CompanionJson.CamelCase);
     }
 
@@ -265,15 +276,15 @@ public sealed class AdminController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "plugin unavailable" });
         }
 
-        var previous = plugin.Configuration;
-        var next = new PluginConfiguration
+        plugin.MutateConfiguration(current => new PluginConfiguration
         {
-            Sonarr = Merge(previous.Sonarr, update.Sonarr),
-            Radarr = Merge(previous.Radarr, update.Radarr),
-            Seerr = Merge(previous.Seerr, update.Seerr),
-            AutoImportSeerrUsers = update.AutoImportSeerrUsers
-        };
-        plugin.UpdateConfiguration(next);
+            Sonarr = Merge(current.Sonarr, update.Sonarr),
+            Radarr = Merge(current.Radarr, update.Radarr),
+            Seerr = Merge(current.Seerr, update.Seerr),
+            AutoImportSeerrUsers = update.AutoImportSeerrUsers,
+            ProtectedMdbListApiKey = current.ProtectedMdbListApiKey,
+            ProtectedTmdbApiKey = current.ProtectedTmdbApiKey
+        });
         // The config page reads the response as JSON, and an empty 204 body
         // would make that read fail after a successful save.
         return Ok(new { saved = true });
