@@ -106,7 +106,7 @@ export const MediaCard = memo(function MediaCard({
             {item.name}
           </div>
         )}
-        <RatingOverlay item={item} />
+        <RatingOverlay item={item} hasRibbon={Boolean(ribbon)} />
         {ribbon && (
           <div className="data-label absolute top-0 right-0 z-[4] bg-primary px-1.5 py-1 leading-none text-primary-foreground">
             {ribbon}

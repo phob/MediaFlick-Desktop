@@ -5,12 +5,20 @@ using Jellyfin.Plugin.MediaFlick.Models;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
+/// <summary>
+/// The only shape allowed to cross from MDBList data into the desktop-facing
+/// ratings boundary. Upstream JSON is data, never a response DTO: every field
+/// below is reconstructed from a fixed catalog and bounded primitive values.
+/// </summary>
 internal static partial class RatingsContract
 {
     public const int BoundaryVersion = 1;
     public const int MaxRequestItems = 500;
     public const int MaxUpstreamBatchItems = 100;
     public const string Origin = "server_mdblist";
+    public const long MaxVotes = 1_000_000_000_000;
+    public const long MaxQuotaValue = 1_000_000_000_000;
+    public const long MaxUnixTimestamp = 4_102_444_800; // 2100-01-01 UTC
 
     public static IReadOnlyList<RatingSourceResponse> SourceCatalog { get; } =
     [
@@ -27,6 +35,9 @@ internal static partial class RatingsContract
         new("rogerebert", "Roger Ebert", "Ebert", 4, "stars", true),
         new("myanimelist", "MyAnimeList", "MAL", 10, "decimal", true)
     ];
+
+    private static readonly IReadOnlyDictionary<string, double> SourceScales =
+        SourceCatalog.ToDictionary(source => source.Id, source => source.ScaleMax, StringComparer.Ordinal);
 
     public static IReadOnlyList<RatingTargetRequest> Validate(RatingBatchRequest? request)
     {
@@ -108,50 +119,117 @@ internal static partial class RatingsContract
         return result;
     }
 
-    public static JsonArray NormalizeMedia(JsonNode item)
+    /// <summary>
+    /// Rebuilds ratings from the fixed public source catalog. Unknown source
+    /// labels, arbitrary upstream fields, and original strings are discarded.
+    /// The legacy source/rawSource keys remain for Desktop v1 compatibility,
+    /// but carry the canonical catalog id rather than upstream text.
+    /// </summary>
+    public static JsonArray NormalizeMedia(JsonNode? item)
     {
         var bySource = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);
-        if (item["ratings"] is JsonArray ratings)
+        if (item?["ratings"] is JsonArray ratings)
         {
             foreach (var candidate in ratings.OfType<JsonObject>())
             {
-                var rawSource = String(candidate["source"])
-                    ?? String(candidate["sourceId"]);
-                if (string.IsNullOrWhiteSpace(rawSource))
-                {
-                    continue;
-                }
-
-                AddRating(bySource, rawSource, Number(candidate["value"] ?? candidate["rating"]),
-                    Number(candidate["score"]), Integer(candidate["votes"]));
+                AddRating(
+                    bySource,
+                    NodeString(candidate["source"]) ?? NodeString(candidate["sourceId"]),
+                    Number(candidate["value"] ?? candidate["rating"]),
+                    Number(candidate["score"]),
+                    Integer(candidate["votes"]));
             }
         }
 
-        AddRating(bySource, "mdblist_score", Number(item["score"]), Number(item["score"]), null);
+        AddRating(bySource, "mdblist_score", Number(item?["score"]), Number(item?["score"]), null);
         AddRating(
             bySource,
             "mdblist_score_average",
-            Number(item["score_average"] ?? item["scoreAverage"]),
-            Number(item["score_average"] ?? item["scoreAverage"]),
+            Number(item?["score_average"] ?? item?["scoreAverage"]),
+            Number(item?["score_average"] ?? item?["scoreAverage"]),
             null);
         return new JsonArray(bySource.Values.Select(value => (JsonNode)value).ToArray());
     }
 
-    public static string CanonicalSource(string source)
+    /// <summary>
+    /// Revalidates persisted records before they can be returned. This repairs
+    /// cache records from earlier releases as well as rejecting any tampering.
+    /// </summary>
+    public static JsonArray NormalizeCachedRatings(JsonArray? ratings)
     {
-        var compact = source.Trim().ToLowerInvariant().Replace(' ', '_').Replace('-', '_');
-        return compact switch
+        var bySource = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);
+        if (ratings is not null)
         {
-            "mal" => "myanimelist",
-            "audience" or "popcorn" or "tomatoesaudience" or "tomatoes_audience"
-                or "rtaudience" or "rt_audience" => "popcorn",
-            "tomato" or "tomatometer" or "rtomatoes" or "rt_critic" => "tomatoes",
-            "score" or "mdblist" or "mdblist_score" => "mdblist_score",
-            "scoreaverage" or "score_average" or "mdblist_score_average" =>
-                "mdblist_score_average",
-            _ => SafeSource(compact)
-        };
+            foreach (var candidate in ratings.OfType<JsonObject>())
+            {
+                // Read only sourceId from a cache record. Older raw `source` /
+                // `rawSource` values are deliberately never re-emitted.
+                AddRating(
+                    bySource,
+                    NodeString(candidate["sourceId"]),
+                    Number(candidate["value"]),
+                    Number(candidate["score"]),
+                    Integer(candidate["votes"]));
+            }
+        }
+
+        return new JsonArray(bySource.Values.Select(value => (JsonNode)value).ToArray());
     }
+
+    public static string? NormalizeSourceUpdatedAt(JsonNode? value)
+    {
+        var text = NodeString(value)?.Trim();
+        if (string.IsNullOrEmpty(text)
+            || text.Length > 40
+            || text.Any(character => !(char.IsAsciiDigit(character)
+                || character is '-' or ':' or 'T' or 'Z' or '.' or '+')))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(
+            text,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)
+            : null;
+    }
+
+    public static RatingQuotaResponse NormalizeQuota(RatingQuotaResponse quota)
+        => new(
+            BoundedNonNegative(quota.Limit, MaxQuotaValue),
+            BoundedNonNegative(quota.Remaining, MaxQuotaValue),
+            BoundedNonNegative(quota.ResetAt, MaxUnixTimestamp));
+
+    public static long? NormalizeTimestamp(long? value)
+        => BoundedNonNegative(value, MaxUnixTimestamp);
+
+    public static string NormalizeValidation(string? validation)
+        => validation?.Trim().ToLowerInvariant() switch
+        {
+            "valid" => "valid",
+            "invalid" => "invalid",
+            "offline" => "offline",
+            "rate_limited" => "rate_limited",
+            "unavailable" => "unavailable",
+            "saved" => "saved",
+            "unchecked" => "unchecked",
+            _ => "unchecked"
+        };
+
+    public static string? StatusDetail(string validation, string provider)
+        => validation switch
+        {
+            "valid" when provider == RatingProviders.MdbList => "Valid MDBList credential.",
+            "valid" => "Credential is valid.",
+            "invalid" when provider == RatingProviders.MdbList => "MDBList rejected the saved API key.",
+            "invalid" => "The saved credential is invalid.",
+            "offline" or "unavailable" => "MDBList is temporarily unavailable; cached ratings remain available.",
+            "rate_limited" => "MDBList quota is exhausted; cached ratings remain available.",
+            "saved" => "Saved for future TMDB features. Rating retrieval does not use this key.",
+            _ => null
+        };
 
     public static bool ValidTmdbKeyShape(string value)
         => (value.Length == 32 && value.All(Uri.IsHexDigit))
@@ -164,16 +242,23 @@ internal static partial class RatingsContract
 
     private static void AddRating(
         IDictionary<string, JsonObject> ratings,
-        string rawSource,
+        string? rawSource,
         double? rawValue,
         double? score,
         long? votes)
     {
-        var source = CanonicalSource(rawSource);
-        var maximum = ScaleMax(source);
+        if (!TryCanonicalSource(rawSource, out var source)
+            || !SourceScales.TryGetValue(source, out var maximum))
+        {
+            return;
+        }
+
+        var safeScore = score is { } scoreValue && scoreValue is >= 0 and <= 100
+            ? scoreValue
+            : (double?)null;
         var value = rawValue is { } raw && raw >= 0 && raw <= maximum
             ? raw
-            : score is { } normalized && normalized >= 0 && normalized <= 100
+            : safeScore is { } normalized
                 ? normalized * maximum / 100
                 : (double?)null;
         if (value is null)
@@ -183,48 +268,53 @@ internal static partial class RatingsContract
 
         var rating = new JsonObject
         {
-            // `source` keeps Desktop v1's normalizer on its established path;
-            // sourceId is the canonical server-side catalog identity.
-            ["source"] = rawSource,
+            // These are all catalog constants; no upstream string survives.
+            ["source"] = source,
             ["sourceId"] = source,
-            ["rawSource"] = rawSource,
+            ["rawSource"] = source,
             ["value"] = value,
             ["scaleMax"] = maximum
         };
-        if (score is { } scoreValue && scoreValue >= 0 && scoreValue <= 100)
+        if (safeScore is { } safeScoreValue)
         {
-            rating["score"] = scoreValue;
+            rating["score"] = safeScoreValue;
         }
 
-        if (votes is >= 0)
+        if (votes is { } voteCount && voteCount <= MaxVotes)
         {
-            rating["votes"] = votes;
+            rating["votes"] = voteCount;
         }
 
         ratings[source] = rating;
     }
 
-    private static double ScaleMax(string source)
-        => source switch
-        {
-            "imdb" or "tmdb" or "metacriticuser" or "myanimelist" => 10,
-            "letterboxd" => 5,
-            "rogerebert" => 4,
-            _ => 100
-        };
-
-    private static string SafeSource(string source)
+    private static bool TryCanonicalSource(string? rawSource, out string source)
     {
-        var safe = new string(source
-            .Where(character => char.IsAsciiLetterLower(character)
-                || char.IsAsciiDigit(character)
-                || character is '_' or '-')
-            .Take(64)
-            .ToArray());
-        return safe.Length == 0 ? "unknown" : safe;
+        source = string.Empty;
+        if (string.IsNullOrWhiteSpace(rawSource) || rawSource.Length > 128)
+        {
+            return false;
+        }
+
+        var compact = rawSource.Trim().ToLowerInvariant().Replace(' ', '_').Replace('-', '_');
+        source = compact switch
+        {
+            "mal" => "myanimelist",
+            "audience" or "popcorn" or "tomatoesaudience" or "tomatoes_audience"
+                or "rtaudience" or "rt_audience" => "popcorn",
+            "tomato" or "tomatometer" or "rtomatoes" or "rt_critic" => "tomatoes",
+            "score" or "mdblist" or "mdblist_score" => "mdblist_score",
+            "scoreaverage" or "score_average" or "mdblist_score_average" =>
+                "mdblist_score_average",
+            _ => compact
+        };
+        return SourceScales.ContainsKey(source);
     }
 
-    private static string? String(JsonNode? node)
+    private static long? BoundedNonNegative(long? value, long maximum)
+        => value is { } number && number >= 0 && number <= maximum ? number : null;
+
+    private static string? NodeString(JsonNode? node)
     {
         try
         {
@@ -254,7 +344,8 @@ internal static partial class RatingsContract
             }
 
             var text = node.GetValue<string>();
-            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+            return text.Length <= 32
+                && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)
                 && double.IsFinite(number)
                     ? number
                     : null;
@@ -268,7 +359,7 @@ internal static partial class RatingsContract
     private static long? Integer(JsonNode? node)
     {
         var value = Number(node);
-        return value is { } number && number >= 0 && number <= long.MaxValue
+        return value is { } number && number >= 0 && number <= MaxVotes
             ? Convert.ToInt64(Math.Truncate(number))
             : null;
     }

@@ -322,7 +322,7 @@ export interface AppearanceSettings {
   artworkIntensity: number
   backdropIntensity: number
   reducedMotion: boolean
-  /** Canonical IDs only; unknown future MDBList sources are intentionally retained. */
+  /** Canonical IDs from the fixed public MDBList source catalog. */
   ratingSources: string[]
 }
 

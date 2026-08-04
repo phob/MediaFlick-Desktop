@@ -73,8 +73,8 @@ pub struct AppearanceSettings {
     pub reduced_motion: bool,
     /// Canonical rating source IDs chosen for card overlays. This is ordinary
     /// presentation state; credentials remain in the operating-system vault.
-    /// Unknown IDs are retained so a newly observed MDBList source survives an
-    /// app downgrade or a temporary credential/plugin transition.
+    /// IDs are limited to the fixed public source catalog so a prior or
+    /// tampered server response cannot remain as desktop-visible metadata.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rating_sources: Vec<String>,
 }
@@ -107,7 +107,7 @@ impl AppearanceSettings {
             .drain(..)
             .filter_map(|source| {
                 let source = source.trim().to_ascii_lowercase();
-                is_rating_source_id(&source)
+                is_public_rating_source(&source)
                     .then_some(source)
                     .filter(|source| seen.insert(source.clone()))
             })
@@ -682,12 +682,22 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn is_rating_source_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-        })
+fn is_public_rating_source(value: &str) -> bool {
+    matches!(
+        value,
+        "mdblist_score"
+            | "mdblist_score_average"
+            | "imdb"
+            | "trakt"
+            | "tmdb"
+            | "letterboxd"
+            | "tomatoes"
+            | "popcorn"
+            | "metacritic"
+            | "metacriticuser"
+            | "rogerebert"
+            | "myanimelist"
+    )
 }
 
 fn default_artwork_intensity() -> u8 {
@@ -879,23 +889,24 @@ mod tests {
     }
 
     #[test]
-    fn rating_source_preferences_migrate_safely_and_retain_future_ids() {
+    fn rating_source_preferences_retain_only_the_public_catalog() {
         let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
         assert!(defaults.appearance.rating_sources.is_empty());
 
         let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
             "appearance": {
-                "rating_sources": [" Letterboxd ", "popcorn", "future_meter", "popcorn", "../bad"]
+                "rating_sources": [" Letterboxd ", "popcorn", "server-mdb-key-must-not-persist", "future_meter", "popcorn", "../bad"]
             }
         }))
         .expect("settings");
         settings.sanitize();
         assert_eq!(
             settings.appearance.rating_sources,
-            ["letterboxd", "popcorn", "future_meter"]
+            ["letterboxd", "popcorn"]
         );
         let serialized = serde_json::to_string(&settings).expect("serialize");
-        assert!(serialized.contains("future_meter"));
+        assert!(!serialized.contains("server-mdb-key-must-not-persist"));
+        assert!(!serialized.contains("future_meter"));
         assert!(!serialized.contains("api_key"));
         assert!(!serialized.contains("apikey"));
     }

@@ -4,7 +4,9 @@
 //! render; those IDs are deduplicated, resolved to stable TMDB/IMDb identities,
 //! served stale-while-revalidate from SQLite, and refreshed in bounded batches.
 //! A versioned Companion boundary is the fallback only when no valid local key
-//! exists, and never returns the plugin administrator's credential.
+//! exists, and never returns the plugin administrator's credential. Every
+//! upstream/cache value is rebuilt through a fixed public rating schema before
+//! persistence or desktop serialization.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -34,6 +36,8 @@ const EXPIRE_SECONDS: i64 = 30 * 24 * 60 * 60;
 const PLUGIN_FRESH_SECONDS: i64 = 24 * 60 * 60;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_VOTES: i64 = 1_000_000_000_000;
+const MAX_QUOTA: i64 = 1_000_000_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Origin {
@@ -304,17 +308,10 @@ impl RatingsService {
             mdblist["valid"].as_bool().unwrap_or(false),
             plugin,
         );
-        let mut sources = known_source_definitions();
-        let known = sources
-            .iter()
-            .filter_map(|source| source["id"].as_str().map(str::to_string))
-            .collect::<HashSet<_>>();
-        for source in self.library.observed_rating_sources().unwrap_or_default() {
-            if known.contains(&source) {
-                continue;
-            }
-            sources.push(unknown_source_definition(&source));
-        }
+        // Source labels are part of the security boundary. Do not derive a
+        // public source definition from server/cache text: a credential-shaped
+        // upstream label would otherwise become desktop-visible metadata.
+        let sources = known_source_definitions();
         json!({
             "boundaryVersion": 1,
             "auth": {
@@ -444,8 +441,8 @@ impl RatingsService {
     fn credential_status(&self, name: &str) -> Value {
         let read = self.credentials.get(name);
         let (configured, store_error) = match read {
-            Ok(value) => (value.is_some(), None),
-            Err(error) => (false, Some(error.to_string())),
+            Ok(value) => (value.is_some(), false),
+            Err(_) => (false, true),
         };
         let state = self
             .library
@@ -457,18 +454,22 @@ impl RatingsService {
                 validation: "unchecked".to_string(),
                 ..IntegrationState::default()
             });
+        let validation = normalized_validation(&state.validation);
         json!({
             "configured": configured,
-            "valid": configured && state.valid,
-            "validation": if configured { state.validation.as_str() } else { "absent" },
-            "detail": store_error.or(state.detail),
+            "valid": configured
+                && state.valid
+                && matches!(validation, "valid" | "offline" | "rate_limited" | "unavailable" | "saved"),
+            "validation": if configured { validation } else { "absent" },
+            "detail": store_error.then_some("The operating-system credential vault could not read this credential.")
+                .or_else(|| status_detail(validation, name)),
             "quota": {
-                "limit": state.quota_limit,
-                "remaining": state.quota_remaining,
-                "resetAt": state.quota_reset_at,
+                "limit": bounded_nonnegative(state.quota_limit, MAX_QUOTA),
+                "remaining": bounded_nonnegative(state.quota_remaining, MAX_QUOTA),
+                "resetAt": bounded_timestamp(state.quota_reset_at),
             },
-            "retryAt": state.retry_at,
-            "lastCheckedAt": (state.updated_at > 0).then_some(state.updated_at),
+            "retryAt": bounded_timestamp(state.retry_at),
+            "lastCheckedAt": (state.updated_at > 0).then_some(state.updated_at).and_then(|value| bounded_timestamp(Some(value))),
             "storage": "os_credential_vault",
             "usedForRatings": name == MDBLIST_CREDENTIAL,
         })
@@ -562,7 +563,7 @@ impl RatingsService {
                 "available": false,
                 "effectiveOrigin": "none",
                 "items": [],
-                "retryAt": state.retry_at,
+                "retryAt": bounded_timestamp(state.retry_at),
                 "diagnostic": "No valid local MDBList key or compatible plugin rating capability is available.",
             }));
         };
@@ -575,6 +576,8 @@ impl RatingsService {
         let mut cache = self
             .library
             .cached_ratings(&targets, origin.as_str())
+            .map_err(storage_error)?;
+        self.sanitize_cached(&targets, origin, &mut cache)
             .map_err(storage_error)?;
         let mut refresh = targets
             .iter()
@@ -610,6 +613,8 @@ impl RatingsService {
                 .library
                 .cached_ratings(&targets, origin.as_str())
                 .map_err(storage_error)?;
+            self.sanitize_cached(&targets, origin, &mut cache)
+                .map_err(storage_error)?;
         }
 
         let items = targets
@@ -620,8 +625,8 @@ impl RatingsService {
                     json!({
                         "id": target.item_id,
                         "ratings": cached.ratings,
-                        "origin": cached.origin,
-                        "fetchedAt": cached.fetched_at,
+                        "origin": origin.as_str(),
+                        "fetchedAt": cached.fetched_at.max(0),
                         "sourceUpdatedAt": cached.source_updated_at,
                         "stale": cached.stale_at <= now,
                         "schemaVersion": cached.schema_version,
@@ -638,14 +643,51 @@ impl RatingsService {
             "available": true,
             "effectiveOrigin": origin.as_str(),
             "items": items,
-            "retryAt": latest_state.retry_at,
+            "retryAt": bounded_timestamp(latest_state.retry_at),
             "quota": {
-                "limit": latest_state.quota_limit,
-                "remaining": latest_state.quota_remaining,
-                "resetAt": latest_state.quota_reset_at,
+                "limit": bounded_nonnegative(latest_state.quota_limit, MAX_QUOTA),
+                "remaining": bounded_nonnegative(latest_state.quota_remaining, MAX_QUOTA),
+                "resetAt": bounded_timestamp(latest_state.quota_reset_at),
             },
             "diagnostic": diagnostic,
         }))
+    }
+
+    /// Rewrites legacy/tampered cache rows before the cache can feed a desktop
+    /// response. The persisted representation receives the same positive
+    /// allowlist as fresh local and plugin results.
+    fn sanitize_cached(
+        &self,
+        targets: &[RatingTarget],
+        origin: Origin,
+        cache: &mut HashMap<String, CachedRatings>,
+    ) -> rusqlite::Result<()> {
+        let mut replacements = Vec::new();
+        for target in targets {
+            let Some(cached) = cache.get_mut(&target.item_id) else {
+                continue;
+            };
+            let sanitized = CachedRatings {
+                ratings: normalize_rating_array(&cached.ratings),
+                source_updated_at: normalized_source_updated_at(
+                    cached.source_updated_at.as_deref(),
+                ),
+                fetched_at: cached.fetched_at.max(0),
+                stale_at: cached.stale_at.max(0),
+                expires_at: cached.expires_at.max(0),
+                schema_version: CACHE_SCHEMA_VERSION,
+                origin: origin.as_str().to_string(),
+            };
+            if *cached != sanitized {
+                *cached = sanitized.clone();
+                replacements.push((target.clone(), sanitized));
+            }
+        }
+        if replacements.is_empty() {
+            Ok(())
+        } else {
+            self.library.save_rating_cache(&replacements)
+        }
     }
 
     fn claim(&self, origin: Origin, targets: &[RatingTarget]) -> Vec<RatingTarget> {
@@ -695,9 +737,10 @@ impl RatingsService {
                             Origin::Local,
                             now_unix(),
                         );
-                        self.library
-                            .save_rating_cache(&entries)
-                            .map_err(|error| format!("could not cache MDBList ratings: {error}"))?;
+                        self.library.save_rating_cache(&entries).map_err(|_| {
+                            "could not cache MDBList ratings; cached ratings remain usable."
+                                .to_string()
+                        })?;
                     }
                     Err(error) => {
                         self.note_fetch_error(&error)
@@ -715,16 +758,14 @@ impl RatingsService {
             "boundaryVersion": 1,
             "items": targets,
         });
-        let response = self.companion.ratings_v1(&body).map_err(|error| match error {
-            ApiError::NotConfigured | ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. } => {
-                "The server rating capability is not available yet; cached plugin ratings remain usable.".to_string()
-            }
-            _ => format!("The server rating capability is temporarily unavailable: {error}"),
-        })?;
+        let response = self
+            .companion
+            .ratings_v1(&body)
+            .map_err(plugin_rating_error)?;
         let entries = normalize_plugin_batch(targets, response, now_unix());
-        self.library
-            .save_rating_cache(&entries)
-            .map_err(|error| format!("could not cache plugin ratings: {error}"))
+        self.library.save_rating_cache(&entries).map_err(|_| {
+            "could not cache server ratings; cached plugin ratings remain usable.".to_string()
+        })
     }
 
     fn note_quota(&self, quota: Quota) -> Result<(), RatingsError> {
@@ -856,8 +897,58 @@ fn offline_state(
     }
 }
 
-fn storage_error(error: rusqlite::Error) -> RatingsError {
-    RatingsError::new(format!("ratings storage is unavailable: {error}"))
+fn storage_error(_: rusqlite::Error) -> RatingsError {
+    // Database errors may name a file or a rejected payload. Keep the native
+    // API diagnostic fixed so neither reaches browser-visible telemetry.
+    RatingsError::new("ratings storage is unavailable")
+}
+
+fn normalized_validation(validation: &str) -> &'static str {
+    match validation {
+        "valid" => "valid",
+        "invalid" => "invalid",
+        "offline" => "offline",
+        "rate_limited" => "rate_limited",
+        "unavailable" => "unavailable",
+        "saved" => "saved",
+        _ => "unchecked",
+    }
+}
+
+fn status_detail(validation: &str, credential: &str) -> Option<&'static str> {
+    match validation {
+        "valid" if credential == MDBLIST_CREDENTIAL => Some("Valid MDBList credential."),
+        "valid" => Some("Credential is valid."),
+        "invalid" if credential == MDBLIST_CREDENTIAL => {
+            Some("MDBList rejected the saved API key.")
+        }
+        "invalid" => Some("The saved credential is invalid."),
+        "offline" | "unavailable" => {
+            Some("MDBList is temporarily unavailable; cached ratings remain available.")
+        }
+        "rate_limited" => Some("MDBList quota is exhausted; cached ratings remain available."),
+        "saved" => Some("Saved for future TMDB features. Rating retrieval does not use this key."),
+        _ => None,
+    }
+}
+
+fn bounded_nonnegative(value: Option<i64>, maximum: i64) -> Option<i64> {
+    value.filter(|value| (0..=maximum).contains(value))
+}
+
+fn bounded_timestamp(value: Option<i64>) -> Option<i64> {
+    bounded_nonnegative(value, 4_102_444_800)
+}
+
+fn plugin_rating_error(error: ApiError) -> String {
+    match error {
+        ApiError::NotConfigured | ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. } => {
+            "The server rating capability is not available yet; cached plugin ratings remain usable."
+                .to_string()
+        }
+        _ => "The server rating capability is temporarily unavailable; cached plugin ratings remain usable."
+            .to_string(),
+    }
 }
 
 fn fetch_error_message(error: &MdbError) -> String {
@@ -903,10 +994,8 @@ fn normalize_batch(
         else {
             continue;
         };
-        let source_updated_at = item
-            .get("updated")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let source_updated_at =
+            normalized_source_updated_at(item.get("updated").and_then(Value::as_str));
         by_id.insert(provider_id, (normalize_media(&item), source_updated_at));
     }
     targets
@@ -961,10 +1050,8 @@ fn normalize_plugin_batch(
             continue;
         };
         let ratings = normalize_rating_array(item.get("ratings").unwrap_or(&Value::Null));
-        let source_updated_at = item
-            .get("sourceUpdatedAt")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let source_updated_at =
+            normalized_source_updated_at(item.get("sourceUpdatedAt").and_then(Value::as_str));
         by_item.insert(item_id.to_string(), (ratings, source_updated_at));
     }
     targets
@@ -990,9 +1077,20 @@ fn normalize_plugin_batch(
 fn value_id(value: &Value) -> Option<String> {
     value
         .as_str()
+        .filter(|value| value.len() <= 32 && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
         .map(str::to_string)
-        .or_else(|| value.as_i64().map(|value| value.to_string()))
-        .or_else(|| value.as_u64().map(|value| value.to_string()))
+        .or_else(|| {
+            value
+                .as_i64()
+                .filter(|value| *value > 0)
+                .map(|value| value.to_string())
+        })
+        .or_else(|| {
+            value
+                .as_u64()
+                .filter(|value| *value > 0)
+                .map(|value| value.to_string())
+        })
 }
 
 fn normalize_media(item: &Value) -> Value {
@@ -1000,25 +1098,17 @@ fn normalize_media(item: &Value) -> Value {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    if let Some(score) = number(item.get("score"))
-        && score >= 0.0
-    {
-        ratings.push(normalized_rating(
-            "mdblist_score",
-            "score",
-            score,
-            Some(score),
-            None,
-        ));
+    if let Some(score) = number(item.get("score")).filter(|score| (0.0..=100.0).contains(score)) {
+        ratings.push(normalized_rating("mdblist_score", score, Some(score), None));
     }
     if let Some(score) = number(
         item.get("score_average")
             .or_else(|| item.get("scoreAverage")),
-    ) && score >= 0.0
+    )
+    .filter(|score| (0.0..=100.0).contains(score))
     {
         ratings.push(normalized_rating(
             "mdblist_score_average",
-            "score_average",
             score,
             Some(score),
             None,
@@ -1027,70 +1117,88 @@ fn normalize_media(item: &Value) -> Value {
     deduplicate_ratings(ratings)
 }
 
+/// Positive response allowlist shared by local MDBList, the server-plugin
+/// fallback, and legacy cache repair. It reads only catalog source IDs and
+/// bounded numeric fields; all other JSON is intentionally forgotten.
 fn normalize_rating_array(value: &Value) -> Value {
     let mut ratings = Vec::new();
     for rating in value.as_array().into_iter().flatten() {
-        let Some(raw_source) = rating
-            .get("source")
-            .or_else(|| rating.get("sourceId"))
+        let source = rating
+            .get("sourceId")
             .and_then(Value::as_str)
-        else {
+            .and_then(canonical_source)
+            .or_else(|| {
+                rating
+                    .get("source")
+                    .and_then(Value::as_str)
+                    .and_then(canonical_source)
+            });
+        let Some(source) = source else {
             continue;
         };
-        let source = canonical_source(raw_source);
         let raw_value = number(rating.get("value").or_else(|| rating.get("rating")));
-        let score = number(rating.get("score"));
-        let Some(value) = native_value(&source, raw_value, score) else {
+        let score = number(rating.get("score")).filter(|score| (0.0..=100.0).contains(score));
+        let Some(value) = native_value(source, raw_value, score) else {
             continue;
         };
         let votes = rating.get("votes").and_then(|votes| {
             votes
                 .as_i64()
                 .or_else(|| votes.as_str()?.parse::<i64>().ok())
-                .filter(|votes| *votes >= 0)
+                .filter(|votes| (0..=MAX_VOTES).contains(votes))
         });
-        ratings.push(normalized_rating(&source, raw_source, value, score, votes));
+        ratings.push(normalized_rating(source, value, score, votes));
     }
     deduplicate_ratings(ratings)
 }
 
 fn deduplicate_ratings(ratings: Vec<Value>) -> Value {
-    let mut by_source = BTreeMap::<String, Value>::new();
+    let mut by_source = BTreeMap::<&'static str, Value>::new();
     for rating in ratings {
-        if let Some(source) = rating.get("sourceId").and_then(Value::as_str) {
-            by_source.insert(source.to_string(), rating);
+        if let Some(source) = rating
+            .get("sourceId")
+            .and_then(Value::as_str)
+            .and_then(canonical_source)
+        {
+            by_source.insert(source, rating);
         }
     }
     Value::Array(by_source.into_values().collect())
 }
 
 fn normalized_rating(
-    source: &str,
-    raw_source: &str,
+    source: &'static str,
     value: f64,
     score: Option<f64>,
     votes: Option<i64>,
 ) -> Value {
+    let scale = scale_max(source).expect("canonical source has a fixed scale");
     json!({
+        // Keep Desktop v1's legacy keys, but make every string a catalog
+        // constant rather than copying provider data.
+        "source": source,
         "sourceId": source,
-        "rawSource": raw_source,
+        "rawSource": source,
         "value": value,
         "score": score,
         "votes": votes,
-        "scaleMax": scale_max(source),
+        "scaleMax": scale,
     })
 }
 
 fn number(value: Option<&Value>) -> Option<f64> {
     let value = value?;
-    let number = value
-        .as_f64()
-        .or_else(|| value.as_str()?.trim().parse::<f64>().ok())?;
+    let number = value.as_f64().or_else(|| {
+        let text = value.as_str()?.trim();
+        (text.len() <= 32)
+            .then(|| text.parse::<f64>().ok())
+            .flatten()
+    })?;
     number.is_finite().then_some(number)
 }
 
 fn native_value(source: &str, raw: Option<f64>, score: Option<f64>) -> Option<f64> {
-    let maximum = scale_max(source);
+    let maximum = scale_max(source)?;
     if let Some(raw) = raw
         && raw >= 0.0
         && raw <= maximum
@@ -1102,45 +1210,66 @@ fn native_value(source: &str, raw: Option<f64>, score: Option<f64>) -> Option<f6
         .map(|score| score * maximum / 100.0)
 }
 
-fn canonical_source(source: &str) -> String {
+fn canonical_source(source: &str) -> Option<&'static str> {
+    if source.len() > 128 {
+        return None;
+    }
     let compact = source.trim().to_ascii_lowercase().replace([' ', '-'], "_");
     match compact.as_str() {
-        "mal" => "myanimelist".to_string(),
+        "mal" | "myanimelist" => Some("myanimelist"),
         "audience" | "popcorn" | "tomatoesaudience" | "tomatoes_audience" | "rtaudience"
-        | "rt_audience" => "popcorn".to_string(),
-        "tomato" | "tomatometer" | "rtomatoes" | "rt_critic" => "tomatoes".to_string(),
-        "score" | "mdblist" | "mdblist_score" => "mdblist_score".to_string(),
-        "scoreaverage" | "score_average" | "mdblist_score_average" => {
-            "mdblist_score_average".to_string()
-        }
-        _ => safe_source_id(&compact),
+        | "rt_audience" => Some("popcorn"),
+        "tomato" | "tomatometer" | "rtomatoes" | "rt_critic" | "tomatoes" => Some("tomatoes"),
+        "score" | "mdblist" | "mdblist_score" => Some("mdblist_score"),
+        "scoreaverage" | "score_average" | "mdblist_score_average" => Some("mdblist_score_average"),
+        "imdb" => Some("imdb"),
+        "trakt" => Some("trakt"),
+        "tmdb" => Some("tmdb"),
+        "letterboxd" => Some("letterboxd"),
+        "metacritic" => Some("metacritic"),
+        "metacriticuser" => Some("metacriticuser"),
+        "rogerebert" => Some("rogerebert"),
+        _ => None,
     }
 }
 
-fn safe_source_id(source: &str) -> String {
-    let safe = source
-        .chars()
-        .filter(|character| {
-            character.is_ascii_lowercase()
-                || character.is_ascii_digit()
-                || matches!(character, '_' | '-')
-        })
-        .take(64)
-        .collect::<String>();
-    if safe.is_empty() {
-        "unknown".to_string()
-    } else {
-        safe
-    }
-}
-
-fn scale_max(source: &str) -> f64 {
+fn scale_max(source: &str) -> Option<f64> {
     match source {
-        "imdb" | "tmdb" | "metacriticuser" | "myanimelist" => 10.0,
-        "letterboxd" => 5.0,
-        "rogerebert" => 4.0,
-        _ => 100.0,
+        "mdblist_score"
+        | "mdblist_score_average"
+        | "trakt"
+        | "tomatoes"
+        | "popcorn"
+        | "metacritic" => Some(100.0),
+        "imdb" | "tmdb" | "metacriticuser" | "myanimelist" => Some(10.0),
+        "letterboxd" => Some(5.0),
+        "rogerebert" => Some(4.0),
+        _ => None,
     }
+}
+
+fn normalized_source_updated_at(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    let bytes = value.as_bytes();
+    if !(20..=35).contains(&bytes.len())
+        || !bytes.iter().all(u8::is_ascii)
+        || bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+        || bytes.last() != Some(&b'Z')
+        || !bytes[..19]
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7 | 10 | 13 | 16) || byte.is_ascii_digit())
+        || !bytes[19..bytes.len() - 1]
+            .iter()
+            .all(|byte| *byte == b'.' || byte.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn known_source_definitions() -> Vec<Value> {
@@ -1195,40 +1324,21 @@ fn source_definition(id: &str, label: &str, short_label: &str, scale: f64, forma
     })
 }
 
-fn unknown_source_definition(id: &str) -> Value {
-    let label = id
-        .split(['_', '-'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut characters = part.chars();
-            characters.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + characters.as_str()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    json!({
-        "id": safe_source_id(id),
-        "label": if label.is_empty() { "New MDBList source" } else { &label },
-        "shortLabel": safe_source_id(id).chars().take(6).collect::<String>().to_ascii_uppercase(),
-        "scaleMax": 100,
-        "format": "decimal",
-        "known": false,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn canonical_sources_cover_current_official_fields_and_aliases() {
-        assert_eq!(canonical_source("letterboxd"), "letterboxd");
-        assert_eq!(canonical_source("tomatoes"), "tomatoes");
-        assert_eq!(canonical_source("audience"), "popcorn");
-        assert_eq!(canonical_source("tomatoesaudience"), "popcorn");
-        assert_eq!(canonical_source("mal"), "myanimelist");
-        assert_eq!(canonical_source("score_average"), "mdblist_score_average");
+        assert_eq!(canonical_source("letterboxd"), Some("letterboxd"));
+        assert_eq!(canonical_source("tomatoes"), Some("tomatoes"));
+        assert_eq!(canonical_source("audience"), Some("popcorn"));
+        assert_eq!(canonical_source("tomatoesaudience"), Some("popcorn"));
+        assert_eq!(canonical_source("mal"), Some("myanimelist"));
+        assert_eq!(
+            canonical_source("score_average"),
+            Some("mdblist_score_average")
+        );
         let ids = known_source_definitions()
             .into_iter()
             .map(|definition| definition["id"].as_str().expect("id").to_string())
@@ -1247,7 +1357,7 @@ mod tests {
     }
 
     #[test]
-    fn normalization_uses_native_scales_and_preserves_unknown_sources() {
+    fn normalization_uses_native_scales_and_drops_unknown_source_text() {
         let ratings = normalize_media(&json!({
             "score": 84,
             "score_average": 81,
@@ -1268,7 +1378,8 @@ mod tests {
         assert_eq!(by_source["letterboxd"]["value"], 4.0);
         assert_eq!(by_source["letterboxd"]["scaleMax"], 5.0);
         assert_eq!(by_source["popcorn"]["value"], 91.0);
-        assert_eq!(by_source["future_meter"]["rawSource"], "future-meter!");
+        assert!(!by_source.contains_key("future_meter"));
+        assert_eq!(by_source["imdb"]["rawSource"], "imdb");
         assert!(by_source.contains_key("mdblist_score"));
         assert!(by_source.contains_key("mdblist_score_average"));
     }
@@ -1310,6 +1421,91 @@ mod tests {
         );
         assert_eq!(entries[1].1.ratings, json!([]));
         assert_eq!(entries[1].1.stale_at, 100 + NEGATIVE_FRESH_SECONDS);
+    }
+
+    #[test]
+    fn credential_shaped_upstream_plugin_cache_and_error_text_never_reach_desktop_data() {
+        const SERVER_MDBLIST_KEY: &str = "server-mdb-key-must-never-reach-desktop";
+        const SERVER_TMDB_KEY: &str = "0123456789abcdef0123456789abcdef";
+        let targets = [RatingTarget {
+            item_id: "matrix".to_string(),
+            kind: "Movie".to_string(),
+            media_type: "movie".to_string(),
+            provider: "tmdb".to_string(),
+            provider_id: "603".to_string(),
+        }];
+
+        // Plugin-key-only fallback: malicious server response fields and cache
+        // records are rebuilt rather than copied into persisted entries.
+        let cache_now = now_unix();
+        assert_eq!(effective_origin(false, false, true), Some(Origin::Plugin));
+        let plugin_entries = normalize_plugin_batch(
+            &targets,
+            json!({
+                "boundaryVersion": 1,
+                "items": [{
+                    "itemId": "matrix",
+                    "sourceUpdatedAt": SERVER_MDBLIST_KEY,
+                    "diagnostic": SERVER_TMDB_KEY,
+                    "ratings": [
+                        { "source": SERVER_MDBLIST_KEY, "value": 99, "trace": SERVER_TMDB_KEY },
+                        { "source": "imdb", "value": 8.7, "rawSource": SERVER_MDBLIST_KEY,
+                          "error": SERVER_TMDB_KEY }
+                    ]
+                }]
+            }),
+            cache_now,
+        );
+        let library = Library::open_in_memory().expect("rating cache");
+        library
+            .save_rating_cache(&plugin_entries)
+            .expect("persist plugin cache");
+        let persisted_plugin = library
+            .cached_ratings(&targets, Origin::Plugin.as_str())
+            .expect("read plugin cache");
+        let persisted_plugin_entry = json!({
+            "ratings": &persisted_plugin["matrix"].ratings,
+            "sourceUpdatedAt": &persisted_plugin["matrix"].source_updated_at,
+        })
+        .to_string();
+        assert!(persisted_plugin_entry.contains("\"imdb\""));
+        assert!(!persisted_plugin_entry.contains(SERVER_MDBLIST_KEY));
+        assert!(!persisted_plugin_entry.contains(SERVER_TMDB_KEY));
+        assert_eq!(plugin_entries[0].1.source_updated_at, None);
+
+        // A valid local Desktop credential wins precedence, but local upstream
+        // text follows the same policy rather than creating a second leak path.
+        assert_eq!(effective_origin(true, true, true), Some(Origin::Local));
+        let local_entries = normalize_batch(
+            &targets,
+            "tmdb",
+            json!([{ "ids": { "tmdb": 603 }, "updated": SERVER_TMDB_KEY,
+                "ratings": [{ "source": SERVER_MDBLIST_KEY, "value": 99 }] }]),
+            Origin::Local,
+            cache_now,
+        );
+        library
+            .save_rating_cache(&local_entries)
+            .expect("persist local cache");
+        let persisted_local = library
+            .cached_ratings(&targets, Origin::Local.as_str())
+            .expect("read local cache");
+        let persisted_local_entry = json!({
+            "ratings": &persisted_local["matrix"].ratings,
+            "sourceUpdatedAt": &persisted_local["matrix"].source_updated_at,
+        })
+        .to_string();
+        assert!(!persisted_local_entry.contains(SERVER_MDBLIST_KEY));
+        assert!(!persisted_local_entry.contains(SERVER_TMDB_KEY));
+        assert_eq!(local_entries[0].1.ratings, json!([]));
+        assert_eq!(local_entries[0].1.source_updated_at, None);
+
+        let diagnostic = plugin_rating_error(ApiError::Remote {
+            status: 502,
+            message: format!("upstream said {SERVER_MDBLIST_KEY} / {SERVER_TMDB_KEY}"),
+        });
+        assert!(!diagnostic.contains(SERVER_MDBLIST_KEY));
+        assert!(!diagnostic.contains(SERVER_TMDB_KEY));
     }
 
     #[test]

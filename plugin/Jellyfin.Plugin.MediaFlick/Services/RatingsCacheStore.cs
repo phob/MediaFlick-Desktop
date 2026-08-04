@@ -49,6 +49,10 @@ internal sealed class RatingsCacheStore
     {
         _path = path;
         _document = Load(path);
+        if (SanitizeLoadedDocument())
+        {
+            PersistLocked();
+        }
     }
 
     public IReadOnlyDictionary<string, CachedRatingEntry> Get(
@@ -61,7 +65,7 @@ internal sealed class RatingsCacheStore
             {
                 if (_document.Entries.TryGetValue(CacheKey(target), out var entry))
                 {
-                    result[target.ItemId] = Clone(entry);
+                    result[target.ItemId] = Sanitize(entry);
                 }
             }
 
@@ -74,7 +78,7 @@ internal sealed class RatingsCacheStore
         lock (_lock)
         {
             return _document.Entries.TryGetValue(CacheKey(target), out var entry)
-                ? Clone(entry)
+                ? Sanitize(entry)
                 : null;
         }
     }
@@ -85,7 +89,7 @@ internal sealed class RatingsCacheStore
         {
             foreach (var (target, entry) in entries)
             {
-                _document.Entries[CacheKey(target)] = Clone(entry);
+                _document.Entries[CacheKey(target)] = Sanitize(entry);
             }
 
             PersistLocked();
@@ -96,7 +100,9 @@ internal sealed class RatingsCacheStore
     {
         lock (_lock)
         {
-            return _document.Health.GetValueOrDefault(provider) ?? new ProviderHealthState();
+            return _document.Health.GetValueOrDefault(provider) is { } state
+                ? Sanitize(state)
+                : new ProviderHealthState();
         }
     }
 
@@ -104,7 +110,7 @@ internal sealed class RatingsCacheStore
     {
         lock (_lock)
         {
-            _document.Health[provider] = state;
+            _document.Health[provider] = Sanitize(state);
             PersistLocked();
         }
     }
@@ -132,8 +138,60 @@ internal sealed class RatingsCacheStore
     private static string CacheKey(RatingTargetRequest target)
         => string.Join('|', target.Provider, target.MediaType, target.ProviderId);
 
-    private static CachedRatingEntry Clone(CachedRatingEntry entry)
-        => entry with { Ratings = (JsonArray)entry.Ratings.DeepClone() };
+    private bool SanitizeLoadedDocument()
+    {
+        var changed = false;
+        foreach (var (key, entry) in _document.Entries.ToArray())
+        {
+            var sanitized = Sanitize(entry);
+            if (!JsonNode.DeepEquals(entry.Ratings, sanitized.Ratings)
+                || entry.SourceUpdatedAt != sanitized.SourceUpdatedAt)
+            {
+                _document.Entries[key] = sanitized;
+                changed = true;
+            }
+        }
+
+        foreach (var (provider, state) in _document.Health.ToArray())
+        {
+            var sanitized = Sanitize(state);
+            if (state != sanitized)
+            {
+                _document.Health[provider] = sanitized;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private static CachedRatingEntry Sanitize(CachedRatingEntry entry)
+        => entry with
+        {
+            Ratings = RatingsContract.NormalizeCachedRatings(entry.Ratings),
+            SourceUpdatedAt = RatingsContract.NormalizeSourceUpdatedAt(
+                entry.SourceUpdatedAt is null ? null : JsonValue.Create(entry.SourceUpdatedAt))
+        };
+
+    private static ProviderHealthState Sanitize(ProviderHealthState state)
+    {
+        var validation = RatingsContract.NormalizeValidation(state.Validation);
+        var valid = state.Valid && validation is not ("invalid" or "unchecked");
+        return new ProviderHealthState
+        {
+            Validation = validation,
+            Valid = valid,
+            // Status responses derive fixed wording from validation/provider;
+            // never retain a provider or transport string in the cache.
+            Detail = null,
+            QuotaLimit = RatingsContract.NormalizeQuota(state.Quota).Limit,
+            QuotaRemaining = RatingsContract.NormalizeQuota(state.Quota).Remaining,
+            QuotaResetAt = RatingsContract.NormalizeQuota(state.Quota).ResetAt,
+            RetryAt = RatingsContract.NormalizeTimestamp(state.RetryAt),
+            FailureCount = Math.Clamp(state.FailureCount, 0, 10),
+            LastCheckedAt = RatingsContract.NormalizeTimestamp(state.LastCheckedAt)
+        };
+    }
 
     private static CacheDocument Load(string path)
     {

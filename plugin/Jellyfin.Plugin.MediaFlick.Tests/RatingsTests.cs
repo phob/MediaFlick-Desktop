@@ -146,7 +146,7 @@ public sealed class RatingsTests
     }
 
     [Fact]
-    public void EveryCurrentSourceIsNormalizedAndFutureSourcesSurvive()
+    public void EveryCurrentSourceIsNormalizedFromTheFixedPublicCatalog()
     {
         var normalized = RatingsContract.NormalizeMedia(JsonNode.Parse(
             """
@@ -175,8 +175,13 @@ public sealed class RatingsTests
         Assert.Equal(7.6, bySource["tmdb"]["value"]!.GetValue<double>(), 3);
         Assert.Equal(97, bySource["tomatoes"]["value"]!.GetValue<double>());
         Assert.Equal(91, bySource["popcorn"]["value"]!.GetValue<double>());
-        Assert.Equal("future-meter!", bySource["future_meter"]["rawSource"]!.GetValue<string>());
+        Assert.DoesNotContain("future_meter", bySource.Keys);
         Assert.DoesNotContain("missing", bySource.Keys);
+        Assert.All(bySource.Values, value =>
+        {
+            Assert.Equal(value["sourceId"]!.GetValue<string>(), value["source"]!.GetValue<string>());
+            Assert.Equal(value["sourceId"]!.GetValue<string>(), value["rawSource"]!.GetValue<string>());
+        });
         Assert.Contains("mdblist_score", bySource.Keys);
         Assert.Contains("mdblist_score_average", bySource.Keys);
 
@@ -184,6 +189,86 @@ public sealed class RatingsTests
         Assert.Contains("letterboxd", catalog);
         Assert.Contains("tomatoes", catalog);
         Assert.Contains("popcorn", catalog);
+    }
+
+    [Fact]
+    public async Task UpstreamAndCachePayloadsCannotReflectServerSecrets()
+    {
+        const string mdbListKey = "mdblist-server-key-never-leaves-the-plugin";
+        const string tmdbKey = "0123456789abcdef0123456789abcdef";
+        using var fixture = new RatingsFixture();
+        fixture.Secrets.Set("mdblist", mdbListKey);
+        fixture.Secrets.Set("tmdb", tmdbKey);
+        fixture.Cache.SetHealth("mdblist", ValidState() with { Detail = mdbListKey });
+        fixture.Cache.SetHealth("tmdb", ValidState() with { Detail = tmdbKey });
+
+        var cachedTarget = Target("cached-card", "tmdb", "604");
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        fixture.Cache.Upsert([(cachedTarget, new CachedRatingEntry(
+            "tmdb",
+            "604",
+            "movie",
+            new JsonArray(new JsonObject
+            {
+                ["sourceId"] = mdbListKey,
+                ["rawSource"] = tmdbKey,
+                ["value"] = 99,
+                ["diagnostic"] = mdbListKey
+            }),
+            tmdbKey,
+            now,
+            now + 60,
+            now + 600))]);
+        fixture.Transport.BatchResponse = new MdbListResponse(
+            HttpStatusCode.OK,
+            JsonNode.Parse(
+                $$"""
+                [{
+                  "ids":{"tmdb":603},
+                  "updated":"{{mdbListKey}}",
+                  "error":"{{tmdbKey}}",
+                  "ratings":[
+                    {"source":"{{mdbListKey}}","value":99,"trace":"{{tmdbKey}}"},
+                    {"source":"imdb","value":8.7,"score":87,"votes":100,"rawSource":"{{mdbListKey}}"}
+                  ]
+                }]
+                """),
+            new RatingQuotaResponse(1000, 999, null),
+            null);
+
+        var response = await fixture.Service.BatchAsync(
+            new RatingBatchRequest(1, [Target("upstream-card", "tmdb", "603"), cachedTarget]),
+            CancellationToken.None);
+        Assert.Equal(mdbListKey, fixture.Transport.LastBatchApiKey);
+        fixture.Transport.BatchResponse = new MdbListResponse(
+            HttpStatusCode.BadGateway,
+            JsonNode.Parse($$"""{"error":"{{mdbListKey}}","trace":"{{tmdbKey}}"}"""),
+            new RatingQuotaResponse(null, null, null),
+            null);
+        var errorResponse = await fixture.Service.BatchAsync(
+            new RatingBatchRequest(1, [Target("error-card", "tmdb", "605")]),
+            CancellationToken.None);
+        var desktopVisible = JsonSerializer.Serialize(
+            new
+            {
+                capability = fixture.Service.Capability(),
+                admin = fixture.Service.AdminStatus(),
+                batch = new[] { response, errorResponse },
+                diagnostic = errorResponse.Diagnostic
+            },
+            CompanionJson.CamelCase);
+        var persistedCache = File.ReadAllText(fixture.CachePath);
+
+        Assert.DoesNotContain(mdbListKey, desktopVisible);
+        Assert.DoesNotContain(tmdbKey, desktopVisible);
+        Assert.DoesNotContain(mdbListKey, persistedCache);
+        Assert.DoesNotContain(tmdbKey, persistedCache);
+        var upstream = response.Items.Single(item => item.ItemId == "upstream-card");
+        var rating = Assert.Single(upstream.Ratings.OfType<JsonObject>());
+        Assert.Equal("imdb", rating["sourceId"]!.GetValue<string>());
+        Assert.Equal("imdb", rating["rawSource"]!.GetValue<string>());
+        var cached = response.Items.Single(item => item.ItemId == "cached-card");
+        Assert.Empty(cached.Ratings);
     }
 
     [Fact]
@@ -432,6 +517,8 @@ public sealed class RatingsTests
 
         public int MaxBatchSizeObserved => _maxBatchSizeObserved;
 
+        public string? LastBatchApiKey { get; private set; }
+
         public TimeSpan BatchDelay { get; set; }
 
         public TaskCompletionSource BatchStarted { get; } =
@@ -460,6 +547,7 @@ public sealed class RatingsTests
             IReadOnlyList<string> ids,
             CancellationToken cancellationToken)
         {
+            LastBatchApiKey = apiKey;
             Interlocked.Increment(ref _batchCalls);
             InterlockedExtensions.Max(ref _maxBatchSizeObserved, ids.Count);
             BatchStarted.TrySetResult();

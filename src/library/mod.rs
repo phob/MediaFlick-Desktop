@@ -11,7 +11,7 @@ pub mod headless;
 pub mod model;
 pub mod sync;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -748,25 +748,6 @@ impl Library {
                 params![now_unix()],
             )?;
             Ok(())
-        })
-    }
-
-    pub fn observed_rating_sources(&self) -> rusqlite::Result<Vec<String>> {
-        self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT json_extract(value, '$.sourceId')
-                 FROM rating_cache, json_each(rating_cache.ratings)
-                 WHERE json_type(value, '$.sourceId') = 'text'
-                 ORDER BY 1",
-            )?;
-            let sources = statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .filter_map(Result::ok)
-                .filter(|source| !source.trim().is_empty())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            Ok(sources)
         })
     }
 
@@ -2566,10 +2547,6 @@ mod tests {
                 .cached_ratings(std::slice::from_ref(movie), "local_mdblist")
                 .expect("cached")["m1"],
             cached
-        );
-        assert_eq!(
-            library.observed_rating_sources().expect("sources"),
-            ["letterboxd"]
         );
     }
 
