@@ -19,7 +19,9 @@ use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::ExternalProfile;
-use crate::library::{ItemQuery, ItemSort, sync};
+use crate::library::{
+    ItemPlaybackPreference, ItemQuery, ItemSort, resolve_playback_preference, sync,
+};
 use crate::maintenance::player_setup;
 use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
@@ -275,6 +277,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
         ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
+        ["item", id, "playback-preference"] if request.is("PATCH") => {
+            set_item_playback_preference(services, &percent_decode(id), request)
+        }
         ["item", id, "trailer"] if request.is("GET") => trailer_info(services, &percent_decode(id)),
         ["item", id, "nextup"] if request.is("GET") => next_up(services, &percent_decode(id)),
         ["item", id, "external"] if request.is("POST") => {
@@ -1254,21 +1259,116 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
         services.library.kind(item_id).as_deref(),
         Some("Series" | "Season")
     ) {
-        return ApiResponse::ok(json!({ "sources": [] }));
+        return ApiResponse::ok(json!({
+            "sources": [],
+            "playbackPreference": Value::Null,
+        }));
     }
     let (client, user_id) = match services.session.client_and_user() {
         Ok(pair) => pair,
         Err(error) => return ApiResponse::from_api_error(&error),
     };
     match items::fetch_media_sources(&client, &user_id, item_id) {
-        Ok(sources) => ApiResponse::ok(json!({
-            "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
-        })),
+        Ok(sources) => {
+            let preference = match services.library.playback_preference(item_id) {
+                Ok(preference) => preference,
+                Err(error) => return storage_failure(&error),
+            };
+            ApiResponse::ok(json!({
+                "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
+                "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
+            }))
+        }
         Err(error) => {
             services.session.note_error(&error);
             ApiResponse::from_api_error(&error)
         }
     }
+}
+
+/// Saves one complete source/audio/subtitle selection for an exact item.
+///
+/// The browser only submits indices. Metadata snapshots are rebuilt from the
+/// current Jellyfin response here, so persisted language/accessibility intent
+/// cannot drift from the track the user actually selected.
+fn set_item_playback_preference(
+    services: &Arc<Services>,
+    item_id: &str,
+    request: &ApiRequest,
+) -> ApiResponse {
+    if matches!(
+        services.library.kind(item_id).as_deref(),
+        None | Some("Series" | "Season")
+    ) {
+        return ApiResponse::error(404, "this item has no selectable media tracks");
+    }
+    let body = request.json();
+    let Some(source_index) = body["mediaSourceIndex"]
+        .as_u64()
+        .and_then(|index| usize::try_from(index).ok())
+    else {
+        return ApiResponse::error(400, "mediaSourceIndex is required");
+    };
+    let requested_source_id = body["mediaSourceId"]
+        .as_str()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    let sources = match items::fetch_media_sources(&client, &user_id, item_id) {
+        Ok(sources) => sources,
+        Err(error) => {
+            services.session.note_error(&error);
+            return ApiResponse::from_api_error(&error);
+        }
+    };
+    let Some(source) = sources
+        .get(source_index)
+        .filter(|source| match requested_source_id {
+            Some(id) => source.id.as_deref() == Some(id),
+            None => source.id.as_deref().is_none_or(str::is_empty),
+        })
+    else {
+        return ApiResponse::error(409, "the available media sources changed; try again");
+    };
+
+    let requested_audio_index = body["audioStreamIndex"].as_i64();
+    let audio = match requested_audio_index {
+        Some(index) if index >= 0 => source
+            .streams_of_type("Audio")
+            .find(|stream| stream.index == index),
+        Some(_) => return ApiResponse::error(400, "audioStreamIndex must not be negative"),
+        None if source.streams_of_type("Audio").next().is_none() => None,
+        None => return ApiResponse::error(400, "audioStreamIndex is required for this source"),
+    };
+    if requested_audio_index.is_some() && audio.is_none() {
+        return ApiResponse::error(409, "the selected audio track is no longer available");
+    }
+
+    let requested_subtitle_index = body["subtitleStreamIndex"].as_i64();
+    let subtitle = match requested_subtitle_index {
+        Some(index) if index >= 0 => source
+            .streams_of_type("Subtitle")
+            .find(|stream| stream.index == index),
+        Some(_) => return ApiResponse::error(400, "subtitleStreamIndex must not be negative"),
+        None => None,
+    };
+    if requested_subtitle_index.is_some() && subtitle.is_none() {
+        return ApiResponse::error(409, "the selected subtitle track is no longer available");
+    }
+
+    let preference = ItemPlaybackPreference::capture(source, source_index, audio, subtitle);
+    if let Err(error) = services
+        .library
+        .save_playback_preference(item_id, &preference)
+    {
+        return storage_failure(&error);
+    }
+    ApiResponse::ok(json!({
+        "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
+    }))
 }
 
 /// The first local trailer attached to an item, if the server has one.
@@ -1431,6 +1531,8 @@ fn media_source_json(source: &MediaSourceInfo) -> Value {
         "fileName": source.path.as_deref().and_then(file_name_of),
         "size": source.size,
         "bitrate": source.bitrate,
+        "defaultAudioStreamIndex": source.default_audio_stream_index,
+        "defaultSubtitleStreamIndex": source.default_subtitle_stream_index,
         "video": streams("video"),
         "audio": streams("audio"),
         "subtitles": streams("subtitle"),
@@ -1452,6 +1554,7 @@ fn media_stream_json(stream: &MediaStream) -> Value {
         "bitDepth": stream.bit_depth,
         "isDefault": stream.is_default,
         "isForced": stream.is_forced,
+        "isHearingImpaired": stream.is_hearing_impaired,
         "isExternal": stream.is_external,
     })
 }
@@ -1748,6 +1851,9 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
         resume: body["resume"].as_bool().unwrap_or(false),
         start_ticks: body["startTicks"].as_i64(),
         media_source_id: body["mediaSourceId"].as_str().map(str::to_string),
+        media_source_index: body["mediaSourceIndex"]
+            .as_u64()
+            .and_then(|index| usize::try_from(index).ok()),
         audio_stream_index: body["audioStreamIndex"].as_i64(),
         subtitle_stream_index: body["subtitleStreamIndex"].as_i64(),
         quality: body["quality"].as_str().and_then(StreamingQuality::from_id),
@@ -2299,7 +2405,8 @@ mod tests {
                 "MediaStreams":[
                     {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":2160},
                     {"Index":1,"Type":"Audio","Codec":"dts","Channels":6,"IsDefault":true},
-                    {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"eng","IsExternal":true}]}"#,
+                    {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"eng",
+                     "IsHearingImpaired":true,"IsExternal":true}]}"#,
         )
         .expect("source");
         let value = media_source_json(&source);
@@ -2308,6 +2415,7 @@ mod tests {
         assert_eq!(value["video"][0]["height"], 2160);
         assert_eq!(value["audio"][0]["channels"], 6);
         assert_eq!(value["subtitles"][0]["isExternal"], true);
+        assert_eq!(value["subtitles"][0]["isHearingImpaired"], true);
         assert_eq!(value["video"].as_array().map(Vec::len), Some(1));
     }
 }

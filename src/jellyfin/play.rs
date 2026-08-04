@@ -5,7 +5,8 @@
 //! source, and build the direct-stream or transcoding URL ourselves.
 
 use crate::app::urls::{build_query, encode_path_segment, join_url};
-use crate::library::Library;
+use crate::library::model::ResolvedPlaybackPreference;
+use crate::library::{Library, resolve_playback_preference};
 use crate::playback::PlaybackRequest;
 use crate::preferences::StreamingQuality;
 
@@ -22,6 +23,10 @@ pub struct PlayOptions {
     pub resume: bool,
     pub start_ticks: Option<i64>,
     pub media_source_id: Option<String>,
+    /// Used only when a Jellyfin source has no stable id. Persisted choices
+    /// retain the source's position and identity so playback can still select
+    /// the same source from the negotiated response.
+    pub media_source_index: Option<usize>,
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
     pub quality: Option<StreamingQuality>,
@@ -58,11 +63,48 @@ pub fn prepare(
         .unwrap_or(0)
         .max(0);
 
+    let mut effective_options = options.clone();
+    let has_explicit_track_options = options.media_source_id.is_some()
+        || options.media_source_index.is_some()
+        || options.audio_stream_index.is_some()
+        || options.subtitle_stream_index.is_some();
+    if !has_explicit_track_options {
+        match library.playback_preference(&options.item_id) {
+            Ok(Some(preference)) => {
+                match items::fetch_media_sources(&client, &user_id, &options.item_id) {
+                    Ok(sources) => {
+                        if let Some(resolved) =
+                            resolve_playback_preference(Some(&preference), &sources)
+                        {
+                            apply_saved_preference(&mut effective_options, resolved);
+                        }
+                    }
+                    Err(error) => {
+                        session.note_error(&error);
+                        tracing::warn!(
+                            target: "playback",
+                            item_id = %options.item_id,
+                            "could not validate saved track preference; using server defaults: {error}"
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "playback",
+                    item_id = %options.item_id,
+                    "could not read saved track preference; using server defaults: {error}"
+                );
+            }
+        }
+    }
+
     let info_request = PlaybackInfoRequest {
-        media_source_id: options.media_source_id.clone(),
+        media_source_id: effective_options.media_source_id.clone(),
         start_time_ticks: Some(start_ticks),
-        audio_stream_index: options.audio_stream_index,
-        subtitle_stream_index: options.subtitle_stream_index,
+        audio_stream_index: effective_options.audio_stream_index,
+        subtitle_stream_index: effective_options.subtitle_stream_index,
     };
     let info = items::playback_info(&client, &user_id, &options.item_id, quality, &info_request)
         .inspect_err(|error| session.note_error(error))?;
@@ -71,10 +113,20 @@ pub fn prepare(
         &client,
         &info,
         quality,
-        options,
+        &effective_options,
         start_ticks,
         cached.as_ref(),
     )
+}
+
+fn apply_saved_preference(options: &mut PlayOptions, resolved: ResolvedPlaybackPreference) {
+    options.media_source_id = resolved.media_source_id;
+    options.media_source_index = Some(resolved.media_source_index);
+    options.audio_stream_index = resolved.audio_stream_index;
+    // Existing preference + no resolved subtitle is an explicit/current
+    // subtitles-off result. Carry the sentinel through both Jellyfin and
+    // player mapping.
+    options.subtitle_stream_index = Some(resolved.subtitle_stream_index.unwrap_or(-1));
 }
 
 fn build(
@@ -85,7 +137,12 @@ fn build(
     start_ticks: i64,
     cached: Option<&serde_json::Value>,
 ) -> Result<PreparedPlayback, ApiError> {
-    let source = select_source(info, options.media_source_id.as_deref()).ok_or_else(|| {
+    let source = select_source(
+        info,
+        options.media_source_id.as_deref(),
+        options.media_source_index,
+    )
+    .ok_or_else(|| {
         ApiError::Decode(format!(
             "Jellyfin returned no playable media source for item {}",
             options.item_id
@@ -118,10 +175,18 @@ fn build(
     request.title = cached.map(display_title);
     request.play_method = Some(play_method.clone());
     request.audio_stream_index = audio.map(|stream| stream.index);
-    request.subtitle_stream_index = subtitle.map(|stream| stream.index);
+    let subtitles_off = options.subtitle_stream_index.is_some_and(|index| index < 0);
+    request.subtitle_stream_index = if subtitles_off {
+        Some(-1)
+    } else {
+        subtitle.map(|stream| stream.index)
+    };
     request.audio_mpv_id = audio.and_then(|stream| embedded_ordinal(source, "Audio", stream.index));
-    request.subtitle_mpv_id =
-        subtitle.and_then(|stream| embedded_ordinal(source, "Subtitle", stream.index));
+    request.subtitle_mpv_id = if subtitles_off {
+        Some(-1)
+    } else {
+        subtitle.and_then(|stream| embedded_ordinal(source, "Subtitle", stream.index))
+    };
     request.subtitle_url = subtitle
         .filter(|stream| stream.is_external)
         .and_then(|stream| stream.delivery_url.as_deref())
@@ -139,12 +204,22 @@ fn build(
 fn select_source<'a>(
     info: &'a PlaybackInfoResponse,
     preferred_id: Option<&str>,
+    preferred_index: Option<usize>,
 ) -> Option<&'a MediaSourceInfo> {
     if let Some(preferred_id) = preferred_id
         && let Some(source) = info
             .media_sources
             .iter()
             .find(|source| source.id.as_deref() == Some(preferred_id))
+    {
+        return Some(source);
+    }
+    // A positional fallback is only safe for a source that had no stable id.
+    // If a saved id disappeared between validation and negotiation, the same
+    // position can now be a different file and must use the ordinary default.
+    if preferred_id.is_none()
+        && let Some(preferred_index) = preferred_index
+        && let Some(source) = info.media_sources.get(preferred_index)
     {
         return Some(source);
     }
@@ -293,11 +368,12 @@ fn display_title(item: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayOptions, absolute_url, build, choose_stream, display_title, embedded_ordinal,
-        select_source,
+        PlayOptions, absolute_url, apply_saved_preference, build, choose_stream, display_title,
+        embedded_ordinal, select_source,
     };
     use crate::jellyfin::api::JellyfinClient;
     use crate::jellyfin::api::model::{MediaSourceInfo, PlaybackInfoResponse};
+    use crate::library::model::ResolvedPlaybackPreference;
     use crate::preferences::StreamingQuality;
     use serde_json::json;
 
@@ -432,11 +508,11 @@ mod tests {
                                 {"Id":"b","SupportsDirectStream":true}]}"#,
         );
         assert_eq!(
-            select_source(&response, Some("b")).and_then(|source| source.id.clone()),
+            select_source(&response, Some("b"), None).and_then(|source| source.id.clone()),
             Some("b".to_string())
         );
         assert_eq!(
-            select_source(&response, Some("missing")).and_then(|source| source.id.clone()),
+            select_source(&response, Some("missing"), None).and_then(|source| source.id.clone()),
             Some("a".to_string())
         );
     }
@@ -446,8 +522,42 @@ mod tests {
         let response =
             info(r#"{"MediaSources":[{"Id":"a"},{"Id":"b","TranscodingUrl":"/x.m3u8"}]}"#);
         assert_eq!(
-            select_source(&response, None).and_then(|source| source.id.clone()),
+            select_source(&response, None, None).and_then(|source| source.id.clone()),
             Some("b".to_string())
+        );
+    }
+
+    #[test]
+    fn saved_preferences_map_to_play_options_including_subtitles_off() {
+        let mut selected = options();
+        apply_saved_preference(
+            &mut selected,
+            ResolvedPlaybackPreference {
+                media_source_id: Some("source-b".to_string()),
+                media_source_index: 1,
+                audio_stream_index: Some(7),
+                subtitle_stream_index: None,
+            },
+        );
+        assert_eq!(selected.media_source_id.as_deref(), Some("source-b"));
+        assert_eq!(selected.media_source_index, Some(1));
+        assert_eq!(selected.audio_stream_index, Some(7));
+        assert_eq!(selected.subtitle_stream_index, Some(-1));
+    }
+
+    #[test]
+    fn source_index_selects_a_source_without_a_stable_id() {
+        let response = info(
+            r#"{"MediaSources":[{"Name":"A","SupportsDirectStream":true},
+                                {"Name":"B","SupportsDirectStream":true}]}"#,
+        );
+        assert_eq!(
+            select_source(&response, None, Some(1)).map(MediaSourceInfo::display_name),
+            Some("B")
+        );
+        assert_eq!(
+            select_source(&response, Some("gone"), Some(1)).map(MediaSourceInfo::display_name),
+            Some("A")
         );
     }
 
@@ -489,6 +599,30 @@ mod tests {
             choose_stream(&source, "Subtitle", Some(3)).map(|stream| stream.index),
             Some(3)
         );
+    }
+
+    #[test]
+    fn explicit_subtitles_off_is_mapped_to_player_off_sentinels() {
+        let response = info(
+            r#"{"MediaSources":[{"Id":"src","Container":"mkv","SupportsDirectStream":true,
+                "DefaultSubtitleStreamIndex":3,
+                "MediaStreams":[{"Index":3,"Type":"Subtitle","Language":"eng"}]}]}"#,
+        );
+        let prepared = build(
+            &client(),
+            &response,
+            StreamingQuality::Original,
+            &PlayOptions {
+                subtitle_stream_index: Some(-1),
+                ..options()
+            },
+            0,
+            None,
+        )
+        .expect("prepared");
+        assert_eq!(prepared.request.subtitle_stream_index, Some(-1));
+        assert_eq!(prepared.request.subtitle_mpv_id, Some(-1));
+        assert_eq!(prepared.request.subtitle_url, None);
     }
 
     #[test]

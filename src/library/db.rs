@@ -12,7 +12,7 @@ use super::model::{ItemRecord, metadata_convergence_initial_delay, persisted_met
 use super::now_unix;
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -185,6 +185,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         migrate_v8(connection)?;
         connection.pragma_update(None, "user_version", 8)?;
         version = 8;
+    }
+    if version < 9 {
+        connection.execute_batch(SCHEMA_V9)?;
+        connection.pragma_update(None, "user_version", 9)?;
+        version = 9;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -564,6 +569,28 @@ fn migrate_v8(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Item-scoped source and track choices.
+///
+/// JSON snapshots retain both Jellyfin's current stream index and the language,
+/// title, codec, channel, forced, external, and accessibility descriptors used
+/// to identify what the user meant. A nullable subtitle snapshot in an existing
+/// row is the explicit subtitles-off choice. The account identity follows the
+/// same Jellyfin server/user scoping as other user-associated data, while the
+/// item foreign key makes cache eviction remove every account's orphaned row.
+const SCHEMA_V9: &str = r#"
+CREATE TABLE IF NOT EXISTS item_playback_preferences (
+    jellyfin_id         TEXT NOT NULL
+                         REFERENCES items(jellyfin_id) ON DELETE CASCADE,
+    jellyfin_server_key TEXT NOT NULL,
+    jellyfin_user_id    TEXT NOT NULL,
+    media_source        TEXT NOT NULL CHECK (json_valid(media_source)),
+    audio_track         TEXT CHECK (audio_track IS NULL OR json_valid(audio_track)),
+    subtitle_track      TEXT CHECK (subtitle_track IS NULL OR json_valid(subtitle_track)),
+    updated_at          INTEGER NOT NULL,
+    PRIMARY KEY (jellyfin_id, jellyfin_server_key, jellyfin_user_id)
+);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -587,6 +614,17 @@ mod tests {
             })
             .expect("seerr_config");
         assert_eq!(table, 1);
+        let preference_table: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'item_playback_preferences'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("item playback preference table");
+        assert_eq!(preference_table, 1);
         let profiles: i64 = database
             .with_connection(|connection| {
                 connection.query_row(
@@ -979,6 +1017,48 @@ mod tests {
             )
             .expect("row survived");
         assert_eq!(url, "https://seerr.test");
+    }
+
+    #[test]
+    fn v9_migration_adds_preferences_without_changing_existing_items() {
+        let connection = Connection::open_in_memory().expect("open");
+        migrate(&connection).expect("initial schema");
+        connection
+            .execute(
+                "INSERT INTO items (jellyfin_id, kind, name, synced_at)
+                 VALUES ('existing', 'Movie', 'Existing film', 0)",
+                [],
+            )
+            .expect("seed existing item");
+        // Recreate the exact v8-to-v9 boundary without replaying unrelated,
+        // much older migrations in this focused preservation test.
+        connection
+            .execute_batch("DROP TABLE item_playback_preferences;")
+            .expect("remove v9 table");
+        connection
+            .pragma_update(None, "user_version", 8)
+            .expect("stamp v8");
+
+        migrate(&connection).expect("migrate to v9");
+
+        let name: String = connection
+            .query_row(
+                "SELECT name FROM items WHERE jellyfin_id = 'existing'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("existing item survived");
+        assert_eq!(name, "Existing film");
+        let preference_tables: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'item_playback_preferences'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preference table");
+        assert_eq!(preference_tables, 1);
+        assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
     }
 
     #[test]

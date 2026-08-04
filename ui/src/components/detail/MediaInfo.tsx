@@ -2,16 +2,26 @@ import { AudioLines, Captions, FileVideo, Film } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { MediaSource, MediaStream } from "@/lib/api"
+import type { MediaSource, MediaStream, PlaybackTrackPreference } from "@/lib/api"
 import {
   describeStream,
+  describeTrackChoice,
   formatBitrate,
   formatCodec,
   formatFileSize,
   formatResolution,
   formatVideoRange,
 } from "@/lib/format"
+import { useSetPlaybackPreference } from "@/lib/queries"
 
 /**
  * A full-subtitle release carries thirty tracks. Listing them all buries the
@@ -69,7 +79,7 @@ function StreamGroup({
   )
 }
 
-function SourceCard({ source }: { source: MediaSource }) {
+function SourceCard({ source, selected }: { source: MediaSource; selected: boolean }) {
   const video = source.video[0]
   const headline = [
     video ? formatResolution(video) : null,
@@ -84,7 +94,11 @@ function SourceCard({ source }: { source: MediaSource }) {
   const label = source.fileName ?? source.name
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-white/5 bg-card/55 p-4 shadow-lg shadow-black/10">
+    <div
+      className={`flex flex-col gap-4 rounded-xl border bg-card/55 p-4 shadow-lg shadow-black/10 ${
+        selected ? "border-primary/35" : "border-white/5"
+      }`}
+    >
       {headline.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {headline.map((part) => (
@@ -124,19 +138,171 @@ function SourceCard({ source }: { source: MediaSource }) {
   )
 }
 
+const SUBTITLES_OFF = "__off__"
+
+function mediaSourceLabel(source: MediaSource, index: number) {
+  return source.fileName?.trim() || source.name.trim() || `Source ${index + 1}`
+}
+
+function defaultAudioIndex(source: MediaSource) {
+  return (
+    source.audio.find((stream) => stream.index === source.defaultAudioStreamIndex)?.index ??
+    source.audio.find((stream) => stream.isDefault)?.index ??
+    source.audio[0]?.index ??
+    null
+  )
+}
+
+function defaultSubtitleIndex(source: MediaSource) {
+  return (
+    source.subtitles.find((stream) => stream.index === source.defaultSubtitleStreamIndex)?.index ??
+    null
+  )
+}
+
+function PlaybackTrackControls({
+  itemId,
+  sources,
+  preference,
+}: {
+  itemId: string
+  sources: MediaSource[]
+  preference: PlaybackTrackPreference | null
+}) {
+  const save = useSetPlaybackPreference(itemId)
+  const sourceIndex = Math.min(preference?.mediaSourceIndex ?? 0, sources.length - 1)
+  const source = sources[sourceIndex]
+  if (!source) return null
+
+  const hasControls = sources.length > 1 || source.audio.length > 1 || source.subtitles.length > 0
+  if (!hasControls) return null
+
+  const write = (
+    selectedSourceIndex: number,
+    audioStreamIndex: number | null,
+    subtitleStreamIndex: number | null,
+  ) => {
+    const selectedSource = sources[selectedSourceIndex]
+    if (!selectedSource) return
+    save.mutate({
+      mediaSourceId: selectedSource.id,
+      mediaSourceIndex: selectedSourceIndex,
+      audioStreamIndex,
+      subtitleStreamIndex,
+    })
+  }
+
+  return (
+    <div className="grid gap-3 rounded-xl border border-primary/15 bg-card/70 p-4 sm:grid-cols-3">
+      {sources.length > 1 && (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="media-source-select">Media source</Label>
+          <Select
+            value={String(sourceIndex)}
+            disabled={save.isPending}
+            onValueChange={(value) => {
+              const nextIndex = Number(value)
+              const next = sources[nextIndex]
+              if (!next) return
+              write(nextIndex, defaultAudioIndex(next), defaultSubtitleIndex(next))
+            }}
+          >
+            <SelectTrigger id="media-source-select" className="w-full" aria-label="Media source">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {sources.map((candidate, index) => (
+                <SelectItem key={candidate.id ?? index} value={String(index)}>
+                  {mediaSourceLabel(candidate, index)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {source.audio.length > 1 && (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="audio-track-select">Audio</Label>
+          <Select
+            value={String(preference?.audioStreamIndex ?? defaultAudioIndex(source))}
+            disabled={save.isPending}
+            onValueChange={(value) =>
+              write(sourceIndex, Number(value), preference?.subtitleStreamIndex ?? null)
+            }
+          >
+            <SelectTrigger id="audio-track-select" className="w-full" aria-label="Audio track">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {source.audio.map((track) => (
+                <SelectItem key={track.index} value={String(track.index)}>
+                  {describeTrackChoice(track, "audio")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {source.subtitles.length > 0 && (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="subtitle-track-select">Subtitles</Label>
+          <Select
+            value={
+              preference?.subtitleStreamIndex == null
+                ? SUBTITLES_OFF
+                : String(preference.subtitleStreamIndex)
+            }
+            disabled={save.isPending}
+            onValueChange={(value) =>
+              write(
+                sourceIndex,
+                preference?.audioStreamIndex ?? defaultAudioIndex(source),
+                value === SUBTITLES_OFF ? null : Number(value),
+              )
+            }
+          >
+            <SelectTrigger
+              id="subtitle-track-select"
+              className="w-full"
+              aria-label="Subtitle track"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SUBTITLES_OFF}>Subtitles off</SelectItem>
+              {source.subtitles.map((track) => (
+                <SelectItem key={track.index} value={String(track.index)}>
+                  {describeTrackChoice(track, "subtitle")}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * What the file actually is: container, size, and every track in it.
  *
  * This is the one part of the page that always costs a request to the server —
  * codecs are not in the local cache — so it renders a skeleton rather than
  * holding the rest of the page back, and simply disappears when the server
- * cannot answer. Nothing here is needed to play the item.
+ * cannot answer. Playback can still use server defaults without this panel;
+ * when it does answer, the same current metadata validates saved selections.
  */
 export function MediaInfo({
+  itemId,
   sources,
+  preference,
   isPending,
 }: {
+  itemId: string
   sources: MediaSource[] | undefined
+  preference: PlaybackTrackPreference | null | undefined
   isPending: boolean
 }) {
   if (isPending) {
@@ -153,8 +319,17 @@ export function MediaInfo({
     <section className="flex flex-col gap-3">
       <h2 className="section-title">Media</h2>
       <div className="flex flex-col gap-3">
+        <PlaybackTrackControls
+          itemId={itemId}
+          sources={sources}
+          preference={preference ?? null}
+        />
         {sources.map((source, index) => (
-          <SourceCard key={source.id ?? index} source={source} />
+          <SourceCard
+            key={source.id ?? index}
+            source={source}
+            selected={sources.length > 1 && index === (preference?.mediaSourceIndex ?? 0)}
+          />
         ))}
       </div>
     </section>
