@@ -82,6 +82,10 @@ pub struct BaseItemDto {
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
     pub user_data: Option<UserItemDataDto>,
+    /// Lightweight stream descriptors returned by the `MediaStreams` item
+    /// field. Unlike `media_sources`, these can be cached with library rows
+    /// without retaining paths, source negotiation, or subtitle delivery data.
+    pub media_streams: Vec<MediaStream>,
     pub media_sources: Vec<MediaSourceInfo>,
     pub remote_trailers: Vec<MediaUrl>,
     pub is_folder: Option<bool>,
@@ -212,6 +216,7 @@ pub struct MediaStream {
     #[serde(rename = "Type")]
     pub stream_type: Option<String>,
     pub codec: Option<String>,
+    pub profile: Option<String>,
     pub language: Option<String>,
     pub display_title: Option<String>,
     pub title: Option<String>,
@@ -228,6 +233,9 @@ pub struct MediaStream {
     pub height: Option<i64>,
     pub width: Option<i64>,
     pub channels: Option<i64>,
+    /// Jellyfin's normalized spatial-audio value (for example
+    /// `DolbyAtmos`). Older servers may only mention it in Profile/DisplayTitle.
+    pub audio_spatial_format: Option<String>,
     /// "SDR" or "HDR". `video_range_type` narrows the latter to HDR10, HLG, or
     /// one of the Dolby Vision profiles, which is what decides whether a file
     /// tone-maps on a given display.
@@ -271,6 +279,32 @@ mod tests {
         .unwrap();
         assert_eq!(movie.primary_image_tag(), Some("own-tag"));
         assert_eq!(movie.image_tag("Thumb"), Some("wide-tag"));
+    }
+
+    #[test]
+    fn item_media_streams_keep_hdr_and_spatial_audio_descriptors() {
+        let item: BaseItemDto = serde_json::from_str(
+            r#"{"Id":"movie","MediaStreams":[
+                {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":2160,
+                 "VideoRange":"HDR","VideoRangeType":"DOVIWithHDR10","BitDepth":10},
+                {"Index":1,"Type":"Audio","Codec":"truehd","Profile":"Dolby TrueHD",
+                 "Channels":8,"AudioSpatialFormat":"DolbyAtmos"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(item.media_streams.len(), 2);
+        assert_eq!(
+            item.media_streams[0].video_range_type.as_deref(),
+            Some("DOVIWithHDR10")
+        );
+        assert_eq!(
+            item.media_streams[1].audio_spatial_format.as_deref(),
+            Some("DolbyAtmos")
+        );
+        assert_eq!(
+            item.media_streams[1].profile.as_deref(),
+            Some("Dolby TrueHD")
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use super::model::{ItemRecord, metadata_convergence_initial_delay, persisted_met
 use super::now_unix;
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -190,6 +190,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(SCHEMA_V9)?;
         connection.pragma_update(None, "user_version", 9)?;
         version = 9;
+    }
+    if version < 10 {
+        migrate_v10(connection)?;
+        connection.pragma_update(None, "user_version", 10)?;
+        version = 10;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -535,6 +540,10 @@ fn migrate_v8(connection: &Connection) -> rusqlite::Result<()> {
                 image_tags: row.get(26)?,
                 primary_image_tag: row.get(27)?,
                 backdrop_image_tag: row.get(28)?,
+                // v8 runs before the v10 column exists. The later migration
+                // starts historical rows empty and schedules one full metadata
+                // refresh to populate them.
+                media_streams: "[]".to_string(),
                 search_genres: row.get(29)?,
                 search_people: row.get(30)?,
                 date_created: row.get(31)?,
@@ -591,6 +600,30 @@ CREATE TABLE IF NOT EXISTS item_playback_preferences (
 );
 "#;
 
+/// Lightweight technical metadata for cards. Existing rows deliberately begin
+/// empty; clearing the weekly-bootstrap timestamp makes the next ordinary sync
+/// enrich the whole cache with `MediaStreams` while preserving every row until
+/// the server has answered.
+const SCHEMA_V10: &str = r#"
+ALTER TABLE items ADD COLUMN media_streams TEXT NOT NULL DEFAULT '[]'
+    CHECK (json_valid(media_streams));
+"#;
+
+fn migrate_v10(connection: &Connection) -> rusqlite::Result<()> {
+    let already_added: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('items') WHERE name = 'media_streams')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !already_added {
+        connection.execute_batch(SCHEMA_V10)?;
+    }
+    // Replays are harmless. On a real v9 database this schedules the one
+    // enrichment pass needed to populate historical rows.
+    connection.execute("DELETE FROM meta WHERE key = 'sync.bootstrap_at'", [])?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -645,6 +678,16 @@ mod tests {
             })
             .expect("items_kind_year");
         assert_eq!(year_index, 1);
+        let technical_stream_column: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM pragma_table_info('items') WHERE name = 'media_streams'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("media_streams column");
+        assert_eq!(technical_stream_column, 1);
         let convergence_table: i64 = database
             .with_connection(|connection| {
                 connection.query_row(
@@ -1020,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn v9_migration_adds_preferences_without_changing_existing_items() {
+    fn v9_and_v10_migrations_preserve_items_and_schedule_stream_enrichment() {
         let connection = Connection::open_in_memory().expect("open");
         migrate(&connection).expect("initial schema");
         connection
@@ -1030,6 +1073,12 @@ mod tests {
                 [],
             )
             .expect("seed existing item");
+        connection
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('sync.bootstrap_at', '123')",
+                [],
+            )
+            .expect("seed completed bootstrap timestamp");
         // Recreate the exact v8-to-v9 boundary without replaying unrelated,
         // much older migrations in this focused preservation test.
         connection
@@ -1058,6 +1107,14 @@ mod tests {
             )
             .expect("preference table");
         assert_eq!(preference_tables, 1);
+        let stale_bootstrap_timestamp: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM meta WHERE key = 'sync.bootstrap_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("bootstrap timestamp");
+        assert_eq!(stale_bootstrap_timestamp, 0);
         assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
     }
 
