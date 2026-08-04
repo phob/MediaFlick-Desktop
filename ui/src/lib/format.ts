@@ -132,9 +132,14 @@ export function formatCodec(codec: string | null | undefined) {
     truehd: "TrueHD",
     dts: "DTS",
     dtshd: "DTS-HD",
+    dts_hd_ma: "DTS-HD MA",
+    dts_hd_hra: "DTS-HD HRA",
     aac: "AAC",
     opus: "Opus",
     flac: "FLAC",
+    alac: "ALAC",
+    pcm_s16le: "PCM",
+    pcm_s24le: "PCM",
     mp3: "MP3",
     subrip: "SRT",
     ass: "ASS",
@@ -144,6 +149,18 @@ export function formatCodec(codec: string | null | undefined) {
   }
   const lower = codec.toLowerCase()
   return known[lower] ?? codec.toUpperCase()
+}
+
+/** Jellyfin often reports DTS-HD as codec `dts` plus a richer profile. */
+export function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">) {
+  const codec = stream.codec?.trim()
+  const profile = stream.profile?.trim() ?? ""
+  if (codec?.toLowerCase() === "dts" && /dts[- ]?hd/i.test(profile)) {
+    if (/\bma\b|master audio/i.test(profile)) return "DTS-HD MA"
+    if (/\bhra\b|high resolution/i.test(profile)) return "DTS-HD HRA"
+    return "DTS-HD"
+  }
+  return formatCodec(codec)
 }
 
 /**
@@ -174,15 +191,141 @@ export function formatVideoRange(stream: Pick<MediaStream, "videoRange" | "video
   return known[value.toLowerCase()] ?? value
 }
 
+export function formatAudioSpatialFormat(
+  stream: Pick<MediaStream, "audioSpatialFormat" | "profile" | "title" | "displayTitle" | "codec">,
+) {
+  const explicit = stream.audioSpatialFormat?.trim() ?? ""
+  const evidence = [explicit, stream.profile, stream.title, stream.displayTitle, stream.codec]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+  const compact = evidence.replace(/[^a-z0-9+]+/g, "")
+
+  if (compact.includes("atmos")) return "Atmos"
+  if (compact.includes("dtsx")) return "DTS:X"
+  if (!explicit || /^(none|unknown)$/i.test(explicit)) return null
+
+  const known: Record<string, string> = {
+    dolbyatmos: "Atmos",
+    dtsx: "DTS:X",
+  }
+  return known[explicit.toLowerCase().replace(/[^a-z0-9]+/g, "")] ?? explicit
+}
+
+export interface CardMediaSummary {
+  video: string[]
+  audio: string[]
+  /** Complete, spoken/native-tooltip text, including facts omitted visually. */
+  description: string
+}
+
+function uniqueLabels(parts: Array<string | null>) {
+  const present = parts.filter((part): part is string => Boolean(part))
+  return present.filter(
+    (part, index) =>
+      present.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index,
+  )
+}
+
+function streamKind(stream: MediaStream, kind: "video" | "audio") {
+  return stream.type?.toLowerCase() === kind
+}
+
+function videoQuality(stream: MediaStream) {
+  // Width is the resolution formatter's primary signal too. Weight it first
+  // so a scope transfer or a stream whose height is absent still beats a
+  // complete but lower-resolution frame size.
+  return (stream.width ?? 0) * 10_000 + (stream.height ?? 0) * 10 + (formatVideoRange(stream) ? 1 : 0)
+}
+
+function bestVideo(streams: MediaStream[]) {
+  return streams.reduce<MediaStream | null>((best, stream) => {
+    if (!streamKind(stream, "video")) return best
+    return !best || videoQuality(stream) > videoQuality(best) ? stream : best
+  }, null)
+}
+
+function audioQuality(stream: MediaStream) {
+  const codec = formatAudioCodec(stream)?.toLowerCase() ?? ""
+  const codecRank: Record<string, number> = {
+    truehd: 700,
+    "dts-hd ma": 675,
+    "dts-hd hra": 665,
+    "dts-hd": 650,
+    flac: 600,
+    dts: 500,
+    "e-ac-3": 450,
+    "ac-3": 400,
+    opus: 350,
+    aac: 300,
+    mp3: 200,
+  }
+  return (
+    (formatAudioSpatialFormat(stream) ? 10_000 : 0) +
+    (codecRank[codec] ?? 0) +
+    (stream.channels ?? 0) * 10 +
+    (stream.isDefault ? 1 : 0)
+  )
+}
+
+function bestAudio(streams: MediaStream[]) {
+  return streams.reduce<MediaStream | null>((best, stream) => {
+    if (!streamKind(stream, "audio")) return best
+    return !best || audioQuality(stream) > audioQuality(best) ? stream : best
+  }, null)
+}
+
+/**
+ * Two restrained card readout lines: resolution/range for the best video
+ * stream, codec/spatial format for the most capable audio stream. The tooltip
+ * keeps codec, bit depth, and channels available without turning the card into
+ * a wall of labels.
+ */
+export function summarizeCardMedia(streams: MediaStream[] | null | undefined): CardMediaSummary | null {
+  if (!streams?.length) return null
+  const video = bestVideo(streams)
+  const audio = bestAudio(streams)
+
+  const resolution = video ? formatResolution(video) : null
+  const range = video ? formatVideoRange(video) : null
+  const videoCodec = video ? formatCodec(video.codec) : null
+  const spatial = audio ? formatAudioSpatialFormat(audio) : null
+  const audioCodec = audio ? formatAudioCodec(audio) : null
+  const channels = audio ? formatChannels(audio.channels) : null
+
+  // Range is more useful than a codec at card size. For ordinary SDR files,
+  // the codec takes that second slot instead.
+  const visibleVideo = uniqueLabels([resolution, range ?? videoCodec])
+  const visibleAudio = uniqueLabels([audioCodec, spatial ?? channels])
+  const fullVideo = uniqueLabels([
+    resolution,
+    range,
+    videoCodec,
+    video?.bitDepth ? `${video.bitDepth}-bit` : null,
+  ])
+  const fullAudio = uniqueLabels([audioCodec, spatial, channels])
+  const description = [
+    fullVideo.length ? `Video: ${fullVideo.join(", ")}` : null,
+    fullAudio.length ? `Audio: ${fullAudio.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("; ")
+
+  return visibleVideo.length || visibleAudio.length
+    ? { video: visibleVideo, audio: visibleAudio, description }
+    : null
+}
+
 /** Compact one-line summary of a track, used in the media-info lists. */
 export function describeStream(stream: MediaStream, kind: "video" | "audio" | "subtitle") {
   const suppliedName = stream.title?.trim() || stream.displayTitle?.trim() || null
   const parts = [
     kind === "video" ? formatResolution(stream) : formatLanguage(stream.language),
     suppliedName,
-    formatCodec(stream.codec),
+    kind === "audio" ? formatAudioCodec(stream) : formatCodec(stream.codec),
     kind === "video" ? formatVideoRange(stream) : null,
     kind === "video" && stream.bitDepth ? `${stream.bitDepth}-bit` : null,
+    kind === "audio" ? formatAudioSpatialFormat(stream) : null,
     kind === "audio" ? formatChannels(stream.channels) : null,
     kind === "subtitle" && stream.isForced ? "Forced" : null,
     kind === "subtitle" && stream.isHearingImpaired ? "SDH" : null,

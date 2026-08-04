@@ -23,7 +23,7 @@ pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 /// cache keys freshness on `DateCreated` instead. See `library::sync`.
 pub const SYNC_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
 DateCreated,OriginalTitle,SortName,PremiereDate,OfficialRating,\
-CommunityRating,CriticRating,ChildCount,ParentId";
+CommunityRating,CriticRating,ChildCount,ParentId,MediaStreams";
 
 /// Page size for the bootstrap and incremental sweeps. Kept modest because
 /// each row carries cast, studios, and provider ids.
@@ -161,9 +161,10 @@ pub fn fetch_item(
 
 /// Container, codec, and track detail for one item.
 ///
-/// `MediaSources` is deliberately absent from `SYNC_FIELDS`: it multiplies the
-/// size of every synced row and only the detail page ever reads it, so it is
-/// fetched on demand and never cached.
+/// `MediaSources` is deliberately absent from `SYNC_FIELDS`: paths, source
+/// negotiation, and subtitle delivery data multiply every synced row and only
+/// the detail page needs them. The much smaller top-level `MediaStreams` field
+/// is cached separately for card-level technical summaries.
 pub fn fetch_media_sources(
     client: &JellyfinClient,
     user_id: &str,
@@ -410,6 +411,8 @@ mod tests {
     fn sync_fields_request_the_provider_join_keys() {
         assert!(SYNC_FIELDS.contains("ProviderIds"));
         assert!(SYNC_FIELDS.contains("DateCreated"));
+        assert!(SYNC_FIELDS.contains("MediaStreams"));
+        assert!(!SYNC_FIELDS.contains("MediaSources"));
         assert!(!SYNC_FIELDS.contains(' '));
     }
 

@@ -1,3 +1,4 @@
+import { AudioLines, ScanLine } from "lucide-react"
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
 import {
@@ -6,7 +7,7 @@ import {
   progressFraction,
   type ItemSummary,
 } from "@/lib/api"
-import { formatRemaining } from "@/lib/format"
+import { formatRemaining, summarizeCardMedia } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
 import { cn } from "@/lib/utils"
 
@@ -48,6 +49,7 @@ export const MediaCard = memo(function MediaCard({
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
+  const technical = summarizeCardMedia(item.mediaStreams)
   // A cached `primaryImageTag` can outlive the artwork on the server, and a
   // failing <img> re-requests on every re-render — which means a fresh round
   // trip to Jellyfin each time. Fall back to the title placeholder instead.
@@ -108,6 +110,42 @@ export const MediaCard = memo(function MediaCard({
             {ribbon}
           </div>
         )}
+        {technical && (
+          <dl
+            className="card-technical-readout"
+            aria-label={`Technical media information. ${technical.description}`}
+            title={technical.description}
+          >
+            {technical.video.length > 0 && (
+              <div className="card-technical-row">
+                <dt className="sr-only">Video</dt>
+                <ScanLine aria-hidden />
+                <dd className="card-technical-values">
+                  {technical.video.map((fact, index) => (
+                    <span key={fact}>
+                      {index > 0 && <span className="card-technical-separator" aria-hidden>·</span>}
+                      {fact}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            )}
+            {technical.audio.length > 0 && (
+              <div className="card-technical-row">
+                <dt className="sr-only">Audio</dt>
+                <AudioLines aria-hidden />
+                <dd className="card-technical-values">
+                  {technical.audio.map((fact, index) => (
+                    <span key={fact}>
+                      {index > 0 && <span className="card-technical-separator" aria-hidden>·</span>}
+                      {fact}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            )}
+          </dl>
+        )}
         {/* Watched is drawn as a finished progress rule rather than a corner
             badge. In a library that is mostly watched, a badge per poster put
             eighty bright marks on one screen and the artwork lost; the two
@@ -116,7 +154,7 @@ export const MediaCard = memo(function MediaCard({
             in-progress title is the one worth spotting. */}
         {(progress > 0 || item.played) && (
           <div
-            className="absolute inset-x-0 bottom-0 h-[3px] bg-black/65"
+            className="absolute inset-x-0 bottom-0 z-[3] h-[3px] bg-black/65"
             title={progress > 0 ? undefined : "Watched"}
           >
             <div

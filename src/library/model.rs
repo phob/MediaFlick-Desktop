@@ -284,10 +284,51 @@ pub struct ItemRecord {
     pub image_tags: String,
     pub primary_image_tag: Option<String>,
     pub backdrop_image_tag: Option<String>,
+    /// Compact video/audio descriptors used by library cards. Full media
+    /// sources remain an on-demand detail-page concern.
+    pub media_streams: String,
     pub search_genres: String,
     pub search_people: String,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
+}
+
+/// Only fields useful to a concise technical readout are retained. Subtitle
+/// tracks, paths, delivery URLs, and playback-negotiation flags stay out of the
+/// library cache; the detail endpoint still serves those from current sources.
+pub(crate) fn technical_media_streams_json(streams: &[MediaStream]) -> serde_json::Value {
+    serde_json::Value::Array(
+        streams
+            .iter()
+            .filter(|stream| {
+                stream.stream_type.as_deref().is_some_and(|kind| {
+                    kind.eq_ignore_ascii_case("video") || kind.eq_ignore_ascii_case("audio")
+                })
+            })
+            .map(|stream| {
+                json!({
+                    "index": stream.index,
+                    "type": stream.stream_type,
+                    "codec": stream.codec,
+                    "profile": stream.profile,
+                    "language": stream.language,
+                    "title": stream.title,
+                    "displayTitle": stream.display_title,
+                    "width": stream.width,
+                    "height": stream.height,
+                    "channels": stream.channels,
+                    "videoRange": stream.video_range,
+                    "videoRangeType": stream.video_range_type,
+                    "audioSpatialFormat": stream.audio_spatial_format,
+                    "bitDepth": stream.bit_depth,
+                    "isDefault": stream.is_default,
+                    "isForced": stream.is_forced,
+                    "isHearingImpaired": stream.is_hearing_impaired,
+                    "isExternal": stream.is_external,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// Cast and crew kept for the details view; capped so a 200-person credit list
@@ -363,6 +404,7 @@ impl ItemRecord {
                 .first()
                 .or_else(|| dto.parent_backdrop_image_tags.first())
                 .cloned(),
+            media_streams: technical_media_streams_json(&dto.media_streams).to_string(),
             search_genres: dto.genres.join(", "),
             search_people: dto
                 .people
@@ -559,6 +601,7 @@ pub(crate) fn persisted_metadata_quality(record: &ItemRecord) -> MetadataQuality
         "images": record.image_tags,
         "primary": record.primary_image_tag,
         "backdrop": record.backdrop_image_tag,
+        "mediaStreams": record.media_streams,
         "dateCreated": record.date_created,
     }))
     .unwrap_or_default();
@@ -728,6 +771,7 @@ pub fn metadata_quality(dto: &BaseItemDto) -> MetadataQuality {
         "backdrops": dto.backdrop_image_tags,
         "parentBackdrops": dto.parent_backdrop_image_tags,
         "seriesPrimary": dto.series_primary_image_tag,
+        "mediaStreams": technical_media_streams_json(&dto.media_streams),
         "dateCreated": dto.date_created,
     }))
     .unwrap_or_default();

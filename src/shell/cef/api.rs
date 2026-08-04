@@ -19,6 +19,7 @@ use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::ExternalProfile;
+use crate::library::model::technical_media_streams_json;
 use crate::library::{
     ItemPlaybackPreference, ItemQuery, ItemSort, resolve_playback_preference, sync,
 };
@@ -1542,13 +1543,16 @@ fn media_source_json(source: &MediaSourceInfo) -> Value {
 fn media_stream_json(stream: &MediaStream) -> Value {
     json!({
         "index": stream.index,
+        "type": stream.stream_type,
         "codec": stream.codec,
+        "profile": stream.profile,
         "language": stream.language,
         "title": stream.title,
         "displayTitle": stream.display_title,
         "width": stream.width,
         "height": stream.height,
         "channels": stream.channels,
+        "audioSpatialFormat": stream.audio_spatial_format,
         "videoRange": stream.video_range,
         "videoRangeType": stream.video_range_type,
         "bitDepth": stream.bit_depth,
@@ -2086,6 +2090,7 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
         "thumbImageTag": dto.image_tag("Thumb"),
         "logoImageTag": dto.image_tag("Logo"),
         "backdropImageTag": dto.backdrop_image_tags.first(),
+        "mediaStreams": technical_media_streams_json(&dto.media_streams),
         "childCount": dto.child_count,
         "premiereDate": dto.premiere_date,
         "seasonId": dto.season_id,

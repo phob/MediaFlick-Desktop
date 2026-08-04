@@ -42,6 +42,8 @@ export interface ItemSummary {
   playCount: number
   positionTicks: number
   favorite: boolean
+  /** Lightweight video/audio descriptors cached for card-level format readouts. */
+  mediaStreams?: MediaStream[]
   /** Only `/api/item/{id}/children` carries this; the grid queries do not. */
   overview?: string | null
 }
@@ -70,13 +72,17 @@ export interface ItemDetail extends ItemSummary {
 /** One track of a media source, as `media_stream_json` in `api.rs` shapes it. */
 export interface MediaStream {
   index: number
+  /** Present on cached item summaries; detail sources already group by type. */
+  type?: string | null
   codec: string | null
+  profile?: string | null
   language: string | null
   title: string | null
   displayTitle: string | null
   width: number | null
   height: number | null
   channels: number | null
+  audioSpatialFormat?: string | null
   videoRange: string | null
   videoRangeType: string | null
   bitDepth: number | null
