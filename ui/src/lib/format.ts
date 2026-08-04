@@ -164,31 +164,48 @@ export function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">)
 }
 
 /**
+ * Compact and expanded labels for Jellyfin's `VideoRangeType` values. The
+ * expanded form keeps terse card labels understandable to assistive
+ * technology and in native tooltips.
+ */
+const knownVideoRanges: Record<string, { label: string; description?: string }> = {
+  hdr: { label: "HDR" },
+  hdr10: { label: "HDR10" },
+  hdr10plus: { label: "HDR10+" },
+  hlg: { label: "HLG" },
+  dovi: { label: "DV", description: "Dolby Vision" },
+  dovihdr10: { label: "Dolby Vision / HDR10" },
+  doviwithhdr10: { label: "Dolby Vision / HDR10" },
+  doviwithhdr10plus: { label: "DV&HDR10+", description: "Dolby Vision / HDR10+" },
+  doviwithhlg: { label: "Dolby Vision / HLG" },
+  doviwithsdr: { label: "DV", description: "Dolby Vision" },
+  doviwithel: { label: "DV", description: "Dolby Vision" },
+  doviinvalid: { label: "DV", description: "Dolby Vision" },
+}
+
+function videoRangeLabels(stream: Pick<MediaStream, "videoRange" | "videoRangeType">) {
+  const specific = stream.videoRangeType?.trim()
+  const general = stream.videoRange?.trim()
+  const value = specific && specific.toUpperCase() !== "SDR" ? specific : general
+  if (!value || value.toUpperCase() === "SDR" || value.toUpperCase() === "UNKNOWN") return null
+  // Anything Jellyfin adds later prints as the server spelled it rather than
+  // as shouted camel case.
+  const known = knownVideoRanges[value.toLowerCase()]
+  return known ?? { label: value }
+}
+
+/**
  * The dynamic range of a video track: "SDR" is the absence of news, so only
  * the HDR flavours are worth a label. `VideoRangeType` is the specific one
  * (HDR10, HLG, DOVI…), which is what decides whether a display tone-maps.
  */
 export function formatVideoRange(stream: Pick<MediaStream, "videoRange" | "videoRangeType">) {
-  const specific = stream.videoRangeType?.trim()
-  const general = stream.videoRange?.trim()
-  const value = specific && specific.toUpperCase() !== "SDR" ? specific : general
-  if (!value || value.toUpperCase() === "SDR" || value.toUpperCase() === "UNKNOWN") return null
-  // Keys are Jellyfin's `VideoRangeType` values, lowercased. Anything it adds
-  // later prints as the server spelled it rather than as shouted camel case.
-  const known: Record<string, string> = {
-    hdr: "HDR",
-    hdr10: "HDR10",
-    hdr10plus: "HDR10+",
-    hlg: "HLG",
-    dovi: "Dolby Vision",
-    dovihdr10: "Dolby Vision / HDR10",
-    doviwithhdr10: "Dolby Vision / HDR10",
-    doviwithhlg: "Dolby Vision / HLG",
-    doviwithsdr: "Dolby Vision",
-    doviwithel: "Dolby Vision",
-    doviinvalid: "Dolby Vision",
-  }
-  return known[value.toLowerCase()] ?? value
+  return videoRangeLabels(stream)?.label ?? null
+}
+
+function describeVideoRange(stream: Pick<MediaStream, "videoRange" | "videoRangeType">) {
+  const labels = videoRangeLabels(stream)
+  return labels?.description ?? labels?.label ?? null
 }
 
 export function formatAudioSpatialFormat(
@@ -299,7 +316,7 @@ export function summarizeCardMedia(streams: MediaStream[] | null | undefined): C
   const visibleAudio = uniqueLabels([audioCodec, spatial ?? channels])
   const fullVideo = uniqueLabels([
     resolution,
-    range,
+    video ? describeVideoRange(video) : null,
     videoCodec,
     video?.bitDepth ? `${video.bitDepth}-bit` : null,
   ])
