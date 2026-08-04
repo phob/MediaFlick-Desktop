@@ -11,7 +11,7 @@ pub mod headless;
 pub mod model;
 pub mod sync;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,6 +36,43 @@ pub struct StoredCredentials {
     pub server_id: Option<String>,
     pub device_id: String,
     pub token: Option<String>,
+}
+
+/// Stable external identity used to batch rating lookups.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RatingTarget {
+    pub item_id: String,
+    pub kind: String,
+    pub media_type: String,
+    pub provider: String,
+    pub provider_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CachedRatings {
+    pub ratings: Value,
+    pub source_updated_at: Option<String>,
+    pub fetched_at: i64,
+    pub stale_at: i64,
+    pub expires_at: i64,
+    pub schema_version: i64,
+    pub origin: String,
+}
+
+/// Non-secret validation and quota state. API keys are held by the OS vault.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IntegrationState {
+    pub service: String,
+    pub validation: String,
+    pub valid: bool,
+    pub detail: Option<String>,
+    pub quota_limit: Option<i64>,
+    pub quota_remaining: Option<i64>,
+    pub quota_reset_at: Option<i64>,
+    pub retry_at: Option<i64>,
+    pub failure_count: i64,
+    pub updated_at: i64,
 }
 
 /// An optional, public profile associated with one Jellyfin account.
@@ -555,6 +592,250 @@ impl Library {
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![key, value],
+            )?;
+            Ok(())
+        })
+    }
+
+    // --------------------------------------------------------------- ratings
+
+    /// Resolves requested cards to one preferred MDBList lookup identity.
+    /// TMDB is numeric and cheapest to batch; IMDb is the stable fallback.
+    pub fn rating_targets(&self, item_ids: &[String]) -> rusqlite::Result<Vec<RatingTarget>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut unique = Vec::new();
+        let mut seen = HashSet::new();
+        for id in item_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+        {
+            if seen.insert(id.to_string()) {
+                unique.push(id.to_string());
+            }
+            if unique.len() == 500 {
+                break;
+            }
+        }
+        if unique.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.db.with_connection(|connection| {
+            let placeholders = vec!["?"; unique.len()].join(", ");
+            let mut statement = connection.prepare(&format!(
+                "SELECT jellyfin_id, kind, tmdb_id, imdb_id FROM items
+                 WHERE kind IN ('Movie', 'Series') AND jellyfin_id IN ({placeholders})"
+            ))?;
+            statement
+                .query_map(params_from_iter(unique.iter()), |row| {
+                    let item_id: String = row.get(0)?;
+                    let kind: String = row.get(1)?;
+                    let tmdb_id = row.get::<_, Option<String>>(2)?.and_then(|id| {
+                        let id = id.trim();
+                        (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+                            .then(|| id.to_string())
+                    });
+                    let imdb_id = row.get::<_, Option<String>>(3)?.and_then(|id| {
+                        let id = id.trim();
+                        (id.len() <= 32
+                            && id.starts_with("tt")
+                            && id[2..].bytes().all(|byte| byte.is_ascii_digit()))
+                        .then(|| id.to_string())
+                    });
+                    let (provider, provider_id) = tmdb_id
+                        .map(|id| ("tmdb".to_string(), id))
+                        .or_else(|| imdb_id.map(|id| ("imdb".to_string(), id)))
+                        .unwrap_or_default();
+                    Ok(RatingTarget {
+                        item_id,
+                        media_type: if kind == "Movie" { "movie" } else { "show" }.to_string(),
+                        kind,
+                        provider,
+                        provider_id,
+                    })
+                })?
+                .filter_map(|row| match row {
+                    Ok(target) if !target.provider_id.is_empty() => Some(Ok(target)),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                })
+                .collect()
+        })
+    }
+
+    pub fn cached_ratings(
+        &self,
+        targets: &[RatingTarget],
+        origin: &str,
+    ) -> rusqlite::Result<HashMap<String, CachedRatings>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT ratings, source_updated_at, fetched_at, stale_at, expires_at,
+                        schema_version, origin
+                 FROM rating_cache
+                 WHERE provider = ?1 AND provider_id = ?2 AND media_type = ?3 AND origin = ?4",
+            )?;
+            let mut result = HashMap::new();
+            for target in targets {
+                let cached = statement
+                    .query_row(
+                        params![
+                            target.provider,
+                            target.provider_id,
+                            target.media_type,
+                            origin
+                        ],
+                        |row| {
+                            let raw: String = row.get(0)?;
+                            Ok(CachedRatings {
+                                ratings: serde_json::from_str(&raw).unwrap_or_else(|_| json!([])),
+                                source_updated_at: row.get(1)?,
+                                fetched_at: row.get(2)?,
+                                stale_at: row.get(3)?,
+                                expires_at: row.get(4)?,
+                                schema_version: row.get(5)?,
+                                origin: row.get(6)?,
+                            })
+                        },
+                    )
+                    .optional()?;
+                if let Some(cached) = cached {
+                    result.insert(target.item_id.clone(), cached);
+                }
+            }
+            Ok(result)
+        })
+    }
+
+    pub fn save_rating_cache(
+        &self,
+        entries: &[(RatingTarget, CachedRatings)],
+    ) -> rusqlite::Result<()> {
+        self.db.with_transaction(|transaction| {
+            for (target, cached) in entries {
+                transaction.execute(
+                    "INSERT INTO rating_cache (
+                         provider, provider_id, media_type, ratings, source_updated_at,
+                         fetched_at, stale_at, expires_at, schema_version, origin
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     ON CONFLICT(provider, provider_id, media_type, origin) DO UPDATE SET
+                         ratings = excluded.ratings,
+                         source_updated_at = excluded.source_updated_at,
+                         fetched_at = excluded.fetched_at,
+                         stale_at = excluded.stale_at,
+                         expires_at = excluded.expires_at,
+                         schema_version = excluded.schema_version",
+                    params![
+                        target.provider,
+                        target.provider_id,
+                        target.media_type,
+                        cached.ratings.to_string(),
+                        cached.source_updated_at,
+                        cached.fetched_at,
+                        cached.stale_at,
+                        cached.expires_at,
+                        cached.schema_version,
+                        cached.origin,
+                    ],
+                )?;
+            }
+            // Expired data has no stale-while-revalidate value. Keep cleanup
+            // bounded to successful cache writes rather than startup/catalog.
+            transaction.execute(
+                "DELETE FROM rating_cache WHERE expires_at < ?1",
+                params![now_unix()],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn observed_rating_sources(&self) -> rusqlite::Result<Vec<String>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT DISTINCT json_extract(value, '$.sourceId')
+                 FROM rating_cache, json_each(rating_cache.ratings)
+                 WHERE json_type(value, '$.sourceId') = 'text'
+                 ORDER BY 1",
+            )?;
+            let sources = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .filter_map(Result::ok)
+                .filter(|source| !source.trim().is_empty())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            Ok(sources)
+        })
+    }
+
+    pub fn integration_state(&self, service: &str) -> rusqlite::Result<Option<IntegrationState>> {
+        self.db.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT service, validation, valid, detail, quota_limit, quota_remaining,
+                            quota_reset_at, retry_at, failure_count, updated_at
+                     FROM integration_state WHERE service = ?1",
+                    params![service],
+                    |row| {
+                        Ok(IntegrationState {
+                            service: row.get(0)?,
+                            validation: row.get(1)?,
+                            valid: row.get::<_, i64>(2)? != 0,
+                            detail: row.get(3)?,
+                            quota_limit: row.get(4)?,
+                            quota_remaining: row.get(5)?,
+                            quota_reset_at: row.get(6)?,
+                            retry_at: row.get(7)?,
+                            failure_count: row.get(8)?,
+                            updated_at: row.get(9)?,
+                        })
+                    },
+                )
+                .optional()
+        })
+    }
+
+    pub fn save_integration_state(&self, state: &IntegrationState) -> rusqlite::Result<()> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO integration_state (
+                     service, validation, valid, detail, quota_limit, quota_remaining,
+                     quota_reset_at, retry_at, failure_count, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(service) DO UPDATE SET
+                     validation = excluded.validation,
+                     valid = excluded.valid,
+                     detail = excluded.detail,
+                     quota_limit = excluded.quota_limit,
+                     quota_remaining = excluded.quota_remaining,
+                     quota_reset_at = excluded.quota_reset_at,
+                     retry_at = excluded.retry_at,
+                     failure_count = excluded.failure_count,
+                     updated_at = excluded.updated_at",
+                params![
+                    state.service,
+                    state.validation,
+                    state.valid,
+                    state.detail,
+                    state.quota_limit,
+                    state.quota_remaining,
+                    state.quota_reset_at,
+                    state.retry_at,
+                    state.failure_count,
+                    state.updated_at,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_integration_state(&self, service: &str) -> rusqlite::Result<()> {
+        self.db.with_connection(|connection| {
+            connection.execute(
+                "DELETE FROM integration_state WHERE service = ?1",
+                params![service],
             )?;
             Ok(())
         })
@@ -1401,7 +1682,7 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
     Ok(())
 }
 
-fn now_unix() -> i64 {
+pub(crate) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
@@ -1467,9 +1748,9 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExternalProfile, ItemPlaybackPreference, ItemQuery, ItemSort, Library, SeerrConfig,
-        cached_image_tag, civil_from_days, current_release_decade, fts_match_expression,
-        release_decade_from_id,
+        CachedRatings, ExternalProfile, IntegrationState, ItemPlaybackPreference, ItemQuery,
+        ItemSort, Library, SeerrConfig, cached_image_tag, civil_from_days, current_release_decade,
+        fts_match_expression, release_decade_from_id,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use serde_json::json;
@@ -2235,6 +2516,89 @@ mod tests {
         assert_eq!(after.server_url.as_deref(), Some("http://server:8096"));
         assert_eq!(after.token, None);
         assert_eq!(library.convergence_diagnostics().pending, 0);
+    }
+
+    #[test]
+    fn rating_targets_prefer_tmdb_and_cache_by_stable_identity() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"m1","Name":"Movie","Type":"Movie","ProviderIds":{"Tmdb":"603","Imdb":"tt0133093"}}"#),
+                dto(r#"{"Id":"s1","Name":"Show","Type":"Series","ProviderIds":{"Imdb":"tt0903747"}}"#),
+                dto(r#"{"Id":"e1","Name":"Episode","Type":"Episode","ProviderIds":{"Tmdb":"1"}}"#),
+            ])
+            .expect("seed");
+        let targets = library
+            .rating_targets(&["m1".to_string(), "s1".to_string(), "e1".to_string()])
+            .expect("targets");
+        assert_eq!(targets.len(), 2);
+        let movie = targets
+            .iter()
+            .find(|target| target.item_id == "m1")
+            .expect("movie");
+        assert_eq!(
+            (movie.provider.as_str(), movie.provider_id.as_str()),
+            ("tmdb", "603")
+        );
+        let show = targets
+            .iter()
+            .find(|target| target.item_id == "s1")
+            .expect("show");
+        assert_eq!(
+            (show.provider.as_str(), show.provider_id.as_str()),
+            ("imdb", "tt0903747")
+        );
+
+        let cached = CachedRatings {
+            ratings: json!([{ "sourceId": "letterboxd", "value": 4.2 }]),
+            fetched_at: 10,
+            stale_at: 20,
+            expires_at: i64::MAX,
+            schema_version: 1,
+            origin: "local_mdblist".to_string(),
+            source_updated_at: Some("2026-08-04T20:00:00Z".to_string()),
+        };
+        library
+            .save_rating_cache(&[(movie.clone(), cached.clone())])
+            .expect("cache");
+        assert_eq!(
+            library
+                .cached_ratings(std::slice::from_ref(movie), "local_mdblist")
+                .expect("cached")["m1"],
+            cached
+        );
+        assert_eq!(
+            library.observed_rating_sources().expect("sources"),
+            ["letterboxd"]
+        );
+    }
+
+    #[test]
+    fn integration_health_persists_without_a_secret_column() {
+        let library = Library::open_in_memory().expect("library");
+        let state = IntegrationState {
+            service: "mdblist-api-key".to_string(),
+            validation: "rate_limited".to_string(),
+            valid: true,
+            detail: Some("quota exhausted".to_string()),
+            quota_limit: Some(1000),
+            quota_remaining: Some(0),
+            retry_at: Some(1234),
+            updated_at: 100,
+            ..IntegrationState::default()
+        };
+        library.save_integration_state(&state).expect("save state");
+        assert_eq!(
+            library.integration_state("mdblist-api-key").expect("state"),
+            Some(state)
+        );
+        library
+            .clear_integration_state("mdblist-api-key")
+            .expect("clear");
+        assert_eq!(
+            library.integration_state("mdblist-api-key").expect("state"),
+            None
+        );
     }
 
     #[test]

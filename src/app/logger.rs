@@ -30,6 +30,9 @@ const SECRET_JSON_KEYS: &[&str] = &[
     "api_key",
     "authorization",
     "cookie",
+    // Integration credential endpoints intentionally use the generic `key`
+    // field. Redact it as defensively as provider-specific API-key names.
+    "key",
     "token",
     "x-emby-authorization",
     "x-emby-token",
@@ -523,6 +526,10 @@ mod tests {
         assert_eq!(
             redact_text("{\"AccessToken\":\"secret\",\"ItemId\":\"item\"}"),
             "{\"AccessToken\":\"REDACTED\",\"ItemId\":\"item\"}"
+        );
+        assert_eq!(
+            redact_text("{\"key\":\"mdblist-secret\",\"provider\":\"mdblist\"}"),
+            "{\"key\":\"REDACTED\",\"provider\":\"mdblist\"}"
         );
     }
 

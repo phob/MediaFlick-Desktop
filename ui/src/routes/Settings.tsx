@@ -2,9 +2,13 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   FolderOpen,
+  KeyRound,
   Link,
   Monitor,
   Palette,
@@ -20,6 +24,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -29,6 +34,14 @@ import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-
 import { toast } from "sonner"
 import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Slider } from "@/components/ui/slider"
@@ -45,9 +58,12 @@ import {
   type AppearanceSettings,
   type ClientSettings,
   type LetterboxdProfile,
+  type RatingCredentialStatus,
+  type RatingSourceDefinition,
+  type RatingsIntegrationStatus,
 } from "@/lib/api"
 import { queryClient, queryKeys } from "@/lib/query-client"
-import { useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 
 type SettingsPage = {
@@ -64,7 +80,8 @@ const NAVIGATION: SettingsPage[] = [
   { to: "/settings/client/player", title: "Player", detail: "Player executable and launch behavior", icon: Play, group: "Client" },
   { to: "/settings/client/playback", title: "Playback", detail: "Quality and segment skipping", icon: SlidersHorizontal, group: "Client" },
   { to: "/settings/client/application", title: "Application", detail: "Window and diagnostics", icon: Monitor, group: "Client" },
-  { to: "/settings/appearance", title: "Appearance", detail: "Theme, color, and motion", icon: Palette },
+  { to: "/settings/appearance", title: "Appearance", detail: "Theme, color, ratings, and motion", icon: Palette },
+  { to: "/settings/integrations/ratings", title: "MDBList Ratings", detail: "Keys, quota, and rating sources", icon: KeyRound, group: "Integrations" },
   { to: "/settings/integrations/letterboxd", title: "Letterboxd", detail: "Public profile connections", icon: Link, signedIn: true, group: "Integrations" },
   { to: "/settings/integrations/seerr", title: "Seerr", detail: "Request service connection", icon: Link, signedIn: true, group: "Integrations" },
 ]
@@ -117,6 +134,158 @@ function Toggle({ checked, onCheckedChange, label }: { checked: boolean; onCheck
     >
       <span />
     </button>
+  )
+}
+
+export function RatingSourceSelector({
+  sources,
+  selected,
+  enabled,
+  onChange,
+  legend = "Rating sources",
+}: {
+  sources: RatingSourceDefinition[]
+  selected: string[]
+  enabled: boolean
+  onChange: (sources: string[]) => void
+  legend?: string
+}) {
+  const chosen = new Set(selected)
+  const helpId = useId()
+  return (
+    <fieldset className="rating-source-selector" disabled={!enabled} aria-describedby={helpId}>
+      <legend className="sr-only">{legend}</legend>
+      <div className="rating-source-options">
+        {sources.map((source) => (
+          <label key={source.id} data-selected={chosen.has(source.id)}>
+            <input
+              type="checkbox"
+              aria-label={source.label}
+              checked={chosen.has(source.id)}
+              onChange={(event) => {
+                const next = event.target.checked
+                  ? [...selected, source.id]
+                  : selected.filter((id) => id !== source.id)
+                onChange([...new Set(next)])
+              }}
+            />
+            <span>
+              <strong>{source.label}</strong>
+              <small>
+                {source.format === "percent" ? "0–100%" : `0–${source.scaleMax}`}
+                {!source.known ? " · newly observed" : ""}
+              </small>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p id={helpId} className="mt-3 text-xs text-muted-foreground">
+        {enabled
+          ? "Only selected sources that have a rating appear; missing values never create placeholders."
+          : "Add a valid local MDBList key or connect a compatible ratings-v1 server capability to enable selection."}
+      </p>
+    </fieldset>
+  )
+}
+
+function credentialStatusText(status: RatingCredentialStatus) {
+  const quota = status.quota
+  const quotaText = quota.limit != null && quota.remaining != null
+    ? ` · ${quota.remaining.toLocaleString()} of ${quota.limit.toLocaleString()} requests remaining`
+    : ""
+  const retry = status.retryAt && status.retryAt * 1000 > Date.now()
+    ? ` · retry after ${new Date(status.retryAt * 1000).toLocaleString()}`
+    : ""
+  return `${status.detail ?? (status.configured ? "Credential saved securely." : "No credential saved.")}${quotaText}${retry}`
+}
+
+export function SecureCredentialField({
+  provider,
+  label,
+  status,
+  onStatus,
+}: {
+  provider: "mdblist" | "tmdb"
+  label: string
+  status: RatingCredentialStatus
+  onStatus: (status: RatingsIntegrationStatus) => void
+}) {
+  const [key, setKey] = useState("")
+  const [revealed, setRevealed] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const configuredPlaceholder = status.configured ? "••••••••••••••••" : `Enter ${label}`
+  const act = async (name: string, work: () => Promise<void>) => {
+    setBusy(name)
+    try {
+      await work()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Credential operation failed")
+    } finally {
+      setBusy(null)
+    }
+  }
+  const reveal = () => void act("reveal", async () => {
+    if (!key) setKey((await api.ratings.revealCredential(provider)).key)
+    setRevealed((current) => !current || !key)
+  })
+  const copy = () => void act("copy", async () => {
+    const value = key || (await api.ratings.revealCredential(provider)).key
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable")
+    await navigator.clipboard.writeText(value)
+    toast.success(`${label} copied`)
+  })
+  return (
+    <div className="secure-credential-field">
+      <form
+        className="flex min-w-0 flex-1 gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!key.trim()) return
+          void act("save", async () => {
+            const saved = await api.ratings.saveCredential(provider, key)
+            onStatus(saved)
+            if (saved.local[provider].configured) {
+              setKey("")
+              setRevealed(false)
+            }
+          })
+        }}
+      >
+        <Input
+          aria-label={label}
+          type={revealed ? "text" : "password"}
+          value={key}
+          onChange={(event) => setKey(event.target.value)}
+          placeholder={configuredPlaceholder}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <Button type="submit" variant={status.configured ? "outline" : "default"} disabled={!key.trim() || busy !== null}>
+          {busy === "save" ? "Checking…" : status.configured ? "Replace" : "Save"}
+        </Button>
+      </form>
+      {status.configured && (
+        <div className="flex shrink-0 gap-1">
+          <Button type="button" size="icon-sm" variant="ghost" aria-label={`${revealed ? "Hide" : "Reveal"} ${label}`} aria-pressed={revealed} onClick={reveal} disabled={busy !== null}>
+            {revealed ? <EyeOff /> : <Eye />}
+          </Button>
+          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={copy} disabled={busy !== null}><Copy /></Button>
+          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Remove ${label}`} onClick={() => void act("remove", async () => {
+            onStatus(await api.ratings.removeCredential(provider))
+            setKey("")
+            setRevealed(false)
+          })} disabled={busy !== null}><Trash2 /></Button>
+        </div>
+      )}
+      {status.configured && provider === "mdblist" && (
+        <Button type="button" variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act("validate", async () => onStatus(await api.ratings.validateCredential(provider)))}>
+          {busy === "validate" ? "Checking…" : "Validate"}
+        </Button>
+      )}
+      <p className="secure-credential-status" data-status={status.validation} aria-live="polite">
+        {credentialStatusText(status)}
+      </p>
+    </div>
   )
 }
 
@@ -191,6 +360,7 @@ function Overview() {
   const { data: settings } = useSettings()
   const { data: status } = useStatus()
   const { data: seerr } = useSeerrStatus()
+  const { data: ratings } = useRatingsStatus()
   if (!settings) return <SettingsLoading />
   return (
     <div className="settings-page">
@@ -198,6 +368,7 @@ function Overview() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatusCard title="Client" value={settings.client.player.playerConfigured ? "Ready" : "Needs setup"} detail={`${settings.client.player.playerBackend === "mpchc" ? "MPC-HC" : "mpv"} player`} to="/settings/client/player" />
         <StatusCard title="Appearance" value={settings.appearance.theme === "system" ? "System" : settings.appearance.theme} detail={`${settings.appearance.accent} accent · ${settings.appearance.density} density`} to="/settings/appearance" />
+        <StatusCard title="Ratings" value={ratings?.available ? "Ready" : "Not configured"} detail={ratings?.effectiveOrigin === "local_mdblist" ? "Local MDBList key" : ratings?.effectiveOrigin === "plugin" ? "Server capability" : "Optional integration"} to="/settings/integrations/ratings" />
         <StatusCard title="Seerr" value={seerr?.linked ? "Connected" : "Not connected"} detail={status?.authenticated ? "Requests integration" : "Sign in to configure"} to="/settings/integrations/seerr" />
       </div>
     </div>
@@ -463,8 +634,9 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
   )
 }
 
-function Appearance() {
+export function Appearance() {
   const { data: settings } = useSettings()
+  const { data: ratings } = useRatingsStatus()
   const [draft, setDraft] = useDraft(settings?.appearance)
   const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   if (!settings || !draft) return <SettingsLoading />
@@ -477,12 +649,108 @@ function Appearance() {
       <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent: accent as AppearanceSettings["accent"] })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
       <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density: density as AppearanceSettings["density"] })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
+    <Section title="Card ratings" description="Choose any combination of MDBList sources for compact top-left card overlays.">
+      <RatingSourceSelector
+        sources={ratings?.sources ?? []}
+        selected={draft.ratingSources}
+        enabled={Boolean(ratings?.selectionEnabled)}
+        onChange={(ratingSources) => setDraft({ ...draft, ratingSources })}
+      />
+    </Section>
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
       <SettingsRow title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider aria-label="Artwork intensity" className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
       <SettingsRow title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider aria-label="Backdrop intensity" className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Toggle label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false })} />
+    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, ratingSources: [] })} />
+  </div>
+}
+
+export function RatingsSetupDialog({ onClose }: { onClose: () => void }) {
+  const { data: settings } = useSettings()
+  const { data: status } = useRatingsStatus()
+  const [step, setStep] = useState<"credentials" | "appearance">("credentials")
+  const [selected, setSelected] = useState(settings?.appearance.ratingSources ?? [])
+  const [saving, setSaving] = useState(false)
+  useEffect(() => setSelected(settings?.appearance.ratingSources ?? []), [settings?.appearance.ratingSources])
+  const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
+  if (!settings || !status) return null
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{step === "credentials" ? "Ratings setup · Credentials" : "Ratings setup · Appearance"}</DialogTitle>
+          <DialogDescription>
+            {step === "credentials"
+              ? "Keys are optional and stored in the operating-system credential vault, never in preference JSON."
+              : "Select every source you want MediaFlick to show when a value is available."}
+          </DialogDescription>
+        </DialogHeader>
+        {step === "credentials" ? (
+          <div className="space-y-5">
+            <div><h3 className="mb-2 font-medium">MDBList API key</h3><SecureCredentialField provider="mdblist" label="MDBList API key" status={status.local.mdblist} onStatus={onStatus} /></div>
+            <div><h3 className="mb-2 font-medium">TMDB API key</h3><SecureCredentialField provider="tmdb" label="TMDB API key" status={status.local.tmdb} onStatus={onStatus} /></div>
+          </div>
+        ) : (
+          <RatingSourceSelector sources={status.sources} selected={selected} enabled={status.selectionEnabled} onChange={setSelected} legend="Setup appearance rating sources" />
+        )}
+        <DialogFooter>
+          {step === "appearance" && <Button variant="outline" onClick={() => setStep("credentials")} disabled={saving}>Back</Button>}
+          {step === "credentials" ? (
+            <Button onClick={() => setStep("appearance")}>Next: Appearance</Button>
+          ) : (
+            <Button disabled={saving} onClick={() => {
+              setSaving(true)
+              void api.settingsPatch.appearance({ ...settings.appearance, ratingSources: selected })
+                .then((saved) => { saveSettings(saved, "Ratings appearance saved"); onClose() })
+                .catch((error: Error) => toast.error(error.message))
+                .finally(() => setSaving(false))
+            }}>{saving ? "Saving…" : "Finish"}</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RatingsIntegration() {
+  const { data: settings } = useSettings()
+  const { data: status } = useRatingsStatus()
+  const [setup, setSetup] = useState(false)
+  const sourceMutation = useMutation({
+    mutationFn: (ratingSources: string[]) => {
+      if (!settings) throw new Error("Settings are not ready")
+      return api.settingsPatch.appearance({ ...settings.appearance, ratingSources })
+    },
+    onSuccess: (saved) => saveSettings(saved, "Rating sources saved"),
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
+  if (!settings || !status) return <SettingsLoading />
+  const origin = status.effectiveOrigin === "local_mdblist"
+    ? "Local MDBList credential (overrides any server configuration)"
+    : status.effectiveOrigin === "plugin"
+      ? "MediaFlick server ratings-v1 capability (no administrator secret leaves the server)"
+      : "Disabled — no valid local credential or compatible server capability"
+  return <div className="settings-page">
+    <PageTitle title="MDBList Ratings" detail="Add optional client keys, monitor quota, and choose the rating signals shown on artwork." />
+    <div className="flex justify-end"><Button variant="outline" onClick={() => setSetup(true)}>Guided setup</Button></div>
+    <Section title="Credentials" description="Local valid credentials take precedence over future plugin-admin credentials. MDBList ratings use only the MDBList key in this version.">
+      <SettingsRow title="MDBList API key" description="Validated with MDBList’s inexpensive /user endpoint; 401, offline, quota, and Retry-After states remain distinct.">
+        <SecureCredentialField provider="mdblist" label="MDBList API key" status={status.local.mdblist} onStatus={onStatus} />
+      </SettingsRow>
+      <SettingsRow title="TMDB API key" description="Preparation for future metadata features. Saved securely and format-checked, but never sent by rating retrieval.">
+        <SecureCredentialField provider="tmdb" label="TMDB API key" status={status.local.tmdb} onStatus={onStatus} />
+      </SettingsRow>
+    </Section>
+    <Section title="Rating origin" description="The desktop consumes plugin capability/data only through a versioned boundary; an absent endpoint is normal in this client-only release.">
+      <SettingsRow title="Effective source" description={origin}><span className="settings-status" data-status={status.available ? "verified" : "unverified"}>{status.available ? <CheckCircle2 /> : <AlertTriangle />}{status.available ? "available" : "disabled"}</span></SettingsRow>
+      <SettingsRow title="Server fallback" description={status.plugin.detail}><span className="data-value">{status.plugin.available ? "ratings-v1" : "not advertised"}</span></SettingsRow>
+    </Section>
+    <Section title="Card rating sources" description="The same selection is available in Settings > Appearance and remains saved when credentials or origins change.">
+      <RatingSourceSelector sources={status.sources} selected={settings.appearance.ratingSources} enabled={status.selectionEnabled} onChange={(sources) => sourceMutation.mutate(sources)} />
+    </Section>
+    {setup && <RatingsSetupDialog onClose={() => setSetup(false)} />}
   </div>
 }
 
@@ -551,5 +819,5 @@ export function AppearanceSync() {
 }
 
 export default function Settings() {
-  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Overview />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="integrations/seerr" element={<Seerr />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
+  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Overview />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="integrations/ratings" element={<RatingsIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="integrations/seerr" element={<Seerr />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
 }

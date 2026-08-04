@@ -71,6 +71,12 @@ pub struct AppearanceSettings {
     pub backdrop_intensity: u8,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reduced_motion: bool,
+    /// Canonical rating source IDs chosen for card overlays. This is ordinary
+    /// presentation state; credentials remain in the operating-system vault.
+    /// Unknown IDs are retained so a newly observed MDBList source survives an
+    /// app downgrade or a temporary credential/plugin transition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rating_sources: Vec<String>,
 }
 
 impl Default for AppearanceSettings {
@@ -82,6 +88,7 @@ impl Default for AppearanceSettings {
             artwork_intensity: default_artwork_intensity(),
             backdrop_intensity: default_backdrop_intensity(),
             reduced_motion: false,
+            rating_sources: Vec::new(),
         }
     }
 }
@@ -94,6 +101,18 @@ impl AppearanceSettings {
     pub fn sanitize(&mut self) {
         self.artwork_intensity = self.artwork_intensity.min(100);
         self.backdrop_intensity = self.backdrop_intensity.min(100);
+        let mut seen = std::collections::HashSet::new();
+        self.rating_sources = self
+            .rating_sources
+            .drain(..)
+            .filter_map(|source| {
+                let source = source.trim().to_ascii_lowercase();
+                is_rating_source_id(&source)
+                    .then_some(source)
+                    .filter(|source| seen.insert(source.clone()))
+            })
+            .take(64)
+            .collect();
     }
 }
 
@@ -663,6 +682,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_rating_source_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+}
+
 fn default_artwork_intensity() -> u8 {
     100
 }
@@ -849,6 +876,28 @@ mod tests {
         assert_eq!(serialized["streaming_quality"], "10_mbps");
         let restored: AppSettings = serde_json::from_value(serialized).expect("restore settings");
         assert_eq!(restored.streaming_quality, StreamingQuality::Mbps10);
+    }
+
+    #[test]
+    fn rating_source_preferences_migrate_safely_and_retain_future_ids() {
+        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
+        assert!(defaults.appearance.rating_sources.is_empty());
+
+        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "appearance": {
+                "rating_sources": [" Letterboxd ", "popcorn", "future_meter", "popcorn", "../bad"]
+            }
+        }))
+        .expect("settings");
+        settings.sanitize();
+        assert_eq!(
+            settings.appearance.rating_sources,
+            ["letterboxd", "popcorn", "future_meter"]
+        );
+        let serialized = serde_json::to_string(&settings).expect("serialize");
+        assert!(serialized.contains("future_meter"));
+        assert!(!serialized.contains("api_key"));
+        assert!(!serialized.contains("apikey"));
     }
 
     #[test]

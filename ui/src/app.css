@@ -329,6 +329,24 @@ html[data-reduced-motion="true"] *::after {
 .settings-status svg { width: 0.82rem; height: 0.82rem; }
 .settings-status[data-status="verified"] { color: var(--primary); }
 
+.secure-credential-field { display: flex; width: min(100%, 34rem); min-width: min(100%, 20rem); flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem; }
+.secure-credential-status { width: 100%; color: var(--muted-foreground); font-size: 0.72rem; line-height: 1.4; text-align: right; }
+.secure-credential-status[data-status="valid"],
+.secure-credential-status[data-status="saved"] { color: color-mix(in srgb, var(--primary) 72%, var(--foreground)); }
+.secure-credential-status[data-status="invalid"],
+.secure-credential-status[data-status="rate_limited"] { color: var(--destructive); }
+
+.rating-source-selector { min-width: 0; }
+.rating-source-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem; }
+.rating-source-options label { display: flex; min-width: 0; align-items: center; gap: 0.65rem; padding: 0.65rem 0.7rem; border: 1px solid var(--border); border-radius: 2px; background: color-mix(in srgb, var(--background) 42%, transparent); cursor: pointer; }
+.rating-source-options label[data-selected="true"] { border-color: color-mix(in srgb, var(--primary) 62%, var(--border)); background: color-mix(in srgb, var(--primary) 9%, transparent); }
+.rating-source-options input { width: 0.95rem; height: 0.95rem; accent-color: var(--primary); }
+.rating-source-options label > span { display: grid; min-width: 0; gap: 0.18rem; }
+.rating-source-options strong { overflow: hidden; font-size: 0.8rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.rating-source-options small { color: var(--muted-foreground); font: 0.6rem/1 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.rating-source-selector:disabled { opacity: 0.52; }
+.rating-source-selector:disabled label { cursor: not-allowed; }
+
 /* The preview owns a complete miniature token scope. Draft theme/accent values
    can therefore be judged without leaking into the saved root appearance. */
 .appearance-preview {
@@ -476,6 +494,8 @@ html[data-reduced-motion="true"] *::after {
   .settings-main { padding: 1.25rem; }
   .settings-row { grid-template-columns: 1fr; }
   .settings-control { justify-content: flex-start; }
+  .secure-credential-field { justify-content: flex-start; }
+  .secure-credential-status { text-align: left; }
   .settings-save-bar { align-items: flex-start; flex-direction: column; }
   .appearance-preview-content { grid-template-columns: minmax(6rem, 7rem) minmax(0, 1fr); }
 }
@@ -719,6 +739,54 @@ html[data-reduced-motion="true"] *::after {
 .signal-card:focus-visible .media-frame::after {
   opacity: 1;
 }
+
+/* Ratings occupy the requested top-left corner as one compact, wrapping data
+   plate. Source abbreviations stay visible on the artwork; full source names,
+   scales, origin and stale state are exposed through semantics/tooltips. */
+.card-rating-overlay {
+  position: absolute;
+  top: 0.42rem;
+  left: 0.42rem;
+  z-index: 3;
+  display: flex;
+  max-width: calc(100% - 0.84rem);
+  flex-wrap: wrap;
+  gap: 0.22rem;
+  margin: 0;
+  filter: drop-shadow(0 1px 4px rgb(0 0 0 / 75%));
+  pointer-events: none;
+}
+
+.card-rating-chip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.24rem;
+  padding: 0.2rem 0.3rem;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 2px;
+  background: rgb(3 6 5 / 88%);
+  color: rgb(250 252 251 / 96%);
+  font: 600 0.57rem/1 var(--font-mono);
+  letter-spacing: 0.015em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 95%);
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(5px);
+}
+
+.card-rating-chip dt {
+  overflow: hidden;
+  max-width: 2.6rem;
+  color: color-mix(in srgb, var(--primary) 78%, white);
+  font-size: 0.49rem;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.card-rating-chip dd { margin: 0; white-space: nowrap; }
+.card-rating-overlay[data-stale="true"] { opacity: 0.84; }
 
 /* A single integrated data plate, never a row of pills. The open gradient keeps
    type readable over bright artwork without drawing a box around each fact;

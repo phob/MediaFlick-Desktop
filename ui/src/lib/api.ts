@@ -322,6 +322,92 @@ export interface AppearanceSettings {
   artworkIntensity: number
   backdropIntensity: number
   reducedMotion: boolean
+  /** Canonical IDs only; unknown future MDBList sources are intentionally retained. */
+  ratingSources: string[]
+}
+
+export type RatingOrigin = "local_mdblist" | "plugin"
+
+export interface RatingSourceDefinition {
+  id: string
+  label: string
+  shortLabel: string
+  scaleMax: number
+  format: "percent" | "decimal" | "integer" | "stars" | (string & {})
+  known: boolean
+}
+
+export interface RatingCredentialStatus {
+  configured: boolean
+  valid: boolean
+  validation: "absent" | "unchecked" | "valid" | "invalid" | "offline" | "rate_limited" | "unavailable" | "saved" | (string & {})
+  detail: string | null
+  quota: {
+    limit: number | null
+    remaining: number | null
+    resetAt: number | null
+  }
+  retryAt: number | null
+  lastCheckedAt: number | null
+  storage: "os_credential_vault"
+  usedForRatings: boolean
+}
+
+export interface RatingsIntegrationStatus {
+  boundaryVersion: 1
+  auth: {
+    currentMode: "api_key"
+    supportedModes: string[]
+    futureModes: string[]
+  }
+  credentialPrecedence: ["local", "plugin", "none"]
+  effectiveOrigin: RatingOrigin | "none"
+  available: boolean
+  selectionEnabled: boolean
+  local: {
+    mdblist: RatingCredentialStatus
+    tmdb: RatingCredentialStatus
+  }
+  plugin: {
+    available: boolean
+    capability: "ratings-v1"
+    boundaryVersion: 1
+    detail: string
+  }
+  sources: RatingSourceDefinition[]
+  selectedSources: string[]
+}
+
+export interface NormalizedRating {
+  sourceId: string
+  rawSource: string
+  value: number
+  score: number | null
+  votes: number | null
+  scaleMax: number
+}
+
+export interface ItemRatings {
+  id: string
+  ratings: NormalizedRating[]
+  origin: RatingOrigin
+  fetchedAt: number
+  sourceUpdatedAt: string | null
+  stale: boolean
+  schemaVersion: number
+}
+
+export interface RatingsBatchResponse {
+  available: boolean
+  effectiveOrigin: RatingOrigin | "none"
+  items: ItemRatings[]
+  retryAt: number | null
+  quota?: {
+    limit: number | null
+    remaining: number | null
+    resetAt: number | null
+  }
+  diagnostic: string | null
 }
 
 export interface LetterboxdProfile {
@@ -852,6 +938,35 @@ export const api = {
         body: { requestId },
       }),
     mpvHelp: () => request<{ opened: boolean }>("/api/shell/mpv/help", { method: "POST" }),
+  },
+  ratings: {
+    status: () => request<RatingsIntegrationStatus>("/api/integrations/ratings"),
+    saveCredential: (provider: "mdblist" | "tmdb", key: string) =>
+      request<RatingsIntegrationStatus>(
+        `/api/integrations/ratings/credential/${provider}`,
+        { method: "PUT", body: { key } },
+      ),
+    validateCredential: (provider: "mdblist" | "tmdb") =>
+      request<RatingsIntegrationStatus>(
+        `/api/integrations/ratings/credential/${provider}/validate`,
+        { method: "POST" },
+      ),
+    revealCredential: (provider: "mdblist" | "tmdb") =>
+      request<{ key: string }>(
+        `/api/integrations/ratings/credential/${provider}/reveal`,
+        { method: "POST" },
+      ),
+    removeCredential: (provider: "mdblist" | "tmdb") =>
+      request<RatingsIntegrationStatus>(
+        `/api/integrations/ratings/credential/${provider}`,
+        { method: "DELETE" },
+      ),
+    batch: (ids: string[], signal?: AbortSignal) =>
+      request<RatingsBatchResponse>("/api/ratings/batch", {
+        method: "POST",
+        body: { ids },
+        signal,
+      }),
   },
   letterboxd: {
     profiles: () => request<{ profiles: LetterboxdProfile[] }>("/api/integrations/letterboxd"),
