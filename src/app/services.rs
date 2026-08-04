@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 
 use crate::app::paths;
 use crate::companion::{CompanionSession, RequestsProvider};
+use crate::integrations::mdblist::RatingsService;
 use crate::jellyfin::session::Session;
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
@@ -24,6 +25,7 @@ pub struct Services {
     pub session: Arc<Session>,
     pub companion: Arc<CompanionSession>,
     pub seerr: Arc<SeerrSession>,
+    pub ratings: Arc<RatingsService>,
     pub sync: SyncHandle,
     pub preferences: Arc<PreferencesService>,
     pub shell: ShellBridge,
@@ -165,6 +167,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
             }
         });
     }
+    let ratings = Arc::new(RatingsService::new(library.clone(), companion.clone()));
     let sync = sync::spawn(library.clone(), session.clone());
     tracing::info!(
         target: "jellyfin.session",
@@ -176,6 +179,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         session,
         companion,
         seerr,
+        ratings,
         sync,
         preferences: Arc::new(PreferencesService::new(initial_settings)),
         shell: ShellBridge::new(),

@@ -53,6 +53,7 @@ pub struct AppearanceSettingsPatch {
     pub artwork_intensity: Option<u8>,
     pub backdrop_intensity: Option<u8>,
     pub reduced_motion: Option<bool>,
+    pub rating_sources: Option<Vec<String>>,
 }
 
 /// A persisted settings snapshot plus the effects the CEF shell has to apply.
@@ -245,6 +246,9 @@ impl PreferencesService {
             }
             if let Some(value) = patch.reduced_motion {
                 next.appearance.reduced_motion = value;
+            }
+            if let Some(value) = patch.rating_sources {
+                next.appearance.rating_sources = value;
             }
             Ok(())
         })

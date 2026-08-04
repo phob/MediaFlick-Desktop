@@ -3,6 +3,7 @@ import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { useStatus } from "@/lib/queries"
+import { RatingsProvider } from "@/lib/ratings"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
 import Home from "@/routes/Home"
@@ -36,6 +37,7 @@ export default function App() {
         <SignIn />
       ) : (
         <AppShell>
+          <RatingsProvider>
           <Routes>
             <Route path="/settings/*" element={<Settings />} />
             <Route path="/" element={<Home />} />
@@ -72,6 +74,7 @@ export default function App() {
             />
             <Route path="*" element={status?.authenticated ? <Home /> : <SignIn />} />
           </Routes>
+          </RatingsProvider>
         </AppShell>
       )}
       <LoadingScreen

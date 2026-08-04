@@ -1,6 +1,7 @@
 import { AudioLines, ScanLine } from "lucide-react"
 import { memo, useState } from "react"
 import { Link } from "react-router-dom"
+import { RatingOverlay } from "@/components/RatingOverlay"
 import {
   imageUrl,
   landscapeImageCandidates,
@@ -105,8 +106,9 @@ export const MediaCard = memo(function MediaCard({
             {item.name}
           </div>
         )}
+        <RatingOverlay item={item} />
         {ribbon && (
-          <div className="data-label absolute top-0 left-0 bg-primary px-1.5 py-1 leading-none text-primary-foreground">
+          <div className="data-label absolute top-0 right-0 z-[4] bg-primary px-1.5 py-1 leading-none text-primary-foreground">
             {ribbon}
           </div>
         )}

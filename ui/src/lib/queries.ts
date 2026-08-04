@@ -59,6 +59,15 @@ export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.settings })
 }
 
+export function useRatingsStatus() {
+  return useQuery({
+    queryKey: queryKeys.ratingsStatus,
+    queryFn: api.ratings.status,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
 export function useHome(enabled = true) {
   return useQuery({ queryKey: queryKeys.home, queryFn: api.home, enabled })
 }

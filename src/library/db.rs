@@ -12,7 +12,7 @@ use super::model::{ItemRecord, metadata_convergence_initial_delay, persisted_met
 use super::now_unix;
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 11;
+pub const SCHEMA_VERSION: i32 = 12;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -200,6 +200,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(SCHEMA_V11)?;
         connection.pragma_update(None, "user_version", 11)?;
         version = 11;
+    }
+    if version < 12 {
+        connection.execute_batch(SCHEMA_V12)?;
+        connection.pragma_update(None, "user_version", 12)?;
+        version = 12;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -669,6 +674,42 @@ INSERT OR IGNORE INTO catalog_enrichment (
 SELECT jellyfin_id, 'pending', CAST(strftime('%s', 'now') AS INTEGER), 0, 0, NULL,
        CAST(strftime('%s', 'now') AS INTEGER)
 FROM items;
+"#;
+
+/// Stable-provider rating cache and non-secret integration health.
+///
+/// Cache identity deliberately excludes Jellyfin IDs: when Jellyfin recreates
+/// an item, its TMDB/IMDb identity can reuse the same durable result. Secrets
+/// are never stored here; `integration_state` contains validation/quota facts
+/// only and the API key stays in the operating-system credential vault.
+const SCHEMA_V12: &str = r#"
+CREATE TABLE IF NOT EXISTS rating_cache (
+    provider           TEXT NOT NULL,
+    provider_id        TEXT NOT NULL,
+    media_type         TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
+    ratings            TEXT NOT NULL CHECK (json_valid(ratings)),
+    source_updated_at  TEXT,
+    fetched_at         INTEGER NOT NULL,
+    stale_at           INTEGER NOT NULL,
+    expires_at         INTEGER NOT NULL,
+    schema_version     INTEGER NOT NULL,
+    origin             TEXT NOT NULL CHECK (origin IN ('local_mdblist', 'plugin')),
+    PRIMARY KEY (provider, provider_id, media_type, origin)
+);
+CREATE INDEX IF NOT EXISTS rating_cache_expiry ON rating_cache (expires_at);
+
+CREATE TABLE IF NOT EXISTS integration_state (
+    service          TEXT PRIMARY KEY,
+    validation       TEXT NOT NULL,
+    valid            INTEGER NOT NULL DEFAULT 0,
+    detail           TEXT,
+    quota_limit      INTEGER,
+    quota_remaining  INTEGER,
+    quota_reset_at   INTEGER,
+    retry_at         INTEGER,
+    failure_count    INTEGER NOT NULL DEFAULT 0,
+    updated_at       INTEGER NOT NULL
+);
 "#;
 
 #[cfg(test)]

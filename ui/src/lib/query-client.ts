@@ -27,6 +27,7 @@ export const queryKeys = {
   companion: ["companion"] as const,
   calendar: (start: string, end: string) => ["calendar", start, end] as const,
   settings: ["settings"] as const,
+  ratingsStatus: ["ratings", "status"] as const,
   home: ["home"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,

@@ -151,6 +151,17 @@ impl CompanionSession {
         })
     }
 
+    /// Versioned ratings boundary. The plugin keeps any administrator-owned
+    /// provider credential server-side and returns capabilities/data only.
+    pub fn ratings_v1(&self, body: &Value) -> Result<Value, ApiError> {
+        let _ = self.probe(false);
+        if !self.supports("ratings-v1") {
+            return Err(ApiError::NotConfigured);
+        }
+        self.client()?
+            .companion_post_json_once("/MediaFlick/ratings/v1/batch", body)
+    }
+
     pub fn calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
         // Cached once probed; a probe failure just means the metadata
         // fallback below answers instead.
