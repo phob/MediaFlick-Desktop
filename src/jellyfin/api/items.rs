@@ -16,17 +16,26 @@ use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, Playba
 /// Item types the local cache mirrors. Music and live TV are out of scope.
 pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 
-/// Metadata pulled for every synced item. Provider IDs are the join keys for
-/// the external-rating and list features planned on top of the cache.
+/// Lightweight fields required to browse, sort, filter, join, and draw cards.
+/// Name, id, type, year, runtime, hierarchy, and image tags are part of
+/// Jellyfin's base item shape; the fields below opt into only the additional
+/// catalog signals the local overview needs. Rich prose, cast, studios, tags,
+/// and media streams are deliberately deferred to [`ENRICHMENT_FIELDS`].
+pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
+PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
+
+/// Rich fields fetched only after the complete lightweight catalog is usable,
+/// or on demand when an item detail is opened.
+///
 /// `DateLastSaved` is deliberately absent: it is a valid `ItemFields` value but
 /// servers return it empty, and it is not a valid `ItemSortBy` value, so the
 /// cache keys freshness on `DateCreated` instead. See `library::sync`.
-pub const SYNC_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
+pub const ENRICHMENT_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
 DateCreated,OriginalTitle,SortName,PremiereDate,OfficialRating,\
 CommunityRating,CriticRating,ChildCount,ParentId,MediaStreams";
 
-/// Page size for the bootstrap and incremental sweeps. Kept modest because
-/// each row carries cast, studios, and provider ids.
+/// Page size for lightweight catalog and incremental sweeps. Requests remain
+/// serial; this bounds both each SQLite commit and one coalesced UI invalidation.
 pub const PAGE_SIZE: i64 = 200;
 
 /// Page size for one parent's children. A series' season list and a season's
@@ -48,7 +57,7 @@ fn items_page_query(
         user_query(user_id),
         ("Recursive", "true".to_string()),
         ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
-        ("Fields", SYNC_FIELDS.to_string()),
+        ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
         ("StartIndex", start_index.to_string()),
@@ -104,7 +113,7 @@ fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'st
         // Deliberately not recursive: a series must answer with its seasons,
         // not with every episode underneath it.
         ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
-        ("Fields", SYNC_FIELDS.to_string()),
+        ("Fields", ENRICHMENT_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
         ("StartIndex", start_index.to_string()),
@@ -143,7 +152,7 @@ pub fn fetch_items(
         &[
             user_query(user_id),
             ("ids", item_ids.join(",")),
-            ("Fields", SYNC_FIELDS.to_string()),
+            ("Fields", ENRICHMENT_FIELDS.to_string()),
             ("EnableUserData", "true".to_string()),
             ("EnableImages", "true".to_string()),
         ],
@@ -248,7 +257,7 @@ pub fn fetch_next_up(
     let mut query = vec![
         user_query(user_id),
         ("Limit", limit.to_string()),
-        ("Fields", SYNC_FIELDS.to_string()),
+        ("Fields", ENRICHMENT_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
     ];
     if let Some(series_id) = series_id {
@@ -270,7 +279,7 @@ pub fn fetch_upcoming(
         &[
             user_query(user_id),
             ("Limit", limit.clamp(1, 500).to_string()),
-            ("Fields", SYNC_FIELDS.to_string()),
+            ("Fields", ENRICHMENT_FIELDS.to_string()),
             ("EnableUserData", "true".to_string()),
             ("EnableImages", "true".to_string()),
         ],
@@ -397,8 +406,8 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CHILDREN_PAGE_SIZE, PAGE_SIZE, SYNC_FIELDS, SYNCED_ITEM_TYPES, children_query, image_path,
-        items_page_query, user_query,
+        CATALOG_FIELDS, CHILDREN_PAGE_SIZE, ENRICHMENT_FIELDS, PAGE_SIZE, SYNCED_ITEM_TYPES,
+        children_query, image_path, items_page_query, user_query,
     };
 
     #[test]
@@ -408,19 +417,26 @@ mod tests {
     }
 
     #[test]
-    fn sync_fields_request_the_provider_join_keys() {
-        assert!(SYNC_FIELDS.contains("ProviderIds"));
-        assert!(SYNC_FIELDS.contains("DateCreated"));
-        assert!(SYNC_FIELDS.contains("MediaStreams"));
-        assert!(!SYNC_FIELDS.contains("MediaSources"));
-        assert!(!SYNC_FIELDS.contains(' '));
+    fn catalog_fields_are_browse_only() {
+        for required in ["ProviderIds", "Genres", "DateCreated", "SortName"] {
+            assert!(CATALOG_FIELDS.contains(required));
+        }
+        for deferred in ["Overview", "People", "Studios", "Tags", "MediaStreams"] {
+            assert!(!CATALOG_FIELDS.contains(deferred));
+            assert!(ENRICHMENT_FIELDS.contains(deferred));
+        }
+        assert!(!CATALOG_FIELDS.contains("MediaSources"));
+        assert!(!ENRICHMENT_FIELDS.contains("MediaSources"));
+        assert!(!CATALOG_FIELDS.contains(' '));
+        assert!(!ENRICHMENT_FIELDS.contains(' '));
     }
 
     /// `DateLastSaved` is not a valid `ItemSortBy` value and servers return the
     /// field empty, so keying sync freshness on it silently disables the sweep.
     #[test]
-    fn sync_fields_do_not_request_date_last_saved() {
-        assert!(!SYNC_FIELDS.contains("DateLastSaved"));
+    fn item_fields_do_not_request_date_last_saved() {
+        assert!(!CATALOG_FIELDS.contains("DateLastSaved"));
+        assert!(!ENRICHMENT_FIELDS.contains("DateLastSaved"));
     }
 
     #[test]
@@ -431,7 +447,7 @@ mod tests {
         assert_eq!(query["userId"], "uid");
         assert_eq!(query["Recursive"], "true");
         assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
-        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["Fields"], CATALOG_FIELDS);
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["StartIndex"], "400");
         assert_eq!(query["Limit"], PAGE_SIZE.to_string());
@@ -449,7 +465,7 @@ mod tests {
         assert_eq!(query["parentId"], "season1");
         assert!(!query.contains_key("Recursive"));
         assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
-        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["Fields"], ENRICHMENT_FIELDS);
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["Limit"], CHILDREN_PAGE_SIZE.to_string());
         assert_eq!(query["SortBy"], "ParentIndexNumber,IndexNumber,SortName");
@@ -472,14 +488,14 @@ mod tests {
         let query = [
             user_query("uid"),
             ("ids", ids.join(",")),
-            ("Fields", SYNC_FIELDS.to_string()),
+            ("Fields", ENRICHMENT_FIELDS.to_string()),
             ("EnableUserData", "true".to_string()),
             ("EnableImages", "true".to_string()),
         ]
         .into_iter()
         .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["ids"].split(',').count(), 20);
-        assert_eq!(query["Fields"], SYNC_FIELDS);
+        assert_eq!(query["Fields"], ENRICHMENT_FIELDS);
         assert_eq!(query["EnableImages"], "true");
     }
 }

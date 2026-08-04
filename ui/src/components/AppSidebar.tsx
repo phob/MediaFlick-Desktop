@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   ChevronsUpDown,
   CalendarDays,
   Compass,
@@ -112,6 +113,73 @@ function SearchBox() {
         className="pl-8"
       />
     </form>
+  )
+}
+
+export function LibrarySyncProgress() {
+  const { data: status } = useStatus()
+  const progress = status?.syncProgress
+  if (!status?.authenticated || !progress?.active) return null
+
+  const catalog = progress.catalog
+  const enrichment = progress.enrichment
+  const error = progress.error ?? enrichment.lastError
+  const retryAt = progress.retryAt ?? enrichment.nextDueAt
+  const isRetrying = progress.phase === "retrying" || Boolean(error && enrichment.failed)
+  const phase = isRetrying
+    ? "Synchronization paused"
+    : progress.phase === "catalog"
+      ? "Loading library"
+      : progress.phase === "enrichment"
+        ? "Enriching details"
+        : "Refreshing library"
+  const current = progress.phase === "catalog" ? catalog.processed : enrichment.completed
+  const total = progress.phase === "catalog" ? catalog.total : enrichment.total
+  const determinate = progress.phase === "catalog" || progress.phase === "enrichment"
+  const retryLabel = retryAt
+    ? `Retry scheduled for ${new Date(retryAt * 1_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : "Retry scheduled automatically"
+  const detail = isRetrying
+    ? retryLabel
+    : determinate && total != null && total > 0
+      ? `${Math.min(current, total).toLocaleString()} of ${total.toLocaleString()}`
+      : "Working in the background"
+
+  return (
+    <div
+      className="sidebar-sync-progress"
+      data-error={isRetrying || undefined}
+      role="status"
+      tabIndex={0}
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={[phase, detail, error].filter(Boolean).join(". ")}
+      title={error ?? `${phase}: ${detail}`}
+    >
+      {isRetrying ? <AlertTriangle aria-hidden /> : <RefreshCw aria-hidden />}
+      <div className="sidebar-sync-copy">
+        <strong>{phase}</strong>
+        <span>{detail}</span>
+        <div
+          className="sidebar-sync-track"
+          role="progressbar"
+          aria-label={phase}
+          aria-valuemin={determinate ? 0 : undefined}
+          aria-valuemax={determinate && total != null ? total : undefined}
+          aria-valuenow={determinate && total != null ? Math.min(current, total) : undefined}
+          aria-valuetext={detail}
+        >
+          <span
+            style={
+              determinate && total != null && total > 0
+                ? { width: `${Math.min(100, (current / total) * 100)}%` }
+                : undefined
+            }
+          />
+        </div>
+        {error && <span className="sr-only">{error}</span>}
+      </div>
+    </div>
   )
 }
 
@@ -291,6 +359,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
+        <LibrarySyncProgress />
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={location.pathname.startsWith("/settings")} tooltip="Settings">

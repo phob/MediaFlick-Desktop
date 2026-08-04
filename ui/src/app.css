@@ -559,43 +559,6 @@ html[data-reduced-motion="true"] *::after {
     transform 180ms ease-out;
 }
 
-.loading-screen[data-determinate="true"] .loading-screen-progress-fill {
-  animation: none;
-  transform: translateX(0);
-  transition: width 300ms ease-out;
-}
-
-.loading-screen-bootstrap {
-  display: flex;
-  min-height: 5.25rem;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: -0.6rem;
-  text-align: center;
-}
-
-.loading-screen-bootstrap-title {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--foreground);
-}
-
-.loading-screen-bootstrap-count {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  letter-spacing: 0.08em;
-  color: var(--muted-foreground);
-}
-
-.loading-screen-bootstrap-note {
-  max-width: 19rem;
-  margin-top: 0.4rem;
-  font-size: 0.75rem;
-  line-height: 1.45;
-  color: var(--muted-foreground);
-}
-
 @keyframes loading-screen-progress {
   from {
     transform: translateX(-110%);
@@ -615,11 +578,6 @@ html[data-reduced-motion="true"] *::after {
     left: 31%;
     animation: none;
     transform: none;
-  }
-
-  .loading-screen[data-determinate="true"] .loading-screen-progress-fill {
-    left: 0;
-    transition: none;
   }
 
   .loading-screen[data-complete="true"] .loading-screen-progress-fill {
@@ -1155,6 +1113,59 @@ html[data-reduced-motion="true"] *::after {
 .app-experience [data-sidebar="menu-button"][data-active="true"] svg {
   color: var(--primary);
 }
+
+/* One coalesced status surface sits directly above Settings. It survives the
+   icon rail as an accessible glyph/title and never competes with navigation. */
+.sidebar-sync-progress {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  min-width: 0;
+  padding: 0.55rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--sidebar-border));
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+  color: var(--sidebar-foreground);
+}
+
+.sidebar-sync-progress > svg {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.08rem;
+  color: var(--primary);
+}
+
+.sidebar-sync-progress[data-error="true"] {
+  border-color: color-mix(in srgb, var(--destructive) 42%, var(--sidebar-border));
+  background: color-mix(in srgb, var(--destructive) 7%, transparent);
+}
+
+.sidebar-sync-progress[data-error="true"] > svg { color: var(--destructive); }
+.sidebar-sync-copy { display: grid; min-width: 0; gap: 0.2rem; }
+.sidebar-sync-copy strong { overflow: hidden; font-size: 0.72rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-sync-copy > span { overflow: hidden; color: var(--muted-foreground); font: 0.58rem/1.25 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-sync-track { width: 100%; height: 2px; overflow: hidden; background: var(--sidebar-border); }
+.sidebar-sync-track > span { display: block; width: 32%; height: 100%; background: var(--primary); transition: width 180ms ease; }
+.sidebar-sync-track:not([aria-valuenow]) > span { animation: sidebar-sync-indeterminate 1.8s ease-in-out infinite; }
+.sidebar-sync-progress[data-error="true"] .sidebar-sync-track > span { background: var(--destructive); animation: none; }
+
+@keyframes sidebar-sync-indeterminate {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(315%); }
+}
+
+.app-experience [data-collapsible="icon"] .sidebar-sync-progress {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.app-experience [data-collapsible="icon"] .sidebar-sync-progress > svg { margin: 0; }
+.app-experience [data-collapsible="icon"] .sidebar-sync-copy { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .page-header {
   position: relative;

@@ -1,9 +1,10 @@
 //! Background synchronisation of the metadata cache.
 //!
-//! One thread owns the whole cycle: a resumable bootstrap that re-runs
-//! periodically, an incremental `DateCreated` sweep, a periodic user-data
-//! mirror, and a daily deletion sweep. It idles until credentials exist and
-//! pauses when the server rejects the token.
+//! One controlled worker owns the whole cycle: a resumable lightweight catalog
+//! fill, bounded rich enrichment, an incremental `DateCreated` sweep, and a
+//! periodic identity/user-data/deletion pass. It idles until credentials exist,
+//! resumes durable offsets/queues after restart, and pauses when the server
+//! rejects the token.
 //!
 //! Jellyfin offers no "changed since" ordering — `DateLastSaved` is a valid
 //! `ItemFields` value but not a valid `ItemSortBy` one, and servers return it
@@ -54,6 +55,7 @@ const MAX_IDENTITY_PAGES: usize = 1_000;
 const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 const META_BOOTSTRAP_TOTAL: &str = "sync.bootstrap_total";
 const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
+const META_CATALOG_READY: &str = "sync.catalog_ready";
 const META_WATERMARK: &str = "sync.watermark";
 const META_WATERMARK_IDS: &str = "sync.watermark_ids";
 const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
@@ -68,17 +70,30 @@ const META_LAST_SYNC: &str = "sync.completed_at";
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapProgress {
     pub complete: bool,
+    pub ready: bool,
     pub processed: i64,
     pub total: Option<i64>,
     pub initial: bool,
 }
 
+/// The catalog becomes usable after its first successful page commit. Existing
+/// rows are an equally strong readiness signal during a migration or weekly
+/// refresh, even if an older build never wrote the explicit marker.
+pub fn library_ready(library: &Library) -> bool {
+    library.meta(META_CATALOG_READY).as_deref() == Some("1")
+        || library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+        || library.stats().total > 0
+}
+
 pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
+    let stats = library.stats();
     BootstrapProgress {
         complete: library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1"),
+        ready: library_ready(library),
         processed: meta_count(library, META_BOOTSTRAP_OFFSET).unwrap_or(0),
         total: meta_count(library, META_BOOTSTRAP_TOTAL),
-        initial: library.meta(META_LAST_BOOTSTRAP).is_none(),
+        // A migration/backfill over an existing cache is never first-time setup.
+        initial: library.meta(META_LAST_BOOTSTRAP).is_none() && stats.total == 0,
     }
 }
 
@@ -138,7 +153,37 @@ struct Signal {
 #[derive(Default)]
 struct Flags {
     requested: bool,
+    enrichment_requested: bool,
     stopped: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncPhase {
+    Catalog,
+    Enrichment,
+    Reconciling,
+    Retrying,
+    #[default]
+    Complete,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkerState {
+    phase: SyncPhase,
+    error: Option<String>,
+    retry_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgress {
+    pub active: bool,
+    pub phase: SyncPhase,
+    pub catalog: BootstrapProgress,
+    pub enrichment: super::enrichment::EnrichmentDiagnostics,
+    pub error: Option<String>,
+    pub retry_at: Option<i64>,
 }
 
 /// Handle used by the shell to nudge or stop the sync thread.
@@ -146,6 +191,7 @@ struct Flags {
 pub struct SyncHandle {
     signal: Arc<Signal>,
     running: Arc<AtomicBool>,
+    state: Arc<Mutex<WorkerState>>,
 }
 
 impl SyncHandle {
@@ -161,6 +207,15 @@ impl SyncHandle {
         self.signal.condvar.notify_all();
     }
 
+    /// Wakes only the rich queue. Opening an item must not force the much more
+    /// expensive manual identity/deletion sweep.
+    pub fn request_enrichment(&self) {
+        if let Ok(mut flags) = self.signal.flags.lock() {
+            flags.enrichment_requested = true;
+        }
+        self.signal.condvar.notify_all();
+    }
+
     pub fn stop(&self) {
         if let Ok(mut flags) = self.signal.flags.lock() {
             flags.stopped = true;
@@ -171,6 +226,71 @@ impl SyncHandle {
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
+
+    pub fn progress(&self, library: &Library) -> SyncProgress {
+        let catalog = bootstrap_progress(library);
+        let enrichment = library.enrichment_diagnostics();
+        let state = self
+            .state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_default();
+        let active = self.is_running() || !catalog.complete || enrichment.pending > 0;
+        let persisted_retry = enrichment.failed > 0 && enrichment.due == 0;
+        let phase = if (state.phase == SyncPhase::Retrying || persisted_retry) && active {
+            SyncPhase::Retrying
+        } else if self.is_running() {
+            state.phase
+        } else if !catalog.complete {
+            SyncPhase::Catalog
+        } else if enrichment.pending > 0 {
+            SyncPhase::Enrichment
+        } else {
+            SyncPhase::Complete
+        };
+        let error = state.error.or_else(|| enrichment.last_error.clone());
+        let retry_at = state.retry_at.or(enrichment.next_due_at);
+        SyncProgress {
+            active,
+            phase,
+            catalog,
+            enrichment,
+            error,
+            retry_at,
+        }
+    }
+
+    fn set_phase(&self, phase: SyncPhase) {
+        if let Ok(mut state) = self.state.lock() {
+            state.phase = phase;
+            state.error = None;
+            state.retry_at = None;
+        }
+    }
+
+    fn set_retry(&self, error: &ApiError, delay: Duration) {
+        if let Ok(mut state) = self.state.lock() {
+            state.phase = SyncPhase::Retrying;
+            state.error = Some(error.to_string());
+            state.retry_at = Some(now_unix() as i64 + delay.as_secs() as i64);
+        }
+    }
+
+    fn set_enrichment_retry(&self, error: String, retry_at: Option<i64>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.phase = SyncPhase::Retrying;
+            state.error = Some(error);
+            state.retry_at = retry_at;
+        }
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.signal
+            .flags
+            .lock()
+            .map(|flags| flags.stopped)
+            .unwrap_or(true)
+    }
 }
 
 pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
@@ -180,6 +300,7 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
             condvar: Condvar::new(),
         }),
         running: Arc::new(AtomicBool::new(false)),
+        state: Arc::new(Mutex::new(WorkerState::default())),
     };
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
@@ -194,30 +315,38 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
     let mut normal_deadline = Instant::now();
+    let mut enrichment_not_before = Instant::now();
     let mut convergence_not_before = Instant::now();
     let mut trigger = Trigger::Scheduled;
     loop {
         if !session.is_authenticated() {
+            handle.running.store(false, Ordering::Relaxed);
             match wait(&handle, IDLE_INTERVAL) {
                 Wake::Stopped => return,
                 // Held until a cycle can actually consume it: this is the
                 // sign-in nudge arriving just before the session goes live.
                 Wake::Requested => trigger = Trigger::Requested,
-                Wake::Elapsed => {}
+                Wake::EnrichmentRequested | Wake::Elapsed => {}
             }
             continue;
         }
 
-        let normal_due = trigger == Trigger::Requested || Instant::now() >= normal_deadline;
-        let convergence_due = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-            && Instant::now() >= convergence_not_before
+        let now = Instant::now();
+        let catalog_complete = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1");
+        let enrichment = library.enrichment_diagnostics();
+        let normal_due = trigger == Trigger::Requested || now >= normal_deadline;
+        let enrichment_due = catalog_complete && now >= enrichment_not_before && enrichment.due > 0;
+        let convergence_due = catalog_complete
+            && enrichment.pending == 0
+            && now >= convergence_not_before
             && library.convergence_diagnostics().due > 0;
-        handle
-            .running
-            .store(normal_due || convergence_due, Ordering::Relaxed);
+        handle.running.store(
+            normal_due || enrichment_due || convergence_due,
+            Ordering::Relaxed,
+        );
 
         if normal_due {
-            let outcome = run_cycle(&library, &session, trigger);
+            let outcome = run_cycle_inner(&library, &session, trigger, Some(&handle));
             trigger = Trigger::Scheduled;
             let delay = match outcome {
                 Ok(report) => {
@@ -225,7 +354,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                     if report.changed() {
                         tracing::info!(
                             target: "library.sync",
-                            bootstrapped = report.bootstrapped,
+                            catalogued = report.bootstrapped,
                             updated = report.updated,
                             deleted = report.deleted,
                             elapsed_ms = report.elapsed_ms,
@@ -234,6 +363,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                     }
                     jittered(SYNC_INTERVAL)
                 }
+                Err(ApiError::Cancelled) if handle.is_stopped() => return,
                 Err(ApiError::Unauthorized) => {
                     session.mark_expired();
                     crate::app::services::notify_session_expired();
@@ -242,18 +372,78 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                 Err(error) => {
                     tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
                     backoff = (backoff * 2).min(Duration::from_secs(30 * 60));
-                    jittered(backoff)
+                    let delay = retry_delay(&error, jittered(backoff));
+                    handle.set_retry(&error, delay);
+                    delay
                 }
             };
             normal_deadline = Instant::now() + delay;
         }
 
+        let enrichment = library.enrichment_diagnostics();
         if session.is_authenticated()
             && library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+            && Instant::now() >= enrichment_not_before
+            && enrichment.due > 0
+        {
+            if handle.is_stopped() {
+                return;
+            }
+            handle.set_phase(SyncPhase::Enrichment);
+            match super::enrichment::process_due(&library, &session, || handle.is_stopped()) {
+                Ok(report) => {
+                    if !report.changes.is_empty() {
+                        crate::app::services::notify_library_changed(report.changes);
+                    }
+                    let diagnostics = library.enrichment_diagnostics();
+                    let retry_at = report.retry_at.or(diagnostics.next_due_at);
+                    if let Some(error) = report.last_error {
+                        handle.set_enrichment_retry(error, retry_at);
+                    }
+                    if !session.is_authenticated() {
+                        crate::app::services::notify_session_expired();
+                    }
+                    enrichment_not_before = if report.failed > 0 {
+                        Instant::now() + epoch_delay(retry_at)
+                    } else if report.more_due {
+                        Instant::now() + Duration::from_secs(super::enrichment::DRAIN_COOLDOWN_SECS)
+                    } else {
+                        Instant::now() + epoch_delay(diagnostics.next_due_at)
+                    };
+                }
+                Err(ApiError::Unauthorized) => {
+                    session.mark_expired();
+                    crate::app::services::notify_session_expired();
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "library.enrichment",
+                        "could not process rich metadata enrichment: {error}"
+                    );
+                    let delay = retry_delay(&error, CONVERGENCE_FAILURE_COOLDOWN);
+                    handle.set_retry(&error, delay);
+                    enrichment_not_before = Instant::now() + delay;
+                }
+            }
+            if handle.is_stopped() {
+                return;
+            }
+        }
+
+        let enrichment = library.enrichment_diagnostics();
+        if session.is_authenticated()
+            && library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+            && enrichment.pending == 0
             && Instant::now() >= convergence_not_before
             && library.convergence_diagnostics().due > 0
         {
-            match super::convergence::process_due(&library, &session) {
+            if handle.is_stopped() {
+                return;
+            }
+            handle.set_phase(SyncPhase::Enrichment);
+            match super::convergence::process_due_controlled(&library, &session, || {
+                handle.is_stopped()
+            }) {
                 Ok(report) => {
                     if !report.changes.is_empty() {
                         crate::app::services::notify_library_changed(report.changes);
@@ -261,7 +451,9 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                     if !session.is_authenticated() {
                         crate::app::services::notify_session_expired();
                     }
-                    convergence_not_before = if report.more_due {
+                    convergence_not_before = if report.failed > 0 {
+                        Instant::now() + epoch_delay(report.retry_at)
+                    } else if report.more_due {
                         Instant::now()
                             + Duration::from_secs(super::convergence::DRAIN_COOLDOWN_SECS)
                     } else {
@@ -280,29 +472,49 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                     convergence_not_before = convergence_failure_deadline(Instant::now());
                 }
             }
+            if handle.is_stopped() {
+                return;
+            }
         }
         handle.running.store(false, Ordering::Relaxed);
 
-        let diagnostics = library.convergence_diagnostics();
-        let convergence_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
-            diagnostics.next_due_at.map_or(SYNC_INTERVAL, |next| {
-                let seconds = next.saturating_sub(now_unix() as i64).max(0) as u64;
-                Duration::from_secs(seconds)
-            })
+        let enrichment = library.enrichment_diagnostics();
+        let enrichment_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
+            epoch_delay(enrichment.next_due_at)
         } else {
             SYNC_INTERVAL
-        };
-        let convergence_delay =
-            convergence_delay.max(convergence_not_before.saturating_duration_since(Instant::now()));
+        }
+        .max(enrichment_not_before.saturating_duration_since(Instant::now()));
+        let convergence = library.convergence_diagnostics();
+        let convergence_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
+            && enrichment.pending == 0
+        {
+            epoch_delay(convergence.next_due_at)
+        } else {
+            SYNC_INTERVAL
+        }
+        .max(convergence_not_before.saturating_duration_since(Instant::now()));
         let delay = normal_deadline
             .saturating_duration_since(Instant::now())
+            .min(enrichment_delay)
             .min(convergence_delay);
         match wait(&handle, delay) {
             Wake::Stopped => return,
             Wake::Requested => trigger = Trigger::Requested,
+            Wake::EnrichmentRequested => enrichment_not_before = Instant::now(),
             Wake::Elapsed => {}
         }
     }
+}
+
+fn epoch_delay(epoch: Option<i64>) -> Duration {
+    epoch.map_or(SYNC_INTERVAL, |next| {
+        Duration::from_secs(next.saturating_sub(now_unix() as i64).max(0) as u64)
+    })
+}
+
+fn retry_delay(error: &ApiError, fallback: Duration) -> Duration {
+    error.retry_after().unwrap_or(fallback).max(fallback)
 }
 
 fn convergence_failure_deadline(now: Instant) -> Instant {
@@ -314,6 +526,8 @@ fn convergence_failure_deadline(now: Instant) -> Instant {
 enum Wake {
     /// Someone called [`SyncHandle::request`].
     Requested,
+    /// An opened detail was moved to the front of the rich queue.
+    EnrichmentRequested,
     /// The timeout elapsed on its own.
     Elapsed,
     /// The thread should exit.
@@ -331,6 +545,10 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
         flags.requested = false;
         return Wake::Requested;
     }
+    if flags.enrichment_requested {
+        flags.enrichment_requested = false;
+        return Wake::EnrichmentRequested;
+    }
     let (mut flags, _) = handle
         .signal
         .condvar
@@ -345,6 +563,10 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
         flags.requested = false;
         return Wake::Requested;
     }
+    if flags.enrichment_requested {
+        flags.enrichment_requested = false;
+        return Wake::EnrichmentRequested;
+    }
     Wake::Elapsed
 }
 
@@ -354,8 +576,19 @@ pub fn run_cycle(
     session: &Session,
     trigger: Trigger,
 ) -> Result<SyncReport, ApiError> {
+    run_cycle_inner(library, session, trigger, None)
+}
+
+fn run_cycle_inner(
+    library: &Library,
+    session: &Session,
+    trigger: Trigger,
+    control: Option<&SyncHandle>,
+) -> Result<SyncReport, ApiError> {
     let started = Instant::now();
     let (client, user_id) = session.client_and_user()?;
+    let initial_catalog = library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
+        && library.meta(META_LAST_BOOTSTRAP).is_none();
     let mut report = SyncReport::default();
 
     let result = (|| -> Result<(), ApiError> {
@@ -369,12 +602,26 @@ pub fn run_cycle(
             // make the determinate bar move against stale information.
             let _ = library.set_meta(META_BOOTSTRAP_TOTAL, "");
         }
-        report.bootstrapped = bootstrap(library, &client, &user_id, &mut report.changes)?;
-        report.updated = incremental(library, &client, &user_id, &mut report.changes)?;
-        if trigger.forces_identity_sweep()
+        if library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
+            && let Some(control) = control
+        {
+            control.set_phase(SyncPhase::Catalog);
+        }
+        report.bootstrapped = bootstrap(library, &client, &user_id, control)?;
+        cancelled(control)?;
+        if let Some(control) = control {
+            control.set_phase(SyncPhase::Reconciling);
+        }
+        report.updated = incremental(library, &client, &user_id, &mut report.changes, control)?;
+        if initial_catalog {
+            // The just-completed catalog itself is a complete identity and user
+            // data observation; repeating every page before enrichment would
+            // double first-run request load without finding a stale row.
+            touch(library, META_LAST_IDENTITY_SWEEP);
+        } else if trigger.forces_identity_sweep()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
         {
-            let (refreshed, deleted) = identity_sweep(library, &client, &user_id)?;
+            let (refreshed, deleted) = identity_sweep(library, &client, &user_id, control)?;
             report.user_data_refreshed = refreshed;
             report.deleted = deleted;
             touch(library, META_LAST_IDENTITY_SWEEP);
@@ -411,12 +658,13 @@ fn bootstrap(
     library: &Library,
     client: &JellyfinClient,
     user_id: &str,
-    changes: &mut LibraryChangeBatch,
+    control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
     if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
         return Ok(0);
     }
 
+    let phase_started = Instant::now();
     let mut offset = library
         .meta(META_BOOTSTRAP_OFFSET)
         .and_then(|value| value.parse::<i64>().ok())
@@ -428,6 +676,7 @@ fn bootstrap(
 
     let mut pages = 0;
     let truncated = loop {
+        cancelled(control)?;
         if pages >= MAX_BOOTSTRAP_PAGES {
             break true;
         }
@@ -442,16 +691,41 @@ fn bootstrap(
             );
         }
         if page.items.is_empty() {
+            // Even an empty library has a successful first catalog page.
+            let _ = library.set_meta(META_CATALOG_READY, "1");
+            if offset == 0 {
+                tracing::info!(
+                    target: "library.sync",
+                    ready_ms = phase_started.elapsed().as_millis() as u64,
+                    "empty catalog confirmed; library is ready"
+                );
+            }
             break false;
         }
         advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
-        let page_changes = library.ingest_page(&page.items).map_err(storage_error)?;
+        let page_changes = library
+            .ingest_catalog_page_at(&page.items, now_unix() as i64)
+            .map_err(storage_error)?;
+        // Readiness is written only after the page transaction commits.
+        let _ = library.set_meta(META_CATALOG_READY, "1");
         written += page.items.len();
-        // The caller emits one event after the complete ordinary cycle.
-        changes.merge(page_changes);
         offset += page.items.len() as i64;
         pages += 1;
         let _ = library.set_meta(META_BOOTSTRAP_OFFSET, &offset.to_string());
+        if pages == 1 {
+            tracing::info!(
+                target: "library.sync",
+                items = page.items.len(),
+                total = page.total_record_count,
+                ready_ms = phase_started.elapsed().as_millis() as u64,
+                "first catalog page committed; library is ready"
+            );
+        }
+        // One page is one SQLite transaction and one UI invalidation. This is
+        // progressive without degenerating into an event per item.
+        if !page_changes.is_empty() {
+            crate::app::services::notify_library_changed(page_changes);
+        }
         tracing::debug!(
             target: "library.sync",
             offset,
@@ -497,6 +771,7 @@ fn incremental(
     client: &JellyfinClient,
     user_id: &str,
     changes: &mut LibraryChangeBatch,
+    control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
     let watermark = library.meta(META_WATERMARK);
     let known_watermark_ids = read_watermark_ids(library);
@@ -506,6 +781,7 @@ fn incremental(
     let mut newest_ids = known_watermark_ids.clone();
 
     for _ in 0..MAX_INCREMENTAL_PAGES {
+        cancelled(control)?;
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")?;
         if page.items.is_empty() {
             break;
@@ -527,7 +803,9 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = library.ingest_page(&fresh).map_err(storage_error)?;
+        let page_changes = library
+            .ingest_catalog_page_at(&fresh, now_unix() as i64)
+            .map_err(storage_error)?;
         written += fresh.len();
         changes.merge(page_changes);
 
@@ -556,12 +834,14 @@ fn identity_sweep(
     library: &Library,
     client: &JellyfinClient,
     user_id: &str,
+    control: Option<&SyncHandle>,
 ) -> Result<(usize, usize), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
     let mut pages = 0;
     let truncated = loop {
+        cancelled(control)?;
         if pages >= MAX_IDENTITY_PAGES {
             break true;
         }
@@ -699,6 +979,14 @@ fn now_unix() -> u64 {
 
 /// Storage failures are reported through the same channel as API failures so a
 /// cycle stops on the first problem instead of half-applying a page.
+fn cancelled(control: Option<&SyncHandle>) -> Result<(), ApiError> {
+    if control.is_some_and(SyncHandle::is_stopped) {
+        Err(ApiError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
 fn storage_error(error: rusqlite::Error) -> ApiError {
     ApiError::Decode(format!("library storage failed: {error}"))
 }
@@ -714,16 +1002,20 @@ fn jittered(base: Duration) -> Duration {
 mod tests {
     use super::{
         CONVERGENCE_FAILURE_COOLDOWN, Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE,
-        META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, PAGE_SIZE, SYNC_INTERVAL,
-        Signal, SyncHandle, SyncReport, Trigger, Wake, advance_watermark_with_ids,
-        bootstrap_progress, convergence_failure_deadline, full_bootstrap_due,
-        is_incremental_candidate, is_newer, jittered, wait,
+        META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP,
+        PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle, SyncReport, Trigger, Wake, WorkerState,
+        advance_watermark_with_ids, bootstrap_progress, convergence_failure_deadline,
+        full_bootstrap_due, is_incremental_candidate, is_newer, jittered, library_ready, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
-    use crate::library::Library;
+    use crate::jellyfin::session::Session;
+    use crate::library::{Library, StoredCredentials};
     use std::collections::HashSet;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::thread;
     use std::time::Duration;
 
     fn items(dates: &[&str]) -> Vec<BaseItemDto> {
@@ -737,6 +1029,52 @@ mod tests {
             .collect()
     }
 
+    fn receive_target(listener: &TcpListener) -> (TcpStream, String) {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2_048];
+        loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "connection closed before headers");
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let target = String::from_utf8(request)
+            .expect("utf8 request")
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .expect("request target")
+            .to_string();
+        (stream, target)
+    }
+
+    fn send_json(mut stream: TcpStream, body: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("write response");
+    }
+
+    fn authenticated_session(library: &Arc<Library>, server_url: &str) -> Session {
+        let previous = library.credentials();
+        library
+            .save_credentials(&StoredCredentials {
+                server_url: Some(server_url.to_string()),
+                user_id: Some("user-1".to_string()),
+                user_name: Some("Test User".to_string()),
+                server_id: Some("server-1".to_string()),
+                device_id: previous.device_id,
+                token: Some("token-1".to_string()),
+            })
+            .expect("credentials");
+        Session::restore(library.clone())
+    }
+
     #[test]
     fn bootstrap_progress_is_durable_and_distinguishes_the_initial_fill() {
         let library = Library::open_in_memory().expect("library");
@@ -744,6 +1082,7 @@ mod tests {
             bootstrap_progress(&library),
             super::BootstrapProgress {
                 complete: false,
+                ready: false,
                 processed: 0,
                 total: None,
                 initial: true,
@@ -767,7 +1106,171 @@ mod tests {
             .expect("last bootstrap");
         let completed = bootstrap_progress(&library);
         assert!(completed.complete);
+        assert!(completed.ready);
         assert!(!completed.initial);
+    }
+
+    #[test]
+    fn first_catalog_page_is_ready_while_background_paging_continues() {
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        library
+            .set_meta(META_LAST_IDENTITY_SWEEP, &super::now_unix().to_string())
+            .expect("skip unrelated identity sweep");
+
+        let first_items = (0..PAGE_SIZE)
+            .map(|index| {
+                serde_json::json!({
+                    "Id": format!("item-{index:03}"),
+                    "Name": format!("Item {index}"),
+                    "Type": "Movie",
+                    "DateCreated": format!("2024-01-01T00:{:02}:00Z", index % 60),
+                    "ImageTags": { "Primary": format!("poster-{index}") },
+                    "UserData": { "Played": false, "IsFavorite": index == 0 },
+                })
+            })
+            .collect::<Vec<_>>();
+        let first_body = serde_json::json!({
+            "Items": first_items,
+            "TotalRecordCount": PAGE_SIZE + 1,
+            "StartIndex": 0,
+        })
+        .to_string();
+        let second_body = serde_json::json!({
+            "Items": [{
+                "Id": "item-last",
+                "Name": "Last item",
+                "Type": "Movie",
+                "DateCreated": "2024-02-01T00:00:00Z"
+            }],
+            "TotalRecordCount": PAGE_SIZE + 1,
+            "StartIndex": PAGE_SIZE,
+        })
+        .to_string();
+        let empty_body = r#"{"Items":[],"TotalRecordCount":201}"#.to_string();
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut targets = Vec::new();
+            let (stream, target) = receive_target(&listener);
+            targets.push(target);
+            send_json(stream, &first_body);
+
+            let (stream, target) = receive_target(&listener);
+            targets.push(target);
+            second_started_tx.send(()).expect("signal second page");
+            continue_rx.recv().expect("release second page");
+            send_json(stream, &second_body);
+
+            let (stream, target) = receive_target(&listener);
+            targets.push(target);
+            send_json(stream, &empty_body);
+            targets
+        });
+        let session = authenticated_session(&library, &format!("http://{address}"));
+        let worker_library = library.clone();
+        let worker =
+            thread::spawn(move || super::run_cycle(&worker_library, &session, Trigger::Scheduled));
+
+        second_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker continued to page two");
+        let first_page = bootstrap_progress(&library);
+        assert!(first_page.ready);
+        assert!(!first_page.complete);
+        assert_eq!(first_page.processed, PAGE_SIZE);
+        assert_eq!(first_page.total, Some(PAGE_SIZE + 1));
+        assert_eq!(library.stats().total, PAGE_SIZE);
+        assert_eq!(library.enrichment_diagnostics().pending, PAGE_SIZE);
+
+        continue_tx.send(()).expect("continue catalog");
+        let report = worker.join().expect("worker").expect("sync cycle");
+        assert_eq!(report.bootstrapped as i64, PAGE_SIZE + 1);
+        assert!(bootstrap_progress(&library).complete);
+        assert_eq!(library.stats().total, PAGE_SIZE + 1);
+        assert_eq!(library.enrichment_diagnostics().pending, PAGE_SIZE + 1);
+
+        let targets = server.join().expect("server");
+        assert_eq!(targets.len(), 3);
+        assert!(targets[0].contains("StartIndex=0"));
+        assert!(targets[1].contains(&format!("StartIndex={PAGE_SIZE}")));
+        assert!(targets[2].contains("SortOrder=Descending"));
+        assert!(targets[..2].iter().all(|target| !target.contains("People")));
+        assert!(
+            targets[..2]
+                .iter()
+                .all(|target| !target.contains("MediaStreams"))
+        );
+    }
+
+    #[test]
+    fn existing_cache_is_ready_even_while_a_refresh_or_migration_is_incomplete() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .ingest_catalog_page_at(
+                &[
+                    serde_json::from_str(r#"{"Id":"cached","Name":"Cached","Type":"Movie"}"#)
+                        .expect("dto"),
+                ],
+                1,
+            )
+            .expect("seed cache");
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "0")
+            .expect("refresh in progress");
+
+        assert!(library_ready(&library));
+        let progress = bootstrap_progress(&library);
+        assert!(progress.ready);
+        assert!(!progress.complete);
+        assert!(!progress.initial);
+    }
+
+    #[test]
+    fn progress_reports_enrichment_and_retry_without_hiding_the_ready_cache() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .ingest_catalog_page_at(
+                &[
+                    serde_json::from_str(r#"{"Id":"queued","Name":"Queued","Type":"Movie"}"#)
+                        .expect("dto"),
+                ],
+                1,
+            )
+            .expect("queue");
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .expect("catalog complete");
+        let handle = SyncHandle {
+            signal: Arc::new(Signal {
+                flags: Mutex::new(Flags::default()),
+                condvar: Condvar::new(),
+            }),
+            running: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(WorkerState::default())),
+        };
+
+        let enriching = handle.progress(&library);
+        assert!(enriching.active);
+        assert!(enriching.catalog.ready);
+        assert_eq!(enriching.phase, super::SyncPhase::Enrichment);
+        assert_eq!(enriching.enrichment.pending, 1);
+
+        handle.set_retry(
+            &crate::jellyfin::api::ApiError::Transport("offline".to_string()),
+            Duration::from_secs(60),
+        );
+        let retrying = handle.progress(&library);
+        assert_eq!(retrying.phase, super::SyncPhase::Retrying);
+        assert!(
+            retrying
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("offline"))
+        );
+        assert!(retrying.retry_at.is_some());
     }
 
     #[test]
@@ -912,11 +1415,16 @@ mod tests {
                 condvar: Condvar::new(),
             }),
             running: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(WorkerState::default())),
         };
 
         handle.request();
         assert_eq!(wait(&handle, Duration::ZERO), Wake::Requested);
         // Consumed: the next wait is an ordinary scheduled one.
+        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
+
+        handle.request_enrichment();
+        assert_eq!(wait(&handle, Duration::ZERO), Wake::EnrichmentRequested);
         assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
 
         handle.stop();
