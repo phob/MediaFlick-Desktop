@@ -36,6 +36,7 @@ public sealed class InfoController : ControllerBase
         if (IsConfigured(configuration.Seerr))
         {
             capabilities.Add("seerr");
+            capabilities.Add("seerr-person-discovery");
             capabilities.Add("seerr-discovery-v2");
             // v3 was the short-lived century contract. A distinct capability
             // prevents mixed desktop/plugin versions from silently ignoring
@@ -116,6 +117,15 @@ public sealed class SeerrController : ControllerBase
         [FromQuery] int page = 1,
         CancellationToken cancellationToken = default)
         => RunAsync(userId => _gateway.SearchAsync(userId, query, page, cancellationToken));
+
+    [HttpGet("person/{tmdbId:int}/credits")]
+    public Task<IActionResult> PersonCredits(
+        int tmdbId,
+        CancellationToken cancellationToken)
+        => RunAsync(userId => _gateway.PersonCreditsAsync(
+            userId,
+            tmdbId,
+            cancellationToken));
 
     [HttpGet("discover/{kind}")]
     public Task<IActionResult> Discover(

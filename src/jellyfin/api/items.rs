@@ -43,6 +43,11 @@ pub const PAGE_SIZE: i64 = 200;
 /// only there so a pathological parent still resolves completely.
 pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
+/// Cast filmographies are live server queries rather than local-cache joins.
+/// A large page keeps Discover's ownership verification bounded while the UI
+/// can still request its ordinary 60-card windows.
+pub const PERSON_PAGE_SIZE: i64 = 500;
+
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
 }
@@ -166,6 +171,68 @@ pub fn fetch_item(
 ) -> Result<Option<BaseItemDto>, ApiError> {
     let response = fetch_items(client, user_id, &[item_id.to_string()])?;
     Ok(response.items.into_iter().next())
+}
+
+fn person_items_query(
+    user_id: &str,
+    person_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("Recursive", "true".to_string()),
+        ("PersonIds", person_id.to_string()),
+        ("PersonTypes", "Actor".to_string()),
+        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+        // Cards need the lightweight catalog shape, not another broad People
+        // or MediaStreams fetch competing with progressive enrichment.
+        ("Fields", CATALOG_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", start_index.max(0).to_string()),
+        ("Limit", limit.clamp(1, PERSON_PAGE_SIZE).to_string()),
+        ("SortBy", "SortName".to_string()),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+/// Every visible library item Jellyfin associates with one exact actor id.
+///
+/// This deliberately bypasses the progressively enriched local `People`
+/// column: names can be ambiguous and cast may not have reached SQLite yet,
+/// while Jellyfin's `PersonIds` relation is exact and complete immediately.
+pub fn fetch_person_items(
+    client: &JellyfinClient,
+    user_id: &str,
+    person_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &person_items_query(user_id, person_id, start_index, limit),
+    )
+}
+
+/// Candidates used only to bridge a TMDB person link to Jellyfin's stable id.
+/// Callers accept an exact provider id or one unambiguous exact name; this
+/// endpoint never turns a fuzzy name match directly into a filmography.
+pub fn fetch_people(
+    client: &JellyfinClient,
+    user_id: &str,
+    search_term: &str,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Persons",
+        &[
+            user_query(user_id),
+            ("searchTerm", search_term.trim().to_string()),
+            ("Fields", "ProviderIds".to_string()),
+            ("EnableImages", "true".to_string()),
+            ("Limit", "50".to_string()),
+        ],
+    )
 }
 
 /// Container, codec, and track detail for one item.
@@ -406,8 +473,9 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CATALOG_FIELDS, CHILDREN_PAGE_SIZE, ENRICHMENT_FIELDS, PAGE_SIZE, SYNCED_ITEM_TYPES,
-        children_query, image_path, items_page_query, user_query,
+        CATALOG_FIELDS, CHILDREN_PAGE_SIZE, ENRICHMENT_FIELDS, PAGE_SIZE, PERSON_PAGE_SIZE,
+        SYNCED_ITEM_TYPES, children_query, image_path, items_page_query, person_items_query,
+        user_query,
     };
 
     #[test]
@@ -469,6 +537,30 @@ mod tests {
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["Limit"], CHILDREN_PAGE_SIZE.to_string());
         assert_eq!(query["SortBy"], "ParentIndexNumber,IndexNumber,SortName");
+    }
+
+    #[test]
+    fn cast_queries_are_exact_complete_and_lightweight() {
+        let query = person_items_query("uid", "person-42", 60, 60)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["userId"], "uid");
+        assert_eq!(query["PersonIds"], "person-42");
+        assert_eq!(query["PersonTypes"], "Actor");
+        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        assert_eq!(query["Recursive"], "true");
+        assert_eq!(query["StartIndex"], "60");
+        assert_eq!(query["Limit"], "60");
+        assert_eq!(query["Fields"], CATALOG_FIELDS);
+        assert!(!query["Fields"].contains("People"));
+        assert!(!query["Fields"].contains("MediaStreams"));
+        assert_eq!(query["EnableUserData"], "true");
+
+        let bounded = person_items_query("uid", "person-42", -1, i64::MAX)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(bounded["StartIndex"], "0");
+        assert_eq!(bounded["Limit"], PERSON_PAGE_SIZE.to_string());
     }
 
     #[test]

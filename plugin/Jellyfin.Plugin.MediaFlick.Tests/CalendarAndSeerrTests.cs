@@ -135,6 +135,35 @@ public sealed class CalendarAndSeerrTests
     }
 
     [Fact]
+    public void SeerrPersonCreditsKeepCastOnlyDeduplicateAndPreserveRequestState()
+    {
+        var source = JsonNode.Parse(
+            """
+            {
+              "id":6384,
+              "cast":[
+                {"id":603,"mediaType":"movie","title":"The Matrix","character":"Neo",
+                 "adult":false},
+                {"id":603,"mediaType":"movie","title":"The Matrix","character":"Thomas",
+                 "adult":false,"mediaInfo":{"status":5}},
+                {"id":603,"mediaType":"tv","name":"Different namespace","adult":false},
+                {"id":7,"mediaType":"movie","title":"Thanks","character":" thanks ","adult":false},
+                {"id":8,"mediaType":"movie","title":"Adult","adult":true}
+              ],
+              "crew":[{"id":9,"mediaType":"movie","title":"Directed"}]
+            }
+            """);
+
+        var page = SeerrGateway.ShapePersonCredits(source);
+        var results = Assert.IsType<JsonArray>(page["results"]);
+        Assert.Equal(2, results.Count);
+        Assert.Equal("movie", results[0]?["mediaType"]?.GetValue<string>());
+        Assert.Equal("available", results[0]?["status"]?.GetValue<string>());
+        Assert.Equal("tv", results[1]?["mediaType"]?.GetValue<string>());
+        Assert.Equal(2, page["totalResults"]?.GetValue<int>());
+    }
+
+    [Fact]
     public void SeerrGenresDropMalformedRowsAndKeepBackdropChoices()
     {
         var source = JsonNode.Parse(

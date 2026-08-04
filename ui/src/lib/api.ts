@@ -56,6 +56,26 @@ export interface Person {
   imageTag: string | null
 }
 
+/** Stable identity shared by Jellyfin cast filtering and TMDB/Seerr credits. */
+export interface PersonIdentity {
+  jellyfinId: string
+  tmdbId: number | null
+  name: string
+  imageTag: string | null
+}
+
+export interface PersonResolution {
+  person: PersonIdentity | null
+  candidates: PersonIdentity[]
+  ambiguous: boolean
+}
+
+export interface PersonResolveQuery {
+  jellyfinId?: string
+  tmdbId?: number
+  name?: string
+}
+
 export interface ItemDetail extends ItemSummary {
   overview: string | null
   genres: string[]
@@ -720,6 +740,8 @@ export type PlayerCommand =
 
 export interface ItemQuery {
   search?: string
+  /** Exact Jellyfin person id; switches `/api/items` to a live `PersonIds` query. */
+  personId?: string
   kind?: string
   genre?: string
   /** Inclusive first year of a standard release decade (for example 1990). */
@@ -879,6 +901,8 @@ export const api = {
   home: () => request<{ rows: HomeRow[] }>("/api/home"),
   billboard: () => request<{ items: ItemSummary[] }>("/api/billboard"),
   genres: () => request<{ genres: string[] }>("/api/genres"),
+  resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>
+    request<PersonResolution>(`/api/person/resolve${queryString(query)}`, { signal }),
   items: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
@@ -940,6 +964,11 @@ export const api = {
 
     search: (q: string, page = 1, signal?: AbortSignal) =>
       request<SeerrPage<SeerrResult>>(`/api/seerr/search${queryString({ q, page })}`, { signal }),
+    personCredits: (tmdbId: number, jellyfinId?: string | null, signal?: AbortSignal) =>
+      request<SeerrPage<SeerrResult>>(
+        `/api/seerr/person/${tmdbId}/credits${queryString({ personId: jellyfinId })}`,
+        { signal },
+      ),
     discover: (
       row: SeerrDiscoverRow,
       filters: SeerrDiscoverFilters = {},

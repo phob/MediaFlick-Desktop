@@ -32,7 +32,13 @@ export const queryKeys = {
   genres: ["genres"] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
-  items: (query: ItemQuery) => ["items", query] as const,
+  // Live exact-person pages are not local SQLite projections. Keeping their
+  // root separate prevents every progressive enrichment batch from re-running
+  // the same Jellyfin filmography query.
+  items: (query: ItemQuery) =>
+    query.personId ? (["person-items", query] as const) : (["items", query] as const),
+  personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
+    ["person", "resolve", jellyfinId, tmdbId, name] as const,
   item: (id: string) => ["item", id] as const,
   children: (id: string) => ["item", id, "children"] as const,
   media: (id: string) => ["item", id, "media"] as const,
@@ -42,6 +48,8 @@ export const queryKeys = {
   seerrStatus: ["seerr", "status"] as const,
   seerrSearch: (term: string) => ["seerr", "search", term] as const,
   seerrSearchInfinite: (term: string) => ["seerr", "search", term, "infinite"] as const,
+  seerrPersonCredits: (tmdbId: number, jellyfinId: string) =>
+    ["seerr", "person", tmdbId, jellyfinId, "credits"] as const,
   seerrDiscover: (row: string, resultSetKey: string) =>
     ["seerr", "discover", row, resultSetKey] as const,
   seerrGenres: (mediaType: string) => ["seerr", "genres", mediaType] as const,
@@ -60,6 +68,7 @@ export function invalidateSeerrSurfaces() {
   const active = { refetchType: "active" as const }
   void queryClient.invalidateQueries({ queryKey: ["seerr", "requests"], ...active })
   void queryClient.invalidateQueries({ queryKey: ["seerr", "search"], ...active })
+  void queryClient.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
   void queryClient.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
   void queryClient.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
   // The quota moves with every request, and it lives on the status.
@@ -92,6 +101,9 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
   const active = { refetchType: "active" as const }
   void queryClient.invalidateQueries({ queryKey: queryKeys.home, ...active })
   void queryClient.invalidateQueries({ queryKey: ["items"], ...active })
+  // Explicit user-data writes should refresh a live person card too; metadata
+  // batches deliberately do not, because that response is already server-live.
+  void queryClient.invalidateQueries({ queryKey: ["person-items"], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...active })

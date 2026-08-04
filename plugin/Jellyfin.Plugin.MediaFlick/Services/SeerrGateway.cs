@@ -116,6 +116,30 @@ public sealed class SeerrGateway
         return ShapeSearchPage(response);
     }
 
+    public async Task<JsonNode> PersonCreditsAsync(
+        Guid jellyfinUserId,
+        int tmdbId,
+        CancellationToken cancellationToken)
+    {
+        ValidatePositive(tmdbId, "TMDB person id");
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        var response = await SendMappedAsync(
+            HttpMethod.Get,
+            $"api/v1/person/{tmdbId}/combined_credits",
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false);
+        var credits = response as JsonObject ?? new JsonObject();
+        var responseId = IntValue(credits, "id");
+        if (responseId is > 0 && responseId != tmdbId)
+        {
+            throw new GatewayException(
+                StatusCodes.Status502BadGateway,
+                "Seerr returned credits for a different TMDB person");
+        }
+        return ShapePersonCredits(credits);
+    }
+
     public async Task<JsonNode> DiscoverAsync(
         Guid jellyfinUserId,
         string kind,
@@ -580,6 +604,38 @@ public sealed class SeerrGateway
             ["page"] = IntValue(page, "page") ?? 1,
             ["totalPages"] = IntValue(page, "totalPages") ?? 1,
             ["totalResults"] = IntValue(page, "totalResults") ?? results.Count,
+            ["results"] = results
+        };
+    }
+
+    internal static JsonNode ShapePersonCredits(JsonNode? node)
+    {
+        var credits = node as JsonObject ?? new JsonObject();
+        var results = new JsonArray(
+            (credits["cast"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(static credit =>
+                    StringValue(credit, "mediaType") is "movie" or "tv"
+                    && (IntValue(credit, "id") ?? 0) > 0
+                    && !BoolValue(credit, "adult")
+                    && !string.Equals(
+                        StringValue(credit, "character")?.Trim(),
+                        "Thanks",
+                        StringComparison.OrdinalIgnoreCase))
+                .GroupBy(
+                    static credit => $"{StringValue(credit, "mediaType")}:{IntValue(credit, "id")}",
+                    StringComparer.Ordinal)
+                // Preserve request state when only a duplicate character row
+                // happens to carry Seerr's mediaInfo object.
+                .Select(static group => ShapeSearchResult(
+                    group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
+                    ?? group.First()))
+                .ToArray());
+        return new JsonObject
+        {
+            ["page"] = 1,
+            ["totalPages"] = results.Count > 0 ? 1 : 0,
+            ["totalResults"] = results.Count,
             ["results"] = results
         };
     }

@@ -120,6 +120,9 @@ export default function ItemDetail() {
       {episodes.length > 0 && <EpisodeList episodes={episodes} parentId={item.id} />}
       <SeasonGrid seasons={seasons} />
 
+      {/* A lightweight progressive-catalog row may have no People yet. The
+          detail API prioritizes its enrichment, and the native metadata bridge
+          refetches this item when cast arrives; the usable detail never waits. */}
       <CastRow people={item.people} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
