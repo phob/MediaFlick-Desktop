@@ -176,15 +176,27 @@ export function formatVideoRange(stream: Pick<MediaStream, "videoRange" | "video
 
 /** Compact one-line summary of a track, used in the media-info lists. */
 export function describeStream(stream: MediaStream, kind: "video" | "audio" | "subtitle") {
+  const suppliedName = stream.title?.trim() || stream.displayTitle?.trim() || null
   const parts = [
     kind === "video" ? formatResolution(stream) : formatLanguage(stream.language),
+    suppliedName,
     formatCodec(stream.codec),
     kind === "video" ? formatVideoRange(stream) : null,
     kind === "video" && stream.bitDepth ? `${stream.bitDepth}-bit` : null,
     kind === "audio" ? formatChannels(stream.channels) : null,
     kind === "subtitle" && stream.isForced ? "Forced" : null,
+    kind === "subtitle" && stream.isHearingImpaired ? "SDH" : null,
     kind === "subtitle" && stream.isExternal ? "External" : null,
-  ].filter(Boolean)
+  ].filter((part): part is string => Boolean(part))
+  const unique = parts.filter(
+    (part, index) => parts.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index,
+  )
   // A track with nothing recognisable still has whatever the server called it.
-  return parts.length ? parts.join(" · ") : (stream.displayTitle ?? stream.title ?? "Unknown")
+  return unique.length ? unique.join(" · ") : "Unknown"
+}
+
+/** Full selector label, including the server's default marker when present. */
+export function describeTrackChoice(stream: MediaStream, kind: "audio" | "subtitle") {
+  const label = describeStream(stream, kind)
+  return stream.isDefault ? `${label} · Default` : label
 }

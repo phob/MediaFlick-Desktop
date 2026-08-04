@@ -82,6 +82,7 @@ export interface MediaStream {
   bitDepth: number | null
   isDefault: boolean
   isForced: boolean
+  isHearingImpaired: boolean
   isExternal: boolean
 }
 
@@ -93,10 +94,28 @@ export interface MediaSource {
   fileName: string | null
   size: number | null
   bitrate: number | null
+  defaultAudioStreamIndex: number | null
+  defaultSubtitleStreamIndex: number | null
   video: MediaStream[]
   audio: MediaStream[]
   subtitles: MediaStream[]
 }
+
+/** A saved choice after the shell has validated it against current sources. */
+export interface PlaybackTrackPreference {
+  mediaSourceId: string | null
+  mediaSourceIndex: number
+  audioStreamIndex: number | null
+  /** `null` means subtitles off. */
+  subtitleStreamIndex: number | null
+}
+
+export interface MediaInfoResponse {
+  sources: MediaSource[]
+  playbackPreference: PlaybackTrackPreference | null
+}
+
+export type PlaybackTrackPreferenceWrite = PlaybackTrackPreference
 
 export interface TrailerSummary {
   id: string | null
@@ -835,7 +854,12 @@ export const api = {
   children: (id: string) =>
     request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
   media: (id: string) =>
-    request<{ sources: MediaSource[] }>(`/api/item/${encodeURIComponent(id)}/media`),
+    request<MediaInfoResponse>(`/api/item/${encodeURIComponent(id)}/media`),
+  setPlaybackPreference: (id: string, body: PlaybackTrackPreferenceWrite) =>
+    request<{ playbackPreference: PlaybackTrackPreference }>(
+      `/api/item/${encodeURIComponent(id)}/playback-preference`,
+      { method: "PATCH", body },
+    ),
   trailer: (id: string) =>
     request<{ trailer: TrailerSummary | null }>(`/api/item/${encodeURIComponent(id)}/trailer`),
   trailerStreamUrl: (id: string) => `/api/trailer/${encodeURIComponent(id)}/stream`,

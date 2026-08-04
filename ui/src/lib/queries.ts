@@ -7,6 +7,8 @@ import {
   type ExternalProvider,
   type ItemQuery,
   type PlayerCommand,
+  type MediaInfoResponse,
+  type PlaybackTrackPreferenceWrite,
   type QuickConnectStart,
   type SeerrDiscoverRow,
   type SeerrDiscoverFilters,
@@ -149,6 +151,29 @@ export function useMediaInfo(id: string | undefined, enabled = true) {
     enabled: Boolean(id) && enabled,
     staleTime: 30 * 60_000,
     retry: false,
+  })
+}
+
+/** Saves source, audio, and subtitle together so indices never cross sources. */
+export function useSetPlaybackPreference(itemId: string) {
+  return useMutation({
+    mutationFn: (preference: PlaybackTrackPreferenceWrite) =>
+      api.setPlaybackPreference(itemId, preference),
+    onSuccess: ({ playbackPreference }) => {
+      queryClient.setQueryData(
+        queryKeys.media(itemId),
+        (current: MediaInfoResponse | undefined) =>
+          current ? { ...current, playbackPreference } : current,
+      )
+    },
+    onError: (error: Error) => {
+      reportError(error)
+      // A 409 means the file changed between reading and saving the controls.
+      // Re-fetching restores safe current choices instead of keeping stale UI.
+      if (error instanceof ApiError && error.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.media(itemId) })
+      }
+    },
   })
 }
 

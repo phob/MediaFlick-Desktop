@@ -27,3 +27,7 @@ if (!elementPrototype.hasPointerCapture) {
   elementPrototype.setPointerCapture = () => {}
   elementPrototype.releasePointerCapture = () => {}
 }
+
+if (!elementPrototype.scrollIntoView) {
+  elementPrototype.scrollIntoView = () => {}
+}

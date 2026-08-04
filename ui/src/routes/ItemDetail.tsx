@@ -124,7 +124,12 @@ export default function ItemDetail() {
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <DetailFacts item={item} />
-        <MediaInfo sources={media.data?.sources} isPending={!isContainer && media.isPending} />
+        <MediaInfo
+          itemId={item.id}
+          sources={media.data?.sources}
+          preference={media.data?.playbackPreference}
+          isPending={!isContainer && media.isPending}
+        />
       </div>
     </div>
   )

@@ -217,6 +217,11 @@ pub struct MediaStream {
     pub title: Option<String>,
     pub is_default: bool,
     pub is_forced: bool,
+    /// Jellyfin marks SDH/closed-caption-style subtitle tracks separately from
+    /// ordinary dialogue subtitles. Keep the flag even when the server does
+    /// not localize a display title so per-item choices retain accessibility
+    /// intent.
+    pub is_hearing_impaired: bool,
     pub is_external: bool,
     pub delivery_url: Option<String>,
     pub delivery_method: Option<String>,
