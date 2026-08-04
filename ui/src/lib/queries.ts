@@ -43,12 +43,13 @@ export function useStatus() {
   return useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
-    // A fresh login only queues the SQLite bootstrap. Keep observing its
-    // completion so App can hold the media routes back until their first read
-    // can return the complete catalog and mirrored playback positions.
+    // A new account is gated only until its first catalog page commits. Keep a
+    // slower status pulse while background phases are active so the compact
+    // sidebar indicator advances without invalidating media queries per item.
     refetchInterval: (query) => {
       const status = query.state.data
-      return status?.authenticated && !status.bootstrapped ? 500 : false
+      if (status?.authenticated && !(status.libraryReady ?? status.bootstrapped)) return 500
+      return status?.authenticated && status.syncProgress?.active ? 2_000 : false
     },
   })
 }

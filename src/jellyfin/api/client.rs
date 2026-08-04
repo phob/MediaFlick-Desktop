@@ -40,6 +40,9 @@ pub enum ApiError {
     Unauthorized,
     /// Any other non-success HTTP status.
     Status { status: u16 },
+    /// The server asked clients to slow down. Seconds are retained from a
+    /// numeric `Retry-After` header so background work does not hammer it.
+    RateLimited { retry_after_secs: Option<u64> },
     /// A typed companion endpoint refused the action and supplied a safe
     /// user-facing explanation.
     Remote { status: u16, message: String },
@@ -49,17 +52,26 @@ pub enum ApiError {
     Decode(String),
     /// No server URL is configured, or no session exists yet.
     NotConfigured,
+    /// Local application shutdown cancelled work between bounded requests.
+    Cancelled,
 }
 
 impl ApiError {
     /// Whether retrying the same request could plausibly succeed.
     pub fn is_retryable(&self) -> bool {
         match self {
-            Self::Transport(_) => true,
-            Self::Status { status } | Self::Remote { status, .. } => {
-                *status >= 500 || *status == 429
-            }
-            Self::Unauthorized | Self::Decode(_) | Self::NotConfigured => false,
+            Self::Transport(_) | Self::RateLimited { .. } => true,
+            Self::Status { status } | Self::Remote { status, .. } => *status >= 500,
+            Self::Unauthorized | Self::Decode(_) | Self::NotConfigured | Self::Cancelled => false,
+        }
+    }
+
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RateLimited {
+                retry_after_secs: Some(seconds),
+            } => Some(Duration::from_secs(*seconds)),
+            _ => None,
         }
     }
 
@@ -67,8 +79,10 @@ impl ApiError {
     pub fn client_status(&self) -> u16 {
         match self {
             Self::Unauthorized => 401,
+            Self::RateLimited { .. } => 429,
             Self::Status { status } | Self::Remote { status, .. } => *status,
             Self::NotConfigured => 409,
+            Self::Cancelled => 499,
             Self::Transport(_) | Self::Decode(_) => 502,
         }
     }
@@ -79,12 +93,20 @@ impl fmt::Display for ApiError {
         match self {
             Self::Unauthorized => write!(formatter, "the Jellyfin server rejected the session"),
             Self::Status { status } => write!(formatter, "Jellyfin returned HTTP {status}"),
+            Self::RateLimited {
+                retry_after_secs: Some(seconds),
+            } => write!(
+                formatter,
+                "Jellyfin rate limited requests; retrying after {seconds} seconds"
+            ),
+            Self::RateLimited { .. } => write!(formatter, "Jellyfin rate limited requests"),
             Self::Remote { message, .. } => write!(formatter, "{message}"),
             Self::Transport(message) => write!(formatter, "could not reach Jellyfin: {message}"),
             Self::Decode(message) => {
                 write!(formatter, "unexpected Jellyfin response: {message}")
             }
             Self::NotConfigured => write!(formatter, "no Jellyfin server is configured"),
+            Self::Cancelled => write!(formatter, "the request was cancelled during shutdown"),
         }
     }
 }
@@ -114,7 +136,9 @@ impl JellyfinClient {
                 .into()
         };
         Self {
-            agent: build_agent(true),
+            // Keep core error responses available so `Retry-After` can be
+            // honored instead of being discarded into `ureq::Error::StatusCode`.
+            agent: build_agent(false),
             companion_agent: build_agent(false),
             base_url: base_url.trim_end_matches('/').to_string(),
             device_id: device_id.to_string(),
@@ -188,13 +212,14 @@ impl JellyfinClient {
     ) -> Result<T, ApiError> {
         let url = self.url(path, query);
         self.with_retry(path, || {
-            let mut response = self
-                .agent
-                .get(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .call()
-                .map_err(map_ureq_error)?;
+            let mut response = core_response(
+                self.agent
+                    .get(url.as_str())
+                    .header("Accept", "application/json")
+                    .header("Authorization", self.authorization_header())
+                    .call()
+                    .map_err(map_ureq_error)?,
+            )?;
             response
                 .body_mut()
                 .read_json::<T>()
@@ -231,7 +256,7 @@ impl JellyfinClient {
             if let Some(range) = range {
                 request = request.header("Range", range);
             }
-            let mut response = request.call().map_err(map_ureq_error)?;
+            let mut response = core_response(request.call().map_err(map_ureq_error)?)?;
             let status = response.status().as_u16();
             let content_type = response
                 .headers()
@@ -297,13 +322,14 @@ impl JellyfinClient {
     ) -> Result<T, ApiError> {
         let url = self.url(path, query);
         self.with_retry(path, || {
-            let mut response = self
-                .agent
-                .post(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .send_json(body)
-                .map_err(map_ureq_error)?;
+            let mut response = core_response(
+                self.agent
+                    .post(url.as_str())
+                    .header("Accept", "application/json")
+                    .header("Authorization", self.authorization_header())
+                    .send_json(body)
+                    .map_err(map_ureq_error)?,
+            )?;
             response
                 .body_mut()
                 .read_json::<T>()
@@ -336,26 +362,30 @@ impl JellyfinClient {
     ) -> Result<(), ApiError> {
         let url = self.url(path, query);
         self.with_retry(path, || {
-            self.agent
-                .post(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .send_json(body)
-                .map(|_| ())
-                .map_err(map_ureq_error)
+            core_response(
+                self.agent
+                    .post(url.as_str())
+                    .header("Accept", "application/json")
+                    .header("Authorization", self.authorization_header())
+                    .send_json(body)
+                    .map_err(map_ureq_error)?,
+            )
+            .map(|_| ())
         })
     }
 
     pub fn delete(&self, path: &str, query: &[(&str, String)]) -> Result<(), ApiError> {
         let url = self.url(path, query);
         self.with_retry(path, || {
-            self.agent
-                .delete(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .call()
-                .map(|_| ())
-                .map_err(map_ureq_error)
+            core_response(
+                self.agent
+                    .delete(url.as_str())
+                    .header("Accept", "application/json")
+                    .header("Authorization", self.authorization_header())
+                    .call()
+                    .map_err(map_ureq_error)?,
+            )
+            .map(|_| ())
         })
     }
 
@@ -383,7 +413,9 @@ impl JellyfinClient {
             match call() {
                 Ok(value) => return Ok(value),
                 Err(error) if error.is_retryable() && attempt < MAX_ATTEMPTS => {
-                    let backoff = Duration::from_millis(250 * (1u64 << (attempt - 1)));
+                    let backoff = error
+                        .retry_after()
+                        .unwrap_or_else(|| Duration::from_millis(250 * (1u64 << (attempt - 1))));
                     if deadline.saturating_duration_since(Instant::now()) <= backoff {
                         tracing::debug!(
                             target: "jellyfin.api",
@@ -414,9 +446,31 @@ impl JellyfinClient {
     }
 }
 
+fn core_response(
+    response: ureq::http::Response<ureq::Body>,
+) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
+    let status = response.status().as_u16();
+    match status {
+        200..=399 => Ok(response),
+        401 | 403 => Err(ApiError::Unauthorized),
+        429 => {
+            let retry_after_secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok());
+            Err(ApiError::RateLimited { retry_after_secs })
+        }
+        _ => Err(ApiError::Status { status }),
+    }
+}
+
 fn map_ureq_error(error: ureq::Error) -> ApiError {
     match error {
         ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => ApiError::Unauthorized,
+        ureq::Error::StatusCode(429) => ApiError::RateLimited {
+            retry_after_secs: None,
+        },
         ureq::Error::StatusCode(status) => ApiError::Status { status },
         other => ApiError::Transport(other.to_string()),
     }
@@ -496,6 +550,9 @@ fn quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ApiError, JellyfinClient, map_companion_ureq_error, map_ureq_error, quote};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     fn client() -> JellyfinClient {
         JellyfinClient::new("http://server:8096/", "device-1", Some("secret"))
@@ -561,6 +618,35 @@ mod tests {
     }
 
     #[test]
+    fn retry_after_seconds_are_preserved_for_background_scheduling() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 2_048];
+            let _ = stream.read(&mut request).expect("request");
+            write!(
+                stream,
+                "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("response");
+        });
+        let client = JellyfinClient::new(&format!("http://{address}"), "device", Some("token"));
+
+        let error = client
+            .get_json::<serde_json::Value>("/Items", &[])
+            .expect_err("rate limit");
+
+        assert_eq!(
+            error,
+            ApiError::RateLimited {
+                retry_after_secs: Some(600)
+            }
+        );
+        server.join().expect("server");
+    }
+
+    #[test]
     fn companion_permissions_do_not_expire_the_jellyfin_session() {
         assert_eq!(
             map_companion_ureq_error(ureq::Error::StatusCode(401)),
@@ -576,7 +662,12 @@ mod tests {
     fn only_transport_and_server_errors_are_retried() {
         assert!(ApiError::Transport("reset".to_string()).is_retryable());
         assert!(ApiError::Status { status: 503 }.is_retryable());
-        assert!(ApiError::Status { status: 429 }.is_retryable());
+        assert!(
+            ApiError::RateLimited {
+                retry_after_secs: Some(30)
+            }
+            .is_retryable()
+        );
         assert!(!ApiError::Status { status: 404 }.is_retryable());
         assert!(!ApiError::Unauthorized.is_retryable());
     }
@@ -586,6 +677,13 @@ mod tests {
         assert_eq!(ApiError::Unauthorized.client_status(), 401);
         assert_eq!(ApiError::NotConfigured.client_status(), 409);
         assert_eq!(ApiError::Status { status: 404 }.client_status(), 404);
+        assert_eq!(
+            ApiError::RateLimited {
+                retry_after_secs: Some(30)
+            }
+            .client_status(),
+            429
+        );
         assert_eq!(
             ApiError::Remote {
                 status: 409,

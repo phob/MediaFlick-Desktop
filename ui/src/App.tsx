@@ -1,4 +1,3 @@
-import { useIsFetching } from "@tanstack/react-query"
 import { Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
@@ -16,9 +15,10 @@ import Settings, { AppearanceSync } from "@/routes/Settings"
 
 export default function App() {
   const { data: status, isPending } = useStatus()
-  const fetching = useIsFetching()
   const location = useLocation()
-  const waitingForLibrary = Boolean(status?.authenticated && !status.bootstrapped)
+  const waitingForLibrary = Boolean(
+    status?.authenticated && !(status.libraryReady ?? status.bootstrapped),
+  )
   // Player and appearance configuration has always been available from the
   // sign-in screen. Keep that promise while the rest of the app remains
   // account-gated: a direct /settings link is a real anonymous route.
@@ -75,13 +75,10 @@ export default function App() {
         </AppShell>
       )}
       <LoadingScreen
-        // The startup screen may already have completed while the sign-in form
-        // was visible. A successful login begins a second loading phase for the
-        // first library bootstrap, so give that authenticated phase a fresh
-        // instance rather than exposing the blank route underneath it.
+        // A new account waits only for the first committed catalog page. The
+        // rest of the fill and all rich enrichment happen in the live shell.
         key={status?.authenticated ? "authenticated" : "anonymous"}
-        ready={!isPending && (!waitingForLibrary || showingSettings) && fetching === 0}
-        bootstrap={status?.authenticated ? status.bootstrap : undefined}
+        ready={!isPending && (!waitingForLibrary || showingSettings)}
       />
       <AppearanceSync />
     </>

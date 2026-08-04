@@ -168,6 +168,7 @@ export interface LibraryStats {
 
 export interface BootstrapProgress {
   complete: boolean
+  ready: boolean
   processed: number
   total: number | null
   initial: boolean
@@ -181,7 +182,9 @@ export interface Status {
   syncing?: boolean
   lastSync?: string | null
   bootstrapped?: boolean
+  libraryReady?: boolean
   bootstrap?: BootstrapProgress
+  syncProgress?: SyncProgress
   convergence?: ConvergenceDiagnostics
   companion?: CompanionStatus
   [key: string]: unknown
@@ -586,6 +589,27 @@ export interface SeerrDiscoverFilters {
   timeWindow?: SeerrTrendingWindow
 }
 
+export type SyncPhase = "catalog" | "enrichment" | "reconciling" | "retrying" | "complete"
+
+export interface EnrichmentDiagnostics {
+  total: number
+  completed: number
+  pending: number
+  failed: number
+  due: number
+  nextDueAt: number | null
+  lastError: string | null
+}
+
+export interface SyncProgress {
+  active: boolean
+  phase: SyncPhase
+  catalog: BootstrapProgress
+  enrichment: EnrichmentDiagnostics
+  error: string | null
+  retryAt: number | null
+}
+
 export interface ConvergenceRunReport {
   selected: number
   requests: number
@@ -595,6 +619,7 @@ export interface ConvergenceRunReport {
   dormant: number
   failed: number
   elapsedMs: number
+  retryAt: number | null
 }
 
 export interface ConvergenceDiagnostics {

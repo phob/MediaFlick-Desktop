@@ -33,13 +33,29 @@ pub fn print_stats() -> i32 {
     println!("seasons:     {}", stats.seasons);
     println!("episodes:    {}", stats.episodes);
     println!("total items: {}", stats.total);
+    let catalog = sync::bootstrap_progress(&library);
     println!(
-        "bootstrap:   {}",
-        if library.meta("sync.bootstrap_done").as_deref() == Some("1") {
+        "catalog:     {} · {} / {}",
+        if catalog.complete {
             "complete"
+        } else if catalog.ready {
+            "usable, filling"
         } else {
-            "in progress"
-        }
+            "waiting for first page"
+        },
+        catalog.processed,
+        catalog
+            .total
+            .map_or_else(|| "unknown".to_string(), |total| total.to_string())
+    );
+    let enrichment = library.enrichment_diagnostics();
+    println!(
+        "enrichment:  complete {} / {} · pending {} · failed {} · next {:?}",
+        enrichment.completed,
+        enrichment.total,
+        enrichment.pending,
+        enrichment.failed,
+        enrichment.next_due_at
     );
     if let Some(report) = library.meta("sync.last_report") {
         println!("last sync:   {report}");

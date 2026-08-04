@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react"
 import appIcon from "../../../resources/app-icon.png?inline"
-import type { BootstrapProgress } from "@/lib/api"
 
 const READY_SETTLE_MS = 160
 const IMAGE_SETTLE_LIMIT_MS = 5_000
@@ -75,29 +74,10 @@ async function waitForInitialVisuals() {
   }
 }
 
-export function LoadingScreen({
-  ready,
-  bootstrap,
-}: {
-  ready: boolean
-  bootstrap?: BootstrapProgress
-}) {
+export function LoadingScreen({ ready }: { ready: boolean }) {
   const [complete, setComplete] = useState(false)
   const [exiting, setExiting] = useState(false)
   const [mounted, setMounted] = useState(true)
-  // The authenticated instance is remounted at login. Remember whether it
-  // began in bootstrap mode so the last 100% frame and its explanation stay
-  // put while the newly available home data and artwork settle. A normal
-  // later startup receives the old completed snapshot but never shows it.
-  const [showBootstrap] = useState(() => Boolean(bootstrap && !bootstrap.complete))
-  const [initialBootstrap] = useState(() => Boolean(bootstrap?.initial))
-  const activeBootstrap = showBootstrap ? bootstrap : undefined
-  const processed = Math.max(0, activeBootstrap?.processed ?? 0)
-  const total =
-    activeBootstrap?.total == null ? null : Math.max(0, activeBootstrap.total)
-  const displayedProcessed = total == null ? processed : Math.min(processed, total)
-  const progress =
-    total == null ? null : total === 0 ? 100 : Math.min(100, (displayedProcessed / total) * 100)
 
   useEffect(() => {
     if (!ready || complete) return
@@ -133,7 +113,6 @@ export function LoadingScreen({
       className="loading-screen"
       data-complete={complete}
       data-exiting={exiting}
-      data-determinate={progress != null || undefined}
       role="status"
       aria-label={complete ? "MediaFlick is ready" : "Loading MediaFlick"}
     >
@@ -142,40 +121,11 @@ export function LoadingScreen({
         <div
           className="loading-screen-progress"
           role="progressbar"
-          aria-label={activeBootstrap ? "Building the local library" : "Loading the home page"}
-          aria-valuemin={progress == null ? undefined : 0}
-          aria-valuemax={progress == null ? undefined : total ?? 0}
-          aria-valuenow={progress == null ? undefined : displayedProcessed}
-          aria-valuetext={
-            complete
-              ? "Complete"
-              : activeBootstrap
-                ? total == null
-                  ? `${processed.toLocaleString()} items loaded`
-                  : `${displayedProcessed.toLocaleString()} of ${total.toLocaleString()} items loaded`
-                : "Loading"
-          }
+          aria-label="Loading MediaFlick"
+          aria-valuetext={complete ? "Complete" : "Loading"}
         >
-          <span
-            className="loading-screen-progress-fill"
-            style={progress == null ? undefined : { width: `${progress}%` }}
-          />
+          <span className="loading-screen-progress-fill" />
         </div>
-        {activeBootstrap && (
-          <div className="loading-screen-bootstrap" aria-live="polite">
-            <p className="loading-screen-bootstrap-title">Building your local library</p>
-            <p className="loading-screen-bootstrap-count">
-              {total == null
-                ? `${processed.toLocaleString()} items loaded`
-                : `${displayedProcessed.toLocaleString()} of ${total.toLocaleString()} items`}
-            </p>
-            {initialBootstrap && (
-              <p className="loading-screen-bootstrap-note">
-                First-time setup takes a little longer. Future starts will be faster.
-              </p>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )

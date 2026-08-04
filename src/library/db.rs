@@ -12,7 +12,7 @@ use super::model::{ItemRecord, metadata_convergence_initial_delay, persisted_met
 use super::now_unix;
 
 /// Bump together with a new `migrate` arm whenever the schema changes.
-pub const SCHEMA_VERSION: i32 = 10;
+pub const SCHEMA_VERSION: i32 = 11;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -195,6 +195,11 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         migrate_v10(connection)?;
         connection.pragma_update(None, "user_version", 10)?;
         version = 10;
+    }
+    if version < 11 {
+        connection.execute_batch(SCHEMA_V11)?;
+        connection.pragma_update(None, "user_version", 11)?;
+        version = 11;
     }
     tracing::debug!(target: "library.db", version, "library schema ready");
     Ok(())
@@ -600,10 +605,9 @@ CREATE TABLE IF NOT EXISTS item_playback_preferences (
 );
 "#;
 
-/// Lightweight technical metadata for cards. Existing rows deliberately begin
-/// empty; clearing the weekly-bootstrap timestamp makes the next ordinary sync
-/// enrich the whole cache with `MediaStreams` while preserving every row until
-/// the server has answered.
+/// Lightweight technical metadata for cards. v10 originally forced a weekly
+/// catalog refresh to populate historical rows; v11 replaces that broad fetch
+/// with its dedicated finite enrichment queue.
 const SCHEMA_V10: &str = r#"
 ALTER TABLE items ADD COLUMN media_streams TEXT NOT NULL DEFAULT '[]'
     CHECK (json_valid(media_streams));
@@ -618,11 +622,54 @@ fn migrate_v10(connection: &Connection) -> rusqlite::Result<()> {
     if !already_added {
         connection.execute_batch(SCHEMA_V10)?;
     }
-    // Replays are harmless. On a real v9 database this schedules the one
-    // enrichment pass needed to populate historical rows.
+    // Replays are harmless. This was v10's historical backfill trigger; the
+    // following v11 migration restores completed-catalog state and queues the
+    // finite enrichment pass instead.
     connection.execute("DELETE FROM meta WHERE key = 'sync.bootstrap_at'", [])?;
     Ok(())
 }
+
+/// Every catalog row gets an explicit durable rich-metadata job. This queue is
+/// separate from the older convergence queue: enrichment is a finite pass over
+/// all rows, while convergence revisits the genuinely sparse subset during
+/// Jellyfin's asynchronous metadata-provider window.
+///
+/// Existing rows are queued without touching catalog/bootstrap markers, user
+/// data, preferences, or item metadata. A migration therefore behaves as a
+/// background backfill and never turns a usable cache into first-time setup.
+const SCHEMA_V11: &str = r#"
+-- v10 used a forced full catalog refresh to acquire MediaStreams. The finite
+-- queue below supersedes that behavior: restore a missing timestamp only for a
+-- cache explicitly known to have completed, so this migration is a backfill
+-- and never a first-time/bootstrap transition.
+INSERT INTO meta (key, value)
+SELECT 'sync.bootstrap_at', CAST(strftime('%s', 'now') AS TEXT)
+WHERE EXISTS (SELECT 1 FROM items)
+  AND EXISTS (SELECT 1 FROM meta WHERE key = 'sync.bootstrap_done' AND value = '1')
+  AND NOT EXISTS (SELECT 1 FROM meta WHERE key = 'sync.bootstrap_at');
+
+CREATE TABLE IF NOT EXISTS catalog_enrichment (
+    jellyfin_id     TEXT PRIMARY KEY
+                    REFERENCES items(jellyfin_id) ON DELETE CASCADE,
+    state           TEXT NOT NULL CHECK (state IN ('pending', 'complete')),
+    next_attempt_at INTEGER,
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    error_count     INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    updated_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS catalog_enrichment_due
+    ON catalog_enrichment (next_attempt_at, jellyfin_id)
+    WHERE state = 'pending' AND next_attempt_at IS NOT NULL;
+
+INSERT OR IGNORE INTO catalog_enrichment (
+    jellyfin_id, state, next_attempt_at, attempt_count, error_count, last_error, updated_at
+)
+SELECT jellyfin_id, 'pending', CAST(strftime('%s', 'now') AS INTEGER), 0, 0, NULL,
+       CAST(strftime('%s', 'now') AS INTEGER)
+FROM items;
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -698,6 +745,16 @@ mod tests {
             })
             .expect("metadata convergence table");
         assert_eq!(convergence_table, 1);
+        let enrichment_table: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'catalog_enrichment'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("catalog enrichment table");
+        assert_eq!(enrichment_table, 1);
     }
 
     #[test]
@@ -1063,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    fn v9_and_v10_migrations_preserve_items_and_schedule_stream_enrichment() {
+    fn v9_through_v11_migrations_preserve_items_and_queue_stream_enrichment() {
         let connection = Connection::open_in_memory().expect("open");
         migrate(&connection).expect("initial schema");
         connection
@@ -1074,11 +1131,11 @@ mod tests {
             )
             .expect("seed existing item");
         connection
-            .execute(
-                "INSERT INTO meta (key, value) VALUES ('sync.bootstrap_at', '123')",
-                [],
+            .execute_batch(
+                "INSERT INTO meta (key, value) VALUES ('sync.bootstrap_at', '123');
+                 INSERT INTO meta (key, value) VALUES ('sync.bootstrap_done', '1');",
             )
-            .expect("seed completed bootstrap timestamp");
+            .expect("seed completed bootstrap markers");
         // Recreate the exact v8-to-v9 boundary without replaying unrelated,
         // much older migrations in this focused preservation test.
         connection
@@ -1114,7 +1171,16 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("bootstrap timestamp");
-        assert_eq!(stale_bootstrap_timestamp, 0);
+        assert_eq!(stale_bootstrap_timestamp, 1);
+        let enrichment: (String, i64) = connection
+            .query_row(
+                "SELECT state, attempt_count FROM catalog_enrichment
+                 WHERE jellyfin_id = 'existing'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("existing row queued without replacement");
+        assert_eq!(enrichment, ("pending".to_string(), 0));
         assert_eq!(user_version(&connection).expect("version"), SCHEMA_VERSION);
     }
 

@@ -327,7 +327,12 @@ fn status(services: &Arc<Services>) -> ApiResponse {
             json!(services.library.meta("sync.completed_at")),
         );
         object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
+        object.insert("libraryReady".to_string(), json!(bootstrap.ready));
         object.insert("bootstrap".to_string(), json!(bootstrap));
+        object.insert(
+            "syncProgress".to_string(),
+            json!(services.sync.progress(&services.library)),
+        );
         object.insert(
             "convergence".to_string(),
             json!(services.library.convergence_diagnostics()),
@@ -1137,8 +1142,22 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 
 fn item_detail(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     match services.library.item(item_id) {
-        Ok(Some(item)) => ApiResponse::ok(item),
-        // A deep link can outrun the sync; fetch that one item and cache it.
+        Ok(Some(cached)) => {
+            // A lightweight catalog row is already a valid detail response.
+            // Move its durable rich job to the front and wake only that queue;
+            // never make the cached response wait on the network.
+            match services.library.prioritize_enrichment(item_id) {
+                Ok(true) => services.sync.request_enrichment(),
+                Ok(false) => {}
+                Err(error) => tracing::debug!(
+                    target: "library.enrichment",
+                    item_id,
+                    "could not prioritize opened detail enrichment: {error}"
+                ),
+            }
+            ApiResponse::ok(cached)
+        }
+        // A deep link can outrun the catalog; fetch that one item and cache it.
         Ok(None) => fetch_and_cache_item(services, item_id),
         Err(error) => storage_failure(&error),
     }
@@ -1151,7 +1170,9 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
     };
     match items::fetch_item(&client, &user_id, item_id) {
         Ok(Some(dto)) => {
-            let _ = services.library.upsert_page(std::slice::from_ref(&dto));
+            let _ = services
+                .library
+                .ingest_enrichment_page(std::slice::from_ref(&dto));
             match services.library.item(item_id) {
                 Ok(Some(item)) => ApiResponse::ok(item),
                 Ok(None) => ApiResponse::ok(summary_from_dto(&dto)),
@@ -1225,7 +1246,7 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) {
             break;
         }
         seen.extend(page.items.iter().map(|item| item.id.clone()));
-        let _ = services.library.upsert_page(&page.items);
+        let _ = services.library.ingest_enrichment_page(&page.items);
         offset += received;
         if received < items::CHILDREN_PAGE_SIZE {
             break;

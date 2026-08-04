@@ -6,6 +6,7 @@
 
 pub mod convergence;
 pub mod db;
+pub mod enrichment;
 pub mod headless;
 pub mod model;
 pub mod sync;

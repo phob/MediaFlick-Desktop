@@ -60,6 +60,7 @@ pub struct ConvergenceRunReport {
     pub dormant: usize,
     pub failed: usize,
     pub elapsed_ms: u64,
+    pub retry_at: Option<i64>,
     #[serde(skip)]
     pub changes: LibraryChangeBatch,
     #[serde(skip)]
@@ -115,6 +116,62 @@ impl Library {
         dtos: &[BaseItemDto],
         now: i64,
     ) -> rusqlite::Result<LibraryChangeBatch> {
+        self.ingest_metadata_page_at(dtos, now, false)
+    }
+
+    /// Commits one lightweight catalog page and queues every accepted row for
+    /// the finite rich-metadata pass in the same transaction. Missing catalog
+    /// fields merge rather than erase values from an existing enriched cache.
+    pub(crate) fn ingest_catalog_page_at(
+        &self,
+        dtos: &[BaseItemDto],
+        now: i64,
+    ) -> rusqlite::Result<LibraryChangeBatch> {
+        self.db.with_transaction(|transaction| {
+            let mut changes = LibraryChangeBatch::default();
+            for dto in dtos {
+                let quality = metadata_quality(dto);
+                if dto.id.trim().is_empty() || !quality.supported {
+                    continue;
+                }
+                upsert_item(transaction, &ItemRecord::from_dto(dto), true)?;
+                transaction.execute(
+                    "INSERT INTO catalog_enrichment (
+                         jellyfin_id, state, next_attempt_at, attempt_count,
+                         error_count, last_error, updated_at
+                     ) VALUES (?1, 'pending', ?2, 0, 0, NULL, ?2)
+                     ON CONFLICT(jellyfin_id) DO UPDATE SET
+                         state = 'pending',
+                         next_attempt_at = excluded.next_attempt_at,
+                         error_count = 0,
+                         last_error = NULL,
+                         updated_at = excluded.updated_at",
+                    params![dto.id, now],
+                )?;
+                if let Some(user_data) = &dto.user_data {
+                    upsert_user_data(transaction, &UserDataRecord::from_dto(&dto.id, user_data))?;
+                }
+                record_change(&mut changes, dto);
+            }
+            Ok(changes)
+        })
+    }
+
+    /// Applies a full exact-id enrichment response without allowing an omitted
+    /// field to blank richer cached metadata from an earlier observation.
+    pub(crate) fn ingest_enrichment_page(
+        &self,
+        dtos: &[BaseItemDto],
+    ) -> rusqlite::Result<LibraryChangeBatch> {
+        self.ingest_metadata_page_at(dtos, now_unix(), true)
+    }
+
+    fn ingest_metadata_page_at(
+        &self,
+        dtos: &[BaseItemDto],
+        now: i64,
+        preserve_missing: bool,
+    ) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
             for dto in dtos {
@@ -133,7 +190,7 @@ impl Library {
                 // The queue row has an immediate foreign key to `items`, so a
                 // first observation establishes the cache row before its state.
                 if !existed {
-                    upsert_item(transaction, &ItemRecord::from_dto(dto), false)?;
+                    upsert_item(transaction, &ItemRecord::from_dto(dto), preserve_missing)?;
                 }
                 let (outcome, write_metadata) = observe(
                     transaction,
@@ -143,7 +200,7 @@ impl Library {
                     ObservationSource::Authoritative,
                 )?;
                 if write_metadata && existed {
-                    upsert_item(transaction, &ItemRecord::from_dto(dto), false)?;
+                    upsert_item(transaction, &ItemRecord::from_dto(dto), preserve_missing)?;
                 }
                 if write_metadata {
                     record_change(&mut changes, dto);
@@ -235,7 +292,7 @@ impl Library {
             let mut report = ConvergenceRunReport::default();
             for item_id in selected {
                 let Some(dto) = by_id.remove(item_id) else {
-                    mark_error(transaction, item_id, now)?;
+                    mark_error(transaction, item_id, now, None)?;
                     report.failed += 1;
                     continue;
                 };
@@ -246,7 +303,7 @@ impl Library {
                         .as_deref()
                         .is_none_or(|name| name.trim().is_empty())
                 {
-                    mark_error(transaction, item_id, now)?;
+                    mark_error(transaction, item_id, now, None)?;
                     report.failed += 1;
                     continue;
                 }
@@ -281,21 +338,40 @@ impl Library {
         })
     }
 
-    fn mark_convergence_batch_error(&self, item_ids: &[String], now: i64) -> rusqlite::Result<()> {
+    fn mark_convergence_batch_error(
+        &self,
+        item_ids: &[String],
+        now: i64,
+        error: &ApiError,
+    ) -> rusqlite::Result<Option<i64>> {
+        let minimum_delay = error
+            .retry_after()
+            .map(|delay| i64::try_from(delay.as_secs()).unwrap_or(i64::MAX));
         self.db.with_transaction(|transaction| {
+            let mut earliest = None;
             for item_id in item_ids {
-                mark_error(transaction, item_id, now)?;
+                let retry_at = mark_error(transaction, item_id, now, minimum_delay)?;
+                earliest = Some(earliest.map_or(retry_at, |old: i64| old.min(retry_at)));
             }
-            Ok(())
+            Ok(earliest)
         })
     }
 }
 
 /// Runs at most two serial logical GETs. The Jellyfin client's own retry/auth
 /// behavior remains intact; this layer only advances durable per-item state.
+#[cfg(test)]
 pub(crate) fn process_due(
     library: &Library,
     session: &Session,
+) -> Result<ConvergenceRunReport, ApiError> {
+    process_due_controlled(library, session, || false)
+}
+
+pub(crate) fn process_due_controlled(
+    library: &Library,
+    session: &Session,
+    cancelled: impl Fn() -> bool,
 ) -> Result<ConvergenceRunReport, ApiError> {
     let started = Instant::now();
     let now = now_unix();
@@ -309,6 +385,9 @@ pub(crate) fn process_due(
     };
 
     for chunk in selected.chunks(REQUEST_BATCH_SIZE) {
+        if cancelled() {
+            break;
+        }
         report.requests += 1;
         let ids = chunk.to_vec();
         match items::fetch_items(&client, &user_id, &ids) {
@@ -324,19 +403,24 @@ pub(crate) fn process_due(
                 report.changes.merge(batch.changes);
             }
             Err(error) => {
-                library
-                    .mark_convergence_batch_error(&ids, now)
+                let retry_at = library
+                    .mark_convergence_batch_error(&ids, now, &error)
                     .map_err(storage_error)?;
                 report.failed += ids.len();
+                report.retry_at = match (report.retry_at, retry_at) {
+                    (Some(left), Some(right)) => Some(left.min(right)),
+                    (left, right) => left.or(right),
+                };
                 session.note_error(&error);
                 tracing::debug!(
                     target: "library.convergence",
                     selected = ids.len(),
                     "convergence REST batch failed: {error}"
                 );
-                if error == ApiError::Unauthorized {
-                    break;
-                }
+                // One failed logical request is enough evidence to stop this
+                // wake; persisted backoff (including Retry-After) controls when
+                // another batch may reach the server.
+                break;
             }
         }
     }
@@ -529,7 +613,12 @@ fn state_row(
         .optional()
 }
 
-fn mark_error(connection: &rusqlite::Connection, item_id: &str, now: i64) -> rusqlite::Result<()> {
+fn mark_error(
+    connection: &rusqlite::Connection,
+    item_id: &str,
+    now: i64,
+    minimum_delay: Option<i64>,
+) -> rusqlite::Result<i64> {
     let errors: i64 = connection
         .query_row(
             "SELECT error_count FROM metadata_convergence
@@ -540,15 +629,16 @@ fn mark_error(connection: &rusqlite::Connection, item_id: &str, now: i64) -> rus
         .optional()?
         .unwrap_or_default()
         + 1;
+    let retry_at = now + error_delay(errors).max(minimum_delay.unwrap_or_default());
     connection.execute(
         "UPDATE metadata_convergence
          SET attempt_count = attempt_count + 1,
              error_count = ?2,
              next_attempt_at = ?3
          WHERE jellyfin_id = ?1 AND state = 'pending'",
-        params![item_id, errors, now + error_delay(errors)],
+        params![item_id, errors, retry_at],
     )?;
-    Ok(())
+    Ok(retry_at)
 }
 
 fn progress_delay(item_id: &str) -> i64 {
@@ -872,6 +962,37 @@ mod tests {
         assert_eq!(report.failed, 20);
         assert!(!session.is_authenticated());
         assert_eq!(server.join().expect("server").len(), 1);
+    }
+
+    #[test]
+    fn catalog_refresh_preserves_rich_metadata_and_updates_card_state() {
+        let library = Library::open_in_memory().expect("library");
+        let rich = dto(
+            r#"{"Id":"m","Name":"Original","Type":"Movie","ProductionYear":1988,
+                "Overview":"Keep this synopsis","People":[{"Name":"Actor","Type":"Actor"}],
+                "MediaStreams":[{"Index":0,"Type":"Video","Codec":"hevc"}],
+                "UserData":{"Played":false,"IsFavorite":false}}"#,
+        );
+        library
+            .ingest_enrichment_page(std::slice::from_ref(&rich))
+            .expect("seed rich metadata");
+
+        let light = dto(
+            r#"{"Id":"m","Name":"Renamed","Type":"Movie","ProductionYear":1988,
+                "UserData":{"Played":true,"PlayCount":2,"IsFavorite":true}}"#,
+        );
+        library
+            .ingest_catalog_page_at(std::slice::from_ref(&light), 10)
+            .expect("refresh lightweight catalog");
+
+        let cached = library.item("m").unwrap().unwrap();
+        assert_eq!(cached["name"], "Renamed");
+        assert_eq!(cached["overview"], "Keep this synopsis");
+        assert_eq!(cached["people"][0]["name"], "Actor");
+        assert_eq!(cached["mediaStreams"][0]["codec"], "hevc");
+        assert_eq!(cached["played"], true);
+        assert_eq!(cached["favorite"], true);
+        assert_eq!(library.enrichment_diagnostics().pending, 1);
     }
 
     #[test]
