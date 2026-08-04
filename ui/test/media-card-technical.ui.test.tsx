@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
-import { summarizeCardMedia } from "../src/lib/format"
+import { formatVideoRange, summarizeCardMedia } from "../src/lib/format"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -36,7 +36,7 @@ const technicalStreams = [
     width: 3840,
     height: 1608,
     videoRange: "HDR",
-    videoRangeType: "DOVIWithHDR10",
+    videoRangeType: "DOVIWithHDR10Plus",
     bitDepth: 10,
   }),
   stream({
@@ -79,13 +79,25 @@ const movie: ItemSummary = {
 }
 
 describe("media-card technical formatting", () => {
+  test("formats Jellyfin Dolby Vision ranges with compact canonical labels", () => {
+    expect(formatVideoRange(stream({ videoRangeType: "DOVIWithHDR10Plus" }))).toBe("DV&HDR10+")
+
+    const dolbyVision = stream({ type: "Video", videoRangeType: "DOVI" })
+    expect(formatVideoRange(dolbyVision)).toBe("DV")
+    expect(summarizeCardMedia([dolbyVision])).toEqual({
+      video: ["DV"],
+      audio: [],
+      description: "Video: Dolby Vision",
+    })
+  })
+
   test("prioritizes resolution, dynamic range, lossless audio, and spatial audio", () => {
     const summary = summarizeCardMedia(technicalStreams)
 
-    expect(summary?.video).toEqual(["4K", "Dolby Vision / HDR10"])
+    expect(summary?.video).toEqual(["4K", "DV&HDR10+"])
     expect(summary?.audio).toEqual(["TrueHD", "Atmos"])
     expect(summary?.description).toBe(
-      "Video: 4K, Dolby Vision / HDR10, HEVC, 10-bit; Audio: TrueHD, Atmos, 7.1",
+      "Video: 4K, Dolby Vision / HDR10+, HEVC, 10-bit; Audio: TrueHD, Atmos, 7.1",
     )
   })
 
@@ -120,9 +132,12 @@ describe("media-card technical formatting", () => {
     const readout = screen.getByLabelText(/Technical media information/)
     expect(readout.tagName).toBe("DL")
     expect(readout.textContent).toContain("4K")
-    expect(readout.textContent).toContain("Dolby Vision / HDR10")
+    expect(readout.textContent).toContain("DV&HDR10+")
+    expect(readout.textContent).not.toContain("DOVIWithHDR10Plus")
     expect(readout.textContent).toContain("TrueHD")
     expect(readout.textContent).toContain("Atmos")
+    expect(readout.getAttribute("aria-label")).toContain("Dolby Vision / HDR10+")
+    expect(readout.getAttribute("title")).toContain("Dolby Vision / HDR10+")
     expect(readout.getAttribute("title")).toContain("HEVC")
     expect(container.querySelector('[data-slot="badge"]')).toBeNull()
   })
