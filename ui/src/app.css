@@ -740,17 +740,21 @@ html[data-reduced-motion="true"] *::after {
   opacity: 1;
 }
 
-/* Ratings use the same compact, icon-led metadata treatment as the technical
-   readout below. They deliberately share one open top gradient rather than
-   becoming a row of badges: source/value pairs wrap as one data line while
-   retaining their full labels, scale, origin and cache state in semantics and
-   native tooltips. */
+/* Ratings share one open top gradient rather than becoming a row of badges.
+   Each short source/value pair is its own flex item, so wrapping starts flush
+   at the left edge instead of inheriting an icon indent or a leading separator.
+   Full labels, scale, origin and cache state remain in semantics and tooltips. */
 .card-rating-readout {
   position: absolute;
   top: 0;
   right: 0;
   left: 0;
   z-index: 3;
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.16rem 0.62rem;
   margin: 0;
   padding: 0.42rem 0.55rem 1.55rem;
   background: linear-gradient(to bottom, rgb(2 5 3 / 88%) 0%, rgb(2 5 3 / 62%) 48%, transparent);
@@ -769,36 +773,13 @@ html[data-reduced-motion="true"] *::after {
   padding-right: 3.8rem;
 }
 
-.card-rating-row {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 0.35rem;
-}
-
-.card-rating-row > svg {
-  width: 0.72rem;
-  height: 0.72rem;
-  flex-shrink: 0;
-  color: color-mix(in srgb, var(--primary) 80%, white);
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 90%));
-}
-
-.card-rating-values {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  row-gap: 0.16rem;
-}
-
-.card-rating-value {
+.rating-readout-value {
   display: inline-flex;
   min-width: 0;
   align-items: baseline;
 }
 
-.card-rating-value dd {
+.rating-readout-value dd {
   display: inline-flex;
   min-width: 0;
   gap: 0.24rem;
@@ -806,7 +787,7 @@ html[data-reduced-motion="true"] *::after {
   white-space: nowrap;
 }
 
-.card-rating-source {
+.rating-readout-source {
   overflow: hidden;
   max-width: 3.4rem;
   color: color-mix(in srgb, var(--primary) 78%, white);
@@ -817,12 +798,22 @@ html[data-reduced-motion="true"] *::after {
   white-space: nowrap;
 }
 
-.card-rating-separator {
-  margin-inline: 0.32rem;
-  color: color-mix(in srgb, var(--primary) 60%, transparent);
+.card-rating-readout[data-stale="true"] { opacity: 0.84; }
+
+/* Detail ratings use the same source/value vocabulary without carrying the
+   card's artwork gradient into the hero metadata line. */
+.detail-rating-readout {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.7rem;
+  margin: 0;
+  color: var(--foreground);
+  font: inherit;
 }
 
-.card-rating-readout[data-stale="true"] { opacity: 0.84; }
+.detail-rating-readout[data-stale="true"] { opacity: 0.72; }
 
 /* A single integrated data plate, never a row of pills. The open gradient keeps
    type readable over bright artwork without drawing a box around each fact;

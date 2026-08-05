@@ -1,6 +1,7 @@
 import { Star } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
+import { DetailRatingReadout } from "@/components/RatingOverlay"
 import { Badge } from "@/components/ui/badge"
 import {
   DETAIL_POSTER_WIDTH,
@@ -10,7 +11,7 @@ import {
   progressFraction,
   type ItemDetail,
 } from "@/lib/api"
-import { formatRuntime, formatYearOnly } from "@/lib/format"
+import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 /**
@@ -56,13 +57,18 @@ function genreHref(genre: string, kind: string) {
 }
 
 /** Community score out of ten, with the critic score alongside where there is one. */
-function Ratings({ item }: { item: ItemDetail }) {
+function JellyfinRatings({ item }: { item: ItemDetail }) {
+  const communityRating = formatCommunityRating(item.communityRating)
   return (
     <>
-      {item.communityRating != null && (
-        <span className="flex items-center gap-1 text-foreground">
+      {communityRating && (
+        <span
+          className="flex items-center gap-1 text-foreground"
+          title={`Jellyfin community rating: ${communityRating} out of 10`}
+          aria-label={`Jellyfin community rating ${communityRating} out of 10`}
+        >
           <Star className="size-3.5 fill-current text-amber-400" aria-hidden />
-          {item.communityRating.toFixed(1)}
+          {communityRating}
         </span>
       )}
       {item.criticRating != null && (
@@ -256,7 +262,8 @@ export function DetailHero({
                 {item.officialRating}
               </Badge>
             )}
-            <Ratings item={item} />
+            <JellyfinRatings item={item} />
+            <DetailRatingReadout item={item} />
           </div>
 
           {item.genres.length > 0 && (

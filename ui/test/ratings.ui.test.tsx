@@ -1,16 +1,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
+import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
-import { RatingOverlayView } from "../src/components/RatingOverlay"
+import { EpisodeList } from "../src/components/detail/EpisodeList"
+import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
 import type {
   ClientSettings,
   ItemRatings,
+  ItemSummary,
   NormalizedRating,
   RatingSourceDefinition,
   RatingsIntegrationStatus,
 } from "../src/lib/api"
-import { formatRating, useCardRatings, type DisplayRating } from "../src/lib/rating-context"
+import {
+  formatRating,
+  RatingsContext,
+  useCardRatings,
+  type DisplayRating,
+} from "../src/lib/rating-context"
 import { RatingsProvider } from "../src/lib/ratings"
 import {
   Appearance,
@@ -114,12 +122,72 @@ describe("configurable card ratings", () => {
     expect(overlay.tagName).toBe("DL")
     expect(overlay.className).toContain("card-rating-readout")
     expect(overlay.querySelector(".card-rating-chip")).toBeNull()
-    expect(overlay.querySelector("svg")).toBeTruthy()
+    expect(overlay.querySelector("svg")).toBeNull()
+    expect(overlay.querySelector(".card-rating-separator")).toBeNull()
+    expect(overlay.querySelectorAll(".rating-readout-value")).toHaveLength(3)
     expect(overlay.getAttribute("data-rating-origin")).toBe("local_mdblist")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()
     expect(overlay.querySelector("[title*='via local MDBList']")).toBeTruthy()
+  })
+
+  test("renders the selected MDBList sources in title details", () => {
+    const letterboxd = display("letterboxd", 4.2).rating
+    const register = vi.fn(() => vi.fn())
+    render(
+      <RatingsContext.Provider value={{
+        items: new Map([[item.id, { ...item, ratings: [letterboxd] }]]),
+        selected: ["letterboxd"],
+        definitions: new Map(definitions.map((definition) => [definition.id, definition])),
+        register,
+      }}>
+        <DetailRatingReadout item={{ id: item.id, name: "The Matrix" }} />
+      </RatingsContext.Provider>,
+    )
+
+    const readout = screen.getByLabelText("Ratings for The Matrix")
+    expect(readout.className).toContain("detail-rating-readout")
+    expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
+    expect(register).toHaveBeenCalledWith(item.id)
+  })
+
+  test("shows each episode's own Jellyfin community rating", () => {
+    const episode: ItemSummary = {
+      id: "episode-1",
+      kind: "Episode",
+      name: "Good News About Hell",
+      year: 2022,
+      runtimeTicks: 3_000_000_000,
+      communityRating: 8.4,
+      officialRating: null,
+      seriesId: "series-1",
+      seriesName: "Severance",
+      indexNumber: 1,
+      parentIndexNumber: 1,
+      primaryImageTag: null,
+      thumbImageTag: null,
+      logoImageTag: null,
+      backdropImageTag: null,
+      childCount: null,
+      premiereDate: "2022-02-18T00:00:00Z",
+      seasonId: "season-1",
+      played: false,
+      playCount: 0,
+      positionTicks: 0,
+      favorite: false,
+      overview: "Mark is promoted.",
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <EpisodeList episodes={[episode]} parentId="season-1" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByLabelText("Jellyfin community rating 8.4 out of 10")).toBeTruthy()
   })
 
   test("renders no placeholder when selected sources have no value", () => {
