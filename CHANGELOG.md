@@ -110,6 +110,7 @@
 - Fixed Player settings saves sending the computed `playerConfigured` field, native file-picker cancellation clearing executable drafts, and stale or mismatched picker/installer completions changing the wrong request. Native completion errors now retain their request and target identity and are shown in the settings UI.
 - Fixed settings changes rolling back an unsaved live window resize, post-playback surfaces refetching before Jellyfin's cache refresh completed, and mark-watched hotkey changes waiting for an mpv restart. Live bounds now survive preference snapshots, refresh completion drives query invalidation, and a running mpv redefines its input section immediately when the binding changes or is disabled.
 - Fixed Appearance artwork/backdrop intensity values having no visual effect and the saved reduced-motion preference being ignored by billboard autoplay. Image layers now honor both intensity controls, motion is disabled by either the app or operating-system preference, and Appearance includes a contained live draft preview for theme, accent, density, artwork, backdrop, and motion.
+- Fixed rating presentation across library and detail surfaces. Card overlays now wrap source/value pairs flush-left without a stray leading separator or icon indent, movie and series details show the selected MDBList sources, and season episode rows show each episode's own Jellyfin community score.
 
 ### Removed
 

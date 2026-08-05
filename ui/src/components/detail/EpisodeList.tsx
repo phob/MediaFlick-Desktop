@@ -1,9 +1,9 @@
-import { Check, Play } from "lucide-react"
+import { Check, Play, Star } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { THUMBNAIL_WIDTH, imageUrl, progressFraction, type ItemSummary } from "@/lib/api"
-import { formatRuntime } from "@/lib/format"
+import { formatCommunityRating, formatRuntime } from "@/lib/format"
 import { useQualityOverride } from "@/lib/playback-quality"
 import { usePlay, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -50,6 +50,7 @@ function EpisodeRow({ episode, parentId }: { episode: ItemSummary; parentId: str
   const quality = useQualityOverride() ?? undefined
   const resumable = episode.positionTicks > 0
   const runtime = formatRuntime(episode.runtimeTicks)
+  const rating = formatCommunityRating(episode.communityRating)
 
   return (
     <li className="group flex gap-4 rounded-xl border border-transparent p-3 transition hover:border-white/5 hover:bg-card/75">
@@ -74,8 +75,20 @@ function EpisodeRow({ episode, parentId }: { episode: ItemSummary; parentId: str
             )}
             {episode.name}
           </Link>
-          {runtime && (
-            <span className="ml-auto shrink-0 text-xs text-muted-foreground">{runtime}</span>
+          {(rating || runtime) && (
+            <span className="data-value ml-auto flex shrink-0 items-center gap-3 text-muted-foreground">
+              {rating && (
+                <span
+                  className="flex items-center gap-1 text-foreground"
+                  title={`Jellyfin community rating: ${rating} out of 10`}
+                  aria-label={`Jellyfin community rating ${rating} out of 10`}
+                >
+                  <Star className="size-3 fill-current text-amber-400" aria-hidden />
+                  {rating}
+                </span>
+              )}
+              {runtime && <span>{runtime}</span>}
+            </span>
           )}
         </div>
         {episode.overview && (
