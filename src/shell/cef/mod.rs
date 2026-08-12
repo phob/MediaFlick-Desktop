@@ -2409,8 +2409,17 @@ fn escape_js_line_separators(json: &str) -> String {
 }
 
 fn load_error_html(title: &str, failed_url: &str, error_text: &str, error_code: i32) -> String {
+    let retry_url = if failed_url.starts_with("mediaflick-desktop://")
+        || failed_url.starts_with("https://")
+        || failed_url.starts_with("http://")
+    {
+        failed_url
+    } else {
+        "mediaflick-desktop://app/"
+    };
     include_str!("../ui/load_error.html")
         .replace("{{title}}", &html_escape(title))
+        .replace("{{retry_url}}", &html_escape(retry_url))
         .replace("{{failed_url}}", &html_escape(failed_url))
         .replace("{{error_text}}", &html_escape(error_text))
         .replace("{{error_code}}", &error_code.to_string())
@@ -2437,7 +2446,8 @@ mod tests {
         PlaybackCacheRefreshOutcome, ShellFilePickerTarget,
         apply_settings_snapshot_preserving_live_window, bridge_token_is_valid,
         escape_js_line_separators, file_picker_completion_payload, html_escape,
-        is_browser_openable_url, is_safe_external_link, playback_cache_refresh_script, url_scheme,
+        is_browser_openable_url, is_safe_external_link, load_error_html,
+        playback_cache_refresh_script, url_scheme,
     };
     use crate::preferences::{AppSettings, AppearanceTheme, WebUiWindowSettings};
 
@@ -2494,6 +2504,26 @@ mod tests {
             html_escape("<a href=\"x\">'&'</a>"),
             "&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;"
         );
+    }
+
+    #[test]
+    fn load_error_page_is_mediaflick_branded_and_retries_safe_urls() {
+        let html = load_error_html(
+            "MediaFlick Desktop",
+            "mediaflick-desktop://app/settings",
+            "failed",
+            -2,
+        );
+        assert!(html.contains("MediaFlick couldn’t load this page"));
+        assert!(html.contains("href=\"mediaflick-desktop://app/settings\""));
+        assert!(!html.contains("Could not load Jellyfin"));
+    }
+
+    #[test]
+    fn load_error_page_does_not_retry_unsafe_schemes() {
+        let html = load_error_html("MediaFlick Desktop", "javascript:alert(1)", "failed", -2);
+        assert!(html.contains("href=\"mediaflick-desktop://app/\""));
+        assert!(!html.contains("href=\"javascript:alert(1)\""));
     }
 
     #[test]

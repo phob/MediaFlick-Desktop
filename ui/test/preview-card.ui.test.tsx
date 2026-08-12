@@ -4,7 +4,14 @@ import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import { PreviewProvider } from "../src/components/PreviewCard"
-import type { ItemDetail, ItemSummary } from "../src/lib/api"
+import type {
+  ItemDetail,
+  ItemRatings,
+  ItemSummary,
+  MediaStream,
+  RatingSourceDefinition,
+} from "../src/lib/api"
+import { RatingsContext } from "../src/lib/rating-context"
 
 const mutations = vi.hoisted(() => ({
   favorite: vi.fn(),
@@ -26,6 +33,56 @@ vi.mock("@/lib/queries", () => ({
   useSetFavorite: () => ({ isPending: false, mutate: mutations.favorite }),
   useSetPlayed: () => ({ isPending: false, mutate: mutations.played }),
 }))
+
+function stream(overrides: Partial<MediaStream>): MediaStream {
+  return {
+    index: 0,
+    type: null,
+    codec: null,
+    profile: null,
+    language: null,
+    title: null,
+    displayTitle: null,
+    width: null,
+    height: null,
+    channels: null,
+    audioSpatialFormat: null,
+    videoRange: null,
+    videoRangeType: null,
+    bitDepth: null,
+    isDefault: false,
+    isForced: false,
+    isHearingImpaired: false,
+    isExternal: false,
+    ...overrides,
+  }
+}
+
+const letterboxd: RatingSourceDefinition = {
+  id: "letterboxd",
+  label: "Letterboxd",
+  shortLabel: "LB",
+  scaleMax: 5,
+  format: "stars",
+  known: true,
+}
+
+const movieRatings: ItemRatings = {
+  id: "movie-1",
+  ratings: [{
+    sourceId: "letterboxd",
+    rawSource: "letterboxd",
+    value: 4.2,
+    score: 84,
+    votes: 1_000,
+    scaleMax: 5,
+  }],
+  origin: "local_mdblist",
+  fetchedAt: 1,
+  sourceUpdatedAt: null,
+  stale: false,
+  schemaVersion: 1,
+}
 
 const movie: ItemSummary = {
   id: "movie-1",
@@ -50,6 +107,10 @@ const movie: ItemSummary = {
   playCount: 0,
   positionTicks: 0,
   favorite: false,
+  mediaStreams: [
+    stream({ type: "Video", codec: "hevc", width: 3840, height: 1608, videoRangeType: "DOVI" }),
+    stream({ index: 1, type: "Audio", codec: "truehd", channels: 8, audioSpatialFormat: "DolbyAtmos" }),
+  ],
 }
 
 function LocationProbe() {
@@ -60,8 +121,15 @@ function LocationProbe() {
 function Providers({ children }: { children: ReactNode }) {
   return (
     <MemoryRouter initialEntries={["/home"]}>
-      <PreviewProvider>{children}</PreviewProvider>
-      <LocationProbe />
+      <RatingsContext.Provider value={{
+        items: new Map([[movie.id, movieRatings]]),
+        selected: [letterboxd.id],
+        definitions: new Map([[letterboxd.id, letterboxd]]),
+        register: () => () => {},
+      }}>
+        <PreviewProvider>{children}</PreviewProvider>
+        <LocationProbe />
+      </RatingsContext.Provider>
     </MemoryRouter>
   )
 }
@@ -100,6 +168,20 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe("expanded media-card details target", () => {
+  test("carries the configured rating and technical media facts into the larger preview", () => {
+    const panel = renderOpenPreview()
+    const rating = panel.querySelector(".card-rating-readout")
+    const technical = panel.querySelector(".preview-technical-readout")
+
+    expect(rating?.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+    expect(rating?.textContent).toContain("★4.2")
+    expect(technical?.getAttribute("aria-label")).toContain("Technical media information")
+    expect(technical?.textContent).toContain("4K")
+    expect(technical?.textContent).toContain("DV")
+    expect(technical?.textContent).toContain("TrueHD")
+    expect(technical?.textContent).toContain("Atmos")
+  })
+
   test("opens item details when the panel background is clicked", () => {
     const panel = renderOpenPreview()
 

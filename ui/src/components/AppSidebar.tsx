@@ -13,7 +13,7 @@ import {
   Settings,
   Tv,
 } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/sidebar"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
+import { isSidebarRouteActive, librarySearchFromLocation } from "@/lib/navigation"
 import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
@@ -69,9 +70,15 @@ function serverLabel(url: string | null | undefined) {
 
 function SearchBox() {
   const { state, setOpen } = useSidebar()
+  const location = useLocation()
   const navigate = useNavigate()
   const input = useRef<HTMLInputElement>(null)
-  const [search, setSearch] = useState("")
+  const locationSearch = librarySearchFromLocation(location.pathname, location.search)
+  const [search, setSearch] = useState(locationSearch)
+
+  // The library URL owns its filters. Mirroring that value keeps a restored or
+  // deep-linked result visibly tied to the query that produced it.
+  useEffect(() => setSearch(locationSearch), [locationSearch])
 
   // Collapsed to icons there is no room for a field, so the icon stands in for
   // it: expanding and focusing is the same gesture as clicking into it.
@@ -342,7 +349,7 @@ export function AppSidebar() {
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton
                       asChild
-                      isActive={location.pathname === item.to}
+                      isActive={isSidebarRouteActive(item.to, location.pathname)}
                       tooltip={item.title}
                     >
                       <Link to={item.to}>

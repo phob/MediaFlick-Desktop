@@ -142,3 +142,35 @@ describe("media-card technical formatting", () => {
     expect(container.querySelector('[data-slot="badge"]')).toBeNull()
   })
 })
+
+describe("media-card playback indicators", () => {
+  test("uses the same thickness and bright fill for watched and in-progress media", () => {
+    const watched = render(
+      <MemoryRouter>
+        <MediaCard item={{ ...movie, played: true }} preview={false} />
+      </MemoryRouter>,
+    )
+    const watchedTrack = watched.container.querySelector('[title="Watched"]') as HTMLElement
+    const watchedFill = watchedTrack.firstElementChild as HTMLElement
+
+    expect(watchedTrack.className).toContain("h-[3px]")
+    expect(watchedFill.className).toBe("h-full bg-primary")
+    expect(watchedFill.style.width).toBe("100%")
+
+    watched.unmount()
+
+    const progressed = render(
+      <MemoryRouter>
+        <MediaCard
+          item={{ ...movie, id: "movie-2", positionTicks: movie.runtimeTicks! / 2 }}
+          preview={false}
+        />
+      </MemoryRouter>,
+    )
+    const progressedFill = progressed.container.querySelector('[style="width: 50%;"]') as HTMLElement
+    const progressedTrack = progressedFill.parentElement as HTMLElement
+
+    expect(progressedTrack.className).toContain("h-[3px]")
+    expect(progressedFill.className).toBe(watchedFill.className)
+  })
+})

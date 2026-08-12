@@ -86,7 +86,7 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
           <Play className="size-3.5" />
         </Button>
         <Button asChild size="sm" variant="ghost">
-          <Link to={`/item/${encodeURIComponent(entry.libraryItemId)}`}>Open</Link>
+          <Link to={`/item/${encodeURIComponent(entry.libraryItemId)}`}>Details</Link>
         </Button>
       </div>
     )
@@ -269,9 +269,10 @@ export default function Calendar() {
   return (
     <div className="flex min-h-full min-w-0 flex-col">
       <PageHeader
-        eyebrow={calendar.data?.provider === "plugin" ? "Sonarr / Radarr" : "Jellyfin metadata"}
+        eyebrow="Release calendar"
         title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-        description="Upcoming episodes and film release dates, joined to what is already in your library."
+        description="Upcoming episodes and movie release dates, joined to what is already in your library."
+        contentClassName={view === "agenda" ? "max-w-6xl" : undefined}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="outline" size="icon" onClick={() => setMonth(addMonths(month, -1))}>
@@ -288,7 +289,7 @@ export default function Calendar() {
       />
 
       <div className="flex min-w-0 flex-col gap-5 px-6 pb-10 sm:px-10 lg:px-14">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className={cn("flex flex-wrap items-center justify-between gap-3", view === "agenda" && "max-w-6xl")}>
           <div className="flex flex-wrap gap-2">
             {DATE_KINDS.map((kind) => (
               <Button
@@ -316,11 +317,15 @@ export default function Calendar() {
           </Tabs>
         </div>
 
-        {calendar.data && <SourceWarning sources={calendar.data.sources} />}
+        {calendar.data && (
+          <div className={cn(view === "agenda" && "max-w-6xl")}>
+            <SourceWarning sources={calendar.data.sources} />
+          </div>
+        )}
         {calendar.error ? (
-          <p className="text-sm text-destructive">{calendar.error.message}</p>
+          <p className={cn("text-sm text-destructive", view === "agenda" && "max-w-6xl")}>{calendar.error.message}</p>
         ) : calendar.isPending ? (
-          <div className="flex flex-col gap-3">
+          <div className={cn("flex flex-col gap-3", view === "agenda" && "max-w-6xl")}>
             {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-20" />)}
           </div>
         ) : entries.length ? (
@@ -330,11 +335,13 @@ export default function Calendar() {
             <Agenda entries={entries} />
           )
         ) : (
-          <PageEmptyState
-            icon={<CalendarDays className="size-6" />}
-            title="No releases in this window"
-            description="Try another month or enable more release types."
-          />
+          <div className={cn(view === "agenda" && "max-w-6xl")}>
+            <PageEmptyState
+              icon={<CalendarDays className="size-6" />}
+              title="No releases in this window"
+              description="Try another month or enable more release types."
+            />
+          </div>
         )}
       </div>
     </div>

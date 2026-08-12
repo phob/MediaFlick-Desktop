@@ -66,7 +66,7 @@ export const SeerrCard = memo(function SeerrCard({
   const [requesting, setRequesting] = useState(false)
   const quickRequestable = canQuickRequest(result, capabilities)
   const quickRequestVisible = hovered || focused
-  const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Film"]
+  const subtitle = [result.year, result.mediaType === "tv" ? "Series" : "Movie"]
     .filter(Boolean)
     .join(" · ")
   const rating =

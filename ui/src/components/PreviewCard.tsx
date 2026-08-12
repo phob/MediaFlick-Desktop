@@ -1,4 +1,4 @@
-import { Check, Play, Plus, Star, ThumbsUp } from "lucide-react"
+import { Check, Play, Plus, ThumbsUp } from "lucide-react"
 import {
   useCallback,
   useEffect,
@@ -10,6 +10,8 @@ import {
 } from "react"
 import { createPortal } from "react-dom"
 import { Link, useLocation, useNavigate } from "react-router-dom"
+import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
+import { RatingOverlay } from "@/components/RatingOverlay"
 import {
   LANDSCAPE_WIDTH,
   landscapeImageCandidates,
@@ -17,7 +19,7 @@ import {
   progressFraction,
   type ItemSummary,
 } from "@/lib/api"
-import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
+import { formatRemaining, formatRuntime } from "@/lib/format"
 import { PreviewContext, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -208,7 +210,6 @@ function PreviewPanel({
   )
   const progress = progressFraction(item)
   const remaining = formatRemaining(item.positionTicks, item.runtimeTicks)
-  const communityRating = formatCommunityRating(item.communityRating)
   const logo = logoUrl(item) ?? (series.data ? logoUrl(series.data) : null)
 
   const seasons =
@@ -318,15 +319,6 @@ function PreviewPanel({
         </div>
 
         <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          {communityRating && (
-            <span
-              className="inline-flex items-center gap-1 font-semibold text-primary"
-              title={`Community rating: ${communityRating}/10`}
-            >
-              <Star className="size-3.5 fill-current" aria-hidden />
-              {communityRating}
-            </span>
-          )}
           {item.officialRating && (
             <span className="data-label border border-foreground/25 px-1.5 py-0.5 text-foreground/75">
               {item.officialRating}
@@ -380,7 +372,7 @@ function PreviewArt({
   const title = item.kind === "Episode" && item.seriesName ? item.seriesName : item.name
 
   return (
-    <div className="relative aspect-video w-full overflow-hidden bg-secondary">
+    <div className="preview-art relative aspect-video w-full overflow-hidden bg-secondary">
       {image && (
         <img
           src={image}
@@ -391,8 +383,9 @@ function PreviewArt({
         />
       )}
       <div className="absolute inset-0 bg-linear-to-t from-card via-card/25 to-transparent" />
+      <RatingOverlay item={item} />
 
-      <div className="absolute inset-x-4 bottom-3 flex flex-col gap-1.5">
+      <div className="absolute inset-x-4 bottom-3 z-[2] flex flex-col gap-1.5">
         {logo && !logoFailed ? (
           <img
             src={logo}
@@ -406,6 +399,7 @@ function PreviewArt({
             {title}
           </p>
         )}
+        <CardTechnicalReadout item={item} variant="preview" />
         {progress > 0 && (
           <div className="flex items-center gap-2">
             <div className="h-[3px] flex-1 overflow-hidden bg-foreground/25">

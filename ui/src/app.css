@@ -348,7 +348,9 @@ html[data-reduced-motion="true"] *::after {
 .rating-source-selector:disabled label { cursor: not-allowed; }
 
 /* The preview owns a complete miniature token scope. Draft theme/accent values
-   can therefore be judged without leaking into the saved root appearance. */
+   can therefore be judged without leaking into the saved root appearance. It
+   mirrors a real shelf instead of a decorative hero so every card-overlay
+   preference has an honest place to appear. */
 .appearance-preview {
   --preview-background: #070b09;
   --preview-foreground: #e6ede9;
@@ -362,7 +364,7 @@ html[data-reduced-motion="true"] *::after {
   --preview-gap: 1.1rem;
   position: relative;
   isolation: isolate;
-  min-height: 19rem;
+  min-height: 23rem;
   overflow: hidden;
   border: 1px solid var(--preview-border);
   border-radius: var(--radius);
@@ -393,15 +395,16 @@ html[data-reduced-motion="true"] *::after {
 .appearance-preview[data-accent="amber"] { --preview-primary: #ffbd4a; --preview-primary-foreground: #261500; --preview-signal-deep: #b87814; }
 .appearance-preview[data-accent="violet"] { --preview-primary: #b69cff; --preview-primary-foreground: #160b31; --preview-signal-deep: #6f54be; }
 .appearance-preview[data-density="compact"] { --preview-padding: 0.85rem; --preview-gap: 0.7rem; }
+.appearance-preview[data-show-media-info="false"] .appearance-preview-media-info { display: none; }
 
 .appearance-preview-backdrop {
   position: absolute;
   z-index: -3;
   inset: 0;
   background:
-    radial-gradient(circle at 78% 22%, color-mix(in srgb, var(--preview-primary) 65%, transparent), transparent 18%),
-    radial-gradient(ellipse at 68% 52%, color-mix(in srgb, var(--preview-signal-deep) 75%, #13251c), transparent 42%),
-    linear-gradient(128deg, #08130d 8%, #1a4530 48%, #09100c 92%);
+    radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--preview-primary) 48%, transparent), transparent 17%),
+    radial-gradient(ellipse at 70% 48%, color-mix(in srgb, var(--preview-signal-deep) 68%, #13251c), transparent 43%),
+    linear-gradient(128deg, #08130d 8%, #173d2b 52%, #09100c 92%);
   opacity: var(--preview-backdrop-intensity);
   transition: opacity 180ms ease;
 }
@@ -411,27 +414,66 @@ html[data-reduced-motion="true"] *::after {
   z-index: -2;
   inset: 0;
   background:
-    linear-gradient(90deg, var(--preview-background) 4%, color-mix(in srgb, var(--preview-background) 82%, transparent) 44%, transparent 84%),
-    linear-gradient(0deg, var(--preview-background), transparent 45%);
+    linear-gradient(90deg, var(--preview-background) 2%, color-mix(in srgb, var(--preview-background) 55%, transparent) 58%, transparent 100%),
+    linear-gradient(0deg, var(--preview-background), transparent 58%);
 }
 
-.appearance-preview-content {
-  display: grid;
-  grid-template-columns: minmax(7rem, 9rem) minmax(0, 1fr);
-  gap: var(--preview-gap);
-  align-items: center;
-  min-height: 15.5rem;
-  padding: var(--preview-padding);
+.appearance-preview-shell {
+  width: calc(100% - 2 * var(--preview-padding));
+  max-width: 42rem;
+  min-height: 18.3rem;
+  margin: var(--preview-padding) auto 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--preview-primary) 18%, var(--preview-border));
+  background: color-mix(in srgb, var(--preview-background) 90%, transparent);
+  box-shadow: 0 1.25rem 3rem rgb(0 0 0 / 28%);
+  backdrop-filter: blur(10px);
 }
+
+.appearance-preview-chrome {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  gap: 1rem;
+  padding-inline: var(--preview-padding);
+  border-bottom: 1px solid var(--preview-border);
+  color: var(--preview-muted);
+  font: 0.56rem/1 var(--font-mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.appearance-preview-brand {
+  display: grid;
+  width: 1.45rem;
+  height: 1.45rem;
+  margin-right: 0.25rem;
+  place-items: center;
+  background: var(--preview-primary);
+  color: var(--preview-primary-foreground);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.appearance-preview-active { color: var(--preview-foreground); }
+.appearance-preview-online { margin-left: auto; color: var(--preview-primary); }
+.appearance-preview-online::before { content: ""; display: inline-block; width: 0.34rem; height: 0.34rem; margin-right: 0.35rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0.45rem currentColor; }
+.appearance-preview-content { padding: var(--preview-padding); }
+.appearance-preview-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--preview-gap); margin-bottom: var(--preview-gap); }
+.appearance-preview-heading h3 { font-size: clamp(1.1rem, 3vw, 1.45rem); font-weight: 700; line-height: 1; letter-spacing: -0.04em; }
+.appearance-preview-kicker { color: var(--preview-primary); font: 0.58rem/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.appearance-preview-cards { display: flex; min-width: 0; gap: var(--preview-gap); }
+.appearance-preview-card { display: grid; width: 7.6rem; min-width: 0; gap: 0.28rem; }
+.appearance-preview-card strong { overflow: hidden; color: var(--preview-foreground); font-size: 0.66rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.appearance-preview-card small { color: var(--preview-muted); font: 0.52rem/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
 
 .appearance-preview-poster {
   position: relative;
   aspect-ratio: 2 / 3;
   overflow: hidden;
-  align-self: center;
   border: 1px solid color-mix(in srgb, var(--preview-primary) 25%, var(--preview-border));
   background: var(--preview-card);
-  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 32%);
+  box-shadow: 0 0.75rem 1.8rem rgb(0 0 0 / 28%);
 }
 
 .appearance-preview-artwork {
@@ -445,22 +487,39 @@ html[data-reduced-motion="true"] *::after {
   transition: opacity 180ms ease;
 }
 
-.appearance-preview-poster > span {
-  position: absolute;
-  right: 0.65rem;
-  bottom: 0.55rem;
-  color: var(--preview-foreground);
-  font: 0.58rem/1 var(--font-mono);
-  letter-spacing: 0.14em;
-  text-shadow: 0 1px 5px rgb(0 0 0 / 85%);
+.appearance-preview-card-secondary .appearance-preview-artwork {
+  background:
+    radial-gradient(ellipse at 45% 78%, color-mix(in srgb, var(--preview-primary) 62%, transparent) 0 6%, transparent 7%),
+    linear-gradient(28deg, transparent 0 46%, color-mix(in srgb, var(--preview-primary) 65%, transparent) 47% 50%, transparent 51%),
+    linear-gradient(145deg, #0b1110 8%, #18382d 53%, #060a08 54% 100%);
 }
 
-.appearance-preview-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: calc(var(--preview-gap) * 0.7); }
-.appearance-preview-kicker { color: var(--preview-primary); font: 0.62rem/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; }
-.appearance-preview-copy h3 { max-width: 22rem; font-size: clamp(1.45rem, 4vw, 2.25rem); font-weight: 750; line-height: 0.96; letter-spacing: -0.04em; text-shadow: 0 2px 14px color-mix(in srgb, var(--preview-background) 70%, transparent); }
-.appearance-preview-copy p { max-width: 25rem; color: var(--preview-muted); font-size: 0.78rem; }
-.appearance-preview-button { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.7rem; border-radius: 2px; background: var(--preview-primary); color: var(--preview-primary-foreground); font-size: 0.75rem; font-weight: 650; }
-.appearance-preview-button svg { width: 0.85rem; height: 0.85rem; fill: currentColor; }
+.appearance-preview-ratings {
+  position: absolute;
+  z-index: 2;
+  top: 0.35rem;
+  left: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.18rem 0.5rem;
+  padding: 0.3rem 1rem 0.3rem 0.3rem;
+  background: linear-gradient(90deg, rgb(2 5 3 / 88%), transparent);
+  color: #f4f8f6;
+  font: 0.48rem/1 var(--font-mono);
+  text-shadow: 0 1px 3px #000;
+}
+
+.appearance-preview-ratings div { display: flex; align-items: center; gap: 0.2rem; }
+.appearance-preview-ratings dt { display: flex; }
+.appearance-preview-ratings .rating-source-icon { width: 0.62rem; height: 0.62rem; }
+.appearance-preview-ratings dd { font-weight: 700; }
+
+.appearance-preview-media-info { position: absolute; right: 0; bottom: 3px; left: 0; z-index: 1; display: grid; gap: 0.16rem; padding: 1.45rem 0.42rem 0.38rem; background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 90%) 58%); color: rgb(244 248 246 / 94%); font: 600 0.5rem/1 var(--font-mono); letter-spacing: 0.03em; }
+.appearance-preview-media-info span { display: flex; align-items: center; gap: 0.24rem; }
+.appearance-preview-media-info svg { width: 0.58rem; height: 0.58rem; color: color-mix(in srgb, var(--preview-primary) 80%, white); }
+.appearance-preview-media-info i { color: color-mix(in srgb, var(--preview-primary) 60%, transparent); font-style: normal; }
+.appearance-preview-progress { position: absolute; z-index: 3; right: 0; bottom: 0; left: 0; height: 3px; background: rgb(0 0 0 / 65%); }
+.appearance-preview-progress i { display: block; width: 58%; height: 100%; background: var(--preview-primary); }
 
 .appearance-preview-motion {
   display: grid;
@@ -497,12 +556,13 @@ html[data-reduced-motion="true"] *::after {
   .secure-credential-field { justify-content: flex-start; }
   .secure-credential-status { text-align: left; }
   .settings-save-bar { align-items: flex-start; flex-direction: column; }
-  .appearance-preview-content { grid-template-columns: minmax(6rem, 7rem) minmax(0, 1fr); }
 }
 
 @media (max-width: 480px) {
-  .appearance-preview-content { grid-template-columns: 5.5rem minmax(0, 1fr); }
-  .appearance-preview-copy p { display: none; }
+  .appearance-preview { min-height: 21.5rem; }
+  .appearance-preview-chrome { gap: 0.65rem; }
+  .appearance-preview-chrome > :nth-child(3) { display: none; }
+  .appearance-preview-card-secondary { display: none; }
   .appearance-preview-motion { grid-template-columns: auto minmax(0, 1fr); }
   .appearance-preview-motion-track { display: none; }
 }
@@ -787,38 +847,72 @@ html[data-reduced-motion="true"] *::after {
   white-space: nowrap;
 }
 
-.rating-readout-source {
-  overflow: hidden;
-  max-width: 3.4rem;
+.card-rating-readout .rating-readout-value dd { align-items: center; }
+
+.rating-source-icon {
+  display: inline-grid;
+  width: 0.76rem;
+  height: 0.76rem;
+  flex: none;
+  place-items: center;
   color: color-mix(in srgb, var(--primary) 78%, white);
-  font-size: 0.49rem;
-  letter-spacing: 0.04em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 85%));
 }
+
+.rating-source-icon-brand { overflow: visible; fill: currentColor; }
+.rating-source-icon-line { fill: none; stroke: currentColor; stroke-width: 2.25; }
+.rating-source-icon-stack { position: relative; }
+.rating-source-icon-stack > .rating-source-icon-brand { width: 100%; height: 100%; color: inherit; filter: none; }
+.rating-source-icon-user { position: absolute; right: -0.16rem; bottom: -0.12rem; width: 0.42rem; height: 0.42rem; padding: 0.04rem; border-radius: 50%; background: rgb(3 6 4 / 92%); color: white; stroke-width: 3; }
+
+.rating-source-icon[data-rating-source-icon="mdblist_score_average"] { color: #55b7d6; }
+.rating-source-icon[data-rating-source-icon="imdb"] { color: #f5c518; }
+.rating-source-icon[data-rating-source-icon="trakt"] { color: #ed1c24; }
+.rating-source-icon[data-rating-source-icon="tmdb"] { color: #01b4e4; }
+.rating-source-icon[data-rating-source-icon="letterboxd"] { color: #00e054; }
+.rating-source-icon[data-rating-source-icon="tomatoes"] { color: #fa320a; }
+.rating-source-icon[data-rating-source-icon="popcorn"] { color: #ffb900; }
+.rating-source-icon[data-rating-source-icon="metacritic"],
+.rating-source-icon[data-rating-source-icon="metacriticuser"] { color: #ffbd3f; }
+.rating-source-icon[data-rating-source-icon="rogerebert"] { color: #f0c84b; }
+.rating-source-icon[data-rating-source-icon="myanimelist"] { color: #5f8fe8; }
 
 .card-rating-readout[data-stale="true"] { opacity: 0.84; }
 
-/* Detail ratings use the same source/value vocabulary without carrying the
-   card's artwork gradient into the hero metadata line. */
+/* Expanded artwork has more room than a shelf card, so its otherwise identical
+   rating vocabulary grows just enough to retain the same visual proportion. */
+.preview-panel .card-rating-readout {
+  gap: 0.22rem 0.78rem;
+  padding: 0.55rem 0.75rem 1.8rem;
+  font-size: 0.72rem;
+}
+
+.preview-panel .card-rating-readout .rating-source-icon { width: 0.88rem; height: 0.88rem; }
+.preview-panel .card-rating-readout .rating-source-icon-user { width: 0.48rem; height: 0.48rem; }
+
+/* Detail ratings use the same icons without carrying the artwork gradient into
+   the hero metadata line. */
 .detail-rating-readout {
   display: inline-flex;
   min-width: 0;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0.25rem 0.7rem;
   margin: 0;
   color: var(--foreground);
   font: inherit;
 }
 
+.detail-rating-readout .rating-readout-value dd { align-items: center; }
+.detail-rating-readout .rating-source-icon { width: 0.9rem; height: 0.9rem; filter: none; }
 .detail-rating-readout[data-stale="true"] { opacity: 0.72; }
 
 /* A single integrated data plate, never a row of pills. The open gradient keeps
    type readable over bright artwork without drawing a box around each fact;
    video and audio retain their own baseline and icon so four facts still scan
    cleanly on a 168px poster. */
+[data-media-info="false"] .card-technical-readout { display: none; }
+
 .card-technical-readout {
   position: absolute;
   right: 0;
@@ -873,6 +967,19 @@ html[data-reduced-motion="true"] *::after {
   margin-inline: 0.32rem;
   color: color-mix(in srgb, var(--primary) 60%, transparent);
 }
+
+/* The preview already owns a bottom artwork scrim, so its larger technical
+   readout can live in the title stack without adding a second gradient. */
+.preview-technical-readout {
+  position: static;
+  gap: 0.24rem;
+  padding: 0.15rem 0 0;
+  background: none;
+  font-size: 0.72rem;
+}
+
+.preview-technical-readout .card-technical-row { gap: 0.42rem; }
+.preview-technical-readout .card-technical-row > svg { width: 0.84rem; height: 0.84rem; }
 
 /* Quick request is a poster action, not a replacement for the card link. It
    sits over the lower artwork edge and appears as soon as either the pointer

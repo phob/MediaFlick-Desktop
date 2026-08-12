@@ -265,8 +265,8 @@ function DiscoveryControls({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Films & series</SelectItem>
-                <SelectItem value="movie">Films</SelectItem>
+                <SelectItem value="all">Movies & series</SelectItem>
+                <SelectItem value="movie">Movies</SelectItem>
                 <SelectItem value="tv">Series</SelectItem>
               </SelectContent>
             </Select>
@@ -466,8 +466,8 @@ function SearchResults({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Films & series</SelectItem>
-              <SelectItem value="movie">Films</SelectItem>
+              <SelectItem value="all">Movies & series</SelectItem>
+              <SelectItem value="movie">Movies</SelectItem>
               <SelectItem value="tv">Series</SelectItem>
             </SelectContent>
           </Select>
@@ -630,7 +630,7 @@ export default function Discover() {
           <Input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Search films and series…"
+            placeholder="Search movies and series…"
             aria-label="Search Seerr"
             minLength={2}
             className="h-12 rounded-xl border-white/10 bg-white/5 pr-12 pl-12 text-base shadow-lg shadow-black/10 placeholder:text-muted-foreground/75"

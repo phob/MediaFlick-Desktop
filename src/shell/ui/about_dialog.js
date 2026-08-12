@@ -1,7 +1,26 @@
 (() => {
   const info = __MEDIAFLICK_ABOUT_INFO_JSON__;
+
+  function applyAppAppearance(element) {
+    const styles = getComputedStyle(document.documentElement);
+    const tokens = {
+      '--mf-background': '--background',
+      '--mf-card': '--card',
+      '--mf-foreground': '--foreground',
+      '--mf-muted': '--muted-foreground',
+      '--mf-border': '--border',
+      '--mf-primary': '--primary',
+    };
+    for (const [target, source] of Object.entries(tokens)) {
+      const value = styles.getPropertyValue(source).trim();
+      if (value) element.style.setProperty(target, value);
+    }
+    element.style.colorScheme = styles.colorScheme || 'dark';
+  }
+
   const existing = document.getElementById('__mediaFlickDesktopAbout');
   if (existing) {
+    applyAppAppearance(existing);
     existing.dispatchEvent(new CustomEvent('mediaflick-desktop-about-focus'));
     return;
   }
@@ -9,6 +28,7 @@
   const host = document.createElement('div');
   host.id = '__mediaFlickDesktopAbout';
   host.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647';
+  applyAppAppearance(host);
   document.documentElement.appendChild(host);
 
   const root = host.attachShadow({ mode: 'closed' });
@@ -16,18 +36,18 @@
     <style>
       :host {
         all: initial;
-        color-scheme: dark;
-        --media-black: oklch(18% .006 260);
-        --chrome: oklch(24% .008 260);
-        --panel: oklch(29% .01 260);
-        --raised: oklch(34% .012 260);
-        --border: oklch(78% .01 260 / .16);
-        --border-strong: oklch(82% .012 260 / .26);
-        --text: oklch(91% .01 260);
-        --muted: oklch(73% .012 260);
-        --quiet: oklch(59% .012 260);
-        --cyan: oklch(68% .145 227);
-        --violet: oklch(62% .13 316);
+        color-scheme: inherit;
+        --media-black: var(--mf-background, oklch(18% .006 260));
+        --chrome: var(--mf-card, oklch(24% .008 260));
+        --panel: color-mix(in srgb, var(--chrome) 90%, var(--mf-foreground, white));
+        --raised: color-mix(in srgb, var(--chrome) 82%, var(--mf-foreground, white));
+        --border: var(--mf-border, oklch(78% .01 260 / .16));
+        --border-strong: color-mix(in srgb, var(--border) 72%, var(--mf-foreground, white));
+        --text: var(--mf-foreground, oklch(91% .01 260));
+        --muted: var(--mf-muted, oklch(73% .012 260));
+        --quiet: color-mix(in srgb, var(--muted) 76%, transparent);
+        --accent: var(--mf-primary, #2bff88);
+        --accent-deep: color-mix(in srgb, var(--accent) 58%, black);
         --shadow: oklch(12% .006 260 / .62);
         font: 14px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       }
@@ -105,9 +125,9 @@
         background: var(--panel);
       }
       .close:focus-visible {
-        outline: 2px solid var(--cyan);
+        outline: 2px solid var(--accent);
         outline-offset: 2px;
-        box-shadow: 0 0 0 3px oklch(68% .145 227 / .18);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
       }
       .body {
         min-height: 0;
@@ -145,6 +165,11 @@
         color: var(--text);
         word-break: break-all;
       }
+      .accent-start { stop-color: var(--accent); }
+      .accent-end { stop-color: var(--accent-deep); }
+      .surface-start { stop-color: var(--raised); }
+      .surface-end { stop-color: var(--chrome); }
+      .mark-frame { stroke: var(--border-strong); }
       @media (max-width: 480px) {
         .box { width: calc(100vw - 20px); max-height: calc(100vh - 20px); }
         .head { padding: 18px 16px 15px; }
@@ -165,16 +190,16 @@
         <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
           <defs>
             <linearGradient id="mediaFlickDesktopAboutGradient" x1="268" y1="220" x2="780" y2="804" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#AA5CC3"/>
-              <stop offset="1" stop-color="#00A4DC"/>
+              <stop class="accent-start"/>
+              <stop class="accent-end" offset="1"/>
             </linearGradient>
             <linearGradient id="mediaFlickDesktopAboutSurface" x1="184" y1="112" x2="840" y2="912" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#2A2A38"/>
-              <stop offset="1" stop-color="#1D1D27"/>
+              <stop class="surface-start"/>
+              <stop class="surface-end" offset="1"/>
             </linearGradient>
           </defs>
           <rect x="96" y="96" width="832" height="832" rx="210" fill="url(#mediaFlickDesktopAboutSurface)"/>
-          <rect x="96" y="96" width="832" height="832" rx="210" stroke="#626276" stroke-opacity="0.65" stroke-width="24"/>
+          <rect class="mark-frame" x="96" y="96" width="832" height="832" rx="210" stroke-opacity="0.65" stroke-width="24"/>
           <path fill="url(#mediaFlickDesktopAboutGradient)" d="M364 292C330 272 288 296 288 336V688C288 728 330 752 364 732L664 556C698 536 698 488 664 468L364 292Z"/>
           <path fill="url(#mediaFlickDesktopAboutGradient)" fill-opacity="0.88" d="M680 256H796C836 256 868 288 868 328V444H772V352H680V256Z"/>
           <path fill="#20202B" fill-opacity="0.78" d="M384 404V620L568 512L384 404Z"/>

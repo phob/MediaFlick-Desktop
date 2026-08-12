@@ -6,11 +6,20 @@ import { MediaRail } from "@/components/MediaRail"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type HomeRow, type ItemSummary } from "@/lib/api"
-import { useBillboard, useGenres, useHome, useItem, useItems } from "@/lib/queries"
+import {
+  useBillboard,
+  useGenres,
+  useHome,
+  useHomeResume,
+  useItem,
+  useItems,
+} from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const VIEW_ALL: Partial<Record<HomeRow["id"], string>> = {
   recent: "/library?sort=added",
+  "latest-movies": "/library?kind=Movie&sort=year",
+  "latest-shows": "/library?kind=Series&sort=year",
   favorites: "/library?favorite=true",
 }
 
@@ -193,13 +202,22 @@ function genreRows(available: string[] | undefined, exclude: string | null) {
 
 export default function Home() {
   const home = useHome()
+  const enrichedResume = useHomeResume()
   const billboard = useBillboard()
   const favorites = useItems({ favorite: true, sort: "added", limit: 24 })
   const genres = useGenres()
 
   const rows = home.data?.rows.filter((row) => row.items.length > 0) ?? []
-  const resume = rows.find((row) => row.id === "resume")
+  const cachedResume = home.data?.rows.find((row) => row.id === "resume")
+  const resumeItems = enrichedResume.data?.items ?? cachedResume?.items ?? []
+  // A user can have no half-watched titles but still have server-side Next Up
+  // episodes. Keep the empty cached row available as that enrichment's shell.
+  const resume = cachedResume && resumeItems.length > 0
+    ? { ...cachedResume, items: resumeItems }
+    : undefined
   const recent = rows.find((row) => row.id === "recent")
+  const latestMovies = rows.find((row) => row.id === "latest-movies")
+  const latestShows = rows.find((row) => row.id === "latest-shows")
 
   // The seed for Because You Watched. Its genres are only on the detail record,
   // which the billboard is fetching for this same item anyway whenever it is
@@ -212,7 +230,10 @@ export default function Home() {
     return <p className="p-6 text-sm text-destructive">{home.error.message}</p>
   }
 
-  if (home.isPending || billboard.isPending) return <HomeSkeleton />
+  // The billboard and live Next Up shelf are progressive decoration over the
+  // SQLite snapshot. Neither may replace already-available cached cards with a
+  // full-page skeleton during startup, navigation, or a background refetch.
+  if (home.isPending) return <HomeSkeleton />
 
   const favoriteRow: HomeRow | null = favorites.data?.items.length
     ? { id: "favorites", title: "My List", items: favorites.data.items }
@@ -237,6 +258,8 @@ export default function Home() {
         {seed && seedGenre && <BecauseYouWatched seed={seed} genre={seedGenre} />}
 
         {recent && <Row row={recent} />}
+        {latestMovies && <Row row={latestMovies} />}
+        {latestShows && <Row row={latestShows} />}
         {favoriteRow && <Row row={favoriteRow} />}
 
         {genreRows(genres.data?.genres, seedGenre).map((genre) => (

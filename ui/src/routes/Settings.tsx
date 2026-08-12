@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle,
+  AudioLines,
   CheckCircle2,
   Copy,
   Download,
@@ -15,6 +16,7 @@ import {
   Play,
   RefreshCw,
   Save,
+  ScanLine,
   Settings as SettingsIcon,
   SlidersHorizontal,
   Trash2,
@@ -32,6 +34,7 @@ import {
 } from "react"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -80,7 +83,7 @@ const NAVIGATION: SettingsPage[] = [
   { to: "/settings/client/player", title: "Player", detail: "Player executable and launch behavior", icon: Play, group: "Client" },
   { to: "/settings/client/playback", title: "Playback", detail: "Quality and segment skipping", icon: SlidersHorizontal, group: "Client" },
   { to: "/settings/client/application", title: "Application", detail: "Window and diagnostics", icon: Monitor, group: "Client" },
-  { to: "/settings/appearance", title: "Appearance", detail: "Theme, color, ratings, and motion", icon: Palette },
+  { to: "/settings/appearance", title: "Appearance", detail: "Theme, card overlays, and motion", icon: Palette },
   { to: "/settings/integrations/ratings", title: "MDBList Ratings", detail: "Keys, quota, and rating sources", icon: KeyRound, group: "Integrations" },
   { to: "/settings/integrations/letterboxd", title: "Letterboxd", detail: "Public profile connections", icon: Link, signedIn: true, group: "Integrations" },
   { to: "/settings/integrations/seerr", title: "Seerr", detail: "Request service connection", icon: Link, signedIn: true, group: "Integrations" },
@@ -576,9 +579,26 @@ function ApplicationSettings() {
   </div>
 }
 
-function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
+function previewRatingValue(source: RatingSourceDefinition) {
+  if (source.format === "percent") return "88%"
+  if (source.format === "stars") return "★4.2"
+  if (source.format === "integer") return "84"
+  return source.scaleMax <= 5 ? "4.2" : "8.4"
+}
+
+function AppearancePreview({
+  appearance,
+  ratingSources,
+}: {
+  appearance: AppearanceSettings
+  ratingSources: RatingSourceDefinition[]
+}) {
   const systemReducedMotion = usePrefersReducedMotion()
   const reducedMotion = systemReducedMotion || appearance.reducedMotion
+  const previewRatings = appearance.ratingSources
+    .map((id) => ratingSources.find((source) => source.id === id))
+    .filter((source): source is RatingSourceDefinition => Boolean(source))
+    .slice(0, 2)
   const style = {
     "--preview-artwork-intensity": String(appearance.artworkIntensity / 100),
     "--preview-backdrop-intensity": String(appearance.backdropIntensity / 100),
@@ -591,6 +611,7 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
       data-accent={appearance.accent}
       data-density={appearance.density}
       data-reduced-motion={reducedMotion}
+      data-show-media-info={appearance.showMediaInfo}
       style={style}
       aria-labelledby="appearance-preview-title"
       aria-describedby="appearance-preview-description appearance-preview-motion-status"
@@ -598,21 +619,55 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
       <figcaption className="sr-only">
         <span id="appearance-preview-title">Live appearance preview</span>
         <span id="appearance-preview-description">
-          A contained sample hero and poster using the unsaved appearance controls.
+          A contained browsing shelf using the unsaved appearance controls.
         </span>
       </figcaption>
       <div className="appearance-preview-backdrop" aria-hidden />
       <div className="appearance-preview-scrim" aria-hidden />
-      <div className="appearance-preview-content">
-        <div className="appearance-preview-poster" aria-hidden>
-          <div className="appearance-preview-artwork" />
-          <span>MF / 07</span>
-        </div>
-        <div className="appearance-preview-copy">
-          <span className="appearance-preview-kicker">Featured signal</span>
-          <h3>Midnight Frequency</h3>
-          <p>Artwork stays readable while the backdrop settles behind the interface.</p>
-          <span className="appearance-preview-button"><Play /> Preview</span>
+      <div className="appearance-preview-shell">
+        <header className="appearance-preview-chrome">
+          <span className="appearance-preview-brand">MF</span>
+          <span>Home</span>
+          <span>Movies</span>
+          <span className="appearance-preview-active">My List</span>
+          <span className="appearance-preview-online">Online</span>
+        </header>
+        <div className="appearance-preview-content">
+          <div className="appearance-preview-heading">
+            <span className="appearance-preview-kicker">Continue watching</span>
+            <h3>Tonight’s signal</h3>
+          </div>
+          <div className="appearance-preview-cards" aria-hidden>
+            <div className="appearance-preview-card">
+              <div className="appearance-preview-poster">
+                <div className="appearance-preview-artwork" />
+                {previewRatings.length > 0 && (
+                  <dl className="appearance-preview-ratings">
+                    {previewRatings.map((source) => (
+                      <div key={source.id}>
+                        <dt><RatingSourceIcon sourceId={source.id} /></dt>
+                        <dd>{previewRatingValue(source)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                <div className="appearance-preview-media-info">
+                  <span><ScanLine /> 4K <i>·</i> DV</span>
+                  <span><AudioLines /> TrueHD <i>·</i> Atmos</span>
+                </div>
+                <span className="appearance-preview-progress"><i /></span>
+              </div>
+              <strong>Midnight Frequency</strong>
+              <small>42 min left</small>
+            </div>
+            <div className="appearance-preview-card appearance-preview-card-secondary">
+              <div className="appearance-preview-poster">
+                <div className="appearance-preview-artwork" />
+              </div>
+              <strong>Green Horizon</strong>
+              <small>2026</small>
+            </div>
+          </div>
         </div>
       </div>
       <div className="appearance-preview-motion">
@@ -642,27 +697,34 @@ export function Appearance() {
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Appearance" detail="Tune the MediaFlick shell without changing your library or server settings." />
     <Section title="Live preview" description="Uses your unsaved choices here only; the rest of MediaFlick changes after Save.">
-      <AppearancePreview appearance={draft} />
+      <AppearancePreview appearance={draft} ratingSources={ratings?.sources ?? []} />
     </Section>
     <Section title="Theme" description="System follows the current operating-system color preference.">
       <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme: theme as AppearanceSettings["theme"] })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
       <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent: accent as AppearanceSettings["accent"] })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
       <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density: density as AppearanceSettings["density"] })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
-    <Section title="Card ratings" description="Choose any combination of MDBList sources for compact top-left card overlays.">
-      <RatingSourceSelector
-        sources={ratings?.sources ?? []}
-        selected={draft.ratingSources}
-        enabled={Boolean(ratings?.selectionEnabled)}
-        onChange={(ratingSources) => setDraft({ ...draft, ratingSources })}
-      />
+    <Section title="Card overlays" description="Choose the compact information drawn over library artwork.">
+      <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
+        <Toggle label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
+      </SettingsRow>
+      <div className="border-t border-border pt-5">
+        <h3 className="font-medium">Rating sources</h3>
+        <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose any combination of MDBList sources for compact top-left card overlays.</p>
+        <RatingSourceSelector
+          sources={ratings?.sources ?? []}
+          selected={draft.ratingSources}
+          enabled={Boolean(ratings?.selectionEnabled)}
+          onChange={(ratingSources) => setDraft({ ...draft, ratingSources })}
+        />
+      </div>
     </Section>
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
       <SettingsRow title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider aria-label="Artwork intensity" className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
       <SettingsRow title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider aria-label="Backdrop intensity" className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Toggle label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, ratingSources: [] })} />
+    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, showMediaInfo: true, ratingSources: [] })} />
   </div>
 }
 
@@ -713,10 +775,11 @@ export function RatingsSetupDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function RatingsIntegration() {
+export function RatingsIntegration() {
   const { data: settings } = useSettings()
   const { data: status } = useRatingsStatus()
   const [setup, setSetup] = useState(false)
+  const [draftSources, setDraftSources] = useDraft(settings?.appearance.ratingSources)
   const sourceMutation = useMutation({
     mutationFn: (ratingSources: string[]) => {
       if (!settings) throw new Error("Settings are not ready")
@@ -726,7 +789,7 @@ function RatingsIntegration() {
     onError: (error: Error) => toast.error(error.message),
   })
   const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
-  if (!settings || !status) return <SettingsLoading />
+  if (!settings || !status || !draftSources) return <SettingsLoading />
   const origin = status.effectiveOrigin === "local_mdblist"
     ? "Local MDBList credential (overrides any server configuration)"
     : status.effectiveOrigin === "plugin"
@@ -748,8 +811,15 @@ function RatingsIntegration() {
       <SettingsRow title="Server fallback" description={status.plugin.detail}><span className="data-value">{status.plugin.available ? "ratings-v1" : "not advertised"}</span></SettingsRow>
     </Section>
     <Section title="Card rating sources" description="The same selection is available in Settings > Appearance and remains saved when credentials or origins change.">
-      <RatingSourceSelector sources={status.sources} selected={settings.appearance.ratingSources} enabled={status.selectionEnabled} onChange={(sources) => sourceMutation.mutate(sources)} />
+      <RatingSourceSelector sources={status.sources} selected={draftSources} enabled={status.selectionEnabled} onChange={setDraftSources} />
     </Section>
+    <SaveBar
+      dirty={!same(draftSources, settings.appearance.ratingSources)}
+      saving={sourceMutation.isPending}
+      onSave={() => sourceMutation.mutate(draftSources)}
+      onDiscard={() => setDraftSources(settings.appearance.ratingSources)}
+      onReset={() => setDraftSources([])}
+    />
     {setup && <RatingsSetupDialog onClose={() => setSetup(false)} />}
   </div>
 }
@@ -762,7 +832,8 @@ function Letterboxd() {
   const { data: status } = useStatus()
   const profiles = useQuery({ queryKey: ["letterboxd", "profiles"], queryFn: api.letterboxd.profiles, enabled: Boolean(status?.authenticated), retry: false })
   const [entry, setEntry] = useState("")
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["letterboxd", "profiles"] })
+  // Profile writes also change every movie's public-review projection.
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["letterboxd"] })
   const add = useMutation({ mutationFn: api.letterboxd.add, onSuccess: () => { setEntry(""); refresh(); toast.success("Letterboxd profile added") }, onError: (error: Error) => toast.error(error.message) })
   const setEnabled = useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.letterboxd.setEnabled(id, enabled), onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const remove = useMutation({ mutationFn: api.letterboxd.remove, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
@@ -812,6 +883,7 @@ export function AppearanceSync() {
     root.dataset.accent = appearance.accent
     root.dataset.density = appearance.density
     root.dataset.reducedMotion = String(appearance.reducedMotion)
+    root.dataset.mediaInfo = String(appearance.showMediaInfo)
     root.style.setProperty("--artwork-intensity", String(appearance.artworkIntensity / 100))
     root.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))
   }, [settings?.appearance])

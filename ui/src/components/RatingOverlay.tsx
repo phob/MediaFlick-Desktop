@@ -1,5 +1,6 @@
 import type { ItemRatings, ItemSummary } from "@/lib/api"
 import { useCardRatings, type DisplayRating } from "@/lib/rating-context"
+import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 
 type RatingReadoutViewProps = {
   itemName: string
@@ -35,7 +36,7 @@ function RatingReadoutView({
         >
           <dt className="sr-only">{definition.label}</dt>
           <dd aria-label={`${definition.label} rating ${accessibleValue}`}>
-            <span className="rating-readout-source" aria-hidden>{definition.shortLabel}</span>
+            <RatingSourceIcon sourceId={rating.sourceId} />
             <span>{formatted}</span>
           </dd>
         </div>

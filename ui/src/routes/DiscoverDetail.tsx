@@ -238,7 +238,7 @@ export default function DiscoverDetail() {
   const releases = regionalReleaseDates(item)
   const rating = contentRating(item, releases)
   const facts = [
-    item.mediaType === "movie" ? "Film" : item.seriesType || "Series",
+    item.mediaType === "movie" ? "Movie" : item.seriesType || "Series",
     item.year ? String(item.year) : null,
     runtimeLabel(item.runtimeMinutes),
     item.numberOfSeasons
@@ -368,7 +368,7 @@ export default function DiscoverDetail() {
                   {genre}
                 </Badge>
               ))}
-              <SeerrStatusBadge status={item.status} />
+              {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
               {item.status4k !== "unknown" && (
                 <span className="flex items-center gap-1">
                   <span className="data-label text-muted-foreground">4K</span>
@@ -400,7 +400,7 @@ export default function DiscoverDetail() {
                 <Button size="lg" asChild>
                   <Link to={`/item/${encodeURIComponent(item.libraryItemId)}`}>
                     <Library />
-                    Open in your library
+                    Open in library
                   </Link>
                 </Button>
               )}

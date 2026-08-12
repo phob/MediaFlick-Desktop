@@ -133,10 +133,10 @@ export default function Library() {
     : search
       ? "Everything in your library that matches, with requestable titles from Seerr below."
       : globalFavoritesView
-        ? "The films and shows you saved for later, all in one place."
+        ? "The movies and shows you saved for later, all in one place."
         : kind === "Series"
           ? "Find your next episode, revisit a favorite, or start something new."
-          : "Your film collection, ready to browse and play."
+          : "Your movie collection, ready to browse and play."
 
   const castDiscover = castPerson ? (
     <CastDiscover

@@ -2,12 +2,72 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{title}}</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #070b09;
+      --card: #0d1511;
+      --foreground: #e6ede9;
+      --muted: #8e9b94;
+      --border: #26352d;
+      --primary: #2bff88;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 20% 15%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 32rem),
+        var(--background);
+      color: var(--foreground);
+      font: 15px/1.55 "Segoe UI", system-ui, sans-serif;
+    }
+    main {
+      width: min(100%, 620px);
+      padding: clamp(24px, 5vw, 42px);
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--card) 94%, transparent);
+      box-shadow: 0 24px 72px rgb(0 0 0 / 45%);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; font-weight: 700; }
+    .mark { display: grid; width: 34px; height: 34px; place-items: center; background: var(--primary); color: #032111; font-size: 12px; }
+    .eyebrow { margin: 0 0 10px; color: var(--primary); font: 700 11px/1 ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 13ch; margin: 0; font-size: clamp(30px, 6vw, 48px); line-height: .98; letter-spacing: -.045em; }
+    .summary { max-width: 48ch; margin: 20px 0 0; color: var(--muted); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; padding: 0 16px; border: 1px solid var(--border); color: var(--foreground); text-decoration: none; }
+    .button.primary { border-color: var(--primary); background: var(--primary); color: #032111; font-weight: 700; }
+    .button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+    details { margin-top: 30px; border-top: 1px solid var(--border); padding-top: 18px; color: var(--muted); }
+    summary { cursor: pointer; color: var(--foreground); font-weight: 600; }
+    dl { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 8px 14px; margin: 16px 0 0; }
+    dt { color: var(--muted); }
+    dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--foreground); font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12px; }
+    @media (max-width: 520px) { dl { grid-template-columns: 1fr; } dd { margin-bottom: 8px; } }
+  </style>
 </head>
-<body style="margin:40px;font:16px system-ui;background:#101010;color:#f4f4f4">
-  <h1>Could not load Jellyfin</h1>
-  <p><strong>URL:</strong> {{failed_url}}</p>
-  <p><strong>Error:</strong> {{error_text}} ({{error_code}})</p>
-  <p>Pass a different server with <code>--url http://localhost:8096</code>.</p>
+<body>
+  <main>
+    <div class="brand"><span class="mark">MF</span><span>MediaFlick</span></div>
+    <p class="eyebrow">Page unavailable</p>
+    <h1>MediaFlick couldn’t load this page.</h1>
+    <p class="summary">The application is still running. Try the page again, or open Settings to check the client and connection configuration.</p>
+    <div class="actions">
+      <a class="button primary" href="{{retry_url}}">Try again</a>
+      <a class="button" href="mediaflick-desktop://app/settings">Open Settings</a>
+    </div>
+    <details>
+      <summary>Technical details</summary>
+      <dl>
+        <dt>URL</dt><dd>{{failed_url}}</dd>
+        <dt>Error</dt><dd>{{error_text}} ({{error_code}})</dd>
+      </dl>
+    </details>
+  </main>
 </body>
 </html>

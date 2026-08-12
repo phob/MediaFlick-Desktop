@@ -89,6 +89,29 @@ export interface ItemDetail extends ItemSummary {
   dateCreated: string | null
 }
 
+/** One connected public Letterboxd profile's latest RSS entry for a movie. */
+export interface LetterboxdReview {
+  profileId: string
+  username: string
+  displayName: string
+  profileUrl: string
+  /** Canonical Letterboxd film entry; absent if the feed supplied an unsafe URL. */
+  entryUrl: string | null
+  rating: number | null
+  /** Native code strips provider HTML before this reaches React. */
+  review: string | null
+  reviewTruncated: boolean
+  watchedDate: string | null
+  /** True when a failed refresh fell back to an older in-memory feed. */
+  stale: boolean
+}
+
+export interface LetterboxdReviewsResponse {
+  reviews: LetterboxdReview[]
+  configuredProfiles: number
+  unavailableProfiles: number
+}
+
 /** One track of a media source, as `media_stream_json` in `api.rs` shapes it. */
 export interface MediaStream {
   index: number
@@ -172,12 +195,15 @@ export function externalLinksFor(item: ItemDetail) {
 }
 
 /**
- * `resume` is Continue Watching and Next Up in one row — `home` in
- * `src/shell/cef/api.rs` merges them, half-watched items first. `favorites` is
- * assembled by the UI from the regular items endpoint for the My List shelf.
+ * `resume` begins as SQLite-backed Continue Watching. `/api/home/resume`
+ * enriches it with live Next Up items independently, half-watched items first,
+ * so the server request cannot hold the cached home page behind a skeleton.
+ * The latest shelves are release-year ordered, unlike `recent`, which is
+ * date-added ordered. `favorites` is assembled by the UI from the regular
+ * items endpoint.
  */
 export interface HomeRow {
-  id: "resume" | "recent" | "favorites"
+  id: "resume" | "recent" | "latest-movies" | "latest-shows" | "favorites"
   title: string
   items: ItemSummary[]
 }
@@ -322,6 +348,8 @@ export interface AppearanceSettings {
   artworkIntensity: number
   backdropIntensity: number
   reducedMotion: boolean
+  /** Whether technical video/audio facts are drawn over library cards. */
+  showMediaInfo: boolean
   /** Canonical IDs from the fixed public MDBList source catalog. */
   ratingSources: string[]
 }
@@ -651,12 +679,12 @@ export const SEERR_DISCOVER_ROWS = [
     id: "trending",
     label: "Trending",
     title: "What everyone is watching",
-    description: "The films and series gaining momentum on TMDB right now.",
+    description: "The movies and series gaining momentum on TMDB right now.",
   },
   {
     id: "movies",
-    label: "Popular films",
-    title: "Popular films",
+    label: "Popular movies",
+    title: "Popular movies",
     description: "Shape Seerr’s movie catalogue by genre, score, and release date.",
   },
   {
@@ -667,8 +695,8 @@ export const SEERR_DISCOVER_ROWS = [
   },
   {
     id: "upcoming-movies",
-    label: "Upcoming films",
-    title: "Films on the horizon",
+    label: "Upcoming movies",
+    title: "Movies on the horizon",
     description: "Get requests in before the next wave of premieres lands.",
   },
   {
@@ -1014,6 +1042,7 @@ export const api = {
   logout: () => request<Status>("/api/auth/logout", { method: "POST" }),
 
   home: () => request<{ rows: HomeRow[] }>("/api/home"),
+  homeResume: () => request<{ items: ItemSummary[] }>("/api/home/resume"),
   billboard: () => request<{ items: ItemSummary[] }>("/api/billboard"),
   genres: () => request<{ genres: string[] }>("/api/genres"),
   resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>
@@ -1021,6 +1050,8 @@ export const api = {
   items: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
+  itemLetterboxd: (id: string) =>
+    request<LetterboxdReviewsResponse>(`/api/item/${encodeURIComponent(id)}/letterboxd`),
   children: (id: string) =>
     request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
   media: (id: string) =>

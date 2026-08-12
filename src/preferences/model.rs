@@ -71,6 +71,11 @@ pub struct AppearanceSettings {
     pub backdrop_intensity: u8,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reduced_motion: bool,
+    /// Technical video/audio facts shown over library card artwork. Enabled by
+    /// default to preserve the card presentation from releases that predate
+    /// this preference.
+    #[serde(default = "default_show_media_info", skip_serializing_if = "is_true")]
+    pub show_media_info: bool,
     /// Canonical rating source IDs chosen for card overlays. This is ordinary
     /// presentation state; credentials remain in the operating-system vault.
     /// IDs are limited to the fixed public source catalog so a prior or
@@ -88,6 +93,7 @@ impl Default for AppearanceSettings {
             artwork_intensity: default_artwork_intensity(),
             backdrop_intensity: default_backdrop_intensity(),
             reduced_motion: false,
+            show_media_info: default_show_media_info(),
             rating_sources: Vec::new(),
         }
     }
@@ -682,6 +688,10 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 fn is_public_rating_source(value: &str) -> bool {
     matches!(
         value,
@@ -706,6 +716,10 @@ fn default_artwork_intensity() -> u8 {
 
 fn default_backdrop_intensity() -> u8 {
     100
+}
+
+fn default_show_media_info() -> bool {
+    true
 }
 
 fn is_default_artwork_intensity(value: &u8) -> bool {
@@ -909,6 +923,22 @@ mod tests {
         assert!(!serialized.contains("future_meter"));
         assert!(!serialized.contains("api_key"));
         assert!(!serialized.contains("apikey"));
+    }
+
+    #[test]
+    fn media_info_remains_enabled_for_legacy_settings_until_explicitly_disabled() {
+        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
+        assert!(defaults.appearance.show_media_info);
+        let serialized = serde_json::to_value(&defaults).expect("serialize defaults");
+        assert!(serialized.get("appearance").is_none());
+
+        let disabled: AppSettings = serde_json::from_value(serde_json::json!({
+            "appearance": { "show_media_info": false }
+        }))
+        .expect("settings");
+        assert!(!disabled.appearance.show_media_info);
+        let serialized = serde_json::to_value(&disabled).expect("serialize disabled setting");
+        assert_eq!(serialized["appearance"]["show_media_info"], false);
     }
 
     #[test]
