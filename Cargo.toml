@@ -11,7 +11,7 @@ path = "src/main.rs"
 [dependencies]
 cef = { version = "=151.3.0", default-features = false }
 getrandom = "0.4"
-keyring = { version = "3.6.3", default-features = false, features = [
+keyring = { version = "4.0.0", default-features = false, features = [
     "apple-native",
     "windows-native",
     "sync-secret-service",
