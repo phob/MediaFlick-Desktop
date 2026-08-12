@@ -104,7 +104,7 @@ export function CastDiscover({
       <div>
         <h2 id="cast-discover-heading" className="section-title">Discover</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          More films and series featuring {personName}, with Seerr availability and request status.
+          More movies and series featuring {personName}, with Seerr availability and request status.
         </p>
       </div>
       {content}

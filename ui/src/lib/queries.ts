@@ -72,6 +72,14 @@ export function useHome(enabled = true) {
   return useQuery({ queryKey: queryKeys.home, queryFn: api.home, enabled })
 }
 
+export function useHomeResume(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.homeResume,
+    queryFn: api.homeResume,
+    enabled,
+  })
+}
+
 export function useCompanion() {
   return useQuery({
     queryKey: queryKeys.companion,
@@ -90,10 +98,11 @@ export function useReleaseCalendar(start: string, end: string) {
   })
 }
 
-export function useBillboard() {
+export function useBillboard(enabled = true) {
   return useQuery({
     queryKey: queryKeys.billboard,
     queryFn: api.billboard,
+    enabled,
     // Keep one random selection stable while the user moves around the app.
     staleTime: 10 * 60_000,
   })
@@ -152,6 +161,18 @@ export function useItem(id: string | undefined) {
     queryKey: queryKeys.item(id ?? ""),
     queryFn: () => api.item(id!),
     enabled: Boolean(id),
+  })
+}
+
+/** Public profile activity is independent of the local item response, so a
+ * slow or unavailable RSS feed never delays the usable detail page. */
+export function useLetterboxdReviews(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.letterboxdReviews(id ?? ""),
+    queryFn: () => api.itemLetterboxd(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 30 * 60_000,
+    retry: false,
   })
 }
 

@@ -2,11 +2,28 @@
   const payload = {{error_payload}};
   const hostId = '__mediaFlickDesktopErrorToast';
 
+  function applyAppAppearance(element) {
+    const styles = getComputedStyle(document.documentElement);
+    const tokens = {
+      '--mf-card': '--card',
+      '--mf-foreground': '--foreground',
+      '--mf-muted': '--muted-foreground',
+      '--mf-border': '--border',
+      '--mf-destructive': '--destructive',
+    };
+    for (const [target, source] of Object.entries(tokens)) {
+      const value = styles.getPropertyValue(source).trim();
+      if (value) element.style.setProperty(target, value);
+    }
+    element.style.colorScheme = styles.colorScheme || 'dark';
+  }
+
   const COPY_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   const DONE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
   const existing = document.getElementById(hostId);
   if (existing && window.__mediaFlickDesktopShowError) {
+    applyAppAppearance(existing);
     window.__mediaFlickDesktopShowError(payload);
     return;
   }
@@ -18,6 +35,7 @@
   const host = document.createElement('div');
   host.id = hostId;
   host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647';
+  applyAppAppearance(host);
   document.documentElement.appendChild(host);
 
   const root = host.attachShadow({ mode: 'closed' });
@@ -25,14 +43,14 @@
     <style>
       :host {
         all: initial;
-        color-scheme: dark;
-        --chrome: oklch(20% .01 260);
-        --raised: oklch(34% .012 260);
-        --border: oklch(78% .01 260 / .16);
-        --text: oklch(91% .01 260);
-        --muted: oklch(73% .012 260);
-        --danger: oklch(66% .18 31);
-        --danger-soft: oklch(66% .18 31 / .18);
+        color-scheme: inherit;
+        --chrome: var(--mf-card, oklch(20% .01 260));
+        --raised: color-mix(in srgb, var(--chrome) 82%, var(--mf-foreground, white));
+        --border: var(--mf-border, oklch(78% .01 260 / .16));
+        --text: var(--mf-foreground, oklch(91% .01 260));
+        --muted: var(--mf-muted, oklch(73% .012 260));
+        --danger: var(--mf-destructive, oklch(66% .18 31));
+        --danger-soft: color-mix(in srgb, var(--danger) 18%, transparent);
         --shadow: oklch(12% .006 260 / .58);
         font: 13px/1.35 "Noto Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       }

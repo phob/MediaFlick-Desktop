@@ -1,8 +1,8 @@
-import { Route, Routes, useLocation } from "react-router-dom"
+import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
-import { useStatus } from "@/lib/queries"
+import { useBillboard, useHome, useStatus } from "@/lib/queries"
 import { RatingsProvider } from "@/lib/ratings"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
@@ -24,7 +24,15 @@ export default function App() {
   // sign-in screen. Keep that promise while the rest of the app remains
   // account-gated: a direct /settings link is a real anonymous route.
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
+  const showingHome = location.pathname === "/"
   const showShell = Boolean(status?.authenticated || showingSettings)
+  const initialHomeEnabled = Boolean(status?.authenticated && !waitingForLibrary && showingHome)
+  // Prime the two SQLite-backed home queries before the startup cover leaves.
+  // Home observes the same keys, so React Query deduplicates these reads.
+  const initialHome = useHome(initialHomeEnabled)
+  const initialBillboard = useBillboard(initialHomeEnabled)
+  const waitingForInitialHome = initialHomeEnabled
+    && (initialHome.isPending || initialBillboard.isPending)
 
   return (
     <>
@@ -36,52 +44,58 @@ export default function App() {
         // token.
         <SignIn />
       ) : (
-        <AppShell>
-          <RatingsProvider>
-          <Routes>
-            <Route path="/settings/*" element={<Settings />} />
-            <Route path="/" element={<Home />} />
-            <Route path="/library" element={<Library />} />
-            <Route path="/item/:id" element={<ItemDetail />} />
-            <Route path="/calendar" element={<Calendar />} />
-            {/* Registered whether or not Seerr is linked: the sidebar hides
-                them until it is, but a deep link or a session that lapsed
-                mid-use must land on the offer to set it up rather than on a
-                blank page. */}
-            <Route
-              path="/discover"
-              element={
-                <SeerrGate>
-                  <Discover />
-                </SeerrGate>
-              }
-            />
-            <Route
-              path="/discover/:mediaType/:tmdbId"
-              element={
-                <SeerrGate>
-                  <DiscoverDetail />
-                </SeerrGate>
-              }
-            />
-            <Route
-              path="/requests"
-              element={
-                <SeerrGate>
-                  <Requests />
-                </SeerrGate>
-              }
-            />
-            <Route path="*" element={status?.authenticated ? <Home /> : <SignIn />} />
-          </Routes>
-          </RatingsProvider>
-        </AppShell>
+        // The expanded-card provider lives inside AppShell and renders its
+        // portal as a sibling of the routed children. Ratings must therefore
+        // wrap the shell itself, not only the routes, or that sibling cannot
+        // read the selected-source context even though the shelf card can.
+        <RatingsProvider>
+          <AppShell>
+            <Routes>
+              <Route path="/settings/*" element={<Settings />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/library" element={<Library />} />
+              <Route path="/item/:id" element={<ItemDetail />} />
+              <Route path="/calendar" element={<Calendar />} />
+              {/* Registered whether or not Seerr is linked: the sidebar hides
+                  them until it is, but a deep link or a session that lapsed
+                  mid-use must land on the offer to set it up rather than on a
+                  blank page. */}
+              <Route
+                path="/discover"
+                element={
+                  <SeerrGate>
+                    <Discover />
+                  </SeerrGate>
+                }
+              />
+              <Route
+                path="/discover/:mediaType/:tmdbId"
+                element={
+                  <SeerrGate>
+                    <DiscoverDetail />
+                  </SeerrGate>
+                }
+              />
+              <Route
+                path="/requests"
+                element={
+                  <SeerrGate>
+                    <Requests />
+                  </SeerrGate>
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </AppShell>
+        </RatingsProvider>
       )}
       <LoadingScreen
         // A new account waits only for the first committed catalog page. The
-        // rest of the fill and all rich enrichment happen in the live shell.
+        // rest of the fill and all live enrichment happen in the live shell.
+        // On later starts the local home snapshot also paints behind this cover
+        // before it leaves, avoiding a flash of route skeletons.
         key={status?.authenticated ? "authenticated" : "anonymous"}
-        ready={!isPending && (!waitingForLibrary || showingSettings)}
+        ready={!isPending && (!waitingForLibrary || showingSettings) && !waitingForInitialHome}
       />
       <AppearanceSync />
     </>

@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { EpisodeList } from "../src/components/detail/EpisodeList"
 import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
+import { RatingSourceIcon } from "../src/components/RatingSourceIcon"
 import type {
   ClientSettings,
   ItemRatings,
@@ -22,6 +23,8 @@ import {
 import { RatingsProvider } from "../src/lib/ratings"
 import {
   Appearance,
+  AppearanceSync,
+  RatingsIntegration,
   RatingSourceSelector,
   RatingsSetupDialog,
   SecureCredentialField,
@@ -71,7 +74,7 @@ const clientSettings: ClientSettings = {
     playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
-  appearance: { theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, ratingSources: ["letterboxd"] },
+  appearance: { theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, showMediaInfo: true, ratingSources: ["letterboxd"] },
   capabilities: { platform: "windows", mpchc: true, mpvInstaller: true },
   streamingQuality: "original",
   playerBackend: "mpv",
@@ -102,6 +105,30 @@ function RatingProbe({ id }: { id: string }) {
 }
 
 describe("configurable card ratings", () => {
+  test("provides an icon for every native source and a safe future-source fallback", () => {
+    const sourceIds = [
+      "mdblist_score_average",
+      "imdb",
+      "trakt",
+      "tmdb",
+      "letterboxd",
+      "tomatoes",
+      "popcorn",
+      "metacritic",
+      "metacriticuser",
+      "rogerebert",
+      "myanimelist",
+      "future-source",
+    ]
+    const { container } = render(<>{sourceIds.map((sourceId) => (
+      <RatingSourceIcon key={sourceId} sourceId={sourceId} />
+    ))}</>)
+
+    for (const sourceId of sourceIds) {
+      expect(container.querySelector(`[data-rating-source-icon="${sourceId}"]`)).toBeTruthy()
+    }
+  })
+
   test("formats each native source scale without conflating RT critics and audience", () => {
     expect(display("letterboxd", 4.25).formatted).toBe("★4.3")
     expect(display("imdb", 8.1).accessibleValue).toBe("8.1 out of 10")
@@ -122,7 +149,12 @@ describe("configurable card ratings", () => {
     expect(overlay.tagName).toBe("DL")
     expect(overlay.className).toContain("card-rating-readout")
     expect(overlay.querySelector(".card-rating-chip")).toBeNull()
-    expect(overlay.querySelector("svg")).toBeNull()
+    expect(overlay.querySelectorAll("[data-rating-source-icon]")).toHaveLength(3)
+    expect(overlay.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+    expect(overlay.querySelector("[data-rating-source-icon='tomatoes']")).toBeTruthy()
+    expect(overlay.querySelector("[data-rating-source-icon='popcorn']")).toBeTruthy()
+    expect(overlay.textContent).not.toContain("LB")
+    expect(overlay.textContent).not.toContain("RT A")
     expect(overlay.querySelector(".card-rating-separator")).toBeNull()
     expect(overlay.querySelectorAll(".rating-readout-value")).toHaveLength(3)
     expect(overlay.getAttribute("data-rating-origin")).toBe("local_mdblist")
@@ -149,6 +181,8 @@ describe("configurable card ratings", () => {
     const readout = screen.getByLabelText("Ratings for The Matrix")
     expect(readout.className).toContain("detail-rating-readout")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
+    expect(readout.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+    expect(readout.textContent).not.toContain("LB")
     expect(register).toHaveBeenCalledWith(item.id)
   })
 
@@ -284,12 +318,42 @@ describe("configurable card ratings", () => {
     expect(screen.getByLabelText("Letterboxd")).toBeTruthy()
   })
 
-  test("normal Appearance includes the same enabled multi-select", () => {
-    withSettings(<Appearance />)
-    expect(screen.getByText("Card ratings")).toBeTruthy()
+  test("normal Appearance previews and saves card overlay preferences together", () => {
+    const { container } = withSettings(<Appearance />)
+    expect(screen.getByText("Card overlays")).toBeTruthy()
+    const mediaInfo = screen.getByRole("switch", { name: "Show media info on cards" })
+    expect(mediaInfo.getAttribute("aria-checked")).toBe("true")
     expect((screen.getByLabelText("Letterboxd") as HTMLInputElement).checked).toBe(true)
     expect(screen.getByLabelText("Rotten Tomatoes Critics")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience")).toBeTruthy()
+
+    const preview = container.querySelector(".appearance-preview") as HTMLElement
+    expect(preview.dataset.showMediaInfo).toBe("true")
+    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+    fireEvent.click(mediaInfo)
+    expect(preview.dataset.showMediaInfo).toBe("false")
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+    expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
+  })
+
+  test("the ratings page drafts preference changes until its Save action", () => {
+    withSettings(<RatingsIntegration />)
+    fireEvent.click(screen.getByLabelText("Rotten Tomatoes Audience"))
+    expect((screen.getByLabelText("Rotten Tomatoes Audience") as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
+    expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
+  })
+
+  test("saved media-info visibility reaches library cards through the root appearance state", () => {
+    const disabled = {
+      ...clientSettings,
+      appearance: { ...clientSettings.appearance, showMediaInfo: false },
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.settings, disabled)
+    render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
+    expect(document.documentElement.dataset.mediaInfo).toBe("false")
+    delete document.documentElement.dataset.mediaInfo
   })
 
   test("disables all source choices without a credential/capability", () => {

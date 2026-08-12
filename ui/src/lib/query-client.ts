@@ -29,6 +29,7 @@ export const queryKeys = {
   settings: ["settings"] as const,
   ratingsStatus: ["ratings", "status"] as const,
   home: ["home"] as const,
+  homeResume: ["home", "resume"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
@@ -41,6 +42,7 @@ export const queryKeys = {
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
     ["person", "resolve", jellyfinId, tmdbId, name] as const,
   item: (id: string) => ["item", id] as const,
+  letterboxdReviews: (id: string) => ["letterboxd", "item", id] as const,
   children: (id: string) => ["item", id, "children"] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,

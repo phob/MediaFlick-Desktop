@@ -14,7 +14,7 @@ const FILTERS = [
   { id: "all", label: "All" },
   { id: "pending", label: "Awaiting approval" },
   { id: "processing", label: "Downloading" },
-  { id: "available", label: "Available" },
+  { id: "available", label: "In your library" },
 ] as const
 
 function requestedSeasons(request: SeerrRequest) {
@@ -68,20 +68,23 @@ function RequestCard({ request }: { request: SeerrRequest }) {
           {request.is4k && <Badge variant="outline">4K</Badge>}
         </div>
         <div className="truncate text-xs text-muted-foreground">
-          {[request.mediaType === "tv" ? "Series" : "Film", seasons, date && `requested ${date}`]
+          {[request.mediaType === "tv" ? "Series" : "Movie", seasons, date && `requested ${date}`]
             .filter(Boolean)
             .join(" · ")}
         </div>
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <SeerrRequestStatusBadge status={request.status} />
-          <SeerrStatusBadge status={request.mediaStatus} />
+          <SeerrRequestStatusBadge
+            status={request.status}
+            suppressUnknown={Boolean(request.libraryItemId) || request.mediaStatus !== "unknown"}
+          />
+          {request.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={request.mediaStatus} />}
         </div>
       </div>
 
       <div className="relative z-10 flex shrink-0 items-center gap-2">
         {request.libraryItemId && (
           <Button asChild variant="secondary" size="sm">
-            <Link to={`/item/${encodeURIComponent(request.libraryItemId)}`}>Open</Link>
+            <Link to={`/item/${encodeURIComponent(request.libraryItemId)}`}>Open in library</Link>
           </Button>
         )}
         {/* Offered only while it can still be withdrawn. A refusal from Seerr
@@ -113,45 +116,48 @@ export default function Requests() {
         eyebrow="Seerr"
         title="Your requests"
         description="Track approvals, downloads, and the titles that have landed in your library."
+        contentClassName="max-w-6xl"
         actions={
           <Tabs value={filter} onValueChange={setFilter}>
-          <TabsList className="h-11 rounded-xl border border-white/5 bg-white/5 p-1">
-            {FILTERS.map((entry) => (
-              <TabsTrigger
-                key={entry.id}
-                value={entry.id}
-                className="h-full rounded-media px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-              >
-                {entry.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+            <TabsList className="h-11 rounded-xl border border-white/5 bg-white/5 p-1">
+              {FILTERS.map((entry) => (
+                <TabsTrigger
+                  key={entry.id}
+                  value={entry.id}
+                  className="h-full rounded-media px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  {entry.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         }
       />
 
       <div className="px-6 pb-10 sm:px-10 lg:px-14">
-        {requests.error ? (
-          <p className="text-sm text-destructive">{requests.error.message}</p>
-        ) : requests.isPending ? (
-          <ul className="flex flex-col gap-3">
-            {Array.from({ length: 4 }, (_, index) => (
-              <Skeleton key={index} className="h-36 rounded-xl" />
-            ))}
-          </ul>
-        ) : requests.data?.results.length ? (
-          <ul className="flex max-w-6xl flex-col gap-3">
-            {requests.data.results.map((request) => (
-              <RequestCard key={request.id} request={request} />
-            ))}
-          </ul>
-        ) : (
-          <PageEmptyState
-            icon={<Inbox className="size-6" />}
-            title="No requests here yet"
-            description="Discover something outside your library and request it. Its approval and download progress will appear here."
-          />
-        )}
+        <div className="max-w-6xl">
+          {requests.error ? (
+            <p className="text-sm text-destructive">{requests.error.message}</p>
+          ) : requests.isPending ? (
+            <ul className="flex flex-col gap-3">
+              {Array.from({ length: 4 }, (_, index) => (
+                <Skeleton key={index} className="h-36 rounded-xl" />
+              ))}
+            </ul>
+          ) : requests.data?.results.length ? (
+            <ul className="flex flex-col gap-3">
+              {requests.data.results.map((request) => (
+                <RequestCard key={request.id} request={request} />
+              ))}
+            </ul>
+          ) : (
+            <PageEmptyState
+              icon={<Inbox className="size-6" />}
+              title="No requests here yet"
+              description="Discover something outside your library and request it. Its approval and download progress will appear here."
+            />
+          )}
+        </div>
       </div>
     </div>
   )

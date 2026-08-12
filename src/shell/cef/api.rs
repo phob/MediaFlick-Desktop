@@ -21,7 +21,7 @@ use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::ExternalProfile;
 use crate::library::model::technical_media_streams_json;
 use crate::library::{
-    ItemPlaybackPreference, ItemQuery, ItemSort, resolve_playback_preference, sync,
+    ItemPlaybackPreference, ItemQuery, ItemSort, Library, resolve_playback_preference, sync,
 };
 use crate::maintenance::player_setup;
 use crate::players::mpv::input::MpvInputBindings;
@@ -292,6 +292,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["seerr", "image", size, file] if request.is("GET") => {
             seerr_image(&percent_decode(size), &percent_decode(file))
         }
+        ["home", "resume"] if request.is("GET") => home_resume(services),
         ["home"] if request.is("GET") => home(services),
         ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
@@ -301,6 +302,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         },
         ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
+        ["item", id, "letterboxd"] if request.is("GET") => {
+            item_letterboxd(services, &percent_decode(id))
+        }
         ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
         ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
         ["item", id, "playback-preference"] if request.is("PATCH") => {
@@ -403,6 +407,7 @@ fn settings_response(settings: AppSettings) -> ApiResponse {
             "artworkIntensity": settings.appearance.artwork_intensity,
             "backdropIntensity": settings.appearance.backdrop_intensity,
             "reducedMotion": settings.appearance.reduced_motion,
+            "showMediaInfo": settings.appearance.show_media_info,
             "ratingSources": settings.appearance.rating_sources,
         },
         "capabilities": {
@@ -651,13 +656,37 @@ fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Api
             Ok(profile) => profile,
             Err(error) => return ApiResponse::error(400, error),
         };
+    let existing = match services
+        .library
+        .external_profiles("letterboxd", &server_id, &user_id)
+    {
+        Ok(existing) => existing,
+        Err(error) => return storage_failure(&error),
+    };
+    if existing.len() >= letterboxd::MAX_CONNECTED_PROFILES
+        && !existing
+            .iter()
+            .any(|saved| saved.profile_key == profile.username)
+    {
+        return ApiResponse::error(
+            409,
+            format!(
+                "up to {} Letterboxd profiles can be connected",
+                letterboxd::MAX_CONNECTED_PROFILES
+            ),
+        );
+    }
     let verification = letterboxd::verify(&profile);
+    let display_name = verification
+        .display_name()
+        .unwrap_or(&profile.username)
+        .to_string();
     let now = unix_now();
     let record = ExternalProfile {
         id: crate::app::ids::random_hex(16),
         provider: "letterboxd".to_string(),
         profile_key: profile.username.clone(),
-        display_name: profile.username,
+        display_name,
         canonical_url: profile.canonical_url,
         enabled: true,
         verification_status: verification.as_str().to_string(),
@@ -729,8 +758,13 @@ fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> ApiResponse
         Err(_) => return ApiResponse::error(409, "stored Letterboxd profile is invalid"),
     };
     let verification = letterboxd::verify(&source);
+    let display_name = verification
+        .display_name()
+        .map(str::to_string)
+        .unwrap_or_else(|| existing.display_name.clone());
     let record = ExternalProfile {
         canonical_url: source.canonical_url,
+        display_name,
         verification_status: verification.as_str().to_string(),
         last_checked_at: Some(unix_now()),
         ..existing
@@ -1227,6 +1261,30 @@ fn home(services: &Arc<Services>) -> ApiResponse {
         .continue_watching(HOME_ROW_LIMIT)
         .unwrap_or_default();
     let recent = library.recently_added(HOME_ROW_LIMIT).unwrap_or_default();
+    let latest_movies = latest_home_items(library, "Movie");
+    let latest_shows = latest_home_items(library, "Series");
+
+    // This response is the startup snapshot. Keep it entirely SQLite-backed so
+    // a healthy durable cache can paint while the loading screen is still up;
+    // live Next Up enrichment arrives independently from `home_resume`.
+    ApiResponse::ok(json!({
+        "rows": [
+            { "id": "resume", "title": "Continue Watching", "items": resume },
+            { "id": "recent", "title": "Recently Added", "items": recent },
+            { "id": "latest-movies", "title": "Latest Movies", "items": latest_movies },
+            { "id": "latest-shows", "title": "Latest Shows", "items": latest_shows },
+        ],
+    }))
+}
+
+/// Enriches the cached Continue Watching shelf with Jellyfin's server-owned
+/// Next Up decisions without holding the rest of the home page behind a
+/// network request.
+fn home_resume(services: &Arc<Services>) -> ApiResponse {
+    let resume = services
+        .library
+        .continue_watching(HOME_ROW_LIMIT)
+        .unwrap_or_default();
     // Next Up is server-side logic; replicating it locally would drift.
     let next_up = services
         .session
@@ -1246,11 +1304,22 @@ fn home(services: &Arc<Services>) -> ApiResponse {
         });
 
     ApiResponse::ok(json!({
-        "rows": [
-            { "id": "resume", "title": "Continue Watching", "items": merge_next_up(resume, next_up) },
-            { "id": "recent", "title": "Recently Added", "items": recent },
-        ],
+        "items": merge_next_up(resume, next_up),
     }))
+}
+
+/// New releases are separate from Recently Added: importing an older title
+/// moves it to the front of the latter, but not to the front of these shelves.
+fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
+    library
+        .query(&ItemQuery {
+            kinds: vec![kind.to_string()],
+            sort: ItemSort::Year,
+            limit: HOME_ROW_LIMIT,
+            ..Default::default()
+        })
+        .map(|page| page.items)
+        .unwrap_or_default()
 }
 
 fn billboard(services: &Arc<Services>) -> ApiResponse {
@@ -1509,6 +1578,48 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> ApiResponse {
         Ok(None) => fetch_and_cache_item(services, item_id),
         Err(error) => storage_failure(&error),
     }
+}
+
+fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let item = match services.library.item(item_id) {
+        Ok(Some(item)) => item,
+        Ok(None) => return ApiResponse::error(404, "item not found"),
+        Err(error) => return storage_failure(&error),
+    };
+    // Letterboxd's RSS movieId namespace is TMDB's movie namespace. Refuse a
+    // series or episode even if it happens to carry the same numeric provider
+    // id, or a TV record could inherit an unrelated film review.
+    if item["kind"].as_str() != Some("Movie") {
+        return ApiResponse::ok(json!({
+            "reviews": [],
+            "configuredProfiles": 0,
+            "unavailableProfiles": 0,
+        }));
+    }
+    let Some(tmdb_id) = item["providerIds"]["tmdb"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+    else {
+        return ApiResponse::ok(json!({
+            "reviews": [],
+            "configuredProfiles": 0,
+            "unavailableProfiles": 0,
+        }));
+    };
+    let profiles = match services
+        .library
+        .external_profiles("letterboxd", &server_id, &user_id)
+    {
+        Ok(profiles) => profiles,
+        Err(error) => return storage_failure(&error),
+    };
+    ApiResponse::ok(json!(
+        services.letterboxd.reviews_for_item(&profiles, tmdb_id)
+    ))
 }
 
 fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse {
@@ -2503,10 +2614,11 @@ mod tests {
     use super::{
         ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key,
         clear_person_availability, external_url, file_name_of, handle, is_iso_date,
-        join_person_items, media_source_json, merge_next_up, mime_for_image, summary_from_dto,
-        youtube_embed_url,
+        join_person_items, latest_home_items, media_source_json, merge_next_up, mime_for_image,
+        summary_from_dto, youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
+    use crate::library::Library;
     use serde_json::json;
 
     fn get(path: &str) -> ApiResponse {
@@ -2634,6 +2746,31 @@ mod tests {
         assert_eq!(summary["thumbImageTag"], "thumb-tag");
         assert_eq!(summary["logoImageTag"], "logo-tag");
         assert_eq!(summary["backdropImageTag"], "backdrop-tag");
+    }
+
+    #[test]
+    fn latest_home_rows_are_kind_scoped_and_ordered_by_release_year() {
+        let library = Library::open_in_memory().expect("library");
+        let items: Vec<BaseItemDto> = [
+            r#"{"Id":"old-movie","Name":"Old Film","Type":"Movie","ProductionYear":1999}"#,
+            r#"{"Id":"new-movie","Name":"New Film","Type":"Movie","ProductionYear":2026}"#,
+            r#"{"Id":"old-show","Name":"Old Show","Type":"Series","ProductionYear":2010}"#,
+            r#"{"Id":"new-show","Name":"New Show","Type":"Series","ProductionYear":2025}"#,
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_str(value).expect("dto"))
+        .collect();
+        library.upsert_page(&items).expect("seed");
+
+        let movies = latest_home_items(&library, "Movie");
+        let shows = latest_home_items(&library, "Series");
+
+        assert_eq!(movies[0]["id"], "new-movie");
+        assert_eq!(movies[1]["id"], "old-movie");
+        assert!(movies.iter().all(|item| item["kind"] == "Movie"));
+        assert_eq!(shows[0]["id"], "new-show");
+        assert_eq!(shows[1]["id"], "old-show");
+        assert!(shows.iter().all(|item| item["kind"] == "Series"));
     }
 
     #[test]

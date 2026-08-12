@@ -5,6 +5,7 @@ import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHero } from "@/components/detail/DetailHero"
 import { EpisodeList } from "@/components/detail/EpisodeList"
 import { MediaInfo } from "@/components/detail/MediaInfo"
+import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { MediaCard } from "@/components/MediaCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
@@ -116,6 +117,8 @@ export default function ItemDetail() {
           playLabel={playLabelFor(item, playTarget ?? null)}
         />
       </DetailHero>
+
+      <LetterboxdReviews item={item} />
 
       {episodes.length > 0 && <EpisodeList episodes={episodes} parentId={item.id} />}
       <SeasonGrid seasons={seasons} />

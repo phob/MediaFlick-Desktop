@@ -38,7 +38,14 @@ export function SeerrStatusBadge({
   )
 }
 
-export function SeerrRequestStatusBadge({ status }: { status: SeerrRequestStatus }) {
+export function SeerrRequestStatusBadge({
+  status,
+  suppressUnknown = false,
+}: {
+  status: SeerrRequestStatus
+  suppressUnknown?: boolean
+}) {
+  if (status === "unknown" && suppressUnknown) return null
   const entry = REQUEST_LABELS[status] ?? REQUEST_LABELS.unknown
   return <Badge variant={entry.variant}>{entry.label}</Badge>
 }
