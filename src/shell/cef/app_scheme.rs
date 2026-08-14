@@ -4,6 +4,7 @@
 //! FETCH_ENABLED`, so this is a real same-origin web app with no localhost
 //! port and no jellyfin-web involved.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cef::*;
@@ -113,15 +114,18 @@ wrap_scheme_handler_factory! {
             let request = request?;
             let url = CefString::from(&request.url()).to_string();
             let (path, query) = split_url(&url);
+            let cancelled = Arc::new(AtomicBool::new(false));
             let api_request = ApiRequest {
                 method: CefString::from(&request.method()).to_string(),
                 path,
                 query,
                 body: read_post_body(request),
                 range: request_header(request, "Range"),
+                cancelled: cancelled.clone(),
             };
             Some(AppResourceHandler::new(
                 api_request,
+                cancelled,
                 Arc::new(Mutex::new(ResponseState::default())),
             ))
         }
@@ -131,10 +135,18 @@ wrap_scheme_handler_factory! {
 wrap_resource_handler! {
     struct AppResourceHandler {
         request: ApiRequest,
+        cancelled: Arc<AtomicBool>,
         state: Arc<Mutex<ResponseState>>,
     }
 
     impl ResourceHandler {
+        // CEF raises this on its IO thread while `open` may still be blocked
+        // in a handler on a background thread; the shared flag is the only
+        // channel through which that handler can notice.
+        fn cancel(&self) {
+            self.cancelled.store(true, Ordering::Relaxed);
+        }
+
         fn open(
             &self,
             _request: Option<&mut Request>,

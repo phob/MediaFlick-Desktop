@@ -51,6 +51,10 @@ export function usePreview(
       // timer for every card it passed and pop a panel nothing can dismiss.
       onPointerEnter: (event) => {
         if (event.pointerType !== "mouse") return
+        // A pointer arriving with a button already held is mid-drag — a text
+        // selection or a press that wandered. A panel opened under it would
+        // read the eventual release as a click it was never meant to receive.
+        if (event.buttons !== 0) return
         preview.open(item, event.currentTarget)
       },
       onPointerLeave: (event) => {

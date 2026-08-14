@@ -160,6 +160,7 @@ function PreviewPanel({
   const panel = useRef<HTMLDivElement>(null)
   const pointerInside = useRef(false)
   const focusInside = useRef(false)
+  const pressStartedInside = useRef(false)
   const [height, setHeight] = useState(ESTIMATED_HEIGHT)
 
   // The panel's height depends on how much metadata the item turns out to have,
@@ -234,6 +235,20 @@ function PreviewPanel({
       onClick={(event) => {
         const element = event.target instanceof Element ? event.target : null
         if (event.defaultPrevented || element?.closest("a, button")) return
+        goToDetail()
+      }}
+      onPointerDown={() => {
+        pressStartedInside.current = true
+      }}
+      // A click that straddles the panel's appearance never fires anywhere: the
+      // mousedown targeted the card underneath, the mouseup targets the panel,
+      // and the browser resolves the click to their common ancestor — the body,
+      // outside both trees. That press began as a card click, and both the card
+      // and the panel background lead to the same details page, so honour it.
+      onPointerUp={(event) => {
+        const startedInside = pressStartedInside.current
+        pressStartedInside.current = false
+        if (startedInside || event.button !== 0) return
         goToDetail()
       }}
       onPointerEnter={() => {

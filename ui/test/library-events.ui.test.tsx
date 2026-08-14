@@ -1,7 +1,11 @@
 import { render } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { useLibraryMetadataBridge } from "../src/lib/library-events"
-import { queryClient } from "../src/lib/query-client"
+import {
+  invalidateMediaSurfaces,
+  queryClient,
+  queryKeys,
+} from "../src/lib/query-client"
 
 function Bridge() {
   useLibraryMetadataBridge()
@@ -30,5 +34,28 @@ describe("native library change bridge", () => {
     expect(filters?.predicate?.({ queryKey: ["item", "series"] } as never)).toBe(true)
     expect(filters?.predicate?.({ queryKey: ["item", "other"] } as never)).toBe(false)
     expect(filters?.predicate?.({ queryKey: ["status"] } as never)).toBe(true)
+  })
+
+  test("user-state changes leave rich and technical item queries cached", () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+
+    invalidateMediaSurfaces("episode", "series")
+
+    const filters = invalidate.mock.calls.map(([filter]) => filter)
+    const filterFor = (queryKey: readonly unknown[]) =>
+      filters.find((filter) => JSON.stringify(filter?.queryKey) === JSON.stringify(queryKey))
+
+    expect(filterFor(queryKeys.item("episode"))?.exact).toBe(true)
+    expect(filterFor(queryKeys.children("series"))?.exact).toBe(true)
+    expect(filterFor(queryKeys.nextUp("series"))?.exact).toBe(true)
+    expect(filterFor(queryKeys.billboard)?.exact).toBe(true)
+    for (const untouched of [
+      queryKeys.itemAbout("episode"),
+      queryKeys.itemSynopsis("episode"),
+      queryKeys.media("episode"),
+      queryKeys.trailer("episode"),
+    ]) {
+      expect(filterFor(untouched)).toBeUndefined()
+    }
   })
 })

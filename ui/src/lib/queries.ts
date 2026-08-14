@@ -164,6 +164,33 @@ export function useItem(id: string | undefined) {
   })
 }
 
+/** Live billboard prose without the detail page's cast and facts payload. */
+export function useItemSynopsis(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.itemSynopsis(id ?? ""),
+    queryFn: () => api.itemSynopsis(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 10 * 60_000,
+    retry: false,
+  })
+}
+
+/**
+ * The live rich-metadata record — synopsis, cast, critic rating, tags,
+ * studios — behind the instant cached row. Never persisted natively, so the
+ * query cache is its only memory; a modest staleTime keeps detail navigation
+ * from re-asking the server on every mount.
+ */
+export function useItemAbout(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.itemAbout(id ?? ""),
+    queryFn: () => api.itemAbout(id!),
+    enabled: Boolean(id) && enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
 /** Public profile activity is independent of the local item response, so a
  * slow or unavailable RSS feed never delays the usable detail page. */
 export function useLetterboxdReviews(id: string | undefined, enabled = true) {

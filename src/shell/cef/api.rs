@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
@@ -15,7 +15,7 @@ use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::companion::ProviderError;
 use crate::integrations::letterboxd;
 use crate::jellyfin::api::items;
-use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream};
+use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::library::ExternalProfile;
@@ -55,6 +55,11 @@ pub struct ApiRequest {
     /// Browser media requests use this to seek without downloading a trailer
     /// wholesale. Other request headers are intentionally not forwarded.
     pub range: Option<String>,
+    /// Raised by CEF's `cancel` callback when the browser abandons the request
+    /// (an aborted fetch, a closed page). Handlers block synchronously, so
+    /// this flag is how a multi-request handler stops issuing further
+    /// upstream calls for an answer nobody will read.
+    pub cancelled: Arc<AtomicBool>,
 }
 
 impl ApiRequest {
@@ -68,6 +73,10 @@ impl ApiRequest {
 
     fn is(&self, method: &str) -> bool {
         self.method.eq_ignore_ascii_case(method)
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
     }
 }
 
@@ -227,6 +236,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             ratings_reveal_credential(services, &percent_decode(provider))
         }
         ["ratings", "batch"] if request.is("POST") => ratings_batch(services, request),
+        ["technical", "batch"] if request.is("POST") => technical_batch(services, request),
         ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
         ["shell", "mpv", "install"] if request.is("POST") => shell_install_mpv(services, request),
         ["shell", "mpv", "help"] if request.is("POST") => shell_mpv_help(),
@@ -302,6 +312,10 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         },
         ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
+        ["item", id, "synopsis"] if request.is("GET") => {
+            item_synopsis(services, &percent_decode(id))
+        }
+        ["item", id, "about"] if request.is("GET") => item_about(services, &percent_decode(id)),
         ["item", id, "letterboxd"] if request.is("GET") => {
             item_letterboxd(services, &percent_decode(id))
         }
@@ -361,10 +375,6 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         object.insert(
             "syncProgress".to_string(),
             json!(services.sync.progress(&services.library)),
-        );
-        object.insert(
-            "convergence".to_string(),
-            json!(services.library.convergence_diagnostics()),
         );
         object.insert("companion".to_string(), services.companion.status());
     }
@@ -547,6 +557,88 @@ fn ratings_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
         Ok(ratings) => ApiResponse::ok(ratings),
         Err(error) => ApiResponse::error(500, error.to_string()),
     }
+}
+
+/// Jellyfin answers `/Items?ids=` comfortably at this width; it is the same
+/// shape the old background enrichment fetcher used.
+const TECHNICAL_BATCH_SIZE: usize = 40;
+
+/// Live technical stream descriptors for visible cards, batched by the UI's
+/// badge scheduler. Container ids (Series, Season) answer with the streams of
+/// a representative episode. Nothing is persisted; a failure is silent on
+/// cards.
+fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let mut seen = HashSet::new();
+    let ids = request
+        .json()
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .filter(|id| seen.insert(id.to_string()))
+                .take(100)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return ApiResponse::ok(json!({ "items": [] }));
+    }
+    // Series and Season cards advertise the same badges as movies, but their
+    // rows are containers Jellyfin reports without streams. Each is answered
+    // by a representative cached episode; a container with no cached episode
+    // is dropped rather than queried uselessly.
+    let sources = match services.library.technical_stream_sources(&ids) {
+        Ok(sources) => sources,
+        Err(error) => return storage_failure(&error),
+    };
+    let mut cards_by_source: HashMap<String, Vec<String>> = HashMap::new();
+    let mut source_ids = Vec::new();
+    for (card_id, source_id) in sources {
+        let cards = cards_by_source.entry(source_id.clone()).or_default();
+        if cards.is_empty() {
+            source_ids.push(source_id);
+        }
+        cards.push(card_id);
+    }
+    if source_ids.is_empty() {
+        return ApiResponse::ok(json!({ "items": [] }));
+    }
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    let mut results = Vec::new();
+    for chunk in source_ids.chunks(TECHNICAL_BATCH_SIZE) {
+        // The UI aborts a batch once none of its cards remains mounted; the
+        // fetch dies in the browser, but this handler is already blocked in
+        // upstream calls. Checking between chunks keeps rapid scrolling from
+        // running every remaining request for an answer nobody will read.
+        if request.is_cancelled() {
+            return ApiResponse::error(499, "the browser abandoned the request");
+        }
+        match items::fetch_media_stream_batch(&client, &user_id, chunk) {
+            Ok(response) => {
+                for dto in &response.items {
+                    let streams = technical_media_streams_json(&dto.media_streams);
+                    for card_id in cards_by_source.get(&dto.id).into_iter().flatten() {
+                        results.push(json!({
+                            "id": card_id,
+                            "mediaStreams": streams.clone(),
+                        }));
+                    }
+                }
+            }
+            Err(error) => {
+                services.session.note_error(&error);
+                return ApiResponse::from_api_error(&error);
+            }
+        }
+    }
+    ApiResponse::ok(json!({ "items": results }))
 }
 
 fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -1559,24 +1651,125 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
 
 fn item_detail(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     match services.library.item(item_id) {
-        Ok(Some(cached)) => {
-            // A lightweight catalog row is already a valid detail response.
-            // Move its durable rich job to the front and wake only that queue;
-            // never make the cached response wait on the network.
-            match services.library.prioritize_enrichment(item_id) {
-                Ok(true) => services.sync.request_enrichment(),
-                Ok(false) => {}
-                Err(error) => tracing::debug!(
-                    target: "library.enrichment",
-                    item_id,
-                    "could not prioritize opened detail enrichment: {error}"
-                ),
-            }
-            ApiResponse::ok(cached)
-        }
+        // The thin catalog row answers instantly; prose, cast, and critic
+        // scores arrive separately through the live `about` endpoint.
+        Ok(Some(cached)) => ApiResponse::ok(cached),
         // A deep link can outrun the catalog; fetch that one item and cache it.
         Ok(None) => fetch_and_cache_item(services, item_id),
         Err(error) => storage_failure(&error),
+    }
+}
+
+fn item_synopsis(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    match items::fetch_item_synopsis(&client, &user_id, item_id) {
+        Ok(Some(dto)) => ApiResponse::ok(json!({ "overview": dto.overview })),
+        Ok(None) => {
+            forget_item(services, item_id);
+            ApiResponse::error(404, "the server has no item with that id")
+        }
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
+    }
+}
+
+const ITEM_ABOUT_CAST_LIMIT: usize = 24;
+const ITEM_ABOUT_CREW_LIMIT: usize = 24;
+const ITEM_ABOUT_CREW_PER_JOB_LIMIT: usize = 6;
+
+fn is_cast_credit(person: &BaseItemPerson) -> bool {
+    person.person_type.as_deref() == Some("Actor")
+        || (person.person_type.is_none()
+            && person
+                .role
+                .as_deref()
+                .is_some_and(|role| !role.trim().is_empty()))
+}
+
+/// Keeps the live about payload and its headshot fan-out bounded while
+/// preserving Jellyfin's credit order and a useful spread of crew jobs.
+fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
+    let mut selected = Vec::with_capacity(ITEM_ABOUT_CAST_LIMIT + ITEM_ABOUT_CREW_LIMIT);
+    let mut cast = 0;
+    let mut crew = 0;
+    let mut crew_by_job = HashMap::<String, usize>::new();
+
+    for person in people {
+        if person
+            .name
+            .as_deref()
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            continue;
+        }
+        if is_cast_credit(person) {
+            if cast >= ITEM_ABOUT_CAST_LIMIT {
+                continue;
+            }
+            cast += 1;
+        } else {
+            let Some(job) = person
+                .person_type
+                .as_deref()
+                .filter(|job| !job.trim().is_empty())
+            else {
+                continue;
+            };
+            let job_count = crew_by_job.entry(job.to_string()).or_default();
+            if crew >= ITEM_ABOUT_CREW_LIMIT || *job_count >= ITEM_ABOUT_CREW_PER_JOB_LIMIT {
+                continue;
+            }
+            crew += 1;
+            *job_count += 1;
+        }
+        selected.push(json!({
+            "id": person.id,
+            "name": person.name,
+            "role": person.role,
+            "type": person.person_type,
+            "imageTag": person.primary_image_tag,
+        }));
+    }
+    selected
+}
+
+/// Rich metadata for one item, fetched live from Jellyfin and never persisted.
+/// The detail page draws the cached thin row first and fills this in when it
+/// lands; when the server is unreachable the UI keeps its plain error state.
+fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+    let (client, user_id) = match services.session.client_and_user() {
+        Ok(pair) => pair,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    match items::fetch_item_about(&client, &user_id, item_id) {
+        Ok(Some(dto)) => {
+            let people = bounded_about_people(&dto.people);
+            let studios = dto
+                .studios
+                .iter()
+                .filter_map(|studio| studio.name.clone())
+                .collect::<Vec<_>>();
+            ApiResponse::ok(json!({
+                "overview": dto.overview,
+                "criticRating": dto.critic_rating,
+                "people": people,
+                "tags": dto.tags,
+                "studios": studios,
+            }))
+        }
+        Ok(None) => {
+            forget_item(services, item_id);
+            ApiResponse::error(404, "the server has no item with that id")
+        }
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
     }
 }
 
@@ -1629,9 +1822,7 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
     };
     match items::fetch_item(&client, &user_id, item_id) {
         Ok(Some(dto)) => {
-            let _ = services
-                .library
-                .ingest_enrichment_page(std::slice::from_ref(&dto));
+            let _ = services.library.ingest_page(std::slice::from_ref(&dto));
             match services.library.item(item_id) {
                 Ok(Some(item)) => ApiResponse::ok(item),
                 Ok(None) => ApiResponse::ok(summary_from_dto(&dto)),
@@ -1655,14 +1846,32 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
 fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     // Only containers have a child list worth asking the server about; a movie
     // detail page asks for children too and must not pay for a round trip.
-    if matches!(
+    let overviews = if matches!(
         services.library.kind(item_id).as_deref(),
         Some("Series" | "Season")
     ) {
-        reconcile_children(services, item_id);
-    }
+        reconcile_children(services, item_id)
+    } else {
+        None
+    };
     match services.library.children(item_id) {
-        Ok(children) => ApiResponse::ok(json!({ "items": children })),
+        Ok(mut children) => {
+            // Episode synopses are not cached; they ride along from the live
+            // reconcile that just answered. Offline, rows simply have none.
+            if let Some(overviews) = &overviews {
+                for child in &mut children {
+                    let Some(id) = child["id"].as_str().map(str::to_string) else {
+                        continue;
+                    };
+                    if let (Some(overview), Some(object)) =
+                        (overviews.get(&id), child.as_object_mut())
+                    {
+                        object.insert("overview".to_string(), overview.clone());
+                    }
+                }
+            }
+            ApiResponse::ok(json!({ "items": children }))
+        }
         Err(error) => storage_failure(&error),
     }
 }
@@ -1678,13 +1887,14 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
 ///
 /// One small non-recursive request per navigation buys a correct list, and it
 /// also makes newly added episodes appear without waiting for a sweep.
-fn reconcile_children(services: &Arc<Services>, parent_id: &str) {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(_) => return,
-    };
+///
+/// Returns each live child's synopsis so the response can carry it without the
+/// cache ever storing prose; `None` means the server could not be asked.
+fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashMap<String, Value>> {
+    let (client, user_id) = services.session.client_and_user().ok()?;
 
-    let mut seen = std::collections::HashSet::new();
+    let mut live_items = Vec::new();
+    let mut overviews = HashMap::new();
     let mut offset = 0;
     loop {
         let page = match items::fetch_children(&client, &user_id, parent_id, offset) {
@@ -1697,38 +1907,44 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) {
                     "could not reconcile the children of {parent_id}: {error}"
                 );
                 services.session.note_error(&error);
-                return;
+                return None;
             }
         };
         let received = page.items.len() as i64;
         if page.items.is_empty() {
             break;
         }
-        seen.extend(page.items.iter().map(|item| item.id.clone()));
-        let _ = services.library.ingest_enrichment_page(&page.items);
+        for item in &page.items {
+            overviews.insert(item.id.clone(), json!(item.overview));
+        }
+        live_items.extend(page.items);
         offset += received;
         if received < items::CHILDREN_PAGE_SIZE {
             break;
         }
     }
 
-    // An empty `seen` here came from a successful request, so it is the server
+    // An empty `live_items` here came from a successful request, so it is the server
     // saying this parent has no children left — unlike the library-wide sweep,
     // where the blast radius makes that answer too dangerous to trust.
-    match services.library.retain_children(parent_id, &seen) {
-        Ok(0) => {}
-        Ok(dropped) => {
-            tracing::info!(
-                target: "app.api",
-                dropped,
-                parent_id,
-                "dropped cached children the server no longer reports"
-            );
+    match services.library.reconcile_children(parent_id, &live_items) {
+        Ok(changes) => {
+            if !changes.is_empty() {
+                tracing::info!(
+                    target: "app.api",
+                    changed = changes.item_ids.len(),
+                    parent_id,
+                    "reconciled changed child rows"
+                );
+                crate::app::services::notify_library_changed(changes);
+            }
         }
         Err(error) => {
-            tracing::warn!(target: "app.api", "could not evict stale children: {error}");
+            tracing::warn!(target: "app.api", "could not commit reconciled children: {error}");
+            return None;
         }
     }
+    Some(overviews)
 }
 
 /// Container, codec, and track detail for the detail page.
@@ -2570,7 +2786,6 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
         "thumbImageTag": dto.image_tag("Thumb"),
         "logoImageTag": dto.image_tag("Logo"),
         "backdropImageTag": dto.backdrop_image_tags.first(),
-        "mediaStreams": technical_media_streams_json(&dto.media_streams),
         "childCount": dto.child_count,
         "premiereDate": dto.premiere_date,
         "seasonId": dto.season_id,
@@ -2589,15 +2804,16 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
 /// replacement (Jellyfin re-creates the item with a new id) is picked up.
 fn forget_item(services: &Arc<Services>, item_id: &str) {
     match services.library.forget(item_id) {
-        Ok(true) => {
+        Ok(changes) if !changes.is_empty() => {
             tracing::info!(
                 target: "app.api",
                 item_id,
                 "dropped a cached item the server no longer has"
             );
+            crate::app::services::notify_library_changed(changes);
             services.sync.request();
         }
-        Ok(false) => {}
+        Ok(_) => {}
         Err(error) => {
             tracing::warn!(target: "app.api", "failed to drop stale item {item_id}: {error}");
         }
@@ -2612,10 +2828,10 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiRequest, ApiResponse, HOME_ROW_LIMIT, bounded_byte_range, cache_key,
-        clear_person_availability, external_url, file_name_of, handle, is_iso_date,
-        join_person_items, latest_home_items, media_source_json, merge_next_up, mime_for_image,
-        summary_from_dto, youtube_embed_url,
+        ApiRequest, ApiResponse, HOME_ROW_LIMIT, ITEM_ABOUT_CAST_LIMIT, ITEM_ABOUT_CREW_LIMIT,
+        bounded_about_people, bounded_byte_range, cache_key, clear_person_availability,
+        external_url, file_name_of, handle, is_iso_date, join_person_items, latest_home_items,
+        media_source_json, merge_next_up, mime_for_image, summary_from_dto, youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use crate::library::Library;
@@ -2628,6 +2844,7 @@ mod tests {
             query: String::new(),
             body: Vec::new(),
             range: None,
+            cancelled: Default::default(),
         })
     }
 
@@ -2655,6 +2872,7 @@ mod tests {
             query: String::new(),
             body: b"not json".to_vec(),
             range: None,
+            cancelled: Default::default(),
         };
         assert_eq!(request.json(), json!({}));
     }
@@ -2667,6 +2885,7 @@ mod tests {
             query: "search=the%20matrix&genre=&limit=20".to_string(),
             body: Vec::new(),
             range: None,
+            cancelled: Default::default(),
         };
         assert_eq!(request.param("search").as_deref(), Some("the matrix"));
         assert_eq!(request.param("genre"), None);
@@ -2746,6 +2965,63 @@ mod tests {
         assert_eq!(summary["thumbImageTag"], "thumb-tag");
         assert_eq!(summary["logoImageTag"], "logo-tag");
         assert_eq!(summary["backdropImageTag"], "backdrop-tag");
+    }
+
+    #[test]
+    fn live_about_credits_are_bounded_before_serialization() {
+        let mut people = vec![json!({
+            "Name": "Unclassified performer",
+            "Role": "Self",
+        })];
+        people.extend((0..30).map(|index| {
+            json!({ "Id": format!("actor-{index}"), "Name": format!("Actor {index}"), "Type": "Actor" })
+        }));
+        for job in ["Director", "Writer", "Producer", "Composer", "Editor"] {
+            people.extend(
+                (0..10).map(|index| json!({ "Name": format!("{job} {index}"), "Type": job })),
+            );
+        }
+        for kind in ["Movie", "Series"] {
+            let dto: BaseItemDto = serde_json::from_value(json!({
+                "Type": kind,
+                "People": people.clone(),
+            }))
+            .expect("dto");
+
+            let selected = bounded_about_people(&dto.people);
+            assert_eq!(
+                selected.len(),
+                ITEM_ABOUT_CAST_LIMIT + ITEM_ABOUT_CREW_LIMIT,
+                "{kind}"
+            );
+            assert_eq!(selected[0]["name"], "Unclassified performer");
+            assert_eq!(
+                selected
+                    .iter()
+                    .filter(|person| person["type"] == "Actor" || person["type"].is_null())
+                    .count(),
+                ITEM_ABOUT_CAST_LIMIT,
+                "{kind}"
+            );
+            assert_eq!(
+                selected
+                    .iter()
+                    .filter(|person| person["type"] != "Actor" && !person["type"].is_null())
+                    .count(),
+                ITEM_ABOUT_CREW_LIMIT,
+                "{kind}"
+            );
+            for job in ["Director", "Writer", "Producer", "Composer", "Editor"] {
+                assert!(
+                    selected
+                        .iter()
+                        .filter(|person| person["type"] == job)
+                        .count()
+                        <= super::ITEM_ABOUT_CREW_PER_JOB_LIMIT,
+                    "{kind} {job}"
+                );
+            }
+        }
     }
 
     #[test]

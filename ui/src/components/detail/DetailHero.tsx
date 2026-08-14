@@ -3,12 +3,14 @@ import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { DetailRatingReadout } from "@/components/RatingOverlay"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   DETAIL_POSTER_WIDTH,
   backdropUrl,
   imageUrl,
   logoUrl,
   progressFraction,
+  type ItemAbout,
   type ItemDetail,
 } from "@/lib/api"
 import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
@@ -56,8 +58,11 @@ function genreHref(genre: string, kind: string) {
   return `/library?kind=${browseKind}&genre=${encodeURIComponent(genre)}`
 }
 
-/** Community score out of ten, with the critic score alongside where there is one. */
-function JellyfinRatings({ item }: { item: ItemDetail }) {
+/**
+ * Community score out of ten, with the critic score alongside once the live
+ * `about` record has delivered one — the thin cached row never carries it.
+ */
+function JellyfinRatings({ item, about }: { item: ItemDetail; about?: ItemAbout }) {
   const communityRating = formatCommunityRating(item.communityRating)
   return (
     <>
@@ -71,8 +76,8 @@ function JellyfinRatings({ item }: { item: ItemDetail }) {
           {communityRating}
         </span>
       )}
-      {item.criticRating != null && (
-        <span title="Critic score">{Math.round(item.criticRating)}% critics</span>
+      {about?.criticRating != null && (
+        <span title="Critic score">{Math.round(about.criticRating)}% critics</span>
       )}
     </>
   )
@@ -125,10 +130,17 @@ function Poster({ item }: { item: ItemDetail }) {
  */
 export function DetailHero({
   item,
+  about,
+  aboutPending = false,
+  aboutFailed = false,
   episodeCount,
   children,
 }: {
   item: ItemDetail
+  /** The live rich record; the hero paints from the cached row without it. */
+  about?: ItemAbout
+  aboutPending?: boolean
+  aboutFailed?: boolean
   /** Shown instead of a runtime for containers, which have none of their own. */
   episodeCount?: number | null
   children?: ReactNode
@@ -262,7 +274,7 @@ export function DetailHero({
                 {item.officialRating}
               </Badge>
             )}
-            <JellyfinRatings item={item} />
+            <JellyfinRatings item={item} about={about} />
             <DetailRatingReadout item={item} />
           </div>
 
@@ -281,9 +293,23 @@ export function DetailHero({
             </div>
           )}
 
-          {item.overview && (
-            <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">{item.overview}</p>
-          )}
+          {/* The synopsis is live-only. Skeleton lines while it loads keep the
+              hero from reflowing under the reader; if the server cannot answer,
+              a plain quiet note is the whole degraded state. */}
+          {aboutPending ? (
+            <div className="flex max-w-3xl flex-col gap-2" aria-hidden>
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-4/5" />
+            </div>
+          ) : about?.overview ? (
+            <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">
+              {about.overview}
+            </p>
+          ) : aboutFailed ? (
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              Details are unavailable while the server cannot be reached.
+            </p>
+          ) : null}
 
           {children}
         </div>

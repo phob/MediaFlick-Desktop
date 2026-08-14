@@ -29,27 +29,18 @@ function renderProgress(progress: SyncProgress) {
 describe("sidebar synchronization progress", () => {
   afterEach(() => queryClient.removeQueries({ queryKey: queryKeys.status }))
 
-  test("shows one compact determinate enrichment update above settings", () => {
+  test("shows one compact determinate catalog update above settings", () => {
     renderProgress({
       active: true,
-      phase: "enrichment",
-      catalog,
-      enrichment: {
-        total: 120,
-        completed: 40,
-        pending: 80,
-        failed: 0,
-        due: 40,
-        nextDueAt: null,
-        lastError: null,
-      },
+      phase: "catalog",
+      catalog: { ...catalog, complete: false, processed: 40 },
       error: null,
       retryAt: null,
     })
 
-    expect(screen.getByRole("status").textContent).toContain("Enriching details")
+    expect(screen.getByRole("status").textContent).toContain("Loading library")
     expect(screen.getByText("40 of 120")).toBeTruthy()
-    const bar = screen.getByRole("progressbar", { name: "Enriching details" })
+    const bar = screen.getByRole("progressbar", { name: "Loading library" })
     expect(bar.getAttribute("aria-valuenow")).toBe("40")
     expect(bar.getAttribute("aria-valuemax")).toBe("120")
   })
@@ -59,15 +50,6 @@ describe("sidebar synchronization progress", () => {
       active: true,
       phase: "retrying",
       catalog,
-      enrichment: {
-        total: 120,
-        completed: 100,
-        pending: 20,
-        failed: 20,
-        due: 0,
-        nextDueAt: 1_900_000_000,
-        lastError: "Jellyfin rate limited requests",
-      },
       error: "Jellyfin rate limited requests",
       retryAt: 1_900_000_000,
     })
@@ -83,15 +65,6 @@ describe("sidebar synchronization progress", () => {
         active: false,
         phase: "complete",
         catalog,
-        enrichment: {
-          total: 120,
-          completed: 120,
-          pending: 0,
-          failed: 0,
-          due: 0,
-          nextDueAt: null,
-          lastError: null,
-        },
         error: null,
         retryAt: null,
       }),

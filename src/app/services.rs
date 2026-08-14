@@ -46,13 +46,14 @@ pub enum ShellRequest {
     InstallMpv {
         request_id: String,
     },
-    /// A committed ordinary-sync or convergence batch changed cached metadata.
+    /// A committed cache mutation changed catalog rows.
     LibraryChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
-    /// Background synchronization observed an authorization rejection.
-    /// Relay it so the UI re-reads the canonical session state immediately.
+    /// Any native Jellyfin call observed an authorization rejection.
+    /// Relay it so the UI re-reads the canonical session state immediately,
+    /// even when the failing request itself is silent by design.
     SessionExpired,
 }
 

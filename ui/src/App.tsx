@@ -4,6 +4,7 @@ import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { useBillboard, useHome, useStatus } from "@/lib/queries"
 import { RatingsProvider } from "@/lib/ratings"
+import { TechnicalProvider } from "@/lib/technical"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
 import Home from "@/routes/Home"
@@ -49,44 +50,46 @@ export default function App() {
         // wrap the shell itself, not only the routes, or that sibling cannot
         // read the selected-source context even though the shelf card can.
         <RatingsProvider>
-          <AppShell>
-            <Routes>
-              <Route path="/settings/*" element={<Settings />} />
-              <Route path="/" element={<Home />} />
-              <Route path="/library" element={<Library />} />
-              <Route path="/item/:id" element={<ItemDetail />} />
-              <Route path="/calendar" element={<Calendar />} />
-              {/* Registered whether or not Seerr is linked: the sidebar hides
-                  them until it is, but a deep link or a session that lapsed
-                  mid-use must land on the offer to set it up rather than on a
-                  blank page. */}
-              <Route
-                path="/discover"
-                element={
-                  <SeerrGate>
-                    <Discover />
-                  </SeerrGate>
-                }
-              />
-              <Route
-                path="/discover/:mediaType/:tmdbId"
-                element={
-                  <SeerrGate>
-                    <DiscoverDetail />
-                  </SeerrGate>
-                }
-              />
-              <Route
-                path="/requests"
-                element={
-                  <SeerrGate>
-                    <Requests />
-                  </SeerrGate>
-                }
-              />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </AppShell>
+          <TechnicalProvider>
+            <AppShell>
+              <Routes>
+                <Route path="/settings/*" element={<Settings />} />
+                <Route path="/" element={<Home />} />
+                <Route path="/library" element={<Library />} />
+                <Route path="/item/:id" element={<ItemDetail />} />
+                <Route path="/calendar" element={<Calendar />} />
+                {/* Registered whether or not Seerr is linked: the sidebar hides
+                    them until it is, but a deep link or a session that lapsed
+                    mid-use must land on the offer to set it up rather than on a
+                    blank page. */}
+                <Route
+                  path="/discover"
+                  element={
+                    <SeerrGate>
+                      <Discover />
+                    </SeerrGate>
+                  }
+                />
+                <Route
+                  path="/discover/:mediaType/:tmdbId"
+                  element={
+                    <SeerrGate>
+                      <DiscoverDetail />
+                    </SeerrGate>
+                  }
+                />
+                <Route
+                  path="/requests"
+                  element={
+                    <SeerrGate>
+                      <Requests />
+                    </SeerrGate>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </AppShell>
+          </TechnicalProvider>
         </RatingsProvider>
       )}
       <LoadingScreen

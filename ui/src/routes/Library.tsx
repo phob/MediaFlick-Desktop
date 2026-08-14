@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid } from "@/components/ItemGrid"
 import { LibraryFilters } from "@/components/LibraryFilters"
+import { MediaCard } from "@/components/MediaCard"
 import { PageHeader } from "@/components/PageHeader"
 import { CastDiscover } from "@/components/seerr/CastDiscover"
 import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
@@ -19,7 +20,53 @@ import {
   type LibraryFilterState,
   writeLibraryFilters,
 } from "@/lib/library-filters"
-import { usePersonResolution } from "@/lib/queries"
+import { useItems, usePersonResolution } from "@/lib/queries"
+
+/** How many of a matched person's titles the search page shows inline. */
+const SEARCH_PERSON_ROW_LIMIT = 12
+
+/**
+ * A search term that exactly names one Jellyfin person gets their titles as a
+ * live section under the instant local results. Cast is not indexed locally,
+ * so this is the only way "tom hanks" finds his films — and it resolves over
+ * the same exact-identity path the cast pages use, never a fuzzy name match.
+ * The server query is scoped to movies and series, so episode credits cannot
+ * crowd actual titles out of the row.
+ */
+export function SearchPersonSection({ term }: { term: string }) {
+  const resolution = usePersonResolution({ name: term }, Boolean(term.trim()))
+  const person = resolution.data?.person ?? null
+  const titles = useItems(
+    { personId: person?.jellyfinId, limit: SEARCH_PERSON_ROW_LIMIT },
+    person !== null,
+  )
+  // No exact person, still resolving, or the server is unreachable: the
+  // local results stand alone, silently.
+  if (!person || !titles.data?.items.length) return null
+
+  return (
+    <section className="flex flex-col gap-4 pt-8" aria-label={`Titles featuring ${person.name}`}>
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 className="section-title">Featuring {person.name}</h2>
+        <Link
+          to={castSearchPath({
+            jellyfinId: person.jellyfinId,
+            tmdbId: person.tmdbId,
+            name: person.name,
+          })}
+          className="text-sm text-muted-foreground outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          See all
+        </Link>
+      </div>
+      <div className="flex flex-wrap gap-[var(--card-gap)]">
+        {titles.data.items.map((item) => (
+          <MediaCard key={item.id} item={item} className="catalog-card" />
+        ))}
+      </div>
+    </section>
+  )
+}
 
 function CastCandidates({
   candidates,
@@ -194,7 +241,16 @@ export default function Library() {
             }
             // Inside the grid's own scroller: it owns the scroll container and
             // the virtualized height, so the block cannot simply follow it.
-            footer={castPerson ? castDiscover : search ? <NotInYourLibrary term={search} /> : undefined}
+            footer={
+              castPerson ? (
+                castDiscover
+              ) : search ? (
+                <>
+                  <SearchPersonSection term={search} />
+                  <NotInYourLibrary term={search} />
+                </>
+              ) : undefined
+            }
           />
         )}
       </div>

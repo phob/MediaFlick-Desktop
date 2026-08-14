@@ -11,7 +11,14 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
-import { useItem, useNextUp, usePlay, useSetFavorite, useSettings, useTrailer } from "@/lib/queries"
+import {
+  useItemSynopsis,
+  useNextUp,
+  usePlay,
+  useSetFavorite,
+  useSettings,
+  useTrailer,
+} from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { cn } from "@/lib/utils"
 
@@ -86,7 +93,9 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
     setAdvancePending(false)
     setIndex(slide)
   }
-  const detail = useItem(current?.id)
+  // The synopsis is live-only and arrives after the cached hero has painted;
+  // until it lands (or offline) the billboard simply shows no overview.
+  const synopsis = useItemSynopsis(current?.id)
   const nextUp = useNextUp(current?.id, current?.kind === "Series")
   if (!current) return null
 
@@ -116,7 +125,8 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
 
       <BillboardCopy
         key={current.id}
-        item={detail.data ?? current}
+        item={current}
+        overview={synopsis.data?.overview ?? null}
         summary={current}
         playTarget={current.kind === "Series" ? nextUp.data?.item : current}
       />
@@ -357,11 +367,13 @@ function BillboardBackdrop({
 
 function BillboardCopy({
   item,
+  overview,
   summary,
   playTarget,
 }: {
-  /** The detail record once it lands, the summary until then. */
-  item: ItemSummary & { overview?: string | null }
+  item: ItemSummary
+  /** Fetched live after the hero paints; null until then. */
+  overview: string | null
   /** Always the row's own entry — what the buttons act on. */
   summary: ItemSummary
   playTarget?: ItemSummary | null
@@ -448,9 +460,9 @@ function BillboardCopy({
         )}
       </div>
 
-      {item.overview && (
+      {overview && (
         <p className="line-clamp-3 max-w-xl text-sm leading-relaxed text-foreground/85 drop-shadow sm:text-base">
-          {item.overview}
+          {overview}
         </p>
       )}
 

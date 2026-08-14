@@ -1,16 +1,25 @@
 import { AudioLines, ScanLine } from "lucide-react"
 import type { ItemSummary } from "@/lib/api"
 import { summarizeCardMedia } from "@/lib/format"
+import { useCardTechnical } from "@/lib/technical-context"
 
-/** Shared compact video/audio facts for library cards and expanded previews. */
+/**
+ * Shared compact video/audio facts for library cards and expanded previews.
+ * Streams arrive over the live batched technical channel keyed by item id;
+ * until they land (or when the server is unreachable) nothing is drawn.
+ */
 export function CardTechnicalReadout({
   item,
   variant = "card",
+  active = true,
 }: {
-  item: Pick<ItemSummary, "mediaStreams">
+  item: Pick<ItemSummary, "id">
   variant?: "card" | "preview"
+  /** False while a mounted shelf card is outside the visible viewport. */
+  active?: boolean
 }) {
-  const technical = summarizeCardMedia(item.mediaStreams)
+  const streams = useCardTechnical(item.id, active)
+  const technical = summarizeCardMedia(streams)
   if (!technical) return null
 
   return (

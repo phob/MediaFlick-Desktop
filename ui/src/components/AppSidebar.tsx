@@ -129,20 +129,17 @@ export function LibrarySyncProgress() {
   if (!status?.authenticated || !progress?.active) return null
 
   const catalog = progress.catalog
-  const enrichment = progress.enrichment
-  const error = progress.error ?? enrichment.lastError
-  const retryAt = progress.retryAt ?? enrichment.nextDueAt
-  const isRetrying = progress.phase === "retrying" || Boolean(error && enrichment.failed)
+  const error = progress.error
+  const retryAt = progress.retryAt
+  const isRetrying = progress.phase === "retrying"
   const phase = isRetrying
     ? "Synchronization paused"
     : progress.phase === "catalog"
       ? "Loading library"
-      : progress.phase === "enrichment"
-        ? "Enriching details"
-        : "Refreshing library"
-  const current = progress.phase === "catalog" ? catalog.processed : enrichment.completed
-  const total = progress.phase === "catalog" ? catalog.total : enrichment.total
-  const determinate = progress.phase === "catalog" || progress.phase === "enrichment"
+      : "Refreshing library"
+  const current = catalog.processed
+  const total = catalog.total
+  const determinate = progress.phase === "catalog"
   const retryLabel = retryAt
     ? `Retry scheduled for ${new Date(retryAt * 1_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
     : "Retry scheduled automatically"
