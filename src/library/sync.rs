@@ -1,10 +1,9 @@
-//! Background synchronisation of the metadata cache.
+//! Background synchronisation of the catalog index.
 //!
-//! One controlled worker owns the whole cycle: a resumable lightweight catalog
-//! fill, bounded rich enrichment, an incremental `DateCreated` sweep, and a
-//! periodic identity/user-data/deletion pass. It idles until credentials exist,
-//! resumes durable offsets/queues after restart, and pauses when the server
-//! rejects the token.
+//! One controlled worker owns the whole cycle: a resumable catalog fill, an
+//! incremental `DateCreated` sweep, and a periodic identity/user-data/deletion
+//! pass. It idles until credentials exist, resumes durable offsets after
+//! restart, and pauses when the server rejects the token.
 //!
 //! Jellyfin offers no "changed since" ordering — `DateLastSaved` is a valid
 //! `ItemFields` value but not a valid `ItemSortBy` one, and servers return it
@@ -32,15 +31,12 @@ use super::{Library, LibraryChangeBatch, UserDataRecord};
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
-/// A storage failure can leave an already-due queue row unchanged. Without a
-/// local floor the worker computes a zero wait from that row and spins.
-const CONVERGENCE_FAILURE_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 /// How often the identity-only pass runs. It mirrors watch state *and* detects
 /// deletions from the same pages, so both stay this fresh for one pass' cost.
 const IDENTITY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// How often the whole library is re-paged. This is the only thing that notices
-/// an in-place metadata edit, so it trades bandwidth for eventual correctness.
-const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// an in-place metadata edit, and thin pages are cheap, so it runs daily.
+const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Identity-only pages can be much larger than metadata pages.
 const IDENTITY_PAGE_SIZE: i64 = 1_000;
 /// Safety valve so a server that never reaches the watermark cannot loop.
@@ -153,7 +149,6 @@ struct Signal {
 #[derive(Default)]
 struct Flags {
     requested: bool,
-    enrichment_requested: bool,
     stopped: bool,
 }
 
@@ -161,7 +156,6 @@ struct Flags {
 #[serde(rename_all = "camelCase")]
 pub enum SyncPhase {
     Catalog,
-    Enrichment,
     Reconciling,
     Retrying,
     #[default]
@@ -181,7 +175,6 @@ pub struct SyncProgress {
     pub active: bool,
     pub phase: SyncPhase,
     pub catalog: BootstrapProgress,
-    pub enrichment: super::enrichment::EnrichmentDiagnostics,
     pub error: Option<String>,
     pub retry_at: Option<i64>,
 }
@@ -207,15 +200,6 @@ impl SyncHandle {
         self.signal.condvar.notify_all();
     }
 
-    /// Wakes only the rich queue. Opening an item must not force the much more
-    /// expensive manual identity/deletion sweep.
-    pub fn request_enrichment(&self) {
-        if let Ok(mut flags) = self.signal.flags.lock() {
-            flags.enrichment_requested = true;
-        }
-        self.signal.condvar.notify_all();
-    }
-
     pub fn stop(&self) {
         if let Ok(mut flags) = self.signal.flags.lock() {
             flags.stopped = true;
@@ -229,34 +213,27 @@ impl SyncHandle {
 
     pub fn progress(&self, library: &Library) -> SyncProgress {
         let catalog = bootstrap_progress(library);
-        let enrichment = library.enrichment_diagnostics();
         let state = self
             .state
             .lock()
             .map(|state| state.clone())
             .unwrap_or_default();
-        let active = self.is_running() || !catalog.complete || enrichment.pending > 0;
-        let persisted_retry = enrichment.failed > 0 && enrichment.due == 0;
-        let phase = if (state.phase == SyncPhase::Retrying || persisted_retry) && active {
+        let active = self.is_running() || !catalog.complete;
+        let phase = if state.phase == SyncPhase::Retrying && active {
             SyncPhase::Retrying
         } else if self.is_running() {
             state.phase
         } else if !catalog.complete {
             SyncPhase::Catalog
-        } else if enrichment.pending > 0 {
-            SyncPhase::Enrichment
         } else {
             SyncPhase::Complete
         };
-        let error = state.error.or_else(|| enrichment.last_error.clone());
-        let retry_at = state.retry_at.or(enrichment.next_due_at);
         SyncProgress {
             active,
             phase,
             catalog,
-            enrichment,
-            error,
-            retry_at,
+            error: state.error,
+            retry_at: state.retry_at,
         }
     }
 
@@ -273,14 +250,6 @@ impl SyncHandle {
             state.phase = SyncPhase::Retrying;
             state.error = Some(error.to_string());
             state.retry_at = Some(now_unix() as i64 + delay.as_secs() as i64);
-        }
-    }
-
-    fn set_enrichment_retry(&self, error: String, retry_at: Option<i64>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.phase = SyncPhase::Retrying;
-            state.error = Some(error);
-            state.retry_at = retry_at;
         }
     }
 
@@ -315,8 +284,6 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
     let mut normal_deadline = Instant::now();
-    let mut enrichment_not_before = Instant::now();
-    let mut convergence_not_before = Instant::now();
     let mut trigger = Trigger::Scheduled;
     loop {
         if !session.is_authenticated() {
@@ -326,24 +293,13 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                 // Held until a cycle can actually consume it: this is the
                 // sign-in nudge arriving just before the session goes live.
                 Wake::Requested => trigger = Trigger::Requested,
-                Wake::EnrichmentRequested | Wake::Elapsed => {}
+                Wake::Elapsed => {}
             }
             continue;
         }
 
-        let now = Instant::now();
-        let catalog_complete = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1");
-        let enrichment = library.enrichment_diagnostics();
-        let normal_due = trigger == Trigger::Requested || now >= normal_deadline;
-        let enrichment_due = catalog_complete && now >= enrichment_not_before && enrichment.due > 0;
-        let convergence_due = catalog_complete
-            && enrichment.pending == 0
-            && now >= convergence_not_before
-            && library.convergence_diagnostics().due > 0;
-        handle.running.store(
-            normal_due || enrichment_due || convergence_due,
-            Ordering::Relaxed,
-        );
+        let normal_due = trigger == Trigger::Requested || Instant::now() >= normal_deadline;
+        handle.running.store(normal_due, Ordering::Relaxed);
 
         if normal_due {
             let outcome = run_cycle_inner(&library, &session, trigger, Some(&handle));
@@ -365,8 +321,8 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
                 }
                 Err(ApiError::Cancelled) if handle.is_stopped() => return,
                 Err(ApiError::Unauthorized) => {
+                    // `mark_expired` itself notifies the UI, exactly once.
                     session.mark_expired();
-                    crate::app::services::notify_session_expired();
                     IDLE_INTERVAL
                 }
                 Err(error) => {
@@ -379,146 +335,19 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
             };
             normal_deadline = Instant::now() + delay;
         }
-
-        let enrichment = library.enrichment_diagnostics();
-        if session.is_authenticated()
-            && library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-            && Instant::now() >= enrichment_not_before
-            && enrichment.due > 0
-        {
-            if handle.is_stopped() {
-                return;
-            }
-            handle.set_phase(SyncPhase::Enrichment);
-            match super::enrichment::process_due(&library, &session, || handle.is_stopped()) {
-                Ok(report) => {
-                    if !report.changes.is_empty() {
-                        crate::app::services::notify_library_changed(report.changes);
-                    }
-                    let diagnostics = library.enrichment_diagnostics();
-                    let retry_at = report.retry_at.or(diagnostics.next_due_at);
-                    if let Some(error) = report.last_error {
-                        handle.set_enrichment_retry(error, retry_at);
-                    }
-                    if !session.is_authenticated() {
-                        crate::app::services::notify_session_expired();
-                    }
-                    enrichment_not_before = if report.failed > 0 {
-                        Instant::now() + epoch_delay(retry_at)
-                    } else if report.more_due {
-                        Instant::now() + Duration::from_secs(super::enrichment::DRAIN_COOLDOWN_SECS)
-                    } else {
-                        Instant::now() + epoch_delay(diagnostics.next_due_at)
-                    };
-                }
-                Err(ApiError::Unauthorized) => {
-                    session.mark_expired();
-                    crate::app::services::notify_session_expired();
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        target: "library.enrichment",
-                        "could not process rich metadata enrichment: {error}"
-                    );
-                    let delay = retry_delay(&error, CONVERGENCE_FAILURE_COOLDOWN);
-                    handle.set_retry(&error, delay);
-                    enrichment_not_before = Instant::now() + delay;
-                }
-            }
-            if handle.is_stopped() {
-                return;
-            }
-        }
-
-        let enrichment = library.enrichment_diagnostics();
-        if session.is_authenticated()
-            && library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-            && enrichment.pending == 0
-            && Instant::now() >= convergence_not_before
-            && library.convergence_diagnostics().due > 0
-        {
-            if handle.is_stopped() {
-                return;
-            }
-            handle.set_phase(SyncPhase::Enrichment);
-            match super::convergence::process_due_controlled(&library, &session, || {
-                handle.is_stopped()
-            }) {
-                Ok(report) => {
-                    if !report.changes.is_empty() {
-                        crate::app::services::notify_library_changed(report.changes);
-                    }
-                    if !session.is_authenticated() {
-                        crate::app::services::notify_session_expired();
-                    }
-                    convergence_not_before = if report.failed > 0 {
-                        Instant::now() + epoch_delay(report.retry_at)
-                    } else if report.more_due {
-                        Instant::now()
-                            + Duration::from_secs(super::convergence::DRAIN_COOLDOWN_SECS)
-                    } else {
-                        Instant::now()
-                    };
-                }
-                Err(ApiError::Unauthorized) => {
-                    session.mark_expired();
-                    crate::app::services::notify_session_expired();
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        target: "library.convergence",
-                        "could not process metadata convergence: {error}"
-                    );
-                    convergence_not_before = convergence_failure_deadline(Instant::now());
-                }
-            }
-            if handle.is_stopped() {
-                return;
-            }
-        }
         handle.running.store(false, Ordering::Relaxed);
 
-        let enrichment = library.enrichment_diagnostics();
-        let enrichment_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
-            epoch_delay(enrichment.next_due_at)
-        } else {
-            SYNC_INTERVAL
-        }
-        .max(enrichment_not_before.saturating_duration_since(Instant::now()));
-        let convergence = library.convergence_diagnostics();
-        let convergence_delay = if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-            && enrichment.pending == 0
-        {
-            epoch_delay(convergence.next_due_at)
-        } else {
-            SYNC_INTERVAL
-        }
-        .max(convergence_not_before.saturating_duration_since(Instant::now()));
-        let delay = normal_deadline
-            .saturating_duration_since(Instant::now())
-            .min(enrichment_delay)
-            .min(convergence_delay);
+        let delay = normal_deadline.saturating_duration_since(Instant::now());
         match wait(&handle, delay) {
             Wake::Stopped => return,
             Wake::Requested => trigger = Trigger::Requested,
-            Wake::EnrichmentRequested => enrichment_not_before = Instant::now(),
             Wake::Elapsed => {}
         }
     }
 }
 
-fn epoch_delay(epoch: Option<i64>) -> Duration {
-    epoch.map_or(SYNC_INTERVAL, |next| {
-        Duration::from_secs(next.saturating_sub(now_unix() as i64).max(0) as u64)
-    })
-}
-
 fn retry_delay(error: &ApiError, fallback: Duration) -> Duration {
     error.retry_after().unwrap_or(fallback).max(fallback)
-}
-
-fn convergence_failure_deadline(now: Instant) -> Instant {
-    now + CONVERGENCE_FAILURE_COOLDOWN
 }
 
 /// Why the sync thread stopped waiting.
@@ -526,8 +355,6 @@ fn convergence_failure_deadline(now: Instant) -> Instant {
 enum Wake {
     /// Someone called [`SyncHandle::request`].
     Requested,
-    /// An opened detail was moved to the front of the rich queue.
-    EnrichmentRequested,
     /// The timeout elapsed on its own.
     Elapsed,
     /// The thread should exit.
@@ -545,10 +372,6 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
         flags.requested = false;
         return Wake::Requested;
     }
-    if flags.enrichment_requested {
-        flags.enrichment_requested = false;
-        return Wake::EnrichmentRequested;
-    }
     let (mut flags, _) = handle
         .signal
         .condvar
@@ -562,10 +385,6 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
     if flags.requested {
         flags.requested = false;
         return Wake::Requested;
-    }
-    if flags.enrichment_requested {
-        flags.enrichment_requested = false;
-        return Wake::EnrichmentRequested;
     }
     Wake::Elapsed
 }
@@ -615,15 +434,17 @@ fn run_cycle_inner(
         report.updated = incremental(library, &client, &user_id, &mut report.changes, control)?;
         if initial_catalog {
             // The just-completed catalog itself is a complete identity and user
-            // data observation; repeating every page before enrichment would
-            // double first-run request load without finding a stale row.
+            // data observation; repeating every page immediately would double
+            // first-run request load without finding a stale row.
             touch(library, META_LAST_IDENTITY_SWEEP);
         } else if trigger.forces_identity_sweep()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
         {
-            let (refreshed, deleted) = identity_sweep(library, &client, &user_id, control)?;
+            let (refreshed, deletion_changes) =
+                identity_sweep(library, &client, &user_id, control)?;
             report.user_data_refreshed = refreshed;
-            report.deleted = deleted;
+            report.deleted = deletion_changes.item_ids.len();
+            report.changes.merge(deletion_changes);
             touch(library, META_LAST_IDENTITY_SWEEP);
         }
         Ok(())
@@ -703,9 +524,7 @@ fn bootstrap(
             break false;
         }
         advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
-        let page_changes = library
-            .ingest_catalog_page_at(&page.items, now_unix() as i64)
-            .map_err(storage_error)?;
+        let page_changes = library.ingest_page(&page.items).map_err(storage_error)?;
         // Readiness is written only after the page transaction commits.
         let _ = library.set_meta(META_CATALOG_READY, "1");
         written += page.items.len();
@@ -803,9 +622,7 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = library
-            .ingest_catalog_page_at(&fresh, now_unix() as i64)
-            .map_err(storage_error)?;
+        let page_changes = library.ingest_page(&fresh).map_err(storage_error)?;
         written += fresh.len();
         changes.merge(page_changes);
 
@@ -829,13 +646,14 @@ fn incremental(
 /// schedules, which meant deletions were only noticed once a day. Folding them
 /// together makes deletions as fresh as watch state for no extra requests.
 ///
-/// Returns `(user data rows refreshed, items deleted)`.
+/// Returns the refreshed user-data count and a complete deletion batch so the
+/// same cycle can notify item and hierarchy caches after committing removals.
 fn identity_sweep(
     library: &Library,
     client: &JellyfinClient,
     user_id: &str,
     control: Option<&SyncHandle>,
-) -> Result<(usize, usize), ApiError> {
+) -> Result<(usize, LibraryChangeBatch), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
@@ -875,15 +693,15 @@ fn identity_sweep(
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-        return Ok((refreshed, 0));
+        return Ok((refreshed, LibraryChangeBatch::default()));
     }
     if seen.is_empty() {
         // An empty answer is far more likely to be a server hiccup than an
         // emptied library, so never treat it as "delete everything".
-        return Ok((refreshed, 0));
+        return Ok((refreshed, LibraryChangeBatch::default()));
     }
-    let deleted = library.retain_ids(&seen).map_err(storage_error)?;
-    Ok((refreshed, deleted))
+    let deletion_changes = library.retain_ids(&seen).map_err(storage_error)?;
+    Ok((refreshed, deletion_changes))
 }
 
 fn advance_watermark_with_ids(
@@ -1001,11 +819,11 @@ fn jittered(base: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        CONVERGENCE_FAILURE_COOLDOWN, Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE,
-        META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP,
-        PAGE_SIZE, SYNC_INTERVAL, Signal, SyncHandle, SyncReport, Trigger, Wake, WorkerState,
-        advance_watermark_with_ids, bootstrap_progress, convergence_failure_deadline,
-        full_bootstrap_due, is_incremental_candidate, is_newer, jittered, library_ready, wait,
+        Flags, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
+        META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, PAGE_SIZE,
+        SYNC_INTERVAL, Signal, SyncHandle, SyncReport, Trigger, Wake, WorkerState,
+        advance_watermark_with_ids, bootstrap_progress, full_bootstrap_due,
+        is_incremental_candidate, is_newer, jittered, library_ready, wait,
     };
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::jellyfin::session::Session;
@@ -1183,14 +1001,12 @@ mod tests {
         assert_eq!(first_page.processed, PAGE_SIZE);
         assert_eq!(first_page.total, Some(PAGE_SIZE + 1));
         assert_eq!(library.stats().total, PAGE_SIZE);
-        assert_eq!(library.enrichment_diagnostics().pending, PAGE_SIZE);
 
         continue_tx.send(()).expect("continue catalog");
         let report = worker.join().expect("worker").expect("sync cycle");
         assert_eq!(report.bootstrapped as i64, PAGE_SIZE + 1);
         assert!(bootstrap_progress(&library).complete);
         assert_eq!(library.stats().total, PAGE_SIZE + 1);
-        assert_eq!(library.enrichment_diagnostics().pending, PAGE_SIZE + 1);
 
         let targets = server.join().expect("server");
         assert_eq!(targets.len(), 3);
@@ -1209,13 +1025,10 @@ mod tests {
     fn existing_cache_is_ready_even_while_a_refresh_or_migration_is_incomplete() {
         let library = Library::open_in_memory().expect("library");
         library
-            .ingest_catalog_page_at(
-                &[
-                    serde_json::from_str(r#"{"Id":"cached","Name":"Cached","Type":"Movie"}"#)
-                        .expect("dto"),
-                ],
-                1,
+            .ingest_page(&[serde_json::from_str(
+                r#"{"Id":"cached","Name":"Cached","Type":"Movie"}"#,
             )
+            .expect("dto")])
             .expect("seed cache");
         library
             .set_meta(META_BOOTSTRAP_DONE, "0")
@@ -1229,20 +1042,14 @@ mod tests {
     }
 
     #[test]
-    fn progress_reports_enrichment_and_retry_without_hiding_the_ready_cache() {
+    fn progress_reports_retry_without_hiding_the_ready_cache() {
         let library = Library::open_in_memory().expect("library");
         library
-            .ingest_catalog_page_at(
-                &[
-                    serde_json::from_str(r#"{"Id":"queued","Name":"Queued","Type":"Movie"}"#)
-                        .expect("dto"),
-                ],
-                1,
+            .ingest_page(&[serde_json::from_str(
+                r#"{"Id":"cached","Name":"Cached","Type":"Movie"}"#,
             )
-            .expect("queue");
-        library
-            .set_meta(META_BOOTSTRAP_DONE, "1")
-            .expect("catalog complete");
+            .expect("dto")])
+            .expect("seed");
         let handle = SyncHandle {
             signal: Arc::new(Signal {
                 flags: Mutex::new(Flags::default()),
@@ -1252,11 +1059,10 @@ mod tests {
             state: Arc::new(Mutex::new(WorkerState::default())),
         };
 
-        let enriching = handle.progress(&library);
-        assert!(enriching.active);
-        assert!(enriching.catalog.ready);
-        assert_eq!(enriching.phase, super::SyncPhase::Enrichment);
-        assert_eq!(enriching.enrichment.pending, 1);
+        let filling = handle.progress(&library);
+        assert!(filling.active);
+        assert!(filling.catalog.ready);
+        assert_eq!(filling.phase, super::SyncPhase::Catalog);
 
         handle.set_retry(
             &crate::jellyfin::api::ApiError::Transport("offline".to_string()),
@@ -1423,22 +1229,8 @@ mod tests {
         // Consumed: the next wait is an ordinary scheduled one.
         assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
 
-        handle.request_enrichment();
-        assert_eq!(wait(&handle, Duration::ZERO), Wake::EnrichmentRequested);
-        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
-
         handle.stop();
         assert_eq!(wait(&handle, Duration::ZERO), Wake::Stopped);
-    }
-
-    #[test]
-    fn convergence_failures_have_a_nonzero_local_retry_floor() {
-        let now = std::time::Instant::now();
-        assert_eq!(
-            convergence_failure_deadline(now).duration_since(now),
-            CONVERGENCE_FAILURE_COOLDOWN
-        );
-        assert!(!CONVERGENCE_FAILURE_COOLDOWN.is_zero());
     }
 
     #[test]

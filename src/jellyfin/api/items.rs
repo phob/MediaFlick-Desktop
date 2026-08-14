@@ -19,20 +19,26 @@ pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
 /// Name, id, type, year, runtime, hierarchy, and image tags are part of
 /// Jellyfin's base item shape; the fields below opt into only the additional
-/// catalog signals the local overview needs. Rich prose, cast, studios, tags,
-/// and media streams are deliberately deferred to [`ENRICHMENT_FIELDS`].
-pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
-PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
-
-/// Rich fields fetched only after the complete lightweight catalog is usable,
-/// or on demand when an item detail is opened.
+/// catalog signals the local index needs. Rich prose, cast, studios, tags,
+/// and media streams are never cached.
 ///
 /// `DateLastSaved` is deliberately absent: it is a valid `ItemFields` value but
 /// servers return it empty, and it is not a valid `ItemSortBy` value, so the
 /// cache keys freshness on `DateCreated` instead. See `library::sync`.
-pub const ENRICHMENT_FIELDS: &str = "ProviderIds,Overview,Genres,Tags,Studios,People,\
-DateCreated,OriginalTitle,SortName,PremiereDate,OfficialRating,\
-CommunityRating,CriticRating,ChildCount,ParentId,MediaStreams";
+pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
+PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
+
+/// A child response persists only the catalog fields, but passes each episode's
+/// synopsis directly to the open season page.
+const CHILD_FIELDS: &str = "ProviderIds,Overview,Genres,DateCreated,OriginalTitle,SortName,\
+PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
+
+/// Next Up is shaped directly into a browsing card. Provider ids, prose, cast,
+/// and streams are not read by that card response.
+const NEXT_UP_FIELDS: &str = "PremiereDate,OfficialRating,CommunityRating,ChildCount";
+
+/// The Jellyfin calendar fallback reads only stable provider ids and air date.
+const UPCOMING_FIELDS: &str = "ProviderIds,PremiereDate";
 
 /// Page size for lightweight catalog and incremental sweeps. Requests remain
 /// serial; this bounds both each SQLite commit and one coalesced UI invalidation.
@@ -47,6 +53,11 @@ pub const CHILDREN_PAGE_SIZE: i64 = 500;
 /// A large page keeps Discover's ownership verification bounded while the UI
 /// can still request its ordinary 60-card windows.
 pub const PERSON_PAGE_SIZE: i64 = 500;
+
+/// Cast surfaces promise titles — movies and series. Jellyfin also credits
+/// people on seasons and episodes, and those rows would consume the visible
+/// result window without naming anything a card can represent.
+pub const PERSON_ITEM_TYPES: &str = "Movie,Series";
 
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
@@ -118,7 +129,7 @@ fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'st
         // Deliberately not recursive: a series must answer with its seasons,
         // not with every episode underneath it.
         ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
-        ("Fields", ENRICHMENT_FIELDS.to_string()),
+        ("Fields", CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
         ("StartIndex", start_index.to_string()),
@@ -145,23 +156,24 @@ pub fn fetch_children(
     client.get_json("/Items", &children_query(user_id, parent_id, start_index))
 }
 
-/// Fetch a single item through `/Items?ids=`, which every supported server
-/// version exposes.
+fn exact_items_query(user_id: &str, item_ids: &[String]) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("ids", item_ids.join(",")),
+        ("Fields", CATALOG_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+    ]
+}
+
+/// Fetch exact catalog items through `/Items?ids=`, which every supported
+/// server version exposes.
 pub fn fetch_items(
     client: &JellyfinClient,
     user_id: &str,
     item_ids: &[String],
 ) -> Result<ItemsResponse, ApiError> {
-    client.get_json(
-        "/Items",
-        &[
-            user_query(user_id),
-            ("ids", item_ids.join(",")),
-            ("Fields", ENRICHMENT_FIELDS.to_string()),
-            ("EnableUserData", "true".to_string()),
-            ("EnableImages", "true".to_string()),
-        ],
-    )
+    client.get_json("/Items", &exact_items_query(user_id, item_ids))
 }
 
 pub fn fetch_item(
@@ -171,6 +183,75 @@ pub fn fetch_item(
 ) -> Result<Option<BaseItemDto>, ApiError> {
     let response = fetch_items(client, user_id, &[item_id.to_string()])?;
     Ok(response.items.into_iter().next())
+}
+
+/// Exactly what the `/about` response serializes — prose, cast, tags, studios,
+/// and critic score. User data, genres, and media streams are deliberately
+/// absent from every detail request.
+pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";
+
+/// The billboard needs prose and nothing else from the live rich record.
+pub const SYNOPSIS_FIELDS: &str = "Overview";
+
+fn synopsis_query(user_id: &str, item_id: &str) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("ids", item_id.to_string()),
+        ("Fields", SYNOPSIS_FIELDS.to_string()),
+        ("EnableUserData", "false".to_string()),
+        ("EnableImages", "false".to_string()),
+    ]
+}
+
+/// One item's live synopsis without cast, tags, studios, ratings, or image
+/// metadata. This is the rotating billboard's purpose-built request.
+pub fn fetch_item_synopsis(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<BaseItemDto>, ApiError> {
+    let response: ItemsResponse = client.get_json("/Items", &synopsis_query(user_id, item_id))?;
+    Ok(response.items.into_iter().next())
+}
+
+/// One item's live about-panel metadata. Images stay enabled because cast
+/// entries carry their headshot tags through the `People` field.
+pub fn fetch_item_about(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<BaseItemDto>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", ABOUT_FIELDS.to_string()),
+            ("EnableUserData", "false".to_string()),
+            ("EnableImages", "true".to_string()),
+        ],
+    )?;
+    Ok(response.items.into_iter().next())
+}
+
+/// Technical stream descriptors for a batch of exact ids, feeding the card
+/// quality badges. Everything else is deliberately excluded: badges need no
+/// images, no user data, and no prose.
+pub fn fetch_media_stream_batch(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_ids: &[String],
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_ids.join(",")),
+            ("Fields", "MediaStreams".to_string()),
+            ("EnableUserData", "false".to_string()),
+            ("EnableImages", "false".to_string()),
+        ],
+    )
 }
 
 fn person_items_query(
@@ -184,9 +265,9 @@ fn person_items_query(
         ("Recursive", "true".to_string()),
         ("PersonIds", person_id.to_string()),
         ("PersonTypes", "Actor".to_string()),
-        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
-        // Cards need the lightweight catalog shape, not another broad People
-        // or MediaStreams fetch competing with progressive enrichment.
+        ("IncludeItemTypes", PERSON_ITEM_TYPES.to_string()),
+        // Cards need the lightweight catalog shape, not a broad People or
+        // MediaStreams fetch per page.
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -199,9 +280,8 @@ fn person_items_query(
 
 /// Every visible library item Jellyfin associates with one exact actor id.
 ///
-/// This deliberately bypasses the progressively enriched local `People`
-/// column: names can be ambiguous and cast may not have reached SQLite yet,
-/// while Jellyfin's `PersonIds` relation is exact and complete immediately.
+/// Cast is not cached locally at all: names can be ambiguous, while Jellyfin's
+/// `PersonIds` relation is exact and complete immediately.
 pub fn fetch_person_items(
     client: &JellyfinClient,
     user_id: &str,
@@ -237,10 +317,9 @@ pub fn fetch_people(
 
 /// Container, codec, and track detail for one item.
 ///
-/// `MediaSources` is deliberately absent from `SYNC_FIELDS`: paths, source
-/// negotiation, and subtitle delivery data multiply every synced row and only
-/// the detail page needs them. The much smaller top-level `MediaStreams` field
-/// is cached separately for card-level technical summaries.
+/// Paths, source negotiation, and subtitle delivery data never enter the thin
+/// index. The detail page reads full sources here, while cards use the separate
+/// live `MediaStreams` batch above.
 pub fn fetch_media_sources(
     client: &JellyfinClient,
     user_id: &str,
@@ -315,42 +394,52 @@ pub fn fetch_remote_trailers(
 
 /// Server-side "what should I watch next" logic; deliberately not replicated
 /// against the local cache.
+fn next_up_query(
+    user_id: &str,
+    series_id: Option<&str>,
+    limit: i64,
+) -> Vec<(&'static str, String)> {
+    let mut query = vec![
+        user_query(user_id),
+        ("Limit", limit.to_string()),
+        ("Fields", NEXT_UP_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+    ];
+    if let Some(series_id) = series_id {
+        query.push(("seriesId", series_id.to_string()));
+    }
+    query
+}
+
 pub fn fetch_next_up(
     client: &JellyfinClient,
     user_id: &str,
     series_id: Option<&str>,
     limit: i64,
 ) -> Result<ItemsResponse, ApiError> {
-    let mut query = vec![
-        user_query(user_id),
-        ("Limit", limit.to_string()),
-        ("Fields", ENRICHMENT_FIELDS.to_string()),
-        ("EnableUserData", "true".to_string()),
-    ];
-    if let Some(series_id) = series_id {
-        query.push(("seriesId", series_id.to_string()));
-    }
-    client.get_json("/Shows/NextUp", &query)
+    client.get_json("/Shows/NextUp", &next_up_query(user_id, series_id, limit))
 }
 
 /// Jellyfin's metadata-only calendar fallback. Unlike the companion calendar
 /// this has no Sonarr truth (monitored/file state) and covers episodes only,
 /// but it keeps the releases surface useful when the plugin is absent.
+fn upcoming_query(user_id: &str, limit: i64) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("Limit", limit.clamp(1, 500).to_string()),
+        ("Fields", UPCOMING_FIELDS.to_string()),
+        ("EnableUserData", "false".to_string()),
+        ("EnableImages", "false".to_string()),
+    ]
+}
+
 pub fn fetch_upcoming(
     client: &JellyfinClient,
     user_id: &str,
     limit: i64,
 ) -> Result<ItemsResponse, ApiError> {
-    client.get_json(
-        "/Shows/Upcoming",
-        &[
-            user_query(user_id),
-            ("Limit", limit.clamp(1, 500).to_string()),
-            ("Fields", ENRICHMENT_FIELDS.to_string()),
-            ("EnableUserData", "true".to_string()),
-            ("EnableImages", "true".to_string()),
-        ],
-    )
+    client.get_json("/Shows/Upcoming", &upcoming_query(user_id, limit))
 }
 
 pub fn set_played(
@@ -473,9 +562,10 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CATALOG_FIELDS, CHILDREN_PAGE_SIZE, ENRICHMENT_FIELDS, PAGE_SIZE, PERSON_PAGE_SIZE,
-        SYNCED_ITEM_TYPES, children_query, image_path, items_page_query, person_items_query,
-        user_query,
+        CATALOG_FIELDS, CHILD_FIELDS, CHILDREN_PAGE_SIZE, NEXT_UP_FIELDS, PAGE_SIZE,
+        PERSON_ITEM_TYPES, PERSON_PAGE_SIZE, SYNCED_ITEM_TYPES, SYNOPSIS_FIELDS, UPCOMING_FIELDS,
+        children_query, exact_items_query, image_path, items_page_query, next_up_query,
+        person_items_query, synopsis_query, upcoming_query,
     };
 
     #[test]
@@ -485,26 +575,68 @@ mod tests {
     }
 
     #[test]
-    fn catalog_fields_are_browse_only() {
+    fn purpose_specific_fields_exclude_discarded_rich_metadata() {
         for required in ["ProviderIds", "Genres", "DateCreated", "SortName"] {
             assert!(CATALOG_FIELDS.contains(required));
+            assert!(CHILD_FIELDS.contains(required));
         }
-        for deferred in ["Overview", "People", "Studios", "Tags", "MediaStreams"] {
-            assert!(!CATALOG_FIELDS.contains(deferred));
-            assert!(ENRICHMENT_FIELDS.contains(deferred));
+        assert!(CHILD_FIELDS.contains("Overview"));
+        for fields in [
+            CATALOG_FIELDS,
+            CHILD_FIELDS,
+            NEXT_UP_FIELDS,
+            UPCOMING_FIELDS,
+        ] {
+            for discarded in ["People", "Studios", "Tags", "MediaStreams", "MediaSources"] {
+                assert!(!fields.contains(discarded));
+            }
+            assert!(!fields.contains(' '));
         }
-        assert!(!CATALOG_FIELDS.contains("MediaSources"));
-        assert!(!ENRICHMENT_FIELDS.contains("MediaSources"));
-        assert!(!CATALOG_FIELDS.contains(' '));
-        assert!(!ENRICHMENT_FIELDS.contains(' '));
+        assert!(!CATALOG_FIELDS.contains("Overview"));
+        assert!(!NEXT_UP_FIELDS.contains("ProviderIds"));
+        assert_eq!(UPCOMING_FIELDS, "ProviderIds,PremiereDate");
+    }
+
+    /// The about panel serializes exactly these; anything more (media streams
+    /// above all) would be fetched on every detail view only to be dropped.
+    #[test]
+    fn about_fields_carry_only_what_the_about_response_serializes() {
+        for required in ["Overview", "People", "Tags", "Studios", "CriticRating"] {
+            assert!(super::ABOUT_FIELDS.contains(required));
+        }
+        assert!(!super::ABOUT_FIELDS.contains("MediaStreams"));
+        assert!(!super::ABOUT_FIELDS.contains("Genres"));
+        assert!(!super::ABOUT_FIELDS.contains(' '));
+    }
+
+    #[test]
+    fn billboard_synopsis_requests_only_overview_without_user_or_image_data() {
+        let query = synopsis_query("uid", "movie-1")
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["userId"], "uid");
+        assert_eq!(query["ids"], "movie-1");
+        assert_eq!(query["Fields"], SYNOPSIS_FIELDS);
+        assert_eq!(query["Fields"], "Overview");
+        assert_eq!(query["EnableUserData"], "false");
+        assert_eq!(query["EnableImages"], "false");
+        assert!(!query.contains_key("IncludeItemTypes"));
     }
 
     /// `DateLastSaved` is not a valid `ItemSortBy` value and servers return the
     /// field empty, so keying sync freshness on it silently disables the sweep.
     #[test]
     fn item_fields_do_not_request_date_last_saved() {
-        assert!(!CATALOG_FIELDS.contains("DateLastSaved"));
-        assert!(!ENRICHMENT_FIELDS.contains("DateLastSaved"));
+        for fields in [
+            CATALOG_FIELDS,
+            CHILD_FIELDS,
+            NEXT_UP_FIELDS,
+            UPCOMING_FIELDS,
+            super::ABOUT_FIELDS,
+            SYNOPSIS_FIELDS,
+        ] {
+            assert!(!fields.contains("DateLastSaved"));
+        }
     }
 
     #[test]
@@ -533,7 +665,10 @@ mod tests {
         assert_eq!(query["parentId"], "season1");
         assert!(!query.contains_key("Recursive"));
         assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
-        assert_eq!(query["Fields"], ENRICHMENT_FIELDS);
+        assert_eq!(query["Fields"], CHILD_FIELDS);
+        assert!(query["Fields"].contains("Overview"));
+        assert!(!query["Fields"].contains("People"));
+        assert!(!query["Fields"].contains("MediaStreams"));
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["Limit"], CHILDREN_PAGE_SIZE.to_string());
         assert_eq!(query["SortBy"], "ParentIndexNumber,IndexNumber,SortName");
@@ -547,7 +682,10 @@ mod tests {
         assert_eq!(query["userId"], "uid");
         assert_eq!(query["PersonIds"], "person-42");
         assert_eq!(query["PersonTypes"], "Actor");
-        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        // Titles only: a season or episode credit would burn a card slot
+        // without naming anything the cast surfaces promise.
+        assert_eq!(query["IncludeItemTypes"], PERSON_ITEM_TYPES);
+        assert_eq!(query["IncludeItemTypes"], "Movie,Series");
         assert_eq!(query["Recursive"], "true");
         assert_eq!(query["StartIndex"], "60");
         assert_eq!(query["Limit"], "60");
@@ -573,21 +711,36 @@ mod tests {
     }
 
     #[test]
-    fn multi_id_queries_are_one_bounded_items_read() {
+    fn multi_id_queries_are_one_bounded_catalog_read() {
         let ids = (0..20)
             .map(|index| format!("item-{index}"))
             .collect::<Vec<_>>();
-        let query = [
-            user_query("uid"),
-            ("ids", ids.join(",")),
-            ("Fields", ENRICHMENT_FIELDS.to_string()),
-            ("EnableUserData", "true".to_string()),
-            ("EnableImages", "true".to_string()),
-        ]
-        .into_iter()
-        .collect::<std::collections::BTreeMap<_, _>>();
+        let query = exact_items_query("uid", &ids)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["ids"].split(',').count(), 20);
-        assert_eq!(query["Fields"], ENRICHMENT_FIELDS);
+        assert_eq!(query["Fields"], CATALOG_FIELDS);
+        assert!(!query["Fields"].contains("Overview"));
+        assert!(!query["Fields"].contains("MediaStreams"));
         assert_eq!(query["EnableImages"], "true");
+    }
+
+    #[test]
+    fn next_up_and_upcoming_request_only_the_fields_their_consumers_read() {
+        let next_up = next_up_query("uid", Some("series-1"), 24)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(next_up["seriesId"], "series-1");
+        assert_eq!(next_up["Fields"], NEXT_UP_FIELDS);
+        assert_eq!(next_up["EnableUserData"], "true");
+        assert_eq!(next_up["EnableImages"], "true");
+
+        let upcoming = upcoming_query("uid", i64::MAX)
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(upcoming["Limit"], "500");
+        assert_eq!(upcoming["Fields"], UPCOMING_FIELDS);
+        assert_eq!(upcoming["EnableUserData"], "false");
+        assert_eq!(upcoming["EnableImages"], "false");
     }
 }

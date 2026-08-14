@@ -21,6 +21,7 @@ function Headshot({ person }: { person: Person }) {
       src={source}
       alt=""
       decoding="async"
+      loading="lazy"
       onError={() => setFailed(true)}
       className="size-24 rounded-full object-cover"
     />

@@ -9,7 +9,7 @@ import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { MediaCard } from "@/components/MediaCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
-import { useChildren, useItem, useMediaInfo, useNextUp } from "@/lib/queries"
+import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
 
 function DetailSkeleton() {
   return (
@@ -75,6 +75,9 @@ function NextUpNote({ episode }: { episode: ItemSummary }) {
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const { data: item, isPending, error } = useItem(id)
+  // The cached row answers instantly; the synopsis, cast, tags, studios, and
+  // critic score arrive from this live fetch and are never persisted.
+  const about = useItemAbout(id)
   const children = useChildren(id)
   const isSeries = item?.kind === "Series"
   const isContainer = isSeries || item?.kind === "Season"
@@ -109,7 +112,13 @@ export default function ItemDetail() {
     // app shell's opaque background, and this stacking context is what pins it
     // between the two.
     <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
-      <DetailHero item={item} episodeCount={episodeCount || null}>
+      <DetailHero
+        item={item}
+        about={about.data}
+        aboutPending={about.isPending}
+        aboutFailed={about.isError}
+        episodeCount={episodeCount || null}
+      >
         {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
         <DetailActions
           item={item}
@@ -123,13 +132,12 @@ export default function ItemDetail() {
       {episodes.length > 0 && <EpisodeList episodes={episodes} parentId={item.id} />}
       <SeasonGrid seasons={seasons} />
 
-      {/* A lightweight progressive-catalog row may have no People yet. The
-          detail API prioritizes its enrichment, and the native metadata bridge
-          refetches this item when cast arrives; the usable detail never waits. */}
-      <CastRow people={item.people} />
+      {/* Cast is live-only; the row appears when the fetch lands and simply
+          stays absent when the server cannot be reached. */}
+      <CastRow people={about.data?.people ?? []} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
-        <DetailFacts item={item} />
+        <DetailFacts item={item} about={about.data} />
         <MediaInfo
           itemId={item.id}
           sources={media.data?.sources}

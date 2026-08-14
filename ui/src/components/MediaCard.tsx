@@ -1,4 +1,4 @@
-import { memo, useState } from "react"
+import { memo, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
 import { RatingOverlay } from "@/components/RatingOverlay"
@@ -11,6 +11,32 @@ import {
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
 import { cn } from "@/lib/utils"
+
+const TECHNICAL_PREFETCH_MARGIN = "160px"
+
+/**
+ * Horizontal shelves mount every card so they can scroll smoothly, including
+ * cards far outside both the viewport and a shelf's clipped edge. Observe the
+ * actual link before registering its live technical metadata; a small margin
+ * lets badges arrive just before a card scrolls into view.
+ */
+function useTechnicalVisibility() {
+  const intersectionSupported = typeof IntersectionObserver !== "undefined"
+  const [element, setElement] = useState<HTMLAnchorElement | null>(null)
+  const [visible, setVisible] = useState(!intersectionSupported)
+
+  useEffect(() => {
+    if (!element || !intersectionSupported) return
+    const observer = new IntersectionObserver(
+      (entries) => setVisible(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: TECHNICAL_PREFETCH_MARGIN },
+    )
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element, intersectionSupported])
+
+  return { ref: setElement, visible }
+}
 
 function subtitleFor(item: ItemSummary) {
   if (item.kind === "Episode") {
@@ -47,6 +73,7 @@ export const MediaCard = memo(function MediaCard({
   preview?: boolean
 }) {
   const { handlers, expanded } = usePreview(item, preview)
+  const technical = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
@@ -63,6 +90,7 @@ export const MediaCard = memo(function MediaCard({
 
   return (
     <Link
+      ref={technical.ref}
       to={`/item/${encodeURIComponent(item.id)}`}
       {...handlers}
       // While the expanded panel is over this card, its own lift would push the
@@ -111,7 +139,7 @@ export const MediaCard = memo(function MediaCard({
             {ribbon}
           </div>
         )}
-        <CardTechnicalReadout item={item} />
+        <CardTechnicalReadout item={item} active={technical.visible} />
         {/* Watched is drawn as a finished progress rule rather than a corner
             badge. The two states use the same thickness and accent fill;
             watched simply fills the track completely. */}

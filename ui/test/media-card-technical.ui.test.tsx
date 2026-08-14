@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
+import type { ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
-import { describe, expect, test } from "vitest"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
 import { formatVideoRange, summarizeCardMedia } from "../src/lib/format"
+import { TechnicalContext } from "../src/lib/technical-context"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -75,7 +77,28 @@ const movie: ItemSummary = {
   playCount: 0,
   positionTicks: 0,
   favorite: false,
-  mediaStreams: technicalStreams,
+}
+
+const series: ItemSummary = {
+  ...movie,
+  id: "series-1",
+  kind: "Series",
+  name: "Severance",
+  childCount: 2,
+}
+
+// Streams are never part of a summary row any more; cards read them from the
+// live batched technical channel, so tests provide that channel directly.
+afterEach(() => vi.unstubAllGlobals())
+
+function withTechnical(streams: ReadonlyMap<string, MediaStream[]>, children: ReactNode) {
+  return (
+    <MemoryRouter>
+      <TechnicalContext.Provider value={{ items: streams, register: () => () => {} }}>
+        {children}
+      </TechnicalContext.Provider>
+    </MemoryRouter>
+  )
 }
 
 describe("media-card technical formatting", () => {
@@ -124,9 +147,10 @@ describe("media-card technical formatting", () => {
 
   test("renders one integrated semantic readout rather than badges or pills", () => {
     const { container } = render(
-      <MemoryRouter>
-        <MediaCard item={movie} preview={false} />
-      </MemoryRouter>,
+      withTechnical(
+        new Map([[movie.id, technicalStreams]]),
+        <MediaCard item={movie} preview={false} />,
+      ),
     )
 
     const readout = screen.getByLabelText(/Technical media information/)
@@ -140,6 +164,65 @@ describe("media-card technical formatting", () => {
     expect(readout.getAttribute("title")).toContain("Dolby Vision / HDR10+")
     expect(readout.getAttribute("title")).toContain("HEVC")
     expect(container.querySelector('[data-slot="badge"]')).toBeNull()
+  })
+
+  test("series cards read the same live channel as movie cards", () => {
+    render(
+      withTechnical(
+        new Map([
+          [
+            series.id,
+            [
+              stream({ type: "Video", codec: "h264", width: 1920, height: 1080, videoRange: "SDR" }),
+              stream({ index: 1, type: "Audio", codec: "eac3", channels: 6, isDefault: true }),
+            ],
+          ],
+        ]),
+        <MediaCard item={series} preview={false} />,
+      ),
+    )
+
+    const readout = screen.getByLabelText(/Technical media information/)
+    expect(readout.textContent).toContain("1080p")
+    expect(readout.textContent).toContain("H.264")
+  })
+
+  test("a card whose streams have not arrived renders no readout at all", () => {
+    const { container } = render(
+      withTechnical(new Map(), <MediaCard item={movie} preview={false} />),
+    )
+    expect(container.querySelector(".card-technical-readout")).toBeNull()
+  })
+
+  test("mounted shelf cards register only when they approach the viewport", () => {
+    let reportIntersection: ((visible: boolean) => void) | undefined
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          reportIntersection = (visible) =>
+            callback([{ isIntersecting: visible } as IntersectionObserverEntry], this as never)
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    const unregister = vi.fn()
+    const register = vi.fn(() => unregister)
+
+    render(
+      <MemoryRouter>
+        <TechnicalContext.Provider value={{ items: new Map(), register }}>
+          <MediaCard item={movie} preview={false} />
+        </TechnicalContext.Provider>
+      </MemoryRouter>,
+    )
+
+    expect(register).not.toHaveBeenCalled()
+    act(() => reportIntersection!(true))
+    expect(register).toHaveBeenCalledWith(movie.id)
+    act(() => reportIntersection!(false))
+    expect(unregister).toHaveBeenCalledTimes(1)
   })
 })
 

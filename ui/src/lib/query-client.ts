@@ -35,13 +35,15 @@ export const queryKeys = {
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
   // Live exact-person pages are not local SQLite projections. Keeping their
-  // root separate prevents every progressive enrichment batch from re-running
-  // the same Jellyfin filmography query.
+  // root separate prevents every committed sync batch from re-running the
+  // same Jellyfin filmography query.
   items: (query: ItemQuery) =>
     query.personId ? (["person-items", query] as const) : (["items", query] as const),
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
     ["person", "resolve", jellyfinId, tmdbId, name] as const,
   item: (id: string) => ["item", id] as const,
+  itemSynopsis: (id: string) => ["item", id, "synopsis"] as const,
+  itemAbout: (id: string) => ["item", id, "about"] as const,
   letterboxdReviews: (id: string) => ["letterboxd", "item", id] as const,
   children: (id: string) => ["item", id, "children"] as const,
   media: (id: string) => ["item", id, "media"] as const,
@@ -90,26 +92,28 @@ export function patchPlayerState(patch: Partial<PlayerState>) {
 }
 
 /**
- * The media-surface invalidation entry point, mirroring SILO's
- * `invalidateMediaSurfaceQueries`. Anything that changes catalog or user state
- * calls this rather than trying to patch individual caches.
+ * The user-state invalidation entry point. Watched/favorite/playback changes
+ * refresh only projections that display that state; live prose, credits,
+ * trailers, and technical media facts are independent and stay cached.
  *
  * Takes several ids because the item whose state changed is often not the one
  * on screen: marking an episode watched from a season page has to refresh the
  * season's child list, and the series' Next Up, as well as the episode itself.
- * `queryKeys.item(id)` is a prefix of that item's children, media, and Next Up
- * keys, so one invalidation per id covers all of them.
  */
 export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[]) {
   const active = { refetchType: "active" as const }
+  const exactActive = { ...active, exact: true }
   void queryClient.invalidateQueries({ queryKey: queryKeys.home, ...active })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.billboard, ...exactActive })
   void queryClient.invalidateQueries({ queryKey: ["items"], ...active })
   // Explicit user-data writes should refresh a live person card too; metadata
   // batches deliberately do not, because that response is already server-live.
   void queryClient.invalidateQueries({ queryKey: ["person-items"], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
-    void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...active })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.children(itemId), ...exactActive })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.nextUp(itemId), ...exactActive })
   }
 }
 

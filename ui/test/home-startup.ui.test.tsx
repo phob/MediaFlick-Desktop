@@ -30,6 +30,9 @@ vi.mock("@/components/seerr/SeerrGate", () => ({
 vi.mock("@/lib/ratings", () => ({
   RatingsProvider: ({ children }: { children: ReactNode }) => <div data-testid="ratings-provider">{children}</div>,
 }))
+vi.mock("@/lib/technical", () => ({
+  TechnicalProvider: ({ children }: { children: ReactNode }) => children,
+}))
 vi.mock("@/routes/Home", () => ({ default: () => <div>Home content</div> }))
 vi.mock("@/routes/Library", () => ({ default: () => null }))
 vi.mock("@/routes/ItemDetail", () => ({ default: () => null }))

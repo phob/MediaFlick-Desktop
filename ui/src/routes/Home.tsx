@@ -219,9 +219,8 @@ export default function Home() {
   const latestMovies = rows.find((row) => row.id === "latest-movies")
   const latestShows = rows.find((row) => row.id === "latest-shows")
 
-  // The seed for Because You Watched. Its genres are only on the detail record,
-  // which the billboard is fetching for this same item anyway whenever it is
-  // the one on screen — so this is usually a cache read, not a request.
+  // The seed for Because You Watched. Its genres are only on the detail
+  // record, which is one local SQLite read — never a server request.
   const seed = resume?.items[0] ?? null
   const seedDetail = useItem(seed?.id)
   const seedGenre = seedDetail.data?.genres?.[0] ?? null

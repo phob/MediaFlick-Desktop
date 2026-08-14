@@ -251,8 +251,10 @@ fn optional_text_matches(saved: Option<&str>, current: Option<&str>) -> bool {
         .is_some_and(|current| saved.eq_ignore_ascii_case(current))
 }
 
-/// One cached library item. Provider IDs get dedicated columns because they are
-/// the join keys for every external metadata feature planned on top of the cache.
+/// One cached library item — the thin catalog index row. Provider IDs get
+/// dedicated columns because they are the join keys for external metadata
+/// features. Rich metadata (synopsis, cast, streams, tags, studios, critic
+/// ratings) is never cached; surfaces fetch it live from Jellyfin.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemRecord {
     pub jellyfin_id: String,
@@ -263,9 +265,7 @@ pub struct ItemRecord {
     pub year: Option<i64>,
     pub premiere_date: Option<String>,
     pub runtime_ticks: Option<i64>,
-    pub overview: Option<String>,
     pub community_rating: Option<f64>,
-    pub critic_rating: Option<f64>,
     pub official_rating: Option<String>,
     pub parent_id: Option<String>,
     pub series_id: Option<String>,
@@ -278,24 +278,25 @@ pub struct ItemRecord {
     pub imdb_id: Option<String>,
     pub tvdb_id: Option<String>,
     pub genres: String,
-    pub tags: String,
-    pub studios: String,
-    pub people: String,
     pub image_tags: String,
     pub primary_image_tag: Option<String>,
     pub backdrop_image_tag: Option<String>,
-    /// Compact video/audio descriptors used by library cards. Full media
-    /// sources remain an on-demand detail-page concern.
-    pub media_streams: String,
     pub search_genres: String,
-    pub search_people: String,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
 }
 
+/// Whether a DTO's kind belongs in the catalog index at all. Guarding here
+/// keeps live single-item fetches (which can resolve people, folders, or other
+/// non-library kinds) from writing rows browsing would then surface.
+pub(crate) fn is_synced_kind(kind: &str) -> bool {
+    matches!(kind, "Movie" | "Series" | "Season" | "Episode")
+}
+
 /// Only fields useful to a concise technical readout are retained. Subtitle
-/// tracks, paths, delivery URLs, and playback-negotiation flags stay out of the
-/// library cache; the detail endpoint still serves those from current sources.
+/// tracks, paths, delivery URLs, and playback-negotiation flags never reach
+/// the card-badge channel; the media endpoint serves those from full sources.
+/// Nothing here is persisted — this shapes live DTO streams for the UI.
 pub(crate) fn technical_media_streams_json(streams: &[MediaStream]) -> serde_json::Value {
     serde_json::Value::Array(
         streams
@@ -331,32 +332,8 @@ pub(crate) fn technical_media_streams_json(streams: &[MediaStream]) -> serde_jso
     )
 }
 
-/// Cast and crew kept for the details view; capped so a 200-person credit list
-/// does not bloat every row.
-const MAX_PEOPLE: usize = 30;
-
 impl ItemRecord {
     pub fn from_dto(dto: &BaseItemDto) -> Self {
-        let people = dto
-            .people
-            .iter()
-            .take(MAX_PEOPLE)
-            .map(|person| {
-                json!({
-                    "id": person.id,
-                    "name": person.name,
-                    "role": person.role,
-                    "type": person.person_type,
-                    "imageTag": person.primary_image_tag,
-                })
-            })
-            .collect::<Vec<_>>();
-        let studios = dto
-            .studios
-            .iter()
-            .filter_map(|studio| studio.name.clone())
-            .collect::<Vec<_>>();
-
         Self {
             jellyfin_id: dto.id.clone(),
             kind: dto
@@ -379,9 +356,7 @@ impl ItemRecord {
             }),
             premiere_date: non_empty(dto.premiere_date.as_deref()),
             runtime_ticks: dto.run_time_ticks.filter(|ticks| *ticks > 0),
-            overview: non_empty(dto.overview.as_deref()),
             community_rating: dto.community_rating,
-            critic_rating: dto.critic_rating,
             official_rating: non_empty(dto.official_rating.as_deref()),
             parent_id: non_empty(dto.parent_id.as_deref()),
             series_id: non_empty(dto.series_id.as_deref()),
@@ -394,9 +369,6 @@ impl ItemRecord {
             imdb_id: dto.provider_id("Imdb").map(str::to_string),
             tvdb_id: dto.provider_id("Tvdb").map(str::to_string),
             genres: json_text(&dto.genres),
-            tags: json_text(&dto.tags),
-            studios: json_text(&studios),
-            people: serde_json::to_string(&people).unwrap_or_else(|_| "[]".to_string()),
             image_tags: json_text(&dto.image_tags),
             primary_image_tag: dto.primary_image_tag().map(str::to_string),
             backdrop_image_tag: dto
@@ -404,407 +376,11 @@ impl ItemRecord {
                 .first()
                 .or_else(|| dto.parent_backdrop_image_tags.first())
                 .cloned(),
-            media_streams: technical_media_streams_json(&dto.media_streams).to_string(),
             search_genres: dto.genres.join(", "),
-            search_people: dto
-                .people
-                .iter()
-                .filter_map(|person| person.name.clone())
-                .take(MAX_PEOPLE)
-                .collect::<Vec<_>>()
-                .join(", "),
             date_created: non_empty(dto.date_created.as_deref()),
             date_last_saved: non_empty(dto.date_last_saved.as_deref()),
         }
     }
-}
-
-/// Stable quality dimensions persisted as a bitset in `metadata_convergence`.
-pub const MISSING_IDENTITY: u32 = 1 << 0;
-pub const MISSING_ARTWORK: u32 = 1 << 1;
-pub const MISSING_DESCRIPTION: u32 = 1 << 2;
-pub const MISSING_PROVIDER: u32 = 1 << 3;
-pub const MISSING_STRUCTURE: u32 = 1 << 4;
-pub const MISSING_RELATION: u32 = 1 << 5;
-pub const MISSING_INDEX: u32 = 1 << 6;
-
-/// Pure metadata assessment used by both ingestion and convergence polling.
-/// The signature intentionally contains presentation values as well as quality
-/// presence, so image-tag/title edits propagate while byte-identical REST
-/// observations do not rewrite SQLite or invalidate React Query.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MetadataQuality {
-    pub supported: bool,
-    pub complete: bool,
-    pub missing: u32,
-    pub score: u8,
-    pub signature: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct MetadataSignals {
-    identity: bool,
-    artwork: bool,
-    description: bool,
-    provider: bool,
-    structure: bool,
-    relation: bool,
-    index: bool,
-}
-
-/// The quality floor itself has one implementation. DTO and migration paths
-/// only differ in how they recover these seven signals and their fingerprint.
-fn assess_metadata_quality(
-    kind: &str,
-    signals: MetadataSignals,
-    signature: String,
-) -> MetadataQuality {
-    let supported = matches!(kind, "Movie" | "Series" | "Season" | "Episode");
-    let identity = supported && signals.identity;
-    let mut missing = 0;
-    for (present, bit) in [
-        (identity, MISSING_IDENTITY),
-        (signals.artwork, MISSING_ARTWORK),
-        (signals.description, MISSING_DESCRIPTION),
-        (signals.provider, MISSING_PROVIDER),
-        (signals.structure, MISSING_STRUCTURE),
-        (signals.relation, MISSING_RELATION),
-        (signals.index, MISSING_INDEX),
-    ] {
-        if !present {
-            missing |= bit;
-        }
-    }
-    let score = 7 - missing.count_ones() as u8;
-    // Top-level items need multiple independent enrichment signals; one
-    // provider id alone never completes them. Child items prioritize correct
-    // hierarchy/indexing and require at least one useful presentation signal.
-    let complete = match kind {
-        "Movie" | "Series" => {
-            identity
-                && signals.artwork
-                && signals.description
-                && signals.provider
-                && signals.structure
-        }
-        "Season" => {
-            identity
-                && signals.relation
-                && signals.index
-                && (signals.artwork || signals.description || signals.provider || signals.structure)
-        }
-        "Episode" => {
-            identity
-                && signals.relation
-                && signals.index
-                && signals.artwork
-                && (signals.description || signals.provider || signals.structure)
-        }
-        _ => false,
-    };
-    MetadataQuality {
-        supported,
-        complete,
-        missing,
-        score,
-        signature,
-    }
-}
-
-/// Reconstructs the convergence floor from the fields retained in `items`.
-///
-/// Movie/Series completion is an exact match for [`metadata_quality`] for every
-/// quality signal the cache persists. Season/Episode use the same persisted
-/// relation and index fields. Provider ids outside the three ids deliberately
-/// retained by [`ItemRecord`] cannot be recovered; treating those as missing is
-/// conservative and can cause one harmless exact-id read rather than strand a
-/// genuinely sparse item forever.
-pub(crate) fn persisted_metadata_quality(record: &ItemRecord) -> MetadataQuality {
-    let identity = !record.jellyfin_id.trim().is_empty() && !record.name.trim().is_empty();
-    let has_artwork = non_empty(record.primary_image_tag.as_deref()).is_some()
-        || non_empty(record.backdrop_image_tag.as_deref()).is_some()
-        || json_object_has_non_empty_string(&record.image_tags);
-    let has_description = non_empty(record.overview.as_deref()).is_some()
-        || json_array_has_non_empty_string(&record.genres)
-        || json_array_has_non_empty_string(&record.tags)
-        || json_array_has_non_empty_string(&record.studios)
-        || json_people_have_name(&record.people)
-        || non_empty(record.official_rating.as_deref()).is_some()
-        || record.community_rating.is_some()
-        || record.critic_rating.is_some();
-    let has_provider = [
-        record.tmdb_id.as_deref(),
-        record.imdb_id.as_deref(),
-        record.tvdb_id.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|provider_id| !provider_id.trim().is_empty());
-    let has_structure = match record.kind.as_str() {
-        "Movie" => {
-            record.year.is_some()
-                || non_empty(record.premiere_date.as_deref()).is_some()
-                || record.runtime_ticks.is_some_and(|ticks| ticks > 0)
-        }
-        "Series" => {
-            record.year.is_some()
-                || non_empty(record.premiere_date.as_deref()).is_some()
-                || record.child_count.is_some()
-        }
-        "Season" => record.child_count.is_some(),
-        "Episode" => record.runtime_ticks.is_some_and(|ticks| ticks > 0),
-        _ => false,
-    };
-    let has_relation = match record.kind.as_str() {
-        "Season" => {
-            non_empty(record.series_id.as_deref()).is_some()
-                || non_empty(record.parent_id.as_deref()).is_some()
-        }
-        "Episode" => {
-            non_empty(record.series_id.as_deref()).is_some()
-                && (non_empty(record.season_id.as_deref()).is_some()
-                    || non_empty(record.parent_id.as_deref()).is_some())
-        }
-        _ => true,
-    };
-    let has_index = match record.kind.as_str() {
-        "Season" => record.index_number.is_some(),
-        "Episode" => record.index_number.is_some() && record.parent_index_number.is_some(),
-        _ => true,
-    };
-
-    let canonical = serde_json::to_vec(&json!({
-        "source": "persisted-v8",
-        "id": record.jellyfin_id,
-        "type": record.kind,
-        "name": record.name,
-        "originalTitle": record.original_title,
-        "sortName": record.sort_name,
-        "year": record.year,
-        "premiereDate": record.premiere_date,
-        "runtime": record.runtime_ticks,
-        "overview": record.overview,
-        "ratings": [record.community_rating, record.critic_rating],
-        "officialRating": record.official_rating,
-        "parentId": record.parent_id,
-        "seriesId": record.series_id,
-        "seriesName": record.series_name,
-        "seasonId": record.season_id,
-        "index": record.index_number,
-        "parentIndex": record.parent_index_number,
-        "childCount": record.child_count,
-        "providers": [record.tmdb_id, record.imdb_id, record.tvdb_id],
-        "genres": record.genres,
-        "tags": record.tags,
-        "studios": record.studios,
-        "people": record.people,
-        "images": record.image_tags,
-        "primary": record.primary_image_tag,
-        "backdrop": record.backdrop_image_tag,
-        "mediaStreams": record.media_streams,
-        "dateCreated": record.date_created,
-    }))
-    .unwrap_or_default();
-    let signature = format!("v8:{}", canonical_fingerprint(&canonical));
-
-    assess_metadata_quality(
-        &record.kind,
-        MetadataSignals {
-            identity,
-            artwork: has_artwork,
-            description: has_description,
-            provider: has_provider,
-            structure: has_structure,
-            relation: has_relation,
-            index: has_index,
-        },
-        signature,
-    )
-}
-
-/// Initial scheduling is shared by live observations and migration backfills,
-/// keeping every item on the established deterministic 120–149 second grace.
-pub(crate) fn metadata_convergence_initial_delay(item_id: &str) -> i64 {
-    120 + item_id
-        .bytes()
-        .fold(0_u64, |hash, byte| {
-            hash.wrapping_mul(33).wrapping_add(u64::from(byte))
-        })
-        .wrapping_rem(30) as i64
-}
-
-fn json_object_has_non_empty_string(value: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(value)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .is_some_and(|values| {
-            values
-                .values()
-                .any(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
-        })
-}
-
-fn json_array_has_non_empty_string(value: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(value)
-        .ok()
-        .and_then(|value| value.as_array().cloned())
-        .is_some_and(|values| {
-            values
-                .iter()
-                .any(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
-        })
-}
-
-fn json_people_have_name(value: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(value)
-        .ok()
-        .and_then(|value| value.as_array().cloned())
-        .is_some_and(|people| {
-            people.iter().any(|person| {
-                person
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|name| !name.trim().is_empty())
-            })
-        })
-}
-
-pub fn metadata_quality(dto: &BaseItemDto) -> MetadataQuality {
-    let kind = dto.item_type.as_deref().unwrap_or_default();
-    let identity = !dto.id.trim().is_empty()
-        && dto
-            .name
-            .as_deref()
-            .is_some_and(|name| !name.trim().is_empty());
-    let has_artwork = dto.image_tags.values().any(|tag| !tag.trim().is_empty())
-        || dto
-            .backdrop_image_tags
-            .iter()
-            .chain(dto.parent_backdrop_image_tags.iter())
-            .any(|tag| !tag.trim().is_empty())
-        || dto
-            .series_primary_image_tag
-            .as_deref()
-            .is_some_and(|tag| !tag.trim().is_empty());
-    let has_description = non_empty(dto.overview.as_deref()).is_some()
-        || dto.genres.iter().any(|genre| !genre.trim().is_empty())
-        || dto.tags.iter().any(|tag| !tag.trim().is_empty())
-        || dto.studios.iter().any(|studio| {
-            studio
-                .name
-                .as_deref()
-                .is_some_and(|name| !name.trim().is_empty())
-        })
-        || dto.people.iter().any(|person| {
-            person
-                .name
-                .as_deref()
-                .is_some_and(|name| !name.trim().is_empty())
-        })
-        || non_empty(dto.official_rating.as_deref()).is_some()
-        || dto.community_rating.is_some()
-        || dto.critic_rating.is_some();
-    let has_provider = dto
-        .provider_ids
-        .values()
-        .any(|provider_id| !provider_id.trim().is_empty());
-    let has_structure = match kind {
-        "Movie" => {
-            dto.production_year.is_some()
-                || non_empty(dto.premiere_date.as_deref()).is_some()
-                || dto.run_time_ticks.is_some_and(|ticks| ticks > 0)
-        }
-        "Series" => {
-            dto.production_year.is_some()
-                || non_empty(dto.premiere_date.as_deref()).is_some()
-                || dto.child_count.is_some()
-        }
-        "Season" => dto.child_count.is_some(),
-        "Episode" => dto.run_time_ticks.is_some_and(|ticks| ticks > 0),
-        _ => false,
-    };
-    let has_relation = match kind {
-        "Season" => {
-            non_empty(dto.series_id.as_deref()).is_some()
-                || non_empty(dto.parent_id.as_deref()).is_some()
-        }
-        "Episode" => {
-            non_empty(dto.series_id.as_deref()).is_some()
-                && (non_empty(dto.season_id.as_deref()).is_some()
-                    || non_empty(dto.parent_id.as_deref()).is_some())
-        }
-        _ => true,
-    };
-    // `Some(0)` is valid for specials and must not be confused with missing.
-    let has_index = match kind {
-        "Season" => dto.index_number.is_some(),
-        "Episode" => dto.index_number.is_some() && dto.parent_index_number.is_some(),
-        _ => true,
-    };
-
-    let canonical = serde_json::to_vec(&json!({
-        "type": dto.item_type,
-        "name": dto.name,
-        "originalTitle": dto.original_title,
-        "sortName": dto.sort_name,
-        "year": dto.production_year,
-        "premiereDate": dto.premiere_date,
-        "runtime": dto.run_time_ticks,
-        "overview": dto.overview,
-        "ratings": [dto.community_rating, dto.critic_rating],
-        "officialRating": dto.official_rating,
-        "parentId": dto.parent_id,
-        "seriesId": dto.series_id,
-        "seriesName": dto.series_name,
-        "seasonId": dto.season_id,
-        "index": dto.index_number,
-        "parentIndex": dto.parent_index_number,
-        "childCount": dto.child_count,
-        "providers": dto.provider_ids,
-        "genres": dto.genres,
-        "tags": dto.tags,
-        "studios": dto.studios.iter().map(|studio| &studio.name).collect::<Vec<_>>(),
-        "people": dto.people.iter().map(|person| (&person.id, &person.name, &person.role,
-                                                   &person.person_type, &person.primary_image_tag))
-                            .collect::<Vec<_>>(),
-        "images": dto.image_tags,
-        "backdrops": dto.backdrop_image_tags,
-        "parentBackdrops": dto.parent_backdrop_image_tags,
-        "seriesPrimary": dto.series_primary_image_tag,
-        "mediaStreams": technical_media_streams_json(&dto.media_streams),
-        "dateCreated": dto.date_created,
-    }))
-    .unwrap_or_default();
-    let signature = canonical_fingerprint(&canonical);
-
-    assess_metadata_quality(
-        kind,
-        MetadataSignals {
-            identity,
-            artwork: has_artwork,
-            description: has_description,
-            provider: has_provider,
-            structure: has_structure,
-            relation: has_relation,
-            index: has_index,
-        },
-        signature,
-    )
-}
-
-/// A compact deterministic fingerprint of the canonical presentation JSON.
-/// Two independently seeded FNV-1a lanes keep the queue small even for DTOs
-/// with large cast lists while making accidental collisions vanishingly rare.
-fn canonical_fingerprint(bytes: &[u8]) -> String {
-    let mut first = 0xcbf2_9ce4_8422_2325_u64;
-    let mut second = 0x8422_2325_cbf2_9ce4_u64;
-    for byte in bytes {
-        first ^= u64::from(*byte);
-        first = first.wrapping_mul(0x100_0000_01b3);
-        second ^= u64::from(byte.rotate_left(1));
-        second = second.wrapping_mul(0x100_0000_01b3);
-    }
-    format!("{first:016x}{second:016x}")
 }
 
 /// Watch state mirrored from the server and from our own playback reporting.
@@ -863,8 +439,8 @@ fn release_year_from_date(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ItemPlaybackPreference, ItemRecord, MISSING_INDEX, UserDataRecord, metadata_quality,
-        persisted_metadata_quality, resolve_playback_preference,
+        ItemPlaybackPreference, ItemRecord, UserDataRecord, is_synced_kind,
+        resolve_playback_preference,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, UserItemDataDto};
 
@@ -914,117 +490,30 @@ mod tests {
     }
 
     #[test]
-    fn top_level_quality_requires_more_than_one_provider_id() {
-        let sparse_movie = dto(r#"{"Id":"m","Name":"A scan in progress","Type":"Movie",
-                "ProductionYear":1988,"RunTimeTicks":100,"DateCreated":"2024-01-01"}"#);
-        assert!(!metadata_quality(&sparse_movie).complete);
-        assert!(
-            !metadata_quality(&dto(
-                r#"{"Id":"m","Name":"Movie","Type":"Movie","ProductionYear":1988,
-                "ProviderIds":{"Tmdb":"1"}}"#
-            ))
-            .complete
-        );
-        assert!(
-            metadata_quality(&dto(
-                r#"{"Id":"m","Name":"Movie","Type":"Movie","ProductionYear":1988,
-                "ProviderIds":{"Tmdb":"1"},"Overview":"Description",
-                "ImageTags":{"Primary":"poster"}}"#
-            ))
-            .complete
-        );
-    }
-
-    #[test]
-    fn quality_covers_every_synced_kind_and_accepts_zero_indexes() {
-        for complete in [
-            r#"{"Id":"m","Name":"M","Type":"Movie","ProductionYear":2000,
-                "Overview":"O","ProviderIds":{"Tmdb":"1"},"ImageTags":{"Primary":"p"}}"#,
-            r#"{"Id":"s","Name":"S","Type":"Series","ChildCount":0,
-                "Genres":["Drama"],"ProviderIds":{"Tvdb":"1"},"ImageTags":{"Primary":"p"}}"#,
-            r#"{"Id":"z","Name":"Specials","Type":"Season","SeriesId":"s",
-                "IndexNumber":0,"ChildCount":2}"#,
-            r#"{"Id":"e","Name":"Special","Type":"Episode","SeriesId":"s",
-                "SeasonId":"z","IndexNumber":0,"ParentIndexNumber":0,
-                "RunTimeTicks":1,"SeriesPrimaryImageTag":"p"}"#,
-        ] {
-            let quality = metadata_quality(&dto(complete));
-            assert!(quality.supported);
-            assert!(quality.complete, "missing mask {}", quality.missing);
-            assert_eq!(quality.missing & MISSING_INDEX, 0);
-        }
-        let unsupported = metadata_quality(&dto(r#"{"Id":"a","Name":"Audio","Type":"Audio"}"#));
-        assert!(!unsupported.supported);
-        assert!(!unsupported.complete);
-    }
-
-    #[test]
-    fn persisted_quality_matches_the_dto_floor_for_cached_signals() {
-        for value in [
-            r#"{"Id":"m","Name":"M","Type":"Movie","ProductionYear":2000,
-                "Overview":"O","ProviderIds":{"Tmdb":"1"},"ImageTags":{"Primary":"p"}}"#,
-            r#"{"Id":"s","Name":"S","Type":"Series","ChildCount":0,
-                "Genres":["Drama"],"ProviderIds":{"Tvdb":"1"},"ImageTags":{"Primary":"p"}}"#,
-            r#"{"Id":"z","Name":"Specials","Type":"Season","SeriesId":"s",
-                "IndexNumber":0,"ChildCount":2}"#,
-            r#"{"Id":"e","Name":"Special","Type":"Episode","SeriesId":"s",
-                "SeasonId":"z","IndexNumber":0,"ParentIndexNumber":0,
-                "RunTimeTicks":1,"SeriesPrimaryImageTag":"p"}"#,
-            r#"{"Id":"m2","Name":"Sparse","Type":"Movie","ProductionYear":1988,
-                "ProviderIds":{"Tmdb":"9599"}}"#,
-        ] {
-            let dto = dto(value);
-            let live = metadata_quality(&dto);
-            let persisted = persisted_metadata_quality(&ItemRecord::from_dto(&dto));
-            assert_eq!(persisted.complete, live.complete, "{value}");
-            assert_eq!(persisted.missing, live.missing, "{value}");
-            assert_eq!(persisted.score, live.score, "{value}");
-        }
-    }
-
-    #[test]
-    fn unpersisted_provider_kinds_are_conservatively_retried() {
-        let dto = dto(
-            r#"{"Id":"m","Name":"M","Type":"Movie","ProductionYear":2000,
-                "Overview":"O","ProviderIds":{"OtherProvider":"1"},
-                "ImageTags":{"Primary":"p"}}"#,
-        );
-        assert!(metadata_quality(&dto).complete);
-        assert!(!persisted_metadata_quality(&ItemRecord::from_dto(&dto)).complete);
-    }
-
-    #[test]
-    fn genres_and_people_are_flattened_for_search_and_kept_as_json() {
+    fn genres_are_flattened_for_search_and_kept_as_json() {
         let record = ItemRecord::from_dto(&dto(
-            r#"{"Id":"a","Name":"Speed","Genres":["Action","Thriller"],
-                "People":[{"Name":"Keanu Reeves","Type":"Actor","Role":"Jack"},
-                          {"Name":"Sandra Bullock"}]}"#,
+            r#"{"Id":"a","Name":"Speed","Genres":["Action","Thriller"]}"#,
         ));
         assert_eq!(record.search_genres, "Action, Thriller");
-        assert_eq!(record.search_people, "Keanu Reeves, Sandra Bullock");
         assert_eq!(record.genres, r#"["Action","Thriller"]"#);
-        assert!(record.people.contains("\"role\":\"Jack\""));
     }
 
     #[test]
-    fn people_lists_are_capped() {
-        let people = (0..50)
-            .map(|index| format!(r#"{{"Name":"Person {index}"}}"#))
-            .collect::<Vec<_>>()
-            .join(",");
-        let record = ItemRecord::from_dto(&dto(&format!(
-            r#"{{"Id":"a","Name":"Crowd","People":[{people}]}}"#
-        )));
-        assert_eq!(record.search_people.split(", ").count(), 30);
+    fn only_library_kinds_are_synced() {
+        for kind in ["Movie", "Series", "Season", "Episode"] {
+            assert!(is_synced_kind(kind));
+        }
+        for kind in ["Audio", "Person", "Folder", "Unknown", ""] {
+            assert!(!is_synced_kind(kind));
+        }
     }
 
     #[test]
     fn zero_runtimes_and_blank_strings_become_null() {
         let record = ItemRecord::from_dto(&dto(
-            r#"{"Id":"a","Name":"A","RunTimeTicks":0,"Overview":"   ","OfficialRating":""}"#,
+            r#"{"Id":"a","Name":"A","RunTimeTicks":0,"OfficialRating":""}"#,
         ));
         assert_eq!(record.runtime_ticks, None);
-        assert_eq!(record.overview, None);
         assert_eq!(record.official_rating, None);
     }
 

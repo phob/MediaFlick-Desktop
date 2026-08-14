@@ -245,6 +245,11 @@ impl Session {
 
     /// Called when the server answers 401/403: pauses sync and sends the UI
     /// back to the login view without discarding the cache.
+    ///
+    /// The UI is told through the shell event here, on the first rejection,
+    /// because many callers swallow their errors by design (card badges, the
+    /// about panel); without the push the app could sit on authenticated
+    /// screens with dead controls until something re-read `/api/status`.
     pub fn mark_expired(&self) {
         let already = self.read().expired;
         if already {
@@ -257,6 +262,7 @@ impl Session {
             target: "jellyfin.session",
             "the Jellyfin server rejected the stored token; re-authentication required"
         );
+        crate::app::services::notify_session_expired();
     }
 
     /// Routes an API failure so a rejected token is only ever handled once.

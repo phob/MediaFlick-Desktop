@@ -12,6 +12,7 @@ import type {
   RatingSourceDefinition,
 } from "../src/lib/api"
 import { RatingsContext } from "../src/lib/rating-context"
+import { TechnicalContext } from "../src/lib/technical-context"
 
 const mutations = vi.hoisted(() => ({
   favorite: vi.fn(),
@@ -107,11 +108,14 @@ const movie: ItemSummary = {
   playCount: 0,
   positionTicks: 0,
   favorite: false,
-  mediaStreams: [
-    stream({ type: "Video", codec: "hevc", width: 3840, height: 1608, videoRangeType: "DOVI" }),
-    stream({ index: 1, type: "Audio", codec: "truehd", channels: 8, audioSpatialFormat: "DolbyAtmos" }),
-  ],
 }
+
+// Technical streams no longer travel on summaries; the preview reads them
+// from the live batched technical channel, keyed by item id.
+const movieStreams: MediaStream[] = [
+  stream({ type: "Video", codec: "hevc", width: 3840, height: 1608, videoRangeType: "DOVI" }),
+  stream({ index: 1, type: "Audio", codec: "truehd", channels: 8, audioSpatialFormat: "DolbyAtmos" }),
+]
 
 function LocationProbe() {
   const location = useLocation()
@@ -127,8 +131,13 @@ function Providers({ children }: { children: ReactNode }) {
         definitions: new Map([[letterboxd.id, letterboxd]]),
         register: () => () => {},
       }}>
-        <PreviewProvider>{children}</PreviewProvider>
-        <LocationProbe />
+        <TechnicalContext.Provider value={{
+          items: new Map([[movie.id, movieStreams]]),
+          register: () => () => {},
+        }}>
+          <PreviewProvider>{children}</PreviewProvider>
+          <LocationProbe />
+        </TechnicalContext.Provider>
       </RatingsContext.Provider>
     </MemoryRouter>
   )
@@ -138,8 +147,8 @@ function location() {
   return document.querySelector("[data-location]")?.textContent
 }
 
-function hoverWithMouse(element: Element) {
-  const event = new MouseEvent("pointerover", { bubbles: true })
+function hoverWithMouse(element: Element, init?: MouseEventInit) {
+  const event = new MouseEvent("pointerover", { bubbles: true, ...init })
   Object.defineProperty(event, "pointerType", { value: "mouse" })
   fireEvent(element, event)
 }
@@ -188,6 +197,39 @@ describe("expanded media-card details target", () => {
     fireEvent.click(panel)
 
     expect(location()).toBe("/item/movie-1")
+  })
+
+  test("treats a release from a press that began on the card as the card click", () => {
+    // The press straddled the panel's appearance: mousedown hit the card, the
+    // panel mounted during the 170ms fade-in, and mouseup lands on the panel.
+    // The browser fires no click for a down/up target mismatch, so the panel
+    // must honour the release itself.
+    const panel = renderOpenPreview()
+
+    fireEvent.pointerUp(panel, { button: 0 })
+
+    expect(location()).toBe("/item/movie-1")
+  })
+
+  test("leaves presses that began inside the panel to their own click", () => {
+    const panel = renderOpenPreview()
+
+    fireEvent.pointerDown(panel, { button: 0 })
+    fireEvent.pointerUp(panel, { button: 0 })
+
+    expect(location()).toBe("/home")
+  })
+
+  test("does not arm the preview under a pointer that is mid-drag", () => {
+    render(<MediaCard item={movie} />, { wrapper: Providers })
+    const card = screen.getAllByRole("link")[0]!
+
+    act(() => {
+      hoverWithMouse(card, { buttons: 1 })
+      vi.advanceTimersByTime(550)
+    })
+
+    expect(document.querySelector(".preview-panel")).toBeNull()
   })
 
   test("exposes a keyboard-focusable details link across the complete panel", () => {

@@ -42,9 +42,10 @@ export interface ItemSummary {
   playCount: number
   positionTicks: number
   favorite: boolean
-  /** Lightweight video/audio descriptors cached for card-level format readouts. */
-  mediaStreams?: MediaStream[]
-  /** Only `/api/item/{id}/children` carries this; the grid queries do not. */
+  /**
+   * Only `/api/item/{id}/children` carries this, passed through from its live
+   * server reconcile; the grid queries do not, and offline rows have none.
+   */
   overview?: string | null
 }
 
@@ -76,17 +77,37 @@ export interface PersonResolveQuery {
   name?: string
 }
 
+/** The cached thin detail row: instant, but without prose or cast. */
 export interface ItemDetail extends ItemSummary {
-  overview: string | null
   genres: string[]
-  tags: string[]
-  studios: string[]
-  people: Person[]
-  criticRating: number | null
   originalTitle: string | null
   providerIds: { tmdb: string | null; imdb: string | null; tvdb: string | null }
   parentId: string | null
   dateCreated: string | null
+}
+
+/**
+ * Rich metadata fetched live from Jellyfin by `/api/item/{id}/about` for the
+ * detail page. Nothing here is cached locally; with the server unreachable
+ * these sections stay in their loading/error states.
+ */
+export interface ItemAbout {
+  overview: string | null
+  criticRating: number | null
+  people: Person[]
+  tags: string[]
+  studios: string[]
+}
+
+/** The billboard's purpose-built live prose response. */
+export interface ItemSynopsis {
+  overview: string | null
+}
+
+/** One card's live technical descriptors from `/api/technical/batch`. */
+export interface ItemTechnical {
+  id: string
+  mediaStreams: MediaStream[]
 }
 
 /** One connected public Letterboxd profile's latest RSS entry for a movie. */
@@ -231,7 +252,6 @@ export interface Status {
   libraryReady?: boolean
   bootstrap?: BootstrapProgress
   syncProgress?: SyncProgress
-  convergence?: ConvergenceDiagnostics
   companion?: CompanionStatus
   [key: string]: unknown
 }
@@ -723,46 +743,14 @@ export interface SeerrDiscoverFilters {
   timeWindow?: SeerrTrendingWindow
 }
 
-export type SyncPhase = "catalog" | "enrichment" | "reconciling" | "retrying" | "complete"
-
-export interface EnrichmentDiagnostics {
-  total: number
-  completed: number
-  pending: number
-  failed: number
-  due: number
-  nextDueAt: number | null
-  lastError: string | null
-}
+export type SyncPhase = "catalog" | "reconciling" | "retrying" | "complete"
 
 export interface SyncProgress {
   active: boolean
   phase: SyncPhase
   catalog: BootstrapProgress
-  enrichment: EnrichmentDiagnostics
   error: string | null
   retryAt: number | null
-}
-
-export interface ConvergenceRunReport {
-  selected: number
-  requests: number
-  completed: number
-  progressed: number
-  unchanged: number
-  dormant: number
-  failed: number
-  elapsedMs: number
-  retryAt: number | null
-}
-
-export interface ConvergenceDiagnostics {
-  pending: number
-  due: number
-  dormant: number
-  oldestPendingAt: number | null
-  nextDueAt: number | null
-  lastRun: ConvergenceRunReport | null
 }
 
 export interface SeerrGenre {
@@ -996,6 +984,14 @@ export const api = {
         signal,
       }),
   },
+  technical: {
+    batch: (ids: string[], signal?: AbortSignal) =>
+      request<{ items: ItemTechnical[] }>("/api/technical/batch", {
+        method: "POST",
+        body: { ids },
+        signal,
+      }),
+  },
   letterboxd: {
     profiles: () => request<{ profiles: LetterboxdProfile[] }>("/api/integrations/letterboxd"),
     add: (profile: string) =>
@@ -1050,6 +1046,9 @@ export const api = {
   items: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
+  itemSynopsis: (id: string) =>
+    request<ItemSynopsis>(`/api/item/${encodeURIComponent(id)}/synopsis`),
+  itemAbout: (id: string) => request<ItemAbout>(`/api/item/${encodeURIComponent(id)}/about`),
   itemLetterboxd: (id: string) =>
     request<LetterboxdReviewsResponse>(`/api/item/${encodeURIComponent(id)}/letterboxd`),
   children: (id: string) =>

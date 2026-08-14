@@ -1,12 +1,11 @@
-//! Local metadata cache.
+//! Local catalog index.
 //!
-//! The UI reads exclusively from here; only "what should I watch next" and the
-//! play path need the server at request time. A background thread ([`sync`])
-//! keeps the cache current.
+//! The UI browses, sorts, filters, and searches exclusively from here; rich
+//! metadata (synopsis, cast, technical streams) is fetched live from Jellyfin
+//! by the surfaces that need it. A background thread ([`sync`]) keeps the thin
+//! index current.
 
-pub mod convergence;
 pub mod db;
-pub mod enrichment;
 pub mod headless;
 pub mod model;
 pub mod sync;
@@ -22,10 +21,63 @@ use serde_json::{Value, json};
 use crate::app::ids::new_device_id;
 use crate::jellyfin::api::model::BaseItemDto;
 
-pub use convergence::LibraryChangeBatch;
+use model::is_synced_kind;
 pub use model::{
     ItemPlaybackPreference, ItemRecord, LibraryStats, UserDataRecord, resolve_playback_preference,
 };
+
+/// Which cached rows one committed mutation touched, so the UI can invalidate
+/// exactly the affected items and their parent/series/season contexts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LibraryChangeBatch {
+    pub item_ids: Vec<String>,
+    pub context_ids: Vec<String>,
+}
+
+impl LibraryChangeBatch {
+    pub fn is_empty(&self) -> bool {
+        self.item_ids.is_empty()
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        self.item_ids.extend(other.item_ids);
+        self.context_ids.extend(other.context_ids);
+        normalize_ids(&mut self.item_ids);
+        normalize_ids(&mut self.context_ids);
+    }
+}
+
+fn record_change(changes: &mut LibraryChangeBatch, dto: &BaseItemDto) {
+    record_change_identity(
+        changes,
+        &dto.id,
+        [
+            dto.parent_id.as_deref(),
+            dto.series_id.as_deref(),
+            dto.season_id.as_deref(),
+        ],
+    );
+}
+
+fn record_change_identity(
+    changes: &mut LibraryChangeBatch,
+    item_id: &str,
+    contexts: [Option<&str>; 3],
+) {
+    changes.item_ids.push(item_id.to_string());
+    for context in contexts.into_iter().flatten() {
+        if !context.trim().is_empty() {
+            changes.context_ids.push(context.to_string());
+        }
+    }
+    normalize_ids(&mut changes.item_ids);
+    normalize_ids(&mut changes.context_ids);
+}
+
+fn normalize_ids(ids: &mut Vec<String>) {
+    ids.sort_unstable();
+    ids.dedup();
+}
 
 /// Session details persisted across restarts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -824,69 +876,162 @@ impl Library {
 
     // ------------------------------------------------------------------ write
 
-    /// Upserts a page of items (and their user data) in one transaction.
-    pub fn upsert_page(&self, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
-        self.ingest_page(items)
-            .map(|_| items.iter().filter(|dto| !dto.id.trim().is_empty()).count())
-    }
-
-    pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
+    /// Ingests server DTOs into the thin index (plus their user data) in one
+    /// transaction, reporting which rows and contexts actually moved — a DTO
+    /// identical to its cached row is not a change, so the periodic full
+    /// re-page of a quiet library invalidates nothing. Non-library kinds —
+    /// people, folders — are skipped so live single-item fetches cannot
+    /// pollute browsing.
+    pub fn ingest_page(&self, dtos: &[BaseItemDto]) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
-            for record in records {
-                upsert_user_data(transaction, record)?;
+            let mut changes = LibraryChangeBatch::default();
+            for dto in dtos {
+                let kind = dto.item_type.as_deref().unwrap_or_default();
+                if dto.id.trim().is_empty() || !is_synced_kind(kind) {
+                    continue;
+                }
+                let mut moved = upsert_item(transaction, &ItemRecord::from_dto(dto))?;
+                if let Some(user_data) = &dto.user_data {
+                    moved |= upsert_user_data(
+                        transaction,
+                        &UserDataRecord::from_dto(&dto.id, user_data),
+                    )?;
+                }
+                if moved {
+                    record_change(&mut changes, dto);
+                }
             }
-            Ok(records.len())
+            Ok(changes)
         })
     }
 
-    /// Removes cached items the server no longer reports.
-    pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<usize> {
+    /// Upserts a page of items (and their user data) in one transaction.
+    pub fn upsert_page(&self, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
+        self.ingest_page(items)
+            .map(|changes| changes.item_ids.len())
+    }
+
+    /// Mirrors a page of watch state, returning how many rows actually moved.
+    pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
+        self.db.with_transaction(|transaction| {
+            let mut refreshed = 0;
+            for record in records {
+                if upsert_user_data(transaction, record)? {
+                    refreshed += 1;
+                }
+            }
+            Ok(refreshed)
+        })
+    }
+
+    /// Removes cached items the server no longer reports, retaining their old
+    /// hierarchy long enough for every affected UI context to be invalidated.
+    pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<LibraryChangeBatch> {
         self.delete_missing(&self.all_ids()?, keep)
     }
 
-    /// Removes cached children of `parent_id` the server no longer reports.
-    ///
-    /// Scoped to one parent so a detail page can reconcile itself without the
-    /// whole-library sweep, and matched with exactly the predicate [`children`]
-    /// reads back — otherwise a row this misses reappears on the season page.
-    ///
-    /// [`children`]: Self::children
-    pub fn retain_children(
+    /// Atomically replaces one live container's direct child snapshot. No
+    /// page is exposed on its own: either the complete server answer commits,
+    /// including deletions, or the cached list remains untouched.
+    pub fn reconcile_children(
         &self,
         parent_id: &str,
-        keep: &HashSet<String>,
-    ) -> rusqlite::Result<usize> {
-        self.delete_missing(&self.child_ids(parent_id)?, keep)
+        dtos: &[BaseItemDto],
+    ) -> rusqlite::Result<LibraryChangeBatch> {
+        self.db.with_transaction(|transaction| {
+            let existing = child_ids_from_connection(transaction, parent_id)?;
+            let mut keep = HashSet::new();
+            let mut changes = LibraryChangeBatch::default();
+
+            for dto in dtos {
+                let kind = dto.item_type.as_deref().unwrap_or_default();
+                if dto.id.trim().is_empty() || !is_synced_kind(kind) {
+                    continue;
+                }
+                keep.insert(dto.id.clone());
+                let mut moved = upsert_item(transaction, &ItemRecord::from_dto(dto))?;
+                if let Some(user_data) = &dto.user_data {
+                    moved |= upsert_user_data(
+                        transaction,
+                        &UserDataRecord::from_dto(&dto.id, user_data),
+                    )?;
+                }
+                if moved {
+                    record_change(&mut changes, dto);
+                }
+            }
+
+            delete_missing_from_transaction(transaction, &existing, &keep, &mut changes)?;
+            Ok(changes)
+        })
     }
 
     fn delete_missing(
         &self,
         existing: &HashSet<String>,
         keep: &HashSet<String>,
-    ) -> rusqlite::Result<usize> {
+    ) -> rusqlite::Result<LibraryChangeBatch> {
         let stale = existing.difference(keep).cloned().collect::<Vec<_>>();
         if stale.is_empty() {
-            return Ok(0);
+            return Ok(LibraryChangeBatch::default());
         }
         self.db.with_transaction(|transaction| {
-            for id in &stale {
-                transaction.execute("DELETE FROM items WHERE jellyfin_id = ?1", params![id])?;
-                transaction.execute("DELETE FROM user_data WHERE jellyfin_id = ?1", params![id])?;
-            }
-            Ok(stale.len())
+            let mut changes = LibraryChangeBatch::default();
+            delete_items_from_transaction(transaction, &stale, &mut changes)?;
+            Ok(changes)
         })
     }
 
-    fn child_ids(&self, parent_id: &str) -> rusqlite::Result<HashSet<String>> {
+    /// Maps each requested card id to the item whose media streams answer its
+    /// technical badge. Movies and episodes answer for themselves; Series and
+    /// Season rows are containers Jellyfin reports without streams, so they
+    /// are represented by their first episode in season/episode order, with
+    /// specials sorting last. A container with no cached episode is omitted —
+    /// no live query could describe it. Ids the cache has never seen (deep
+    /// links) are probed as themselves.
+    pub fn technical_stream_sources(
+        &self,
+        ids: &[String],
+    ) -> rusqlite::Result<Vec<(String, String)>> {
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT jellyfin_id FROM items
-                 WHERE parent_id = ?1 OR (season_id = ?1 AND kind = 'Episode')",
-            )?;
-            let ids = statement
-                .query_map(params![parent_id], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<HashSet<_>>>()?;
-            Ok(ids)
+            let mut sources = Vec::with_capacity(ids.len());
+            for id in ids {
+                let kind = connection
+                    .query_row(
+                        "SELECT kind FROM items WHERE jellyfin_id = ?1",
+                        params![id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                let source = match kind.as_deref() {
+                    Some("Series") => connection
+                        .query_row(
+                            "SELECT jellyfin_id FROM items
+                             WHERE kind = 'Episode' AND series_id = ?1
+                             ORDER BY parent_index_number IS NULL OR parent_index_number < 1,
+                                      parent_index_number, index_number
+                             LIMIT 1",
+                            params![id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?,
+                    // The same episode predicate the season reconcile reads.
+                    Some("Season") => connection
+                        .query_row(
+                            "SELECT jellyfin_id FROM items
+                             WHERE kind = 'Episode' AND (parent_id = ?1 OR season_id = ?1)
+                             ORDER BY index_number LIMIT 1",
+                            params![id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?,
+                    _ => Some(id.clone()),
+                };
+                if let Some(source) = source {
+                    sources.push((id.clone(), source));
+                }
+            }
+            Ok(sources)
         })
     }
 
@@ -962,15 +1107,11 @@ impl Library {
     /// Jellyfin re-creates an item with a new id when its file is replaced, so
     /// the old row would otherwise linger — offering a dead poster and a dead
     /// Play button — until the next daily deletion sweep.
-    pub fn forget(&self, item_id: &str) -> rusqlite::Result<bool> {
+    pub fn forget(&self, item_id: &str) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
-            let removed = transaction
-                .execute("DELETE FROM items WHERE jellyfin_id = ?1", params![item_id])?;
-            transaction.execute(
-                "DELETE FROM user_data WHERE jellyfin_id = ?1",
-                params![item_id],
-            )?;
-            Ok(removed > 0)
+            let mut changes = LibraryChangeBatch::default();
+            delete_items_from_transaction(transaction, &[item_id.to_string()], &mut changes)?;
+            Ok(changes)
         })
     }
 
@@ -1207,13 +1348,12 @@ impl Library {
 
     /// Seasons of a series, or episodes of a season, in broadcast order.
     ///
-    /// Carries the overview on top of the summary shape: the episode list is a
-    /// reading surface, not a poster wall, and re-fetching one synopsis per row
-    /// would be a request per episode.
+    /// Summary rows only: episode synopses are not cached. The children API
+    /// handler overlays them from its live server reconcile when online.
     pub fn children(&self, parent_id: &str) -> rusqlite::Result<Vec<Value>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS}, i.overview FROM items i
+                "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
                  WHERE i.parent_id = ?1 OR (i.season_id = ?1 AND i.kind = 'Episode')
                  ORDER BY i.parent_index_number ASC NULLS LAST,
@@ -1221,7 +1361,7 @@ impl Library {
                           i.sort_name COLLATE NOCASE ASC"
             ))?;
             let rows = statement
-                .query_map(params![parent_id], child_row)?
+                .query_map(params![parent_id], summary_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -1355,15 +1495,14 @@ const SUMMARY_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_
 i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
-COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, i.media_streams";
+COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag";
 
 const DETAIL_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
 i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
-COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, i.media_streams, i.overview, \
-i.genres, i.tags, i.studios, i.people, i.critic_rating, i.original_title, i.tmdb_id, i.imdb_id, \
-i.tvdb_id, i.parent_id, i.date_created";
+COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, \
+i.genres, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, i.parent_id, i.date_created";
 
 /// Reads one entry out of Jellyfin's per-image-type map, whose key casing the
 /// server does not guarantee. The live-DTO path in `src/shell/cef/api.rs` goes
@@ -1405,20 +1544,7 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         // which is what makes a hero read as artwork rather than as a heading.
         "logoImageTag": cached_image_tag(&image_tags, "Logo"),
         "backdropImageTag": row.get::<_, Option<String>>(20)?,
-        "mediaStreams": parsed_json(row.get::<_, String>(21)?),
     }))
-}
-
-/// A summary row plus the overview, in the one column past `SUMMARY_COLUMNS`.
-fn child_row(row: &Row<'_>) -> rusqlite::Result<Value> {
-    let mut value = summary_row(row)?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert(
-            "overview".to_string(),
-            json!(row.get::<_, Option<String>>(22)?),
-        );
-    }
-    Ok(value)
 }
 
 fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
@@ -1426,40 +1552,26 @@ fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
     let object = value
         .as_object_mut()
         .expect("summary rows serialize as objects");
-    object.insert(
-        "overview".to_string(),
-        json!(row.get::<_, Option<String>>(22)?),
-    );
-    object.insert("genres".to_string(), parsed_json(row.get::<_, String>(23)?));
-    object.insert("tags".to_string(), parsed_json(row.get::<_, String>(24)?));
-    object.insert(
-        "studios".to_string(),
-        parsed_json(row.get::<_, String>(25)?),
-    );
-    object.insert("people".to_string(), parsed_json(row.get::<_, String>(26)?));
-    object.insert(
-        "criticRating".to_string(),
-        json!(row.get::<_, Option<f64>>(27)?),
-    );
+    object.insert("genres".to_string(), parsed_json(row.get::<_, String>(21)?));
     object.insert(
         "originalTitle".to_string(),
-        json!(row.get::<_, Option<String>>(28)?),
+        json!(row.get::<_, Option<String>>(22)?),
     );
     object.insert(
         "providerIds".to_string(),
         json!({
-            "tmdb": row.get::<_, Option<String>>(29)?,
-            "imdb": row.get::<_, Option<String>>(30)?,
-            "tvdb": row.get::<_, Option<String>>(31)?,
+            "tmdb": row.get::<_, Option<String>>(23)?,
+            "imdb": row.get::<_, Option<String>>(24)?,
+            "tvdb": row.get::<_, Option<String>>(25)?,
         }),
     );
     object.insert(
         "parentId".to_string(),
-        json!(row.get::<_, Option<String>>(32)?),
+        json!(row.get::<_, Option<String>>(26)?),
     );
     object.insert(
         "dateCreated".to_string(),
-        json!(row.get::<_, Option<String>>(33)?),
+        json!(row.get::<_, Option<String>>(27)?),
     );
     Ok(value)
 }
@@ -1542,59 +1654,148 @@ fn fts_match_expression(input: &str) -> Option<String> {
     (!tokens.is_empty()).then(|| tokens.join(" AND "))
 }
 
-fn upsert_item(
+fn child_ids_from_connection(
     connection: &Connection,
-    record: &ItemRecord,
-    preserve_missing: bool,
+    parent_id: &str,
+) -> rusqlite::Result<HashSet<String>> {
+    let mut statement = connection.prepare(
+        "SELECT jellyfin_id FROM items
+         WHERE parent_id = ?1 OR (season_id = ?1 AND kind = 'Episode')",
+    )?;
+    statement
+        .query_map(params![parent_id], |row| row.get::<_, String>(0))?
+        .collect()
+}
+
+fn delete_missing_from_transaction(
+    connection: &Connection,
+    existing: &HashSet<String>,
+    keep: &HashSet<String>,
+    changes: &mut LibraryChangeBatch,
 ) -> rusqlite::Result<()> {
-    connection.execute(
+    let stale = existing.difference(keep).cloned().collect::<Vec<_>>();
+    delete_items_from_transaction(connection, &stale, changes)
+}
+
+/// Captures hierarchy before deletion so a committed removal can invalidate
+/// the item itself and every aggregate container that used to own it.
+fn delete_items_from_transaction(
+    connection: &Connection,
+    item_ids: &[String],
+    changes: &mut LibraryChangeBatch,
+) -> rusqlite::Result<()> {
+    for item_id in item_ids {
+        let contexts = connection
+            .query_row(
+                "SELECT parent_id, series_id, season_id FROM items WHERE jellyfin_id = ?1",
+                params![item_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let removed =
+            connection.execute("DELETE FROM items WHERE jellyfin_id = ?1", params![item_id])?;
+        connection.execute(
+            "DELETE FROM user_data WHERE jellyfin_id = ?1",
+            params![item_id],
+        )?;
+        if removed > 0 {
+            let (parent_id, series_id, season_id) = contexts.unwrap_or_default();
+            record_change_identity(
+                changes,
+                item_id,
+                [
+                    parent_id.as_deref(),
+                    series_id.as_deref(),
+                    season_id.as_deref(),
+                ],
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A plain full-row upsert: every ingest source (catalog pages, live detail
+/// fetches, children reconciles) requests a superset of the thin fields, so
+/// the freshest observation simply wins.
+/// Writes one catalog row, reporting whether the row is new or actually moved.
+///
+/// The conflict update carries a `WHERE` comparing every mirrored column, so
+/// the periodic re-page of an unchanged library performs no row writes, fires
+/// no FTS triggers, and reports nothing for the UI to invalidate. `synced_at`
+/// sits outside the comparison on purpose: it would differ every cycle, and
+/// nothing reads it back.
+fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<bool> {
+    let written = connection.execute(
         "INSERT INTO items (
             jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
-            runtime_ticks, overview, community_rating, critic_rating, official_rating,
-            parent_id, series_id, series_name, season_id, index_number, parent_index_number,
-            child_count, tmdb_id, imdb_id, tvdb_id, genres, tags, studios, people,
-            image_tags, primary_image_tag, backdrop_image_tag, media_streams, search_genres,
-            search_people, date_created, date_last_saved, synced_at
+            runtime_ticks, community_rating, official_rating, parent_id, series_id,
+            series_name, season_id, index_number, parent_index_number, child_count,
+            tmdb_id, imdb_id, tvdb_id, genres, image_tags, primary_image_tag,
+            backdrop_image_tag, search_genres, date_created, date_last_saved, synced_at
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33,
-            ?34, ?35
+            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
         )
         ON CONFLICT(jellyfin_id) DO UPDATE SET
-            kind = CASE WHEN ?36 AND excluded.kind = 'Unknown' THEN items.kind ELSE excluded.kind END,
-            name = CASE WHEN ?36 AND excluded.name = 'Untitled' THEN items.name ELSE excluded.name END,
-            original_title = CASE WHEN ?36 THEN COALESCE(excluded.original_title, items.original_title) ELSE excluded.original_title END,
-            sort_name = CASE WHEN ?36 THEN COALESCE(excluded.sort_name, items.sort_name) ELSE excluded.sort_name END,
-            year = CASE WHEN ?36 THEN COALESCE(excluded.year, items.year) ELSE excluded.year END,
-            premiere_date = CASE WHEN ?36 THEN COALESCE(excluded.premiere_date, items.premiere_date) ELSE excluded.premiere_date END,
-            runtime_ticks = CASE WHEN ?36 THEN COALESCE(excluded.runtime_ticks, items.runtime_ticks) ELSE excluded.runtime_ticks END,
-            overview = CASE WHEN ?36 THEN COALESCE(excluded.overview, items.overview) ELSE excluded.overview END,
-            community_rating = CASE WHEN ?36 THEN COALESCE(excluded.community_rating, items.community_rating) ELSE excluded.community_rating END,
-            critic_rating = CASE WHEN ?36 THEN COALESCE(excluded.critic_rating, items.critic_rating) ELSE excluded.critic_rating END,
-            official_rating = CASE WHEN ?36 THEN COALESCE(excluded.official_rating, items.official_rating) ELSE excluded.official_rating END,
-            parent_id = CASE WHEN ?36 THEN COALESCE(excluded.parent_id, items.parent_id) ELSE excluded.parent_id END,
-            series_id = CASE WHEN ?36 THEN COALESCE(excluded.series_id, items.series_id) ELSE excluded.series_id END,
-            series_name = CASE WHEN ?36 THEN COALESCE(excluded.series_name, items.series_name) ELSE excluded.series_name END,
-            season_id = CASE WHEN ?36 THEN COALESCE(excluded.season_id, items.season_id) ELSE excluded.season_id END,
-            index_number = CASE WHEN ?36 THEN COALESCE(excluded.index_number, items.index_number) ELSE excluded.index_number END,
-            parent_index_number = CASE WHEN ?36 THEN COALESCE(excluded.parent_index_number, items.parent_index_number) ELSE excluded.parent_index_number END,
-            child_count = CASE WHEN ?36 THEN COALESCE(excluded.child_count, items.child_count) ELSE excluded.child_count END,
-            tmdb_id = CASE WHEN ?36 THEN COALESCE(excluded.tmdb_id, items.tmdb_id) ELSE excluded.tmdb_id END,
-            imdb_id = CASE WHEN ?36 THEN COALESCE(excluded.imdb_id, items.imdb_id) ELSE excluded.imdb_id END,
-            tvdb_id = CASE WHEN ?36 THEN COALESCE(excluded.tvdb_id, items.tvdb_id) ELSE excluded.tvdb_id END,
-            genres = CASE WHEN ?36 AND excluded.genres = '[]' THEN items.genres ELSE excluded.genres END,
-            tags = CASE WHEN ?36 AND excluded.tags = '[]' THEN items.tags ELSE excluded.tags END,
-            studios = CASE WHEN ?36 AND excluded.studios = '[]' THEN items.studios ELSE excluded.studios END,
-            people = CASE WHEN ?36 AND excluded.people = '[]' THEN items.people ELSE excluded.people END,
-            image_tags = CASE WHEN ?36 AND excluded.image_tags = '{}' THEN items.image_tags ELSE excluded.image_tags END,
-            primary_image_tag = CASE WHEN ?36 THEN COALESCE(excluded.primary_image_tag, items.primary_image_tag) ELSE excluded.primary_image_tag END,
-            backdrop_image_tag = CASE WHEN ?36 THEN COALESCE(excluded.backdrop_image_tag, items.backdrop_image_tag) ELSE excluded.backdrop_image_tag END,
-            media_streams = CASE WHEN ?36 AND excluded.media_streams = '[]' THEN items.media_streams ELSE excluded.media_streams END,
-            search_genres = CASE WHEN ?36 AND excluded.search_genres = '' THEN items.search_genres ELSE excluded.search_genres END,
-            search_people = CASE WHEN ?36 AND excluded.search_people = '' THEN items.search_people ELSE excluded.search_people END,
-            date_created = CASE WHEN ?36 THEN COALESCE(excluded.date_created, items.date_created) ELSE excluded.date_created END,
-            date_last_saved = CASE WHEN ?36 THEN COALESCE(excluded.date_last_saved, items.date_last_saved) ELSE excluded.date_last_saved END,
-            synced_at = excluded.synced_at",
+            kind = excluded.kind,
+            name = excluded.name,
+            original_title = excluded.original_title,
+            sort_name = excluded.sort_name,
+            year = excluded.year,
+            premiere_date = excluded.premiere_date,
+            runtime_ticks = excluded.runtime_ticks,
+            community_rating = excluded.community_rating,
+            official_rating = excluded.official_rating,
+            parent_id = excluded.parent_id,
+            series_id = excluded.series_id,
+            series_name = excluded.series_name,
+            season_id = excluded.season_id,
+            index_number = excluded.index_number,
+            parent_index_number = excluded.parent_index_number,
+            child_count = excluded.child_count,
+            tmdb_id = excluded.tmdb_id,
+            imdb_id = excluded.imdb_id,
+            tvdb_id = excluded.tvdb_id,
+            genres = excluded.genres,
+            image_tags = excluded.image_tags,
+            primary_image_tag = excluded.primary_image_tag,
+            backdrop_image_tag = excluded.backdrop_image_tag,
+            search_genres = excluded.search_genres,
+            date_created = excluded.date_created,
+            date_last_saved = excluded.date_last_saved,
+            synced_at = excluded.synced_at
+        WHERE kind IS NOT excluded.kind
+            OR name IS NOT excluded.name
+            OR original_title IS NOT excluded.original_title
+            OR sort_name IS NOT excluded.sort_name
+            OR year IS NOT excluded.year
+            OR premiere_date IS NOT excluded.premiere_date
+            OR runtime_ticks IS NOT excluded.runtime_ticks
+            OR community_rating IS NOT excluded.community_rating
+            OR official_rating IS NOT excluded.official_rating
+            OR parent_id IS NOT excluded.parent_id
+            OR series_id IS NOT excluded.series_id
+            OR series_name IS NOT excluded.series_name
+            OR season_id IS NOT excluded.season_id
+            OR index_number IS NOT excluded.index_number
+            OR parent_index_number IS NOT excluded.parent_index_number
+            OR child_count IS NOT excluded.child_count
+            OR tmdb_id IS NOT excluded.tmdb_id
+            OR imdb_id IS NOT excluded.imdb_id
+            OR tvdb_id IS NOT excluded.tvdb_id
+            OR genres IS NOT excluded.genres
+            OR image_tags IS NOT excluded.image_tags
+            OR primary_image_tag IS NOT excluded.primary_image_tag
+            OR backdrop_image_tag IS NOT excluded.backdrop_image_tag
+            OR search_genres IS NOT excluded.search_genres
+            OR date_created IS NOT excluded.date_created
+            OR date_last_saved IS NOT excluded.date_last_saved",
         params![
             record.jellyfin_id,
             record.kind,
@@ -1604,9 +1805,7 @@ fn upsert_item(
             record.year,
             record.premiere_date,
             record.runtime_ticks,
-            record.overview,
             record.community_rating,
-            record.critic_rating,
             record.official_rating,
             record.parent_id,
             record.series_id,
@@ -1619,26 +1818,23 @@ fn upsert_item(
             record.imdb_id,
             record.tvdb_id,
             record.genres,
-            record.tags,
-            record.studios,
-            record.people,
             record.image_tags,
             record.primary_image_tag,
             record.backdrop_image_tag,
-            record.media_streams,
             record.search_genres,
-            record.search_people,
             record.date_created,
             record.date_last_saved,
             now_unix(),
-            preserve_missing,
         ],
     )?;
-    Ok(())
+    Ok(written > 0)
 }
 
-fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlite::Result<()> {
-    connection.execute(
+/// Mirrors one watch-state row, reporting whether it is new or actually moved.
+/// Like [`upsert_item`], an identical row performs no write; `updated_at` is
+/// outside the comparison because it would differ on every sweep.
+fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlite::Result<bool> {
+    let written = connection.execute(
         "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
              is_favorite, played_percentage, last_played_date, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -1648,7 +1844,13 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
              is_favorite = excluded.is_favorite,
              played_percentage = excluded.played_percentage,
              last_played_date = excluded.last_played_date,
-             updated_at = excluded.updated_at",
+             updated_at = excluded.updated_at
+         WHERE played IS NOT excluded.played
+             OR play_count IS NOT excluded.play_count
+             OR playback_position_ticks IS NOT excluded.playback_position_ticks
+             OR is_favorite IS NOT excluded.is_favorite
+             OR played_percentage IS NOT excluded.played_percentage
+             OR last_played_date IS NOT excluded.last_played_date",
         params![
             record.jellyfin_id,
             record.played,
@@ -1660,7 +1862,7 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
             now_unix(),
         ],
     )?;
-    Ok(())
+    Ok(written > 0)
 }
 
 pub(crate) fn now_unix() -> i64 {
@@ -1750,6 +1952,89 @@ mod tests {
         assert_eq!(cached_image_tag(&tags, "Banner"), None);
         // A row stored before the column existed parses to `null`, not a map.
         assert_eq!(cached_image_tag(&json!(null), "Logo"), None);
+    }
+
+    /// The daily full re-page feeds every row through here; an unchanged
+    /// library must produce zero UI invalidations and zero FTS churn from it.
+    #[test]
+    fn re_ingesting_an_identical_page_reports_no_changes() {
+        let library = Library::open_in_memory().expect("library");
+        let page = [dto(
+            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
+                "Genres":["Action"],"UserData":{"Played":false}}"#,
+        )];
+        let first = library.ingest_page(&page).expect("first ingest");
+        assert_eq!(first.item_ids, vec!["m1".to_string()]);
+
+        let second = library.ingest_page(&page).expect("second ingest");
+        assert!(second.is_empty());
+
+        // A watch-state-only difference still reports the row…
+        let watched = [dto(
+            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
+                "Genres":["Action"],"UserData":{"Played":true}}"#,
+        )];
+        let third = library.ingest_page(&watched).expect("watched ingest");
+        assert_eq!(third.item_ids, vec!["m1".to_string()]);
+
+        // …and so does an in-place metadata edit.
+        let edited = [dto(
+            r#"{"Id":"m1","Name":"The Matrix Reloaded","Type":"Movie","ProductionYear":1999,
+                "Genres":["Action"],"UserData":{"Played":true}}"#,
+        )];
+        let fourth = library.ingest_page(&edited).expect("edited ingest");
+        assert_eq!(fourth.item_ids, vec!["m1".to_string()]);
+    }
+
+    #[test]
+    fn technical_sources_resolve_containers_to_a_representative_episode() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"m1","Name":"Movie","Type":"Movie"}"#),
+                dto(r#"{"Id":"s1","Name":"Show","Type":"Series"}"#),
+                dto(r#"{"Id":"season1","Name":"Season 1","Type":"Season",
+                        "SeriesId":"s1","ParentId":"s1","IndexNumber":1}"#),
+                // A special: numerically first, representative of nothing.
+                dto(
+                    r#"{"Id":"e0","Name":"Special","Type":"Episode","SeriesId":"s1",
+                        "ParentIndexNumber":0,"IndexNumber":1}"#,
+                ),
+                dto(
+                    r#"{"Id":"e2","Name":"S1E2","Type":"Episode","SeriesId":"s1",
+                        "SeasonId":"season1","ParentId":"season1",
+                        "ParentIndexNumber":1,"IndexNumber":2}"#,
+                ),
+                dto(
+                    r#"{"Id":"e1","Name":"S1E1","Type":"Episode","SeriesId":"s1",
+                        "SeasonId":"season1","ParentId":"season1",
+                        "ParentIndexNumber":1,"IndexNumber":1}"#,
+                ),
+                dto(r#"{"Id":"empty","Name":"Empty Show","Type":"Series"}"#),
+            ])
+            .expect("seed");
+
+        let sources = library
+            .technical_stream_sources(&[
+                "m1".to_string(),
+                "s1".to_string(),
+                "season1".to_string(),
+                "empty".to_string(),
+                "deep-link".to_string(),
+            ])
+            .expect("sources");
+        assert_eq!(
+            sources,
+            vec![
+                // Playable kinds and unknown (deep-linked) ids probe themselves;
+                // containers resolve to their first regular episode, and a
+                // container without a cached episode is omitted entirely.
+                ("m1".to_string(), "m1".to_string()),
+                ("s1".to_string(), "e1".to_string()),
+                ("season1".to_string(), "e1".to_string()),
+                ("deep-link".to_string(), "deep-link".to_string()),
+            ]
+        );
     }
 
     fn seeded() -> Library {
@@ -1984,7 +2269,7 @@ mod tests {
     }
 
     #[test]
-    fn search_matches_titles_and_cast_by_prefix() {
+    fn search_matches_titles_and_genres_by_prefix() {
         let library = seeded();
         let page = library
             .query(&ItemQuery {
@@ -1996,14 +2281,15 @@ mod tests {
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0]["name"], "The Matrix");
 
-        let by_actor = library
+        let by_genre = library
             .query(&ItemQuery {
-                search: Some("keanu".to_string()),
+                search: Some("acti".to_string()),
                 limit: 10,
                 ..Default::default()
             })
             .expect("query");
-        assert_eq!(by_actor.total, 1);
+        assert_eq!(by_genre.total, 1);
+        assert_eq!(by_genre.items[0]["id"], "m1");
     }
 
     #[test]
@@ -2224,15 +2510,6 @@ mod tests {
         assert_eq!(rows[1]["id"], "e2");
     }
 
-    /// The episode list prints a synopsis per row; without it here that would
-    /// be one request per episode.
-    #[test]
-    fn children_carry_their_overview() {
-        let rows = seeded().children("season1").expect("children");
-        assert_eq!(rows[0]["overview"], "Mark is promoted.");
-        assert_eq!(rows[1]["overview"], serde_json::Value::Null);
-    }
-
     #[test]
     fn next_episode_follows_broadcast_order() {
         let library = seeded();
@@ -2241,17 +2518,16 @@ mod tests {
         assert!(library.next_episode("e2").expect("next").is_none());
     }
 
+    /// The thin index deliberately carries no technical streams; card badges
+    /// arrive over the live batch channel instead.
     #[test]
-    fn summary_rows_include_only_cached_video_and_audio_technical_streams() {
+    fn summary_rows_are_thin_and_carry_no_rich_metadata() {
         let library = Library::open_in_memory().expect("library");
         library
             .upsert_page(&[dto(
                 r#"{"Id":"m1","Name":"Feature","Type":"Movie","MediaStreams":[
-                    {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":1608,
-                     "VideoRange":"HDR","VideoRangeType":"DOVIWithHDR10","BitDepth":10},
-                    {"Index":1,"Type":"Audio","Codec":"truehd","Profile":"Dolby TrueHD",
-                     "Channels":8,"AudioSpatialFormat":"DolbyAtmos","IsDefault":true},
-                    {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"eng"}]}"#,
+                    {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":1608}],
+                    "Overview":"Synopsis","People":[{"Name":"Actor"}]}"#,
             )])
             .expect("seed");
 
@@ -2261,30 +2537,23 @@ mod tests {
                 ..Default::default()
             })
             .expect("query");
-        let streams = page.items[0]["mediaStreams"].as_array().expect("streams");
-
-        assert_eq!(streams.len(), 2);
-        assert_eq!(streams[0]["type"], "Video");
-        assert_eq!(streams[0]["videoRangeType"], "DOVIWithHDR10");
-        assert_eq!(streams[1]["codec"], "truehd");
-        assert_eq!(streams[1]["audioSpatialFormat"], "DolbyAtmos");
-        assert!(streams.iter().all(|stream| stream["type"] != "Subtitle"));
+        let row = page.items[0].as_object().expect("row object");
+        assert!(!row.contains_key("mediaStreams"));
+        assert!(!row.contains_key("overview"));
+        assert!(!row.contains_key("people"));
     }
 
     #[test]
-    fn item_detail_includes_people_and_provider_ids() {
+    fn item_detail_includes_genres_and_provider_ids() {
         let library = Library::open_in_memory().expect("library");
         library
-            .upsert_page(&[dto(
-                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","Overview":"Neo.",
-                    "Genres":["Action"],"ProviderIds":{"Tmdb":"603"},
-                    "People":[{"Name":"Keanu Reeves","Role":"Neo"}]}"#,
-            )])
+            .upsert_page(&[dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie",
+                    "OriginalTitle":"Matrix","Genres":["Action"],
+                    "ProviderIds":{"Tmdb":"603"}}"#)])
             .expect("seed");
         let detail = library.item("m1").expect("query").expect("item");
-        assert_eq!(detail["overview"], "Neo.");
         assert_eq!(detail["genres"][0], "Action");
-        assert_eq!(detail["people"][0]["role"], "Neo");
+        assert_eq!(detail["originalTitle"], "Matrix");
         assert_eq!(detail["providerIds"]["tmdb"], "603");
         assert!(library.item("missing").expect("query").is_none());
     }
@@ -2301,48 +2570,81 @@ mod tests {
             .into_iter()
             .map(str::to_string)
             .collect::<HashSet<_>>();
-        assert_eq!(library.retain_ids(&keep).expect("retain"), 1);
+        let changes = library.retain_ids(&keep).expect("retain");
+        assert_eq!(changes.item_ids, ["m2"]);
+        assert!(changes.context_ids.is_empty());
         assert!(library.item("m2").expect("query").is_none());
-        assert_eq!(library.retain_ids(&keep).expect("retain"), 0);
+        assert!(library.retain_ids(&keep).expect("retain").is_empty());
     }
 
-    /// A season page reads its episodes back through `children`, so anything
-    /// that predicate can see has to be evictable through `retain_children`.
+    /// A season page reads its episodes back through `children`, so a live
+    /// snapshot must evict anything that same predicate can still see.
     #[test]
-    fn retain_children_drops_only_the_episodes_the_server_dropped() {
+    fn child_reconcile_drops_only_the_episodes_the_server_dropped() {
         let library = seeded();
-        let keep = ["e2"]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<HashSet<_>>();
+        let live = [dto(
+            r#"{"Id":"e2","Name":"Half Loop","Type":"Episode","SeriesId":"s1",
+                "ParentId":"season1","SeasonId":"season1",
+                "IndexNumber":2,"ParentIndexNumber":1}"#,
+        )];
 
-        assert_eq!(
-            library.retain_children("season1", &keep).expect("retain"),
-            1
-        );
+        let changes = library
+            .reconcile_children("season1", &live)
+            .expect("reconcile");
+        assert_eq!(changes.item_ids, ["e1"]);
+        assert_eq!(changes.context_ids, ["s1", "season1"]);
         let remaining = library.children("season1").expect("children");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0]["id"], "e2");
         // Untouched: the sweep is scoped to that one parent.
         assert!(library.item("m1").expect("query").is_some());
-        assert_eq!(
-            library.retain_children("season1", &keep).expect("retain"),
-            0
+        assert!(
+            library
+                .reconcile_children("season1", &live)
+                .expect("reconcile")
+                .is_empty()
         );
     }
 
     /// The whole point of the season reconcile: a server that reports no
     /// children clears the cached ones instead of leaving ghosts behind.
     #[test]
-    fn retain_children_clears_a_parent_the_server_reports_as_empty() {
+    fn child_reconcile_clears_a_parent_the_server_reports_as_empty() {
         let library = seeded();
-        assert_eq!(
-            library
-                .retain_children("season1", &HashSet::new())
-                .expect("retain"),
-            2
-        );
+        let changes = library
+            .reconcile_children("season1", &[])
+            .expect("reconcile");
+        assert_eq!(changes.item_ids, ["e1", "e2"]);
+        assert_eq!(changes.context_ids, ["s1", "season1"]);
         assert!(library.children("season1").expect("children").is_empty());
+    }
+
+    #[test]
+    fn child_reconcile_reports_upserts_deletions_and_parent_contexts_together() {
+        let library = seeded();
+        let live = [
+            dto(
+                r#"{"Id":"e2","Name":"Half Loop Updated","Type":"Episode","SeriesId":"s1",
+                    "ParentId":"season1","SeasonId":"season1",
+                    "IndexNumber":2,"ParentIndexNumber":1}"#,
+            ),
+            dto(
+                r#"{"Id":"e3","Name":"In Perpetuity","Type":"Episode","SeriesId":"s1",
+                    "ParentId":"season1","SeasonId":"season1",
+                    "IndexNumber":3,"ParentIndexNumber":1}"#,
+            ),
+        ];
+
+        let changes = library
+            .reconcile_children("season1", &live)
+            .expect("reconcile");
+        assert_eq!(changes.item_ids, ["e1", "e2", "e3"]);
+        assert_eq!(changes.context_ids, ["s1", "season1"]);
+        let remaining = library.children("season1").expect("children");
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0]["id"], "e2");
+        assert_eq!(remaining[0]["name"], "Half Loop Updated");
+        assert_eq!(remaining[1]["id"], "e3");
     }
 
     #[test]
@@ -2360,7 +2662,9 @@ mod tests {
     fn forget_drops_a_single_item_and_its_user_data() {
         let library = seeded();
 
-        assert!(library.forget("m1").expect("forget"));
+        let changes = library.forget("m1").expect("forget");
+        assert_eq!(changes.item_ids, ["m1"]);
+        assert!(changes.context_ids.is_empty());
         assert!(library.item("m1").expect("query").is_none());
         assert!(
             !library
@@ -2370,7 +2674,15 @@ mod tests {
                 .any(|row| row["id"] == "m1")
         );
         // Idempotent: a second eviction is not an error and reports no change.
-        assert!(!library.forget("m1").expect("forget"));
+        assert!(library.forget("m1").expect("forget").is_empty());
+    }
+
+    #[test]
+    fn forgetting_an_episode_keeps_its_old_hierarchy_in_the_change_batch() {
+        let library = seeded();
+        let changes = library.forget("e1").expect("forget");
+        assert_eq!(changes.item_ids, ["e1"]);
+        assert_eq!(changes.context_ids, ["s1", "season1"]);
     }
 
     #[test]
@@ -2451,7 +2763,7 @@ mod tests {
                 library.playback_preference("m1").expect("restored"),
                 Some(preference)
             );
-            assert!(library.forget("m1").expect("forget item"));
+            assert!(!library.forget("m1").expect("forget item").is_empty());
             assert_eq!(
                 library
                     .playback_preference("m1")
@@ -2487,8 +2799,8 @@ mod tests {
             .ingest_page(&[dto(
                 r#"{"Id":"sparse","Name":"Sparse","Type":"Movie","ProviderIds":{"Tmdb":"1"}}"#,
             )])
-            .expect("queue sparse metadata");
-        assert_eq!(library.convergence_diagnostics().pending, 1);
+            .expect("cache a row");
+        assert_eq!(library.stats().total, 1);
 
         library.clear_session(true).expect("logout");
         let after = library.credentials();
@@ -2496,7 +2808,7 @@ mod tests {
         assert_eq!(after.device_id, device_id);
         assert_eq!(after.server_url.as_deref(), Some("http://server:8096"));
         assert_eq!(after.token, None);
-        assert_eq!(library.convergence_diagnostics().pending, 0);
+        assert_eq!(library.stats().total, 0);
     }
 
     #[test]
