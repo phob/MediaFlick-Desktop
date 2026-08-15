@@ -12,6 +12,7 @@ import { useState, type ReactNode } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
+import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -418,6 +419,8 @@ export default function DiscoverDetail() {
           </div>
         </div>
       </header>
+
+      <DiscoverLetterboxdReviews mediaType={item.mediaType} tmdbId={item.tmdbId} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <section className="flex flex-col gap-3">

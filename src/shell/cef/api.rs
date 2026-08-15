@@ -256,6 +256,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["integrations", "letterboxd", id, "open"] if request.is("POST") => {
             letterboxd_open_profile(services, &percent_decode(id))
         }
+        ["letterboxd", "movie", tmdb_id] if request.is("GET") => {
+            movie_letterboxd(services, &percent_decode(tmdb_id))
+        }
         ["auth", "connect"] if request.is("POST") => auth_connect(services, request),
         ["auth", "login"] if request.is("POST") => auth_login(services, request),
         ["auth", "quickconnect", "start"] if request.is("POST") => {
@@ -1803,9 +1806,37 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> ApiResponse {
             "unavailableProfiles": 0,
         }));
     };
+    letterboxd_reviews_for_movie(services, &server_id, &user_id, tmdb_id)
+}
+
+fn movie_letterboxd(services: &Arc<Services>, tmdb_id: &str) -> ApiResponse {
+    let Some(tmdb_id) = canonical_tmdb_movie_id(tmdb_id) else {
+        return ApiResponse::error(400, "that is not a TMDB movie id");
+    };
+    let (server_id, user_id) = match letterboxd_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    letterboxd_reviews_for_movie(services, &server_id, &user_id, &tmdb_id)
+}
+
+fn canonical_tmdb_movie_id(value: &str) -> Option<String> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let id = value.parse::<i64>().ok()?;
+    (id > 0).then(|| id.to_string())
+}
+
+fn letterboxd_reviews_for_movie(
+    services: &Arc<Services>,
+    server_id: &str,
+    user_id: &str,
+    tmdb_id: &str,
+) -> ApiResponse {
     let profiles = match services
         .library
-        .external_profiles("letterboxd", &server_id, &user_id)
+        .external_profiles("letterboxd", server_id, user_id)
     {
         Ok(profiles) => profiles,
         Err(error) => return storage_failure(&error),
@@ -2829,9 +2860,10 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 mod tests {
     use super::{
         ApiRequest, ApiResponse, HOME_ROW_LIMIT, ITEM_ABOUT_CAST_LIMIT, ITEM_ABOUT_CREW_LIMIT,
-        bounded_about_people, bounded_byte_range, cache_key, clear_person_availability,
-        external_url, file_name_of, handle, is_iso_date, join_person_items, latest_home_items,
-        media_source_json, merge_next_up, mime_for_image, summary_from_dto, youtube_embed_url,
+        bounded_about_people, bounded_byte_range, cache_key, canonical_tmdb_movie_id,
+        clear_person_availability, external_url, file_name_of, handle, is_iso_date,
+        join_person_items, latest_home_items, media_source_json, merge_next_up, mime_for_image,
+        summary_from_dto, youtube_embed_url,
     };
     use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
     use crate::library::Library;
@@ -2898,6 +2930,15 @@ mod tests {
         assert!(!is_iso_date("2026-8-2"));
         assert!(!is_iso_date("2026/08/02"));
         assert!(!is_iso_date("../../etc"));
+    }
+
+    #[test]
+    fn discovered_letterboxd_lookups_require_a_positive_tmdb_movie_id() {
+        assert_eq!(canonical_tmdb_movie_id("603").as_deref(), Some("603"));
+        assert_eq!(canonical_tmdb_movie_id("000603").as_deref(), Some("603"));
+        for invalid in ["", "0", "+603", "-1", "603.0", "movie-603"] {
+            assert_eq!(canonical_tmdb_movie_id(invalid), None, "{invalid}");
+        }
     }
 
     #[test]

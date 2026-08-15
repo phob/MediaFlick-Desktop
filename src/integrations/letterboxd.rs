@@ -63,9 +63,11 @@ impl Verification {
     }
 }
 
-/// One connected member's latest RSS entry for a film. Review content is
-/// always plain text; `entry_url` is present only when it is a canonical film
-/// URL below that same member profile.
+/// One connected member's newest rating and newest written review available
+/// in the current RSS feed for a film. Review content is always plain text;
+/// when a review is present, `entry_url` and `watched_date` describe that
+/// review rather than a newer rating-only rewatch. The URL is present only
+/// when it is a canonical film URL below that same member profile.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberReview {
@@ -348,7 +350,7 @@ fn parse_feed(
         let Some(tmdb_id) = child_text(item, "movieId").map(str::trim) else {
             continue;
         };
-        if !valid_tmdb_id(tmdb_id) || by_tmdb_id.contains_key(tmdb_id) {
+        if !valid_tmdb_id(tmdb_id) {
             continue;
         }
 
@@ -374,21 +376,41 @@ fn parse_feed(
             .map(str::trim)
             .filter(|value| valid_iso_date(value))
             .map(str::to_string);
-        by_tmdb_id.insert(
-            tmdb_id.to_string(),
-            MemberReview {
+
+        let activity = by_tmdb_id
+            .entry(tmdb_id.to_string())
+            .or_insert_with(|| MemberReview {
                 profile_id: profile.id.clone(),
                 username: source.username.clone(),
                 display_name: display_name.clone(),
                 profile_url: source.canonical_url.clone(),
-                entry_url,
-                rating,
-                review,
-                review_truncated,
-                watched_date,
+                entry_url: None,
+                rating: None,
+                review: None,
+                review_truncated: false,
+                watched_date: None,
                 stale: false,
-            },
-        );
+            });
+
+        // Letterboxd orders the feed newest first. Keep looking only until the
+        // newest value for each independent surface has been found: a newer
+        // rating-only rewatch must not erase an older written review that is
+        // still present in this same bounded feed.
+        let selects_newest_rating = activity.rating.is_none() && rating.is_some();
+        if selects_newest_rating {
+            activity.rating = rating;
+        }
+        if activity.review.is_none() && review.is_some() {
+            activity.review = review;
+            activity.review_truncated = review_truncated;
+            activity.entry_url = entry_url;
+            activity.watched_date = watched_date;
+        } else if activity.review.is_none() && selects_newest_rating {
+            // Until a written review is found, the newest rated entry remains
+            // the click/date destination for rating-only activity.
+            activity.entry_url = entry_url;
+            activity.watched_date = watched_date;
+        }
     }
     Ok(by_tmdb_id)
 }
@@ -664,19 +686,50 @@ mod tests {
     }
 
     #[test]
-    fn ignores_watch_only_description_and_duplicate_older_entries() {
+    fn combines_the_newest_rating_with_an_older_review_in_the_same_feed() {
         let xml = r#"<rss xmlns:letterboxd="https://letterboxd.com" xmlns:tmdb="https://themoviedb.org"><channel>
-          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-2</guid><letterboxd:memberRating>3.5</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p><img src="poster"/></p><p>Watched on Monday August 3, 2026.</p>]]></description></item>
-          <item><link>https://letterboxd.com/alice/film/movie/</link><guid>letterboxd-review-1</guid><letterboxd:memberRating>2.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p>Older words.</p>]]></description></item>
+          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-2</guid><letterboxd:watchedDate>2026-08-03</letterboxd:watchedDate><letterboxd:memberRating>3.5</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p><img src="poster"/></p><p>Watched on Monday August 3, 2026.</p>]]></description></item>
+          <item><link>https://letterboxd.com/alice/film/movie/</link><guid>letterboxd-review-1</guid><letterboxd:watchedDate>2026-07-12</letterboxd:watchedDate><letterboxd:memberRating>2.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p>Older words.</p>]]></description></item>
         </channel></rss>"#;
         let reviews = parse_feed(&profile(), xml).expect("feed");
         let latest = reviews.get("42").expect("latest");
         assert_eq!(latest.rating, Some(3.5));
-        assert_eq!(latest.review, None);
+        assert_eq!(latest.review.as_deref(), Some("Older words."));
         assert_eq!(
             latest.entry_url.as_deref(),
-            Some("https://letterboxd.com/alice/film/movie/1/")
+            Some("https://letterboxd.com/alice/film/movie/")
         );
+        assert_eq!(latest.watched_date.as_deref(), Some("2026-07-12"));
+    }
+
+    #[test]
+    fn combines_a_newest_review_with_the_newest_older_rating() {
+        let xml = r#"<rss xmlns:letterboxd="https://letterboxd.com" xmlns:tmdb="https://themoviedb.org"><channel>
+          <item><link>https://letterboxd.com/alice/film/movie/2/</link><guid>letterboxd-review-2</guid><letterboxd:watchedDate>2026-08-03</letterboxd:watchedDate><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p>Newest words.</p>]]></description></item>
+          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-1</guid><letterboxd:watchedDate>2026-07-12</letterboxd:watchedDate><letterboxd:memberRating>4.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
+        </channel></rss>"#;
+        let reviews = parse_feed(&profile(), xml).expect("feed");
+        let latest = reviews.get("42").expect("latest");
+        assert_eq!(latest.rating, Some(4.0));
+        assert_eq!(latest.review.as_deref(), Some("Newest words."));
+        assert_eq!(
+            latest.entry_url.as_deref(),
+            Some("https://letterboxd.com/alice/film/movie/2/")
+        );
+        assert_eq!(latest.watched_date.as_deref(), Some("2026-08-03"));
+    }
+
+    #[test]
+    fn does_not_borrow_an_older_link_for_a_newer_rating_only_entry() {
+        let xml = r#"<rss xmlns:letterboxd="https://letterboxd.com" xmlns:tmdb="https://themoviedb.org"><channel>
+          <item><link>https://example.test/not-canonical</link><guid>letterboxd-watch-2</guid><letterboxd:watchedDate>2026-08-03</letterboxd:watchedDate><letterboxd:memberRating>3.5</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
+          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-1</guid><letterboxd:watchedDate>2026-07-12</letterboxd:watchedDate><letterboxd:memberRating>2.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
+        </channel></rss>"#;
+        let reviews = parse_feed(&profile(), xml).expect("feed");
+        let latest = reviews.get("42").expect("latest");
+        assert_eq!(latest.rating, Some(3.5));
+        assert_eq!(latest.entry_url, None);
+        assert_eq!(latest.watched_date.as_deref(), Some("2026-08-03"));
     }
 
     #[test]
