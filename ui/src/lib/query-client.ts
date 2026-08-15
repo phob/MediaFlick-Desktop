@@ -45,6 +45,7 @@ export const queryKeys = {
   itemSynopsis: (id: string) => ["item", id, "synopsis"] as const,
   itemAbout: (id: string) => ["item", id, "about"] as const,
   letterboxdReviews: (id: string) => ["letterboxd", "item", id] as const,
+  letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
   children: (id: string) => ["item", id, "children"] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,

@@ -52,6 +52,23 @@ function BrandSourceIcon({ sourceId, mark }: { sourceId: string; mark: BrandMark
   )
 }
 
+/** The full-colour local mark used when public RSS cannot supply an avatar. */
+export function LetterboxdMark({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      data-letterboxd-mark
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="4.45" cy="12" r="4.45" fill="#ff8000" />
+      <circle cx="12" cy="12" r="4.45" fill="#00e054" />
+      <circle cx="19.55" cy="12" r="4.45" fill="#40bcf4" />
+    </svg>
+  )
+}
+
 /** Compact visual identity for a configured rating source. */
 export function RatingSourceIcon({ sourceId }: { sourceId: string }) {
   if (sourceId === "popcorn") {

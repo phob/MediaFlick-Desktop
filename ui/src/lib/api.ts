@@ -110,7 +110,7 @@ export interface ItemTechnical {
   mediaStreams: MediaStream[]
 }
 
-/** One connected public Letterboxd profile's latest RSS entry for a movie. */
+/** One profile's newest rating and newest written review in the current movie RSS feed. */
 export interface LetterboxdReview {
   profileId: string
   username: string
@@ -1051,6 +1051,8 @@ export const api = {
   itemAbout: (id: string) => request<ItemAbout>(`/api/item/${encodeURIComponent(id)}/about`),
   itemLetterboxd: (id: string) =>
     request<LetterboxdReviewsResponse>(`/api/item/${encodeURIComponent(id)}/letterboxd`),
+  movieLetterboxd: (tmdbId: number) =>
+    request<LetterboxdReviewsResponse>(`/api/letterboxd/movie/${tmdbId}`),
   children: (id: string) =>
     request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
   media: (id: string) =>

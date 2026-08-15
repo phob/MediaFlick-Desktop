@@ -203,6 +203,18 @@ export function useLetterboxdReviews(id: string | undefined, enabled = true) {
   })
 }
 
+/** Discovered films have no Jellyfin item id yet, so their public-profile
+ * activity is matched directly in Letterboxd's TMDB movie namespace. */
+export function useLetterboxdMovieReviews(tmdbId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.letterboxdMovieReviews(tmdbId ?? 0),
+    queryFn: () => api.movieLetterboxd(tmdbId!),
+    enabled: tmdbId != null && tmdbId > 0 && enabled,
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+}
+
 export function useChildren(id: string | undefined) {
   return useQuery({
     queryKey: queryKeys.children(id ?? ""),
