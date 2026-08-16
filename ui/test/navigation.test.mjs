@@ -1,11 +1,23 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  defaultDetailNavigationState,
   detailNavigationState,
   isSidebarRouteActive,
   librarySearchFromLocation,
   readDetailNavigationState,
 } from "../src/lib/navigation.ts"
+
+test("direct library details always return to the matching library", () => {
+  assert.deepEqual(defaultDetailNavigationState("Movie"), {
+    from: "/library?kind=Movie",
+    label: "Back to library",
+  })
+  assert.deepEqual(defaultDetailNavigationState("Episode"), {
+    from: "/library?kind=Series",
+    label: "Back to library",
+  })
+})
 
 test("discovery detail routes keep the Discover destination active", () => {
   assert.equal(isSidebarRouteActive("/discover", "/discover"), true)

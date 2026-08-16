@@ -18,6 +18,14 @@ export interface DetailNavigationState {
   label: string
 }
 
+/** A directly opened library detail still has a useful, visible way out. */
+export function defaultDetailNavigationState(kind: string): DetailNavigationState {
+  return {
+    from: `/library?kind=${kind === "Movie" ? "Movie" : "Series"}`,
+    label: "Back to library",
+  }
+}
+
 type LocationLike = {
   pathname: string
   search?: string

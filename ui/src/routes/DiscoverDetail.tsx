@@ -10,10 +10,10 @@ import { useState, type ReactNode } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
+import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
 import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import {
   DetailCastRail,
-  DetailBackLink,
   DetailFact,
   DetailFactPanel,
   DetailPageSkeleton,
@@ -169,8 +169,6 @@ export default function DiscoverDetail() {
   const validId = Number.isSafeInteger(parsedId) && parsedId > 0 ? parsedId : null
   const detail = useSeerrMedia(validMediaType, validId)
   const seerrStatus = useSeerrStatus()
-  const [posterFailed, setPosterFailed] = useState(false)
-  const [backdropFailed, setBackdropFailed] = useState(false)
   const [requesting, setRequesting] = useState(false)
 
   if (!validMediaType || !validId) {
@@ -189,8 +187,8 @@ export default function DiscoverDetail() {
   if (!detail.data) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="Seerr did not return details for this title." /></div>
 
   const item = detail.data
-  const poster = posterFailed ? null : seerrImageUrl(item.posterPath, "w500")
-  const backdrop = backdropFailed ? null : seerrImageUrl(item.backdropPath, "w1280")
+  const poster = seerrImageUrl(item.posterPath, "w500")
+  const backdrop = seerrImageUrl(item.backdropPath, "w1280")
   const releases = regionalReleaseDates(item)
   const rating = contentRating(item, releases)
   const facts = [
@@ -255,126 +253,98 @@ export default function DiscoverDetail() {
 
   return (
     <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
-      <header className="relative min-h-[26rem] overflow-hidden">
-        {backdrop && (
+      <DetailHeroLayout
+        back={{
+          to: { pathname: "/discover", search: location.search },
+          label: "Back to discovery",
+        }}
+        backdrop={backdrop}
+        poster={poster ? { src: poster, aspect: "poster" } : null}
+        title={item.title}
+        subtitle={
+          item.tagline ? (
+            <p className="mt-2 max-w-2xl text-base text-foreground/70 italic">
+              {item.tagline}
+            </p>
+          ) : undefined
+        }
+        facts={facts}
+        metadata={
           <>
-            <img
-              src={backdrop}
-              alt=""
-              decoding="async"
-              onError={() => setBackdropFailed(true)}
-              className="media-backdrop-image absolute inset-0 -z-10 h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 -z-9 bg-linear-to-r from-background via-background/80 to-background/20" />
-            <div className="absolute inset-0 -z-9 bg-linear-to-t from-background via-transparent to-background/30" />
-          </>
-        )}
-        <div className="flex gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14">
-          {poster && (
-            <img
-              src={poster}
-              alt=""
-              decoding="async"
-              onError={() => setPosterFailed(true)}
-              className="media-artwork-image hidden aspect-2/3 w-[220px] shrink-0 self-start rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:block"
-            />
-          )}
-          <div className="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
-            <DetailBackLink
-              to={{ pathname: "/discover", search: location.search }}
-              label="Back to discovery"
-            />
-            <div>
-              <h1 className="text-4xl leading-[0.98] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
-                {item.title}
-              </h1>
-              {item.tagline && (
-                <p className="mt-3 max-w-2xl text-base text-foreground/70 italic">
-                  {item.tagline}
-                </p>
-              )}
-            </div>
-
-            <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-2 text-muted-foreground">
-              {facts.map((fact, index) => (
-                <span key={fact} className="flex items-center gap-2">
-                  {index > 0 && <span className="text-primary/45">/</span>}
-                  {fact}
-                </span>
-              ))}
-              {rating && <Badge variant="outline">{rating}</Badge>}
-              {item.voteAverage != null && item.voteAverage > 0 && (
-                <span className="flex items-center gap-1 text-foreground">
-                  <Star className="size-3.5 fill-current text-amber-400" />
-                  {item.voteAverage.toFixed(1)}
-                  {item.voteCount ? (
-                    <span className="text-muted-foreground">
-                      ({item.voteCount.toLocaleString()})
-                    </span>
-                  ) : null}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {item.genres.map((genre) => (
-                <Badge key={genre} variant="secondary">
-                  {genre}
-                </Badge>
-              ))}
-              {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
-              {item.status4k !== "unknown" && (
-                <span className="flex items-center gap-1">
-                  <span className="data-label text-muted-foreground">4K</span>
-                  <SeerrStatusBadge status={item.status4k} />
-                </span>
-              )}
-            </div>
-
-            {item.overview && (
-              <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">
-                {item.overview}
-              </p>
+            {rating && (
+              <Badge variant="outline" className="data-label border-muted-foreground/40 px-1.5 py-0.5">
+                {rating}
+              </Badge>
             )}
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              {item.trailer && (
-                <Button size="lg" variant="secondary" asChild>
-                  <a
-                    href={`https://www.youtube.com/watch?v=${item.trailer.key}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <Play />
-                    Watch trailer
-                  </a>
-                </Button>
-              )}
-              {item.libraryItemId && (
-                <Button size="lg" asChild>
-                  <Link
-                    to={`/item/${encodeURIComponent(item.libraryItemId)}`}
-                    state={detailNavigationState(location)}
-                  >
-                    <Library />
-                    Open in library
-                  </Link>
-                </Button>
-              )}
-              {requestable(item, seerrStatus.data?.capabilities) && (
-                <Button
-                  size="lg"
-                  variant={item.libraryItemId ? "outline" : "default"}
-                  onClick={() => setRequesting(true)}
-                >
-                  <Plus />
-                  Request options
-                </Button>
-              )}
-            </div>
-          </div>
+            {item.voteAverage != null && item.voteAverage > 0 && (
+              <span className="flex items-center gap-1 text-foreground">
+                <Star className="size-3.5 fill-current text-amber-400" aria-hidden />
+                {item.voteAverage.toFixed(1)}
+                {item.voteCount ? (
+                  <span className="text-muted-foreground">
+                    ({item.voteCount.toLocaleString()})
+                  </span>
+                ) : null}
+              </span>
+            )}
+          </>
+        }
+        genres={item.genres.map((genre) => ({ label: genre }))}
+        status={
+          <>
+            {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
+            {item.status4k !== "unknown" && (
+              <span className="flex items-center gap-1">
+                <span className="data-label text-muted-foreground">4K</span>
+                <SeerrStatusBadge status={item.status4k} />
+              </span>
+            )}
+          </>
+        }
+        overview={
+          item.overview ? (
+            <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">
+              {item.overview}
+            </p>
+          ) : undefined
+        }
+      >
+        <div className="flex flex-wrap gap-2 pt-1">
+          {item.trailer && (
+            <Button size="lg" variant="secondary" asChild>
+              <a
+                href={`https://www.youtube.com/watch?v=${item.trailer.key}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Play />
+                Watch trailer
+              </a>
+            </Button>
+          )}
+          {item.libraryItemId && (
+            <Button size="lg" asChild>
+              <Link
+                to={`/item/${encodeURIComponent(item.libraryItemId)}`}
+                state={detailNavigationState(location)}
+              >
+                <Library />
+                Open in library
+              </Link>
+            </Button>
+          )}
+          {requestable(item, seerrStatus.data?.capabilities) && (
+            <Button
+              size="lg"
+              variant={item.libraryItemId ? "outline" : "default"}
+              onClick={() => setRequesting(true)}
+            >
+              <Plus />
+              Request options
+            </Button>
+          )}
         </div>
-      </header>
+      </DetailHeroLayout>
 
       <DiscoverLetterboxdReviews mediaType={item.mediaType} tmdbId={item.tmdbId} />
 
