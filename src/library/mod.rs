@@ -1400,18 +1400,18 @@ impl Library {
         })
     }
 
-    /// A fresh set of films for the home billboard.
+    /// A fresh set of movies and series for the home billboard.
     ///
     /// The artwork predicate lives in the query rather than in the UI so five
     /// blank candidates cannot crowd out five useful ones. Image tag keys are
     /// case-insensitive in Jellyfin, hence the small `json_each` lookup for a
     /// Thumb fallback.
-    pub fn random_billboard_movies(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
+    pub fn random_billboard_titles(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
-                 WHERE i.kind = 'Movie'
+                 WHERE i.kind IN ('Movie', 'Series')
                    AND (
                        COALESCE(i.backdrop_image_tag, '') <> ''
                        OR EXISTS (
@@ -2054,7 +2054,10 @@ mod tests {
                         "Genres":["Drama"],"DateCreated":"2024-03-04","CommunityRating":7.9,
                         "UserData":{"Played":true}}"#,
                 ),
-                dto(r#"{"Id":"s1","Name":"Severance","Type":"Series","DateCreated":"2024-02-02"}"#),
+                dto(
+                    r#"{"Id":"s1","Name":"Severance","Type":"Series","DateCreated":"2024-02-02",
+                        "BackdropImageTags":["series-backdrop-tag"]}"#,
+                ),
                 dto(
                     r#"{"Id":"e1","Name":"Good News About Hell","Type":"Episode","SeriesId":"s1",
                         "ParentId":"season1","SeasonId":"season1","Overview":"Mark is promoted.",
@@ -2495,11 +2498,14 @@ mod tests {
     }
 
     #[test]
-    fn billboard_movies_are_random_films_with_landscape_artwork() {
-        let rows = seeded().random_billboard_movies(5).expect("rows");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["id"], "m1");
-        assert_eq!(rows[0]["kind"], "Movie");
+    fn billboard_titles_include_movies_and_series_with_landscape_artwork() {
+        let rows = seeded().random_billboard_titles(5).expect("rows");
+        let mut kinds = rows
+            .iter()
+            .map(|row| (row["id"].as_str().unwrap(), row["kind"].as_str().unwrap()))
+            .collect::<Vec<_>>();
+        kinds.sort_unstable();
+        assert_eq!(kinds, [("m1", "Movie"), ("s1", "Series")]);
     }
 
     #[test]

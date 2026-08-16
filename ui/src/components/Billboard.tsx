@@ -1,6 +1,6 @@
 import { Check, Info, Play, Plus, Star } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import {
   BACKDROP_WIDTH,
@@ -20,6 +20,7 @@ import {
   useTrailer,
 } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
+import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 /** How long a title without a usable trailer holds before the next takes over. */
@@ -378,6 +379,7 @@ function BillboardCopy({
   summary: ItemSummary
   playTarget?: ItemSummary | null
 }) {
+  const location = useLocation()
   const play = usePlay()
   const setFavorite = useSetFavorite()
   const [logoFailed, setLogoFailed] = useState(false)
@@ -496,7 +498,10 @@ function BillboardCopy({
           className="border-foreground/25 bg-background/50 backdrop-blur-sm hover:border-primary/60 hover:bg-background/70 hover:text-primary"
           asChild
         >
-          <Link to={`/item/${encodeURIComponent(summary.id)}`}>
+          <Link
+            to={`/item/${encodeURIComponent(summary.id)}`}
+            state={detailNavigationState(location)}
+          >
             <Info className="size-5" />
             Details
           </Link>

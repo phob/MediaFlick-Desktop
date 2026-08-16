@@ -1367,7 +1367,7 @@ fn home(services: &Arc<Services>) -> ApiResponse {
             { "id": "resume", "title": "Continue Watching", "items": resume },
             { "id": "recent", "title": "Recently Added", "items": recent },
             { "id": "latest-movies", "title": "Latest Movies", "items": latest_movies },
-            { "id": "latest-shows", "title": "Latest Shows", "items": latest_shows },
+            { "id": "latest-shows", "title": "Latest Series", "items": latest_shows },
         ],
     }))
 }
@@ -1418,7 +1418,7 @@ fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
 }
 
 fn billboard(services: &Arc<Services>) -> ApiResponse {
-    match services.library.random_billboard_movies(BILLBOARD_LIMIT) {
+    match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
         Ok(items) => ApiResponse::ok(json!({ "items": items })),
         Err(error) => storage_failure(&error),
     }

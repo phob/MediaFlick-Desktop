@@ -1,21 +1,26 @@
 import {
-  ArrowLeft,
   CalendarDays,
   ExternalLink,
   Library,
   Play,
   Plus,
   Star,
-  UserRound,
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { Link, useLocation, useParams } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
+import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
 import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
+import {
+  DetailCastRail,
+  DetailFact,
+  DetailFactPanel,
+  DetailPageSkeleton,
+} from "@/components/detail/DetailPrimitives"
+import { PageErrorState } from "@/components/PageHeader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
   seerrImageUrl,
   type SeerrCapabilities,
@@ -24,24 +29,8 @@ import {
 } from "@/lib/api"
 import { castSearchPath } from "@/lib/cast-search"
 import { formatDate, formatLanguage } from "@/lib/format"
+import { detailNavigationState } from "@/lib/navigation"
 import { useSeerrMedia, useSeerrStatus } from "@/lib/queries"
-
-function DetailSkeleton() {
-  return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex min-h-[31rem] gap-8 px-6 pt-16 sm:px-10 lg:px-14">
-        <Skeleton className="hidden h-[330px] w-[220px] sm:block" />
-        <div className="flex flex-1 flex-col gap-4">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-12 w-2/3 max-w-2xl" />
-          <Skeleton className="h-4 w-72" />
-          <Skeleton className="h-24 max-w-3xl" />
-          <Skeleton className="h-11 w-72" />
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function runtimeLabel(minutes: number | null) {
   if (!minutes || minutes <= 0) return null
@@ -108,56 +97,14 @@ function contentRating(detail: SeerrMediaDetail, releases: SeerrReleaseDate[]) {
   )
 }
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[8.5rem_1fr] gap-4 py-2.5 text-sm">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  )
-}
-
 export function Cast({ detail }: { detail: SeerrMediaDetail }) {
-  if (!detail.cast.length) return null
-  return (
-    <section className="flex min-w-0 flex-col gap-4">
-      <h2 className="section-title px-6 sm:px-10 lg:px-14">Cast</h2>
-      <div className="media-strip flex gap-6 overflow-x-auto px-6 pb-3 sm:px-10 lg:px-14">
-        {detail.cast.map((person) => {
-          const image = seerrImageUrl(person.profilePath, "w185")
-          return (
-            <Link
-              key={`${person.id}-${person.name}`}
-              to={castSearchPath({ tmdbId: person.id, name: person.name })}
-              aria-label={`Find titles featuring ${person.name}`}
-              className="flex w-28 shrink-0 flex-col items-center gap-2 rounded-media text-center outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {image ? (
-                <img
-                  src={image}
-                  alt=""
-                  decoding="async"
-                  className="size-24 rounded-full object-cover ring-1 ring-white/10"
-                />
-              ) : (
-                <div className="grid size-24 place-items-center rounded-full bg-card text-muted-foreground ring-1 ring-white/10">
-                  <UserRound className="size-8" aria-hidden />
-                </div>
-              )}
-              <span className="flex flex-col gap-0.5">
-                <span className="text-xs leading-tight">{person.name}</span>
-                {person.character && (
-                  <span className="text-xs leading-tight text-muted-foreground">
-                    {person.character}
-                  </span>
-                )}
-              </span>
-            </Link>
-          )
-        })}
-      </div>
-    </section>
-  )
+  return <DetailCastRail entries={detail.cast.map((person) => ({
+    key: `${person.id}-${person.name}`,
+    name: person.name,
+    role: person.character,
+    imageUrl: seerrImageUrl(person.profilePath, "w185"),
+    to: castSearchPath({ tmdbId: person.id, name: person.name }),
+  }))} />
 }
 
 function Seasons({ detail }: { detail: SeerrMediaDetail }) {
@@ -169,7 +116,7 @@ function Seasons({ detail }: { detail: SeerrMediaDetail }) {
         {detail.seasons.map((season) => (
           <div
             key={season.seasonNumber}
-            className="flex min-w-0 items-center justify-between gap-4 border border-white/5 bg-card/55 px-4 py-3 shadow-lg shadow-black/10"
+            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-white/5 bg-card/55 px-4 py-3 shadow-lg shadow-black/10"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">
@@ -222,20 +169,26 @@ export default function DiscoverDetail() {
   const validId = Number.isSafeInteger(parsedId) && parsedId > 0 ? parsedId : null
   const detail = useSeerrMedia(validMediaType, validId)
   const seerrStatus = useSeerrStatus()
-  const [posterFailed, setPosterFailed] = useState(false)
-  const [backdropFailed, setBackdropFailed] = useState(false)
   const [requesting, setRequesting] = useState(false)
 
   if (!validMediaType || !validId) {
-    return <p className="p-6 text-sm text-destructive">That is not a Seerr title.</p>
+    return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Invalid discovery title" description="That address does not identify a valid Seerr title." /></div>
   }
-  if (detail.isPending) return <DetailSkeleton />
-  if (detail.error) return <p className="p-6 text-sm text-destructive">{detail.error.message}</p>
-  if (!detail.data) return null
+  if (detail.isPending) return <DetailPageSkeleton />
+  if (detail.error && !detail.data) return (
+    <div className="p-6 sm:p-10 lg:p-14">
+      <PageErrorState
+        title="Could not load title details"
+        description={detail.error.message}
+        action={<Button variant="outline" onClick={() => void detail.refetch()}>Try again</Button>}
+      />
+    </div>
+  )
+  if (!detail.data) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="Seerr did not return details for this title." /></div>
 
   const item = detail.data
-  const poster = posterFailed ? null : seerrImageUrl(item.posterPath, "w500")
-  const backdrop = backdropFailed ? null : seerrImageUrl(item.backdropPath, "w1280")
+  const poster = seerrImageUrl(item.posterPath, "w500")
+  const backdrop = seerrImageUrl(item.backdropPath, "w1280")
   const releases = regionalReleaseDates(item)
   const rating = contentRating(item, releases)
   const facts = [
@@ -300,155 +253,131 @@ export default function DiscoverDetail() {
 
   return (
     <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
-      <header className="relative min-h-[31rem] overflow-hidden">
-        {backdrop && (
+      <DetailHeroLayout
+        back={{
+          to: { pathname: "/discover", search: location.search },
+          label: "Back to discovery",
+        }}
+        backdrop={backdrop}
+        poster={poster ? { src: poster, aspect: "poster" } : null}
+        title={item.title}
+        subtitle={
+          item.tagline ? (
+            <p className="mt-2 max-w-2xl text-base text-foreground/70 italic">
+              {item.tagline}
+            </p>
+          ) : undefined
+        }
+        facts={facts}
+        metadata={
           <>
-            <img
-              src={backdrop}
-              alt=""
-              decoding="async"
-              onError={() => setBackdropFailed(true)}
-              className="media-backdrop-image absolute inset-0 -z-10 h-full w-full object-cover"
-            />
-            <div className="absolute inset-0 -z-9 bg-linear-to-r from-background via-background/80 to-background/20" />
-            <div className="absolute inset-0 -z-9 bg-linear-to-t from-background via-transparent to-background/30" />
+            {rating && (
+              <Badge variant="outline" className="data-label border-muted-foreground/40 px-1.5 py-0.5">
+                {rating}
+              </Badge>
+            )}
+            {item.voteAverage != null && item.voteAverage > 0 && (
+              <span className="flex items-center gap-1 text-foreground">
+                <Star className="size-3.5 fill-current text-amber-400" aria-hidden />
+                {item.voteAverage.toFixed(1)}
+                {item.voteCount ? (
+                  <span className="text-muted-foreground">
+                    ({item.voteCount.toLocaleString()})
+                  </span>
+                ) : null}
+              </span>
+            )}
           </>
-        )}
-        <div className="flex gap-8 px-6 pt-10 pb-14 sm:px-10 lg:px-14">
-          {poster && (
-            <img
-              src={poster}
-              alt=""
-              decoding="async"
-              onError={() => setPosterFailed(true)}
-              className="media-artwork-image hidden aspect-2/3 w-[220px] shrink-0 self-start object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:block"
-            />
+        }
+        genres={item.genres.map((genre) => ({ label: genre }))}
+        status={
+          <>
+            {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
+            {item.status4k !== "unknown" && (
+              <span className="flex items-center gap-1">
+                <span className="data-label text-muted-foreground">4K</span>
+                <SeerrStatusBadge status={item.status4k} />
+              </span>
+            )}
+          </>
+        }
+        overview={
+          item.overview ? (
+            <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">
+              {item.overview}
+            </p>
+          ) : undefined
+        }
+      >
+        <div className="flex flex-wrap gap-2 pt-1">
+          {item.trailer && (
+            <Button size="lg" variant="secondary" asChild>
+              <a
+                href={`https://www.youtube.com/watch?v=${item.trailer.key}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Play />
+                Watch trailer
+              </a>
+            </Button>
           )}
-          <div className="flex min-w-0 max-w-4xl flex-1 flex-col gap-4">
-            <Button variant="ghost" size="sm" className="w-fit px-0 text-muted-foreground" asChild>
-              <Link to={{ pathname: "/discover", search: location.search }}>
-                <ArrowLeft />
-                Back to discovery
+          {item.libraryItemId && (
+            <Button size="lg" asChild>
+              <Link
+                to={`/item/${encodeURIComponent(item.libraryItemId)}`}
+                state={detailNavigationState(location)}
+              >
+                <Library />
+                Open in library
               </Link>
             </Button>
-            <div>
-              <h1 className="text-4xl leading-[0.98] font-black tracking-[-0.04em] text-balance drop-shadow-lg sm:text-5xl lg:text-6xl">
-                {item.title}
-              </h1>
-              {item.tagline && (
-                <p className="mt-3 max-w-2xl text-base text-foreground/70 italic">
-                  {item.tagline}
-                </p>
-              )}
-            </div>
-
-            <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-2 text-muted-foreground">
-              {facts.map((fact, index) => (
-                <span key={fact} className="flex items-center gap-2">
-                  {index > 0 && <span className="text-primary/45">/</span>}
-                  {fact}
-                </span>
-              ))}
-              {rating && <Badge variant="outline">{rating}</Badge>}
-              {item.voteAverage != null && item.voteAverage > 0 && (
-                <span className="flex items-center gap-1 text-foreground">
-                  <Star className="size-3.5 fill-current text-amber-400" />
-                  {item.voteAverage.toFixed(1)}
-                  {item.voteCount ? (
-                    <span className="text-muted-foreground">
-                      ({item.voteCount.toLocaleString()})
-                    </span>
-                  ) : null}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {item.genres.map((genre) => (
-                <Badge key={genre} variant="secondary">
-                  {genre}
-                </Badge>
-              ))}
-              {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
-              {item.status4k !== "unknown" && (
-                <span className="flex items-center gap-1">
-                  <span className="data-label text-muted-foreground">4K</span>
-                  <SeerrStatusBadge status={item.status4k} />
-                </span>
-              )}
-            </div>
-
-            {item.overview && (
-              <p className="max-w-3xl text-sm leading-relaxed text-foreground/90">
-                {item.overview}
-              </p>
-            )}
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              {item.trailer && (
-                <Button size="lg" variant="secondary" asChild>
-                  <a
-                    href={`https://www.youtube.com/watch?v=${item.trailer.key}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <Play />
-                    Watch trailer
-                  </a>
-                </Button>
-              )}
-              {item.libraryItemId && (
-                <Button size="lg" asChild>
-                  <Link to={`/item/${encodeURIComponent(item.libraryItemId)}`}>
-                    <Library />
-                    Open in library
-                  </Link>
-                </Button>
-              )}
-              {requestable(item, seerrStatus.data?.capabilities) && (
-                <Button
-                  size="lg"
-                  variant={item.libraryItemId ? "outline" : "default"}
-                  onClick={() => setRequesting(true)}
-                >
-                  <Plus />
-                  Request options
-                </Button>
-              )}
-            </div>
-          </div>
+          )}
+          {requestable(item, seerrStatus.data?.capabilities) && (
+            <Button
+              size="lg"
+              variant={item.libraryItemId ? "outline" : "default"}
+              onClick={() => setRequesting(true)}
+            >
+              <Plus />
+              Request options
+            </Button>
+          )}
         </div>
-      </header>
+      </DetailHeroLayout>
 
       <DiscoverLetterboxdReviews mediaType={item.mediaType} tmdbId={item.tmdbId} />
+
+      <Seasons detail={item} />
+      <Cast detail={item} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <section className="flex flex-col gap-3">
           <h2 className="section-title">Release schedule</h2>
-          <div className="divide-y divide-border/60 border border-white/5 bg-card/55 px-4 py-1 shadow-lg shadow-black/10">
+          <DetailFactPanel>
             {releases.map((release) => (
-              <Fact key={`${release.type}-${release.date}`} label={RELEASE_LABELS[release.type]}>
+              <DetailFact key={`${release.type}-${release.date}`} label={RELEASE_LABELS[release.type]}>
                 <span className="flex flex-wrap items-center gap-2">
                   <CalendarDays className="size-4 text-primary" />
                   <span className="data-label text-muted-foreground">{release.region}</span>
                   {formatDate(release.date)}
                   {release.certification && <Badge variant="outline">{release.certification}</Badge>}
                 </span>
-              </Fact>
+              </DetailFact>
             ))}
             {releaseFallback && (
-              <Fact label={item.mediaType === "movie" ? "Release" : "First aired"}>
+              <DetailFact label={item.mediaType === "movie" ? "Release" : "First aired"}>
                 <span className="flex items-center gap-2">
                   <CalendarDays className="size-4 text-primary" />
                   {releaseFallback}
                 </span>
-              </Fact>
+              </DetailFact>
             )}
             {formatDate(item.lastAirDate) && (
-              <Fact label="Last aired">{formatDate(item.lastAirDate)}</Fact>
+              <DetailFact label="Last aired">{formatDate(item.lastAirDate)}</DetailFact>
             )}
             {nextEpisode && (
-              <Fact label="Next episode">
+              <DetailFact label="Next episode">
                 <span className="flex flex-col">
                   <span>{[nextEpisodeCode, nextEpisode.name].filter(Boolean).join(" · ")}</span>
                   {formatDate(nextEpisode.airDate) && (
@@ -457,32 +386,27 @@ export default function DiscoverDetail() {
                     </span>
                   )}
                 </span>
-              </Fact>
+              </DetailFact>
             )}
             {!releases.length && !releaseFallback && !nextEpisode && (
-              <p className="py-4 text-sm text-muted-foreground">
-                No release date has been announced.
-              </p>
+              <DetailFact label="Release">No release date has been announced.</DetailFact>
             )}
-          </div>
+          </DetailFactPanel>
         </section>
 
         {details.length > 0 && (
           <section className="flex flex-col gap-3">
             <h2 className="section-title">Details</h2>
-            <dl className="divide-y divide-border/60 border border-white/5 bg-card/55 px-4 py-1 shadow-lg shadow-black/10">
+            <DetailFactPanel>
               {details.map((fact) => (
-                <Fact key={fact.label} label={fact.label}>
+                <DetailFact key={fact.label} label={fact.label}>
                   {fact.value}
-                </Fact>
+                </DetailFact>
               ))}
-            </dl>
+            </DetailFactPanel>
           </section>
         )}
       </div>
-
-      <Cast detail={item} />
-      <Seasons detail={item} />
 
       {requesting && <RequestDialog result={item} onClose={() => setRequesting(false)} />}
     </div>
