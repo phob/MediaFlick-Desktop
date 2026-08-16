@@ -1,5 +1,5 @@
 import { SearchX } from "lucide-react"
-import { PageEmptyState } from "@/components/PageHeader"
+import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
 import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { SeerrResult } from "@/lib/api"
@@ -27,7 +27,7 @@ export function SeerrResults({
 }) {
   const status = useSeerrStatus()
 
-  if (error) return <p className="py-4 text-sm text-destructive">{error.message}</p>
+  if (error && !results?.length) return <PageErrorState title="Could not load discovery results" description={error.message} />
   if (isPending) {
     return (
       <div className="flex flex-wrap gap-[var(--card-gap)]">

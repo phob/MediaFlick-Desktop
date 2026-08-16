@@ -285,10 +285,13 @@ export interface CalendarEntry {
   episode: number | null
   tmdbId: number | null
   tvdbId: number | null
+  seriesTmdbId?: number | null
+  seriesTvdbId?: number | null
   monitored: boolean
   hasFile: boolean
   posterUrl: string | null
   libraryItemId: string | null
+  seriesLibraryItemId?: string | null
 }
 
 export interface CalendarSource {
@@ -711,7 +714,7 @@ export const SEERR_DISCOVER_ROWS = [
     id: "tv",
     label: "Popular series",
     title: "Popular series",
-    description: "Find the shows people keep coming back to.",
+    description: "Find the series people keep coming back to.",
   },
   {
     id: "upcoming-movies",
@@ -723,7 +726,7 @@ export const SEERR_DISCOVER_ROWS = [
     id: "upcoming-tv",
     label: "Upcoming series",
     title: "Series on the horizon",
-    description: "New and returning shows with their first air dates ahead.",
+    description: "New and returning series with their first air dates ahead.",
   },
 ] as const
 

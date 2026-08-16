@@ -356,14 +356,29 @@ function Section({ title, description, children }: { title: string; description:
 }
 
 function SettingsLoading() {
-  return <div className="p-6 text-sm text-muted-foreground">Loading settings…</div>
+  return <div className="settings-page text-sm text-muted-foreground" role="status">Loading settings…</div>
+}
+
+function SettingsError({ title = "Settings unavailable", error, onRetry }: { title?: string; error: Error; onRetry: () => void }) {
+  return (
+    <div className="settings-page">
+      <PageTitle title={title} detail="MediaFlick could not load the saved state for this page." />
+      <Section title="Could not load settings" description={error.message}>
+        <Button variant="outline" onClick={onRetry}><RefreshCw /> Try again</Button>
+      </Section>
+    </div>
+  )
 }
 
 function Overview() {
-  const { data: settings } = useSettings()
+  const settingsQuery = useSettings()
+  const { data: settings } = settingsQuery
   const { data: status } = useStatus()
-  const { data: seerr } = useSeerrStatus()
-  const { data: ratings } = useRatingsStatus()
+  const seerrQuery = useSeerrStatus()
+  const ratingsQuery = useRatingsStatus()
+  const { data: seerr } = seerrQuery
+  const { data: ratings } = ratingsQuery
+  if (settingsQuery.error && !settings) return <SettingsError error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings) return <SettingsLoading />
   return (
     <div className="settings-page">
@@ -371,8 +386,8 @@ function Overview() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatusCard title="Client" value={settings.client.player.playerConfigured ? "Ready" : "Needs setup"} detail={`${settings.client.player.playerBackend === "mpchc" ? "MPC-HC" : "mpv"} player`} to="/settings/client/player" />
         <StatusCard title="Appearance" value={settings.appearance.theme === "system" ? "System" : settings.appearance.theme} detail={`${settings.appearance.accent} accent · ${settings.appearance.density} density`} to="/settings/appearance" />
-        <StatusCard title="Ratings" value={ratings?.available ? "Ready" : "Not configured"} detail={ratings?.effectiveOrigin === "local_mdblist" ? "Local MDBList key" : ratings?.effectiveOrigin === "plugin" ? "Server capability" : "Optional integration"} to="/settings/integrations/ratings" />
-        <StatusCard title="Seerr" value={seerr?.linked ? "Connected" : "Not connected"} detail={status?.authenticated ? "Requests integration" : "Sign in to configure"} to="/settings/integrations/seerr" />
+        <StatusCard title="Ratings" value={ratingsQuery.error && !ratings ? "Unavailable" : ratings?.available ? "Ready" : "Not configured"} detail={ratingsQuery.error && !ratings ? "Could not load integration status" : ratings?.effectiveOrigin === "local_mdblist" ? "Local MDBList key" : ratings?.effectiveOrigin === "plugin" ? "Server capability" : "Optional integration"} to="/settings/integrations/ratings" />
+        <StatusCard title="Seerr" value={seerrQuery.error && !seerr ? "Unavailable" : seerr?.linked ? "Connected" : "Not connected"} detail={seerrQuery.error && !seerr ? "Could not load connection status" : status?.authenticated ? "Requests integration" : "Sign in to configure"} to="/settings/integrations/seerr" />
       </div>
     </div>
   )
@@ -408,7 +423,8 @@ function requestId() {
 }
 
 function PlayerSettings() {
-  const { data: settings } = useSettings()
+  const settingsQuery = useSettings()
+  const { data: settings } = settingsQuery
   const [draft, setDraft] = useDraft(settings?.client.player)
   const [install, setInstall] = useState<{ state: string; message?: string; downloaded?: number; total?: number | null }>({ state: "idle" })
   const pendingPickers = useRef<Partial<Record<"mpv" | "mpchc", string>>>({})
@@ -466,6 +482,7 @@ function PlayerSettings() {
     }
   }, [setDraft])
   useShellEvents(onShellEvent)
+  if (settingsQuery.error && !settings) return <SettingsError title="Player settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const dirty = !same(draft, settings.client.player)
   const pick = (target: "mpv" | "mpchc") => {
@@ -542,9 +559,11 @@ function PlayerSettings() {
 }
 
 function PlaybackSettings() {
-  const { data: settings } = useSettings()
+  const settingsQuery = useSettings()
+  const { data: settings } = settingsQuery
   const [draft, setDraft] = useDraft(settings?.client.playback)
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const update = (key: keyof typeof draft, value: string) => setDraft({ ...draft, [key]: value })
   const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }]
@@ -563,9 +582,11 @@ function PlaybackSettings() {
 }
 
 function ApplicationSettings() {
-  const { data: settings } = useSettings()
+  const settingsQuery = useSettings()
+  const { data: settings } = settingsQuery
   const [draft, setDraft] = useDraft(settings?.client.application)
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  if (settingsQuery.error && !settings) return <SettingsError title="Application settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Application" detail="Control window behavior and the diagnostics recorded by the desktop client." />
     <Section title="Window" description="These choices are applied immediately after saving.">
@@ -690,10 +711,13 @@ function AppearancePreview({
 }
 
 export function Appearance() {
-  const { data: settings } = useSettings()
-  const { data: ratings } = useRatingsStatus()
+  const settingsQuery = useSettings()
+  const ratingsQuery = useRatingsStatus()
+  const { data: settings } = settingsQuery
+  const { data: ratings } = ratingsQuery
   const [draft, setDraft] = useDraft(settings?.appearance)
   const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  if (settingsQuery.error && !settings) return <SettingsError title="Appearance settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Appearance" detail="Tune the MediaFlick shell without changing your library or server settings." />
     <Section title="Live preview" description="Uses your unsaved choices here only; the rest of MediaFlick changes after Save.">
@@ -711,12 +735,19 @@ export function Appearance() {
       <div className="border-t border-border pt-5">
         <h3 className="font-medium">Rating sources</h3>
         <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose any combination of MDBList sources for compact top-left card overlays.</p>
-        <RatingSourceSelector
-          sources={ratings?.sources ?? []}
-          selected={draft.ratingSources}
-          enabled={Boolean(ratings?.selectionEnabled)}
-          onChange={(ratingSources) => setDraft({ ...draft, ratingSources })}
-        />
+        {ratingsQuery.error && !ratings ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm">
+            <span>Rating source status could not be loaded.</span>
+            <Button size="sm" variant="outline" onClick={() => void ratingsQuery.refetch()}>Try again</Button>
+          </div>
+        ) : (
+          <RatingSourceSelector
+            sources={ratings?.sources ?? []}
+            selected={draft.ratingSources}
+            enabled={Boolean(ratings?.selectionEnabled)}
+            onChange={(ratingSources) => setDraft({ ...draft, ratingSources })}
+          />
+        )}
       </div>
     </Section>
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
@@ -776,8 +807,10 @@ export function RatingsSetupDialog({ onClose }: { onClose: () => void }) {
 }
 
 export function RatingsIntegration() {
-  const { data: settings } = useSettings()
-  const { data: status } = useRatingsStatus()
+  const settingsQuery = useSettings()
+  const statusQuery = useRatingsStatus()
+  const { data: settings } = settingsQuery
+  const { data: status } = statusQuery
   const [setup, setSetup] = useState(false)
   const [draftSources, setDraftSources] = useDraft(settings?.appearance.ratingSources)
   const sourceMutation = useMutation({
@@ -789,6 +822,8 @@ export function RatingsIntegration() {
     onError: (error: Error) => toast.error(error.message),
   })
   const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
+  if (settingsQuery.error && !settings) return <SettingsError title="Ratings settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
+  if (statusQuery.error && !status) return <SettingsError title="Ratings status unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
   if (!settings || !status || !draftSources) return <SettingsLoading />
   const origin = status.effectiveOrigin === "local_mdblist"
     ? "Local MDBList credential (overrides any server configuration)"
@@ -829,7 +864,8 @@ function SignInRequired({ name }: { name: string }) {
 }
 
 function Letterboxd() {
-  const { data: status } = useStatus()
+  const statusQuery = useStatus()
+  const { data: status } = statusQuery
   const profiles = useQuery({ queryKey: ["letterboxd", "profiles"], queryFn: api.letterboxd.profiles, enabled: Boolean(status?.authenticated), retry: false })
   const [entry, setEntry] = useState("")
   // Profile writes also change every movie's public-review projection.
@@ -839,13 +875,15 @@ function Letterboxd() {
   const remove = useMutation({ mutationFn: api.letterboxd.remove, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const verify = useMutation({ mutationFn: api.letterboxd.refresh, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toast.error(error.message) })
+  if (statusQuery.error && !status) return <SettingsError title="Letterboxd unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
+  if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Letterboxd" />
   return <div className="settings-page"><PageTitle title="Letterboxd" detail="Connect public profiles using Letterboxd’s public RSS feed—no credentials are stored." />
     <Section title="Add profile" description="Enter a Letterboxd username or a canonical profile URL.">
       <form className="flex max-w-xl gap-2" onSubmit={(event) => { event.preventDefault(); if (entry.trim()) add.mutate(entry) }}><Input value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="letterboxd username or URL" /><Button disabled={add.isPending}>{add.isPending ? "Verifying…" : "Add profile"}</Button></form>
     </Section>
     <Section title="Connected profiles" description="Profiles are visible only to this Jellyfin account on this server.">
-      {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => <ProfileCard key={profile.id} profile={profile} onEnabled={(enabled) => setEnabled.mutate({ id: profile.id, enabled })} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => remove.mutate(profile.id)} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
+      {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.error && !profiles.data ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm"><span>{profiles.error.message}</span><Button size="sm" variant="outline" onClick={() => void profiles.refetch()}>Try again</Button></div> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => <ProfileCard key={profile.id} profile={profile} onEnabled={(enabled) => setEnabled.mutate({ id: profile.id, enabled })} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => remove.mutate(profile.id)} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
     </Section>
   </div>
 }
@@ -855,10 +893,16 @@ function ProfileCard({ profile, onEnabled, onRefresh, onOpen, onRemove }: { prof
 }
 
 function Seerr() {
-  const { data: status } = useStatus()
-  const { data: seerr } = useSeerrStatus()
+  const statusQuery = useStatus()
+  const seerrQuery = useSeerrStatus()
+  const { data: status } = statusQuery
+  const { data: seerr } = seerrQuery
   const [setup, setSetup] = useState(false)
+  if (statusQuery.error && !status) return <SettingsError title="Seerr unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
+  if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Seerr" />
+  if (seerrQuery.error && !seerr) return <SettingsError title="Seerr status unavailable" error={seerrQuery.error} onRetry={() => void seerrQuery.refetch()} />
+  if (seerrQuery.isPending) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Seerr" detail="Connect Seerr to discover titles and submit requests from MediaFlick." />
     <Section title="Connection" description="Seerr signs in with your Jellyfin account; no server password is retained by MediaFlick.">
       <SettingsRow title="Status" description={seerr?.linked ? "This Jellyfin account can request through the connected Seerr instance." : "No Seerr instance is linked for this Jellyfin account."}><Button variant={seerr?.linked ? "outline" : "default"} onClick={() => setSetup(true)}>{seerr?.linked ? "Manage connection" : "Set up Seerr"}</Button></SettingsRow>

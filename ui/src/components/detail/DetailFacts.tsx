@@ -1,17 +1,9 @@
 import type { ReactNode } from "react"
+import { DetailFact, DetailFactPanel } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
 import type { ItemAbout, ItemDetail } from "@/lib/api"
 import { crewOf } from "@/lib/credits"
 import { formatDate } from "@/lib/format"
-
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-[8rem_1fr] gap-4 py-2 text-sm">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  )
-}
 
 /**
  * Everything about the item that is not artwork, playback, or a synopsis:
@@ -55,13 +47,13 @@ export function DetailFacts({ item, about }: { item: ItemDetail; about?: ItemAbo
   return (
     <section className="flex flex-col gap-3">
       <h2 className="section-title">Details</h2>
-      <dl className="divide-y divide-border/60 rounded-xl border border-white/5 bg-card/55 px-4 py-1 shadow-lg shadow-black/10">
+      <DetailFactPanel>
         {facts.map((fact) => (
-          <Fact key={fact.label} label={fact.label}>
+          <DetailFact key={fact.label} label={fact.label}>
             {fact.value}
-          </Fact>
+          </DetailFact>
         ))}
-      </dl>
+      </DetailFactPanel>
     </section>
   )
 }

@@ -29,6 +29,7 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal(1, entry.Season);
         Assert.Equal(4, entry.Episode);
         Assert.Equal(1234, entry.TvdbId);
+        Assert.Equal(371980, entry.SeriesTvdbId);
         Assert.False(entry.HasFile);
     }
 
@@ -106,6 +107,7 @@ public sealed class CalendarAndSeerrTests
             "plugin");
         json = JsonSerializer.Serialize(calendar, CompanionJson.CamelCase);
         Assert.Contains("\"dateKind\":\"digital\"", json);
+        Assert.Contains("\"seriesLibraryItemId\":null", json);
         Assert.Contains("\"windowStart\":\"2026-07-26\"", json);
         Assert.Contains("\"radarr\":", json);
     }

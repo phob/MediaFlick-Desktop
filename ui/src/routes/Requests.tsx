@@ -1,7 +1,7 @@
 import { Inbox, X } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router-dom"
-import { PageEmptyState, PageHeader } from "@/components/PageHeader"
+import { Link, useLocation } from "react-router-dom"
+import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
 import { SeerrRequestStatusBadge, SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { seerrImageUrl, type SeerrRequest } from "@/lib/api"
 import { useSeerrCancelRequest, useSeerrMedia, useSeerrRequests } from "@/lib/queries"
+import { detailNavigationState } from "@/lib/navigation"
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -37,6 +38,7 @@ function requestedOn(request: SeerrRequest) {
  * which is cached per title and shared with every other surface that shows it.
  */
 function RequestCard({ request }: { request: SeerrRequest }) {
+  const location = useLocation()
   const media = useSeerrMedia(request.mediaType, request.tmdbId)
   const cancel = useSeerrCancelRequest()
   const poster = seerrImageUrl(media.data?.posterPath, "w154")
@@ -84,7 +86,12 @@ function RequestCard({ request }: { request: SeerrRequest }) {
       <div className="relative z-10 flex shrink-0 items-center gap-2">
         {request.libraryItemId && (
           <Button asChild variant="secondary" size="sm">
-            <Link to={`/item/${encodeURIComponent(request.libraryItemId)}`}>Open in library</Link>
+            <Link
+              to={`/item/${encodeURIComponent(request.libraryItemId)}`}
+              state={detailNavigationState(location)}
+            >
+              Open in library
+            </Link>
           </Button>
         )}
         {/* Offered only while it can still be withdrawn. A refusal from Seerr
@@ -136,8 +143,12 @@ export default function Requests() {
 
       <div className="px-6 pb-10 sm:px-10 lg:px-14">
         <div className="max-w-6xl">
-          {requests.error ? (
-            <p className="text-sm text-destructive">{requests.error.message}</p>
+          {requests.error && !requests.data ? (
+            <PageErrorState
+              title="Could not load your requests"
+              description={requests.error.message}
+              action={<Button variant="outline" onClick={() => void requests.refetch()}>Try again</Button>}
+            />
           ) : requests.isPending ? (
             <ul className="flex flex-col gap-3">
               {Array.from({ length: 4 }, (_, index) => (

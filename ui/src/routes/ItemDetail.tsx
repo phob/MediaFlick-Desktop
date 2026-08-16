@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom"
+import { useLocation, useParams } from "react-router-dom"
 import { CastRow } from "@/components/detail/CastRow"
 import { DetailActions } from "@/components/detail/DetailActions"
 import { DetailFacts } from "@/components/detail/DetailFacts"
@@ -6,24 +6,13 @@ import { DetailHero } from "@/components/detail/DetailHero"
 import { EpisodeList } from "@/components/detail/EpisodeList"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
+import { DetailPageSkeleton } from "@/components/detail/DetailPrimitives"
 import { MediaCard } from "@/components/MediaCard"
-import { Skeleton } from "@/components/ui/skeleton"
+import { PageErrorState } from "@/components/PageHeader"
+import { Button } from "@/components/ui/button"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
+import { readDetailNavigationState, type DetailNavigationState } from "@/lib/navigation"
 import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
-
-function DetailSkeleton() {
-  return (
-    <div className="flex gap-8 p-6">
-      <Skeleton className="hidden h-[330px] w-[220px] rounded-xl sm:block" />
-      <div className="flex flex-1 flex-col gap-4">
-        <Skeleton className="h-9 w-2/3 max-w-lg" />
-        <Skeleton className="h-4 w-48" />
-        <Skeleton className="h-20 max-w-3xl" />
-        <Skeleton className="h-10 w-72" />
-      </div>
-    </div>
-  )
-}
 
 /** Seasons of a series still read best as posters — they are covers, not text. */
 function SeasonGrid({ seasons }: { seasons: ItemSummary[] }) {
@@ -74,7 +63,9 @@ function NextUpNote({ episode }: { episode: ItemSummary }) {
 
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
-  const { data: item, isPending, error } = useItem(id)
+  const location = useLocation()
+  const itemQuery = useItem(id)
+  const { data: item, isPending, error } = itemQuery
   // The cached row answers instantly; the synopsis, cast, tags, studios, and
   // critic score arrive from this live fetch and are never persisted.
   const about = useItemAbout(id)
@@ -86,8 +77,22 @@ export default function ItemDetail() {
   const media = useMediaInfo(id, Boolean(item) && !isContainer)
   const nextUp = useNextUp(id, isSeries)
 
-  if (error) return <p className="p-6 text-sm text-destructive">{error.message}</p>
-  if (isPending) return <DetailSkeleton />
+  if (error && !item) return (
+    <div className="p-6 sm:p-10 lg:p-14">
+      <PageErrorState
+        title="Could not load title details"
+        description={error.message}
+        action={<Button variant="outline" onClick={() => void itemQuery.refetch()}>Try again</Button>}
+      />
+    </div>
+  )
+  if (isPending) return <DetailPageSkeleton />
+  if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
+
+  const navigationState: DetailNavigationState = readDetailNavigationState(location.state) ?? {
+    from: `/library?kind=${item.kind === "Movie" ? "Movie" : "Series"}`,
+    label: "Back to library",
+  }
 
   const childItems = children.data?.items ?? []
   const episodes = childItems.filter((child) => child.kind === "Episode")
@@ -118,6 +123,7 @@ export default function ItemDetail() {
         aboutPending={about.isPending}
         aboutFailed={about.isError}
         episodeCount={episodeCount || null}
+        navigationState={navigationState}
       >
         {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
         <DetailActions

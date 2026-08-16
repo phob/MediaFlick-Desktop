@@ -153,7 +153,9 @@ public sealed class CalendarService
                 IntValue(episode, "tvdbId"),
                 BoolValue(episode, "monitored", true),
                 BoolValue(episode, "hasFile", false),
-                null));
+                null,
+                SeriesTmdbId: IntValue(series, "tmdbId"),
+                SeriesTvdbId: IntValue(series, "tvdbId")));
         }
 
         return result;
