@@ -11,7 +11,11 @@ import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
-import { readDetailNavigationState, type DetailNavigationState } from "@/lib/navigation"
+import {
+  defaultDetailNavigationState,
+  readDetailNavigationState,
+  type DetailNavigationState,
+} from "@/lib/navigation"
 import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
 
 /** Seasons of a series still read best as posters — they are covers, not text. */
@@ -89,10 +93,8 @@ export default function ItemDetail() {
   if (isPending) return <DetailPageSkeleton />
   if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
 
-  const navigationState: DetailNavigationState = readDetailNavigationState(location.state) ?? {
-    from: `/library?kind=${item.kind === "Movie" ? "Movie" : "Series"}`,
-    label: "Back to library",
-  }
+  const navigationState: DetailNavigationState =
+    readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item.kind)
 
   const childItems = children.data?.items ?? []
   const episodes = childItems.filter((child) => child.kind === "Episode")

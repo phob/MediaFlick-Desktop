@@ -116,28 +116,41 @@ release:
 [group('build')]
 non-debug: release
 
-# Run the staged app. Example: just run --url http://localhost:8096
+# Stop the interactive app that owns the config-wide single-instance gate.
+[private]
+[windows]
+stop-running-app:
+    $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'mediaflick-desktop.exe' -and $_.CommandLine -notmatch '--type=' }); foreach ($entry in $running) { $process = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue; if (-not $process) { continue }; if ($process.MainWindowHandle -ne 0) { $null = $process.CloseMainWindow(); $null = $process.WaitForExit(5000) }; if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force } }
+
+# Stop the interactive app that owns the config-wide single-instance gate.
+[private]
+[unix]
+stop-running-app:
+    pkill -TERM -x mediaflick-desktop 2>/dev/null || true
+
+# Restart the staged development app so the single-instance gate can never
+# leave `just run` showing the UI embedded in an older process.
 [group('run')]
 [windows]
-run *args: build
+run *args: stop-running-app build
     & 'build/mediaflick-desktop.exe' {{args}}
 
 # Run the staged app. Example: just run --url http://localhost:8096
 [group('run')]
 [unix]
-run *args: build
+run *args: stop-running-app build
     build/mediaflick-desktop {{args}}
 
 # Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
 [group('run')]
 [windows]
-run-non-debug *args: non-debug
+run-non-debug *args: stop-running-app non-debug
     & 'build/mediaflick-desktop.exe' {{args}}
 
 # Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
 [group('run')]
 [unix]
-run-non-debug *args: non-debug
+run-non-debug *args: stop-running-app non-debug
     build/mediaflick-desktop {{args}}
 
 # Run the external mpv binary that will be wired into playback later
