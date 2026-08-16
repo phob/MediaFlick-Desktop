@@ -197,6 +197,10 @@ impl CompanionSession {
                     .kind(&item.id)
                     .is_some()
                     .then(|| item.id.clone());
+                let series_library_item_id = item.series_id.as_ref().and_then(|series_id| {
+                    (self.library.kind(series_id).as_deref() == Some("Series"))
+                        .then(|| series_id.clone())
+                });
                 Some(json!({
                     "kind": "episode",
                     "date": date,
@@ -207,10 +211,13 @@ impl CompanionSession {
                     "episode": item.index_number,
                     "tmdbId": item.provider_id("Tmdb").and_then(|id| id.parse::<i64>().ok()),
                     "tvdbId": item.provider_id("Tvdb").and_then(|id| id.parse::<i64>().ok()),
+                    "seriesTmdbId": Value::Null,
+                    "seriesTvdbId": Value::Null,
                     "monitored": true,
                     "hasFile": library_item_id.is_some(),
                     "posterUrl": Value::Null,
                     "libraryItemId": library_item_id,
+                    "seriesLibraryItemId": series_library_item_id,
                 }))
             })
             .collect::<Vec<_>>();
@@ -541,10 +548,24 @@ fn join_calendar(library: &Library, value: &mut Value) {
         if let Some(id) = entry["tvdbId"].as_i64() {
             tvdb_by_kind.entry(kind).or_default().push(id.to_string());
         }
+        if kind == "Episode" {
+            if let Some(id) = entry["seriesTmdbId"].as_i64() {
+                tmdb_by_kind
+                    .entry("Series")
+                    .or_default()
+                    .push(id.to_string());
+            }
+            if let Some(id) = entry["seriesTvdbId"].as_i64() {
+                tvdb_by_kind
+                    .entry("Series")
+                    .or_default()
+                    .push(id.to_string());
+            }
+        }
     }
     let mut resolved: std::collections::HashMap<(&str, String), String> =
         std::collections::HashMap::new();
-    for kind in ["Movie", "Episode"] {
+    for kind in ["Movie", "Episode", "Series"] {
         for (id, item) in library
             .ids_by_tmdb(kind, tmdb_by_kind.get(kind).map_or(&[], Vec::as_slice))
             .unwrap_or_default()
@@ -573,12 +594,28 @@ fn join_calendar(library: &Library, value: &mut Value) {
                     .and_then(|id| resolved.get(&(kind, format!("tvdb:{id}"))))
             });
         entry["libraryItemId"] = item.map_or(Value::Null, |id| json!(id));
+        let series_item = (kind == "Episode")
+            .then(|| {
+                entry["seriesTmdbId"]
+                    .as_i64()
+                    .and_then(|id| resolved.get(&("Series", format!("tmdb:{id}"))))
+                    .or_else(|| {
+                        entry["seriesTvdbId"]
+                            .as_i64()
+                            .and_then(|id| resolved.get(&("Series", format!("tvdb:{id}"))))
+                    })
+            })
+            .flatten();
+        entry["seriesLibraryItemId"] = series_item.map_or(Value::Null, |id| json!(id));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::CompanionInfo;
+    use super::{CompanionInfo, join_calendar};
+    use crate::jellyfin::api::model::BaseItemDto;
+    use crate::library::Library;
+    use serde_json::json;
 
     #[test]
     fn only_supported_api_versions_enable_capabilities() {
@@ -595,5 +632,33 @@ mod tests {
             ..Default::default()
         };
         assert!(!future.supports("calendar"));
+    }
+
+    #[test]
+    fn calendar_join_keeps_episode_and_series_library_identity() {
+        let library = Library::open_in_memory().expect("library");
+        let items = [
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"series-1","Name":"Severance","Type":"Series","ProviderIds":{"Tvdb":"371980"}}"#,
+            )
+            .expect("series"),
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"episode-1","Name":"The We We Are","Type":"Episode","SeriesId":"series-1","ProviderIds":{"Tvdb":"1234"}}"#,
+            )
+            .expect("episode"),
+        ];
+        library.upsert_page(&items).expect("seed");
+        let mut calendar = json!({
+            "entries": [{
+                "kind": "episode",
+                "tvdbId": 1234,
+                "seriesTvdbId": 371980
+            }]
+        });
+
+        join_calendar(&library, &mut calendar);
+
+        assert_eq!(calendar["entries"][0]["libraryItemId"], "episode-1");
+        assert_eq!(calendar["entries"][0]["seriesLibraryItemId"], "series-1");
     }
 }

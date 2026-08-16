@@ -42,8 +42,8 @@ import {
 } from "@/components/ui/sidebar"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
-import { isSidebarRouteActive, librarySearchFromLocation } from "@/lib/navigation"
-import { useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
+import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
+import { useItem, useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
@@ -255,15 +255,39 @@ function UserMenu() {
 export function AppSidebar() {
   const location = useLocation()
   const libraryParams = new URLSearchParams(location.search)
+  const detailMatch = location.pathname.match(/^\/item\/([^/]+)$/)
+  let detailId: string | undefined
+  try {
+    detailId = detailMatch ? decodeURIComponent(detailMatch[1]) : undefined
+  } catch {
+    detailId = undefined
+  }
+  const detail = useItem(detailId)
+  const detailOrigin = readDetailNavigationState(location.state)
+  const originUrl = detailOrigin?.from.startsWith("/library")
+    ? new URL(detailOrigin.from, "https://mediaflick.invalid")
+    : null
   const activeLibraryNav = (title: string) => {
-    if (location.pathname !== "/library") return false
-    if (title === "Movies") return libraryKind(libraryParams) === "Movie"
-    if (title === "Series") return libraryKind(libraryParams) === "Series"
-    return (
+    if (location.pathname === "/library") {
+      if (title === "Movies") return libraryKind(libraryParams) === "Movie"
+      if (title === "Series") return libraryKind(libraryParams) === "Series"
+      return (
+        title === "Favorites"
+        && libraryParams.get("favorite") === "true"
+        && !libraryParams.has("kind")
+      )
+    }
+    if (!detailId) return false
+    if (
       title === "Favorites"
-      && libraryParams.get("favorite") === "true"
-      && !libraryParams.has("kind")
-    )
+      && originUrl?.searchParams.get("favorite") === "true"
+      && !originUrl.searchParams.has("kind")
+    ) return true
+    if (title === "Movies") return detail.data?.kind === "Movie"
+    if (title === "Series") {
+      return detail.data != null && detail.data.kind !== "Movie"
+    }
+    return false
   }
   const { data: seerr } = useSeerrStatus()
   const { data: status } = useStatus()

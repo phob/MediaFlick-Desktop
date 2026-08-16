@@ -3,9 +3,10 @@ import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid } from "@/components/ItemGrid"
 import { LibraryFilters } from "@/components/LibraryFilters"
 import { MediaCard } from "@/components/MediaCard"
-import { PageHeader } from "@/components/PageHeader"
+import { PageErrorState, PageHeader } from "@/components/PageHeader"
 import { CastDiscover } from "@/components/seerr/CastDiscover"
 import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { PersonIdentity } from "@/lib/api"
 import {
@@ -174,16 +175,20 @@ export default function Library() {
           ? "Series"
           : kind === "Movie"
             ? "Movies"
+            : kind === "Movie,Series"
+              ? "Movies & Series"
             : "Your library"
   const description = castPerson
     ? `Titles featuring ${personName} on your Jellyfin server, followed by more to discover through Seerr.`
     : search
       ? "Everything in your library that matches, with requestable titles from Seerr below."
       : globalFavoritesView
-        ? "The movies and shows you saved for later, all in one place."
+        ? "The movies and series you saved for later, all in one place."
         : kind === "Series"
           ? "Find your next episode, revisit a favorite, or start something new."
-          : "Your movie collection, ready to browse and play."
+          : kind === "Movie"
+            ? "Your movie collection, ready to browse and play."
+            : "Your movies and series, ready to browse and play."
 
   const castDiscover = castPerson ? (
     <CastDiscover
@@ -219,7 +224,11 @@ export default function Library() {
                 ))}
               </div>
             ) : resolution.error ? (
-              <p className="py-4 text-sm text-destructive">{resolution.error.message}</p>
+              <PageErrorState
+                title="Could not resolve this cast member"
+                description={resolution.error.message}
+                action={<Button variant="outline" onClick={() => void resolution.refetch()}>Try again</Button>}
+              />
             ) : (
               <CastCandidates
                 candidates={resolution.data?.candidates ?? []}

@@ -198,7 +198,7 @@ export function RequestDialog({
         {nothingLeft && (
           <p className="text-sm text-muted-foreground">
             {isSeries
-              ? `Seerr already has every ${is4k ? "4K " : ""}season of this show.`
+              ? `Seerr already has every ${is4k ? "4K " : ""}season of this series.`
               : `This ${is4k ? "4K " : ""}version is already in Seerr.`}
           </p>
         )}

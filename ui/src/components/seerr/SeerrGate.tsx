@@ -48,7 +48,7 @@ export function SeerrGate({ children }: { children: ReactNode }) {
             {companionManaged
               ? "Ask your Jellyfin administrator to import this account into Seerr. MediaFlick never needs a separate Seerr login when the Companion plugin is enabled."
               : status.data?.expired
-              ? "Sign in to Seerr again to keep requesting movies and shows."
+              ? "Sign in to Seerr again to keep requesting movies and series."
               : "Link a Seerr instance to search beyond your library and request what it does not have."}
           </p>
           {status.error && <p className="text-sm text-destructive">{status.error.message}</p>}

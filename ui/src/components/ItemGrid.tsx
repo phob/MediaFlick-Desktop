@@ -2,14 +2,17 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { LibraryBig } from "lucide-react"
 import type React from "react"
 import { useEffect, useLayoutEffect, useMemo, useState } from "react"
+import { useLocation, useNavigationType } from "react-router-dom"
 import { MediaCard } from "@/components/MediaCard"
-import { PageEmptyState } from "@/components/PageHeader"
+import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
 import { useItemPages } from "@/lib/queries"
 
 /** Fallbacks for the geometry tokens in `app.css`, used before first measure. */
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
+const gridScrollPositions = new Map<string, number>()
 
 function readGeometry(element: HTMLElement) {
   const styles = getComputedStyle(element)
@@ -89,14 +92,21 @@ export function ItemGrid({
   const [content, setContent] = useState<HTMLDivElement | null>(null)
   const { columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
+  const location = useLocation()
+  const navigationType = useNavigationType()
 
   // A changed filter is a different list; the old scroll offset means nothing
   // in it, and keeping it would land the user mid-way through the new results.
   const queryKey = JSON.stringify(query)
-  useEffect(() => {
-    scroller?.scrollTo({ top: 0 })
+  useLayoutEffect(() => {
+    if (!scroller) return
+    const top = navigationType === "POP" ? gridScrollPositions.get(location.key) ?? 0 : 0
+    scroller.scrollTo({ top })
     setVisibleRows({ first: 0, last: 0 })
-  }, [queryKey, scroller])
+    return () => {
+      gridScrollPositions.set(location.key, scroller.scrollTop)
+    }
+  }, [location.key, navigationType, queryKey, scroller])
 
   // Page 0 is always requested: it is what `total` is read from, so keeping it
   // resident stops the grid collapsing to zero rows when the user scrolls into
@@ -117,7 +127,10 @@ export function ItemGrid({
 
   const results = useItemPages(query, pages)
   const total = results[0]?.data?.total ?? null
-  const error = results.find((result) => result.error)?.error
+  // A background refetch can fail while every cached card is still valid. Only
+  // page zero can make the whole view unavailable; later page failures remain
+  // as unloaded slots until the query retries.
+  const error = results[0]?.data ? null : results[0]?.error
 
   // Not memoised: `useQueries` hands back a fresh array every render, so any
   // dependency list including it would miss on every pass anyway. Building a
@@ -161,7 +174,11 @@ export function ItemGrid({
     >
       <div ref={setContent}>
         {error ? (
-          <p className="py-4 text-sm text-destructive">{error.message}</p>
+          <PageErrorState
+            title="Could not load library items"
+            description={error.message}
+            action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
+          />
         ) : total === null ? (
           <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
         ) : total === 0 ? (

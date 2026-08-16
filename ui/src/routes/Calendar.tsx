@@ -8,8 +8,8 @@ import {
   Ticket,
 } from "lucide-react"
 import { useMemo, useState } from "react"
-import { Link } from "react-router-dom"
-import { PageEmptyState, PageHeader } from "@/components/PageHeader"
+import { Link, useLocation } from "react-router-dom"
+import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ import {
   type SeerrResult,
 } from "@/lib/api"
 import { usePlay, useReleaseCalendar, useSeerrStatus } from "@/lib/queries"
+import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 const DATE_KINDS: { id: CalendarDateKind; label: string }[] = [
@@ -69,6 +70,8 @@ function entriesByDate(entries: CalendarEntry[]) {
 }
 
 function EntryActions({ entry }: { entry: CalendarEntry }) {
+  const location = useLocation()
+  const navigationState = detailNavigationState(location)
   const play = usePlay()
   const seerr = useSeerrStatus()
   const [requesting, setRequesting] = useState(false)
@@ -86,17 +89,27 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
           <Play className="size-3.5" />
         </Button>
         <Button asChild size="sm" variant="ghost">
-          <Link to={`/item/${encodeURIComponent(entry.libraryItemId)}`}>Details</Link>
+          <Link to={`/item/${encodeURIComponent(entry.libraryItemId)}`} state={navigationState}>Details</Link>
         </Button>
       </div>
     )
   }
 
-  if (entry.kind === "movie" && entry.tmdbId && seerr.data?.linked) {
+  if (entry.seriesLibraryItemId) {
+    return (
+      <Button asChild size="sm" variant="ghost">
+        <Link to={`/item/${encodeURIComponent(entry.seriesLibraryItemId)}`} state={navigationState}>Series details</Link>
+      </Button>
+    )
+  }
+
+  const requestMediaType = entry.kind === "movie" ? "movie" : "tv"
+  const requestTmdbId = entry.kind === "movie" ? entry.tmdbId : entry.seriesTmdbId
+  if (requestTmdbId && seerr.data?.linked) {
     const result: SeerrResult = {
-      mediaType: "movie",
-      tmdbId: entry.tmdbId,
-      title: entry.title,
+      mediaType: requestMediaType,
+      tmdbId: requestTmdbId,
+      title: entry.kind === "episode" ? entry.seriesTitle ?? entry.title : entry.title,
       year: Number(entry.date.slice(0, 4)) || null,
       overview: null,
       posterPath: null,
@@ -110,7 +123,7 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
       <>
         <Button size="sm" variant="ghost" onClick={() => setRequesting(true)}>
           <Ticket className="size-3.5" />
-          Request
+          Request options
         </Button>
         {requesting && <RequestDialog result={result} onClose={() => setRequesting(false)} />}
       </>
@@ -275,13 +288,13 @@ export default function Calendar() {
         contentClassName={view === "agenda" ? "max-w-6xl" : undefined}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={() => setMonth(addMonths(month, -1))}>
+            <Button aria-label="Previous month" variant="outline" size="icon" onClick={() => setMonth(addMonths(month, -1))}>
               <ChevronLeft />
             </Button>
             <Button variant="outline" onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>
               Today
             </Button>
-            <Button variant="outline" size="icon" onClick={() => setMonth(addMonths(month, 1))}>
+            <Button aria-label="Next month" variant="outline" size="icon" onClick={() => setMonth(addMonths(month, 1))}>
               <ChevronRight />
             </Button>
           </div>
@@ -322,8 +335,14 @@ export default function Calendar() {
             <SourceWarning sources={calendar.data.sources} />
           </div>
         )}
-        {calendar.error ? (
-          <p className={cn("text-sm text-destructive", view === "agenda" && "max-w-6xl")}>{calendar.error.message}</p>
+        {calendar.error && !calendar.data ? (
+          <div className={cn(view === "agenda" && "max-w-6xl")}>
+            <PageErrorState
+              title="Could not load releases"
+              description={calendar.error.message}
+              action={<Button variant="outline" onClick={() => void calendar.refetch()}>Try again</Button>}
+            />
+          </div>
         ) : calendar.isPending ? (
           <div className={cn("flex flex-col gap-3", view === "agenda" && "max-w-6xl")}>
             {Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-20" />)}

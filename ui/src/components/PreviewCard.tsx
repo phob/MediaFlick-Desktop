@@ -20,6 +20,7 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatRemaining, formatRuntime } from "@/lib/format"
+import { detailNavigationState } from "@/lib/navigation"
 import { PreviewContext, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -157,6 +158,7 @@ function PreviewPanel({
 }) {
   const { item, rect } = target
   const navigate = useNavigate()
+  const location = useLocation()
   const panel = useRef<HTMLDivElement>(null)
   const pointerInside = useRef(false)
   const focusInside = useRef(false)
@@ -223,7 +225,8 @@ function PreviewPanel({
   ].filter(Boolean)
 
   const detailPath = `/item/${encodeURIComponent(item.id)}`
-  const goToDetail = () => navigate(detailPath)
+  const detailState = detailNavigationState(location)
+  const goToDetail = () => navigate(detailPath, { state: detailState })
 
   return (
     <div
@@ -274,6 +277,7 @@ function PreviewPanel({
     >
       <Link
         to={detailPath}
+        state={detailState}
         aria-label={`Open details for ${item.name}`}
         className="absolute inset-0 z-10 cursor-pointer rounded-media outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       />
