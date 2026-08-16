@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { Billboard } from "@/components/Billboard"
 import { MediaCard } from "@/components/MediaCard"
 import { MediaRail } from "@/components/MediaRail"
+import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type HomeRow, type ItemSummary } from "@/lib/api"
@@ -17,7 +18,7 @@ import {
 import { cn } from "@/lib/utils"
 
 const VIEW_ALL: Partial<Record<HomeRow["id"], string>> = {
-  recent: "/library?sort=added",
+  recent: "/library?kind=Movie,Series&sort=added",
   "latest-movies": "/library?kind=Movie&sort=year",
   "latest-shows": "/library?kind=Series&sort=year",
   favorites: "/library?favorite=true",
@@ -225,8 +226,16 @@ export default function Home() {
   const seedDetail = useItem(seed?.id)
   const seedGenre = seedDetail.data?.genres?.[0] ?? null
 
-  if (home.error) {
-    return <p className="p-6 text-sm text-destructive">{home.error.message}</p>
+  if (home.error && !home.data) {
+    return (
+      <div className="p-6 sm:p-10 lg:p-14">
+        <PageErrorState
+          title="Could not load your home page"
+          description={home.error.message}
+          action={<Button variant="outline" onClick={() => void home.refetch()}>Try again</Button>}
+        />
+      </div>
+    )
   }
 
   // The billboard and live Next Up shelf are progressive decoration over the

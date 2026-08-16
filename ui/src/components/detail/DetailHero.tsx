@@ -2,6 +2,7 @@ import { Star } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { DetailRatingReadout } from "@/components/RatingOverlay"
+import { DetailBackLink } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -15,13 +16,14 @@ import {
 } from "@/lib/api"
 import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import type { DetailNavigationState } from "@/lib/navigation"
 
 /**
  * Where this item sits: the series and season above an episode, the series
  * above a season. Both are real navigation targets, which is what turns the
  * episode page from a dead end into part of a show.
  */
-function Breadcrumb({ item }: { item: ItemDetail }) {
+function Breadcrumb({ item, navigationState }: { item: ItemDetail; navigationState?: DetailNavigationState }) {
   const links: { to: string; label: string }[] = []
   if (item.seriesId && item.seriesName && item.kind !== "Series") {
     links.push({ to: `/item/${encodeURIComponent(item.seriesId)}`, label: item.seriesName })
@@ -39,7 +41,11 @@ function Breadcrumb({ item }: { item: ItemDetail }) {
       {links.map((link, index) => (
         <span key={link.to} className="flex items-center gap-2">
           {index > 0 && <span aria-hidden>›</span>}
-          <Link to={link.to} className="rounded-sm hover:text-foreground hover:underline">
+          <Link
+            to={link.to}
+            state={navigationState}
+            className="rounded-sm hover:text-foreground hover:underline"
+          >
             {link.label}
           </Link>
         </span>
@@ -134,6 +140,7 @@ export function DetailHero({
   aboutPending = false,
   aboutFailed = false,
   episodeCount,
+  navigationState,
   children,
 }: {
   item: ItemDetail
@@ -143,6 +150,7 @@ export function DetailHero({
   aboutFailed?: boolean
   /** Shown instead of a runtime for containers, which have none of their own. */
   episodeCount?: number | null
+  navigationState?: DetailNavigationState
   children?: ReactNode
 }) {
   const [backdropFailed, setBackdropFailed] = useState(false)
@@ -229,7 +237,10 @@ export function DetailHero({
         )}
         <Poster item={item} />
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <Breadcrumb item={item} />
+          {navigationState && (
+            <DetailBackLink to={navigationState.from} label={navigationState.label} />
+          )}
+          <Breadcrumb item={item} navigationState={navigationState} />
           <div className="flex flex-col gap-1">
             {/* The heading stays in the document whatever is drawn: a wordmark
                 is artwork, and a page whose <h1> is an image is a page with no

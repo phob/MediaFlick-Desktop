@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
 import { RatingOverlay } from "@/components/RatingOverlay"
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/lib/api"
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
+import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 const TECHNICAL_PREFETCH_MARGIN = "160px"
@@ -72,6 +73,7 @@ export const MediaCard = memo(function MediaCard({
   /** Off for cards the expanded panel would sit badly on, such as a Top 10 rank. */
   preview?: boolean
 }) {
+  const location = useLocation()
   const { handlers, expanded } = usePreview(item, preview)
   const technical = useTechnicalVisibility()
   const progress = progressFraction(item)
@@ -92,6 +94,7 @@ export const MediaCard = memo(function MediaCard({
     <Link
       ref={technical.ref}
       to={`/item/${encodeURIComponent(item.id)}`}
+      state={detailNavigationState(location)}
       {...handlers}
       // While the expanded panel is over this card, its own lift would push the
       // artwork out from under an opaque panel that is not going to move with

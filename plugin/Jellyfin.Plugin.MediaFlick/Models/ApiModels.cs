@@ -39,7 +39,10 @@ public sealed record CalendarEntry(
     bool Monitored,
     bool HasFile,
     string? PosterUrl,
-    string? LibraryItemId = null);
+    string? LibraryItemId = null,
+    int? SeriesTmdbId = null,
+    int? SeriesTvdbId = null,
+    string? SeriesLibraryItemId = null);
 
 public sealed record CalendarResponse(
     IReadOnlyList<CalendarEntry> Entries,
