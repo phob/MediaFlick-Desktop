@@ -59,7 +59,7 @@ function useGridMetrics(element: HTMLElement | null) {
   return metrics
 }
 
-interface ItemGridProps {
+export interface ItemGridProps {
   /** Without `limit`/`offset` — the grid owns paging. */
   query: ItemQuery
   /** Reports the result count so the caller can label the view. */

@@ -21,6 +21,11 @@ export type DisplayRating = {
   accessibleValue: string
 }
 
+interface CardRatingsResult {
+  ratings: DisplayRating[]
+  item: ItemRatings | undefined
+}
+
 export function formatRating(
   rating: NormalizedRating,
   definition: RatingSourceDefinition,
@@ -56,10 +61,10 @@ export function formatRating(
   }
 }
 
-export function useCardRatings(itemId: string) {
+export function useCardRatings(itemId: string): CardRatingsResult {
   const context = useContext(RatingsContext)
   useEffect(() => context?.register(itemId), [context, itemId])
-  if (!context) return { ratings: [] as DisplayRating[], item: undefined }
+  if (!context) return { ratings: [], item: undefined }
   const item = context.items.get(itemId)
   const bySource = new Map(item?.ratings.map((rating) => [rating.sourceId, rating]) ?? [])
   const ratings = context.selected.flatMap((sourceId) => {

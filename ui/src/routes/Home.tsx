@@ -17,12 +17,12 @@ import {
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-const VIEW_ALL: Partial<Record<HomeRow["id"], string>> = {
-  recent: "/library?kind=Movie,Series&sort=added",
-  "latest-movies": "/library?kind=Movie&sort=year",
-  "latest-shows": "/library?kind=Series&sort=year",
-  favorites: "/library?favorite=true",
-}
+const VIEW_ALL = new Map<HomeRow["id"], string>([
+  ["recent", "/library?kind=Movie,Series&sort=added"],
+  ["latest-movies", "/library?kind=Movie&sort=year"],
+  ["latest-shows", "/library?kind=Series&sort=year"],
+  ["favorites", "/library?favorite=true"],
+])
 
 /** Films and shows together, the way every shelf below the fold is mixed. */
 const BOTH_KINDS = "Movie,Series"
@@ -105,7 +105,7 @@ function BecauseYouWatched({ seed, genre }: { seed: ItemSummary; genre: string }
 function Row({ row }: { row: HomeRow }) {
   if (!row.items.length) return null
   return (
-    <MediaRail title={row.title} viewAll={VIEW_ALL[row.id]} itemCount={row.items.length}>
+    <MediaRail title={row.title} viewAll={VIEW_ALL.get(row.id)} itemCount={row.items.length}>
       {row.items.map((item) => (
         <MediaCard
           key={item.id}

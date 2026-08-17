@@ -2,33 +2,29 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom"
-import { describe, expect, test, vi } from "vitest"
-import type { ItemQuery } from "../src/lib/api"
+import { describe, expect, test } from "vitest"
+import type { ItemGridProps } from "../src/components/ItemGrid"
+import type { CastDiscoverProps } from "../src/components/seerr/CastDiscover"
 import { queryKeys } from "../src/lib/query-client"
 
-vi.mock("@/components/ItemGrid", () => ({
-  ItemGrid: ({ query, footer }: { query: ItemQuery; footer?: ReactNode }) => (
+import Library from "../src/routes/Library"
+
+function QueryProbeGrid({ query, footer }: ItemGridProps) {
+  return (
     <>
       <output data-library-query>{JSON.stringify(query)}</output>
       {footer}
     </>
-  ),
-}))
+  )
+}
 
-vi.mock("@/components/seerr/CastDiscover", () => ({
-  CastDiscover: ({ personName, jellyfinId, tmdbId, resolving }: {
-    personName: string
-    jellyfinId: string | null
-    tmdbId: number | null
-    resolving?: boolean
-  }) => (
+function CastDiscoverProbe({ personName, jellyfinId, tmdbId, resolving }: CastDiscoverProps) {
+  return (
     <output data-cast-discover>
       {JSON.stringify({ personName, jellyfinId, tmdbId, resolving })}
     </output>
-  ),
-}))
-
-import Library from "../src/routes/Library"
+  )
+}
 
 function NavigationProbe() {
   const location = useLocation()
@@ -87,7 +83,12 @@ describe("person-mode Search route", () => {
           ]}
           initialIndex={1}
         >
-          <Routes><Route path="/library" element={<Library />} /></Routes>
+          <Routes>
+            <Route
+              path="/library"
+              element={<Library components={{ ItemGrid: QueryProbeGrid, CastDiscover: CastDiscoverProbe }} />}
+            />
+          </Routes>
           <NavigationProbe />
         </MemoryRouter>
       </Providers>,

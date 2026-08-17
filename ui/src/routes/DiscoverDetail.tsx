@@ -78,14 +78,14 @@ function regionalReleaseDates(detail: SeerrMediaDetail) {
   return [...unique.values()].sort((left, right) => left.date.localeCompare(right.date))
 }
 
-const RELEASE_LABELS: Record<SeerrReleaseDate["type"], string> = {
+const RELEASE_LABELS = {
   premiere: "Premiere",
   "limited-cinema": "Limited cinema",
   cinema: "In cinemas",
   digital: "Digital",
   physical: "Physical",
   tv: "Television",
-}
+} satisfies Record<SeerrReleaseDate["type"], string>
 
 function contentRating(detail: SeerrMediaDetail, releases: SeerrReleaseDate[]) {
   const preferred = preferredRegion()
@@ -97,7 +97,7 @@ function contentRating(detail: SeerrMediaDetail, releases: SeerrReleaseDate[]) {
   )
 }
 
-export function Cast({ detail }: { detail: SeerrMediaDetail }) {
+export function Cast({ detail }: { detail: Pick<SeerrMediaDetail, "cast"> }) {
   return <DetailCastRail entries={detail.cast.map((person) => ({
     key: `${person.id}-${person.name}`,
     name: person.name,

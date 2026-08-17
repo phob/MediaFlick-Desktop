@@ -1,49 +1,47 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import { beforeEach, describe, expect, test, vi } from "vitest"
-import type { ItemSummary } from "@/lib/api"
-
-vi.mock("@/components/Billboard", () => ({ Billboard: () => null }))
-vi.mock("@/components/MediaCard", () => ({
-  MediaCard: ({ item }: { item: ItemSummary }) => <div>{item.name}</div>,
-}))
-
-const item = (id: string, name: string, kind: "Movie" | "Series") =>
-  ({ id, name, kind }) as ItemSummary
-const homeState = vi.hoisted(() => ({ error: null as Error | null }))
-
-vi.mock("@/lib/queries", () => ({
-  useHome: () => ({
-    data: {
-      rows: [
-        { id: "recent", title: "Recently Added", items: [item("recent", "Recent", "Movie"), item("recent-show", "Recent Series", "Series")] },
-        { id: "latest-movies", title: "Latest Movies", items: [item("movie", "Movie", "Movie")] },
-        { id: "latest-shows", title: "Latest Series", items: [item("show", "Series", "Series")] },
-      ],
-    },
-    error: homeState.error,
-    isPending: false,
-  }),
-  useHomeResume: () => ({ data: undefined, isPending: true }),
-  useBillboard: () => ({ data: undefined, isPending: true }),
-  useItems: () => ({ data: { items: [] } }),
-  useGenres: () => ({ data: { genres: [] } }),
-  useItem: () => ({ data: undefined }),
-}))
+import { describe, expect, test } from "vitest"
+import { queryKeys } from "@/lib/query-client"
+import { itemSummary } from "./support/fixtures"
 
 import Home from "@/routes/Home"
 
-describe("home latest shelves", () => {
-  beforeEach(() => {
-    homeState.error = null
-  })
+const item = (id: string, name: string, kind: "Movie" | "Series") =>
+  itemSummary({ id, name, kind })
 
-  test("renders cached shelves while billboard and live Next Up are pending", () => {
-    render(
+function renderHome(error: Error | null = null) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  client.setQueryData(queryKeys.home, {
+    rows: [
+      { id: "recent", title: "Recently Added", items: [item("recent", "Recent", "Movie"), item("recent-show", "Recent Series", "Series")] },
+      { id: "latest-movies", title: "Latest Movies", items: [item("movie", "Movie", "Movie")] },
+      { id: "latest-shows", title: "Latest Series", items: [item("show", "Series", "Series")] },
+    ],
+  })
+  client.setQueryData(queryKeys.homeResume, { items: [] })
+  client.setQueryData(queryKeys.billboard, { items: [] })
+  client.setQueryData(queryKeys.items({ favorite: true, sort: "added", limit: 24 }), { items: [] })
+  client.setQueryData(queryKeys.genres, { genres: [] })
+  if (error) {
+    const query = client.getQueryCache().find({ queryKey: queryKeys.home })
+    if (!query) throw new Error("Expected the seeded Home query")
+    query.setState({ ...query.state, error, status: "error" })
+  }
+  return render(
+    <QueryClientProvider client={client}>
       <MemoryRouter>
         <Home />
-      </MemoryRouter>,
-    )
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe("home latest shelves", () => {
+  test("renders cached shelves while billboard and live Next Up are pending", () => {
+    renderHome()
 
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
       "Recently Added",
@@ -65,12 +63,7 @@ describe("home latest shelves", () => {
   })
 
   test("keeps valid cached shelves visible when a background refresh fails", () => {
-    homeState.error = new Error("offline")
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    )
+    renderHome(new Error("offline"))
 
     expect(screen.getByRole("heading", { name: "Recently Added" })).toBeTruthy()
     expect(screen.queryByText("offline")).toBeNull()

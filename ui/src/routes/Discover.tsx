@@ -54,6 +54,22 @@ function availabilityFilter(value: string | null): AvailabilityFilter {
   return value === "outside" || value === "library" ? value : "all"
 }
 
+function searchMediaFilter(value: string): SearchMediaFilter {
+  return value === "movie" || value === "tv" ? value : "all"
+}
+
+function trendingMediaFilter(value: string): NonNullable<SeerrDiscoverFilters["mediaType"]> {
+  return value === "movie" || value === "tv" ? value : "all"
+}
+
+function trendingTimeWindow(value: string): NonNullable<SeerrDiscoverFilters["timeWindow"]> {
+  return value === "week" ? "week" : "day"
+}
+
+function catalogueSort(value: string): NonNullable<SeerrDiscoverFilters["sort"]> {
+  return value === "rating" || value === "newest" ? value : "popular"
+}
+
 function filterResults(
   results: SeerrResult[] | undefined,
   availability: AvailabilityFilter,
@@ -81,7 +97,7 @@ function PaginationTail({
   active?: boolean
   hasNextPage: boolean
   isFetchingNextPage: boolean
-  fetchNextPage: () => Promise<unknown>
+  fetchNextPage: () => Promise<void>
 }) {
   const sentinel = useRef<HTMLDivElement>(null)
 
@@ -131,7 +147,7 @@ function AvailabilitySelect({
 }) {
   return (
     <FilterField label="Library">
-      <Select value={value} onValueChange={(next) => onChange(next as AvailabilityFilter)}>
+      <Select value={value} onValueChange={(next) => onChange(availabilityFilter(next))}>
         <SelectTrigger className="h-10 min-w-40 border-white/10 bg-white/5">
           <SelectValue />
         </SelectTrigger>
@@ -257,7 +273,7 @@ function DiscoveryControls({
               onValueChange={(mediaType) =>
                 onFiltersChange({
                   ...filters,
-                  mediaType: mediaType as NonNullable<SeerrDiscoverFilters["mediaType"]>,
+                  mediaType: trendingMediaFilter(mediaType),
                 })
               }
             >
@@ -277,7 +293,7 @@ function DiscoveryControls({
               onValueChange={(timeWindow) =>
                 onFiltersChange({
                   ...filters,
-                  timeWindow: timeWindow as NonNullable<SeerrDiscoverFilters["timeWindow"]>,
+                  timeWindow: trendingTimeWindow(timeWindow),
                 })
               }
             >
@@ -301,7 +317,7 @@ function DiscoveryControls({
               onValueChange={(sort) =>
                 onFiltersChange({
                   ...filters,
-                  sort: sort as NonNullable<SeerrDiscoverFilters["sort"]>,
+                  sort: catalogueSort(sort),
                 })
               }
             >
@@ -399,7 +415,7 @@ function DiscoverRow({
           </h2>
           <p className="text-sm text-muted-foreground">{metadata.description}</p>
         </div>
-        {typeof total === "number" ? (
+        {total !== undefined ? (
           <span className="data-label text-muted-foreground">
             {visible?.length ?? 0} loaded / {total.toLocaleString()}
           </span>
@@ -416,7 +432,7 @@ function DiscoverRow({
       <PaginationTail
         hasNextPage={Boolean(results.hasNextPage)}
         isFetchingNextPage={results.isFetchingNextPage}
-        fetchNextPage={results.fetchNextPage}
+        fetchNextPage={() => results.fetchNextPage().then(() => undefined)}
       />
     </section>
   )
@@ -449,7 +465,7 @@ function SearchResults({
             Search keeps loading as you scroll, just like the discovery feeds.
           </p>
         </div>
-        {typeof total === "number" ? (
+        {total !== undefined ? (
           <span className="data-label text-muted-foreground">
             {visible?.length ?? 0} loaded / {total.toLocaleString()}
           </span>
@@ -461,7 +477,7 @@ function SearchResults({
           Refine
         </div>
         <FilterField label="Format">
-          <Select value={mediaType} onValueChange={(value) => setMediaType(value as SearchMediaFilter)}>
+          <Select value={mediaType} onValueChange={(value) => setMediaType(searchMediaFilter(value))}>
             <SelectTrigger className="h-10 min-w-32 border-white/10 bg-white/5">
               <SelectValue />
             </SelectTrigger>
@@ -484,7 +500,7 @@ function SearchResults({
       <PaginationTail
         hasNextPage={Boolean(search.hasNextPage)}
         isFetchingNextPage={search.isFetchingNextPage}
-        fetchNextPage={search.fetchNextPage}
+        fetchNextPage={() => search.fetchNextPage().then(() => undefined)}
       />
     </section>
   )
@@ -669,7 +685,7 @@ export default function Discover() {
           <Tabs
             value={row}
             onValueChange={(value) => {
-              const next = value as SeerrDiscoverRow
+              const next = discoverRow(value)
               setParams(
                 (previous) => {
                   const nextParams = new URLSearchParams(previous)

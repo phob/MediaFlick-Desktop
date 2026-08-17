@@ -1,26 +1,32 @@
 import { Badge } from "@/components/ui/badge"
 import type { SeerrRequestStatus, SeerrStatus } from "@/lib/api"
 
+type StatusBadgeDescription = {
+  label: string
+  variant: "default" | "secondary" | "outline" | "destructive"
+}
+
 /**
  * What Seerr already knows about a title. `unknown` is deliberately not a badge:
  * "we have never heard of this" is the default state of everything on a
  * discovery page, and a badge on every card would say nothing.
  */
-const MEDIA_LABELS: Partial<Record<SeerrStatus, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }>> = {
+const MEDIA_LABELS = {
+  unknown: null,
   pending: { label: "Requested", variant: "secondary" },
   processing: { label: "Downloading", variant: "secondary" },
   partial: { label: "Partly available", variant: "outline" },
   available: { label: "Available", variant: "default" },
   blacklisted: { label: "Blocked", variant: "destructive" },
-}
+} satisfies Record<SeerrStatus, StatusBadgeDescription | null>
 
-const REQUEST_LABELS: Record<SeerrRequestStatus, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
+const REQUEST_LABELS = {
   pending: { label: "Awaiting approval", variant: "secondary" },
   approved: { label: "Approved", variant: "default" },
   declined: { label: "Declined", variant: "destructive" },
   failed: { label: "Failed", variant: "destructive" },
   unknown: { label: "Unknown", variant: "outline" },
-}
+} satisfies Record<SeerrRequestStatus, StatusBadgeDescription>
 
 export function SeerrStatusBadge({
   status,

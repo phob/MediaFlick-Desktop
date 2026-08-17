@@ -11,7 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { MediaSource, MediaStream, PlaybackTrackPreference } from "@/lib/api"
+import type {
+  MediaSource,
+  MediaStream,
+  PlaybackTrackPreference,
+  PlaybackTrackPreferenceWrite,
+} from "@/lib/api"
 import {
   describeStream,
   describeTrackChoice,
@@ -161,15 +166,14 @@ function defaultSubtitleIndex(source: MediaSource) {
 }
 
 function PlaybackTrackControls({
-  itemId,
   sources,
   preference,
+  save,
 }: {
-  itemId: string
   sources: MediaSource[]
   preference: PlaybackTrackPreference | null
+  save: PlaybackPreferenceWriter
 }) {
-  const save = useSetPlaybackPreference(itemId)
   const sourceIndex = Math.min(preference?.mediaSourceIndex ?? 0, sources.length - 1)
   const source = sources[sourceIndex]
   if (!source) return null
@@ -305,6 +309,33 @@ export function MediaInfo({
   preference: PlaybackTrackPreference | null | undefined
   isPending: boolean
 }) {
+  const save = useSetPlaybackPreference(itemId)
+  return (
+    <MediaInfoView
+      sources={sources}
+      preference={preference}
+      isPending={isPending}
+      save={save}
+    />
+  )
+}
+
+export interface PlaybackPreferenceWriter {
+  isPending: boolean
+  mutate: (preference: PlaybackTrackPreferenceWrite) => void
+}
+
+export function MediaInfoView({
+  sources,
+  preference,
+  isPending,
+  save,
+}: {
+  sources: MediaSource[] | undefined
+  preference: PlaybackTrackPreference | null | undefined
+  isPending: boolean
+  save: PlaybackPreferenceWriter
+}) {
   if (isPending) {
     return (
       <section className="flex flex-col gap-3">
@@ -320,9 +351,9 @@ export function MediaInfo({
       <h2 className="section-title">Media</h2>
       <div className="flex flex-col gap-3">
         <PlaybackTrackControls
-          itemId={itemId}
           sources={sources}
           preference={preference ?? null}
+          save={save}
         />
         {sources.map((source, index) => (
           <SourceCard

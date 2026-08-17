@@ -1,27 +1,19 @@
 import { useEffect } from "react"
 import { invalidateLibraryChanged, queryClient, queryKeys } from "./query-client"
-
-type ShellEvent = {
-  type?: string
-  payload?: { itemIds?: unknown; contextIds?: unknown }
-}
+import { readShellEvent, shellEventIds } from "./shell-events"
 
 /** Relays native background metadata commits into React Query's active views. */
 export function useLibraryMetadataBridge() {
   useEffect(() => {
     const receive = (event: Event) => {
-      const detail = (event as CustomEvent<ShellEvent>).detail
+      const detail = readShellEvent(event)
       if (detail?.type === "jellyfin-session-expired") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.status })
         return
       }
       if (detail?.type !== "library-changed") return
-      const itemIds = Array.isArray(detail.payload?.itemIds)
-        ? detail.payload.itemIds.filter((id): id is string => typeof id === "string")
-        : []
-      const contextIds = Array.isArray(detail.payload?.contextIds)
-        ? detail.payload.contextIds.filter((id): id is string => typeof id === "string")
-        : []
+      const itemIds = shellEventIds(detail.payload.itemIds)
+      const contextIds = shellEventIds(detail.payload.contextIds)
       invalidateLibraryChanged(itemIds, contextIds)
     }
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 export const TOUCH_INPUT_QUERY = "(hover: none), (pointer: coarse), (any-pointer: coarse)"
 
 function matchesTouchInput() {
-  return typeof window !== "undefined" && window.matchMedia?.(TOUCH_INPUT_QUERY).matches === true
+  return globalThis.window?.matchMedia?.(TOUCH_INPUT_QUERY).matches === true
 }
 
 /** Prefer a non-nested sheet when the primary input cannot reliably hover. */

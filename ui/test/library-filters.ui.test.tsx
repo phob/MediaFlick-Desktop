@@ -4,20 +4,18 @@ import { useState, type ReactNode } from "react"
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { LibraryFilters } from "../src/components/LibraryFilters"
-import type { ItemQuery } from "../src/lib/api"
+import type { ItemGridProps } from "../src/components/ItemGrid"
 import {
   libraryKindPath,
   type LibraryFilterState,
 } from "../src/lib/library-filters"
 import { queryKeys } from "../src/lib/query-client"
 
-vi.mock("@/components/ItemGrid", () => ({
-  ItemGrid: ({ query }: { query: ItemQuery }) => (
-    <output data-library-query>{JSON.stringify(query)}</output>
-  ),
-}))
-
 import Library from "../src/routes/Library"
+
+function QueryProbeGrid({ query }: ItemGridProps) {
+  return <output data-library-query>{JSON.stringify(query)}</output>
+}
 
 const EMPTY: LibraryFilterState = {
   sort: "name",
@@ -165,7 +163,7 @@ describe("library filter URL state", () => {
           ]}
         >
           <Routes>
-            <Route path="/library" element={<Library />} />
+            <Route path="/library" element={<Library components={{ ItemGrid: QueryProbeGrid }} />} />
           </Routes>
           <RouteProbe />
         </MemoryRouter>

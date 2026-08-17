@@ -13,7 +13,14 @@ function Bridge() {
 }
 
 describe("native library change bridge", () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    queryClient.clear()
+  })
+
+  function queryFor(queryKey: readonly unknown[]) {
+    return queryClient.getQueryCache().build(queryClient, { queryKey })
+  }
 
   test("invalidates one active batch including item and context ids", () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
@@ -31,9 +38,9 @@ describe("native library change bridge", () => {
     expect(invalidate).toHaveBeenCalledTimes(1)
     const filters = invalidate.mock.calls[0]?.[0]
     expect(filters?.refetchType).toBe("active")
-    expect(filters?.predicate?.({ queryKey: ["item", "series"] } as never)).toBe(true)
-    expect(filters?.predicate?.({ queryKey: ["item", "other"] } as never)).toBe(false)
-    expect(filters?.predicate?.({ queryKey: ["status"] } as never)).toBe(true)
+    expect(filters?.predicate?.(queryFor(["item", "series"]))).toBe(true)
+    expect(filters?.predicate?.(queryFor(["item", "other"]))).toBe(false)
+    expect(filters?.predicate?.(queryFor(["status"]))).toBe(true)
   })
 
   test("user-state changes leave rich and technical item queries cached", () => {

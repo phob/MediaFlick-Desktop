@@ -3,19 +3,21 @@ import { SeerrResults } from "@/components/seerr/SeerrResults"
 import { castDiscoverResults } from "@/lib/cast-search"
 import { useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
 
+export interface CastDiscoverProps {
+  personName: string
+  jellyfinId: string | null
+  tmdbId: number | null
+  resolving?: boolean
+  resolutionError?: Error | null
+}
+
 export function CastDiscover({
   personName,
   jellyfinId,
   tmdbId,
   resolving = false,
   resolutionError = null,
-}: {
-  personName: string
-  jellyfinId: string | null
-  tmdbId: number | null
-  resolving?: boolean
-  resolutionError?: Error | null
-}) {
+}: CastDiscoverProps) {
   const seerr = useSeerrStatus()
   const app = useStatus()
   const companionCapabilities = app.data?.companion?.info?.capabilities ?? []

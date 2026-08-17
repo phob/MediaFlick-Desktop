@@ -142,12 +142,10 @@ export function readDiscoveryFilters(
 
   const decade = positiveInteger(params.get("decade"))
   const mediaType = row === "movies" ? "movie" : "tv"
-  if (
-    decadeDiscovery &&
-    RELEASE_DECADES[mediaType].some((option) => option.value === decade)
-  ) {
-    filters.decade = decade as SeerrReleaseDecade
-  }
+  const selectedDecade = decadeDiscovery
+    ? RELEASE_DECADES[mediaType].find((option) => option.value === decade)
+    : undefined
+  if (selectedDecade) filters.decade = selectedDecade.value
   return filters
 }
 

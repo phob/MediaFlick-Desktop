@@ -21,7 +21,6 @@ import {
   progressFraction,
   qualityLabel,
   type ItemDetail,
-  type StreamingQualityId,
 } from "@/lib/api"
 import { formatRemaining } from "@/lib/format"
 import { setQualityOverride, useQualityOverride } from "@/lib/playback-quality"
@@ -50,7 +49,9 @@ function QualityPicker() {
     <Select
       value={override ?? FROM_SETTINGS}
       onValueChange={(value) => {
-        const quality = value === FROM_SETTINGS ? null : (value as StreamingQualityId)
+        const quality = value === FROM_SETTINGS
+          ? null
+          : STREAMING_QUALITIES.find((candidate) => candidate.id === value)?.id ?? null
         setQualityOverride(quality)
         const label = quality ? qualityLabel(quality) : (saved ?? "the saved setting")
         toast.success(`Next playback uses ${label}.`)

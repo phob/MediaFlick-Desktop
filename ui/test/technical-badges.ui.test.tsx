@@ -2,9 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings } from "../src/lib/api"
+import { jsonStringArray } from "../src/lib/json"
 import { queryKeys } from "../src/lib/query-client"
 import { TechnicalProvider } from "../src/lib/technical"
 import { useCardTechnical } from "../src/lib/technical-context"
+import { parseJsonObject } from "./support/fixtures"
 
 const clientSettings: ClientSettings = {
   client: {
@@ -23,6 +25,12 @@ const clientSettings: ClientSettings = {
 function TechnicalProbe({ id, visible = true }: { id: string; visible?: boolean }) {
   const streams = useCardTechnical(id, visible)
   return <span>{streams ? `${id}:${streams[0]?.codec}` : `${id}:pending`}</span>
+}
+
+function requestIds(init?: RequestInit) {
+  const ids = jsonStringArray(parseJsonObject(String(init?.body)).ids)
+  if (!ids) throw new Error("Expected a technical batch id list")
+  return ids
 }
 
 afterEach(() => {
@@ -86,7 +94,7 @@ describe("live card technical channel", () => {
   test("only visible cards enter a technical batch", async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const ids = JSON.parse(String(init?.body)).ids as string[]
+      const ids = requestIds(init)
       return new Response(JSON.stringify({ items: ids.map((id) => ({ id, mediaStreams: [] })) }), {
         status: 200,
       })
@@ -125,7 +133,7 @@ describe("live card technical channel", () => {
     vi.useFakeTimers()
     let codec = "h264"
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const ids = JSON.parse(String(init?.body)).ids as string[]
+      const ids = requestIds(init)
       expect(String(input)).toBe("/api/technical/batch")
       return new Response(
         JSON.stringify({
@@ -195,7 +203,7 @@ describe("live card technical channel", () => {
     vi.useFakeTimers()
     let codec = "h264"
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const ids = JSON.parse(String(init?.body)).ids as string[]
+      const ids = requestIds(init)
       return new Response(
         JSON.stringify({
           items: ids.map((id) => ({
@@ -287,7 +295,8 @@ describe("live card technical channel", () => {
     })
     expect(fetchMock.mock.calls.map(([path]) => String(path))).toEqual(["/api/settings"])
 
-    finishSettings!(
+    if (!finishSettings) throw new Error("Expected the settings request to be pending")
+    finishSettings(
       new Response(
         JSON.stringify({
           ...clientSettings,

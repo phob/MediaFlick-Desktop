@@ -185,7 +185,7 @@ function DesktopFilters({
               value={value.watched || ANY}
               onValueChange={(watched) =>
                 onChange({
-                  watched: watched === ANY ? "" : watched as "true" | "false",
+                  watched: watched === "true" || watched === "false" ? watched : "",
                 })
               }
             >
@@ -418,16 +418,18 @@ function ActiveFilters({
   onChange: LibraryFiltersProps["onChange"]
   touch: boolean
 }) {
-  const chips = [
-    value.genre && { key: "genre", label: `Genre: ${value.genre}`, patch: { genre: "" } },
-    value.decade && { key: "decade", label: `Released: ${value.decade}s`, patch: { decade: "" } },
-    value.watched && {
+  type FilterChip = { key: string; label: string; patch: Partial<LibraryFilterState> }
+  const candidates: Array<FilterChip | null> = [
+    value.genre ? { key: "genre", label: `Genre: ${value.genre}`, patch: { genre: "" } } : null,
+    value.decade ? { key: "decade", label: `Released: ${value.decade}s`, patch: { decade: "" } } : null,
+    value.watched ? {
       key: "watched",
       label: value.watched === "true" ? "Watched" : "Unwatched",
       patch: { watched: "" },
-    },
-    value.favorite && { key: "favorite", label: "In My List", patch: { favorite: false } },
-  ].filter(Boolean) as { key: string; label: string; patch: Partial<LibraryFilterState> }[]
+    } : null,
+    value.favorite ? { key: "favorite", label: "In My List", patch: { favorite: false } } : null,
+  ]
+  const chips = candidates.filter((chip) => chip !== null)
 
   if (!chips.length) return null
 

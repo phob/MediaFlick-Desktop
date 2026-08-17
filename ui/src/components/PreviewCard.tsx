@@ -17,6 +17,7 @@ import {
   landscapeImageCandidates,
   logoUrl,
   progressFraction,
+  type ItemDetail,
   type ItemSummary,
 } from "@/lib/api"
 import { formatRemaining, formatRuntime } from "@/lib/format"
@@ -43,6 +44,33 @@ const PANEL_WIDTH = 348
 const ESTIMATED_HEIGHT = 320
 const VIEWPORT_MARGIN = 12
 
+type PreviewItemData = Pick<ItemDetail, "id" | "genres" | "logoImageTag">
+
+interface PreviewQuery<Data> {
+  data: Data | undefined
+}
+
+interface PreviewMutation<Input> {
+  isPending: boolean
+  mutate: (input: Input) => void
+}
+
+export interface PreviewDependencies {
+  item: (id: string | undefined) => PreviewQuery<PreviewItemData>
+  nextUp: (id: string | undefined, enabled: boolean) => PreviewQuery<{ item: ItemSummary | null }>
+  play: () => PreviewMutation<{ id: string; resume: boolean }>
+  favorite: () => PreviewMutation<{ id: string; favorite: boolean }>
+  played: () => PreviewMutation<{ id: string; played: boolean; context?: string | null }>
+}
+
+const DEFAULT_PREVIEW_DEPENDENCIES: PreviewDependencies = {
+  item: useItem,
+  nextUp: useNextUp,
+  play: usePlay,
+  favorite: useSetFavorite,
+  played: useSetPlayed,
+}
+
 /**
  * The expanded-card layer. One panel exists for the whole app: it is positioned
  * over whichever card the pointer is resting on, rather than each card owning a
@@ -52,7 +80,13 @@ const VIEWPORT_MARGIN = 12
  * drawn inside the scroller would be cut off at the row's edge, which is the
  * whole thing it exists to escape.
  */
-export function PreviewProvider({ children }: { children: ReactNode }) {
+export function PreviewProvider({
+  children,
+  dependencies = DEFAULT_PREVIEW_DEPENDENCIES,
+}: {
+  children: ReactNode
+  dependencies?: PreviewDependencies
+}) {
   const [target, setTarget] = useState<PreviewTarget | null>(null)
   const openTimer = useRef<number | undefined>(undefined)
   const closeTimer = useRef<number | undefined>(undefined)
@@ -130,6 +164,7 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
             target={target}
             onHold={api.hold}
             onRelease={api.release}
+            dependencies={dependencies}
           />,
           document.body,
         )}
@@ -151,10 +186,12 @@ function PreviewPanel({
   target,
   onHold,
   onRelease,
+  dependencies,
 }: {
   target: PreviewTarget
   onHold: () => void
   onRelease: () => void
+  dependencies: PreviewDependencies
 }) {
   const { item, rect } = target
   const navigate = useNavigate()
@@ -193,18 +230,18 @@ function PreviewPanel({
   // lives on the detail record. It is fetched only once a card has actually
   // been rested on, and the cache keeps it for the next hover and for the
   // detail page the panel leads to.
-  const { data: detail } = useItem(item.id)
+  const { data: detail } = dependencies.item(item.id)
   const isSeries = item.kind === "Series"
-  const nextUp = useNextUp(item.id, isSeries)
+  const nextUp = dependencies.nextUp(item.id, isSeries)
   // The title treatment that belongs over an episode still is the *show's*, not
   // the episode's — episodes essentially never carry one of their own. Disabled
   // for everything else, so this costs a request only on a Continue Watching
   // card, and only the first time one is rested on.
-  const series = useItem(item.kind === "Episode" ? (item.seriesId ?? undefined) : undefined)
+  const series = dependencies.item(item.kind === "Episode" ? (item.seriesId ?? undefined) : undefined)
 
-  const play = usePlay()
-  const setFavorite = useSetFavorite()
-  const setPlayed = useSetPlayed()
+  const play = dependencies.play()
+  const setFavorite = dependencies.favorite()
+  const setPlayed = dependencies.played()
 
   // A series is not playable itself; its button stands in for one episode.
   const playTarget = isSeries ? (nextUp.data?.item ?? null) : item

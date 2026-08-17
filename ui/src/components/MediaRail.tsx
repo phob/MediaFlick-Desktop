@@ -20,7 +20,7 @@ export function MediaRail({
   className,
   itemCount,
 }: {
-  title: ReactNode
+  title: string
   viewAll?: string
   children: ReactNode
   className?: string
@@ -112,16 +112,15 @@ function RailArrow({
   onClick,
 }: {
   side: "start" | "end"
-  title: ReactNode
+  title: string
   hidden: boolean
   onClick: () => void
 }) {
   const Icon = side === "start" ? ChevronLeft : ChevronRight
-  const label = typeof title === "string" ? title : "titles"
   return (
     <button
       type="button"
-      aria-label={side === "start" ? `Previous ${label}` : `Next ${label}`}
+      aria-label={side === "start" ? `Previous ${title}` : `Next ${title}`}
       disabled={hidden}
       onClick={onClick}
       className={cn(

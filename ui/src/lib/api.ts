@@ -2,6 +2,8 @@
 // `mediaflick-desktop://app/` scheme. Shapes mirror `summary_row` / `detail_row`
 // in `src/library/mod.rs` and the handlers in `api.rs`.
 
+import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "./json.ts"
+
 export const TICKS_PER_MS = 10_000
 export const POSTER_WIDTH = 400
 /** Home progress cards are drawn wider and use 16:9 art. */
@@ -211,7 +213,7 @@ export function externalLinksFor(item: ItemDetail) {
   return EXTERNAL_PROVIDERS.filter(
     (provider) =>
       Boolean(item.providerIds?.[provider.id]) &&
-      (provider.kinds as readonly string[]).includes(item.kind),
+      provider.kinds.some((kind) => kind === item.kind),
   )
 }
 
@@ -230,7 +232,11 @@ export interface HomeRow {
 }
 
 export interface LibraryStats {
-  [key: string]: unknown
+  movies: number
+  series: number
+  seasons: number
+  episodes: number
+  total: number
 }
 
 export interface BootstrapProgress {
@@ -253,7 +259,6 @@ export interface Status {
   bootstrap?: BootstrapProgress
   syncProgress?: SyncProgress
   companion?: CompanionStatus
-  [key: string]: unknown
 }
 
 export interface CompanionInfo {
@@ -887,6 +892,24 @@ interface RequestOptions {
   signal?: AbortSignal
 }
 
+interface ApiErrorEnvelope {
+  error?: string
+  expired?: boolean
+  seerrExpired?: boolean
+}
+
+function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
+  if (!isJsonObject(value)) return null
+  const error = jsonString(value.error)
+  const expired = jsonBoolean(value.expired)
+  const seerrExpired = jsonBoolean(value.seerrExpired)
+  return {
+    error: error ?? undefined,
+    expired: expired ?? undefined,
+    seerrExpired: seerrExpired ?? undefined,
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const init: RequestInit = { method: options.method ?? "GET", signal: options.signal }
   if (options.body !== undefined) {
@@ -895,7 +918,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   const response = await fetch(path, init)
-  let payload: unknown = null
+  let payload: JsonValue = null
   try {
     payload = await response.json()
   } catch {
@@ -903,11 +926,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    const envelope = payload as {
-      error?: string
-      expired?: boolean
-      seerrExpired?: boolean
-    } | null
+    const envelope = readApiErrorEnvelope(payload)
     throw new ApiError(
       envelope?.error ?? `request failed (${response.status})`,
       response.status,
@@ -915,10 +934,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       Boolean(envelope?.seerrExpired),
     )
   }
+  // SAFETY: The embedded UI and Rust shell ship together, and every request<T>
+  // call names the response type owned by that same-version local API route.
   return payload as T
 }
 
-function queryString(params: object) {
+type QueryParameterValue = string | number | boolean | null | undefined
+
+function queryString<T>(params: { [K in keyof T]: QueryParameterValue }) {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue

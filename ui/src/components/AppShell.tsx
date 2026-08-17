@@ -18,16 +18,11 @@ function storedSidebarOpen() {
   }
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
-  // shadcn persists the rail state in a cookie, which the app scheme is not
-  // registered for (STANDARD | SECURE | CORS | FETCH — no cookie option), so
-  // that write silently no-ops. Drive the provider instead.
-  const [open, setOpen] = useState(storedSidebarOpen)
+/** The route-owned scroll container, separated from sidebar/player chrome for focused testing. */
+export function RouteScrollViewport({ children }: { children: ReactNode }) {
   const viewport = useRef<HTMLDivElement>(null)
   const location = useLocation()
   const navigationType = useNavigationType()
-  usePlaybackStoppedBridge()
-  useLibraryMetadataBridge()
 
   useLayoutEffect(() => {
     const element = viewport.current
@@ -38,6 +33,21 @@ export function AppShell({ children }: { children: ReactNode }) {
       routeScrollPositions.set(location.key, element.scrollTop)
     }
   }, [location.key, navigationType])
+
+  return (
+    <div ref={viewport} className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
+      {children}
+    </div>
+  )
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  // shadcn persists the rail state in a cookie, which the app scheme is not
+  // registered for (STANDARD | SECURE | CORS | FETCH — no cookie option), so
+  // that write silently no-ops. Drive the provider instead.
+  const [open, setOpen] = useState(storedSidebarOpen)
+  usePlaybackStoppedBridge()
+  useLibraryMetadataBridge()
 
   return (
     <SidebarProvider
@@ -55,12 +65,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <AppSidebar />
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
         {/* The shell never scrolls; the content pane does. */}
-        <div ref={viewport} className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
+        <RouteScrollViewport>
           {/* Wraps the routed content because every card that can expand is in
               it. The panel itself is portalled to the body, so this subtree's
               clipping — `content-viewport` and the rails — does not reach it. */}
           <PreviewProvider>{children}</PreviewProvider>
-        </div>
+        </RouteScrollViewport>
         <PlayerBar />
       </SidebarInset>
     </SidebarProvider>

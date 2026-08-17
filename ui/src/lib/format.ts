@@ -119,36 +119,36 @@ export function formatLanguage(code: string | null | undefined) {
 
 export function formatCodec(codec: string | null | undefined) {
   if (!codec) return null
-  const known: Record<string, string> = {
-    h264: "H.264",
-    hevc: "HEVC",
-    h265: "HEVC",
-    av1: "AV1",
-    vp9: "VP9",
-    mpeg2video: "MPEG-2",
-    vc1: "VC-1",
-    eac3: "E-AC-3",
-    ac3: "AC-3",
-    truehd: "TrueHD",
-    dts: "DTS",
-    dtshd: "DTS-HD",
-    dts_hd_ma: "DTS-HD MA",
-    dts_hd_hra: "DTS-HD HRA",
-    aac: "AAC",
-    opus: "Opus",
-    flac: "FLAC",
-    alac: "ALAC",
-    pcm_s16le: "PCM",
-    pcm_s24le: "PCM",
-    mp3: "MP3",
-    subrip: "SRT",
-    ass: "ASS",
-    ssa: "SSA",
-    pgssub: "PGS",
-    dvdsub: "VobSub",
-  }
+  const known = new Map<string, string>([
+    ["h264", "H.264"],
+    ["hevc", "HEVC"],
+    ["h265", "HEVC"],
+    ["av1", "AV1"],
+    ["vp9", "VP9"],
+    ["mpeg2video", "MPEG-2"],
+    ["vc1", "VC-1"],
+    ["eac3", "E-AC-3"],
+    ["ac3", "AC-3"],
+    ["truehd", "TrueHD"],
+    ["dts", "DTS"],
+    ["dtshd", "DTS-HD"],
+    ["dts_hd_ma", "DTS-HD MA"],
+    ["dts_hd_hra", "DTS-HD HRA"],
+    ["aac", "AAC"],
+    ["opus", "Opus"],
+    ["flac", "FLAC"],
+    ["alac", "ALAC"],
+    ["pcm_s16le", "PCM"],
+    ["pcm_s24le", "PCM"],
+    ["mp3", "MP3"],
+    ["subrip", "SRT"],
+    ["ass", "ASS"],
+    ["ssa", "SSA"],
+    ["pgssub", "PGS"],
+    ["dvdsub", "VobSub"],
+  ])
   const lower = codec.toLowerCase()
-  return known[lower] ?? codec.toUpperCase()
+  return known.get(lower) ?? codec.toUpperCase()
 }
 
 /** Jellyfin often reports DTS-HD as codec `dts` plus a richer profile. */
@@ -168,20 +168,20 @@ export function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">)
  * expanded form keeps terse card labels understandable to assistive
  * technology and in native tooltips.
  */
-const knownVideoRanges: Record<string, { label: string; description?: string }> = {
-  hdr: { label: "HDR" },
-  hdr10: { label: "HDR10" },
-  hdr10plus: { label: "HDR10+" },
-  hlg: { label: "HLG" },
-  dovi: { label: "DV", description: "Dolby Vision" },
-  dovihdr10: { label: "DV/HDR10", description: "Dolby Vision / HDR10" },
-  doviwithhdr10: { label: "DV&HDR10", description: "Dolby Vision / HDR10" },
-  doviwithhdr10plus: { label: "DV&HDR10+", description: "Dolby Vision / HDR10+" },
-  doviwithhlg: { label: "DV&HLG", description: "Dolby Vision / HLG" },
-  doviwithsdr: { label: "DV", description: "Dolby Vision" },
-  doviwithel: { label: "DV", description: "Dolby Vision" },
-  doviinvalid: { label: "DV", description: "Dolby Vision" },
-}
+const knownVideoRanges = new Map<string, { label: string; description?: string }>([
+  ["hdr", { label: "HDR" }],
+  ["hdr10", { label: "HDR10" }],
+  ["hdr10plus", { label: "HDR10+" }],
+  ["hlg", { label: "HLG" }],
+  ["dovi", { label: "DV", description: "Dolby Vision" }],
+  ["dovihdr10", { label: "DV/HDR10", description: "Dolby Vision / HDR10" }],
+  ["doviwithhdr10", { label: "DV&HDR10", description: "Dolby Vision / HDR10" }],
+  ["doviwithhdr10plus", { label: "DV&HDR10+", description: "Dolby Vision / HDR10+" }],
+  ["doviwithhlg", { label: "DV&HLG", description: "Dolby Vision / HLG" }],
+  ["doviwithsdr", { label: "DV", description: "Dolby Vision" }],
+  ["doviwithel", { label: "DV", description: "Dolby Vision" }],
+  ["doviinvalid", { label: "DV", description: "Dolby Vision" }],
+])
 
 function videoRangeLabels(stream: Pick<MediaStream, "videoRange" | "videoRangeType">) {
   const specific = stream.videoRangeType?.trim()
@@ -190,7 +190,7 @@ function videoRangeLabels(stream: Pick<MediaStream, "videoRange" | "videoRangeTy
   if (!value || value.toUpperCase() === "SDR" || value.toUpperCase() === "UNKNOWN") return null
   // Anything Jellyfin adds later prints as the server spelled it rather than
   // as shouted camel case.
-  const known = knownVideoRanges[value.toLowerCase()]
+  const known = knownVideoRanges.get(value.toLowerCase())
   return known ?? { label: value }
 }
 
@@ -222,11 +222,11 @@ export function formatAudioSpatialFormat(
   if (compact.includes("dtsx")) return "DTS:X"
   if (!explicit || /^(none|unknown)$/i.test(explicit)) return null
 
-  const known: Record<string, string> = {
-    dolbyatmos: "Atmos",
-    dtsx: "DTS:X",
-  }
-  return known[explicit.toLowerCase().replace(/[^a-z0-9]+/g, "")] ?? explicit
+  const known = new Map<string, string>([
+    ["dolbyatmos", "Atmos"],
+    ["dtsx", "DTS:X"],
+  ])
+  return known.get(explicit.toLowerCase().replace(/[^a-z0-9]+/g, "")) ?? explicit
 }
 
 export interface CardMediaSummary {
@@ -264,22 +264,22 @@ function bestVideo(streams: MediaStream[]) {
 
 function audioQuality(stream: MediaStream) {
   const codec = formatAudioCodec(stream)?.toLowerCase() ?? ""
-  const codecRank: Record<string, number> = {
-    truehd: 700,
-    "dts-hd ma": 675,
-    "dts-hd hra": 665,
-    "dts-hd": 650,
-    flac: 600,
-    dts: 500,
-    "e-ac-3": 450,
-    "ac-3": 400,
-    opus: 350,
-    aac: 300,
-    mp3: 200,
-  }
+  const codecRank = new Map<string, number>([
+    ["truehd", 700],
+    ["dts-hd ma", 675],
+    ["dts-hd hra", 665],
+    ["dts-hd", 650],
+    ["flac", 600],
+    ["dts", 500],
+    ["e-ac-3", 450],
+    ["ac-3", 400],
+    ["opus", 350],
+    ["aac", 300],
+    ["mp3", 200],
+  ])
   return (
     (formatAudioSpatialFormat(stream) ? 10_000 : 0) +
-    (codecRank[codec] ?? 0) +
+    (codecRank.get(codec) ?? 0) +
     (stream.channels ?? 0) * 10 +
     (stream.isDefault ? 1 : 0)
   )

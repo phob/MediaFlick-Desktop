@@ -1,19 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
-import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
-import { beforeEach, describe, expect, test, vi } from "vitest"
-
-vi.mock("@/components/AppSidebar", () => ({ AppSidebar: () => null }))
-vi.mock("@/components/PlayerBar", () => ({ PlayerBar: () => null }))
-vi.mock("@/components/PreviewCard", () => ({ PreviewProvider: ({ children }: { children: ReactNode }) => children }))
-vi.mock("@/components/ui/sidebar", () => ({
-  SidebarInset: ({ children, className }: { children: ReactNode; className?: string }) => <main className={className}>{children}</main>,
-  SidebarProvider: ({ children, className }: { children: ReactNode; className?: string }) => <div className={className}>{children}</div>,
-}))
-vi.mock("@/lib/playback-events", () => ({ usePlaybackStoppedBridge: () => undefined }))
-vi.mock("@/lib/library-events", () => ({ useLibraryMetadataBridge: () => undefined }))
-
-import { AppShell } from "@/components/AppShell"
+import { beforeEach, describe, expect, test } from "vitest"
+import { RouteScrollViewport } from "@/components/AppShell"
 
 function First() {
   const navigate = useNavigate()
@@ -38,15 +26,16 @@ describe("AppShell route scrolling", () => {
   test("new routes start at the top and browser Back restores the old route", () => {
     const view = render(
       <MemoryRouter initialEntries={["/first"]}>
-        <AppShell>
+        <RouteScrollViewport>
           <Routes>
             <Route path="/first" element={<First />} />
             <Route path="/second" element={<Second />} />
           </Routes>
-        </AppShell>
+        </RouteScrollViewport>
       </MemoryRouter>,
     )
-    const viewport = view.container.querySelector<HTMLElement>(".content-viewport")!
+    const viewport = view.container.querySelector<HTMLElement>(".content-viewport")
+    if (!viewport) throw new Error("Expected the route scroll viewport")
     viewport.scrollTop = 180
 
     fireEvent.click(screen.getByRole("button", { name: "Second" }))
