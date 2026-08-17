@@ -1202,7 +1202,14 @@ export function imageUrl(
 /** Null when the item has no backdrop, so callers can lay out without one. */
 export function backdropUrl(item: ItemDetail, maxWidth = BACKDROP_WIDTH) {
   if (!item.backdropImageTag) return null
-  return imageUrl(item, "Backdrop", maxWidth, item.backdropImageTag)
+  // Jellyfin supplies a series' backdrop tag as ParentBackdropImageTags on
+  // seasons and episodes. That image still belongs to the series item: asking
+  // the child id for the inherited tag produces a 404 from the image endpoint.
+  const imageOwner =
+    (item.kind === "Season" || item.kind === "Episode") && item.seriesId
+      ? { id: item.seriesId, primaryImageTag: null }
+      : item
+  return imageUrl(imageOwner, "Backdrop", maxWidth, item.backdropImageTag)
 }
 
 /**
