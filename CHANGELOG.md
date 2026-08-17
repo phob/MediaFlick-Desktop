@@ -93,6 +93,7 @@
 
 ### Fixed
 
+- Fixed season and episode detail pages requesting inherited TV backdrops from the child item, which made Jellyfin return no image; they now load the backdrop from the owning series.
 - Fixed card clicks going dead when the press straddled the expanding hover panel's appearance. A mousedown on the card followed by a mouseup on the freshly mounted panel resolves the click outside both, so nothing fired; the panel now reads a release from a press it never saw begin as the card click it started as, and a pointer that arrives on a card mid-drag no longer arms the panel at all.
 - Fixed expanded hover previews missing selected-source ratings because their portal was mounted outside the ratings context.
 - Fixed a valid SQLite home cache flashing the full-page card skeleton at startup and again after route navigation. The startup cover now waits for the local home snapshot, cached shelves no longer wait on Jellyfin's live Next Up request or the independent billboard query, and those slower surfaces enrich the page without replacing cards that are already present.
