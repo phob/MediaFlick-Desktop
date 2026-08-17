@@ -6,6 +6,7 @@ import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
 import { formatVideoRange, summarizeCardMedia } from "../src/lib/format"
 import { TechnicalContext } from "../src/lib/technical-context"
+import { requireElement } from "./support/fixtures"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -198,13 +199,33 @@ describe("media-card technical formatting", () => {
     let reportIntersection: ((visible: boolean) => void) | undefined
     vi.stubGlobal(
       "IntersectionObserver",
-      class {
+      class TestIntersectionObserver implements IntersectionObserver {
+        readonly root = null
+        readonly rootMargin = "0px"
+        readonly scrollMargin = "0px"
+        readonly thresholds = [0]
+
         constructor(callback: IntersectionObserverCallback) {
-          reportIntersection = (visible) =>
-            callback([{ isIntersecting: visible } as IntersectionObserverEntry], this as never)
+          reportIntersection = (visible) => {
+            const bounds = new DOMRect()
+            callback(
+              [{
+                boundingClientRect: bounds,
+                intersectionRatio: visible ? 1 : 0,
+                intersectionRect: bounds,
+                isIntersecting: visible,
+                rootBounds: null,
+                target: document.body,
+                time: 0,
+              }],
+              this,
+            )
+          }
         }
-        observe() {}
         disconnect() {}
+        observe() {}
+        takeRecords() { return [] }
+        unobserve() {}
       },
     )
     const unregister = vi.fn()
@@ -219,9 +240,11 @@ describe("media-card technical formatting", () => {
     )
 
     expect(register).not.toHaveBeenCalled()
-    act(() => reportIntersection!(true))
+    if (!reportIntersection) throw new Error("Expected the card to create an intersection observer")
+    const report = reportIntersection
+    act(() => report(true))
     expect(register).toHaveBeenCalledWith(movie.id)
-    act(() => reportIntersection!(false))
+    act(() => report(false))
     expect(unregister).toHaveBeenCalledTimes(1)
   })
 })
@@ -233,8 +256,16 @@ describe("media-card playback indicators", () => {
         <MediaCard item={{ ...movie, played: true }} preview={false} />
       </MemoryRouter>,
     )
-    const watchedTrack = watched.container.querySelector('[title="Watched"]') as HTMLElement
-    const watchedFill = watchedTrack.firstElementChild as HTMLElement
+    const watchedTrack = requireElement(
+      watched.container.querySelector<HTMLElement>('[title="Watched"]'),
+      "watched progress track",
+    )
+    const watchedFill = requireElement(
+      watchedTrack.firstElementChild instanceof HTMLElement
+        ? watchedTrack.firstElementChild
+        : null,
+      "watched progress fill",
+    )
 
     expect(watchedTrack.className).toContain("h-[3px]")
     expect(watchedFill.className).toBe("h-full bg-primary")
@@ -245,13 +276,16 @@ describe("media-card playback indicators", () => {
     const progressed = render(
       <MemoryRouter>
         <MediaCard
-          item={{ ...movie, id: "movie-2", positionTicks: movie.runtimeTicks! / 2 }}
+          item={{ ...movie, id: "movie-2", positionTicks: (movie.runtimeTicks ?? 0) / 2 }}
           preview={false}
         />
       </MemoryRouter>,
     )
-    const progressedFill = progressed.container.querySelector('[style="width: 50%;"]') as HTMLElement
-    const progressedTrack = progressedFill.parentElement as HTMLElement
+    const progressedFill = requireElement(
+      progressed.container.querySelector<HTMLElement>('[style="width: 50%;"]'),
+      "in-progress fill",
+    )
+    const progressedTrack = requireElement(progressedFill.parentElement, "in-progress track")
 
     expect(progressedTrack.className).toContain("h-[3px]")
     expect(progressedFill.className).toBe(watchedFill.className)

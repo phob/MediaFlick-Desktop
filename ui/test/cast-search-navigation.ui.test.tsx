@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { describe, expect, test } from "vitest"
 import { CastRow } from "../src/components/detail/CastRow"
-import type { Person, SeerrMediaDetail } from "../src/lib/api"
+import type { Person } from "../src/lib/api"
 import { Cast } from "../src/routes/DiscoverDetail"
 
 function LocationProbe() {
@@ -49,7 +49,7 @@ describe("cast click navigation", () => {
   test("Seerr cast links preserve the exact TMDB person namespace", () => {
     const detail = {
       cast: [{ id: 6384, name: "Keanu Reeves", character: "Neo", profilePath: null }],
-    } as SeerrMediaDetail
+    }
     render(<Cast detail={detail} />, { wrapper })
 
     fireEvent.click(screen.getByRole("link", { name: "Find titles featuring Keanu Reeves" }))

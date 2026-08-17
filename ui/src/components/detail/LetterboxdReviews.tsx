@@ -32,6 +32,22 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(",")
 
+interface LetterboxdLookup {
+  isPending: boolean
+  error: Error | null
+  data: LetterboxdReviewsResponse | undefined
+}
+
+export interface LetterboxdQueries {
+  item: (id: string | undefined, enabled: boolean) => LetterboxdLookup
+  movie: (tmdbId: number | null, enabled: boolean) => LetterboxdLookup
+}
+
+const DEFAULT_LETTERBOXD_QUERIES: LetterboxdQueries = {
+  item: useLetterboxdReviews,
+  movie: useLetterboxdMovieReviews,
+}
+
 function ratingLabel(value: number) {
   return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)
 }
@@ -385,16 +401,28 @@ function LetterboxdReviewSection({
   )
 }
 
-export function LetterboxdReviews({ item }: { item: ItemDetail }) {
+export function LetterboxdReviews({
+  item,
+  queries = DEFAULT_LETTERBOXD_QUERIES,
+}: {
+  item: ItemDetail
+  queries?: LetterboxdQueries
+}) {
   const eligible = item.kind === "Movie" && Boolean(item.providerIds.tmdb)
-  const lookup = useLetterboxdReviews(item.id, eligible)
+  const lookup = queries.item(item.id, eligible)
   if (!eligible) return null
   return <LetterboxdReviewSection lookup={lookup} />
 }
 
-export function LetterboxdMovieReviews({ tmdbId }: { tmdbId: number }) {
+export function LetterboxdMovieReviews({
+  tmdbId,
+  queries = DEFAULT_LETTERBOXD_QUERIES,
+}: {
+  tmdbId: number
+  queries?: LetterboxdQueries
+}) {
   const eligible = Number.isSafeInteger(tmdbId) && tmdbId > 0
-  const lookup = useLetterboxdMovieReviews(tmdbId, eligible)
+  const lookup = queries.movie(tmdbId, eligible)
   if (!eligible) return null
   return <LetterboxdReviewSection lookup={lookup} />
 }
@@ -402,10 +430,12 @@ export function LetterboxdMovieReviews({ tmdbId }: { tmdbId: number }) {
 export function DiscoverLetterboxdReviews({
   mediaType,
   tmdbId,
+  queries = DEFAULT_LETTERBOXD_QUERIES,
 }: {
   mediaType: SeerrMediaType
   tmdbId: number
+  queries?: LetterboxdQueries
 }) {
   if (mediaType !== "movie") return null
-  return <LetterboxdMovieReviews tmdbId={tmdbId} />
+  return <LetterboxdMovieReviews tmdbId={tmdbId} queries={queries} />
 }

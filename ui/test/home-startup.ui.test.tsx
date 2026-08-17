@@ -1,90 +1,68 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
-import { describe, expect, test, vi } from "vitest"
-import type { ReactNode } from "react"
+import { useContext } from "react"
+import { describe, expect, test } from "vitest"
+import { AppProviders } from "@/components/AppProviders"
+import { RatingsContext } from "@/lib/rating-context"
+import { queryKeys } from "@/lib/query-client"
+import { startupScreenReady } from "@/lib/startup"
 
-const queryState = vi.hoisted(() => ({
-  homePending: true,
-  billboardPending: true,
-}))
-
-vi.mock("@/lib/queries", () => ({
-  useStatus: () => ({
-    data: { authenticated: true, libraryReady: true },
-    isPending: false,
-  }),
-  useHome: () => ({ isPending: queryState.homePending }),
-  useBillboard: () => ({ isPending: queryState.billboardPending }),
-}))
-vi.mock("@/components/AppShell", () => ({
-  AppShell: ({ children }: { children: ReactNode }) => <div data-testid="app-shell">{children}</div>,
-}))
-vi.mock("@/components/LoadingScreen", () => ({
-  LoadingScreen: ({ ready }: { ready: boolean }) => (
-    <div data-testid="loading-screen" data-ready={String(ready)} />
-  ),
-}))
-vi.mock("@/components/seerr/SeerrGate", () => ({
-  SeerrGate: ({ children }: { children: ReactNode }) => children,
-}))
-vi.mock("@/lib/ratings", () => ({
-  RatingsProvider: ({ children }: { children: ReactNode }) => <div data-testid="ratings-provider">{children}</div>,
-}))
-vi.mock("@/lib/technical", () => ({
-  TechnicalProvider: ({ children }: { children: ReactNode }) => children,
-}))
-vi.mock("@/routes/Home", () => ({ default: () => <div>Home content</div> }))
-vi.mock("@/routes/Library", () => ({ default: () => null }))
-vi.mock("@/routes/ItemDetail", () => ({ default: () => null }))
-vi.mock("@/routes/Calendar", () => ({ default: () => null }))
-vi.mock("@/routes/Discover", () => ({ default: () => null }))
-vi.mock("@/routes/DiscoverDetail", () => ({ default: () => null }))
-vi.mock("@/routes/Requests", () => ({ default: () => null }))
-vi.mock("@/routes/SignIn", () => ({ default: () => null }))
-vi.mock("@/routes/Settings", () => ({
-  default: () => null,
-  AppearanceSync: () => null,
-}))
-
-import App from "@/App"
+function RatingsProbe() {
+  const ratings = useContext(RatingsContext)
+  return <output data-testid="ratings-context">{ratings ? "available" : "missing"}</output>
+}
 
 describe("home startup cover", () => {
-  test("keeps the complete shell, including its preview portal, under rating context", () => {
+  test("keeps shell content inside the real rating and technical providers", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.settings, {
+      appearance: { showMediaInfo: false, ratingSources: [] },
+    })
+    client.setQueryData(queryKeys.ratingsStatus, {
+      selectionEnabled: false,
+      effectiveOrigin: "none",
+      sources: [],
+    })
+
     const view = render(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
+      <QueryClientProvider client={client}>
+        <AppProviders>
+          <RatingsProbe />
+        </AppProviders>
+      </QueryClientProvider>,
     )
 
-    const ratings = screen.getByTestId("ratings-provider")
-    const shell = screen.getByTestId("app-shell")
-    expect(ratings.contains(shell)).toBe(true)
+    expect(screen.getByTestId("ratings-context").textContent).toBe("available")
     view.unmount()
+    client.clear()
   })
 
   test("stays up until both SQLite-backed home queries settle", () => {
-    const view = render(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
-    )
+    const readiness = {
+      statusPending: false,
+      waitingForLibrary: false,
+      showingSettings: false,
+      initialHomeEnabled: true,
+      homePending: true,
+      billboardPending: true,
+    }
 
-    expect(screen.getByTestId("loading-screen").getAttribute("data-ready")).toBe("false")
+    expect(startupScreenReady(readiness)).toBe(false)
+    expect(startupScreenReady({ ...readiness, homePending: false })).toBe(false)
+    expect(startupScreenReady({ ...readiness, homePending: false, billboardPending: false })).toBe(true)
+  })
 
-    queryState.homePending = false
-    view.rerender(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
-    )
-    expect(screen.getByTestId("loading-screen").getAttribute("data-ready")).toBe("false")
+  test("keeps library startup gated while settings remains directly available", () => {
+    const readiness = {
+      statusPending: false,
+      waitingForLibrary: true,
+      showingSettings: false,
+      initialHomeEnabled: false,
+      homePending: false,
+      billboardPending: false,
+    }
 
-    queryState.billboardPending = false
-    view.rerender(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
-    )
-    expect(screen.getByTestId("loading-screen").getAttribute("data-ready")).toBe("true")
+    expect(startupScreenReady(readiness)).toBe(false)
+    expect(startupScreenReady({ ...readiness, showingSettings: true })).toBe(true)
   })
 })

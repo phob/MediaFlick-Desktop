@@ -22,7 +22,7 @@ const TECHNICAL_PREFETCH_MARGIN = "160px"
  * lets badges arrive just before a card scrolls into view.
  */
 function useTechnicalVisibility() {
-  const intersectionSupported = typeof IntersectionObserver !== "undefined"
+  const intersectionSupported = globalThis.IntersectionObserver !== undefined
   const [element, setElement] = useState<HTMLAnchorElement | null>(null)
   const [visible, setVisible] = useState(!intersectionSupported)
 

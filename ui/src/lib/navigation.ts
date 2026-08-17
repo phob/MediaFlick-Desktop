@@ -29,7 +29,7 @@ export function defaultDetailNavigationState(kind: string): DetailNavigationStat
 type LocationLike = {
   pathname: string
   search?: string
-  state?: unknown
+  state?: JsonValue
 }
 
 /** A detail page remembers the browsing surface that opened it. */
@@ -53,15 +53,16 @@ export function detailNavigationState(location: LocationLike): DetailNavigationS
 }
 
 /** Accept navigation state only when it is a safe app-internal target. */
-export function readDetailNavigationState(value: unknown): DetailNavigationState | null {
-  if (!value || typeof value !== "object") return null
-  const state = value as Partial<DetailNavigationState>
+export function readDetailNavigationState(value: JsonValue | undefined): DetailNavigationState | null {
+  if (!isJsonObject(value)) return null
+  const from = jsonString(value.from)
+  const label = jsonString(value.label)
   if (
-    typeof state.from !== "string"
-    || !state.from.startsWith("/")
-    || state.from.startsWith("//")
-    || typeof state.label !== "string"
-    || !state.label.trim()
+    !from
+    || !from.startsWith("/")
+    || from.startsWith("//")
+    || !label?.trim()
   ) return null
-  return { from: state.from, label: state.label }
+  return { from, label }
 }
+import { isJsonObject, jsonString, type JsonValue } from "./json.ts"

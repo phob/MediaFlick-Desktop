@@ -3,9 +3,8 @@ import type { ReactNode } from "react"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
-import { PreviewProvider } from "../src/components/PreviewCard"
+import { PreviewProvider, type PreviewDependencies } from "../src/components/PreviewCard"
 import type {
-  ItemDetail,
   ItemRatings,
   ItemSummary,
   MediaStream,
@@ -13,27 +12,30 @@ import type {
 } from "../src/lib/api"
 import { RatingsContext } from "../src/lib/rating-context"
 import { TechnicalContext } from "../src/lib/technical-context"
+import { itemDetail, requireElement } from "./support/fixtures"
 
-const mutations = vi.hoisted(() => ({
-  favorite: vi.fn(),
-  play: vi.fn(),
-  played: vi.fn(),
-}))
+const mutations = {
+  favorite: vi.fn<(input: { id: string; favorite: boolean }) => void>(),
+  play: vi.fn<(input: { id: string; resume: boolean }) => void>(),
+  played: vi.fn<(input: { id: string; played: boolean; context?: string | null }) => void>(),
+}
 
-vi.mock("@/lib/queries", () => ({
-  useItem: (id: string | undefined) => ({
+const dependencies: PreviewDependencies = {
+  item: (id) => ({
     data: id
-      ? ({
+      ? itemDetail({
           id,
+          name: "The Matrix",
+          kind: "Movie",
           genres: ["Science Fiction"],
-        } as ItemDetail)
+        })
       : undefined,
   }),
-  useNextUp: () => ({ data: undefined }),
-  usePlay: () => ({ isPending: false, mutate: mutations.play }),
-  useSetFavorite: () => ({ isPending: false, mutate: mutations.favorite }),
-  useSetPlayed: () => ({ isPending: false, mutate: mutations.played }),
-}))
+  nextUp: () => ({ data: undefined }),
+  play: () => ({ isPending: false, mutate: mutations.play }),
+  favorite: () => ({ isPending: false, mutate: mutations.favorite }),
+  played: () => ({ isPending: false, mutate: mutations.played }),
+}
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -135,7 +137,7 @@ function Providers({ children }: { children: ReactNode }) {
           items: new Map([[movie.id, movieStreams]]),
           register: () => () => {},
         }}>
-          <PreviewProvider>{children}</PreviewProvider>
+          <PreviewProvider dependencies={dependencies}>{children}</PreviewProvider>
           <LocationProbe />
         </TechnicalContext.Provider>
       </RatingsContext.Provider>
@@ -155,16 +157,18 @@ function hoverWithMouse(element: Element, init?: MouseEventInit) {
 
 function renderOpenPreview() {
   render(<MediaCard item={movie} />, { wrapper: Providers })
-  const card = screen.getAllByRole("link")[0]!
+  const card = screen.getAllByRole("link")[0]
+  if (!card) throw new Error("Expected a media-card link")
 
   act(() => {
     hoverWithMouse(card)
     vi.advanceTimersByTime(550)
   })
 
-  const panel = document.querySelector(".preview-panel")
-  expect(panel).not.toBeNull()
-  return panel!
+  return requireElement(
+    document.querySelector<HTMLElement>(".preview-panel"),
+    "expanded media-card preview",
+  )
 }
 
 beforeEach(() => {
@@ -222,7 +226,8 @@ describe("expanded media-card details target", () => {
 
   test("does not arm the preview under a pointer that is mid-drag", () => {
     render(<MediaCard item={movie} />, { wrapper: Providers })
-    const card = screen.getAllByRole("link")[0]!
+    const card = screen.getAllByRole("link")[0]
+    if (!card) throw new Error("Expected a media-card link")
 
     act(() => {
       hoverWithMouse(card, { buttons: 1 })

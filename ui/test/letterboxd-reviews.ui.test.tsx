@@ -5,13 +5,14 @@ import {
   LetterboxdReviewList,
   LetterboxdReviews,
   LetterboxdMovieReviews,
+  type LetterboxdQueries,
 } from "../src/components/detail/LetterboxdReviews"
-import type { ItemDetail, LetterboxdReview } from "../src/lib/api"
+import type { LetterboxdReview } from "../src/lib/api"
+import { itemDetail, requireElement } from "./support/fixtures"
 
-const useLetterboxdReviews = vi.hoisted(() => vi.fn())
-const useLetterboxdMovieReviews = vi.hoisted(() => vi.fn())
-
-vi.mock("@/lib/queries", () => ({ useLetterboxdMovieReviews, useLetterboxdReviews }))
+const itemLookup = vi.fn<LetterboxdQueries["item"]>()
+const movieLookup = vi.fn<LetterboxdQueries["movie"]>()
+const queries: LetterboxdQueries = { item: itemLookup, movie: movieLookup }
 
 function review(overrides: Partial<LetterboxdReview> = {}): LetterboxdReview {
   return {
@@ -29,15 +30,18 @@ function review(overrides: Partial<LetterboxdReview> = {}): LetterboxdReview {
   }
 }
 
-const movie = {
+const movie = itemDetail({
   id: "movie-1",
+  name: "The Matrix",
   kind: "Movie",
   providerIds: { tmdb: "603", imdb: null, tvdb: null },
-} as ItemDetail
+})
 
 beforeEach(() => {
-  useLetterboxdReviews.mockReset()
-  useLetterboxdMovieReviews.mockReset()
+  itemLookup.mockReset()
+  movieLookup.mockReset()
+  itemLookup.mockReturnValue({ isPending: false, error: null, data: undefined })
+  movieLookup.mockReturnValue({ isPending: false, error: null, data: undefined })
 })
 
 afterEach(() => {
@@ -123,7 +127,10 @@ describe("Letterboxd detail activity", () => {
     const tile = screen.getByRole("link", { name: /Alice Film Fan.*written review available/i })
     fireEvent.pointerEnter(tile, { pointerType: "mouse" })
     act(() => vi.advanceTimersByTime(350))
-    const preview = document.querySelector("[data-letterboxd-review-preview]")!
+    const preview = requireElement(
+      document.querySelector("[data-letterboxd-review-preview]"),
+      "Letterboxd review preview",
+    )
 
     fireEvent.pointerLeave(tile, { pointerType: "mouse" })
     act(() => vi.advanceTimersByTime(100))
@@ -195,8 +202,11 @@ describe("Letterboxd detail activity", () => {
     const tile = screen.getByRole("link", { name: /Alice Film Fan.*written review available/i })
 
     fireEvent.focus(tile)
-    const preview = document.querySelector("[data-letterboxd-review-preview]")!
-    const quote = preview.querySelector("blockquote")!
+    const preview = requireElement(
+      document.querySelector("[data-letterboxd-review-preview]"),
+      "Letterboxd review preview",
+    )
+    const quote = requireElement(preview.querySelector("blockquote"), "review excerpt")
     expect(Array.from(quote.textContent ?? "").length).toBeLessThanOrEqual(421)
     expect(Array.from(quote.textContent ?? "").length).toBeGreaterThan(300)
     expect(quote.textContent?.endsWith("…")).toBe(true)
@@ -205,45 +215,45 @@ describe("Letterboxd detail activity", () => {
   })
 
   test("uses cast-shaped skeletons only for the initial lookup", () => {
-    useLetterboxdReviews.mockReturnValue({ isPending: true })
-    const { container } = render(<LetterboxdReviews item={movie} />)
+    itemLookup.mockReturnValue({ isPending: true, error: null, data: undefined })
+    const { container } = render(<LetterboxdReviews item={movie} queries={queries} />)
 
     expect(screen.getByRole("region", { name: "Loading Letterboxd activity" })).not.toBeNull()
     expect(container.querySelectorAll(".size-24.rounded-full")).toHaveLength(3)
   })
 
   test("loads the same activity rail for a discovered movie by TMDB id", () => {
-    useLetterboxdMovieReviews.mockReturnValue({
+    movieLookup.mockReturnValue({
       isPending: false,
       error: null,
       data: { reviews: [review()], configuredProfiles: 1, unavailableProfiles: 0 },
     })
 
-    render(<LetterboxdMovieReviews tmdbId={603} />)
+    render(<LetterboxdMovieReviews tmdbId={603} queries={queries} />)
 
-    expect(useLetterboxdMovieReviews).toHaveBeenCalledWith(603, true)
+    expect(movieLookup).toHaveBeenCalledWith(603, true)
     expect(screen.getByRole("heading", { name: "Letterboxd" })).not.toBeNull()
     expect(screen.getByRole("link", { name: /Alice Film Fan/i })).not.toBeNull()
   })
 
   test("does not query an invalid discovered movie identity", () => {
-    useLetterboxdMovieReviews.mockReturnValue({ isPending: false, error: null, data: undefined })
+    const { container } = render(<LetterboxdMovieReviews tmdbId={0} queries={queries} />)
 
-    const { container } = render(<LetterboxdMovieReviews tmdbId={0} />)
-
-    expect(useLetterboxdMovieReviews).toHaveBeenCalledWith(0, false)
+    expect(movieLookup).toHaveBeenCalledWith(0, false)
     expect(container.innerHTML).toBe("")
   })
 
   test("keeps Letterboxd's movie namespace off discovered series", () => {
-    const { container } = render(<DiscoverLetterboxdReviews mediaType="tv" tmdbId={603} />)
+    const { container } = render(
+      <DiscoverLetterboxdReviews mediaType="tv" tmdbId={603} queries={queries} />,
+    )
 
-    expect(useLetterboxdMovieReviews).not.toHaveBeenCalled()
+    expect(movieLookup).not.toHaveBeenCalled()
     expect(container.innerHTML).toBe("")
   })
 
   test("keeps available profiles and reports a partial refresh failure once", () => {
-    useLetterboxdReviews.mockReturnValue({
+    itemLookup.mockReturnValue({
       isPending: false,
       error: null,
       data: {
@@ -252,7 +262,7 @@ describe("Letterboxd detail activity", () => {
         unavailableProfiles: 1,
       },
     })
-    render(<LetterboxdReviews item={movie} />)
+    render(<LetterboxdReviews item={movie} queries={queries} />)
 
     expect(screen.getByText("1 connected profile was unavailable; cached activity remains visible."))
       .not.toBeNull()
@@ -260,12 +270,12 @@ describe("Letterboxd detail activity", () => {
   })
 
   test("shows one compact status when every configured profile is unavailable", () => {
-    useLetterboxdReviews.mockReturnValue({
+    itemLookup.mockReturnValue({
       isPending: false,
       error: null,
       data: { reviews: [], configuredProfiles: 2, unavailableProfiles: 2 },
     })
-    render(<LetterboxdReviews item={movie} />)
+    render(<LetterboxdReviews item={movie} queries={queries} />)
 
     expect(screen.getByRole("heading", { name: "Letterboxd" })).not.toBeNull()
     expect(screen.getByRole("status").textContent).toBe(
@@ -274,12 +284,11 @@ describe("Letterboxd detail activity", () => {
   })
 
   test("does not expose connected RSS activity on Series details", () => {
-    useLetterboxdReviews.mockReturnValue({ isPending: false, error: null, data: undefined })
     const { container } = render(
-      <LetterboxdReviews item={{ ...movie, kind: "Series" }} />,
+      <LetterboxdReviews item={{ ...movie, kind: "Series" }} queries={queries} />,
     )
 
-    expect(useLetterboxdReviews).toHaveBeenCalledWith("movie-1", false)
+    expect(itemLookup).toHaveBeenCalledWith("movie-1", false)
     expect(container.innerHTML).toBe("")
   })
 })

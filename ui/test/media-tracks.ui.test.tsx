@@ -1,13 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, test, vi } from "vitest"
-import { MediaInfo } from "../src/components/detail/MediaInfo"
+import { MediaInfoView } from "../src/components/detail/MediaInfo"
 import type { MediaSource, MediaStream } from "../src/lib/api"
 
-const save = vi.hoisted(() => ({ mutate: vi.fn() }))
-
-vi.mock("@/lib/queries", () => ({
-  useSetPlaybackPreference: () => ({ isPending: false, mutate: save.mutate }),
-}))
+const save = { isPending: false, mutate: vi.fn() }
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -68,8 +64,8 @@ beforeEach(() => save.mutate.mockReset())
 describe("per-item media track controls", () => {
   test("shows a named source selector when the item has multiple files", () => {
     render(
-      <MediaInfo
-        itemId="movie-1"
+      <MediaInfoView
+        save={save}
         sources={[
           source,
           { ...source, id: "opaque-source-b", name: "Director's cut", fileName: null },
@@ -91,8 +87,8 @@ describe("per-item media track controls", () => {
 
   test("restores understandable selected audio and subtitle labels", () => {
     render(
-      <MediaInfo
-        itemId="movie-1"
+      <MediaInfoView
+        save={save}
         sources={[source]}
         preference={{
           mediaSourceId: "source-a",
@@ -116,8 +112,8 @@ describe("per-item media track controls", () => {
 
   test("offers subtitles off and saves it with the current audio/source", () => {
     render(
-      <MediaInfo
-        itemId="movie-1"
+      <MediaInfoView
+        save={save}
         sources={[source]}
         preference={{
           mediaSourceId: "source-a",
@@ -142,8 +138,8 @@ describe("per-item media track controls", () => {
 
   test("keeps a single-track item as read-only media information", () => {
     render(
-      <MediaInfo
-        itemId="movie-1"
+      <MediaInfoView
+        save={save}
         sources={[{ ...source, audio: source.audio.slice(0, 1), subtitles: [] }]}
         preference={{
           mediaSourceId: "source-a",

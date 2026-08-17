@@ -29,7 +29,6 @@ import {
   useId,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from "react"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
@@ -65,9 +64,12 @@ import {
   type RatingSourceDefinition,
   type RatingsIntegrationStatus,
 } from "@/lib/api"
+import { jsonNumber, jsonString } from "@/lib/json"
 import { queryClient, queryKeys } from "@/lib/query-client"
 import { useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
+import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
+import { cssVariables } from "@/lib/style"
 
 type SettingsPage = {
   to: string
@@ -292,19 +294,29 @@ export function SecureCredentialField({
   )
 }
 
-function SelectField({
+type SelectOption<Value extends string> = {
+  value: Value
+  label: string
+  disabled?: boolean
+}
+
+function SelectField<const Value extends string>({
   value,
   onValueChange,
   options,
   label,
 }: {
-  value: string
-  onValueChange: (value: string) => void
-  options: Array<{ value: string; label: string; disabled?: boolean }>
+  value: Value
+  onValueChange: (value: Value) => void
+  options: readonly SelectOption<Value>[]
   label: string
 }) {
+  const selectOption = (candidate: string) => {
+    const selected = options.find((option) => option.value === candidate)?.value
+    if (selected !== undefined) onValueChange(selected)
+  }
   return (
-    <Select value={value} onValueChange={onValueChange}>
+    <Select value={value} onValueChange={selectOption}>
       <SelectTrigger aria-label={label} className="w-52 max-w-full">
         <SelectValue />
       </SelectTrigger>
@@ -408,11 +420,12 @@ function PageTitle({ title, detail }: { title: string; detail: string }) {
   return <header className="settings-page-title"><h1>{title}</h1><p>{detail}</p></header>
 }
 
-type ShellEvent = { type: string; payload: Record<string, unknown> }
-
 function useShellEvents(listener: (event: ShellEvent) => void) {
   useEffect(() => {
-    const receive = (event: Event) => listener((event as CustomEvent<ShellEvent>).detail)
+    const receive = (event: Event) => {
+      const shellEvent = readShellEvent(event)
+      if (shellEvent) listener(shellEvent)
+    }
     window.addEventListener("mediaflick-desktop-shell", receive)
     return () => window.removeEventListener("mediaflick-desktop-shell", receive)
   }, [listener])
@@ -437,11 +450,11 @@ function PlayerSettings() {
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
     if (event.type === "file-picker-completed") {
-      const target = event.payload.target
-      const completedRequestId = event.payload.requestId
+      const target = jsonString(event.payload.target)
+      const completedRequestId = jsonString(event.payload.requestId)
       if (
         (target !== "mpv" && target !== "mpchc") ||
-        typeof completedRequestId !== "string" ||
+        completedRequestId === null ||
         pendingPickers.current[target] !== completedRequestId
       ) {
         return
@@ -449,35 +462,40 @@ function PlayerSettings() {
       delete pendingPickers.current[target]
       setPicking((current) => ({ ...current, [target]: false }))
 
-      if (typeof event.payload.error === "string" && event.payload.error) {
-        toast.error(event.payload.error)
+      const pickerError = jsonString(event.payload.error)
+      if (pickerError) {
+        toast.error(pickerError)
         return
       }
       // A null path is the native dialog's cancellation result. It settles the
       // request but deliberately leaves the user's existing draft untouched.
-      if (typeof event.payload.path !== "string") return
-      const path = event.payload.path
+      const path = jsonString(event.payload.path)
+      if (path === null) return
       if (target === "mpv") setDraft((current) => current ? { ...current, mpvPath: path } : current)
       if (target === "mpchc") setDraft((current) => current ? { ...current, mpchcPath: path } : current)
     }
     if (event.type === "mpv-install-progress") {
-      const completedRequestId = event.payload.requestId
+      const completedRequestId = jsonString(event.payload.requestId)
       if (
-        typeof completedRequestId !== "string" ||
+        completedRequestId === null ||
         pendingInstall.current !== completedRequestId
       ) {
         return
       }
-      const state = String(event.payload.state ?? "idle")
-      setInstall({ state, message: typeof event.payload.message === "string" ? event.payload.message : undefined, downloaded: Number(event.payload.downloaded ?? 0), total: typeof event.payload.total === "number" ? event.payload.total : null })
-      if (state === "completed" && typeof event.payload.path === "string") {
+      const state = jsonString(event.payload.state) ?? "idle"
+      const message = jsonString(event.payload.message) ?? undefined
+      const downloaded = jsonNumber(event.payload.downloaded) ?? 0
+      const total = jsonNumber(event.payload.total)
+      setInstall({ state, message, downloaded, total })
+      const installedPath = jsonString(event.payload.path)
+      if (state === "completed" && installedPath !== null) {
         pendingInstall.current = null
-        setDraft((current) => current ? { ...current, mpvPath: event.payload.path as string } : current)
+        setDraft((current) => current ? { ...current, mpvPath: installedPath } : current)
         void queryClient.invalidateQueries({ queryKey: queryKeys.settings })
       }
       if (state === "failed") {
         pendingInstall.current = null
-        if (typeof event.payload.message === "string") toast.error(event.payload.message)
+        if (message) toast.error(message)
       }
     }
   }, [setDraft])
@@ -532,10 +550,10 @@ function PlayerSettings() {
       <PageTitle title="Player" detail="Choose the native player MediaFlick launches for playback." />
       <Section title="Playback backend" description="MPC-HC is available only on Windows; mpv is the portable default.">
         <SettingsRow title="Player" description="The active backend determines which executable is required.">
-          <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend: playerBackend as "mpv" | "mpchc" })} options={[{ value: "mpv", label: "mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
+          <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "mpv", label: "mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
         </SettingsRow>
         <SettingsRow title="Start fullscreen" description="Use a full-screen player window by default.">
-          <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen: defaultFullscreen as "fullscreen" | "windowed" })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
+          <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
         <SettingsRow title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
           <Input className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
@@ -565,8 +583,8 @@ function PlaybackSettings() {
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
-  const update = (key: keyof typeof draft, value: string) => setDraft({ ...draft, [key]: value })
-  const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }]
+  const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
+  const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }] as const
   return <div className="settings-page"><PageTitle title="Playback" detail="Set your default stream quality and handling for detected media segments." />
     <Section title="Streaming quality" description="Original sends the source unchanged; lower quality permits transcoding when needed.">
       <SettingsRow title="Default quality" description="You can still override this for an individual play."><SelectField label="Default streaming quality" value={draft.streamingQuality} onValueChange={(value) => update("streamingQuality", value)} options={[{ value: "original", label: "Original" }, { value: "auto", label: "Auto" }, { value: "120_mbps", label: "120 Mbps" }, { value: "80_mbps", label: "80 Mbps" }, { value: "60_mbps", label: "60 Mbps" }, { value: "40_mbps", label: "40 Mbps" }, { value: "20_mbps", label: "20 Mbps" }, { value: "10_mbps", label: "10 Mbps" }, { value: "5_mbps", label: "5 Mbps" }, { value: "3_mbps", label: "3 Mbps" }, { value: "1_5_mbps", label: "1.5 Mbps" }]} /></SettingsRow>
@@ -590,11 +608,11 @@ function ApplicationSettings() {
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Application" detail="Control window behavior and the diagnostics recorded by the desktop client." />
     <Section title="Window" description="These choices are applied immediately after saving.">
-      <SettingsRow title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior: closeBehavior as "exit_app" | "minimize_window" })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
+      <SettingsRow title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
       <SettingsRow title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Toggle label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
     </Section>
     <Section title="Diagnostics" description="A log-level change is picked up on the next application launch.">
-      <SettingsRow title="Log level" description="Use Debug only while investigating a problem."><SelectField label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel: logLevel as typeof draft.logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
+      <SettingsRow title="Log level" description="Use Debug only while investigating a problem."><SelectField label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
     </Section>
     <SaveBar dirty={!same(draft, settings.client.application)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.application)} onReset={() => setDraft({ closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" })} restartRequired={draft.logLevel !== settings.client.application.logLevel} />
   </div>
@@ -620,10 +638,10 @@ function AppearancePreview({
     .map((id) => ratingSources.find((source) => source.id === id))
     .filter((source): source is RatingSourceDefinition => Boolean(source))
     .slice(0, 2)
-  const style = {
+  const style = cssVariables({
     "--preview-artwork-intensity": String(appearance.artworkIntensity / 100),
     "--preview-backdrop-intensity": String(appearance.backdropIntensity / 100),
-  } as CSSProperties
+  })
 
   return (
     <figure
@@ -724,9 +742,9 @@ export function Appearance() {
       <AppearancePreview appearance={draft} ratingSources={ratings?.sources ?? []} />
     </Section>
     <Section title="Theme" description="System follows the current operating-system color preference.">
-      <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme: theme as AppearanceSettings["theme"] })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
-      <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent: accent as AppearanceSettings["accent"] })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
-      <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density: density as AppearanceSettings["density"] })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
+      <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
+      <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
+      <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
     <Section title="Card overlays" description="Choose the compact information drawn over library artwork.">
       <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">

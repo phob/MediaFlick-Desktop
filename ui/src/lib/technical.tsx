@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api, type MediaStream } from "./api"
 import { useSettings } from "./queries"
+import { readShellEvent, shellEventIds } from "./shell-events"
 import { TechnicalContext } from "./technical-context"
 
 const UI_BATCH_SIZE = 100
@@ -11,8 +12,8 @@ const STALE_SCAN_MS = 60_000
 
 type ActiveBatch = { ids: Set<string>; controller: AbortController }
 
-function isAbortError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError"
+function isAbortError(cause: unknown) {
+  return cause instanceof DOMException && cause.name === "AbortError"
 }
 
 /**
@@ -131,16 +132,12 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
   // again; visible entries are requeued immediately.
   useEffect(() => {
     const receive = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        type?: string
-        payload?: { itemIds?: unknown; contextIds?: unknown }
-      }>).detail
+      const detail = readShellEvent(event)
       if (detail?.type !== "library-changed") return
-      const itemIds = Array.isArray(detail.payload?.itemIds) ? detail.payload.itemIds : []
-      const contextIds = Array.isArray(detail.payload?.contextIds) ? detail.payload.contextIds : []
-      const changed = [...new Set(
-        [...itemIds, ...contextIds].filter((id): id is string => typeof id === "string"),
-      )]
+      const changed = [...new Set([
+        ...shellEventIds(detail.payload.itemIds),
+        ...shellEventIds(detail.payload.contextIds),
+      ])]
       if (changed.length === 0) return
 
       for (const id of changed) checkedAt.current.delete(id)

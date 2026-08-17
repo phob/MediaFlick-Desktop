@@ -11,6 +11,7 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatCommunityRating, formatRemaining, formatRuntime } from "@/lib/format"
+import { isJsonObject, jsonNumber, jsonString, type JsonValue } from "@/lib/json"
 import {
   useItemSynopsis,
   useNextUp,
@@ -30,6 +31,34 @@ const TRAILER_DELAY_MS = 5_000
 /** A broken remote player must not strand the billboard forever. */
 const REMOTE_TRAILER_WATCHDOG_MS = 3 * 60_000
 const YOUTUBE_ORIGINS = new Set(["https://www.youtube-nocookie.com", "https://www.youtube.com"])
+
+type YouTubeOutboundMessage =
+  | { event: "listening" }
+  | { event: "command"; func: "addEventListener"; args: ["onStateChange" | "onError"] }
+
+interface YouTubeInboundMessage {
+  event: string | null
+  state: number | null
+}
+
+function readYouTubeMessage(data: JsonValue): YouTubeInboundMessage | null {
+  let parsed = data
+  const serialized = jsonString(data)
+  if (serialized !== null) {
+    try {
+      parsed = JSON.parse(serialized)
+    } catch {
+      return null
+    }
+  }
+  if (!isJsonObject(parsed)) return null
+  const info = jsonNumber(parsed.info)
+  const nestedInfo = isJsonObject(parsed.info) ? jsonNumber(parsed.info.playerState) : null
+  return {
+    event: jsonString(parsed.event),
+    state: info ?? nestedInfo,
+  }
+}
 
 function episodeLabel(item: ItemSummary) {
   if (item.kind !== "Episode") return null
@@ -237,7 +266,7 @@ function BillboardBackdrop({
     const frame = youtubeFrame.current
     if (!active || !trailerArmed || !trailerEmbed || !frame) return
     const playerId = `billboard-youtube-${item.id}`
-    const post = (message: object) =>
+    const post = (message: YouTubeOutboundMessage) =>
       frame.contentWindow?.postMessage(
         JSON.stringify({ ...message, id: playerId }),
         "https://www.youtube-nocookie.com",
@@ -249,21 +278,9 @@ function BillboardBackdrop({
     }
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || !YOUTUBE_ORIGINS.has(event.origin)) return
-      let parsed: unknown
-      try {
-        parsed = typeof event.data === "string" ? JSON.parse(event.data) : event.data
-      } catch {
-        return
-      }
-      if (!parsed || typeof parsed !== "object") return
-      const message = parsed as {
-        event?: string
-        info?: number | { playerState?: number }
-      }
-      const state =
-        typeof message.info === "number" ? message.info : message.info?.playerState
-      if (state === 1) setTrailerPlaying(true)
-      if (state === 0 || message.event === "onError") complete()
+      const message = readYouTubeMessage(event.data)
+      if (message?.state === 1) setTrailerPlaying(true)
+      if (message?.state === 0 || message?.event === "onError") complete()
     }
 
     window.addEventListener("message", handleMessage)

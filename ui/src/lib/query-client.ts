@@ -134,7 +134,7 @@ export function invalidateLibraryChanged(
     predicate: (query) => {
       const [root, id] = query.queryKey
       if (["home", "items", "billboard", "genres", "status"].includes(String(root))) return true
-      return root === "item" && typeof id === "string" && relevant.has(id)
+      return root === "item" && relevant.has(String(id))
     },
   })
 }

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
-import { ItemGrid } from "@/components/ItemGrid"
+import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
 import { LibraryFilters } from "@/components/LibraryFilters"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState, PageHeader } from "@/components/PageHeader"
-import { CastDiscover } from "@/components/seerr/CastDiscover"
+import { CastDiscover, type CastDiscoverProps } from "@/components/seerr/CastDiscover"
 import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -25,6 +25,15 @@ import { useItems, usePersonResolution } from "@/lib/queries"
 
 /** How many of a matched person's titles the search page shows inline. */
 const SEARCH_PERSON_ROW_LIMIT = 12
+
+export interface LibraryComponents {
+  ItemGrid: ComponentType<ItemGridProps>
+  CastDiscover: ComponentType<CastDiscoverProps>
+}
+
+interface LibraryProps {
+  components?: Partial<LibraryComponents>
+}
 
 /**
  * A search term that exactly names one Jellyfin person gets their titles as a
@@ -111,7 +120,9 @@ function CastCandidates({
   )
 }
 
-export default function Library() {
+export default function Library({ components }: LibraryProps = {}) {
+  const Grid = components?.ItemGrid ?? ItemGrid
+  const CastDiscovery = components?.CastDiscover ?? CastDiscover
   const [params, setParams] = useSearchParams()
   const [total, setTotal] = useState<number | null>(null)
 
@@ -191,7 +202,7 @@ export default function Library() {
             : "Your movies and series, ready to browse and play."
 
   const castDiscover = castPerson ? (
-    <CastDiscover
+    <CastDiscovery
       personName={personName}
       jellyfinId={jellyfinPersonId}
       tmdbId={tmdbPersonId}
@@ -238,7 +249,7 @@ export default function Library() {
             {castDiscover}
           </div>
         ) : (
-          <ItemGrid
+          <Grid
             query={query}
             onTotal={setTotal}
             empty={

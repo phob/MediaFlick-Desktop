@@ -30,6 +30,7 @@ import {
   SecureCredentialField,
 } from "../src/routes/Settings"
 import { queryKeys } from "../src/lib/query-client"
+import { requireElement } from "./support/fixtures"
 
 const definitions: RatingSourceDefinition[] = [
   { id: "imdb", label: "IMDb", shortLabel: "IMDb", scaleMax: 10, format: "decimal", known: true },
@@ -40,7 +41,8 @@ const definitions: RatingSourceDefinition[] = [
 ]
 
 function display(sourceId: string, value: number): DisplayRating {
-  const definition = definitions.find((candidate) => candidate.id === sourceId)!
+  const definition = definitions.find((candidate) => candidate.id === sourceId)
+  if (!definition) throw new Error(`Expected rating source ${sourceId}`)
   const rating: NormalizedRating = {
     sourceId,
     rawSource: sourceId,
@@ -292,7 +294,7 @@ describe("configurable card ratings", () => {
           onStatus={vi.fn()}
         />,
       )
-      const input = screen.getByLabelText("MDBList API key") as HTMLInputElement
+      const input = screen.getByLabelText<HTMLInputElement>("MDBList API key")
       expect(input.type).toBe("password")
       expect(input.value).toBe("")
       expect(input.placeholder).toContain("••••")
@@ -323,11 +325,14 @@ describe("configurable card ratings", () => {
     expect(screen.getByText("Card overlays")).toBeTruthy()
     const mediaInfo = screen.getByRole("switch", { name: "Show media info on cards" })
     expect(mediaInfo.getAttribute("aria-checked")).toBe("true")
-    expect((screen.getByLabelText("Letterboxd") as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>("Letterboxd").checked).toBe(true)
     expect(screen.getByLabelText("Rotten Tomatoes Critics")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience")).toBeTruthy()
 
-    const preview = container.querySelector(".appearance-preview") as HTMLElement
+    const preview = requireElement(
+      container.querySelector<HTMLElement>(".appearance-preview"),
+      "appearance preview",
+    )
     expect(preview.dataset.showMediaInfo).toBe("true")
     expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
     fireEvent.click(mediaInfo)
@@ -339,7 +344,7 @@ describe("configurable card ratings", () => {
   test("the ratings page drafts preference changes until its Save action", () => {
     withSettings(<RatingsIntegration />)
     fireEvent.click(screen.getByLabelText("Rotten Tomatoes Audience"))
-    expect((screen.getByLabelText("Rotten Tomatoes Audience") as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>("Rotten Tomatoes Audience").checked).toBe(true)
     expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
     expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
   })

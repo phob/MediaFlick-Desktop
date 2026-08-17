@@ -30,6 +30,11 @@ interface PreviewHandlers {
   onPointerLeave?: (event: React.PointerEvent<HTMLElement>) => void
 }
 
+interface PreviewState {
+  expanded: boolean
+  handlers: PreviewHandlers
+}
+
 /**
  * Hover handlers for one card, plus whether that card is the expanded one.
  *
@@ -40,7 +45,7 @@ interface PreviewHandlers {
 export function usePreview(
   item: ItemSummary,
   enabled = true,
-): { expanded: boolean; handlers: PreviewHandlers } {
+): PreviewState {
   const preview = useContext(PreviewContext)
   if (!preview || !enabled) return { handlers: {}, expanded: false }
 

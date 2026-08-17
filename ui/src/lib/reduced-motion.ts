@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 
 function systemPrefersReducedMotion() {
-  return typeof window !== "undefined" && window.matchMedia?.(REDUCED_MOTION_QUERY).matches === true
+  return globalThis.window?.matchMedia?.(REDUCED_MOTION_QUERY).matches === true
 }
 
 /** Reactive operating-system motion preference shared by runtime and previews. */

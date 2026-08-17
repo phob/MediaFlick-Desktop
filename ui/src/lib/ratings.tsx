@@ -3,6 +3,7 @@ import { api, type ItemRatings } from "./api"
 import { RatingsContext } from "./rating-context"
 import { queryClient, queryKeys } from "./query-client"
 import { useRatingsStatus, useSettings } from "./queries"
+import { readShellEvent, shellEventIds } from "./shell-events"
 
 const UI_BATCH_SIZE = 100
 const COALESCE_MS = 75
@@ -10,6 +11,11 @@ const CACHE_RECHECK_SECONDS = 6 * 60 * 60
 const NO_SOURCES: string[] = []
 
 type ActiveBatch = { ids: Set<string>; controller: AbortController }
+
+interface RatingsConfiguration {
+  available: boolean
+  selected: string[]
+}
 
 /**
  * One scheduler for every mounted card. It deduplicates the same title across
@@ -27,7 +33,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
   const batches = useRef(new Set<ActiveBatch>())
   const timer = useRef<number | null>(null)
   const generation = useRef(0)
-  const config = useRef({ available: false, selected: [] as string[] })
+  const config = useRef<RatingsConfiguration>({ available: false, selected: [] })
   const flushRef = useRef<() => Promise<void>>(async () => {})
 
   const schedule = useCallback(() => {
@@ -103,13 +109,10 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const receive = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        type?: string
-        payload?: { itemIds?: unknown }
-      }>).detail
-      if (detail?.type !== "library-changed" || !Array.isArray(detail.payload?.itemIds)) return
-      for (const id of detail.payload.itemIds) {
-        if (typeof id === "string" && active.current.has(id)) pending.current.add(id)
+      const detail = readShellEvent(event)
+      if (detail?.type !== "library-changed") return
+      for (const id of shellEventIds(detail.payload.itemIds)) {
+        if (active.current.has(id)) pending.current.add(id)
       }
       schedule()
     }
@@ -165,4 +168,3 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
 
   return <RatingsContext.Provider value={value}>{children}</RatingsContext.Provider>
 }
-
