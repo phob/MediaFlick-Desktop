@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::app::paths::app_data_dir;
 use crate::app::services::{self, ShellFilePickerTarget, ShellRequest};
-use crate::app::{logger, urls};
+use crate::app::{build_info, logger, urls};
 use crate::jellyfin::api::items;
 use crate::jellyfin::bridge as jellyfin_bridge;
 use crate::jellyfin::playback_reporter::flush_playstate_reports;
@@ -193,6 +193,16 @@ fn current_exe_path() -> Option<PathBuf> {
 fn cef_string_from_path(path: Option<&PathBuf>) -> CefString {
     path.map(|path| CefString::from(path.to_string_lossy().as_ref()))
         .unwrap_or_default()
+}
+
+fn linux_desktop_id() -> CefString {
+    // The generated CEF wrapper writes only borrowed string structs back to the
+    // native callback output. Keep the allocated string alive and let CEF own
+    // the raw value it receives for this one-shot window creation callback.
+    let owned = CefString::from(build_info::APP_DESKTOP_ID);
+    let borrowed = owned.clone();
+    std::mem::forget(owned);
+    borrowed
 }
 
 wrap_app! {
@@ -403,6 +413,20 @@ wrap_window_delegate! {
     impl PanelDelegate {}
 
     impl WindowDelegate {
+        fn linux_window_properties(
+            &self,
+            _window: Option<&mut Window>,
+            properties: Option<&mut LinuxWindowProperties>,
+        ) -> i32 {
+            let Some(properties) = properties else {
+                return 0;
+            };
+            properties.wayland_app_id = linux_desktop_id();
+            properties.wm_class_class = linux_desktop_id();
+            properties.wm_class_name = linux_desktop_id();
+            1
+        }
+
         fn on_window_created(&self, window: Option<&mut Window>) {
             let Some(window) = window else {
                 return;

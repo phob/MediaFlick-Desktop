@@ -54,5 +54,47 @@ pub fn set_window_icon(window: &cef::Window) {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn set_window_icon(window: &cef::Window) {
+    use cef::{ImplImage, ImplWindow};
+
+    let Some(mut window_icon) = cef::image_create() else {
+        tracing::warn!(target: "cef", "failed to create Linux title-bar icon");
+        return;
+    };
+    if window_icon.add_png(
+        1.0,
+        Some(include_bytes!(
+            "../../resources/linux/io.github.phob.MediaFlickDesktop-16.png"
+        )),
+    ) != 1
+    {
+        tracing::warn!(target: "cef", "failed to decode Linux title-bar icon");
+        return;
+    }
+
+    let Some(mut app_icon) = cef::image_create() else {
+        tracing::warn!(target: "cef", "failed to create Linux application icon");
+        return;
+    };
+    if app_icon.add_png(
+        1.0,
+        Some(include_bytes!(
+            "../../resources/linux/io.github.phob.MediaFlickDesktop-256.png"
+        )),
+    ) != 1
+    {
+        tracing::warn!(target: "cef", "failed to decode Linux application icon");
+        return;
+    }
+
+    // CEF otherwise supplies Chromium's built-in images. The app icon is the
+    // fallback used by X11 window managers and by compositors that cannot
+    // resolve our desktop id (for example, an AppImage launched without desktop
+    // integration); identity hints alone cannot replace those native images.
+    window.set_window_icon(Some(&mut window_icon));
+    window.set_window_app_icon(Some(&mut app_icon));
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub fn set_window_icon(_window: &cef::Window) {}
