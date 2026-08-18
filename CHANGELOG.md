@@ -97,6 +97,9 @@
 
 ### Fixed
 
+- Fixed Linux taskbars showing Chromium's icon. CEF windows now use the MediaFlick Desktop app id/WM_CLASS and carry embedded title-bar and application-switcher icons instead of relying on desktop-entry matching alone.
+- Fixed `just run` and `just run-non-debug` on Linux so the staged CEF runtime directory is added to the dynamic linker path before launching the app.
+- Fixed `just run` cleanup on Linux to stop stale MediaFlick CEF subprocesses and warm mpv children despite the executable name being longer than `pkill -x` can match.
 - Fixed the hover corner brackets on media cards looking washed out along the top edge: the ratings readout's dark top gradient was layered over them, so they now draw above every in-frame overlay.
 - Fixed MDBList card ratings frequently staying absent on the home page's lower shelves — most visibly the genre rows — until the title's detail page was opened. Every batch response re-registered all mounted cards, and that whole-page cleanup pass momentarily read as "no cards remain", aborting every other in-flight rating batch; the native work those aborted requests had started kept their titles claimed, so the replacement requests answered without them and the cards were never asked about again. Card registration is now identity-stable so a response cannot abort its sibling batches, and a title an available response omits is re-requested a bounded number of times instead of being treated as final.
 - Fixed the CI and Companion release workflows failing to resolve the .NET SDK pinned in `global.json` when it is newer than the runner image's preinstalled SDKs; `setup-dotnet` now installs the pinned version from `global.json` directly.
