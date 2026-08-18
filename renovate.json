@@ -4,6 +4,7 @@
     "config:recommended"
   ],
   "platformAutomerge": false,
+  "minimumReleaseAge": "1 day",
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true
