@@ -126,7 +126,11 @@ stop-running-app:
 [private]
 [unix]
 stop-running-app:
-    pkill -TERM -x mediaflick-desktop 2>/dev/null || true
+    pkill -TERM -f '(^|/)[m]ediaflick-desktop([[:space:]]|$)' 2>/dev/null || true
+    pkill -TERM -f 'input-ipc-server=/tmp/[m]ediaflick-desktop-' 2>/dev/null || true
+    sleep 1
+    pkill -KILL -f '(^|/)[m]ediaflick-desktop([[:space:]]|$)' 2>/dev/null || true
+    pkill -KILL -f 'input-ipc-server=/tmp/[m]ediaflick-desktop-' 2>/dev/null || true
 
 # Restart the staged development app so the single-instance gate can never
 # leave `just run` showing the UI embedded in an older process.
@@ -139,7 +143,7 @@ run *args: stop-running-app build
 [group('run')]
 [unix]
 run *args: stop-running-app build
-    build/mediaflick-desktop {{args}}
+    cef_lib="$PWD/build/libcef.so"; export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; if [ -f "$cef_lib" ]; then export MEDIAFLICK_DESKTOP_CEF_PRELOAD="$cef_lib"; export LD_PRELOAD="$cef_lib${LD_PRELOAD:+ $LD_PRELOAD}"; fi; build/mediaflick-desktop {{args}}
 
 # Run a non-debug staged app. Example: just run-non-debug --url http://localhost:8096
 [group('run')]
@@ -151,7 +155,7 @@ run-non-debug *args: stop-running-app non-debug
 [group('run')]
 [unix]
 run-non-debug *args: stop-running-app non-debug
-    build/mediaflick-desktop {{args}}
+    cef_lib="$PWD/build/libcef.so"; export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; if [ -f "$cef_lib" ]; then export MEDIAFLICK_DESKTOP_CEF_PRELOAD="$cef_lib"; export LD_PRELOAD="$cef_lib${LD_PRELOAD:+ $LD_PRELOAD}"; fi; build/mediaflick-desktop {{args}}
 
 # Run the external mpv binary that will be wired into playback later
 [group('run')]
