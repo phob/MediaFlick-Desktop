@@ -2617,78 +2617,30 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 }
 
 fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiResponse {
-    let settings = services.preferences.snapshot();
-    let Some(player_path) = settings.player_path().map(str::to_string) else {
-        return ApiResponse::error(
+    match play::start(services, options, "own UI") {
+        Ok(prepared) => ApiResponse::ok(json!({
+            "started": true,
+            "itemId": options.item_id,
+            "playMethod": prepared.play_method,
+            "mediaSource": prepared.media_source_name,
+            "startTicks": prepared.request.start_time_ticks.unwrap_or(0),
+        })),
+        Err(play::StartError::NoPlayer) => ApiResponse::error(
             409,
             "No media player is configured. Open Settings to set up mpv or MPC-HC.",
-        );
-    };
-    let Some(playback) = services.playback() else {
-        return ApiResponse::error(503, "the playback coordinator is not ready yet");
-    };
-
-    let prepared = match play::prepare(
-        &services.session,
-        &services.library,
-        settings.streaming_quality,
-        options,
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => {
+        ),
+        Err(play::StartError::NotReady) => {
+            ApiResponse::error(503, "the playback coordinator is not ready yet")
+        }
+        Err(play::StartError::Api(error)) => {
             // A 404 from `PlaybackInfo` means the item no longer exists on the
             // server, so the cached row is a phantom: drop it now rather than
             // offering a Play button that can never work.
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_item(services, &options.item_id);
             }
-            return ApiResponse::from_api_error(&error);
+            ApiResponse::from_api_error(&error)
         }
-    };
-
-    tracing::info!(
-        target: "app.api",
-        item_id = %options.item_id,
-        play_method = %prepared.play_method,
-        media_source = %prepared.media_source_name,
-        headers = %crate::app::logger::redacted_header_summary(&prepared.request.headers),
-        launch = %crate::app::logger::launch_summary(&prepared.request),
-        "starting playback from the own UI"
-    );
-    playback.open(
-        player_path,
-        settings.default_fullscreen,
-        prepared.request.clone(),
-    );
-    playback.update_context(playback_context(&prepared.request));
-
-    ApiResponse::ok(json!({
-        "started": true,
-        "itemId": options.item_id,
-        "playMethod": prepared.play_method,
-        "mediaSource": prepared.media_source_name,
-        "startTicks": prepared.request.start_time_ticks.unwrap_or(0),
-    }))
-}
-
-/// Feeds the player adapters the same identity the launch carries so their
-/// pending playback is complete before the file loads.
-fn playback_context(
-    request: &crate::playback::PlaybackRequest,
-) -> crate::playback::PlaybackContext {
-    crate::playback::PlaybackContext {
-        media_url: Some(request.media_url.clone()),
-        item_id: request.item_id.clone(),
-        media_source_id: request.media_source_id.clone(),
-        play_session_id: request.play_session_id.clone(),
-        device_id: request.device_id.clone(),
-        start_time_ticks: request.start_time_ticks,
-        runtime_ticks: request.runtime_ticks,
-        title: request.title.clone(),
-        audio_stream_index: request.audio_stream_index,
-        subtitle_stream_index: request.subtitle_stream_index,
-        play_method: request.play_method.clone(),
-        ..Default::default()
     }
 }
 

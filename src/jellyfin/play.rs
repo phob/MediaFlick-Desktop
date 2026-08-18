@@ -4,10 +4,13 @@
 //! stream URL: negotiate `PlaybackInfo` with a device profile, pick a media
 //! source, and build the direct-stream or transcoding URL ourselves.
 
+use std::sync::Arc;
+
+use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url};
 use crate::library::model::ResolvedPlaybackPreference;
 use crate::library::{Library, resolve_playback_preference};
-use crate::playback::PlaybackRequest;
+use crate::playback::{PlaybackContext, PlaybackRequest};
 use crate::preferences::StreamingQuality;
 
 use super::api::items::{self, PlaybackInfoRequest};
@@ -38,6 +41,79 @@ pub struct PreparedPlayback {
     pub request: PlaybackRequest,
     pub play_method: String,
     pub media_source_name: String,
+}
+
+/// Why [`start`] could not launch the player.
+#[derive(Debug)]
+pub enum StartError {
+    /// No mpv/MPC-HC path is configured in Settings.
+    NoPlayer,
+    /// The playback coordinator has not been attached yet.
+    NotReady,
+    Api(ApiError),
+}
+
+/// Negotiates `options` and launches the configured external player.
+///
+/// This is the one launch path shared by the UI's play endpoints and
+/// remote-control Play messages, so both start playback identically.
+pub fn start(
+    services: &Arc<Services>,
+    options: &PlayOptions,
+    origin: &str,
+) -> Result<PreparedPlayback, StartError> {
+    let settings = services.preferences.snapshot();
+    let Some(player_path) = settings.player_path().map(str::to_string) else {
+        return Err(StartError::NoPlayer);
+    };
+    let Some(playback) = services.playback() else {
+        return Err(StartError::NotReady);
+    };
+
+    let prepared = prepare(
+        &services.session,
+        &services.library,
+        settings.streaming_quality,
+        options,
+    )
+    .map_err(StartError::Api)?;
+
+    tracing::info!(
+        target: "playback",
+        item_id = %options.item_id,
+        play_method = %prepared.play_method,
+        media_source = %prepared.media_source_name,
+        headers = %crate::app::logger::redacted_header_summary(&prepared.request.headers),
+        launch = %crate::app::logger::launch_summary(&prepared.request),
+        origin,
+        "starting playback"
+    );
+    playback.open(
+        player_path,
+        settings.default_fullscreen,
+        prepared.request.clone(),
+    );
+    playback.update_context(context_from(&prepared.request));
+    Ok(prepared)
+}
+
+/// Feeds the player adapters the same identity the launch carries so their
+/// pending playback is complete before the file loads.
+fn context_from(request: &PlaybackRequest) -> PlaybackContext {
+    PlaybackContext {
+        media_url: Some(request.media_url.clone()),
+        item_id: request.item_id.clone(),
+        media_source_id: request.media_source_id.clone(),
+        play_session_id: request.play_session_id.clone(),
+        device_id: request.device_id.clone(),
+        start_time_ticks: request.start_time_ticks,
+        runtime_ticks: request.runtime_ticks,
+        title: request.title.clone(),
+        audio_stream_index: request.audio_stream_index,
+        subtitle_stream_index: request.subtitle_stream_index,
+        play_method: request.play_method.clone(),
+        ..Default::default()
+    }
 }
 
 pub fn prepare(
