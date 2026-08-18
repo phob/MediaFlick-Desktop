@@ -28,6 +28,8 @@ use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 use super::api::ApiError;
 use super::api::items;
 use super::api::model::UserItemDataDto;
+use super::api::sessions;
+use super::remote;
 use super::session::Session;
 
 /// How often the worker re-checks for a signed-in session while idle. Cheap —
@@ -129,6 +131,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle, handle: S
         match connect(&session) {
             Ok((mut socket, authorization)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
+                announce_capabilities(&session);
                 // Whatever happened while no connection existed was never
                 // pushed; one requested cycle reconciles the gap.
                 sync.request();
@@ -177,6 +180,42 @@ fn run(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle, handle: S
             return;
         }
         backoff = (backoff * 2).min(RECONNECT_MAX);
+    }
+}
+
+/// Announces media-control capabilities for the freshly connected session on
+/// its own thread: the announcement is a bounded HTTP POST that must not hold
+/// up event handling, and a failure only means "Play On" menus skip this
+/// device until the next reconnect.
+fn announce_capabilities(session: &Arc<Session>) {
+    let session = session.clone();
+    let spawned = thread::Builder::new()
+        .name("jellyfin-capabilities".to_string())
+        .spawn(move || {
+            let Ok(client) = session.client() else {
+                return;
+            };
+            match sessions::announce_capabilities(&client) {
+                Ok(()) => {
+                    tracing::debug!(
+                        target: "jellyfin.socket",
+                        "announced remote-control capabilities"
+                    );
+                }
+                Err(error) => {
+                    session.note_error(&error);
+                    tracing::debug!(
+                        target: "jellyfin.socket",
+                        "could not announce remote-control capabilities: {error}"
+                    );
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(
+            target: "jellyfin.socket",
+            "failed to start the capabilities announcement thread: {error}"
+        );
     }
 }
 
@@ -293,6 +332,9 @@ fn handle_message(
         ServerMessage::LibraryChanged { changed, removed } => {
             apply_library_change(library, session, sync, &changed, &removed);
         }
+        ServerMessage::Play(data) => remote::handle_play(&data),
+        ServerMessage::Playstate(data) => remote::handle_playstate(&data),
+        ServerMessage::GeneralCommand(data) => remote::handle_general_command(&data),
         ServerMessage::Ignored => {}
     }
     None
@@ -311,6 +353,12 @@ enum ServerMessage {
         changed: Vec<String>,
         removed: Vec<String>,
     },
+    /// Play: another client asked this session to start something.
+    Play(Value),
+    /// Playstate: pause/stop/seek/next from a remote client.
+    Playstate(Value),
+    /// GeneralCommand: volume and mute from a remote client.
+    GeneralCommand(Value),
     /// Anything else — session chatter, keep-alive acks, refresh progress.
     Ignored,
 }
@@ -362,6 +410,9 @@ fn parse_message(text: &str) -> ServerMessage {
                 removed: id_list(data, "ItemsRemoved"),
             }
         }
+        "Play" => ServerMessage::Play(data.clone()),
+        "Playstate" => ServerMessage::Playstate(data.clone()),
+        "GeneralCommand" => ServerMessage::GeneralCommand(data.clone()),
         _ => ServerMessage::Ignored,
     }
 }
@@ -642,6 +693,26 @@ mod tests {
                 changed: vec!["a".to_string(), "b".to_string(), "c".to_string()],
                 removed: vec!["gone".to_string()],
             }
+        );
+    }
+
+    #[test]
+    fn remote_control_messages_are_routed_with_their_payloads() {
+        let play = parse_message(r#"{"MessageType":"Play","Data":{"ItemIds":["a"]}}"#);
+        assert_eq!(
+            play,
+            ServerMessage::Play(serde_json::json!({ "ItemIds": ["a"] }))
+        );
+        let playstate = parse_message(r#"{"MessageType":"Playstate","Data":{"Command":"Pause"}}"#);
+        assert_eq!(
+            playstate,
+            ServerMessage::Playstate(serde_json::json!({ "Command": "Pause" }))
+        );
+        let general =
+            parse_message(r#"{"MessageType":"GeneralCommand","Data":{"Name":"ToggleMute"}}"#);
+        assert_eq!(
+            general,
+            ServerMessage::GeneralCommand(serde_json::json!({ "Name": "ToggleMute" }))
         );
     }
 
