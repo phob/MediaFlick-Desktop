@@ -1682,6 +1682,7 @@ wrap_life_span_handler! {
                 }
                 if let Some(services) = services::services() {
                     services.sync.stop();
+                    services.socket.stop();
                 }
                 quit_message_loop();
             }
