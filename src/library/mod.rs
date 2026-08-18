@@ -911,6 +911,50 @@ impl Library {
             .map(|changes| changes.item_ids.len())
     }
 
+    /// Applies pushed watch-state changes for items already in the catalog,
+    /// returning the change batch so the UI can invalidate the items and
+    /// their series/season contexts. Unknown ids are skipped: the item sweep
+    /// delivers the row and its watch state together, and an orphan
+    /// user-data row would notify nothing anyone can see.
+    pub fn apply_user_data(
+        &self,
+        records: &[UserDataRecord],
+    ) -> rusqlite::Result<LibraryChangeBatch> {
+        self.db.with_transaction(|transaction| {
+            let mut changes = LibraryChangeBatch::default();
+            for record in records {
+                let contexts = transaction
+                    .query_row(
+                        "SELECT parent_id, series_id, season_id FROM items WHERE jellyfin_id = ?1",
+                        params![record.jellyfin_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((parent_id, series_id, season_id)) = contexts else {
+                    continue;
+                };
+                if upsert_user_data(transaction, record)? {
+                    record_change_identity(
+                        &mut changes,
+                        &record.jellyfin_id,
+                        [
+                            parent_id.as_deref(),
+                            series_id.as_deref(),
+                            season_id.as_deref(),
+                        ],
+                    );
+                }
+            }
+            Ok(changes)
+        })
+    }
+
     /// Mirrors a page of watch state, returning how many rows actually moved.
     pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
         self.db.with_transaction(|transaction| {

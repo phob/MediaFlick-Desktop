@@ -8,6 +8,14 @@ import { readShellEvent, shellEventIds } from "./shell-events"
 const UI_BATCH_SIZE = 100
 const COALESCE_MS = 75
 const CACHE_RECHECK_SECONDS = 6 * 60 * 60
+/**
+ * A response can answer without an entry for a requested id — most commonly
+ * when another native call still owns that title's refresh, since an aborted
+ * request's native work is not cancelled. Ask again a little later, a bounded
+ * number of times, instead of treating the omission as final for the mount.
+ */
+const OMITTED_RETRY_MS = 2_000
+const OMITTED_RETRY_LIMIT = 2
 const NO_SOURCES: string[] = []
 
 type ActiveBatch = { ids: Set<string>; controller: AbortController }
@@ -22,26 +30,33 @@ interface RatingsConfiguration {
  * shelves, coalesces arrivals into bounded requests, and aborts a request once
  * none of its cards remains mounted. Ratings start only after cards commit, so
  * neither catalog queries nor progressive first-page readiness waits on them.
+ *
+ * `register` must stay identity-stable like the technical scheduler's: cards
+ * re-run their registration effect when it changes, and a whole-page cleanup
+ * pass momentarily empties `active`, which reads as "no cards remain" and
+ * aborts every other in-flight batch mid-request.
  */
 export function RatingsProvider({ children }: { children: ReactNode }) {
   const settings = useSettings()
   const status = useRatingsStatus()
   const [items, setItems] = useState<ReadonlyMap<string, ItemRatings>>(new Map())
+  const itemsRef = useRef<ReadonlyMap<string, ItemRatings>>(items)
   const active = useRef(new Map<string, number>())
   const pending = useRef(new Set<string>())
   const inFlight = useRef(new Set<string>())
+  const omitted = useRef(new Map<string, number>())
   const batches = useRef(new Set<ActiveBatch>())
   const timer = useRef<number | null>(null)
   const generation = useRef(0)
   const config = useRef<RatingsConfiguration>({ available: false, selected: [] })
   const flushRef = useRef<() => Promise<void>>(async () => {})
 
-  const schedule = useCallback(() => {
+  const schedule = useCallback((delayMs: number = COALESCE_MS) => {
     if (timer.current !== null || pending.current.size === 0) return
     timer.current = window.setTimeout(() => {
       timer.current = null
       void flushRef.current()
-    }, COALESCE_MS)
+    }, delayMs)
   }, [])
 
   flushRef.current = async () => {
@@ -59,14 +74,32 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController()
     const batch: ActiveBatch = { ids: new Set(ids), controller }
     batches.current.add(batch)
+    let retryingOmitted = false
     try {
       const response = await api.ratings.batch(ids, controller.signal)
       if (currentGeneration !== generation.current) return
-      setItems((current) => {
-        const next = new Map(current)
+      if (response.items.length > 0) {
+        const next = new Map(itemsRef.current)
         for (const item of response.items) next.set(item.id, item)
-        return next
-      })
+        itemsRef.current = next
+        setItems(next)
+      }
+      if (response.available) {
+        const returned = new Set(response.items.map((item) => item.id))
+        for (const id of ids) {
+          if (!active.current.has(id)) continue
+          if (returned.has(id)) {
+            omitted.current.delete(id)
+            continue
+          }
+          const attempts = (omitted.current.get(id) ?? 0) + 1
+          omitted.current.set(id, attempts)
+          if (attempts <= OMITTED_RETRY_LIMIT) {
+            pending.current.add(id)
+            retryingOmitted = true
+          }
+        }
+      }
       // Quota, 401 and Retry-After state is canonical in the native service.
       // Refetch only if the status view is active; cards do not need another
       // network request to display the response they just received.
@@ -82,7 +115,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
     } finally {
       batches.current.delete(batch)
       ids.forEach((id) => inFlight.current.delete(id))
-      if (pending.current.size > 0) schedule()
+      if (pending.current.size > 0) schedule(retryingOmitted ? OMITTED_RETRY_MS : COALESCE_MS)
     }
   }
 
@@ -100,7 +133,9 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
     batches.current.forEach((batch) => batch.controller.abort())
     batches.current.clear()
     inFlight.current.clear()
-    setItems(new Map())
+    omitted.current.clear()
+    itemsRef.current = new Map()
+    setItems(itemsRef.current)
     if (available && selected.length > 0) {
       active.current.forEach((_count, id) => pending.current.add(id))
       schedule()
@@ -112,7 +147,10 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
       const detail = readShellEvent(event)
       if (detail?.type !== "library-changed") return
       for (const id of shellEventIds(detail.payload.itemIds)) {
-        if (active.current.has(id)) pending.current.add(id)
+        if (active.current.has(id)) {
+          omitted.current.delete(id)
+          pending.current.add(id)
+        }
       }
       schedule()
     }
@@ -131,7 +169,9 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     (id: string) => {
       active.current.set(id, (active.current.get(id) ?? 0) + 1)
-      const cached = items.get(id)
+      // A remount is a fresh look at the card, so it earns fresh retries.
+      omitted.current.delete(id)
+      const cached = itemsRef.current.get(id)
       const shouldRecheck = !cached
         || cached.stale
         || Date.now() / 1000 - cached.fetchedAt >= CACHE_RECHECK_SECONDS
@@ -154,7 +194,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [items, schedule],
+    [schedule],
   )
 
   const definitions = useMemo(

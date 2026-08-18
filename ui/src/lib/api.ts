@@ -10,9 +10,10 @@ export const POSTER_WIDTH = 400
 export const LANDSCAPE_WIDTH = 560
 /** The detail hero renders edge to edge, so its backdrop needs a real width. */
 export const BACKDROP_WIDTH = 1920
-/** Detail poster and episode thumbnails: bigger slots than the grid's. */
+/** The detail hero's poster: a bigger slot than the library grid's. */
 export const DETAIL_POSTER_WIDTH = 600
-export const THUMBNAIL_WIDTH = 480
+/** Episode still cards: wide grid slots, doubled to cover HiDPI. */
+export const THUMBNAIL_WIDTH = 800
 export const HEADSHOT_WIDTH = 200
 /** Title treatments are drawn at most ~28rem wide; twice that covers HiDPI. */
 export const LOGO_WIDTH = 800

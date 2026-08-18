@@ -136,7 +136,7 @@ jobs:
       - name: Install .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "9.0.x"
+          global-json-file: global.json
 
       - name: Test
         run: dotnet test plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release

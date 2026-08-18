@@ -17,10 +17,10 @@ import {
   RefreshCw,
   Save,
   ScanLine,
-  Settings as SettingsIcon,
   SlidersHorizontal,
   Trash2,
   Undo2,
+  type LucideIcon,
 } from "lucide-react"
 import {
   Fragment,
@@ -36,17 +36,11 @@ import { toast } from "sonner"
 import { RatingSourceIcon } from "@/components/RatingSourceIcon"
 import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -74,21 +68,19 @@ import { cssVariables } from "@/lib/style"
 type SettingsPage = {
   to: string
   title: string
-  detail: string
-  icon: typeof SettingsIcon
+  icon: LucideIcon
   group?: string
   signedIn?: boolean
 }
 
 const NAVIGATION: SettingsPage[] = [
-  { to: "/settings", title: "Overview", detail: "Client status and connected services", icon: SettingsIcon },
-  { to: "/settings/client/player", title: "Player", detail: "Player executable and launch behavior", icon: Play, group: "Client" },
-  { to: "/settings/client/playback", title: "Playback", detail: "Quality and segment skipping", icon: SlidersHorizontal, group: "Client" },
-  { to: "/settings/client/application", title: "Application", detail: "Window and diagnostics", icon: Monitor, group: "Client" },
-  { to: "/settings/appearance", title: "Appearance", detail: "Theme, card overlays, and motion", icon: Palette },
-  { to: "/settings/integrations/ratings", title: "MDBList Ratings", detail: "Keys, quota, and rating sources", icon: KeyRound, group: "Integrations" },
-  { to: "/settings/integrations/letterboxd", title: "Letterboxd", detail: "Public profile connections", icon: Link, signedIn: true, group: "Integrations" },
-  { to: "/settings/integrations/seerr", title: "Seerr", detail: "Request service connection", icon: Link, signedIn: true, group: "Integrations" },
+  { to: "/settings/client/player", title: "Player", icon: Play, group: "Client" },
+  { to: "/settings/client/playback", title: "Playback", icon: SlidersHorizontal, group: "Client" },
+  { to: "/settings/client/application", title: "Application", icon: Monitor, group: "Client" },
+  { to: "/settings/appearance", title: "Appearance", icon: Palette },
+  { to: "/settings/integrations/ratings", title: "MDBList Ratings", icon: KeyRound, group: "Integrations" },
+  { to: "/settings/integrations/letterboxd", title: "Letterboxd", icon: Link, signedIn: true, group: "Integrations" },
+  { to: "/settings/integrations/seerr", title: "Seerr", icon: Link, signedIn: true, group: "Integrations" },
 ]
 
 function same<T>(left: T, right: T) {
@@ -126,22 +118,6 @@ function SettingsRow({
   )
 }
 
-function Toggle({ checked, onCheckedChange, label }: { checked: boolean; onCheckedChange: (value: boolean) => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onCheckedChange(!checked)}
-      className="settings-switch"
-      data-checked={checked}
-    >
-      <span />
-    </button>
-  )
-}
-
 export function RatingSourceSelector({
   sources,
   selected,
@@ -163,12 +139,11 @@ export function RatingSourceSelector({
       <div className="rating-source-options">
         {sources.map((source) => (
           <label key={source.id} data-selected={chosen.has(source.id)}>
-            <input
-              type="checkbox"
+            <Checkbox
               aria-label={source.label}
               checked={chosen.has(source.id)}
-              onChange={(event) => {
-                const next = event.target.checked
+              onCheckedChange={(checked) => {
+                const next = checked === true
                   ? [...selected, source.id]
                   : selected.filter((id) => id !== source.id)
                 onChange([...new Set(next)])
@@ -186,8 +161,8 @@ export function RatingSourceSelector({
       </div>
       <p id={helpId} className="mt-3 text-xs text-muted-foreground">
         {enabled
-          ? "Only selected sources that have a rating appear; missing values never create placeholders."
-          : "Add a valid local MDBList key or connect a compatible ratings-v1 server capability to enable selection."}
+          ? "A source that has no rating for a title is simply not shown."
+          : "Add an MDBList API key under Integrations to choose sources."}
       </p>
     </fieldset>
   )
@@ -379,40 +354,6 @@ function SettingsError({ title = "Settings unavailable", error, onRetry }: { tit
         <Button variant="outline" onClick={onRetry}><RefreshCw /> Try again</Button>
       </Section>
     </div>
-  )
-}
-
-function Overview() {
-  const settingsQuery = useSettings()
-  const { data: settings } = settingsQuery
-  const { data: status } = useStatus()
-  const seerrQuery = useSeerrStatus()
-  const ratingsQuery = useRatingsStatus()
-  const { data: seerr } = seerrQuery
-  const { data: ratings } = ratingsQuery
-  if (settingsQuery.error && !settings) return <SettingsError error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
-  if (!settings) return <SettingsLoading />
-  return (
-    <div className="settings-page">
-      <PageTitle title="Settings" detail="Your MediaFlick client, presentation, and connected services." />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <StatusCard title="Client" value={settings.client.player.playerConfigured ? "Ready" : "Needs setup"} detail={`${settings.client.player.playerBackend === "mpchc" ? "MPC-HC" : "mpv"} player`} to="/settings/client/player" />
-        <StatusCard title="Appearance" value={settings.appearance.theme === "system" ? "System" : settings.appearance.theme} detail={`${settings.appearance.accent} accent · ${settings.appearance.density} density`} to="/settings/appearance" />
-        <StatusCard title="Ratings" value={ratingsQuery.error && !ratings ? "Unavailable" : ratings?.available ? "Ready" : "Not configured"} detail={ratingsQuery.error && !ratings ? "Could not load integration status" : ratings?.effectiveOrigin === "local_mdblist" ? "Local MDBList key" : ratings?.effectiveOrigin === "plugin" ? "Server capability" : "Optional integration"} to="/settings/integrations/ratings" />
-        <StatusCard title="Seerr" value={seerrQuery.error && !seerr ? "Unavailable" : seerr?.linked ? "Connected" : "Not connected"} detail={seerrQuery.error && !seerr ? "Could not load connection status" : status?.authenticated ? "Requests integration" : "Sign in to configure"} to="/settings/integrations/seerr" />
-      </div>
-    </div>
-  )
-}
-
-function StatusCard({ title, value, detail, to }: { title: string; value: string; detail: string; to: string }) {
-  return (
-    <RouterLink to={to} className="block transition-opacity hover:opacity-85">
-      <Card className="h-full gap-3 py-5">
-        <CardHeader className="px-5"><CardDescription>{title}</CardDescription><CardTitle className="capitalize">{value}</CardTitle></CardHeader>
-        <CardContent className="px-5 text-sm text-muted-foreground">{detail}</CardContent>
-      </Card>
-    </RouterLink>
   )
 }
 
@@ -609,7 +550,7 @@ function ApplicationSettings() {
   return <div className="settings-page"><PageTitle title="Application" detail="Control window behavior and the diagnostics recorded by the desktop client." />
     <Section title="Window" description="These choices are applied immediately after saving.">
       <SettingsRow title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
-      <SettingsRow title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Toggle label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
+      <SettingsRow title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Switch aria-label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
     </Section>
     <Section title="Diagnostics" description="A log-level change is picked up on the next application launch.">
       <SettingsRow title="Log level" description="Use Debug only while investigating a problem."><SelectField label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
@@ -748,7 +689,7 @@ export function Appearance() {
     </Section>
     <Section title="Card overlays" description="Choose the compact information drawn over library artwork.">
       <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
-        <Toggle label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
+        <Switch aria-label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
       </SettingsRow>
       <div className="border-t border-border pt-5">
         <h3 className="font-medium">Rating sources</h3>
@@ -771,114 +712,39 @@ export function Appearance() {
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
       <SettingsRow title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider aria-label="Artwork intensity" className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
       <SettingsRow title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider aria-label="Backdrop intensity" className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
-      <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Toggle label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
+      <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
     <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, showMediaInfo: true, ratingSources: [] })} />
   </div>
 }
 
-export function RatingsSetupDialog({ onClose }: { onClose: () => void }) {
-  const { data: settings } = useSettings()
-  const { data: status } = useRatingsStatus()
-  const [step, setStep] = useState<"credentials" | "appearance">("credentials")
-  const [selected, setSelected] = useState(settings?.appearance.ratingSources ?? [])
-  const [saving, setSaving] = useState(false)
-  useEffect(() => setSelected(settings?.appearance.ratingSources ?? []), [settings?.appearance.ratingSources])
-  const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
-  if (!settings || !status) return null
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
-      <DialogContent className="max-h-[86vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{step === "credentials" ? "Ratings setup · Credentials" : "Ratings setup · Appearance"}</DialogTitle>
-          <DialogDescription>
-            {step === "credentials"
-              ? "Keys are optional and stored in the operating-system credential vault, never in preference JSON."
-              : "Select every source you want MediaFlick to show when a value is available."}
-          </DialogDescription>
-        </DialogHeader>
-        {step === "credentials" ? (
-          <div className="space-y-5">
-            <div><h3 className="mb-2 font-medium">MDBList API key</h3><SecureCredentialField provider="mdblist" label="MDBList API key" status={status.local.mdblist} onStatus={onStatus} /></div>
-            <div><h3 className="mb-2 font-medium">TMDB API key</h3><SecureCredentialField provider="tmdb" label="TMDB API key" status={status.local.tmdb} onStatus={onStatus} /></div>
-          </div>
-        ) : (
-          <RatingSourceSelector sources={status.sources} selected={selected} enabled={status.selectionEnabled} onChange={setSelected} legend="Setup appearance rating sources" />
-        )}
-        <DialogFooter>
-          {step === "appearance" && <Button variant="outline" onClick={() => setStep("credentials")} disabled={saving}>Back</Button>}
-          {step === "credentials" ? (
-            <Button onClick={() => setStep("appearance")}>Next: Appearance</Button>
-          ) : (
-            <Button disabled={saving} onClick={() => {
-              setSaving(true)
-              void api.settingsPatch.appearance({ ...settings.appearance, ratingSources: selected })
-                .then((saved) => { saveSettings(saved, "Ratings appearance saved"); onClose() })
-                .catch((error: Error) => toast.error(error.message))
-                .finally(() => setSaving(false))
-            }}>{saving ? "Saving…" : "Finish"}</Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export function RatingsIntegration() {
-  const settingsQuery = useSettings()
   const statusQuery = useRatingsStatus()
-  const { data: settings } = settingsQuery
   const { data: status } = statusQuery
-  const [setup, setSetup] = useState(false)
-  const [draftSources, setDraftSources] = useDraft(settings?.appearance.ratingSources)
-  const sourceMutation = useMutation({
-    mutationFn: (ratingSources: string[]) => {
-      if (!settings) throw new Error("Settings are not ready")
-      return api.settingsPatch.appearance({ ...settings.appearance, ratingSources })
-    },
-    onSuccess: (saved) => saveSettings(saved, "Rating sources saved"),
-    onError: (error: Error) => toast.error(error.message),
-  })
   const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
-  if (settingsQuery.error && !settings) return <SettingsError title="Ratings settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (statusQuery.error && !status) return <SettingsError title="Ratings status unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
-  if (!settings || !status || !draftSources) return <SettingsLoading />
+  if (!status) return <SettingsLoading />
   const origin = status.effectiveOrigin === "local_mdblist"
-    ? "Local MDBList credential (overrides any server configuration)"
+    ? "Your local MDBList key"
     : status.effectiveOrigin === "plugin"
-      ? "MediaFlick server ratings-v1 capability (no administrator secret leaves the server)"
-      : "Disabled — no valid local credential or compatible server capability"
+      ? "Your server's MediaFlick plugin"
+      : "Disabled — add an MDBList key or enable ratings on your server's MediaFlick plugin"
   return <div className="settings-page">
-    <PageTitle title="MDBList Ratings" detail="Add optional client keys, monitor quota, and choose the rating signals shown on artwork." />
-    <div className="flex justify-end"><Button variant="outline" onClick={() => setSetup(true)}>Guided setup</Button></div>
-    <Section title="Credentials" description="Local valid credentials take precedence over future plugin-admin credentials. MDBList ratings use only the MDBList key in this version.">
-      <SettingsRow title="MDBList API key" description="Validated with MDBList’s inexpensive /user endpoint; 401, offline, quota, and Retry-After states remain distinct.">
+    <PageTitle title="MDBList Ratings" detail="Show ratings from MDBList on artwork and title details." />
+    <Section title="Credential" description="The key is stored in the operating-system credential vault and never sent to your Jellyfin server.">
+      <SettingsRow title="MDBList API key" description="Your personal key from mdblist.com. A local key takes precedence over the server's plugin.">
         <SecureCredentialField provider="mdblist" label="MDBList API key" status={status.local.mdblist} onStatus={onStatus} />
       </SettingsRow>
-      <SettingsRow title="TMDB API key" description="Preparation for future metadata features. Saved securely and format-checked, but never sent by rating retrieval.">
-        <SecureCredentialField provider="tmdb" label="TMDB API key" status={status.local.tmdb} onStatus={onStatus} />
-      </SettingsRow>
     </Section>
-    <Section title="Rating origin" description="The desktop consumes plugin capability/data only through a versioned boundary; an absent endpoint is normal in this client-only release.">
-      <SettingsRow title="Effective source" description={origin}><span className="settings-status" data-status={status.available ? "verified" : "unverified"}>{status.available ? <CheckCircle2 /> : <AlertTriangle />}{status.available ? "available" : "disabled"}</span></SettingsRow>
-      <SettingsRow title="Server fallback" description={status.plugin.detail}><span className="data-value">{status.plugin.available ? "ratings-v1" : "not advertised"}</span></SettingsRow>
+    <Section title="Status" description="Which rating sources appear on cards is chosen in Appearance.">
+      <SettingsRow title="Ratings come from" description={origin}><span className="settings-status" data-status={status.available ? "verified" : "unverified"}>{status.available ? <CheckCircle2 /> : <AlertTriangle />}{status.available ? "available" : "disabled"}</span></SettingsRow>
+      <SettingsRow title="Server plugin" description={status.plugin.detail}><span className="data-value">{status.plugin.available ? "available" : "not available"}</span></SettingsRow>
     </Section>
-    <Section title="Card rating sources" description="The same selection is available in Settings > Appearance and remains saved when credentials or origins change.">
-      <RatingSourceSelector sources={status.sources} selected={draftSources} enabled={status.selectionEnabled} onChange={setDraftSources} />
-    </Section>
-    <SaveBar
-      dirty={!same(draftSources, settings.appearance.ratingSources)}
-      saving={sourceMutation.isPending}
-      onSave={() => sourceMutation.mutate(draftSources)}
-      onDiscard={() => setDraftSources(settings.appearance.ratingSources)}
-      onReset={() => setDraftSources([])}
-    />
-    {setup && <RatingsSetupDialog onClose={() => setSetup(false)} />}
   </div>
 }
 
 function SignInRequired({ name }: { name: string }) {
-  return <div className="settings-page"><PageTitle title={name} detail="This integration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description="Configure client and appearance settings without an account; integrations are account-scoped."><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
+  return <div className="settings-page"><PageTitle title={name} detail="This integration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description="Sign in to your Jellyfin server to configure this integration."><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
 }
 
 function Letterboxd() {
@@ -907,7 +773,7 @@ function Letterboxd() {
 }
 
 function ProfileCard({ profile, onEnabled, onRefresh, onOpen, onRemove }: { profile: LetterboxdProfile; onEnabled: (enabled: boolean) => void; onRefresh: () => void; onOpen: () => void; onRemove: () => void }) {
-  return <div className="settings-profile-card"><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="font-medium">{profile.displayName}</h3><span className="settings-status" data-status={profile.verificationStatus}>{profile.verificationStatus === "verified" ? <CheckCircle2 /> : <AlertTriangle />}{profile.verificationStatus}</span></div><p className="mt-1 truncate text-sm text-muted-foreground">{profile.canonicalUrl}</p></div><div className="flex flex-wrap items-center justify-end gap-1"><Toggle label={`Enable ${profile.displayName}`} checked={profile.enabled} onCheckedChange={onEnabled} /><Button size="icon-sm" variant="ghost" aria-label="Refresh profile" onClick={onRefresh}><RefreshCw /></Button><Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button><Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button></div></div>
+  return <div className="settings-profile-card"><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="font-medium">{profile.displayName}</h3><span className="settings-status" data-status={profile.verificationStatus}>{profile.verificationStatus === "verified" ? <CheckCircle2 /> : <AlertTriangle />}{profile.verificationStatus}</span></div><p className="mt-1 truncate text-sm text-muted-foreground">{profile.canonicalUrl}</p></div><div className="flex flex-wrap items-center justify-end gap-1"><Switch aria-label={`Enable ${profile.displayName}`} checked={profile.enabled} onCheckedChange={onEnabled} /><Button size="icon-sm" variant="ghost" aria-label="Refresh profile" onClick={onRefresh}><RefreshCw /></Button><Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button><Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button></div></div>
 }
 
 function Seerr() {
@@ -932,7 +798,7 @@ function Seerr() {
 function SettingsNavigation() {
   const location = useLocation()
   const { data: status } = useStatus()
-  return <nav className="settings-navigation" aria-label="Settings navigation"><span className="settings-nav-label">Settings</span>{NAVIGATION.map((item, index) => { const active = item.to === "/settings" ? location.pathname === item.to : location.pathname.startsWith(item.to); const previousGroup = NAVIGATION[index - 1]?.group; return <Fragment key={item.to}>{item.group && item.group !== previousGroup && <span className="settings-nav-group">{item.group}</span>}<RouterLink to={item.to} data-active={active} aria-disabled={item.signedIn && !status?.authenticated}><item.icon /><span><strong>{item.title}</strong><small>{item.detail}</small></span></RouterLink></Fragment> })}</nav>
+  return <nav className="settings-navigation" aria-label="Settings navigation"><span className="settings-nav-label">Settings</span>{NAVIGATION.map((item, index) => { const active = location.pathname.startsWith(item.to); const previousGroup = NAVIGATION[index - 1]?.group; return <Fragment key={item.to}>{item.group && item.group !== previousGroup && <span className="settings-nav-group">{item.group}</span>}<RouterLink to={item.to} data-active={active} aria-disabled={item.signedIn && !status?.authenticated}><item.icon /><span>{item.title}</span></RouterLink></Fragment> })}</nav>
 }
 
 export function AppearanceSync() {
@@ -953,5 +819,5 @@ export function AppearanceSync() {
 }
 
 export default function Settings() {
-  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Overview />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="integrations/ratings" element={<RatingsIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="integrations/seerr" element={<Seerr />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
+  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="integrations/ratings" element={<RatingsIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="integrations/seerr" element={<Seerr />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
 }

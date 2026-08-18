@@ -1,13 +1,12 @@
-import { useLocation, useParams } from "react-router-dom"
+import { Navigate, useLocation, useParams, useSearchParams } from "react-router-dom"
 import { CastRow } from "@/components/detail/CastRow"
 import { DetailActions } from "@/components/detail/DetailActions"
 import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHero } from "@/components/detail/DetailHero"
-import { EpisodeList } from "@/components/detail/EpisodeList"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { DetailPageSkeleton } from "@/components/detail/DetailPrimitives"
-import { MediaCard } from "@/components/MediaCard"
+import { SeasonBrowser, seasonRailOrder } from "@/components/detail/SeasonBrowser"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
@@ -17,35 +16,6 @@ import {
   type DetailNavigationState,
 } from "@/lib/navigation"
 import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
-
-/** Seasons of a series still read best as posters — they are covers, not text. */
-function SeasonGrid({ seasons }: { seasons: ItemSummary[] }) {
-  if (!seasons.length) return null
-  return (
-    <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
-      <h2 className="section-title">Seasons</h2>
-      <div className="flex flex-wrap gap-[var(--card-gap)]">
-        {seasons.map((season) => (
-          <MediaCard key={season.id} item={season} className="catalog-card" />
-        ))}
-      </div>
-    </section>
-  )
-}
-
-/**
- * What a season's Play button should start: whatever was left half-watched,
- * otherwise the first episode not yet seen, otherwise the season opener. The
- * episodes are already loaded for the list, so this costs nothing.
- */
-function seasonPlayTarget(episodes: ItemSummary[]) {
-  return (
-    episodes.find((episode) => episode.positionTicks > 0) ??
-    episodes.find((episode) => !episode.played) ??
-    episodes[0] ??
-    null
-  )
-}
 
 function episodeCode(episode: ItemSummary) {
   return episode.parentIndexNumber != null && episode.indexNumber != null
@@ -68,6 +38,7 @@ function NextUpNote({ episode }: { episode: ItemSummary }) {
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const itemQuery = useItem(id)
   const { data: item, isPending, error } = itemQuery
   // The cached row answers instantly; the synopsis, cast, tags, studios, and
@@ -81,6 +52,24 @@ export default function ItemDetail() {
   const media = useMediaInfo(id, Boolean(item) && !isContainer)
   const nextUp = useNextUp(id, isSeries)
 
+  const childItems = children.data?.items ?? []
+  const seasons = seasonRailOrder(childItems.filter((child) => child.kind === "Season"))
+  const nextUpItem = isSeries ? (nextUp.data?.item ?? null) : null
+  // Which season the episode grid shows: the URL wins, then the season Next Up
+  // lives in, then the first regular season. While Next Up is still loading
+  // there is no honest default, so the grid holds its skeleton instead of
+  // painting season one and jumping.
+  const selectedSeason = !isSeries
+    ? null
+    : (seasons.find((season) => season.id === searchParams.get("season")) ??
+      (nextUp.isPending
+        ? null
+        : (seasons.find((season) => season.id === nextUpItem?.seasonId) ?? seasons[0] ?? null)))
+  const seasonChildren = useChildren(selectedSeason?.id)
+  const seasonEpisodes = (seasonChildren.data?.items ?? []).filter(
+    (child) => child.kind === "Episode",
+  )
+
   if (error && !item) return (
     <div className="p-6 sm:p-10 lg:p-14">
       <PageErrorState
@@ -93,25 +82,29 @@ export default function ItemDetail() {
   if (isPending) return <DetailPageSkeleton />
   if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
 
+  // Episodes are browsed on the series page; a season is not a page of its
+  // own, so anything still linking one lands on its series with it selected.
+  if (item.kind === "Season" && item.seriesId) {
+    return (
+      <Navigate
+        to={`/item/${encodeURIComponent(item.seriesId)}?season=${encodeURIComponent(item.id)}`}
+        replace
+      />
+    )
+  }
+
   const navigationState: DetailNavigationState =
     readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item.kind)
 
-  const childItems = children.data?.items ?? []
-  const episodes = childItems.filter((child) => child.kind === "Episode")
-  const seasons = childItems.filter((child) => child.kind === "Season")
   // A series knows how many seasons it has but not how many episodes; each
   // season row carries its own count, so the total is already on hand.
   const episodeCount = isSeries
     ? seasons.reduce((total, season) => total + (season.childCount ?? 0), 0)
-    : episodes.length
+    : 0
 
-  // Containers cannot be played themselves, so their Play button stands in for
-  // one episode; everything else plays itself and needs no target at all.
-  const playTarget = isSeries
-    ? (nextUp.data?.item ?? null)
-    : item.kind === "Season"
-      ? seasonPlayTarget(episodes)
-      : undefined
+  // A series cannot be played itself, so its Play button stands in for the
+  // Next Up episode; everything else plays itself and needs no target at all.
+  const playTarget = isSeries ? nextUpItem : undefined
 
   return (
     // `isolate` scopes the hero's backdrop, which is painted at a negative
@@ -137,8 +130,28 @@ export default function ItemDetail() {
 
       <LetterboxdReviews item={item} />
 
-      {episodes.length > 0 && <EpisodeList episodes={episodes} parentId={item.id} />}
-      <SeasonGrid seasons={seasons} />
+      {isSeries && seasons.length > 0 && (
+        <SeasonBrowser
+          seasons={seasons}
+          selectedSeason={selectedSeason}
+          onSelect={(season) =>
+            setSearchParams(
+              (params) => {
+                params.set("season", season.id)
+                return params
+              },
+              // Season switches restate the page rather than advancing it, so
+              // Back leaves the series instead of unwinding every click.
+              { replace: true },
+            )
+          }
+          episodes={seasonEpisodes}
+          episodesPending={!selectedSeason || seasonChildren.isPending}
+          episodesError={seasonChildren.error}
+          onRetry={() => void seasonChildren.refetch()}
+          nextUpEpisodeId={nextUpItem?.id ?? null}
+        />
+      )}
 
       {/* Cast is live-only; the row appears when the fetch lands and simply
           stays absent when the server cannot be reached. */}
@@ -158,15 +171,12 @@ export default function ItemDetail() {
 }
 
 /**
- * A container's Play button starts one particular episode, so it names it
- * rather than leaving the user to guess which one — and whether it will resume.
+ * A series' Play button starts one particular episode, so it names it rather
+ * than leaving the user to guess which one — and whether it will resume.
  */
 function playLabelFor(item: Item, target: ItemSummary | null) {
-  if ((item.kind !== "Series" && item.kind !== "Season") || !target) return undefined
+  if (item.kind !== "Series" || !target) return undefined
   const verb = target.positionTicks > 0 ? "Resume" : "Play"
-  const code =
-    item.kind === "Season" && target.indexNumber != null
-      ? `episode ${target.indexNumber}`
-      : episodeCode(target)
+  const code = episodeCode(target)
   return code ? `${verb} ${code}` : verb
 }

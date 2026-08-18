@@ -289,7 +289,7 @@ html[data-reduced-motion="true"] *::after {
 .settings-navigation a {
   display: flex;
   gap: 0.75rem;
-  align-items: flex-start;
+  align-items: center;
   padding: 0.65rem;
   border-left: 2px solid transparent;
   color: var(--muted-foreground);
@@ -304,10 +304,8 @@ html[data-reduced-motion="true"] *::after {
   color: var(--foreground);
 }
 
-.settings-navigation a svg { width: 1rem; height: 1rem; margin-top: 0.1rem; color: var(--primary); }
-.settings-navigation a span { display: grid; gap: 0.12rem; }
-.settings-navigation a strong { font-size: 0.9rem; font-weight: 600; }
-.settings-navigation a small { color: var(--muted-foreground); font-size: 0.7rem; line-height: 1.35; }
+.settings-navigation a svg { width: 1rem; height: 1rem; color: var(--primary); }
+.settings-navigation a span { font-size: 0.9rem; font-weight: 600; }
 
 .settings-main { min-width: 0; padding: clamp(1.25rem, 3vw, 3rem); }
 .settings-page { width: min(100%, 58rem); padding-bottom: 5rem; }
@@ -318,10 +316,6 @@ html[data-reduced-motion="true"] *::after {
 
 .settings-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, auto); gap: 1rem; align-items: center; padding-block: 0.1rem; }
 .settings-control { display: flex; justify-content: flex-end; min-width: min(100%, 14rem); }
-.settings-switch { display: inline-flex; width: 2.6rem; height: 1.45rem; align-items: center; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--muted); transition: background 150ms ease; }
-.settings-switch span { width: 1rem; height: 1rem; border-radius: 50%; background: var(--muted-foreground); transform: translateX(0); transition: transform 150ms ease, background 150ms ease; }
-.settings-switch[data-checked="true"] { background: var(--primary); border-color: var(--primary); }
-.settings-switch[data-checked="true"] span { background: var(--primary-foreground); transform: translateX(1.12rem); }
 
 .settings-save-bar { position: sticky; bottom: 1rem; z-index: 10; display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-top: 1.5rem; padding: 0.7rem 0.8rem 0.7rem 1rem; border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border)); background: color-mix(in srgb, var(--card) 92%, var(--background)); box-shadow: 0 0.8rem 2.5rem rgb(0 0 0 / 25%); backdrop-filter: blur(14px); }
 .settings-profile-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.85rem; border: 1px solid var(--border); background: color-mix(in srgb, var(--background) 35%, transparent); }
@@ -340,7 +334,6 @@ html[data-reduced-motion="true"] *::after {
 .rating-source-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem; }
 .rating-source-options label { display: flex; min-width: 0; align-items: center; gap: 0.65rem; padding: 0.65rem 0.7rem; border: 1px solid var(--border); border-radius: 2px; background: color-mix(in srgb, var(--background) 42%, transparent); cursor: pointer; }
 .rating-source-options label[data-selected="true"] { border-color: color-mix(in srgb, var(--primary) 62%, var(--border)); background: color-mix(in srgb, var(--primary) 9%, transparent); }
-.rating-source-options input { width: 0.95rem; height: 0.95rem; accent-color: var(--primary); }
 .rating-source-options label > span { display: grid; min-width: 0; gap: 0.18rem; }
 .rating-source-options strong { overflow: hidden; font-size: 0.8rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .rating-source-options small { color: var(--muted-foreground); font: 0.6rem/1 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; }
@@ -549,7 +542,6 @@ html[data-reduced-motion="true"] *::after {
   .settings-navigation { position: static; min-height: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 1rem; border-right: 0; border-bottom: 1px solid var(--border); }
   .settings-nav-label { grid-column: 1 / -1; }
   .settings-nav-group { grid-column: 1 / -1; margin-top: 0.65rem; }
-  .settings-navigation a small { display: none; }
   .settings-main { padding: 1.25rem; }
   .settings-row { grid-template-columns: 1fr; }
   .settings-control { justify-content: flex-start; }
@@ -779,7 +771,9 @@ html[data-reduced-motion="true"] *::after {
 .media-frame::after {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* Above every in-frame overlay (rating gradient 3, ribbon 4): the top
+     rating scrim would otherwise dim the upper brackets. */
+  z-index: 5;
   background:
     linear-gradient(var(--primary), var(--primary)) 0 0 / 15px 2px no-repeat,
     linear-gradient(var(--primary), var(--primary)) 0 0 / 2px 15px no-repeat,

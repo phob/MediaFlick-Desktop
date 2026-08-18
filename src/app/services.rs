@@ -8,6 +8,7 @@ use crate::companion::{CompanionSession, RequestsProvider};
 use crate::integrations::letterboxd::ReviewService;
 use crate::integrations::mdblist::RatingsService;
 use crate::jellyfin::session::Session;
+use crate::jellyfin::socket::{self, SocketHandle};
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
 use crate::library::sync::{self, SyncHandle};
@@ -29,6 +30,7 @@ pub struct Services {
     pub ratings: Arc<RatingsService>,
     pub letterboxd: Arc<ReviewService>,
     pub sync: SyncHandle,
+    pub socket: SocketHandle,
     pub preferences: Arc<PreferencesService>,
     pub shell: ShellBridge,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
@@ -173,6 +175,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     let ratings = Arc::new(RatingsService::new(library.clone(), companion.clone()));
     let letterboxd = Arc::new(ReviewService::default());
     let sync = sync::spawn(library.clone(), session.clone());
+    let socket = socket::spawn(library.clone(), session.clone(), sync.clone());
     tracing::info!(
         target: "jellyfin.session",
         restored,
@@ -186,6 +189,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         ratings,
         letterboxd,
         sync,
+        socket,
         preferences: Arc::new(PreferencesService::new(initial_settings)),
         shell: ShellBridge::new(),
         playback: RwLock::new(None),
