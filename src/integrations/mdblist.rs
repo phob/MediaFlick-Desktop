@@ -106,26 +106,11 @@ enum MdbError {
     Remote { status: u16, quota: Quota },
 }
 
-/// Authentication is a transport concern rather than a query-shape concern.
-/// This release constructs only `ApiKey`; a confirmed Public PKCE flow can
-/// supply a bearer token without changing batching, cache, or precedence.
-pub enum MdbAuth<'a> {
-    ApiKey(&'a str),
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "reserved for the documented future Public PKCE route"
-        )
-    )]
-    PublicPkceBearer(&'a str),
-}
-
 trait MdbTransport: Send + Sync {
-    fn validate(&self, auth: MdbAuth<'_>) -> Result<MdbResponse, MdbError>;
+    fn validate(&self, api_key: &str) -> Result<MdbResponse, MdbError>;
     fn batch(
         &self,
-        auth: MdbAuth<'_>,
+        api_key: &str,
         provider: &str,
         media_type: &str,
         ids: &[String],
@@ -182,25 +167,26 @@ impl HttpTransport {
 }
 
 impl MdbTransport for HttpTransport {
-    fn validate(&self, auth: MdbAuth<'_>) -> Result<MdbResponse, MdbError> {
-        let (url, bearer) = authenticated_url("/user", &auth);
-        let mut request = self.agent.get(url).header("Accept", "application/json");
-        if let Some(bearer) = bearer {
-            request = request.header("Authorization", bearer);
-        }
-        let response = request.call().map_err(|_| MdbError::Transport)?;
+    fn validate(&self, api_key: &str) -> Result<MdbResponse, MdbError> {
+        let url = api_key_url("/user", api_key);
+        let response = self
+            .agent
+            .get(url)
+            .header("Accept", "application/json")
+            .call()
+            .map_err(|_| MdbError::Transport)?;
         self.finish(response)
     }
 
     fn batch(
         &self,
-        auth: MdbAuth<'_>,
+        api_key: &str,
         provider: &str,
         media_type: &str,
         ids: &[String],
     ) -> Result<MdbResponse, MdbError> {
         let path = format!("/{provider}/{media_type}/");
-        let (url, bearer) = authenticated_url(&path, &auth);
+        let url = api_key_url(&path, api_key);
         let body_ids = ids
             .iter()
             .map(|id| {
@@ -211,26 +197,20 @@ impl MdbTransport for HttpTransport {
                 }
             })
             .collect::<Vec<_>>();
-        let mut request = self.agent.post(url).header("Accept", "application/json");
-        if let Some(bearer) = bearer {
-            request = request.header("Authorization", bearer);
-        }
-        let response = request
+        let response = self
+            .agent
+            .post(url)
+            .header("Accept", "application/json")
             .send_json(json!({ "ids": body_ids }))
             .map_err(|_| MdbError::Transport)?;
         self.finish(response)
     }
 }
 
-fn authenticated_url(path: &str, auth: &MdbAuth<'_>) -> (String, Option<String>) {
+fn api_key_url(path: &str, api_key: &str) -> String {
     let base = join_url(MDBLIST_BASE_URL, path);
-    match auth {
-        MdbAuth::ApiKey(key) => {
-            let query = build_query(&[("apikey", key.to_string())]);
-            (format!("{base}?{query}"), None)
-        }
-        MdbAuth::PublicPkceBearer(token) => (base, Some(format!("Bearer {token}"))),
-    }
+    let query = build_query(&[("apikey", api_key.to_string())]);
+    format!("{base}?{query}")
 }
 
 fn integer_header(headers: &ureq::http::HeaderMap, name: &str) -> Option<i64> {
@@ -482,7 +462,7 @@ impl RatingsService {
             .map_err(storage_error)?
             .unwrap_or_default();
         let now = now_unix();
-        let state = match self.transport.validate(MdbAuth::ApiKey(key)) {
+        let state = match self.transport.validate(key) {
             Ok(response) => state_with_quota(
                 "valid",
                 true,
@@ -708,10 +688,7 @@ impl RatingsService {
                     .iter()
                     .map(|target| target.provider_id.clone())
                     .collect::<Vec<_>>();
-                match self
-                    .transport
-                    .batch(MdbAuth::ApiKey(key), &provider, &media_type, &ids)
-                {
+                match self.transport.batch(key, &provider, &media_type, &ids) {
                     Ok(response) => {
                         self.note_quota(&response.quota)
                             .map_err(|error| error.to_string())?;
@@ -1531,15 +1508,8 @@ mod tests {
     }
 
     #[test]
-    fn auth_modes_share_transport_without_putting_bearer_tokens_in_urls() {
-        let (api_key_url, api_key_header) = authenticated_url("/user", &MdbAuth::ApiKey("a b"));
-        assert!(api_key_url.ends_with("/user?apikey=a%20b"));
-        assert_eq!(api_key_header, None);
-        let (pkce_url, pkce_header) =
-            authenticated_url("/user", &MdbAuth::PublicPkceBearer("token"));
-        assert!(pkce_url.ends_with("/user"));
-        assert!(!pkce_url.contains("token"));
-        assert_eq!(pkce_header.as_deref(), Some("Bearer token"));
+    fn api_key_authentication_percent_encodes_query_values() {
+        assert!(api_key_url("/user", "a b").ends_with("/user?apikey=a%20b"));
     }
 
     #[test]
