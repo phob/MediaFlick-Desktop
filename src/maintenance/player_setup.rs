@@ -51,7 +51,7 @@ pub fn installed_mpv_path() -> PathBuf {
 }
 
 /// Builds the JS that pushes an mpv setup status update into the page.
-pub fn setup_script(state: &str, payload: serde_json::Value) -> String {
+pub fn setup_script(state: &str, payload: &serde_json::Value) -> String {
     let payload = serde_json::json!({ "state": state, "payload": payload });
     format!("window.__mediaFlickDesktopMpvSetup&&window.__mediaFlickDesktopMpvSetup({payload});")
 }

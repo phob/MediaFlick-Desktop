@@ -369,7 +369,7 @@ impl JellyfinClient {
             .header("Accept", "application/json")
             .header("Authorization", self.authorization_header())
             .send_json(body)
-            .map_err(map_companion_ureq_error_safe)?;
+            .map_err(|error| map_companion_ureq_error_safe(&error))?;
         companion_json_safe(response)
     }
 
@@ -384,7 +384,7 @@ impl JellyfinClient {
                 .header("Accept", "application/json")
                 .header("Authorization", self.authorization_header())
                 .call()
-                .map_err(map_companion_ureq_error_safe)?;
+                .map_err(|error| map_companion_ureq_error_safe(&error))?;
             companion_json_safe(response)
         })
     }
@@ -520,10 +520,10 @@ fn map_companion_ureq_error(error: ureq::Error) -> ApiError {
     }
 }
 
-fn map_companion_ureq_error_safe(error: ureq::Error) -> ApiError {
+fn map_companion_ureq_error_safe(error: &ureq::Error) -> ApiError {
     match error {
         ureq::Error::StatusCode(401) => ApiError::Unauthorized,
-        ureq::Error::StatusCode(status) => ApiError::Status { status },
+        ureq::Error::StatusCode(status) => ApiError::Status { status: *status },
         _ => ApiError::Transport("could not reach the MediaFlick Companion plugin".to_string()),
     }
 }

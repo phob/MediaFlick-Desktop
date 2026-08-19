@@ -183,7 +183,7 @@ impl HttpTransport {
 
 impl MdbTransport for HttpTransport {
     fn validate(&self, auth: MdbAuth<'_>) -> Result<MdbResponse, MdbError> {
-        let (url, bearer) = authenticated_url("/user", auth);
+        let (url, bearer) = authenticated_url("/user", &auth);
         let mut request = self.agent.get(url).header("Accept", "application/json");
         if let Some(bearer) = bearer {
             request = request.header("Authorization", bearer);
@@ -200,7 +200,7 @@ impl MdbTransport for HttpTransport {
         ids: &[String],
     ) -> Result<MdbResponse, MdbError> {
         let path = format!("/{provider}/{media_type}/");
-        let (url, bearer) = authenticated_url(&path, auth);
+        let (url, bearer) = authenticated_url(&path, &auth);
         let body_ids = ids
             .iter()
             .map(|id| {
@@ -222,7 +222,7 @@ impl MdbTransport for HttpTransport {
     }
 }
 
-fn authenticated_url(path: &str, auth: MdbAuth<'_>) -> (String, Option<String>) {
+fn authenticated_url(path: &str, auth: &MdbAuth<'_>) -> (String, Option<String>) {
     let base = join_url(MDBLIST_BASE_URL, path);
     match auth {
         MdbAuth::ApiKey(key) => {
@@ -354,7 +354,7 @@ impl RatingsService {
             return Err(RatingsError::new("enter a valid API key"));
         }
         if provider == TMDB_CREDENTIAL && !valid_tmdb_key_shape(secret) {
-            self.save_state(IntegrationState {
+            self.save_state(&IntegrationState {
                 service: provider.to_string(),
                 validation: "invalid".to_string(),
                 detail: Some(
@@ -371,7 +371,7 @@ impl RatingsService {
         if provider == MDBLIST_CREDENTIAL {
             self.validate_key(secret, false)?;
         } else {
-            self.save_state(IntegrationState {
+            self.save_state(&IntegrationState {
                 service: provider.to_string(),
                 validation: "saved".to_string(),
                 valid: true,
@@ -400,7 +400,7 @@ impl RatingsService {
         if provider == MDBLIST_CREDENTIAL {
             self.validate_key(&key, true)?;
         } else {
-            self.save_state(IntegrationState {
+            self.save_state(&IntegrationState {
                 service: provider.to_string(),
                 validation: "saved".to_string(),
                 valid: valid_tmdb_key_shape(&key),
@@ -487,7 +487,7 @@ impl RatingsService {
                 "valid",
                 true,
                 "Valid MDBList credential.",
-                response.quota,
+                &response.quota,
                 0,
                 now,
             ),
@@ -495,7 +495,7 @@ impl RatingsService {
                 "invalid",
                 false,
                 "MDBList rejected this API key (401).",
-                quota,
+                &quota,
                 0,
                 now,
             ),
@@ -503,12 +503,12 @@ impl RatingsService {
                 "rate_limited",
                 true,
                 "MDBList accepted the credential but its request quota is exhausted.",
-                quota,
+                &quota,
                 previous.failure_count,
                 now,
             ),
             Err(MdbError::Transport | MdbError::Decode) => offline_state(
-                previous,
+                &previous,
                 preserve_valid_on_offline,
                 "MDBList could not be reached. The key is saved; retry when online.",
                 now,
@@ -517,17 +517,17 @@ impl RatingsService {
                 "unavailable",
                 preserve_valid_on_offline && previous.valid,
                 &format!("MDBList returned HTTP {status}; retry later."),
-                quota,
+                &quota,
                 previous.failure_count.saturating_add(1),
                 now,
             ),
         };
-        self.save_state(state)
+        self.save_state(&state)
     }
 
-    fn save_state(&self, state: IntegrationState) -> Result<(), RatingsError> {
+    fn save_state(&self, state: &IntegrationState) -> Result<(), RatingsError> {
         self.library
-            .save_integration_state(&state)
+            .save_integration_state(state)
             .map_err(storage_error)
     }
 
@@ -535,14 +535,7 @@ impl RatingsService {
     /// bounded refresh work owned by this call. The catalog endpoints never
     /// invoke this method, so rating latency cannot delay progressive sync.
     pub fn batch(&self, item_ids: &[String]) -> Result<Value, RatingsError> {
-        let mut item_ids = item_ids
-            .iter()
-            .map(|id| id.trim().to_string())
-            .filter(|id| !id.is_empty() && id.len() <= 128)
-            .collect::<Vec<_>>();
-        item_ids.sort();
-        item_ids.dedup();
-        item_ids.truncate(MAX_REQUEST_IDS);
+        let item_ids = bounded_item_ids(item_ids);
 
         // A platform without a local vault can still consume the plugin's
         // capability/data boundary; a vault failure must not suppress it.
@@ -559,13 +552,7 @@ impl RatingsService {
             self.companion.supports("ratings-v1"),
         );
         let Some(origin) = origin else {
-            return Ok(json!({
-                "available": false,
-                "effectiveOrigin": "none",
-                "items": [],
-                "retryAt": bounded_timestamp(state.retry_at),
-                "diagnostic": "No valid local MDBList key or compatible plugin rating capability is available.",
-            }));
+            return Ok(unavailable_ratings(&state));
         };
 
         let targets = self
@@ -597,11 +584,9 @@ impl RatingsService {
         let mut diagnostic = None;
         if !owned.is_empty() {
             let refreshed = match origin {
-                Origin::Local => self.refresh_local(
-                    configured
-                        .as_deref()
-                        .expect("local origin requires a credential"),
-                    &owned,
+                Origin::Local => configured.as_deref().map_or_else(
+                    || Err("The local MDBList credential is no longer available.".to_string()),
+                    |credential| self.refresh_local(credential, &owned),
                 ),
                 Origin::Plugin => self.refresh_plugin(&owned),
             };
@@ -728,12 +713,12 @@ impl RatingsService {
                     .batch(MdbAuth::ApiKey(key), &provider, &media_type, &ids)
                 {
                     Ok(response) => {
-                        self.note_quota(response.quota.clone())
+                        self.note_quota(&response.quota)
                             .map_err(|error| error.to_string())?;
                         let entries = normalize_batch(
                             chunk,
                             &provider,
-                            response.body,
+                            &response.body,
                             Origin::Local,
                             now_unix(),
                         );
@@ -761,21 +746,21 @@ impl RatingsService {
         let response = self
             .companion
             .ratings_v1(&body)
-            .map_err(plugin_rating_error)?;
-        let entries = normalize_plugin_batch(targets, response, now_unix());
+            .map_err(|error| plugin_rating_error(&error))?;
+        let entries = normalize_plugin_batch(targets, &response, now_unix());
         self.library.save_rating_cache(&entries).map_err(|_| {
             "could not cache server ratings; cached plugin ratings remain usable.".to_string()
         })
     }
 
-    fn note_quota(&self, quota: Quota) -> Result<(), RatingsError> {
+    fn note_quota(&self, quota: &Quota) -> Result<(), RatingsError> {
         let previous = self
             .library
             .integration_state(MDBLIST_CREDENTIAL)
             .map_err(storage_error)?
             .unwrap_or_default();
         let now = now_unix();
-        self.save_state(IntegrationState {
+        self.save_state(&IntegrationState {
             service: MDBLIST_CREDENTIAL.to_string(),
             validation: "valid".to_string(),
             valid: true,
@@ -801,7 +786,7 @@ impl RatingsService {
                 "invalid",
                 false,
                 "MDBList rejected the saved key (401). Validate or replace it.",
-                quota.clone(),
+                quota,
                 0,
                 now,
             ),
@@ -809,7 +794,7 @@ impl RatingsService {
                 "rate_limited",
                 true,
                 "MDBList quota exhausted; cached ratings remain visible.",
-                quota.clone(),
+                quota,
                 previous.failure_count,
                 now,
             ),
@@ -817,19 +802,41 @@ impl RatingsService {
                 "unavailable",
                 previous.valid,
                 &format!("MDBList returned HTTP {status}; cached ratings remain visible."),
-                quota.clone(),
+                quota,
                 previous.failure_count.saturating_add(1),
                 now,
             ),
             MdbError::Transport | MdbError::Decode => offline_state(
-                previous,
+                &previous,
                 true,
                 "MDBList is offline or returned an unreadable response; cached ratings remain visible.",
                 now,
             ),
         };
-        self.save_state(state)
+        self.save_state(&state)
     }
+}
+
+fn bounded_item_ids(item_ids: &[String]) -> Vec<String> {
+    let mut item_ids = item_ids
+        .iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && id.len() <= 128)
+        .collect::<Vec<_>>();
+    item_ids.sort();
+    item_ids.dedup();
+    item_ids.truncate(MAX_REQUEST_IDS);
+    item_ids
+}
+
+fn unavailable_ratings(state: &IntegrationState) -> Value {
+    json!({
+        "available": false,
+        "effectiveOrigin": "none",
+        "items": [],
+        "retryAt": bounded_timestamp(state.retry_at),
+        "diagnostic": "No valid local MDBList key or compatible plugin rating capability is available.",
+    })
 }
 
 fn credential_name(provider: &str) -> Result<&'static str, RatingsError> {
@@ -859,7 +866,7 @@ fn state_with_quota(
     validation: &str,
     valid: bool,
     detail: &str,
-    quota: Quota,
+    quota: &Quota,
     failure_count: i64,
     now: i64,
 ) -> IntegrationState {
@@ -878,7 +885,7 @@ fn state_with_quota(
 }
 
 fn offline_state(
-    previous: IntegrationState,
+    previous: &IntegrationState,
     preserve_valid: bool,
     detail: &str,
     now: i64,
@@ -893,7 +900,7 @@ fn offline_state(
         retry_at: Some(now.saturating_add(delay.min(6 * 60 * 60))),
         failure_count: failures,
         updated_at: now,
-        ..previous
+        ..previous.clone()
     }
 }
 
@@ -940,7 +947,7 @@ fn bounded_timestamp(value: Option<i64>) -> Option<i64> {
     bounded_nonnegative(value, 4_102_444_800)
 }
 
-fn plugin_rating_error(error: ApiError) -> String {
+fn plugin_rating_error(error: &ApiError) -> String {
     match error {
         ApiError::NotConfigured | ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. } => {
             "The server rating capability is not available yet; cached plugin ratings remain usable."
@@ -980,7 +987,7 @@ fn target_key(origin: Origin, target: &RatingTarget) -> String {
 fn normalize_batch(
     targets: &[RatingTarget],
     provider: &str,
-    body: Value,
+    body: &Value,
     origin: Origin,
     now: i64,
 ) -> Vec<(RatingTarget, CachedRatings)> {
@@ -1029,7 +1036,7 @@ fn normalize_batch(
 
 fn normalize_plugin_batch(
     targets: &[RatingTarget],
-    body: Value,
+    body: &Value,
     now: i64,
 ) -> Vec<(RatingTarget, CachedRatings)> {
     if body.get("boundaryVersion").and_then(Value::as_i64) != Some(1) {
@@ -1099,7 +1106,13 @@ fn normalize_media(item: &Value) -> Value {
         .cloned()
         .unwrap_or_default();
     if let Some(score) = number(item.get("score")).filter(|score| (0.0..=100.0).contains(score)) {
-        ratings.push(normalized_rating("mdblist_score", score, Some(score), None));
+        ratings.push(normalized_rating(
+            "mdblist_score",
+            100.0,
+            score,
+            Some(score),
+            None,
+        ));
     }
     if let Some(score) = number(
         item.get("score_average")
@@ -1109,6 +1122,7 @@ fn normalize_media(item: &Value) -> Value {
     {
         ratings.push(normalized_rating(
             "mdblist_score_average",
+            100.0,
             score,
             Some(score),
             None,
@@ -1138,7 +1152,7 @@ fn normalize_rating_array(value: &Value) -> Value {
         };
         let raw_value = number(rating.get("value").or_else(|| rating.get("rating")));
         let score = number(rating.get("score")).filter(|score| (0.0..=100.0).contains(score));
-        let Some(value) = native_value(source, raw_value, score) else {
+        let Some((value, scale)) = native_value(source, raw_value, score) else {
             continue;
         };
         let votes = rating.get("votes").and_then(|votes| {
@@ -1147,7 +1161,7 @@ fn normalize_rating_array(value: &Value) -> Value {
                 .or_else(|| votes.as_str()?.parse::<i64>().ok())
                 .filter(|votes| (0..=MAX_VOTES).contains(votes))
         });
-        ratings.push(normalized_rating(source, value, score, votes));
+        ratings.push(normalized_rating(source, scale, value, score, votes));
     }
     deduplicate_ratings(ratings)
 }
@@ -1168,11 +1182,11 @@ fn deduplicate_ratings(ratings: Vec<Value>) -> Value {
 
 fn normalized_rating(
     source: &'static str,
+    scale: f64,
     value: f64,
     score: Option<f64>,
     votes: Option<i64>,
 ) -> Value {
-    let scale = scale_max(source).expect("canonical source has a fixed scale");
     json!({
         // Keep Desktop v1's legacy keys, but make every string a catalog
         // constant rather than copying provider data.
@@ -1197,17 +1211,17 @@ fn number(value: Option<&Value>) -> Option<f64> {
     number.is_finite().then_some(number)
 }
 
-fn native_value(source: &str, raw: Option<f64>, score: Option<f64>) -> Option<f64> {
+fn native_value(source: &str, raw: Option<f64>, score: Option<f64>) -> Option<(f64, f64)> {
     let maximum = scale_max(source)?;
     if let Some(raw) = raw
         && raw >= 0.0
         && raw <= maximum
     {
-        return Some(raw);
+        return Some((raw, maximum));
     }
     score
         .filter(|score| (0.0..=100.0).contains(score))
-        .map(|score| score * maximum / 100.0)
+        .map(|score| (score * maximum / 100.0, maximum))
 }
 
 fn canonical_source(source: &str) -> Option<&'static str> {
@@ -1405,7 +1419,7 @@ mod tests {
         let entries = normalize_batch(
             &targets,
             "tmdb",
-            json!([{
+            &json!([{
                 "ids": { "tmdb": 603 },
                 "updated": "2026-08-04T20:00:00Z",
                 "ratings": [{ "source": "imdb", "value": 8.7, "score": 87 }]
@@ -1441,7 +1455,7 @@ mod tests {
         assert_eq!(effective_origin(false, false, true), Some(Origin::Plugin));
         let plugin_entries = normalize_plugin_batch(
             &targets,
-            json!({
+            &json!({
                 "boundaryVersion": 1,
                 "items": [{
                     "itemId": "matrix",
@@ -1479,7 +1493,7 @@ mod tests {
         let local_entries = normalize_batch(
             &targets,
             "tmdb",
-            json!([{ "ids": { "tmdb": 603 }, "updated": SERVER_TMDB_KEY,
+            &json!([{ "ids": { "tmdb": 603 }, "updated": SERVER_TMDB_KEY,
                 "ratings": [{ "source": SERVER_MDBLIST_KEY, "value": 99 }] }]),
             Origin::Local,
             cache_now,
@@ -1500,7 +1514,7 @@ mod tests {
         assert_eq!(local_entries[0].1.ratings, json!([]));
         assert_eq!(local_entries[0].1.source_updated_at, None);
 
-        let diagnostic = plugin_rating_error(ApiError::Remote {
+        let diagnostic = plugin_rating_error(&ApiError::Remote {
             status: 502,
             message: format!("upstream said {SERVER_MDBLIST_KEY} / {SERVER_TMDB_KEY}"),
         });
@@ -1518,11 +1532,11 @@ mod tests {
 
     #[test]
     fn auth_modes_share_transport_without_putting_bearer_tokens_in_urls() {
-        let (api_key_url, api_key_header) = authenticated_url("/user", MdbAuth::ApiKey("a b"));
+        let (api_key_url, api_key_header) = authenticated_url("/user", &MdbAuth::ApiKey("a b"));
         assert!(api_key_url.ends_with("/user?apikey=a%20b"));
         assert_eq!(api_key_header, None);
         let (pkce_url, pkce_header) =
-            authenticated_url("/user", MdbAuth::PublicPkceBearer("token"));
+            authenticated_url("/user", &MdbAuth::PublicPkceBearer("token"));
         assert!(pkce_url.ends_with("/user"));
         assert!(!pkce_url.contains("token"));
         assert_eq!(pkce_header.as_deref(), Some("Bearer token"));

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::{Mutex, mpsc};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::players::mpv::input::MpvInputBindings;
 
@@ -13,17 +13,42 @@ use super::{
 
 /// Serialized patches accepted by the settings API.  These deliberately name
 /// sections instead of exposing `AppSettings` as a generic key/value bag.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum NullablePatch<T> {
+    #[default]
+    Unchanged,
+    Clear,
+    Set(T),
+}
+
+impl<'de, T> Deserialize<'de> for NullablePatch<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<T>::deserialize(deserializer).map(|value| match value {
+            Some(value) => Self::Set(value),
+            None => Self::Clear,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayerSettingsPatch {
     pub player_backend: Option<String>,
     /// An explicit JSON `null` clears a path; an omitted field preserves it.
-    pub mpv_path: Option<Option<String>>,
-    pub mpchc_path: Option<Option<String>>,
+    #[serde(default)]
+    pub mpv_path: NullablePatch<String>,
+    #[serde(default)]
+    pub mpchc_path: NullablePatch<String>,
     pub default_fullscreen: Option<String>,
-    /// `None` means leave the binding alone; `Some(None)` is the explicit UI
-    /// request to disable it.
-    pub mark_watched_next: Option<Option<String>>,
+    /// Missing leaves the binding alone; JSON `null` explicitly disables it.
+    #[serde(default)]
+    pub mark_watched_next: NullablePatch<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -123,7 +148,7 @@ impl PreferencesService {
         patch: PlayerSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
         let binding = patch.mark_watched_next.clone();
-        let update_input_bindings = binding.is_some();
+        let update_input_bindings = !matches!(&binding, NullablePatch::Unchanged);
         self.update_with_plan(
             move |next| {
                 if let Some(value) = patch.player_backend.as_deref() {
@@ -136,11 +161,15 @@ impl PreferencesService {
                     }
                     next.player_backend = backend;
                 }
-                if let Some(value) = patch.mpv_path {
-                    next.mpv_path = value.as_deref().and_then(clean_path);
+                match patch.mpv_path {
+                    NullablePatch::Unchanged => {}
+                    NullablePatch::Clear => next.mpv_path = None,
+                    NullablePatch::Set(value) => next.mpv_path = clean_path(&value),
                 }
-                if let Some(value) = patch.mpchc_path {
-                    next.mpchc_path = value.as_deref().and_then(clean_path);
+                match patch.mpchc_path {
+                    NullablePatch::Unchanged => {}
+                    NullablePatch::Clear => next.mpchc_path = None,
+                    NullablePatch::Set(value) => next.mpchc_path = clean_path(&value),
                 }
                 if let Some(value) = patch.default_fullscreen.as_deref() {
                     next.default_fullscreen = FullscreenBehavior::from_id(value)
@@ -149,13 +178,17 @@ impl PreferencesService {
                 // An unconfigured player is a valid saved state: it lets users reset
                 // the section to defaults and finish choosing a backend later. Playback
                 // still performs the concrete executable check before it starts.
-                if let Some(value) = binding {
-                    let bindings = MpvInputBindings {
-                        mark_watched_next: value.as_deref().and_then(clean_path),
-                    };
-                    bindings.save().map_err(|error| {
-                        PreferencesError(format!("could not save input bindings: {error}"))
-                    })?;
+                let save_binding = |mark_watched_next| {
+                    MpvInputBindings { mark_watched_next }
+                        .save()
+                        .map_err(|error| {
+                            PreferencesError(format!("could not save input bindings: {error}"))
+                        })
+                };
+                match binding {
+                    NullablePatch::Unchanged => {}
+                    NullablePatch::Clear => save_binding(None)?,
+                    NullablePatch::Set(value) => save_binding(clean_path(&value))?,
                 }
                 Ok(())
             },
@@ -398,6 +431,25 @@ mod tests {
             "playerConfigured": true,
         });
         assert!(serde_json::from_value::<PlayerSettingsPatch>(response_shape).is_err());
+    }
+
+    #[test]
+    fn nullable_player_fields_distinguish_omitted_clear_and_set() {
+        let omitted = serde_json::from_value::<PlayerSettingsPatch>(json!({})).expect("omitted");
+        assert_eq!(omitted.mpv_path, NullablePatch::Unchanged);
+
+        let clear = serde_json::from_value::<PlayerSettingsPatch>(json!({ "mpvPath": null }))
+            .expect("clear");
+        assert_eq!(clear.mpv_path, NullablePatch::Clear);
+
+        let set = serde_json::from_value::<PlayerSettingsPatch>(json!({
+            "mpvPath": "C:/mpv/mpv.exe",
+        }))
+        .expect("set");
+        assert_eq!(
+            set.mpv_path,
+            NullablePatch::Set("C:/mpv/mpv.exe".to_string())
+        );
     }
 
     #[test]

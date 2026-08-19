@@ -11,6 +11,7 @@
 ### Added
 
 - Added the anti-slop Oxlint plugin, enabled its full rule set for the React UI, and migrated the owned UI code and tests to comply without rule suppressions.
+- Added a pinned Rust quality stack with strict Clippy readability and ownership rules, rust-analyzer and Bacon background diagnostics, and a repository Codex skill and Rust-aware stop hook; migrated the owned Rust code and tests to comply without rule suppressions.
 - Added Latest Movies and Latest Shows shelves immediately after Recently Added on the home screen. They sort each catalogue by release year and link to the matching newest-first library view.
 - Added an in-app `/settings/*` dashboard with anonymous Client and Appearance pages, account-scoped Letterboxd and Seerr pages, a permanent sidebar entry, local drafts, and Save/Discard/Reset controls. Typed section PATCH endpoints now share a preference service with CEF, apply player/segment/scrollbar changes at runtime, and return normalized settings and platform capabilities.
 - Added Appearance preferences for system/dark/light mode, signal/cobalt/amber/violet accents, compact density, artwork/backdrop intensity, and reduced motion.

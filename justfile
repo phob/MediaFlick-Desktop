@@ -72,6 +72,15 @@ test:
 clippy:
     cargo clippy --all-targets -- -D warnings
 
+# Run every deterministic Rust quality check
+[group('lint')]
+rust-quality: fmt-check clippy
+
+# Continuously run the configured Rust quality job
+[group('lint')]
+rust-watch:
+    bacon
+
 # Build and stage the app into ./build
 [group('build')]
 [windows]

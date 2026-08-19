@@ -724,8 +724,8 @@ impl SeerrSession {
             next.cookies = client.cookies();
             next.user_id = Some(user.id);
             next.user_name = Some(user.preferred_name().to_string());
-            next.jellyfin_server_id = credentials.server_id.clone();
-            next.jellyfin_user_id = credentials.user_id.clone();
+            next.jellyfin_server_id.clone_from(&credentials.server_id);
+            next.jellyfin_user_id.clone_from(&credentials.user_id);
             if let Some(settings) = settings {
                 next.movie_4k_enabled = settings.movie_4k_enabled;
                 next.series_4k_enabled = settings.series_4k_enabled;
@@ -908,61 +908,16 @@ impl SeerrSession {
             .release_date
             .clone()
             .or_else(|| detail.first_air_date.clone());
-        let studios = names_of(&detail.production_companies);
-        let networks = names_of(&detail.networks);
-        let creators = unique_names(
-            detail
-                .created_by
-                .iter()
-                .map(|person| person.name.as_str())
-                .chain(crew_names(&detail, |credit| {
-                    credit.job.as_deref() == Some("Creator")
-                })),
-        );
-        let directors = unique_names(crew_names(&detail, |credit| {
-            credit.job.as_deref() == Some("Director")
-        }));
-        let writers = unique_names(crew_names(&detail, |credit| {
-            credit.department.as_deref() == Some("Writing")
-                || matches!(
-                    credit.job.as_deref(),
-                    Some("Writer" | "Screenplay" | "Story" | "Teleplay")
-                )
-        }));
-        let production_countries = detail
-            .production_countries
-            .iter()
-            .map(|country| {
-                json!({
-                    "code": country.code,
-                    "name": country.name,
-                })
-            })
-            .collect::<Vec<_>>();
-        let spoken_languages = detail
-            .spoken_languages
-            .iter()
-            .map(|language| {
-                json!({
-                    "code": language.code,
-                    "name": language.english_name.as_deref().unwrap_or(&language.name),
-                })
-            })
-            .collect::<Vec<_>>();
-        let cast = detail
-            .credits
-            .cast
-            .iter()
-            .take(20)
-            .map(|person| {
-                json!({
-                    "id": person.id,
-                    "name": person.name,
-                    "character": person.character,
-                    "profilePath": person.profile_path,
-                })
-            })
-            .collect::<Vec<_>>();
+        let DetailPeople {
+            studios,
+            networks,
+            creators,
+            directors,
+            writers,
+            production_countries,
+            spoken_languages,
+            cast,
+        } = detail_people(&detail);
         let genres = names_of(&detail.genres);
         let seasons = season_list(&detail, &info);
         let trailer = trailer_of(&detail);
@@ -1637,6 +1592,78 @@ fn positive(value: Option<i64>) -> Option<i64> {
     value.filter(|value| *value > 0)
 }
 
+struct DetailPeople {
+    studios: Vec<String>,
+    networks: Vec<String>,
+    creators: Vec<String>,
+    directors: Vec<String>,
+    writers: Vec<String>,
+    production_countries: Vec<Value>,
+    spoken_languages: Vec<Value>,
+    cast: Vec<Value>,
+}
+
+fn detail_people(detail: &MediaDetail) -> DetailPeople {
+    let creators = unique_names(
+        detail
+            .created_by
+            .iter()
+            .map(|person| person.name.as_str())
+            .chain(crew_names(detail, |credit| {
+                credit.job.as_deref() == Some("Creator")
+            })),
+    );
+    let directors = unique_names(crew_names(detail, |credit| {
+        credit.job.as_deref() == Some("Director")
+    }));
+    let writers = unique_names(crew_names(detail, |credit| {
+        credit.department.as_deref() == Some("Writing")
+            || matches!(
+                credit.job.as_deref(),
+                Some("Writer" | "Screenplay" | "Story" | "Teleplay")
+            )
+    }));
+    let production_countries = detail
+        .production_countries
+        .iter()
+        .map(|country| json!({ "code": country.code, "name": country.name }))
+        .collect();
+    let spoken_languages = detail
+        .spoken_languages
+        .iter()
+        .map(|language| {
+            json!({
+                "code": language.code,
+                "name": language.english_name.as_deref().unwrap_or(&language.name),
+            })
+        })
+        .collect();
+    let cast = detail
+        .credits
+        .cast
+        .iter()
+        .take(20)
+        .map(|person| {
+            json!({
+                "id": person.id,
+                "name": person.name,
+                "character": person.character,
+                "profilePath": person.profile_path,
+            })
+        })
+        .collect();
+    DetailPeople {
+        studios: names_of(&detail.production_companies),
+        networks: names_of(&detail.networks),
+        creators,
+        directors,
+        writers,
+        production_countries,
+        spoken_languages,
+        cast,
+    }
+}
+
 fn names_of(values: &[model::NamedId]) -> Vec<String> {
     unique_names(values.iter().map(|value| value.name.as_str()))
 }
@@ -2115,6 +2142,7 @@ mod tests {
         // The pair the probe handed out is already on the second request, and
         // is persisted so the first write after a restart still has it.
         assert!(requests[1].contains("cookie: XSRF-TOKEN=token123; _csrf=secret"));
+        drop(requests);
         let stored = library.seerr_config();
         assert_eq!(stored.base_url.as_deref(), Some(base_url.as_str()));
         assert!(
@@ -2234,7 +2262,7 @@ mod tests {
         let library = library();
         library
             .save_seerr_config(&SeerrConfig {
-                base_url: Some(old_url.clone()),
+                base_url: Some(old_url),
                 cookies: Some(r#"{"XSRF-TOKEN":"token123","connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 user_name: Some("pho".to_string()),
@@ -2252,6 +2280,7 @@ mod tests {
         // csurf accepts the token echoed as a header; without it a
         // CSRF-protected instance rejects every write.
         assert!(logout[0].contains("x-xsrf-token: token123"));
+        drop(logout);
 
         // Nothing of the old link survives the move.
         let stored = library.seerr_config();
@@ -2424,6 +2453,7 @@ mod tests {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut state = session.state.write().expect("state");
             state.base_url = Some("https://seerr.test".to_string());
+            drop(state);
             panic!("poison the state lock");
         }));
 
@@ -2462,6 +2492,7 @@ mod tests {
         assert!(requests[1].contains("x-xsrf-token: token123"));
         assert!(requests[2].starts_with("GET /api/v1/auth/me HTTP/1.1"));
         assert!(requests[2].contains("cookie: XSRF-TOKEN=token123; connect.sid=s%3Aabc.def"));
+        drop(requests);
 
         let stored = library.seerr_config();
         assert_eq!(stored.user_id, Some(7));
@@ -2507,6 +2538,7 @@ mod tests {
         let requests = requests.lock().expect("lock");
         assert_eq!(requests.len(), 4, "the refused session was not logged out");
         assert!(requests[3].starts_with("POST /api/v1/auth/logout HTTP/1.1"));
+        drop(requests);
 
         // Fail closed: nothing about the refused session is on disk.
         let stored = library.seerr_config();
@@ -2637,6 +2669,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("POST /api/v1/auth/logout HTTP/1.1"));
         assert!(requests[0].contains("x-xsrf-token: token123"));
+        drop(requests);
 
         let stored = library.seerr_config();
         assert_eq!(stored.base_url.as_deref(), Some(base_url.as_str()));
@@ -2678,6 +2711,7 @@ mod tests {
             seerr_requests[2]
                 .starts_with("POST /api/v1/auth/jellyfin/quickconnect/authenticate HTTP/1.1")
         );
+        drop(seerr_requests);
         // The code Seerr minted is approved on our own server, by us — this is
         // the step that makes the flow password-less, and the one that proves
         // the handshake belongs to the server we are signed in to.
@@ -2686,6 +2720,7 @@ mod tests {
         assert!(
             jellyfin_requests[1].starts_with("POST /QuickConnect/Authorize?code=AB12CD HTTP/1.1")
         );
+        drop(jellyfin_requests);
 
         assert_eq!(library.seerr_config().user_id, Some(7));
         assert!(is_linked(&session));
@@ -2794,6 +2829,7 @@ mod tests {
 
         let requests = requests.lock().expect("lock");
         assert!(requests[1].starts_with("POST /api/v1/auth/jellyfin/quickconnect/authenticate"));
+        drop(requests);
         assert_eq!(
             library.seerr_config().jellyfin_user_id.as_deref(),
             Some("uid")
@@ -2855,6 +2891,7 @@ mod tests {
         let requests = requests.lock().expect("lock");
         assert!(requests[0].starts_with("GET /api/v1/search?query=matrix&page=1"));
         assert!(requests[0].contains("cookie: connect.sid=abc"));
+        drop(requests);
     }
 
     #[test]
@@ -3107,6 +3144,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "a write must never be retried");
         assert!(requests[0].starts_with("POST /api/v1/request HTTP/1.1"));
         let body = compact(&requests[0]);
+        drop(requests);
         assert!(body.contains(r#""mediaType":"movie""#));
         assert!(body.contains(r#""mediaId":603"#));
         // Movies have no seasons; sending an empty list would be rejected.
@@ -3164,6 +3202,7 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/v1/auth/me HTTP/1.1"));
         assert!(requests[1].starts_with("GET /api/v1/service/radarr HTTP/1.1"));
         assert!(requests[2].starts_with("GET /api/v1/service/radarr/0 HTTP/1.1"));
+        drop(requests);
     }
 
     #[test]
@@ -3206,6 +3245,7 @@ mod tests {
             "a write must never be retried"
         );
         let body = compact(&requests[1]);
+        drop(requests);
         assert!(body.contains(r#""serverId":0"#));
         assert!(body.contains(r#""profileId":2"#));
     }
@@ -3251,6 +3291,7 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/v1/request?"));
         assert!(requests[0].contains("requestedBy=7"), "{}", requests[0]);
         assert!(requests[0].contains("take=20"));
+        drop(requests);
     }
 
     /// A 4K request reports the 4K availability, not the ordinary one.
@@ -3278,7 +3319,7 @@ mod tests {
         signed_in(&library, "uid");
         library
             .save_seerr_config(&SeerrConfig {
-                base_url: Some(base_url.clone()),
+                base_url: Some(base_url),
                 cookies: Some(r#"{"XSRF-TOKEN":"token123","connect.sid":"abc"}"#.to_string()),
                 user_id: Some(7),
                 jellyfin_server_id: Some("srv".to_string()),
@@ -3296,6 +3337,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "a cancellation must never be retried");
         assert!(requests[0].starts_with("DELETE /api/v1/request/12 HTTP/1.1"));
         assert!(requests[0].contains("x-xsrf-token: token123"));
+        drop(requests);
     }
 
     /// Seerr answers 401 — not 403 — to a valid session that may not cancel
@@ -3315,6 +3357,7 @@ mod tests {
 
         let requests = requests.lock().expect("lock");
         assert!(requests[1].starts_with("GET /api/v1/auth/me HTTP/1.1"));
+        drop(requests);
         // The link survives: nothing about this was a session expiry.
         assert!(!session.read().expired);
         assert!(library.seerr_config().cookies.is_some());

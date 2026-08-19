@@ -1560,9 +1560,9 @@ fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a s
     })
 }
 
-fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
-    let image_tags = parsed_json(row.get::<_, String>(19)?);
-    Ok(json!({
+fn summary_object(row: &Row<'_>) -> rusqlite::Result<serde_json::Map<String, Value>> {
+    let image_tags = parsed_json(&row.get::<_, String>(19)?);
+    let Value::Object(object) = json!({
         "id": row.get::<_, String>(0)?,
         "kind": row.get::<_, String>(1)?,
         "name": row.get::<_, String>(2)?,
@@ -1588,15 +1588,22 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         // which is what makes a hero read as artwork rather than as a heading.
         "logoImageTag": cached_image_tag(&image_tags, "Logo"),
         "backdropImageTag": row.get::<_, Option<String>>(20)?,
-    }))
+    }) else {
+        unreachable!("a JSON object literal always produces an object");
+    };
+    Ok(object)
+}
+
+fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
+    summary_object(row).map(Value::Object)
 }
 
 fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
-    let mut value = summary_row(row)?;
-    let object = value
-        .as_object_mut()
-        .expect("summary rows serialize as objects");
-    object.insert("genres".to_string(), parsed_json(row.get::<_, String>(21)?));
+    let mut object = summary_object(row)?;
+    object.insert(
+        "genres".to_string(),
+        parsed_json(&row.get::<_, String>(21)?),
+    );
     object.insert(
         "originalTitle".to_string(),
         json!(row.get::<_, Option<String>>(22)?),
@@ -1617,11 +1624,11 @@ fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
         "dateCreated".to_string(),
         json!(row.get::<_, Option<String>>(27)?),
     );
-    Ok(value)
+    Ok(Value::Object(object))
 }
 
-fn parsed_json(raw: String) -> Value {
-    serde_json::from_str(&raw).unwrap_or_else(|_| json!([]))
+fn parsed_json(raw: &str) -> Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| json!([]))
 }
 
 /// Builds the FROM clause, WHERE conditions, and bound arguments for a query.

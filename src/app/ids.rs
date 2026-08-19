@@ -10,7 +10,9 @@ use std::fmt::Write;
 /// guess — is not good enough.
 pub fn random_hex(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
-    getrandom::fill(&mut buffer).expect("the operating system random number generator");
+    getrandom::fill(&mut buffer).unwrap_or_else(|error| {
+        panic!("the operating system random number generator failed: {error}");
+    });
     let mut out = String::with_capacity(bytes * 2);
     for byte in buffer {
         let _ = write!(out, "{byte:02x}");

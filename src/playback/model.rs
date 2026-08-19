@@ -101,10 +101,10 @@ impl PlaybackRequest {
 
     pub fn merge_missing_from(&mut self, other: &Self) {
         if self.media_url.trim().is_empty() {
-            self.media_url = other.media_url.clone();
+            self.media_url.clone_from(&other.media_url);
         }
         if self.headers.is_empty() {
-            self.headers = other.headers.clone();
+            self.headers.clone_from(&other.headers);
         }
         merge_option(&mut self.item_id, &other.item_id);
         merge_option(&mut self.media_source_id, &other.media_source_id);
@@ -259,7 +259,7 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
 
 fn merge_option<T: Clone>(target: &mut Option<T>, source: &Option<T>) {
     if target.is_none() {
-        *target = source.clone();
+        target.clone_from(source);
     }
 }
 

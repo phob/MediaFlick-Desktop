@@ -111,14 +111,14 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle) -> 
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("jellyfin-socket".to_string())
-        .spawn(move || run(library, session, sync, worker))
+        .spawn(move || run(&library, &session, &sync, &worker))
     {
         tracing::warn!(target: "jellyfin.socket", "failed to start the Jellyfin event thread: {error}");
     }
     handle
 }
 
-fn run(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle, handle: SocketHandle) {
+fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle: &SocketHandle) {
     let mut backoff = RECONNECT_MIN;
     while !handle.is_stopped() {
         if !session.is_authenticated() {
@@ -128,22 +128,15 @@ fn run(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle, handle: S
             continue;
         }
 
-        match connect(&session) {
+        match connect(session) {
             Ok((mut socket, authorization)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
-                announce_capabilities(&session);
+                announce_capabilities(session);
                 // Whatever happened while no connection existed was never
                 // pushed; one requested cycle reconciles the gap.
                 sync.request();
                 let connected_at = Instant::now();
-                match listen(
-                    &mut socket,
-                    &library,
-                    &session,
-                    &sync,
-                    &handle,
-                    &authorization,
-                ) {
+                match listen(&mut socket, library, session, sync, handle, &authorization) {
                     Disconnect::Stopped => return,
                     Disconnect::SessionChanged => {
                         tracing::debug!(

@@ -1,0 +1,11 @@
+default_job = "clippy"
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"]
+env.CARGO_TARGET_DIR = "build/cargo-target"
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "test", "--all-targets"]
+env.CARGO_TARGET_DIR = "build/cargo-target"
+need_stdout = true

@@ -43,7 +43,7 @@ impl Session {
             user_id: stored.user_id.clone(),
             user_name: stored.user_name.clone(),
             device_id: stored.device_id.clone(),
-            token: stored.token.clone(),
+            token: stored.token,
             expired: false,
         };
         Self {
@@ -187,7 +187,7 @@ impl Session {
             user_id: Some(credentials.user_id.clone()),
             user_name: Some(credentials.user_name.clone()),
             server_id: Some(credentials.server_id.clone()),
-            device_id: previous.device_id.clone(),
+            device_id: previous.device_id,
             token: Some(credentials.token.clone()),
         };
         if let Err(error) = self.library.save_credentials(&stored) {

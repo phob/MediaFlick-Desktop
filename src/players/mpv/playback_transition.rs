@@ -101,25 +101,25 @@ impl ControllerState {
         }
     }
 
-    pub(super) fn update_active_playback_context(&mut self, context: PlaybackContext) {
+    pub(super) fn update_active_playback_context(&mut self, context: &PlaybackContext) {
         let mut updated = false;
 
         if let Some(pending) = &mut self.pending
-            && identity_matches_context(&pending.identity, &context)
+            && identity_matches_context(&pending.identity, context)
         {
             context.merge_into_request(&mut pending.launch);
-            update_identity_from_context(&mut pending.identity, &context);
+            update_identity_from_context(&mut pending.identity, context);
             if let Some(reporter) = &mut pending.reporter {
-                reporter.merge_context(&context);
+                reporter.merge_context(context);
             }
             updated = true;
         }
 
         if let Some(active) = &mut self.active
-            && identity_matches_context(&active.identity, &context)
+            && identity_matches_context(&active.identity, context)
         {
-            update_identity_from_context(&mut active.identity, &context);
-            active.reporter.merge_context(&context);
+            update_identity_from_context(&mut active.identity, context);
+            active.reporter.merge_context(context);
             if active.runtime_ticks.is_none() {
                 active.runtime_ticks = context.runtime_ticks.filter(|ticks| *ticks > 0);
             }
@@ -130,16 +130,16 @@ impl ControllerState {
         }
 
         if let Some(identity) = &mut self.playback_identity
-            && identity_matches_context(identity, &context)
+            && identity_matches_context(identity, context)
         {
-            update_identity_from_context(identity, &context);
+            update_identity_from_context(identity, context);
             updated = true;
         }
 
         if updated {
             tracing::debug!(
                 target: "playback",
-                context = %playback_context_update_summary(&context),
+                context = %playback_context_update_summary(context),
                 "merged playback context into active mpv playback"
             );
             self.publish_snapshot();

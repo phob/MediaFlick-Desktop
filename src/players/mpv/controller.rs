@@ -429,7 +429,7 @@ impl ControllerState {
                     fullscreen,
                 }) => {
                     tracing::debug!(target: "playback", "received mpv warm request");
-                    self.warm(mpv_path, fullscreen);
+                    self.warm(&mpv_path, fullscreen);
                 }
                 Ok(ControllerMessage::Load {
                     mpv_path,
@@ -437,15 +437,15 @@ impl ControllerState {
                     launch,
                 }) => {
                     tracing::debug!(target: "playback", "received playback load request");
-                    self.load(mpv_path, fullscreen, *launch);
+                    self.load(&mpv_path, fullscreen, *launch);
                 }
                 Ok(ControllerMessage::PlaybackContext(context)) => {
                     tracing::debug!(target: "playback", "received playback context update");
-                    self.update_active_playback_context(*context);
+                    self.update_active_playback_context(context.as_ref());
                 }
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
-                    self.control(command);
+                    self.control(&command);
                 }
                 Ok(ControllerMessage::RefreshInputBindings) => {
                     if self
@@ -503,7 +503,7 @@ impl ControllerState {
         }
     }
 
-    fn control(&mut self, command: PlayerCommand) {
+    fn control(&mut self, command: &PlayerCommand) {
         if matches!(command, PlayerCommand::Stop)
             && self.should_suppress_stop_during_next_playback_handoff()
         {
@@ -514,11 +514,11 @@ impl ControllerState {
             return;
         }
 
-        if self.handle_prompt_skip_control(&command) {
+        if self.handle_prompt_skip_control(command) {
             return;
         }
 
-        let Some(command_json) = control_command(command.clone()) else {
+        let Some(command_json) = control_command(command) else {
             tracing::debug!(target: "mpv.ipc", ?command, "ignored invalid mpv control command");
             return;
         };
@@ -578,7 +578,7 @@ impl ControllerState {
             "sending delayed mpv startup seek"
         );
         if let Some(command) =
-            control_command(PlayerCommand::SeekMilliseconds(startup_seek.position_ms))
+            control_command(&PlayerCommand::SeekMilliseconds(startup_seek.position_ms))
         {
             match self.send_mpv_command(command) {
                 Ok(()) => {
@@ -601,8 +601,8 @@ impl ControllerState {
         }
     }
 
-    fn load(&mut self, mpv_path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
-        self.remember_configured_mpv(&mpv_path, fullscreen);
+    fn load(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
+        self.remember_configured_mpv(mpv_path, fullscreen);
         let key = launch.dedupe_key();
         let identity = PlaybackIdentity::from_launch(allocate_playback_id(), &launch);
         tracing::debug!(
@@ -630,7 +630,7 @@ impl ControllerState {
             return;
         }
 
-        if !self.ensure_mpv(&mpv_path, fullscreen) {
+        if !self.ensure_mpv(mpv_path, fullscreen) {
             tracing::warn!(
                 target: "playback",
                 mpv_path = %mpv_path,
@@ -656,7 +656,7 @@ impl ControllerState {
             active.reporter.report_stopped(&self.last_state, false);
         }
 
-        match self.send_loadfile_with_reconnect(&mpv_path, fullscreen, &launch) {
+        match self.send_loadfile_with_reconnect(mpv_path, fullscreen, &launch) {
             Ok(()) => {
                 tracing::info!(
                     target: "playback",
@@ -727,15 +727,15 @@ impl ControllerState {
         }
     }
 
-    fn warm(&mut self, mpv_path: String, fullscreen: FullscreenBehavior) {
+    fn warm(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) {
         tracing::debug!(
             target: "mpv.ipc",
             mpv_path = %mpv_path,
             fullscreen = %fullscreen.fullscreen_arg(),
             "warming idle mpv process"
         );
-        self.remember_configured_mpv(&mpv_path, fullscreen);
-        if self.ensure_mpv(&mpv_path, fullscreen) {
+        self.remember_configured_mpv(mpv_path, fullscreen);
+        if self.ensure_mpv(mpv_path, fullscreen) {
             self.apply_default_fullscreen(fullscreen);
         }
     }
@@ -928,7 +928,7 @@ impl ControllerState {
         }
         let saw_shutdown = events.iter().any(|event| event.name == "shutdown");
         for event in events {
-            self.handle_event(event);
+            self.handle_event(&event);
         }
         if disconnected && !saw_shutdown {
             tracing::warn!(target: "mpv.ipc", "mpv IPC event stream disconnected");
@@ -936,7 +936,7 @@ impl ControllerState {
         }
     }
 
-    fn handle_event(&mut self, event: MpvEvent) {
+    fn handle_event(&mut self, event: &MpvEvent) {
         if event.is_position_property_change() {
             tracing::trace!(target: "mpv.ipc", event = %event.summary(), "received mpv position event");
         } else {
@@ -956,7 +956,9 @@ impl ControllerState {
                 self.restart_configured_mpv("mpv emitted shutdown");
             }
             "seek" => self.handle_seek_event(),
-            "property-change" => self.apply_property(event.property.as_deref(), event.data),
+            "property-change" => {
+                self.apply_property(event.property.as_deref(), event.data.as_ref());
+            }
             "client-message" if is_mark_watched_next_message(&event.args) => {
                 self.mark_watched_and_play_next();
             }
@@ -973,7 +975,7 @@ impl ControllerState {
         let Some(subtitle_url) = self.pending_external_subtitle_url.take() else {
             return;
         };
-        let Some(command) = control_command(PlayerCommand::AddSubtitle(subtitle_url.clone()))
+        let Some(command) = control_command(&PlayerCommand::AddSubtitle(subtitle_url.clone()))
         else {
             return;
         };
@@ -997,23 +999,34 @@ impl ControllerState {
         }
     }
 
-    fn apply_property(&mut self, property: Option<&str>, data: Option<Value>) {
+    fn apply_property(&mut self, property: Option<&str>, data: Option<&Value>) {
         tracing::trace!(
             target: "mpv.ipc",
             property = property.unwrap_or("unknown"),
             data = %data
-                .as_ref()
                 .map(logger::redacted_json)
                 .unwrap_or_else(|| "null".to_string()),
             "applying mpv property"
         );
         match property {
-            Some("time-pos") | Some("playback-time") => {
-                if let Some(ticks) = data
-                    .as_ref()
-                    .and_then(Value::as_f64)
-                    .and_then(seconds_to_ticks)
-                {
+            Some("time-pos" | "playback-time" | "pause" | "duration") => {
+                self.apply_timeline_property(property, data);
+            }
+            Some("volume" | "mute") => self.apply_audio_property(property, data),
+            Some("eof-reached" | "seeking" | "chapter-list" | "playback-abort") => {
+                self.apply_status_property(property, data);
+            }
+            Some(other) => {
+                tracing::trace!(target: "mpv.ipc", property = other, "ignored mpv property")
+            }
+            None => tracing::trace!(target: "mpv.ipc", "ignored mpv property with no name"),
+        }
+    }
+
+    fn apply_timeline_property(&mut self, property: Option<&str>, data: Option<&Value>) {
+        match property {
+            Some("time-pos" | "playback-time") => {
+                if let Some(ticks) = data.and_then(Value::as_f64).and_then(seconds_to_ticks) {
                     if self.defer_startup_position_update(ticks) {
                         return;
                     }
@@ -1027,7 +1040,7 @@ impl ControllerState {
                 }
             }
             Some("pause") => {
-                if let Some(value) = data.as_ref().and_then(Value::as_bool) {
+                if let Some(value) = data.and_then(Value::as_bool) {
                     let previous = self.last_state.pause;
                     self.last_state.pause = value;
                     if previous != value {
@@ -1043,10 +1056,8 @@ impl ControllerState {
                 }
             }
             Some("duration") => {
-                self.last_state.duration_ticks = data
-                    .as_ref()
-                    .and_then(Value::as_f64)
-                    .and_then(seconds_to_ticks);
+                self.last_state.duration_ticks =
+                    data.and_then(Value::as_f64).and_then(seconds_to_ticks);
                 tracing::debug!(
                     target: "playback",
                     state = %self.last_state,
@@ -1055,11 +1066,16 @@ impl ControllerState {
                 self.refresh_chapter_markers();
                 self.publish_snapshot();
             }
+            _ => {}
+        }
+    }
+
+    fn apply_audio_property(&mut self, property: Option<&str>, data: Option<&Value>) {
+        match property {
             Some("volume") => {
                 let previous = self.last_state.volume;
                 self.last_state.volume = data
-                    .as_ref()
-                    .and_then(|value| value.as_f64())
+                    .and_then(Value::as_f64)
                     .map(|value| value.round() as i64);
                 if previous != self.last_state.volume {
                     tracing::debug!(
@@ -1074,7 +1090,7 @@ impl ControllerState {
             }
             Some("mute") => {
                 let previous = self.last_state.mute;
-                self.last_state.mute = data.as_ref().and_then(Value::as_bool);
+                self.last_state.mute = data.and_then(Value::as_bool);
                 if previous != self.last_state.mute {
                     tracing::debug!(
                         target: "playback",
@@ -1086,10 +1102,15 @@ impl ControllerState {
                 }
                 self.publish_snapshot();
             }
+            _ => {}
+        }
+    }
+
+    fn apply_status_property(&mut self, property: Option<&str>, data: Option<&Value>) {
+        match property {
             Some("eof-reached") => {
                 let previous = self.last_state.eof_reached;
-                self.last_state.eof_reached =
-                    data.as_ref().and_then(Value::as_bool).unwrap_or(false);
+                self.last_state.eof_reached = data.and_then(Value::as_bool).unwrap_or(false);
                 if previous != self.last_state.eof_reached {
                     tracing::debug!(
                         target: "playback",
@@ -1101,30 +1122,26 @@ impl ControllerState {
                 }
             }
             Some("seeking") => {
-                if let Some(value) = data.as_ref().and_then(Value::as_bool) {
+                if let Some(value) = data.and_then(Value::as_bool) {
                     self.handle_seeking_property(value);
                 }
             }
             Some("chapter-list") => {
-                if let Some(chapters) = data.as_ref().and_then(Value::as_array) {
+                if let Some(chapters) = data.and_then(Value::as_array) {
                     self.handle_chapter_list_event(chapters.clone());
                 }
             }
-            Some("playback-abort") => {
-                if data.as_ref().and_then(Value::as_bool).unwrap_or(false) {
-                    tracing::debug!(
-                        target: "playback",
-                        pending = self.pending.is_some(),
-                        active = self.active.is_some(),
-                        state = %self.last_state,
-                        "mpv playback-abort is true; waiting for end-file before finishing playback"
-                    );
-                }
+            Some("playback-abort") if data.and_then(Value::as_bool).unwrap_or(false) => {
+                tracing::debug!(
+                    target: "playback",
+                    pending = self.pending.is_some(),
+                    active = self.active.is_some(),
+                    state = %self.last_state,
+                    "mpv playback-abort is true; waiting for end-file before finishing playback"
+                );
             }
-            Some(other) => {
-                tracing::trace!(target: "mpv.ipc", property = other, "ignored mpv property")
-            }
-            None => tracing::trace!(target: "mpv.ipc", "ignored mpv property with no name"),
+            Some("playback-abort") => {}
+            _ => {}
         }
     }
 
@@ -1284,7 +1301,7 @@ impl ControllerState {
             return;
         }
 
-        self.injected_chapter_markers = markers.clone();
+        self.injected_chapter_markers.clone_from(&markers);
         self.queue_chapter_list(merge_chapter_markers(base, markers));
     }
 
@@ -2098,7 +2115,7 @@ pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
     })
 }
 
-pub fn control_command(command: PlayerCommand) -> Option<Value> {
+pub fn control_command(command: &PlayerCommand) -> Option<Value> {
     let command = match command {
         PlayerCommand::SetPause(pause) => {
             json!(["set_property", "pause", pause])
@@ -2126,7 +2143,7 @@ pub fn control_command(command: PlayerCommand) -> Option<Value> {
             json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
         }
         PlayerCommand::SetAudioTrack(id) => {
-            if id <= 0 {
+            if *id <= 0 {
                 return None;
             }
             json!(["set_property", "aid", id])
@@ -2179,8 +2196,8 @@ impl IpcWorker {
         };
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
-        let reader_thread = thread::spawn(move || read_events(reader, event_tx));
-        let writer_thread = thread::spawn(move || writer.write_commands(command_rx));
+        let reader_thread = thread::spawn(move || read_events(&reader, &event_tx));
+        let writer_thread = thread::spawn(move || writer.write_commands(&command_rx));
         Ok((
             Self {
                 path: path.to_string(),
@@ -2249,7 +2266,7 @@ impl IpcWorker {
 }
 
 impl IpcCommandWriter {
-    fn write_commands(mut self, rx: Receiver<IpcCommand>) {
+    fn write_commands(mut self, rx: &Receiver<IpcCommand>) {
         while let Ok((command, timeout, ack)) = rx.recv() {
             tracing::trace!(
                 target: "mpv.ipc",
@@ -2441,7 +2458,7 @@ fn log_command_reply(value: &Value) {
     }
 }
 
-fn read_events(stream: IpcConnection, tx: Sender<MpvEvent>) {
+fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     loop {
@@ -3016,24 +3033,24 @@ mod tests {
 
     #[test]
     fn control_commands_map_to_mpv_ipc_commands() {
-        let pause = control_command(PlayerCommand::SetPause(true)).expect("pause command");
+        let pause = control_command(&PlayerCommand::SetPause(true)).expect("pause command");
         assert_eq!(pause["command"], json!(["set_property", "pause", true]));
 
         let seek =
-            control_command(PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek command");
+            control_command(&PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek command");
         assert_eq!(seek["command"], json!(["seek", 12.345, "absolute+exact"]));
 
-        let volume = control_command(PlayerCommand::SetVolume(250.0)).expect("volume command");
+        let volume = control_command(&PlayerCommand::SetVolume(250.0)).expect("volume command");
         assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
 
-        let audio = control_command(PlayerCommand::SetAudioTrack(2)).expect("audio command");
+        let audio = control_command(&PlayerCommand::SetAudioTrack(2)).expect("audio command");
         assert_eq!(audio["command"], json!(["set_property", "aid", 2]));
 
         let subtitle =
-            control_command(PlayerCommand::SetSubtitleTrack(None)).expect("subtitle none command");
+            control_command(&PlayerCommand::SetSubtitleTrack(None)).expect("subtitle none command");
         assert_eq!(subtitle["command"], json!(["set_property", "sid", "no"]));
 
-        let external_subtitle = control_command(PlayerCommand::AddSubtitle(
+        let external_subtitle = control_command(&PlayerCommand::AddSubtitle(
             "https://example.test/sub.srt".to_string(),
         ))
         .expect("external subtitle command");
@@ -3045,14 +3062,14 @@ mod tests {
 
         assert!(seek.get("async").is_none());
 
-        assert!(control_command(PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
+        assert!(control_command(&PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
     }
 
     #[test]
     fn playback_abort_snapshot_does_not_fail_pending_load() {
         let mut state = controller_with_pending_load(Some(20_000_000));
 
-        state.apply_property(Some("playback-abort"), Some(json!(true)));
+        state.apply_property(Some("playback-abort"), Some(&json!(true)));
 
         assert!(state.pending.is_some());
         state.activate_pending();
@@ -3182,6 +3199,7 @@ mod tests {
 
         let snapshot = state.snapshot.lock().expect("snapshot");
         assert_eq!(snapshot.stop_reason, Some("eof"));
+        drop(snapshot);
     }
 
     #[test]
@@ -3192,11 +3210,11 @@ mod tests {
         assert_eq!(state.last_state.position_ticks, 1_000_000_000);
         assert!(state.startup_seek.is_some());
 
-        state.apply_property(Some("time-pos"), Some(json!(0.0)));
+        state.apply_property(Some("time-pos"), Some(&json!(0.0)));
         assert_eq!(state.last_state.position_ticks, 1_000_000_000);
         assert!(state.startup_seek.is_some());
 
-        state.apply_property(Some("time-pos"), Some(json!(98.0)));
+        state.apply_property(Some("time-pos"), Some(&json!(98.0)));
         assert_eq!(state.last_state.position_ticks, 980_000_000);
         assert!(state.startup_seek.is_none());
     }
@@ -3277,7 +3295,7 @@ mod tests {
         pending.identity = PlaybackIdentity::from_launch(1, &pending.launch);
 
         state.activate_pending();
-        state.update_active_playback_context(PlaybackContext {
+        state.update_active_playback_context(&PlaybackContext {
             item_id: Some("item-1".to_string()),
             media_source_id: Some("source-1".to_string()),
             play_session_id: Some("session-1".to_string()),
@@ -3380,7 +3398,7 @@ mod tests {
         launch.media_source_id = Some("next-source".to_string());
 
         state.load(
-            "C:\\missing\\mpv.exe".to_string(),
+            "C:\\missing\\mpv.exe",
             FullscreenBehavior::Fullscreen,
             launch,
         );
