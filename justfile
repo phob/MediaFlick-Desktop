@@ -38,7 +38,7 @@ plugin:
 # Run the companion plugin unit tests
 [group('test')]
 plugin-test:
-    dotnet test plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+    dotnet test --project plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
 # Deploy the plugin to the configured Jellyfin development host and restart it
 [group('run')]

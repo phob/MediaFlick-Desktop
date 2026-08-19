@@ -11,6 +11,7 @@ import { Link, useLocation, useParams } from "react-router-dom"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
+import { ExternalLinksMenu } from "@/components/detail/ExternalLinksMenu"
 import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import {
   DetailCastRail,
@@ -22,6 +23,7 @@ import { PageErrorState } from "@/components/PageHeader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
+  discoveryExternalLinksFor,
   seerrImageUrl,
   type SeerrCapabilities,
   type SeerrMediaDetail,
@@ -208,6 +210,7 @@ export default function DiscoverDetail() {
   const releaseFallback = releases.length ? null : formatDate(item.releaseDate)
   const language = formatLanguage(item.originalLanguage)
   const homepage = safeHttpUrl(item.homepage)
+  const externalLinks = discoveryExternalLinksFor(item)
   const details: { label: string; value: ReactNode }[] = [
     item.originalTitle && item.originalTitle !== item.title
       ? { label: "Original title", value: item.originalTitle }
@@ -343,6 +346,7 @@ export default function DiscoverDetail() {
               Request options
             </Button>
           )}
+          <ExternalLinksMenu links={externalLinks} />
         </div>
       </DetailHeroLayout>
 

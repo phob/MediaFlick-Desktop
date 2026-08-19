@@ -14,11 +14,13 @@ import {
   Monitor,
   Palette,
   Play,
+  Plus,
   RefreshCw,
   Save,
   ScanLine,
   SlidersHorizontal,
   Trash2,
+  ThumbsUp,
   Undo2,
   type LucideIcon,
 } from "lucide-react"
@@ -591,6 +593,7 @@ function AppearancePreview({
       data-accent={appearance.accent}
       data-density={appearance.density}
       data-reduced-motion={reducedMotion}
+      data-card-previews={appearance.cardPreviews}
       data-show-media-info={appearance.showMediaInfo}
       style={style}
       aria-labelledby="appearance-preview-title"
@@ -634,6 +637,11 @@ function AppearancePreview({
                 <div className="appearance-preview-media-info">
                   <span><ScanLine /> 4K <i>·</i> DV</span>
                   <span><AudioLines /> TrueHD <i>·</i> Atmos</span>
+                </div>
+                <div className="appearance-preview-card-actions">
+                  <span><Play /></span>
+                  <span><Plus /></span>
+                  <span><ThumbsUp /></span>
                 </div>
                 <span className="appearance-preview-progress"><i /></span>
               </div>
@@ -687,7 +695,10 @@ export function Appearance() {
       <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
       <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
-    <Section title="Card overlays" description="Choose the compact information drawn over library artwork.">
+    <Section title="Cards" description="Choose how library cards behave and what they show.">
+      <SettingsRow title="Card previews" description="Open a larger panel after resting the pointer on a card. When off, Play, My List, and watched buttons stay on the card.">
+        <Switch aria-label="Show pop-out previews on cards" checked={draft.cardPreviews} onCheckedChange={(cardPreviews) => setDraft({ ...draft, cardPreviews })} />
+      </SettingsRow>
       <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
         <Switch aria-label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
       </SettingsRow>
@@ -714,7 +725,7 @@ export function Appearance() {
       <SettingsRow title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider aria-label="Backdrop intensity" className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, showMediaInfo: true, ratingSources: [] })} />
+    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] })} />
   </div>
 }
 
@@ -811,6 +822,7 @@ export function AppearanceSync() {
     root.dataset.accent = appearance.accent
     root.dataset.density = appearance.density
     root.dataset.reducedMotion = String(appearance.reducedMotion)
+    root.dataset.cardPreviews = String(appearance.cardPreviews)
     root.dataset.mediaInfo = String(appearance.showMediaInfo)
     root.style.setProperty("--artwork-intensity", String(appearance.artworkIntensity / 100))
     root.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))

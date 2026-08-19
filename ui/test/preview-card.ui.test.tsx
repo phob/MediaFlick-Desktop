@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
@@ -36,6 +37,10 @@ const dependencies: PreviewDependencies = {
   favorite: () => ({ isPending: false, mutate: mutations.favorite }),
   played: () => ({ isPending: false, mutate: mutations.played }),
 }
+
+const client = new QueryClient({
+  defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+})
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -124,25 +129,43 @@ function LocationProbe() {
   return <output data-location>{location.pathname}</output>
 }
 
-function Providers({ children }: { children: ReactNode }) {
+function ProviderTree({
+  children,
+  previewsEnabled,
+}: {
+  children: ReactNode
+  previewsEnabled: boolean
+}) {
   return (
-    <MemoryRouter initialEntries={["/home"]}>
-      <RatingsContext.Provider value={{
-        items: new Map([[movie.id, movieRatings]]),
-        selected: [letterboxd.id],
-        definitions: new Map([[letterboxd.id, letterboxd]]),
-        register: () => () => {},
-      }}>
-        <TechnicalContext.Provider value={{
-          items: new Map([[movie.id, movieStreams]]),
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/home"]}>
+        <RatingsContext.Provider value={{
+          items: new Map([[movie.id, movieRatings]]),
+          selected: [letterboxd.id],
+          definitions: new Map([[letterboxd.id, letterboxd]]),
           register: () => () => {},
         }}>
-          <PreviewProvider dependencies={dependencies}>{children}</PreviewProvider>
-          <LocationProbe />
-        </TechnicalContext.Provider>
-      </RatingsContext.Provider>
-    </MemoryRouter>
+          <TechnicalContext.Provider value={{
+            items: new Map([[movie.id, movieStreams]]),
+            register: () => () => {},
+          }}>
+            <PreviewProvider dependencies={dependencies} enabled={previewsEnabled}>
+              {children}
+            </PreviewProvider>
+            <LocationProbe />
+          </TechnicalContext.Provider>
+        </RatingsContext.Provider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
+}
+
+function Providers({ children }: { children: ReactNode }) {
+  return <ProviderTree previewsEnabled>{children}</ProviderTree>
+}
+
+function InlineProviders({ children }: { children: ReactNode }) {
+  return <ProviderTree previewsEnabled={false}>{children}</ProviderTree>
 }
 
 function location() {
@@ -173,12 +196,16 @@ function renderOpenPreview() {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  client.clear()
   mutations.favorite.mockReset()
   mutations.play.mockReset()
   mutations.played.mockReset()
 })
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe("expanded media-card details target", () => {
   test("carries the configured rating and technical media facts into the larger preview", () => {
@@ -237,9 +264,74 @@ describe("expanded media-card details target", () => {
     expect(document.querySelector(".preview-panel")).toBeNull()
   })
 
-  test("exposes a keyboard-focusable details link across the complete panel", () => {
-    renderOpenPreview()
+  test("keeps the three actions on the card when expanded previews are disabled", () => {
+    render(<MediaCard item={movie} />, { wrapper: InlineProviders })
     const details = screen.getByRole("link", { name: "Open details for The Matrix" })
+
+    act(() => {
+      hoverWithMouse(details)
+      vi.advanceTimersByTime(550)
+    })
+
+    expect(document.querySelector(".preview-panel")).toBeNull()
+    for (const name of ["Play", "Add to My List", "Mark as watched"]) {
+      const button = screen.getByRole("button", { name })
+      expect(button.closest("a")).toBeNull()
+    }
+  })
+
+  test("runs direct movie-card actions without opening details", async () => {
+    vi.useRealTimers()
+    const requests: Array<{ path: string; body: unknown }> = []
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      requests.push({
+        path,
+        body: JSON.parse(String(init?.body ?? "null")),
+      })
+      const payload = path === "/api/play" ? { playMethod: "mpv" } : {}
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }))
+    render(<MediaCard item={movie} />, { wrapper: InlineProviders })
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }))
+    fireEvent.click(screen.getByRole("button", { name: "Add to My List" }))
+    fireEvent.click(screen.getByRole("button", { name: "Mark as watched" }))
+
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(requests).toEqual(expect.arrayContaining([
+      { path: "/api/play", body: { itemId: "movie-1", resume: false } },
+      { path: "/api/item/movie-1/favorite", body: { favorite: true } },
+      { path: "/api/item/movie-1/played", body: { played: true } },
+    ]))
+    expect(location()).toBe("/home")
+  })
+
+  test("resolves a series play target only after its direct Play button is pressed", async () => {
+    vi.useRealTimers()
+    const series = { ...movie, id: "series-1", kind: "Series" as const, name: "Severance" }
+    const episode = { ...movie, id: "episode-1", kind: "Episode" as const, name: "Good News About Hell" }
+    const paths: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      paths.push(path)
+      const payload = path.endsWith("/nextup") ? { item: episode } : { playMethod: "mpv" }
+      return new Response(JSON.stringify(payload), { status: 200 })
+    }))
+    render(<MediaCard item={series} />, { wrapper: InlineProviders })
+
+    expect(paths).toEqual([])
+    fireEvent.click(screen.getByRole("button", { name: "Play next episode" }))
+
+    await waitFor(() => expect(paths).toEqual([
+      "/api/item/series-1/nextup",
+      "/api/play",
+    ]))
+  })
+
+  test("exposes a keyboard-focusable details link across the complete panel", () => {
+    const panel = renderOpenPreview()
+    const details = within(panel).getByRole("link", { name: "Open details for The Matrix" })
 
     act(() => details.focus())
     expect(document.activeElement).toBe(details)

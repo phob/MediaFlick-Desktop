@@ -511,6 +511,13 @@ html[data-reduced-motion="true"] *::after {
 .appearance-preview-media-info span { display: flex; align-items: center; gap: 0.24rem; }
 .appearance-preview-media-info svg { width: 0.58rem; height: 0.58rem; color: color-mix(in srgb, var(--preview-primary) 80%, white); }
 .appearance-preview-media-info i { color: color-mix(in srgb, var(--preview-primary) 60%, transparent); font-style: normal; }
+.appearance-preview-card-actions { position: absolute; right: 0; bottom: 3px; left: 0; z-index: 2; display: none; align-items: center; gap: 0.28rem; padding: 1.6rem 0.42rem 0.38rem; }
+.appearance-preview[data-card-previews="false"] .appearance-preview-card-actions { display: flex; }
+.appearance-preview[data-card-previews="false"] .appearance-preview-media-info span { opacity: 0; }
+.appearance-preview[data-card-previews="false"][data-show-media-info="false"] .appearance-preview-card-actions { background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 90%) 58%); }
+.appearance-preview-card-actions span { display: grid; width: 1.2rem; height: 1.2rem; border: 1px solid color-mix(in srgb, var(--preview-foreground) 35%, transparent); border-radius: 2px; background: rgb(2 5 3 / 72%); color: var(--preview-foreground); place-items: center; }
+.appearance-preview-card-actions span:first-child { border-color: var(--preview-primary); background: var(--preview-primary); color: var(--preview-primary-foreground); }
+.appearance-preview-card-actions svg { width: 0.62rem; height: 0.62rem; }
 .appearance-preview-progress { position: absolute; z-index: 3; right: 0; bottom: 0; left: 0; height: 3px; background: rgb(0 0 0 / 65%); }
 .appearance-preview-progress i { display: block; width: 58%; height: 100%; background: var(--preview-primary); }
 
@@ -747,6 +754,7 @@ html[data-reduced-motion="true"] *::after {
 
 .home-media-card:hover,
 .home-media-card:focus-visible,
+.home-media-card:focus-within,
 .catalog-card:hover,
 .catalog-card:focus-visible,
 .catalog-card:focus-within {
@@ -771,9 +779,8 @@ html[data-reduced-motion="true"] *::after {
 .media-frame::after {
   position: absolute;
   inset: 0;
-  /* Above every in-frame overlay (rating gradient 3, ribbon 4): the top
-     rating scrim would otherwise dim the upper brackets. */
-  z-index: 5;
+  /* Above every in-frame overlay, including direct card actions. */
+  z-index: 8;
   background:
     linear-gradient(var(--primary), var(--primary)) 0 0 / 15px 2px no-repeat,
     linear-gradient(var(--primary), var(--primary)) 0 0 / 2px 15px no-repeat,
@@ -790,8 +797,67 @@ html[data-reduced-motion="true"] *::after {
 }
 
 .signal-card:hover .media-frame::after,
-.signal-card:focus-visible .media-frame::after {
+.signal-card:focus-visible .media-frame::after,
+.signal-card:focus-within .media-frame::after {
   opacity: 1;
+}
+
+/* When expanded previews are disabled, the same actions stay inside the
+   artwork frame. They remain in the tab order and reveal as soon as keyboard
+   focus or the pointer enters the card. */
+.card-inline-actions {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.25rem 0.5rem 0.5rem;
+  background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 88%) 62%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+/* Reuse the technical readout's existing bottom scrim when it is present.
+   Only its text leaves while the direct controls are visible. */
+.media-frame:has(.card-technical-readout) > .card-inline-actions {
+  background: none;
+}
+
+[data-media-info="false"] .media-frame:has(.card-technical-readout) > .card-inline-actions {
+  background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 88%) 62%);
+}
+
+.signal-card:has(.card-inline-actions):hover .card-technical-row,
+.signal-card:has(.card-inline-actions):focus-within .card-technical-row {
+  opacity: 0;
+}
+
+.signal-card:hover .card-inline-actions,
+.signal-card:focus-within .card-inline-actions {
+  opacity: 1;
+}
+
+.signal-card:hover .card-inline-actions > button,
+.signal-card:focus-within .card-inline-actions > button {
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .card-inline-actions {
+    opacity: 1;
+  }
+
+  .card-inline-actions > button {
+    pointer-events: auto;
+  }
+
+  .signal-card:has(.card-inline-actions) .card-technical-row {
+    opacity: 0;
+  }
 }
 
 /* Ratings share one open top gradient rather than becoming a row of badges.
@@ -1441,6 +1507,10 @@ html[data-reduced-motion="true"] *::after {
   }
 
   .preview-action {
+    transition: none;
+  }
+
+  .card-inline-actions {
     transition: none;
   }
 

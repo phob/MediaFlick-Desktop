@@ -740,6 +740,7 @@ public sealed class SeerrGateway
             ?? (detail["episodeRunTime"] as JsonArray)?
                 .Select(static item => item?.GetValue<int?>())
                 .FirstOrDefault(static value => value is > 0);
+        var externalIds = detail["externalIds"] as JsonObject;
 
         return new JsonObject
         {
@@ -774,6 +775,11 @@ public sealed class SeerrGateway
             ["numberOfEpisodes"] = Clone(detail["numberOfEpisodes"]),
             ["originalLanguage"] = Clone(detail["originalLanguage"]),
             ["homepage"] = Clone(detail["homepage"]),
+            ["externalIds"] = new JsonObject
+            {
+                ["imdb"] = ImdbTitleId(detail, externalIds),
+                ["tvdb"] = PositiveInt(externalIds, "tvdbId")
+            },
             ["budget"] = PositiveInt(detail, "budget"),
             ["revenue"] = PositiveInt(detail, "revenue"),
             ["studios"] = StringArray(Names(detail["productionCompanies"])),
@@ -794,10 +800,46 @@ public sealed class SeerrGateway
         };
     }
 
-    private static JsonNode? PositiveInt(JsonObject value, string name)
+    private static JsonNode? PositiveInt(JsonObject? value, string name)
     {
         var number = IntValue(value, name);
         return number is > 0 ? JsonValue.Create(number.Value) : null;
+    }
+
+    private static string? ImdbTitleId(JsonObject detail, JsonObject? externalIds)
+    {
+        foreach (var candidate in new[]
+        {
+            StringValue(externalIds, "imdbId"),
+            StringValue(detail, "imdbId")
+        })
+        {
+            if (IsImdbTitleId(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsImdbTitleId(string? value)
+    {
+        if (value is not { Length: > 2 and <= 32 }
+            || !value.StartsWith("tt", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (var index = 2; index < value.Length; index++)
+        {
+            if (value[index] is < '0' or > '9')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static IEnumerable<string> Names(JsonNode? node)

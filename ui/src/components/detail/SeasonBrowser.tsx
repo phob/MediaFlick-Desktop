@@ -1,6 +1,7 @@
 import { Check, Play, Star } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
+import { CardInlineActions } from "@/components/CardInlineActions"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -116,15 +117,11 @@ function EpisodeCard({
   parentId: string
   nextUp: boolean
 }) {
-  const play = usePlay()
-  const setPlayed = useSetPlayed()
-  const quality = useQualityOverride() ?? undefined
-  const { handlers, expanded } = usePreview(episode)
+  const { handlers, expanded, previewsEnabled } = usePreview(episode)
   // Same fallback ladder as every other landscape card: still, Thumb art,
   // backdrop — and a broken image steps down once instead of re-requesting.
   const [imageIndex, setImageIndex] = useState(0)
   const image = landscapeImageCandidates(episode, THUMBNAIL_WIDTH)[imageIndex]
-  const resumable = episode.positionTicks > 0
   const progress = progressFraction(episode)
   const runtime = formatRuntime(episode.runtimeTicks)
   const rating = formatCommunityRating(episode.communityRating)
@@ -165,34 +162,17 @@ function EpisodeCard({
           )}
         </Link>
         <CardTechnicalReadout item={episode} />
-        {/* The controls stay mounted so keyboard users can reach them; only
-            their opacity follows the pointer. */}
-        <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            size="sm"
-            disabled={play.isPending}
-            onClick={() => play.mutate({ id: episode.id, resume: resumable, quality })}
-          >
-            <Play className="size-3 fill-current" />
-            {resumable ? "Resume" : "Play"}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              setPlayed.mutate({ id: episode.id, played: !episode.played, context: parentId })
-            }
-          >
-            <Check className="size-3" />
-            {episode.played ? "Unwatch" : "Watched"}
-          </Button>
-        </div>
+        {previewsEnabled ? (
+          <EpisodeActions episode={episode} parentId={parentId} />
+        ) : (
+          <CardInlineActions item={episode} playedContext={parentId} />
+        )}
         {/* Watched is drawn as a finished progress rule rather than a corner
             badge, matching every other media card: the two states share the
             accent fill and watched simply fills the track completely. */}
         {(progress > 0 || episode.played) && (
           <div
-            className="pointer-events-none absolute inset-x-0 bottom-0 z-[3] h-[3px] bg-black/65"
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-black/65"
             title={progress > 0 ? undefined : "Watched"}
           >
             <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
@@ -230,6 +210,39 @@ function EpisodeCard({
         )}
       </div>
     </li>
+  )
+}
+
+/** The episode grid's existing labelled controls when expanded previews are on. */
+function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId: string }) {
+  const play = usePlay()
+  const setPlayed = useSetPlayed()
+  const quality = useQualityOverride() ?? undefined
+  const resumable = episode.positionTicks > 0
+
+  return (
+    // The controls stay mounted so keyboard users can reach them; only their
+    // opacity follows the pointer.
+    <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+      <Button
+        size="sm"
+        disabled={play.isPending}
+        onClick={() => play.mutate({ id: episode.id, resume: resumable, quality })}
+      >
+        <Play className="size-3 fill-current" />
+        {resumable ? "Resume" : "Play"}
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() =>
+          setPlayed.mutate({ id: episode.id, played: !episode.played, context: parentId })
+        }
+      >
+        <Check className="size-3" />
+        {episode.played ? "Unwatch" : "Watched"}
+      </Button>
+    </div>
   )
 }
 

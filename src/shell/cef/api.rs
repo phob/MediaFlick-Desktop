@@ -480,6 +480,7 @@ fn settings_response(settings: &AppSettings) -> ApiResponse {
             "artworkIntensity": settings.appearance.artwork_intensity,
             "backdropIntensity": settings.appearance.backdrop_intensity,
             "reducedMotion": settings.appearance.reduced_motion,
+            "cardPreviews": settings.appearance.card_previews,
             "showMediaInfo": settings.appearance.show_media_info,
             "ratingSources": settings.appearance.rating_sources,
         },
@@ -2389,56 +2390,98 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     ApiResponse::ok(json!({ "item": item }))
 }
 
-/// Opens an item's page on IMDb, TMDb, or TVDB in the default browser.
+#[derive(Clone, Copy)]
+enum ExternalProvider {
+    Imdb,
+    Tmdb,
+    Tvdb,
+    Letterboxd,
+    Trakt,
+}
+
+impl ExternalProvider {
+    fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "imdb" => Self::Imdb,
+            "tmdb" => Self::Tmdb,
+            "tvdb" => Self::Tvdb,
+            "letterboxd" => Self::Letterboxd,
+            "trakt" => Self::Trakt,
+            _ => return None,
+        })
+    }
+
+    const fn id_field(self) -> &'static str {
+        match self {
+            Self::Imdb | Self::Trakt => "imdb",
+            Self::Tmdb | Self::Letterboxd => "tmdb",
+            Self::Tvdb => "tvdb",
+        }
+    }
+
+    fn url(self, id: &str, kind: &str) -> Option<String> {
+        if !valid_external_id(self.id_field(), id) {
+            return None;
+        }
+        Some(match (self, kind) {
+            // IMDb keeps movies, series, and episodes under one `/title/` route.
+            (Self::Imdb, "Movie" | "Series" | "Episode") => {
+                format!("https://www.imdb.com/title/{id}/")
+            }
+            (Self::Tmdb, "Movie") => format!("https://www.themoviedb.org/movie/{id}"),
+            (Self::Tmdb, "Series") => format!("https://www.themoviedb.org/tv/{id}"),
+            (Self::Tvdb, "Movie") => format!("https://thetvdb.com/dereferrer/movie/{id}"),
+            (Self::Tvdb, "Series") => format!("https://thetvdb.com/dereferrer/series/{id}"),
+            (Self::Tvdb, "Episode") => {
+                format!("https://thetvdb.com/dereferrer/episode/{id}")
+            }
+            (Self::Letterboxd, "Movie") => format!("https://letterboxd.com/tmdb/{id}"),
+            (Self::Trakt, "Movie") => format!("https://trakt.tv/movies/{id}"),
+            (Self::Trakt, "Series") => format!("https://trakt.tv/shows/{id}"),
+            _ => return None,
+        })
+    }
+}
+
+/// Opens an item's exact provider page in the default browser.
 ///
 /// The UI names a provider, never a URL: the id and the item kind both come
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
 fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
     let body = request.json();
-    let provider = body["provider"].as_str().unwrap_or_default().to_string();
+    let Some(provider) = body["provider"].as_str().and_then(ExternalProvider::parse) else {
+        return ApiResponse::error(404, "unknown external information provider");
+    };
     let item = match services.library.item(item_id) {
         Ok(Some(item)) => item,
         Ok(None) => return ApiResponse::error(404, "no cached item with that id"),
         Err(error) => return storage_failure(&error),
     };
     let kind = item["kind"].as_str().unwrap_or_default();
-    let id = item["providerIds"][provider.as_str()]
+    let id = item["providerIds"][provider.id_field()]
         .as_str()
         .unwrap_or("");
-    let Some(url) = external_url(&provider, id, kind) else {
+    let Some(url) = provider.url(id, kind) else {
         return ApiResponse::error(404, "this item has no id for that database");
     };
     super::open_external_link(&url);
     ApiResponse::ok(json!({ "opened": true, "url": url }))
 }
 
-/// Builds the provider URL, or `None` when the id is missing, is not the plain
-/// token these databases use in a path segment, or belongs to a kind the
-/// provider has no page for.
-///
-/// The kind matters because the ids are not interchangeable: an episode's TMDb
-/// id is an episode id, so linking it under `/tv/` would land on an unrelated
-/// show. Where a provider has no route for the kind, there is no link.
-fn external_url(provider: &str, id: &str, kind: &str) -> Option<String> {
-    if id.is_empty()
-        || id.len() > 32
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    {
-        return None;
+fn valid_external_id(source: &str, id: &str) -> bool {
+    if id.is_empty() || id.len() > 32 {
+        return false;
     }
-    Some(match (provider, kind) {
-        // IMDb keeps movies, series, and episodes under one `/title/` route.
-        ("imdb", "Movie" | "Series" | "Episode") => format!("https://www.imdb.com/title/{id}/"),
-        ("tmdb", "Movie") => format!("https://www.themoviedb.org/movie/{id}"),
-        ("tmdb", "Series") => format!("https://www.themoviedb.org/tv/{id}"),
-        ("tvdb", "Movie") => format!("https://thetvdb.com/dereferrer/movie/{id}"),
-        ("tvdb", "Series") => format!("https://thetvdb.com/dereferrer/series/{id}"),
-        ("tvdb", "Episode") => format!("https://thetvdb.com/dereferrer/episode/{id}"),
-        _ => return None,
-    })
+    match source {
+        "imdb" => id.strip_prefix("tt").is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        }),
+        "tmdb" | "tvdb" => {
+            id.bytes().all(|byte| byte.is_ascii_digit()) && id.bytes().any(|byte| byte != b'0')
+        }
+        _ => false,
+    }
 }
 
 fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
@@ -2871,9 +2914,9 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiRequest, ApiResponse, HOME_ROW_LIMIT, ITEM_ABOUT_CAST_LIMIT, ITEM_ABOUT_CREW_LIMIT,
-        bounded_about_people, bounded_byte_range, cache_key, canonical_tmdb_movie_id,
-        clear_person_availability, external_url, file_name_of, handle, is_iso_date,
+        ApiRequest, ApiResponse, ExternalProvider, HOME_ROW_LIMIT, ITEM_ABOUT_CAST_LIMIT,
+        ITEM_ABOUT_CREW_LIMIT, bounded_about_people, bounded_byte_range, cache_key,
+        canonical_tmdb_movie_id, clear_person_availability, file_name_of, handle, is_iso_date,
         join_person_items, latest_home_items, media_source_json, merge_next_up, mime_for_image,
         summary_from_dto, youtube_embed_url,
     };
@@ -2890,6 +2933,10 @@ mod tests {
             range: None,
             cancelled: Default::default(),
         })
+    }
+
+    fn external_url(provider: &str, id: &str, kind: &str) -> Option<String> {
+        ExternalProvider::parse(provider)?.url(id, kind)
     }
 
     #[test]
@@ -3206,6 +3253,14 @@ mod tests {
     #[test]
     fn external_links_are_built_per_provider_and_kind() {
         assert_eq!(
+            ExternalProvider::parse("letterboxd").map(ExternalProvider::id_field),
+            Some("tmdb")
+        );
+        assert_eq!(
+            ExternalProvider::parse("trakt").map(ExternalProvider::id_field),
+            Some("imdb")
+        );
+        assert_eq!(
             external_url("imdb", "tt0133093", "Movie").as_deref(),
             Some("https://www.imdb.com/title/tt0133093/")
         );
@@ -3221,6 +3276,18 @@ mod tests {
             external_url("tvdb", "371980", "Episode").as_deref(),
             Some("https://thetvdb.com/dereferrer/episode/371980")
         );
+        assert_eq!(
+            external_url("letterboxd", "603", "Movie").as_deref(),
+            Some("https://letterboxd.com/tmdb/603")
+        );
+        assert_eq!(
+            external_url("trakt", "tt0133093", "Movie").as_deref(),
+            Some("https://trakt.tv/movies/tt0133093")
+        );
+        assert_eq!(
+            external_url("trakt", "tt11280740", "Series").as_deref(),
+            Some("https://trakt.tv/shows/tt11280740")
+        );
     }
 
     /// An episode's TMDb id is an episode id, so there is no `/tv/` page for it
@@ -3230,6 +3297,8 @@ mod tests {
         assert_eq!(external_url("tmdb", "12345", "Episode"), None);
         assert_eq!(external_url("tmdb", "12345", "Season"), None);
         assert_eq!(external_url("tvdb", "12345", "Season"), None);
+        assert_eq!(external_url("letterboxd", "95396", "Series"), None);
+        assert_eq!(external_url("trakt", "tt0133093", "Episode"), None);
         assert_eq!(external_url("imdb", "", "Movie"), None);
         assert_eq!(external_url("trakt", "12345", "Movie"), None);
     }
@@ -3242,6 +3311,9 @@ mod tests {
         for id in ["tt1/../evil", "603?x=1", "603#f", "603 604", &too_long] {
             assert_eq!(external_url("imdb", id, "Movie"), None, "id {id}");
         }
+        assert_eq!(external_url("imdb", "603", "Movie"), None);
+        assert_eq!(external_url("tmdb", "tt0133093", "Movie"), None);
+        assert_eq!(external_url("tmdb", "000", "Movie"), None);
     }
 
     #[test]

@@ -1,13 +1,8 @@
-import { Check, ExternalLink, Heart, Play, RotateCcw } from "lucide-react"
+import { Check, Heart, Play, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
+import { ExternalLinksMenu } from "@/components/detail/ExternalLinksMenu"
 import { RequestSeasonsButton } from "@/components/seerr/RequestSeasonsButton"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -74,32 +69,14 @@ function QualityPicker() {
   )
 }
 
-/** Opens the item on IMDb, TMDb, or TVDB in the system browser. */
+/** Opens an exact provider-id match in the system browser. */
 function ExternalLinks({ item }: { item: ItemDetail }) {
   const open = useOpenExternal()
   const links = externalLinksFor(item)
-  if (!links.length) return null
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="secondary" size="icon-lg" aria-label="Open on an external database">
-          <ExternalLink className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {links.map((link) => (
-          <DropdownMenuItem
-            key={link.id}
-            onSelect={() => open.mutate({ id: item.id, provider: link.id })}
-          >
-            <ExternalLink className="size-4" />
-            View on {link.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
+  return <ExternalLinksMenu
+    links={links}
+    onSelect={(provider) => open.mutate({ id: item.id, provider })}
+  />
 }
 
 /**
