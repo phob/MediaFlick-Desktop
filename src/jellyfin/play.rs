@@ -240,7 +240,7 @@ fn build(
     let mut request = PlaybackRequest::new(media_url);
     request.headers = client.auth_headers();
     request.item_id = Some(options.item_id.clone());
-    request.media_source_id = source.id.clone();
+    request.media_source_id.clone_from(&source.id);
     request.play_session_id = play_session_id;
     request.device_id = Some(client.device_id().to_string());
     request.start_time_ticks = (start_ticks > 0).then_some(start_ticks);

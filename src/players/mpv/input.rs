@@ -38,9 +38,15 @@ impl MpvInputBindings {
     }
 
     fn from_json(value: &Value) -> Self {
-        let mark_watched_next = find_binding(value, "mark_watched_next")
-            .or_else(|| find_binding(value, "kb_watched"))
-            .unwrap_or_else(|| Some(DEFAULT_MARK_WATCHED_NEXT_KEY.to_string()));
+        let binding = match find_binding(value, "mark_watched_next") {
+            BindingLookup::Missing => find_binding(value, "kb_watched"),
+            binding => binding,
+        };
+        let mark_watched_next = match binding {
+            BindingLookup::Missing => Some(DEFAULT_MARK_WATCHED_NEXT_KEY.to_string()),
+            BindingLookup::Disabled => None,
+            BindingLookup::Key(key) => Some(key),
+        };
         Self { mark_watched_next }
     }
 
@@ -78,12 +84,21 @@ pub fn input_file_path() -> PathBuf {
     config_dir().join("input.json")
 }
 
-fn find_binding(value: &Value, key: &str) -> Option<Option<String>> {
-    value
+enum BindingLookup {
+    Missing,
+    Disabled,
+    Key(String),
+}
+
+fn find_binding(value: &Value, key: &str) -> BindingLookup {
+    let value = value
         .get("bindings")
         .and_then(|bindings| bindings.get(key))
-        .or_else(|| value.get(key))
-        .map(binding_value)
+        .or_else(|| value.get(key));
+    match value {
+        None => BindingLookup::Missing,
+        Some(value) => binding_value(value).map_or(BindingLookup::Disabled, BindingLookup::Key),
+    }
 }
 
 fn binding_value(value: &Value) -> Option<String> {

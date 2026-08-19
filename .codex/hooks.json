@@ -1,0 +1,31 @@
+{
+  "description": "Run MediaFlick's Rust quality gate after Codex changes Rust inputs.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/rust_quality_gate.py\"",
+            "commandWindows": "python \"$((git rev-parse --show-toplevel).Trim())/.codex/hooks/rust_quality_gate.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/rust_quality_gate.py\"",
+            "commandWindows": "python \"$((git rev-parse --show-toplevel).Trim())/.codex/hooks/rust_quality_gate.py\"",
+            "statusMessage": "Running Rust quality checks",
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  }
+}

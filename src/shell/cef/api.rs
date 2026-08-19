@@ -91,10 +91,12 @@ pub struct ApiResponse {
 
 impl ApiResponse {
     fn json(status: u16, value: Value) -> Self {
+        let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
+        drop(value);
         Self {
             status,
             content_type: "application/json; charset=utf-8".to_string(),
-            body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec()),
+            body,
             cache_control: NO_STORE,
             headers: Vec::new(),
         }
@@ -200,7 +202,20 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
     let segments = path.split('/').collect::<Vec<_>>();
-    match segments.as_slice() {
+    route_core(services, &segments, request)
+        .or_else(|| route_profiles_and_auth(services, &segments, request))
+        .or_else(|| route_seerr(services, &segments, request))
+        .or_else(|| route_catalog(services, &segments, request))
+        .or_else(|| route_playback(services, &segments, request))
+        .unwrap_or_else(|| ApiResponse::error(404, format!("unknown endpoint /api/{path}")))
+}
+
+fn route_core(
+    services: &Arc<Services>,
+    segments: &[&str],
+    request: &ApiRequest,
+) -> Option<ApiResponse> {
+    let response = match segments {
         ["status"] => status(services),
         ["companion", "info"] if request.is("GET") => companion_info(services, false),
         ["companion", "probe"] if request.is("POST") => companion_info(services, true),
@@ -240,6 +255,17 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
         ["shell", "mpv", "install"] if request.is("POST") => shell_install_mpv(services, request),
         ["shell", "mpv", "help"] if request.is("POST") => shell_mpv_help(),
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn route_profiles_and_auth(
+    services: &Arc<Services>,
+    segments: &[&str],
+    request: &ApiRequest,
+) -> Option<ApiResponse> {
+    let response = match segments {
         ["integrations", "letterboxd"] if request.is("GET") => letterboxd_profiles(services),
         ["integrations", "letterboxd"] if request.is("POST") => {
             letterboxd_add_profile(services, request)
@@ -268,6 +294,17 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             quick_connect_poll(services, request)
         }
         ["auth", "logout"] if request.is("POST") => auth_logout(services, request),
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn route_seerr(
+    services: &Arc<Services>,
+    segments: &[&str],
+    request: &ApiRequest,
+) -> Option<ApiResponse> {
+    let response = match segments {
         ["seerr", "status"] if request.is("GET") => match services.requests_provider().status() {
             Ok(value) => ApiResponse::ok(value),
             Err(error) => ApiResponse::from_provider_error(&error),
@@ -305,6 +342,17 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["seerr", "image", size, file] if request.is("GET") => {
             seerr_image(&percent_decode(size), &percent_decode(file))
         }
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn route_catalog(
+    services: &Arc<Services>,
+    segments: &[&str],
+    request: &ApiRequest,
+) -> Option<ApiResponse> {
+    let response = match segments {
         ["home", "resume"] if request.is("GET") => home_resume(services),
         ["home"] if request.is("GET") => home(services),
         ["billboard"] if request.is("GET") => billboard(services),
@@ -347,6 +395,17 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         ["trailer", id, "stream"] if request.is("GET") => {
             trailer_stream(services, &percent_decode(id), request)
         }
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn route_playback(
+    services: &Arc<Services>,
+    segments: &[&str],
+    request: &ApiRequest,
+) -> Option<ApiResponse> {
+    let response = match segments {
         ["play"] if request.is("POST") => play_item(services, request),
         ["play", "next"] if request.is("POST") => play_next(services, request),
         ["player", "state"] if request.is("GET") => player_state(services),
@@ -355,8 +414,9 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
             services.sync.request();
             ApiResponse::ok(json!({ "requested": true }))
         }
-        _ => ApiResponse::error(404, format!("unknown endpoint /api/{path}")),
-    }
+        _ => return None,
+    };
+    Some(response)
 }
 
 // ------------------------------------------------------------------- session
@@ -385,10 +445,10 @@ fn status(services: &Arc<Services>) -> ApiResponse {
 }
 
 fn settings_snapshot(services: &Arc<Services>) -> ApiResponse {
-    settings_response(services.preferences.snapshot())
+    settings_response(&services.preferences.snapshot())
 }
 
-fn settings_response(settings: AppSettings) -> ApiResponse {
+fn settings_response(settings: &AppSettings) -> ApiResponse {
     let bindings = MpvInputBindings::load();
     ApiResponse::ok(json!({
         "client": {
@@ -443,7 +503,7 @@ fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiR
         Err(error) => return ApiResponse::error(400, format!("invalid player settings: {error}")),
     };
     match services.preferences.patch_player(patch) {
-        Ok(change) => settings_response(change.settings),
+        Ok(change) => settings_response(&change.settings),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -456,7 +516,7 @@ fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Ap
         }
     };
     match services.preferences.patch_playback(patch) {
-        Ok(change) => settings_response(change.settings),
+        Ok(change) => settings_response(&change.settings),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -469,7 +529,7 @@ fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) ->
         }
     };
     match services.preferences.patch_application(patch) {
-        Ok(change) => settings_response(change.settings),
+        Ok(change) => settings_response(&change.settings),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -482,7 +542,7 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
         }
     };
     match services.preferences.patch_appearance(patch) {
-        Ok(change) => settings_response(change.settings),
+        Ok(change) => settings_response(&change.settings),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -2455,7 +2515,7 @@ fn image(
     };
     let mut query = Vec::new();
     if !tag.is_empty() {
-        query.push(("tag", tag.clone()));
+        query.push(("tag", tag));
     }
     if max_width > 0 {
         query.push(("maxWidth", max_width.to_string()));

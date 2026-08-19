@@ -37,7 +37,7 @@ pub struct AppConfig {
     pub hidden: bool,
 }
 
-pub fn run(config: AppConfig) -> i32 {
+pub fn run(config: &AppConfig) -> i32 {
     // CEF requires this API hash initialization before most other API calls.
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
@@ -142,7 +142,7 @@ impl RuntimePaths {
             .map(|path| path.join("Resources"))
             .or_else(|| app_dir.clone());
         #[cfg(not(target_os = "macos"))]
-        let resources_dir_path = app_dir.clone();
+        let resources_dir_path = app_dir;
 
         let locales_dir_path = resources_dir_path.as_ref().map(|path| path.join("locales"));
 
@@ -451,7 +451,7 @@ wrap_window_delegate! {
         }
 
         fn on_window_closing(&self, window: Option<&mut Window>) {
-            update_webui_window_from_window(self.state.as_ref(), window);
+            update_webui_window_from_window(self.state.as_ref(), window.as_deref());
             save_webui_window_settings(self.state.as_ref());
         }
 
@@ -464,7 +464,7 @@ wrap_window_delegate! {
             window: Option<&mut Window>,
             new_bounds: Option<&Rect>,
         ) {
-            update_webui_window_settings(self.state.as_ref(), window, new_bounds);
+            update_webui_window_settings(self.state.as_ref(), window.as_deref(), new_bounds);
         }
 
         fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
@@ -480,9 +480,8 @@ wrap_window_delegate! {
         }
 
         fn can_close(&self, window: Option<&mut Window>) -> i32 {
-            let mut window = window;
             if should_minimize_instead_of_close(self.state.as_ref()) {
-                update_webui_window_from_window(self.state.as_ref(), window.as_deref_mut());
+                update_webui_window_from_window(self.state.as_ref(), window.as_deref());
                 save_webui_window_settings(self.state.as_ref());
                 if let Some(window) = window {
                     window.minimize();
@@ -513,14 +512,14 @@ wrap_window_delegate! {
     }
 }
 
-fn update_webui_window_from_window(state: Option<&BrowserState>, window: Option<&mut Window>) {
-    let bounds = window.as_ref().map(|window| window.bounds());
+fn update_webui_window_from_window(state: Option<&BrowserState>, window: Option<&Window>) {
+    let bounds = window.map(Window::bounds);
     update_webui_window_settings(state, window, bounds.as_ref());
 }
 
 fn update_webui_window_settings(
     state: Option<&BrowserState>,
-    window: Option<&mut Window>,
+    window: Option<&Window>,
     bounds: Option<&Rect>,
 ) {
     let Some(state) = state else {
@@ -529,9 +528,7 @@ fn update_webui_window_settings(
     let Some(bounds) = bounds else {
         return;
     };
-    let maximized = window
-        .as_ref()
-        .is_some_and(|window| window.is_maximized() != 0);
+    let maximized = window.is_some_and(|window| window.is_maximized() != 0);
     match state.lock() {
         Ok(mut state) => {
             state
@@ -610,9 +607,9 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         mpv_setup_started: false,
         force_close_requested: false,
     }));
-    start_playback_event_bridge(state.clone(), playback_event_rx);
-    start_preferences_event_bridge(state.clone());
-    start_shell_request_bridge(state.clone());
+    start_playback_event_bridge(&state, playback_event_rx);
+    start_preferences_event_bridge(&state);
+    start_shell_request_bridge(&state);
     start_update_check_bridge(state.clone());
     state
 }
@@ -626,8 +623,8 @@ fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings
     playback.warm(path.to_string(), settings.default_fullscreen);
 }
 
-fn start_playback_event_bridge(state: BrowserState, rx: Receiver<PlaybackEvent>) {
-    let state = Arc::downgrade(&state);
+fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
+    let state = Arc::downgrade(state);
     thread::spawn(move || {
         while let Ok(event) = rx.recv() {
             let Some(state) = state.upgrade() else {
@@ -644,12 +641,12 @@ fn start_playback_event_bridge(state: BrowserState, rx: Receiver<PlaybackEvent>)
 /// Settings are persisted from an app-scheme background thread.  CEF's player
 /// and frame APIs are UI-thread-only, so relay its apply plan before touching
 /// either of them.
-fn start_preferences_event_bridge(state: BrowserState) {
+fn start_preferences_event_bridge(state: &BrowserState) {
     let Some(services) = services::services() else {
         return;
     };
     let receiver = services.preferences.subscribe();
-    let state = Arc::downgrade(&state);
+    let state = Arc::downgrade(state);
     thread::spawn(move || {
         while let Ok(change) = receiver.recv() {
             let Some(state) = state.upgrade() else {
@@ -663,12 +660,12 @@ fn start_preferences_event_bridge(state: BrowserState) {
     });
 }
 
-fn start_shell_request_bridge(state: BrowserState) {
+fn start_shell_request_bridge(state: &BrowserState) {
     let Some(services) = services::services() else {
         return;
     };
     let receiver = services.shell.subscribe();
-    let state = Arc::downgrade(&state);
+    let state = Arc::downgrade(state);
     thread::spawn(move || {
         while let Ok(request) = receiver.recv() {
             let Some(state) = state.upgrade() else {
@@ -755,7 +752,7 @@ wrap_task! {
 
     impl Task {
         fn execute(&self) {
-            dispatch_playback_event(&self.state, self.event.clone());
+            dispatch_playback_event(&self.state, &self.event);
         }
     }
 }
@@ -808,7 +805,7 @@ wrap_task! {
 
     impl Task {
         fn execute(&self) {
-            apply_preference_change(&self.state, self.change.clone());
+            apply_preference_change(&self.state, &self.change);
         }
     }
 }
@@ -878,7 +875,7 @@ wrap_task! {
     }
 }
 
-fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
+fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent) {
     if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
         dispatch_error_toast(state, "Playback error", message);
@@ -902,7 +899,7 @@ fn dispatch_playback_event(state: &BrowserState, event: PlaybackEvent) {
         return;
     }
 
-    let script = playback_event_script(&event);
+    let script = playback_event_script(event);
     let browser_count = browsers.len();
     let mut frame_count = 0usize;
     for browser in browsers {
@@ -1083,11 +1080,11 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
             dispatch_update_progress(
                 state,
                 "downloading",
-                json!({ "downloaded": downloaded, "total": total }),
+                &json!({ "downloaded": downloaded, "total": total }),
             );
         }
         UpdateEvent::DownloadReady(path) => {
-            dispatch_update_progress(state, "installing", json!({ "downloaded": 1, "total": 1 }));
+            dispatch_update_progress(state, "installing", &json!({ "downloaded": 1, "total": 1 }));
             match updater::start_installer(&path) {
                 Ok(()) => initiate_app_exit(None, state),
                 Err(error) => {
@@ -1097,7 +1094,7 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
                     dispatch_update_progress(
                         state,
                         "error",
-                        json!({ "message": error.to_string() }),
+                        &json!({ "message": error.to_string() }),
                     );
                 }
             }
@@ -1107,7 +1104,7 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
             if let Ok(mut state) = state.lock() {
                 state.update_download_started = false;
             }
-            dispatch_update_progress(state, "error", json!({ "message": message }));
+            dispatch_update_progress(state, "error", &json!({ "message": message }));
         }
     }
 }
@@ -1125,7 +1122,7 @@ fn dispatch_update_available(state: &BrowserState, release: &UpdateRelease) {
     }
 }
 
-fn dispatch_update_progress(state: &BrowserState, status: &str, payload: serde_json::Value) {
+fn dispatch_update_progress(state: &BrowserState, status: &str, payload: &serde_json::Value) {
     let browsers = state
         .lock()
         .map(|state| state.browsers.clone())
@@ -1148,7 +1145,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             dispatch_mpv_setup(
                 state,
                 "downloading",
-                json!({ "downloaded": downloaded, "total": total }),
+                &json!({ "downloaded": downloaded, "total": total }),
             );
             if let Some(request_id) = request_id {
                 dispatch_shell_event(
@@ -1161,7 +1158,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             }
         }
         MpvSetupEvent::Extracting { request_id } => {
-            dispatch_mpv_setup(state, "extracting", json!({}));
+            dispatch_mpv_setup(state, "extracting", &json!({}));
             if let Some(request_id) = request_id {
                 dispatch_shell_event(
                     state,
@@ -1188,7 +1185,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             };
             match save_result {
                 Ok(()) => {
-                    dispatch_mpv_setup(state, "done", json!({ "path": mpv_path }));
+                    dispatch_mpv_setup(state, "done", &json!({ "path": mpv_path }));
                     if let Some(request_id) = request_id {
                         dispatch_shell_event(
                             state,
@@ -1201,7 +1198,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
                 }
                 Err(message) => {
                     tracing::warn!(target: "mpv.setup", "failed to save installed mpv path: {message}");
-                    dispatch_mpv_setup(state, "error", json!({ "message": message }));
+                    dispatch_mpv_setup(state, "error", &json!({ "message": message }));
                     if let Some(request_id) = request_id {
                         dispatch_shell_event(
                             state,
@@ -1222,7 +1219,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             if let Ok(mut state) = state.lock() {
                 state.mpv_setup_started = false;
             }
-            dispatch_mpv_setup(state, "error", json!({ "message": message }));
+            dispatch_mpv_setup(state, "error", &json!({ "message": message }));
             if let Some(request_id) = request_id {
                 dispatch_shell_event(
                     state,
@@ -1236,7 +1233,7 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
     }
 }
 
-fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: serde_json::Value) {
+fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: &serde_json::Value) {
     let browsers = state
         .lock()
         .map(|state| state.browsers.clone())
@@ -1249,7 +1246,7 @@ fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: serde_json::V
     }
 }
 
-fn apply_preference_change(state: &BrowserState, change: SettingsChange) {
+fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
     let (playback, event_tx, browsers) = match state.lock() {
         Ok(mut state) => {
             apply_settings_snapshot_preserving_live_window(
@@ -1333,7 +1330,10 @@ fn dispatch_shell_event(state: &BrowserState, kind: &str, payload: serde_json::V
         .lock()
         .map(|state| state.browsers.clone())
         .unwrap_or_default();
-    let event = json!({ "type": kind, "payload": payload });
+    let mut event = serde_json::Map::new();
+    event.insert("type".to_string(), json!(kind));
+    event.insert("payload".to_string(), payload);
+    let event = serde_json::Value::Object(event);
     let script = format!(
         "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
         js_json(&event)
@@ -1483,7 +1483,9 @@ where
     T: TryInto<i32>,
     T::Error: std::fmt::Debug,
 {
-    value.try_into().expect("CEF enum value fits in i32")
+    value
+        .try_into()
+        .unwrap_or_else(|error| panic!("CEF enum value does not fit in i32: {error:?}"))
 }
 
 fn remove_trailing_separator(model: &MenuModel) {
@@ -1897,7 +1899,7 @@ wrap_resource_request_handler! {
                 frame.as_deref_mut(),
             ) {
                 post_bridge_action(
-                    request_url.clone(),
+                    request_url,
                     browser.as_deref().cloned(),
                     frame.as_deref().cloned(),
                     self.state.clone(),
@@ -2165,7 +2167,7 @@ fn start_update_download(_query: &str, state: &BrowserState) {
     dispatch_update_progress(
         state,
         "downloading",
-        json!({
+        &json!({
             "downloaded": 0,
             "total": release.asset.as_ref().and_then(|asset| asset.size),
         }),
@@ -2194,7 +2196,7 @@ fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
         dispatch_mpv_setup(
             state,
             "error",
-            json!({ "message": "Automatic mpv download is only available on Windows." }),
+            &json!({ "message": "Automatic mpv download is only available on Windows." }),
         );
         if let Some(request_id) = request_id {
             dispatch_shell_event(
@@ -2244,7 +2246,7 @@ fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
     dispatch_mpv_setup(
         state,
         "downloading",
-        json!({ "downloaded": 0, "total": null }),
+        &json!({ "downloaded": 0, "total": null }),
     );
 
     let state_for_thread = state.clone();
@@ -2304,7 +2306,7 @@ wrap_run_file_dialog_callback! {
                 file_picker_completion_payload(
                     &self.request_id,
                     self.target,
-                    path,
+                    path.as_deref(),
                     None,
                 ),
             );
@@ -2322,7 +2324,7 @@ fn file_picker_target_id(target: ShellFilePickerTarget) -> &'static str {
 fn file_picker_completion_payload(
     request_id: &str,
     target: ShellFilePickerTarget,
-    path: Option<String>,
+    path: Option<&str>,
     error: Option<&str>,
 ) -> serde_json::Value {
     json!({
@@ -2408,7 +2410,10 @@ fn open_settings_file_dialog(
 }
 
 fn dispatch_shell_event_to_frame(frame: &Frame, kind: &str, payload: serde_json::Value) {
-    let event = json!({ "type": kind, "payload": payload });
+    let mut event = serde_json::Map::new();
+    event.insert("type".to_string(), json!(kind));
+    event.insert("payload".to_string(), payload);
+    let event = serde_json::Value::Object(event);
     let script = format!(
         "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
         js_json(&event)

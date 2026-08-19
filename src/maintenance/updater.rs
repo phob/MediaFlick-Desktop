@@ -194,7 +194,7 @@ pub fn update_available_script(release: &UpdateRelease) -> String {
         .replace("{{bridge_token}}", crate::jellyfin::bridge::bridge_token())
 }
 
-pub fn update_progress_script(state: &str, payload: serde_json::Value) -> String {
+pub fn update_progress_script(state: &str, payload: &serde_json::Value) -> String {
     let payload = serde_json::json!({
         "state": state,
         "payload": payload,

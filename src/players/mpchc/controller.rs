@@ -110,13 +110,17 @@ fn identity_matches_context(identity: &Identity, context: &PlaybackContext) -> b
 
 fn update_identity_from_context(identity: &mut Identity, context: &PlaybackContext) {
     if identity.item_id.is_none() {
-        identity.item_id = context.item_id.clone();
+        identity.item_id.clone_from(&context.item_id);
     }
     if identity.media_source_id.is_none() {
-        identity.media_source_id = context.media_source_id.clone();
+        identity
+            .media_source_id
+            .clone_from(&context.media_source_id);
     }
     if identity.play_session_id.is_none() {
-        identity.play_session_id = context.play_session_id.clone();
+        identity
+            .play_session_id
+            .clone_from(&context.play_session_id);
     }
 }
 
@@ -280,9 +284,9 @@ impl State {
                     path,
                     fullscreen,
                     launch,
-                }) => self.load(path, fullscreen, *launch),
-                Ok(Msg::Control(command)) => self.control(command),
-                Ok(Msg::PlaybackContext(context)) => self.update_context(*context),
+                }) => self.load(&path, fullscreen, *launch),
+                Ok(Msg::Control(command)) => self.control(&command),
+                Ok(Msg::PlaybackContext(context)) => self.update_context(context.as_ref()),
                 Ok(Msg::SegmentSkipConfig(config)) => self.apply_segment_skip_config(config),
                 Ok(Msg::MediaSegments {
                     playback_id,
@@ -378,14 +382,14 @@ impl State {
         }
     }
 
-    fn load(&mut self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
+    fn load(&mut self, path: &str, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         let key = launch.dedupe_key();
         if self.is_duplicate(&key) {
             tracing::debug!(target: "mpchc", dedupe_key = %key, "ignored duplicate playback load");
             return;
         }
         self.fullscreen_pref = fullscreen;
-        if !self.ensure_process(&path, fullscreen) {
+        if !self.ensure_process(path, fullscreen) {
             tracing::warn!(target: "mpchc", "cannot load playback because MPC-HC is unavailable");
             self.report_playback_failure(
                 "Could not start MPC-HC. Check that the MPC-HC path in Settings is correct.",
@@ -476,7 +480,7 @@ impl State {
         }
         self.send_command_empty(protocol::CMD_GETNOWPLAYING);
         if let Some(selection) = selection {
-            self.apply_track_selection(selection);
+            self.apply_track_selection(&selection);
         }
         self.apply_default_fullscreen();
         if let Some(target) = self.resume_seconds.take().filter(|seconds| *seconds > 0.0) {
@@ -486,7 +490,7 @@ impl State {
         self.publish_snapshot();
     }
 
-    fn apply_track_selection(&mut self, selection: TrackSelection) {
+    fn apply_track_selection(&mut self, selection: &TrackSelection) {
         if let Some(index) = selection.audio_index {
             self.send_command(protocol::CMD_SETAUDIOTRACK, &index.to_string());
         }
@@ -507,7 +511,7 @@ impl State {
         self.fullscreen_state = want;
     }
 
-    fn control(&mut self, command: PlayerCommand) {
+    fn control(&mut self, command: &PlayerCommand) {
         match command {
             PlayerCommand::SetPause(true) => {
                 self.send_command_empty(protocol::CMD_PAUSE);
@@ -516,29 +520,29 @@ impl State {
                 self.send_command_empty(protocol::CMD_PLAY);
             }
             PlayerCommand::SeekMilliseconds(position_ms) => {
-                if !self.handle_prompt_skip(position_ms) {
-                    self.send_seek(position_ms / 1000.0);
+                if !self.handle_prompt_skip(*position_ms) {
+                    self.send_seek(*position_ms / 1000.0);
                 }
             }
             PlayerCommand::SetPlaybackRate(rate) => {
                 self.send_command(protocol::CMD_SETSPEED, &format!("{rate}"));
             }
             PlayerCommand::SetAudioTrack(index) => {
-                if let Some(track) = mpchc_audio_index(index) {
+                if let Some(track) = mpchc_audio_index(*index) {
                     self.send_command(protocol::CMD_SETAUDIOTRACK, &track.to_string());
                 }
             }
             PlayerCommand::SetSubtitleTrack(index) => {
                 self.send_command(
                     protocol::CMD_SETSUBTITLETRACK,
-                    &mpchc_subtitle_index(index).to_string(),
+                    &mpchc_subtitle_index(*index).to_string(),
                 );
             }
             PlayerCommand::AddSubtitle(_) => {
                 tracing::debug!(target: "mpchc", "external subtitles are delivered burned-in, not via runtime sub-add");
             }
-            PlayerCommand::SetVolume(volume) => self.set_volume(volume),
-            PlayerCommand::SetMute(mute) => self.set_mute(mute),
+            PlayerCommand::SetVolume(volume) => self.set_volume(*volume),
+            PlayerCommand::SetMute(mute) => self.set_mute(*mute),
             PlayerCommand::Stop => {
                 self.finish_active("stop", false);
                 self.send_command_empty(protocol::CMD_STOP);
@@ -593,28 +597,28 @@ impl State {
         self.believed_output = (self.believed_output + applied).clamp(0.0, 100.0);
     }
 
-    fn update_context(&mut self, context: PlaybackContext) {
+    fn update_context(&mut self, context: &PlaybackContext) {
         if let Some(active) = &mut self.active
-            && identity_matches_context(&active.identity, &context)
+            && identity_matches_context(&active.identity, context)
         {
-            update_identity_from_context(&mut active.identity, &context);
+            update_identity_from_context(&mut active.identity, context);
             if let Some(reporter) = &mut active.reporter {
-                reporter.merge_context(&context);
+                reporter.merge_context(context);
             }
         }
         if let Some(pending) = &mut self.pending
-            && identity_matches_context(&pending.identity, &context)
+            && identity_matches_context(&pending.identity, context)
         {
             context.merge_into_request(&mut pending.launch);
-            update_identity_from_context(&mut pending.identity, &context);
+            update_identity_from_context(&mut pending.identity, context);
             if let Some(reporter) = &mut pending.reporter {
-                reporter.merge_context(&context);
+                reporter.merge_context(context);
             }
         }
         if let Some(identity) = &mut self.identity
-            && identity_matches_context(identity, &context)
+            && identity_matches_context(identity, context)
         {
-            update_identity_from_context(identity, &context);
+            update_identity_from_context(identity, context);
         }
         self.publish_snapshot();
     }
@@ -679,25 +683,25 @@ impl State {
             }
         }
         for message in messages {
-            self.handle_inbound(message);
+            self.handle_inbound(&message);
         }
     }
 
-    fn handle_inbound(&mut self, message: Inbound) {
+    fn handle_inbound(&mut self, message: &Inbound) {
         match message {
-            Inbound::Connect { hwnd } => self.on_connected(hwnd),
-            Inbound::State(state) if state == protocol::MLS_LOADED => self.on_loaded(),
-            Inbound::State(state) if state == protocol::MLS_FAILING => {
+            Inbound::Connect { hwnd } => self.on_connected(*hwnd),
+            Inbound::State(state) if *state == protocol::MLS_LOADED => self.on_loaded(),
+            Inbound::State(state) if *state == protocol::MLS_FAILING => {
                 self.finish_active("error", true)
             }
             Inbound::State(_) => {}
-            Inbound::PlayMode(mode) => self.handle_play_mode(mode),
+            Inbound::PlayMode(mode) => self.handle_play_mode(*mode),
             Inbound::NowPlaying { duration_seconds } => {
-                self.last_state.duration_ticks = duration_seconds.and_then(seconds_to_ticks);
+                self.last_state.duration_ticks = (*duration_seconds).and_then(seconds_to_ticks);
                 self.publish_snapshot();
             }
-            Inbound::CurrentPosition(seconds) => self.handle_position(seconds, false),
-            Inbound::NotifySeek(seconds) => self.handle_position(seconds, true),
+            Inbound::CurrentPosition(seconds) => self.handle_position(*seconds, false),
+            Inbound::NotifySeek(seconds) => self.handle_position(*seconds, true),
             Inbound::EndOfStream => self.finish_active("eof", false),
             Inbound::Disconnect => {
                 self.connected = false;
@@ -1282,7 +1286,7 @@ mod tests {
     #[test]
     fn burn_in_drops_static_and_requests_encoded_subtitle() {
         let url = apply_subtitle_burn_in(
-            external_subtitle_launch().media_url.clone(),
+            external_subtitle_launch().media_url,
             &external_subtitle_launch(),
         );
         assert!(!query_has_key(&url, "static"));

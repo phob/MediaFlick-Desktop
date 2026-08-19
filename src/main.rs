@@ -30,7 +30,7 @@ fn main() {
     // Do not parse the user CLI in CEF subprocesses. Chromium starts this same
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
-        std::process::exit(crate::shell::cef::run(AppConfig {
+        std::process::exit(crate::shell::cef::run(&AppConfig {
             settings: FileSettingsStore.load(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
@@ -47,7 +47,7 @@ fn main() {
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(logger::default_log_file_path);
     let effective_log_level = cli.log_level.as_deref().unwrap_or(&settings.log_level);
-    let _log_guard = logger::init(log_file, effective_log_level);
+    let _log_guard = logger::init(&log_file, effective_log_level);
 
     // Headless checks open no window and share the database through WAL, so
     // they run before the single-instance guard and work alongside a running app.
@@ -102,7 +102,7 @@ fn main() {
         settings.player_path().unwrap_or("not configured")
     );
 
-    std::process::exit(crate::shell::cef::run(AppConfig {
+    std::process::exit(crate::shell::cef::run(&AppConfig {
         settings,
         title: "MediaFlick Desktop".to_string(),
         remote_debugging_port: cli.remote_debugging_port,

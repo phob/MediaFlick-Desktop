@@ -123,8 +123,10 @@ fn playstate_reporter() -> &'static mpsc::Sender<PlaystateMessage> {
         let (tx, rx) = mpsc::channel();
         thread::Builder::new()
             .name("jellyfin-playstate".to_string())
-            .spawn(move || run_playstate_reporter(rx))
-            .expect("failed to start Jellyfin playstate reporter");
+            .spawn(move || run_playstate_reporter(&rx))
+            .unwrap_or_else(|error| {
+                panic!("failed to start Jellyfin playstate reporter: {error}");
+            });
         tx
     })
 }
@@ -137,7 +139,7 @@ pub fn flush_playstate_reports(timeout: Duration) -> bool {
         && ack_rx.recv_timeout(timeout).is_ok()
 }
 
-fn run_playstate_reporter(rx: mpsc::Receiver<PlaystateMessage>) {
+fn run_playstate_reporter(rx: &mpsc::Receiver<PlaystateMessage>) {
     let config = ureq::Agent::config_builder()
         .timeout_global(Some(HTTP_TIMEOUT))
         .user_agent(format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION")))
@@ -156,7 +158,7 @@ fn run_playstate_reporter(rx: mpsc::Receiver<PlaystateMessage>) {
         }
 
         while let Some(report) = pending.pop_front() {
-            send_playstate_report(&agent, report);
+            send_playstate_report(&agent, &report);
         }
         if let Some(ack) = flush {
             let _ = ack.send(());
@@ -196,7 +198,7 @@ impl PlaystateRequest {
     }
 }
 
-fn send_playstate_report(agent: &ureq::Agent, report: PlaystateRequest) {
+fn send_playstate_report(agent: &ureq::Agent, report: &PlaystateRequest) {
     tracing::trace!(
         target: "jellyfin.playstate",
         endpoint = report.endpoint,
@@ -431,20 +433,16 @@ fn playback_auth_headers(launch: &PlaybackRequest) -> Vec<HttpHeader> {
         let Some(value) = non_empty(Some(header.value.as_str())) else {
             continue;
         };
-        push_unique_header(&mut headers, &mut seen, name, value.to_string());
+        push_unique_header(&mut headers, &mut seen, name, value);
     }
 
     if let Some(token) = non_empty(token.as_deref()) {
         if !has_auth_header(&headers) {
-            push_unique_header(
-                &mut headers,
-                &mut seen,
-                "Authorization",
-                minimal_authorization_header(token),
-            );
+            let authorization = minimal_authorization_header(token);
+            push_unique_header(&mut headers, &mut seen, "Authorization", &authorization);
         }
         if !has_token_header(&headers) {
-            push_unique_header(&mut headers, &mut seen, "X-Emby-Token", token.to_string());
+            push_unique_header(&mut headers, &mut seen, "X-Emby-Token", token);
         }
     }
 
@@ -535,10 +533,10 @@ fn push_unique_header(
     headers: &mut Vec<HttpHeader>,
     seen: &mut HashSet<String>,
     name: &str,
-    value: String,
+    value: &str,
 ) {
     let name = sanitize_header_name(name);
-    let value = sanitize_header_value(&value);
+    let value = sanitize_header_value(value);
     if name.is_empty() || value.is_empty() {
         return;
     }

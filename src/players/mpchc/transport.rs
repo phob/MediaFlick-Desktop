@@ -210,7 +210,7 @@ fn send_copydata(
     sent != 0
 }
 
-fn sender_loop(rx: Receiver<SenderMsg>, our_hwnd: isize, target: Arc<AtomicIsize>) {
+fn sender_loop(rx: &Receiver<SenderMsg>, our_hwnd: isize, target: &Arc<AtomicIsize>) {
     while let Ok(first) = rx.recv() {
         let mut batch = Vec::new();
         let mut stop = false;
@@ -300,7 +300,7 @@ impl MpcHcTransport {
         let sender_target = target_hwnd.clone();
         thread::Builder::new()
             .name("mpchc-sender".to_string())
-            .spawn(move || sender_loop(sender_rx, our_hwnd, sender_target))?;
+            .spawn(move || sender_loop(&sender_rx, our_hwnd, &sender_target))?;
 
         Ok((
             Self {

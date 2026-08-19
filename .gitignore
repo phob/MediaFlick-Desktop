@@ -31,11 +31,15 @@
 *.local
 
 # Editor/IDE files
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo
 *~
+
+# Background Rust diagnostics
+.bacon-locations
 
 # OS files
 .DS_Store

@@ -33,9 +33,9 @@ fn main() {
         resource.set("InternalName", "mediaflick-desktop");
         resource.set("OriginalFilename", "mediaflick-desktop.exe");
         resource.set("ProductName", "MediaFlick Desktop");
-        resource
-            .compile()
-            .expect("failed to compile Windows resources");
+        resource.compile().unwrap_or_else(|error| {
+            panic!("failed to compile Windows resources: {error}");
+        });
     }
 }
 
@@ -90,9 +90,9 @@ fn build_ui(repo_root: &Path) {
 /// leaves `include_bytes!` pointing at nothing. `OUT_DIR` is cargo-managed and
 /// survives exactly as long as the fingerprint that produced it.
 fn stage_bundle(dist: &Path) {
-    let out_dir = std::path::PathBuf::from(
-        std::env::var_os("OUT_DIR").expect("cargo always sets OUT_DIR for build scripts"),
-    );
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_else(|| {
+        panic!("Cargo did not set OUT_DIR for the MediaFlick build script");
+    }));
 
     for asset in ["app.js", "app.css", "index.html"] {
         let source = dist.join(asset);
@@ -128,12 +128,16 @@ fn run_pnpm(ui_dir: &Path, args: &[&str]) {
         }
     }
 
+    let last_error = last_error.map_or_else(
+        || "no pnpm executable candidates were configured".to_string(),
+        |error| error.to_string(),
+    );
     panic!(
         "could not run `pnpm {}` in {}: {}. Install Node and pnpm, or set \
          MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1 with a prebuilt ui/dist.",
         args.join(" "),
         ui_dir.display(),
-        last_error.expect("at least one candidate is tried"),
+        last_error,
     );
 }
 

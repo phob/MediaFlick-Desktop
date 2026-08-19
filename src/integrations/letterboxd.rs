@@ -167,46 +167,50 @@ impl ReviewService {
         });
 
         let mut failed = HashSet::new();
-        let mut feeds = self
-            .feeds
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for (profile, result) in refreshes {
-            match result {
-                Ok(by_tmdb_id) => {
-                    feeds.insert(
-                        profile_cache_key(&profile),
-                        CachedFeed {
-                            fetched_at: Instant::now(),
-                            profile_checked_at: profile.last_checked_at,
-                            by_tmdb_id,
-                        },
-                    );
-                }
-                Err(error) => {
-                    tracing::debug!(
-                        target: "letterboxd.rss",
-                        profile = %profile.profile_key,
-                        "could not refresh public profile feed: {error}"
-                    );
-                    failed.insert(profile.id);
+        let reviews = {
+            let mut feeds = self
+                .feeds
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (profile, result) in refreshes {
+                match result {
+                    Ok(by_tmdb_id) => {
+                        feeds.insert(
+                            profile_cache_key(&profile),
+                            CachedFeed {
+                                fetched_at: Instant::now(),
+                                profile_checked_at: profile.last_checked_at,
+                                by_tmdb_id,
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        tracing::debug!(
+                            target: "letterboxd.rss",
+                            profile = %profile.profile_key,
+                            "could not refresh public profile feed: {error}"
+                        );
+                        failed.insert(profile.id);
+                    }
                 }
             }
-        }
-        feeds.retain(|_, cached| cached.fetched_at.elapsed() < MAX_CACHE_AGE);
+            feeds.retain(|_, cached| cached.fetched_at.elapsed() < MAX_CACHE_AGE);
 
-        let mut reviews = Vec::new();
-        for profile in &enabled {
-            let Some(cached) = feeds.get(&profile_cache_key(profile)) else {
-                continue;
-            };
-            let Some(review) = cached.by_tmdb_id.get(tmdb_id) else {
-                continue;
-            };
-            let mut review = review.clone();
-            review.stale = failed.contains(&profile.id);
-            reviews.push(review);
-        }
+            let mut reviews = Vec::new();
+            for profile in &enabled {
+                let Some(cached) = feeds.get(&profile_cache_key(profile)) else {
+                    continue;
+                };
+                let Some(review) = cached.by_tmdb_id.get(tmdb_id) else {
+                    continue;
+                };
+                let mut review = review.clone();
+                review.stale = failed.contains(&profile.id);
+                reviews.push(review);
+            }
+            drop(feeds);
+            reviews
+        };
 
         ReviewLookup {
             reviews,

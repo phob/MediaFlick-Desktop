@@ -56,7 +56,7 @@ pub fn default_log_file_path() -> PathBuf {
     config_dir().join("mediaflick-desktop.log")
 }
 
-pub fn init(path: PathBuf, filter: &str) -> LogGuard {
+pub fn init(path: &Path, filter: &str) -> LogGuard {
     if let Some(parent) = path.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
     {
@@ -70,7 +70,7 @@ pub fn init(path: PathBuf, filter: &str) -> LogGuard {
         .lossy(true)
         .finish(io::stderr());
 
-    let (file_writer, file_guard) = match RotatingFile::open(path.clone()) {
+    let (file_writer, file_guard) = match RotatingFile::open(path.to_path_buf()) {
         Ok(file) => {
             let (writer, guard) = NonBlockingBuilder::default().lossy(true).finish(file);
             (Some(writer), Some(guard))

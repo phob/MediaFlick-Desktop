@@ -288,21 +288,21 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("library-sync".to_string())
-        .spawn(move || run(library, session, worker))
+        .spawn(move || run(&library, &session, &worker))
     {
         tracing::warn!(target: "library.sync", "failed to start the library sync thread: {error}");
     }
     handle
 }
 
-fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
+fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
     let mut backoff = SYNC_INTERVAL;
     let mut normal_deadline = Instant::now();
     let mut trigger = Trigger::Scheduled;
     loop {
         if !session.is_authenticated() {
             handle.running.store(false, Ordering::Relaxed);
-            match wait(&handle, IDLE_INTERVAL) {
+            match wait(handle, IDLE_INTERVAL) {
                 Wake::Stopped => return,
                 // Held until a cycle can actually consume it: this is the
                 // sign-in nudge arriving just before the session goes live.
@@ -316,7 +316,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
         handle.running.store(normal_due, Ordering::Relaxed);
 
         if normal_due {
-            let outcome = run_cycle_inner(&library, &session, trigger, Some(&handle));
+            let outcome = run_cycle_inner(library, session, trigger, Some(handle));
             trigger = Trigger::Scheduled;
             let delay = match outcome {
                 Ok(report) => {
@@ -352,7 +352,7 @@ fn run(library: Arc<Library>, session: Arc<Session>, handle: SyncHandle) {
         handle.running.store(false, Ordering::Relaxed);
 
         let delay = normal_deadline.saturating_duration_since(Instant::now());
-        match wait(&handle, delay) {
+        match wait(handle, delay) {
             Wake::Stopped => return,
             Wake::Requested => trigger = Trigger::Requested,
             Wake::Elapsed => {}
@@ -538,7 +538,9 @@ fn bootstrap(
             break false;
         }
         advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
-        let page_changes = library.ingest_page(&page.items).map_err(storage_error)?;
+        let page_changes = library
+            .ingest_page(&page.items)
+            .map_err(|error| storage_error(&error))?;
         // Readiness is written only after the page transaction commits.
         let _ = library.set_meta(META_CATALOG_READY, "1");
         written += page.items.len();
@@ -636,7 +638,9 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = library.ingest_page(&fresh).map_err(storage_error)?;
+        let page_changes = library
+            .ingest_page(&fresh)
+            .map_err(|error| storage_error(&error))?;
         written += fresh.len();
         changes.merge(page_changes);
 
@@ -691,7 +695,9 @@ fn identity_sweep(
                     .map(|user_data| UserDataRecord::from_dto(&item.id, user_data))
             })
             .collect::<Vec<_>>();
-        refreshed += library.upsert_user_data(&records).map_err(storage_error)?;
+        refreshed += library
+            .upsert_user_data(&records)
+            .map_err(|error| storage_error(&error))?;
         offset += page.items.len() as i64;
         pages += 1;
         if (page.items.len() as i64) < IDENTITY_PAGE_SIZE {
@@ -714,7 +720,9 @@ fn identity_sweep(
         // emptied library, so never treat it as "delete everything".
         return Ok((refreshed, LibraryChangeBatch::default()));
     }
-    let deletion_changes = library.retain_ids(&seen).map_err(storage_error)?;
+    let deletion_changes = library
+        .retain_ids(&seen)
+        .map_err(|error| storage_error(&error))?;
     Ok((refreshed, deletion_changes))
 }
 
@@ -819,7 +827,7 @@ fn cancelled(control: Option<&SyncHandle>) -> Result<(), ApiError> {
     }
 }
 
-fn storage_error(error: rusqlite::Error) -> ApiError {
+fn storage_error(error: &rusqlite::Error) -> ApiError {
     ApiError::Decode(format!("library storage failed: {error}"))
 }
 
