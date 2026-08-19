@@ -266,6 +266,14 @@ pub struct SeasonStatus {
     pub status_4k: i64,
 }
 
+/// Stable title identities Seerr receives from TMDB alongside a movie or show.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExternalIds {
+    pub imdb_id: Option<String>,
+    pub tvdb_id: Option<i64>,
+}
+
 /// `GET /api/v1/movie/{id}` and `GET /api/v1/tv/{id}`, which differ only in
 /// which of the paired fields they populate.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -296,6 +304,9 @@ pub struct MediaDetail {
     pub number_of_episodes: Option<i64>,
     pub original_language: Option<String>,
     pub homepage: Option<String>,
+    /// Seerr also exposes this at the top level for movies.
+    pub imdb_id: Option<String>,
+    pub external_ids: ExternalIds,
     pub budget: Option<i64>,
     pub revenue: Option<i64>,
     pub production_companies: Vec<NamedId>,
@@ -330,12 +341,33 @@ impl MediaDetail {
         )
     }
 
+    pub fn external_imdb_id(&self) -> Option<&str> {
+        [
+            self.external_ids.imdb_id.as_deref(),
+            self.imdb_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|id| valid_imdb_title_id(id))
+    }
+
+    pub fn external_tvdb_id(&self) -> Option<i64> {
+        self.external_ids.tvdb_id.filter(|id| *id > 0)
+    }
+
     /// Movies carry one runtime; series carry a list of typical ones.
     pub fn runtime_minutes(&self) -> Option<i64> {
         self.runtime
             .filter(|minutes| *minutes > 0)
             .or_else(|| self.episode_run_time.first().copied())
     }
+}
+
+fn valid_imdb_title_id(id: &str) -> bool {
+    let Some(number) = id.strip_prefix("tt") else {
+        return false;
+    };
+    !number.is_empty() && id.len() <= 32 && number.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

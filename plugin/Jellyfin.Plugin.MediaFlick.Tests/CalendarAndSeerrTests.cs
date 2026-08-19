@@ -228,6 +228,8 @@ public sealed class CalendarAndSeerrTests
               "id":603,"title":"The Matrix","releaseDate":"1999-03-30",
               "overview":"A hacker discovers the truth.","status":"Released",
               "voteAverage":8.2,"voteCount":26000,
+              "imdbId":"not-an-imdb-id",
+              "externalIds":{"imdbId":"tt0133093","tvdbId":-1},
               "productionCompanies":[{"id":79,"name":"Village Roadshow Pictures"}],
               "credits":{
                 "cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo"}],
@@ -249,9 +251,17 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal("Released", detail["productionStatus"]?.GetValue<string>());
         Assert.Equal("Lana Wachowski", detail["directors"]?[0]?.GetValue<string>());
         Assert.Equal("Neo", detail["cast"]?[0]?["character"]?.GetValue<string>());
+        Assert.Equal("tt0133093", detail["externalIds"]?["imdb"]?.GetValue<string>());
+        Assert.Null(detail["externalIds"]?["tvdb"]);
         Assert.Equal("abcdefghijk", detail["trailer"]?["key"]?.GetValue<string>());
         Assert.Equal("digital", detail["releaseDates"]?[0]?["type"]?.GetValue<string>());
         Assert.Equal("R", detail["releaseDates"]?[0]?["certification"]?.GetValue<string>());
+
+        var seriesSource = Assert.IsType<JsonObject>(JsonNode.Parse(
+            """{"id":95396,"name":"Severance","externalIds":{"imdbId":"tt11280740","tvdbId":371980}}"""));
+        var series = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(seriesSource, "tv"));
+        Assert.Equal("tt11280740", series["externalIds"]?["imdb"]?.GetValue<string>());
+        Assert.Equal(371980, series["externalIds"]?["tvdb"]?.GetValue<int>());
     }
 
     [Fact]

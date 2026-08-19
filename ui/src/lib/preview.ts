@@ -21,6 +21,8 @@ export interface PreviewApi {
   hold: () => void
   /** The id currently expanded, so the card underneath can suppress its hover. */
   activeId: string | null
+  /** The saved Appearance choice shared by every card under this provider. */
+  enabled: boolean
 }
 
 export const PreviewContext = createContext<PreviewApi | null>(null)
@@ -33,6 +35,7 @@ interface PreviewHandlers {
 interface PreviewState {
   expanded: boolean
   handlers: PreviewHandlers
+  previewsEnabled: boolean
 }
 
 /**
@@ -47,10 +50,14 @@ export function usePreview(
   enabled = true,
 ): PreviewState {
   const preview = useContext(PreviewContext)
-  if (!preview || !enabled) return { handlers: {}, expanded: false }
+  if (!preview) return { handlers: {}, expanded: false, previewsEnabled: true }
+  if (!preview.enabled || !enabled) {
+    return { handlers: {}, expanded: false, previewsEnabled: preview.enabled }
+  }
 
   return {
     expanded: preview.activeId === item.id,
+    previewsEnabled: preview.enabled,
     handlers: {
       // Pointer, not mouse: a touch drag across a rail would otherwise arm the
       // timer for every card it passed and pop a panel nothing can dismiss.

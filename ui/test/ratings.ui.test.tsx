@@ -75,7 +75,7 @@ const clientSettings: ClientSettings = {
     playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
-  appearance: { theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, showMediaInfo: true, ratingSources: ["letterboxd"] },
+  appearance: { theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: ["letterboxd"] },
   capabilities: { platform: "windows", mpchc: true, mpvInstaller: true },
   streamingQuality: "original",
   playerBackend: "mpv",
@@ -491,7 +491,9 @@ describe("configurable card ratings", () => {
 
   test("normal Appearance previews and saves card overlay preferences together", () => {
     const { container } = withSettings(<Appearance />)
-    expect(screen.getByText("Card overlays")).toBeTruthy()
+    expect(screen.getByText("Cards")).toBeTruthy()
+    const cardPreviews = screen.getByRole("switch", { name: "Show pop-out previews on cards" })
+    expect(cardPreviews.getAttribute("aria-checked")).toBe("true")
     const mediaInfo = screen.getByRole("switch", { name: "Show media info on cards" })
     expect(mediaInfo.getAttribute("aria-checked")).toBe("true")
     expect(screen.getByRole("checkbox", { name: "Letterboxd" }).getAttribute("aria-checked")).toBe("true")
@@ -503,7 +505,11 @@ describe("configurable card ratings", () => {
       "appearance preview",
     )
     expect(preview.dataset.showMediaInfo).toBe("true")
+    expect(preview.dataset.cardPreviews).toBe("true")
     expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+    fireEvent.click(cardPreviews)
+    expect(preview.dataset.cardPreviews).toBe("false")
+    expect(preview.querySelector(".appearance-preview-card-actions")).toBeTruthy()
     fireEvent.click(mediaInfo)
     expect(preview.dataset.showMediaInfo).toBe("false")
     expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
@@ -528,6 +534,18 @@ describe("configurable card ratings", () => {
     render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
     expect(document.documentElement.dataset.mediaInfo).toBe("false")
     delete document.documentElement.dataset.mediaInfo
+  })
+
+  test("saved card-preview visibility reaches browsing cards through the root appearance state", () => {
+    const disabled = {
+      ...clientSettings,
+      appearance: { ...clientSettings.appearance, cardPreviews: false },
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.settings, disabled)
+    render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
+    expect(document.documentElement.dataset.cardPreviews).toBe("false")
+    delete document.documentElement.dataset.cardPreviews
   })
 
   test("disables all source choices without a credential/capability", () => {

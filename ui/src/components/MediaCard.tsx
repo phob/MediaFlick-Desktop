@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
+import { CardInlineActions } from "@/components/CardInlineActions"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
 import { RatingOverlay } from "@/components/RatingOverlay"
 import {
@@ -23,7 +24,7 @@ const TECHNICAL_PREFETCH_MARGIN = "160px"
  */
 function useTechnicalVisibility() {
   const intersectionSupported = globalThis.IntersectionObserver !== undefined
-  const [element, setElement] = useState<HTMLAnchorElement | null>(null)
+  const [element, setElement] = useState<HTMLElement | null>(null)
   const [visible, setVisible] = useState(!intersectionSupported)
 
   useEffect(() => {
@@ -74,7 +75,7 @@ export const MediaCard = memo(function MediaCard({
   preview?: boolean
 }) {
   const location = useLocation()
-  const { handlers, expanded } = usePreview(item, preview)
+  const { handlers, expanded, previewsEnabled } = usePreview(item, preview)
   const technical = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
@@ -91,17 +92,15 @@ export const MediaCard = memo(function MediaCard({
   const image = images[imageIndex]
 
   return (
-    <Link
+    <article
       ref={technical.ref}
-      to={`/item/${encodeURIComponent(item.id)}`}
-      state={detailNavigationState(location)}
       {...handlers}
       // While the expanded panel is over this card, its own lift would push the
       // artwork out from under an opaque panel that is not going to move with
       // it — a sliver of the poster creeping past the panel's edge.
       data-expanded={expanded || undefined}
       className={cn(
-        "signal-card group flex flex-col gap-2 outline-none",
+        "signal-card group flex flex-col gap-2",
         landscape ? "w-landscape-w" : "w-poster-w",
         className,
       )}
@@ -115,47 +114,59 @@ export const MediaCard = memo(function MediaCard({
           landscape ? "h-landscape-h w-landscape-w" : "h-poster-h w-poster-w",
         )}
       >
-        {image ? (
-          <img
-            src={image}
-            alt=""
-            // No `loading="lazy"`: the virtualizer already mounts only the rows
-            // near the viewport, so lazy loading just adds a second deferral —
-            // the overscan rows would wait for an intersection check instead of
-            // fetching ahead, and the poster would land after the row is
-            // already on screen. `decoding="async"` keeps the decode off the
-            // main thread so a newly revealed row cannot drop a scroll frame.
-            // No zoom on hover: the card is framed rather than enlarged, so a
-            // shelf keeps its rhythm while the pointer runs along it.
-            decoding="async"
-            onError={() => setImageIndex((current) => current + 1)}
-            className="media-artwork-image h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
-            {item.name}
-          </div>
-        )}
-        <RatingOverlay item={item} hasRibbon={Boolean(ribbon)} />
-        {ribbon && (
-          <div className="data-label absolute top-0 right-0 z-[4] bg-primary px-1.5 py-1 leading-none text-primary-foreground">
-            {ribbon}
-          </div>
-        )}
-        <CardTechnicalReadout item={item} active={technical.visible} />
-        {/* Watched is drawn as a finished progress rule rather than a corner
-            badge. The two states use the same thickness and accent fill;
-            watched simply fills the track completely. */}
-        {(progress > 0 || item.played) && (
-          <div
-            className="absolute inset-x-0 bottom-0 z-[3] h-[3px] bg-black/65"
-            title={progress > 0 ? undefined : "Watched"}
-          >
-            <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
-          </div>
-        )}
+        <Link
+          to={`/item/${encodeURIComponent(item.id)}`}
+          state={detailNavigationState(location)}
+          aria-label={`Open details for ${item.name}`}
+          className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          {image ? (
+            <img
+              src={image}
+              alt=""
+              // No `loading="lazy"`: the virtualizer already mounts only the rows
+              // near the viewport, so lazy loading just adds a second deferral —
+              // the overscan rows would wait for an intersection check instead of
+              // fetching ahead, and the poster would land after the row is
+              // already on screen. `decoding="async"` keeps the decode off the
+              // main thread so a newly revealed row cannot drop a scroll frame.
+              // No zoom on hover: the card is framed rather than enlarged, so a
+              // shelf keeps its rhythm while the pointer runs along it.
+              decoding="async"
+              onError={() => setImageIndex((current) => current + 1)}
+              className="media-artwork-image h-full w-full object-cover"
+            />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
+              {item.name}
+            </span>
+          )}
+          <RatingOverlay item={item} hasRibbon={Boolean(ribbon)} />
+          {ribbon && (
+            <div className="data-label absolute top-0 right-0 z-[4] bg-primary px-1.5 py-1 leading-none text-primary-foreground">
+              {ribbon}
+            </div>
+          )}
+          <CardTechnicalReadout item={item} active={technical.visible} />
+          {/* Watched is drawn as a finished progress rule rather than a corner
+              badge. The two states use the same thickness and accent fill;
+              watched simply fills the track completely. */}
+          {(progress > 0 || item.played) && (
+            <div
+              className="absolute inset-x-0 bottom-0 z-[7] h-[3px] bg-black/65"
+              title={progress > 0 ? undefined : "Watched"}
+            >
+              <div className="h-full bg-primary" style={{ width: `${(progress || 1) * 100}%` }} />
+            </div>
+          )}
+        </Link>
+        {!previewsEnabled && <CardInlineActions item={item} />}
       </div>
-      <div className="min-w-0">
+      <Link
+        to={`/item/${encodeURIComponent(item.id)}`}
+        state={detailNavigationState(location)}
+        className="min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <div className="truncate text-sm font-medium transition-colors group-hover:text-primary">
           {item.name}
         </div>
@@ -170,7 +181,7 @@ export const MediaCard = memo(function MediaCard({
             {remaining && <span className="shrink-0">{remaining}</span>}
           </div>
         )}
-      </div>
-    </Link>
+      </Link>
+    </article>
   )
 })

@@ -71,6 +71,9 @@ pub struct AppearanceSettings {
     pub backdrop_intensity: u8,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reduced_motion: bool,
+    /// Expanded panels shown after resting the pointer on a media card.
+    #[serde(default = "default_card_previews", skip_serializing_if = "is_true")]
+    pub card_previews: bool,
     /// Technical video/audio facts shown over library card artwork. Enabled by
     /// default to preserve the card presentation from releases that predate
     /// this preference.
@@ -93,6 +96,7 @@ impl Default for AppearanceSettings {
             artwork_intensity: default_artwork_intensity(),
             backdrop_intensity: default_backdrop_intensity(),
             reduced_motion: false,
+            card_previews: default_card_previews(),
             show_media_info: default_show_media_info(),
             rating_sources: Vec::new(),
         }
@@ -722,6 +726,10 @@ fn default_show_media_info() -> bool {
     true
 }
 
+fn default_card_previews() -> bool {
+    true
+}
+
 fn is_default_artwork_intensity(value: &u8) -> bool {
     *value == default_artwork_intensity()
 }
@@ -939,6 +947,22 @@ mod tests {
         assert!(!disabled.appearance.show_media_info);
         let serialized = serde_json::to_value(&disabled).expect("serialize disabled setting");
         assert_eq!(serialized["appearance"]["show_media_info"], false);
+    }
+
+    #[test]
+    fn card_previews_remain_enabled_for_legacy_settings_until_explicitly_disabled() {
+        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
+        assert!(defaults.appearance.card_previews);
+        let serialized = serde_json::to_value(&defaults).expect("serialize defaults");
+        assert!(serialized.get("appearance").is_none());
+
+        let disabled: AppSettings = serde_json::from_value(serde_json::json!({
+            "appearance": { "card_previews": false }
+        }))
+        .expect("settings");
+        assert!(!disabled.appearance.card_previews);
+        let serialized = serde_json::to_value(&disabled).expect("serialize disabled setting");
+        assert_eq!(serialized["appearance"]["card_previews"], false);
     }
 
     #[test]

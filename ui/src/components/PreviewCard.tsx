@@ -83,9 +83,11 @@ const DEFAULT_PREVIEW_DEPENDENCIES: PreviewDependencies = {
 export function PreviewProvider({
   children,
   dependencies = DEFAULT_PREVIEW_DEPENDENCIES,
+  enabled = true,
 }: {
   children: ReactNode
   dependencies?: PreviewDependencies
+  enabled?: boolean
 }) {
   const [target, setTarget] = useState<PreviewTarget | null>(null)
   const openTimer = useRef<number | undefined>(undefined)
@@ -100,6 +102,7 @@ export function PreviewProvider({
   const api = useMemo<PreviewApi>(
     () => ({
       open: (item, anchor) => {
+        if (!enabled) return
         window.clearTimeout(openTimer.current)
         window.clearTimeout(closeTimer.current)
         openTimer.current = window.setTimeout(() => {
@@ -116,9 +119,16 @@ export function PreviewProvider({
       },
       hold: () => window.clearTimeout(closeTimer.current),
       activeId: target?.item.id ?? null,
+      enabled,
     }),
-    [target],
+    [enabled, target],
   )
+
+  useEffect(() => {
+    if (enabled) return
+    clearTimers()
+    setTarget(null)
+  }, [clearTimers, enabled])
 
   // Anything that moves the page moves the card out from under the panel, and
   // the panel has no way to follow: its position was resolved from a rect taken
@@ -157,7 +167,7 @@ export function PreviewProvider({
   return (
     <PreviewContext.Provider value={api}>
       {children}
-      {target &&
+      {enabled && target &&
         createPortal(
           <PreviewPanel
             key={target.item.id}

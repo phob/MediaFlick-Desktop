@@ -78,6 +78,7 @@ pub struct AppearanceSettingsPatch {
     pub artwork_intensity: Option<u8>,
     pub backdrop_intensity: Option<u8>,
     pub reduced_motion: Option<bool>,
+    pub card_previews: Option<bool>,
     pub show_media_info: Option<bool>,
     pub rating_sources: Option<Vec<String>>,
 }
@@ -281,6 +282,9 @@ impl PreferencesService {
             if let Some(value) = patch.reduced_motion {
                 next.appearance.reduced_motion = value;
             }
+            if let Some(value) = patch.card_previews {
+                next.appearance.card_previews = value;
+            }
             if let Some(value) = patch.show_media_info {
                 next.appearance.show_media_info = value;
             }
@@ -453,11 +457,13 @@ mod tests {
     }
 
     #[test]
-    fn appearance_patch_accepts_the_card_media_info_preference() {
+    fn appearance_patch_accepts_card_preferences() {
         let patch = serde_json::from_value::<AppearanceSettingsPatch>(json!({
+            "cardPreviews": false,
             "showMediaInfo": false,
         }))
         .expect("appearance patch");
+        assert_eq!(patch.card_previews, Some(false));
         assert_eq!(patch.show_media_info, Some(false));
     }
 

@@ -923,6 +923,7 @@ impl SeerrSession {
         let trailer = trailer_of(&detail);
         let release_dates = release_dates_of(&detail);
         let content_ratings = content_ratings_of(&detail);
+        let external_ids = detail_external_ids(&detail);
         let next_episode = detail.next_episode_to_air.as_ref().map(|episode| {
             json!({
                 "name": episode.name,
@@ -931,7 +932,7 @@ impl SeerrSession {
                 "episodeNumber": episode.episode_number,
             })
         });
-        Ok(json!({
+        let mut response = json!({
             "mediaType": media_type,
             "tmdbId": detail.id,
             "title": title,
@@ -973,7 +974,11 @@ impl SeerrSession {
             "releaseDates": release_dates,
             "contentRatings": content_ratings,
             "nextEpisode": next_episode,
-        }))
+        });
+        if let Value::Object(fields) = &mut response {
+            fields.insert("externalIds".to_string(), external_ids);
+        }
+        Ok(response)
     }
 
     /// The quality profiles on the linked Radarr or Sonarr destinations that
@@ -1601,6 +1606,13 @@ struct DetailPeople {
     production_countries: Vec<Value>,
     spoken_languages: Vec<Value>,
     cast: Vec<Value>,
+}
+
+fn detail_external_ids(detail: &MediaDetail) -> Value {
+    json!({
+        "imdb": detail.external_imdb_id(),
+        "tvdb": detail.external_tvdb_id(),
+    })
 }
 
 fn detail_people(detail: &MediaDetail) -> DetailPeople {
@@ -3028,6 +3040,7 @@ mod tests {
             "200 OK",
             r#"{"id":95396,"name":"Severance","firstAirDate":"2022-02-18",
                 "episodeRunTime":[45],"genres":[{"id":18,"name":"Drama"}],
+                "externalIds":{"imdbId":"tt11280740","tvdbId":371980},
                 "seasons":[{"id":1,"seasonNumber":0,"name":"Specials","episodeCount":2},
                            {"id":2,"seasonNumber":1,"name":"Season 1","episodeCount":9},
                            {"id":3,"seasonNumber":2,"name":"Season 2","episodeCount":10}],
@@ -3044,6 +3057,8 @@ mod tests {
         assert_eq!(detail["runtimeMinutes"], 45);
         assert_eq!(detail["genres"][0], "Drama");
         assert_eq!(detail["libraryItemId"], "s1");
+        assert_eq!(detail["externalIds"]["imdb"], "tt11280740");
+        assert_eq!(detail["externalIds"]["tvdb"], 371_980);
 
         let seasons = detail["seasons"].as_array().expect("seasons");
         // Specials are left out, exactly as Seerr's own request modal does.
@@ -3063,6 +3078,8 @@ mod tests {
             r#"{"id":603,"title":"The Matrix","originalTitle":"The Matrix",
                 "releaseDate":"1999-03-30","status":"Released","runtime":136,
                 "overview":"A hacker discovers the truth.","tagline":"Welcome to the Real World.",
+                "imdbId":"not-an-imdb-id",
+                "externalIds":{"imdbId":"tt0133093","tvdbId":-1},
                 "voteAverage":8.2,"voteCount":26000,"originalLanguage":"en",
                 "budget":63000000,"revenue":467200000,
                 "genres":[{"id":28,"name":"Action"}],
@@ -3095,6 +3112,8 @@ mod tests {
         assert_eq!(detail["directors"], json!(["Lana Wachowski"]));
         assert_eq!(detail["writers"], json!(["Lilly Wachowski"]));
         assert_eq!(detail["cast"][0]["character"], "Neo");
+        assert_eq!(detail["externalIds"]["imdb"], "tt0133093");
+        assert_eq!(detail["externalIds"]["tvdb"], Value::Null);
         assert_eq!(detail["trailer"]["key"], "abcdefghijk");
         assert_eq!(detail["releaseDates"][0]["type"], "cinema");
         assert_eq!(detail["releaseDates"][0]["certification"], "R");

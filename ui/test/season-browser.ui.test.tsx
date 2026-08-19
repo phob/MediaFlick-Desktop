@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
+import { PreviewProvider } from "../src/components/PreviewCard"
 import { EpisodeGrid, SeasonBrowser, seasonRailOrder } from "../src/components/detail/SeasonBrowser"
 import { requireElement, itemSummary } from "./support/fixtures"
 
@@ -84,6 +85,18 @@ describe("season browser", () => {
       "resume progress bar",
     )
     expect(bar.style.width).toBe("50%")
+  })
+
+  test("episode cards expose the complete inline action set when previews are off", () => {
+    withProviders(
+      <PreviewProvider enabled={false}>
+        <EpisodeGrid episodes={[episode("episode-1", 1)]} parentId="season-1" />
+      </PreviewProvider>,
+    )
+
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Add to My List" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
   })
 
   test("the next-up episode carries the accent marker", () => {

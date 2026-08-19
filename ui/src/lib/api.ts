@@ -197,25 +197,110 @@ export interface TrailerSummary {
 }
 
 /**
- * External databases the shell can open in the default browser. The UI only
- * names the provider — `external_url` in `api.rs` owns the address, and the
- * kinds listed here mirror the routes it knows, so a button never appears for a
- * link the shell would refuse to build.
+ * External title pages the shell can open in the default browser. `source`
+ * names the stable provider id each destination accepts. The kinds mirror the
+ * native routes, so the UI never offers a link the shell would refuse to build.
  */
 export const EXTERNAL_PROVIDERS = [
-  { id: "imdb", label: "IMDb", kinds: ["Movie", "Series", "Episode"] },
-  { id: "tmdb", label: "TMDb", kinds: ["Movie", "Series"] },
-  { id: "tvdb", label: "TVDB", kinds: ["Movie", "Series", "Episode"] },
+  { id: "imdb", label: "IMDb", source: "imdb", kinds: ["Movie", "Series", "Episode"] },
+  { id: "tmdb", label: "TMDB", source: "tmdb", kinds: ["Movie", "Series"] },
+  { id: "tvdb", label: "TVDB", source: "tvdb", kinds: ["Movie", "Series", "Episode"] },
+  { id: "letterboxd", label: "Letterboxd", source: "tmdb", kinds: ["Movie"] },
+  { id: "trakt", label: "Trakt", source: "imdb", kinds: ["Movie", "Series"] },
 ] as const
 
 export type ExternalProvider = (typeof EXTERNAL_PROVIDERS)[number]["id"]
+type ExternalIdSource = (typeof EXTERNAL_PROVIDERS)[number]["source"]
+type DiscoveryMediaKind = "Movie" | "Series"
+type ExternalLinkId = ExternalProvider | "rotten-tomatoes-search"
 
-export function externalLinksFor(item: ItemDetail) {
-  return EXTERNAL_PROVIDERS.filter(
+export interface ExternalMediaLink {
+  id: ExternalLinkId
+  label: string
+  href: string
+  actionLabel?: string
+}
+
+export type ExternalMenuLink =
+  | ExternalMediaLink
+  | { id: ExternalProvider; label: string }
+
+function validExternalId(source: ExternalIdSource, value: string | null | undefined) {
+  if (!value || value.length > 32) return false
+  if (source === "imdb") return /^tt\d+$/.test(value)
+  return /^\d+$/.test(value) && Number(value) > 0
+}
+
+function rottenTomatoesSearchLink(title: string, year: number | null): ExternalMediaLink | null {
+  const normalizedTitle = title.trim()
+  if (!normalizedTitle) return null
+
+  const normalizedYear = Number.isInteger(year) && year !== null && year > 1800
+    ? ` ${year}`
+    : ""
+  const query = encodeURIComponent(`${normalizedTitle}${normalizedYear}`)
+  return {
+    id: "rotten-tomatoes-search",
+    label: "Rotten Tomatoes",
+    actionLabel: "Search Rotten Tomatoes",
+    href: `https://www.rottentomatoes.com/search?search=${query}`,
+  }
+}
+
+export function externalLinksFor(
+  item: Pick<ItemDetail, "kind" | "name" | "year" | "providerIds">,
+): ExternalMenuLink[] {
+  const exactLinks = EXTERNAL_PROVIDERS.filter(
     (provider) =>
-      Boolean(item.providerIds?.[provider.id]) &&
+      validExternalId(provider.source, item.providerIds?.[provider.source]) &&
       provider.kinds.some((kind) => kind === item.kind),
   )
+  const rottenTomatoes = item.kind === "Movie" || item.kind === "Series"
+    ? rottenTomatoesSearchLink(item.name, item.year)
+    : null
+  return rottenTomatoes ? [...exactLinks, rottenTomatoes] : exactLinks
+}
+
+function externalMediaUrl(
+  provider: ExternalProvider,
+  id: string | null | undefined,
+  kind: DiscoveryMediaKind,
+) {
+  const definition = EXTERNAL_PROVIDERS.find((candidate) => candidate.id === provider)
+  if (!definition || !validExternalId(definition.source, id)) return null
+
+  switch (provider) {
+    case "imdb":
+      return `https://www.imdb.com/title/${id}/`
+    case "tmdb":
+      return `https://www.themoviedb.org/${kind === "Movie" ? "movie" : "tv"}/${id}`
+    case "tvdb":
+      return `https://thetvdb.com/dereferrer/${kind === "Movie" ? "movie" : "series"}/${id}`
+    case "letterboxd":
+      return `https://letterboxd.com/tmdb/${id}`
+    case "trakt":
+      return `https://trakt.tv/${kind === "Movie" ? "movies" : "shows"}/${id}`
+  }
+}
+
+export function discoveryExternalLinksFor(
+  item: Pick<SeerrMediaDetail, "mediaType" | "tmdbId" | "title" | "year" | "externalIds">,
+): ExternalMediaLink[] {
+  const kind = item.mediaType === "movie" ? "Movie" : "Series"
+  const externalIds = item.externalIds ?? { imdb: null, tvdb: null }
+  const ids = {
+    imdb: externalIds.imdb,
+    tmdb: String(item.tmdbId),
+    tvdb: externalIds.tvdb === null ? null : String(externalIds.tvdb),
+  } satisfies Record<ExternalIdSource, string | null>
+
+  const exactLinks = EXTERNAL_PROVIDERS.flatMap((provider) => {
+    if (!provider.kinds.some((candidate) => candidate === kind)) return []
+    const href = externalMediaUrl(provider.id, ids[provider.source], kind)
+    return href ? [{ id: provider.id, label: provider.label, href }] : []
+  })
+  const rottenTomatoes = rottenTomatoesSearchLink(item.title, item.year)
+  return rottenTomatoes ? [...exactLinks, rottenTomatoes] : exactLinks
 }
 
 /**
@@ -377,6 +462,8 @@ export interface AppearanceSettings {
   artworkIntensity: number
   backdropIntensity: number
   reducedMotion: boolean
+  /** Whether resting the pointer on a media card opens the expanded panel. */
+  cardPreviews: boolean
   /** Whether technical video/audio facts are drawn over library cards. */
   showMediaInfo: boolean
   /** Canonical IDs from the fixed public MDBList source catalog. */
@@ -579,6 +666,8 @@ export interface SeerrMediaDetail extends SeerrResult {
   numberOfEpisodes: number | null
   originalLanguage: string | null
   homepage: string | null
+  /** Absent when an older compatible Companion serves the detail response. */
+  externalIds?: { imdb: string | null; tvdb: number | null }
   budget: number | null
   revenue: number | null
   studios: string[]

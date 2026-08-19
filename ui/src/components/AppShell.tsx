@@ -6,6 +6,7 @@ import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
+import { useSettings } from "@/lib/queries"
 
 const SIDEBAR_OPEN_KEY = "mediaflick.sidebar.open"
 const routeScrollPositions = new Map<string, number>()
@@ -46,6 +47,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   // registered for (STANDARD | SECURE | CORS | FETCH — no cookie option), so
   // that write silently no-ops. Drive the provider instead.
   const [open, setOpen] = useState(storedSidebarOpen)
+  const settings = useSettings()
+  const cardPreviews = settings.data?.appearance.cardPreviews !== false
   usePlaybackStoppedBridge()
   useLibraryMetadataBridge()
 
@@ -69,7 +72,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* Wraps the routed content because every card that can expand is in
               it. The panel itself is portalled to the body, so this subtree's
               clipping — `content-viewport` and the rails — does not reach it. */}
-          <PreviewProvider>{children}</PreviewProvider>
+          <PreviewProvider enabled={cardPreviews}>{children}</PreviewProvider>
         </RouteScrollViewport>
         <PlayerBar />
       </SidebarInset>
