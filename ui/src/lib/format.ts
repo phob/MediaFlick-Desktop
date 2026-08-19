@@ -71,7 +71,7 @@ export function formatResolution(stream: Pick<MediaStream, "width" | "height">) 
   return height ? `${height}p` : null
 }
 
-export function formatChannels(channels: number | null | undefined) {
+function formatChannels(channels: number | null | undefined) {
   switch (channels) {
     case null:
     case undefined:
@@ -152,7 +152,7 @@ export function formatCodec(codec: string | null | undefined) {
 }
 
 /** Jellyfin often reports DTS-HD as codec `dts` plus a richer profile. */
-export function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">) {
+function formatAudioCodec(stream: Pick<MediaStream, "codec" | "profile">) {
   const codec = stream.codec?.trim()
   const profile = stream.profile?.trim() ?? ""
   if (codec?.toLowerCase() === "dts" && /dts[- ]?hd/i.test(profile)) {
@@ -208,7 +208,7 @@ function describeVideoRange(stream: Pick<MediaStream, "videoRange" | "videoRange
   return labels?.description ?? labels?.label ?? null
 }
 
-export function formatAudioSpatialFormat(
+function formatAudioSpatialFormat(
   stream: Pick<MediaStream, "audioSpatialFormat" | "profile" | "title" | "displayTitle" | "codec">,
 ) {
   const explicit = stream.audioSpatialFormat?.trim() ?? ""

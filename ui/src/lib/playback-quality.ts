@@ -22,7 +22,7 @@ export function setQualityOverride(quality: StreamingQualityId | null) {
   for (const listener of listeners) listener()
 }
 
-export function qualityOverride() {
+function qualityOverride() {
   return override
 }
 

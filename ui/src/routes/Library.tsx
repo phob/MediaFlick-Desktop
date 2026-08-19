@@ -26,7 +26,7 @@ import { useItems, usePersonResolution } from "@/lib/queries"
 /** How many of a matched person's titles the search page shows inline. */
 const SEARCH_PERSON_ROW_LIMIT = 12
 
-export interface LibraryComponents {
+interface LibraryComponents {
   ItemGrid: ComponentType<ItemGridProps>
   CastDiscover: ComponentType<CastDiscoverProps>
 }

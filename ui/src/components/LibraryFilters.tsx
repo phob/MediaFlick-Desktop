@@ -516,5 +516,3 @@ export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) 
     </div>
   )
 }
-
-export type { LibraryFilterState }
