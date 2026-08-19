@@ -8,7 +8,7 @@ export const LIBRARY_SORTS = [
 ] as const
 
 export type LibraryKind = "Movie" | "Series"
-export type WatchedFilter = "true" | "false" | ""
+type WatchedFilter = "true" | "false" | ""
 
 export interface LibraryFilterState {
   sort: string

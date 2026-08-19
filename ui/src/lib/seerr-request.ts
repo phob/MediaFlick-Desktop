@@ -11,7 +11,7 @@ import type {
  * are still unknown. For a movie, every state except `unknown` describes a
  * request that Seerr already owns and must not be offered again.
  */
-export function isQuickRequestableStatus(mediaType: SeerrMediaType, status: SeerrStatus) {
+function isQuickRequestableStatus(mediaType: SeerrMediaType, status: SeerrStatus) {
   return status === "unknown" || (mediaType === "tv" && status === "partial")
 }
 

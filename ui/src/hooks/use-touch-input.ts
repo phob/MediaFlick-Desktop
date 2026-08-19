@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-export const TOUCH_INPUT_QUERY = "(hover: none), (pointer: coarse), (any-pointer: coarse)"
+const TOUCH_INPUT_QUERY = "(hover: none), (pointer: coarse), (any-pointer: coarse)"
 
 function matchesTouchInput() {
   return globalThis.window?.matchMedia?.(TOUCH_INPUT_QUERY).matches === true

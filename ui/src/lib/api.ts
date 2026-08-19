@@ -4,8 +4,8 @@
 
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "./json.ts"
 
-export const TICKS_PER_MS = 10_000
-export const POSTER_WIDTH = 400
+const TICKS_PER_MS = 10_000
+const POSTER_WIDTH = 400
 /** Home progress cards are drawn wider and use 16:9 art. */
 export const LANDSCAPE_WIDTH = 560
 /** The detail hero renders edge to edge, so its backdrop needs a real width. */
@@ -14,12 +14,12 @@ export const BACKDROP_WIDTH = 1920
 export const DETAIL_POSTER_WIDTH = 600
 /** Episode still cards: wide grid slots, doubled to cover HiDPI. */
 export const THUMBNAIL_WIDTH = 800
-export const HEADSHOT_WIDTH = 200
+const HEADSHOT_WIDTH = 200
 /** Title treatments are drawn at most ~28rem wide; twice that covers HiDPI. */
-export const LOGO_WIDTH = 800
+const LOGO_WIDTH = 800
 export const PAGE_SIZE = 60
 
-export type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
+type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
 
 export interface ItemSummary {
   id: string
@@ -201,7 +201,7 @@ export interface TrailerSummary {
  * names the stable provider id each destination accepts. The kinds mirror the
  * native routes, so the UI never offers a link the shell would refuse to build.
  */
-export const EXTERNAL_PROVIDERS = [
+const EXTERNAL_PROVIDERS = [
   { id: "imdb", label: "IMDb", source: "imdb", kinds: ["Movie", "Series", "Episode"] },
   { id: "tmdb", label: "TMDB", source: "tmdb", kinds: ["Movie", "Series"] },
   { id: "tvdb", label: "TVDB", source: "tvdb", kinds: ["Movie", "Series", "Episode"] },
@@ -317,7 +317,7 @@ export interface HomeRow {
   items: ItemSummary[]
 }
 
-export interface LibraryStats {
+interface LibraryStats {
   movies: number
   series: number
   seasons: number
@@ -325,7 +325,7 @@ export interface LibraryStats {
   total: number
 }
 
-export interface BootstrapProgress {
+interface BootstrapProgress {
   complete: boolean
   ready: boolean
   processed: number
@@ -347,7 +347,7 @@ export interface Status {
   companion?: CompanionStatus
 }
 
-export interface CompanionInfo {
+interface CompanionInfo {
   pluginVersion: string
   apiVersion: number
   capabilities: string[]
@@ -363,7 +363,7 @@ export interface CompanionStatus {
   supportedApi: { min: number; max: number }
 }
 
-export type CalendarEntryKind = "episode" | "movie"
+type CalendarEntryKind = "episode" | "movie"
 export type CalendarDateKind = "air" | "digital" | "physical" | "cinema"
 
 export interface CalendarEntry {
@@ -453,7 +453,7 @@ export interface ClientSettings {
   serverUrl: string | null
 }
 
-export type SegmentSkipMode = "disabled" | "prompt" | "always"
+type SegmentSkipMode = "disabled" | "prompt" | "always"
 
 export interface AppearanceSettings {
   theme: "system" | "dark" | "light"
@@ -470,7 +470,7 @@ export interface AppearanceSettings {
   ratingSources: string[]
 }
 
-export type RatingOrigin = "local_mdblist" | "plugin"
+type RatingOrigin = "local_mdblist" | "plugin"
 
 export interface RatingSourceDefinition {
   id: string
@@ -625,7 +625,7 @@ export interface SeerrSeason {
   status4k: SeerrStatus
 }
 
-export interface SeerrCastMember {
+interface SeerrCastMember {
   id: number
   name: string
   character: string | null
@@ -639,12 +639,12 @@ export interface SeerrReleaseDate {
   certification: string | null
 }
 
-export interface SeerrContentRating {
+interface SeerrContentRating {
   region: string
   rating: string
 }
 
-export interface SeerrTrailer {
+interface SeerrTrailer {
   name: string
   key: string
 }
@@ -724,13 +724,13 @@ export interface SeerrCapabilities {
   advancedRequest: boolean
 }
 
-export interface SeerrQualityProfile {
+interface SeerrQualityProfile {
   id: number
   name: string
   isDefault: boolean
 }
 
-export interface SeerrRequestDestination {
+interface SeerrRequestDestination {
   id: number
   name: string
   isDefault: boolean
@@ -741,7 +741,7 @@ export interface SeerrRequestOptions {
   destinations: SeerrRequestDestination[]
 }
 
-export interface SeerrQuotaStatus {
+interface SeerrQuotaStatus {
   days: number | null
   limit: number | null
   used: number
@@ -827,10 +827,10 @@ export const SEERR_DISCOVER_ROWS = [
 
 export type SeerrDiscoverRow = (typeof SEERR_DISCOVER_ROWS)[number]["id"]
 
-export type SeerrDiscoverSort = "popular" | "rating" | "newest"
+type SeerrDiscoverSort = "popular" | "rating" | "newest"
 export type SeerrReleaseDecade = number
-export type SeerrTrendingMediaType = "all" | SeerrMediaType
-export type SeerrTrendingWindow = "day" | "week"
+type SeerrTrendingMediaType = "all" | SeerrMediaType
+type SeerrTrendingWindow = "day" | "week"
 
 export interface SeerrDiscoverFilters {
   genre?: number
@@ -841,7 +841,7 @@ export interface SeerrDiscoverFilters {
   timeWindow?: SeerrTrendingWindow
 }
 
-export type SyncPhase = "catalog" | "reconciling" | "retrying" | "complete"
+type SyncPhase = "catalog" | "reconciling" | "retrying" | "complete"
 
 export interface SyncProgress {
   active: boolean
@@ -899,7 +899,7 @@ export function qualityLabel(id: string | null | undefined) {
   return STREAMING_QUALITIES.find((quality) => quality.id === id)?.label ?? null
 }
 
-export interface PlayerCapabilities {
+interface PlayerCapabilities {
   chapterMarkers: boolean
   externalSubtitles: boolean
   injectedHotkeys: boolean

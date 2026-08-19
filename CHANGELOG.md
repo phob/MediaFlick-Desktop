@@ -165,6 +165,7 @@
 - Removed the settings Overview page, the ratings Guided setup wizard (a dialog repeating the same fields as the page it opened from), and the TMDB API key field, which stored a key no feature uses.
 - Removed the superseded hand-written ES-module UI (`src/shell/ui/app/`). It was kept as a porting reference after the React swap; the last views that depended on it — the windowed library grid, the filter controls, Quick Connect, and the streaming-quality picker — have all landed, and nothing built or shipped referenced it. The native dialogs under `src/shell/ui/` are unaffected.
 - Removed orphaned mpv direct-launch helpers, unused React component wrappers, a speculative MDBList bearer-auth branch, and an unreferenced Companion response type.
+- Removed an orphaned separator component and unused anti-slop helper, and narrowed TypeScript exports that have no external consumers.
 
 
 ## [0.1.6] - 2026-07-16
