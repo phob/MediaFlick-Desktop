@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace Jellyfin.Plugin.MediaFlick.Models;
 
@@ -72,5 +71,3 @@ public sealed record CompanionConfigurationUpdate(
     bool AutoImportSeerrUsers);
 
 public sealed record ConnectionTestResponse(string Service, bool Connected, string? Version);
-
-public sealed record GatewayResult(int StatusCode, JsonNode? Body);
