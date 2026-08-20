@@ -12,6 +12,7 @@
 
 - Added the anti-slop Oxlint plugin, enabled its full rule set for the React UI, and migrated the owned UI code and tests to comply without rule suppressions.
 - Added a pinned Rust quality stack with strict Clippy readability and ownership rules, rust-analyzer and Bacon background diagnostics, and a repository Codex skill and Rust-aware stop hook; migrated the owned Rust code and tests to comply without rule suppressions.
+- Added a standalone Rust source file-size validator that reports files above 1,000 physical lines for review and rejects files above 1,500, while ignoring build outputs and other Git-ignored files.
 - Added Latest Movies and Latest Shows shelves immediately after Recently Added on the home screen. They sort each catalogue by release year and link to the matching newest-first library view.
 - Added an in-app `/settings/*` dashboard with anonymous Client and Appearance pages, account-scoped Letterboxd and Seerr pages, a permanent sidebar entry, local drafts, and Save/Discard/Reset controls. Typed section PATCH endpoints now share a preference service with CEF, apply player/segment/scrollbar changes at runtime, and return normalized settings and platform capabilities.
 - Added Appearance preferences for system/dark/light mode, signal/cobalt/amber/violet accents, compact density, artwork/backdrop intensity, and reduced motion.
@@ -61,6 +62,7 @@
 
 ### Changed
 
+- Reorganized oversized Rust modules into focused player, library, integration, synchronization, preferences, and CEF components while preserving their existing public contracts and behavior.
 - Slimmed the local library cache to a thin catalog index and moved all rich metadata to live Jellyfin fetches. The cache now keeps one lightweight row per movie, series, season, and episode — identity, titles, year, runtime, community rating, hierarchy, provider ids, genres, and image tags — which is everything instant shelves, scrolling, sorting, filtering, counts, and provider-id joins need. Synopses, cast, critic scores, tags, and studios are fetched on demand by the detail page through a new `/api/item/{id}/about` endpoint, the billboard fetches its synopsis after the cached hero paints, and episode synopses ride along on the season page's existing live reconcile. Nothing from those fetches is persisted; when the server is unreachable these surfaces show plain loading/error states, which is the intended degraded behavior for an online client.
 - Live title metadata now stays bounded by purpose: the billboard requests only a synopsis without user or image data, while detail responses keep the first 24 cast credits and a representative bounded crew list instead of mounting every person and headshot Jellyfin returns.
 - Card quality badges (resolution, dynamic range, audio format) now arrive over a live batched channel modeled on the ratings scheduler: visible cards register, requests coalesce into bounded `/api/technical/batch` calls, and a batch is aborted once none of its cards remains visible. Badges appear for movies and series alike, fail silently offline, and stop being fetched entirely while Appearance hides media info.

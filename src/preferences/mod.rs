@@ -9,4 +9,4 @@ pub use service::{
     AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch, PlayerSettingsPatch,
     PreferencesService, SettingsChange,
 };
-pub use store::{FileSettingsStore, SettingsStore};
+pub use store::*;
