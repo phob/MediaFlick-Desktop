@@ -1,5 +1,6 @@
 mod controller;
 mod protocol;
+mod request;
 mod transport;
 
 pub use controller::MpcHcController;
