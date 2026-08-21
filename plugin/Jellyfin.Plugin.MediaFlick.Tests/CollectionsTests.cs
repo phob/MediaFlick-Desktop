@@ -102,4 +102,45 @@ public sealed class CollectionsTests
     {
         Assert.Empty(CollectionsService.ReadDocument(json));
     }
+
+    [Fact]
+    public void CollectionsSortUnderTheirRealTitleNotTheLeadingArticle()
+    {
+        var movieIds = new[] { 1, 2, 3, 4, 5 };
+        var mappings = new Dictionary<int, CollectionsService.Mapping>
+        {
+            [1] = new(5, "Zombie Collection", null, null, DateTimeOffset.UtcNow),
+            [2] = new(1, "Alien Collection", null, null, DateTimeOffset.UtcNow),
+            [3] = new(2, "The Matrix Collection", null, null, DateTimeOffset.UtcNow),
+            // Article stripping must not eat into the following word.
+            [4] = new(3, "An American Werewolf Collection", null, null, DateTimeOffset.UtcNow),
+            [5] = new(4, "A Quiet Place Collection", null, null, DateTimeOffset.UtcNow)
+        };
+
+        var summary = CollectionsService.GroupCollections(movieIds, mappings, pending: 0);
+
+        var names = Assert.IsType<JsonArray>(summary["collections"])
+            .Select(node => node?["name"]?.GetValue<string>())
+            .ToArray();
+        Assert.Equal(
+            [
+                "Alien Collection",
+                "An American Werewolf Collection",
+                "The Matrix Collection",
+                "A Quiet Place Collection",
+                "Zombie Collection"
+            ],
+            names);
+    }
+
+    [Theory]
+    [InlineData("The Matrix Collection", "Matrix Collection")]
+    [InlineData("An American Werewolf Collection", "American Werewolf Collection")]
+    [InlineData("A Quiet Place Collection", "Quiet Place Collection")]
+    [InlineData("Alien Collection", "Alien Collection")]
+    [InlineData("", "")]
+    public void SortNameStripsOnlyALeadingEnglishArticle(string name, string expected)
+    {
+        Assert.Equal(expected, CollectionsService.SortName(name));
+    }
 }
