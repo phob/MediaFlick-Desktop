@@ -26,10 +26,22 @@ import { cn } from "@/lib/utils"
 
 /** How long a title without a usable trailer holds before the next takes over. */
 const NO_TRAILER_DWELL_MS = 12_000
-/** Let the still establish the title before its local trailer takes over. */
-const TRAILER_DELAY_MS = 5_000
-/** A broken remote player must not strand the billboard forever. */
-const REMOTE_TRAILER_WATCHDOG_MS = 3 * 60_000
+/** Earliest moment a trailer may take over from the establishing still. */
+const TRAILER_DELAY_MS = 2_500
+/**
+ * A trailer that has not confirmed playback within this window is treated as
+ * unavailable. Its stage has stayed hidden the whole time, so the slide simply
+ * advances as if the title had no trailer at all.
+ */
+const TRAILER_CONFIRM_MS = 15_000
+/**
+ * YouTube redraws its centre play/pause chrome on every transition into the
+ * playing state — including the deferred seek to the embed's start offset,
+ * which lands seconds after the first reveal. Every playing event therefore
+ * restarts this concealment window so the overlay always finishes behind the
+ * still image instead of over visible footage.
+ */
+const YOUTUBE_PLAYING_GRACE_MS = 2_200
 const YOUTUBE_ORIGINS = new Set(["https://www.youtube-nocookie.com", "https://www.youtube.com"])
 
 type YouTubeOutboundMessage =
@@ -160,6 +172,10 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
   // until it lands (or offline) the billboard simply shows no overview.
   const synopsis = useItemSynopsis(current?.id)
   const nextUp = useNextUp(current?.id, current?.kind === "Series")
+  // Warm the next title's trailer record while the current slide plays so the
+  // next slide can mount its player without waiting on an API round trip.
+  const upcoming = items.length > 1 ? items[(index + 1) % items.length] : undefined
+  useTrailer(upcoming?.id, !reducedMotion)
   if (!current) return null
 
   return (
@@ -223,12 +239,13 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
 interface TrailerPlaybackState {
   session: string
   armed: boolean
+  /** The player itself reported that footage is actually rolling. */
+  started: boolean
   playing: boolean
-  youtubeLoaded: boolean
 }
 
 function initialTrailerPlayback(session: string): TrailerPlaybackState {
-  return { session, armed: false, playing: false, youtubeLoaded: false }
+  return { session, armed: false, started: false, playing: false }
 }
 
 /**
@@ -254,6 +271,7 @@ function BillboardBackdrop({
     initialTrailerPlayback(session),
   )
   const youtubeFrame = useRef<HTMLIFrameElement>(null)
+  const revealTimer = useRef<number | null>(null)
   const finished = useRef(false)
   const trailer = useTrailer(item.id, active && !reducedMotion)
   const image = images[imageIndex]
@@ -263,14 +281,21 @@ function BillboardBackdrop({
   }
   const trailerArmed =
     trailerPlayback.session === session && trailerPlayback.armed
+  const trailerStarted =
+    trailerPlayback.session === session && trailerPlayback.started
   const trailerPlaying =
     trailerPlayback.session === session && trailerPlayback.playing
-  const youtubeLoaded =
-    trailerPlayback.session === session && trailerPlayback.youtubeLoaded
+  // The stage reveals only once the establish period has passed AND the player
+  // has confirmed that footage is really rolling.
+  const trailerVisible = trailerArmed && trailerPlaying
 
   const complete = useCallback(() => {
     if (finished.current) return
     finished.current = true
+    if (revealTimer.current !== null) {
+      window.clearTimeout(revealTimer.current)
+      revealTimer.current = null
+    }
     setTrailerPlayback((current) =>
       current.session === session
         ? { ...current, armed: false, playing: false }
@@ -278,6 +303,22 @@ function BillboardBackdrop({
     )
     onFinished(item.id)
   }, [item.id, onFinished, session])
+
+  /** Hide the player and reveal it only once fresh start-up chrome is gone. */
+  const scheduleReveal = useCallback(() => {
+    if (revealTimer.current !== null) window.clearTimeout(revealTimer.current)
+    setTrailerPlayback((current) =>
+      current.session === session
+        ? { ...current, started: true, playing: false }
+        : current,
+    )
+    revealTimer.current = window.setTimeout(() => {
+      revealTimer.current = null
+      setTrailerPlayback((current) =>
+        current.session === session ? { ...current, playing: true } : current,
+      )
+    }, YOUTUBE_PLAYING_GRACE_MS)
+  }, [session])
 
   useEffect(() => {
     finished.current = false
@@ -320,10 +361,11 @@ function BillboardBackdrop({
 
   // YouTube's embedded player reports state 0 when the video ends. Listen only
   // to the exact iframe window and its two documented origins; no remote script
-  // is loaded into the privileged app page.
+  // is loaded into the privileged app page. Listening starts as soon as the
+  // frame exists so an early playing event is never missed.
   useEffect(() => {
     const frame = youtubeFrame.current
-    if (!active || !trailerArmed || !trailerEmbed || !frame) return
+    if (!active || !trailerEmbed || !frame) return
     const playerId = `billboard-youtube-${item.id}`
     const post = (message: YouTubeOutboundMessage) =>
       frame.contentWindow?.postMessage(
@@ -338,11 +380,7 @@ function BillboardBackdrop({
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || !YOUTUBE_ORIGINS.has(event.origin)) return
       const message = readYouTubeMessage(event.data)
-      if (message?.state === 1) {
-        setTrailerPlayback((current) =>
-          current.session === session ? { ...current, playing: true } : current,
-        )
-      }
+      if (message?.state === 1) scheduleReveal()
       if (message?.state === 0 || message?.event === "onError") complete()
     }
 
@@ -357,33 +395,36 @@ function BillboardBackdrop({
       window.removeEventListener("message", handleMessage)
       window.clearInterval(subscribeTimer)
       window.clearTimeout(stopSubscribing)
+      if (revealTimer.current !== null) {
+        window.clearTimeout(revealTimer.current)
+        revealTimer.current = null
+      }
     }
-  }, [active, complete, item.id, session, trailerArmed, trailerEmbed])
+  }, [active, complete, item.id, scheduleReveal, session, trailerEmbed])
 
-  // The raw state messages are deliberately a progressive enhancement. Reveal
-  // a loaded player even if a particular YouTube build does not acknowledge
-  // the listener, but retain a long watchdog so a broken embed cannot pin the
-  // home screen forever.
+  // Footage becomes visible only once the player itself confirms playback. A
+  // trailer that never does — a missing stream, an unavailable embed — or that
+  // reports an error advances the billboard without ever being shown.
   useEffect(() => {
-    if (!active || !trailerArmed || !trailerEmbed || !youtubeLoaded) return
-    const reveal = window.setTimeout(() => {
-      setTrailerPlayback((current) =>
-        current.session === session ? { ...current, playing: true } : current,
-      )
-    }, 600)
-    const watchdog = window.setTimeout(complete, REMOTE_TRAILER_WATCHDOG_MS)
-    return () => {
-      window.clearTimeout(reveal)
-      window.clearTimeout(watchdog)
-    }
-  }, [active, complete, session, trailerArmed, trailerEmbed, youtubeLoaded])
+    if (!active || reducedMotion || trailerStarted) return
+    if (!trailerId && !trailerEmbed) return
+    const timer = window.setTimeout(complete, TRAILER_CONFIRM_MS)
+    return () => window.clearTimeout(timer)
+  }, [
+    active,
+    complete,
+    reducedMotion,
+    trailerStarted,
+    trailerEmbed,
+    trailerId,
+  ])
 
   if (!image) return null
 
   return (
     <div
       aria-hidden
-      data-trailer-playing={trailerPlaying}
+      data-trailer-playing={trailerVisible}
       data-trailer-source={trailerId ? "local" : trailerEmbed ? "youtube" : undefined}
       className={cn(
         "billboard-slide pointer-events-none absolute inset-0",
@@ -397,10 +438,13 @@ function BillboardBackdrop({
         onError={() => setImageIndex((current) => current + 1)}
         className="billboard-backdrop-image media-backdrop-image"
       />
-      {trailerArmed && trailerId && (
+      {/* Players mount as soon as the slide is active so loading, buffering,
+          and autoplay happen underneath the establishing still. Visibility is
+          governed separately by data-playing. */}
+      {active && trailerId && (
         <div
           className="billboard-trailer-stage"
-          data-playing={trailerPlaying}
+          data-playing={trailerVisible}
           data-source="local"
         >
           <div className="billboard-trailer-feather">
@@ -414,7 +458,9 @@ function BillboardBackdrop({
               src={api.trailerStreamUrl(trailerId)}
               onPlaying={() =>
                 setTrailerPlayback((current) =>
-                  current.session === session ? { ...current, playing: true } : current,
+                  current.session === session
+                    ? { ...current, started: true, playing: true }
+                    : current,
                 )
               }
               onEnded={complete}
@@ -424,10 +470,10 @@ function BillboardBackdrop({
           </div>
         </div>
       )}
-      {trailerArmed && trailerEmbed && (
+      {active && trailerEmbed && (
         <div
           className="billboard-trailer-stage"
-          data-playing={trailerPlaying}
+          data-playing={trailerVisible}
           data-source="youtube"
         >
           <div className="billboard-trailer-feather">
@@ -441,13 +487,6 @@ function BillboardBackdrop({
               allow="autoplay; encrypted-media"
               sandbox="allow-scripts allow-same-origin allow-presentation"
               src={trailerEmbed}
-              onLoad={() =>
-                setTrailerPlayback((current) =>
-                  current.session === session
-                    ? { ...current, youtubeLoaded: true }
-                    : current,
-                )
-              }
               className="billboard-trailer-youtube"
             />
           </div>

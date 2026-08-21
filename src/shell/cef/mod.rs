@@ -331,7 +331,13 @@ fn reveal_main_window(state: &BrowserState) {
     if show_state == ShowState::MAXIMIZED {
         window.maximize();
     }
+    // Show alone displays the window at its current Z-order position without
+    // making it active. Because the reveal happens after UI readiness, the
+    // process no longer holds launch-time foreground rights, so the window
+    // would stay behind whatever currently has focus. Activate brings it to
+    // the front and gives it keyboard focus.
     window.show();
+    window.activate();
 }
 
 fn new_browser_state(

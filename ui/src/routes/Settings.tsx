@@ -1,46 +1,47 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle,
-  AudioLines,
   CheckCircle2,
   Copy,
   Download,
   ExternalLink,
   Eye,
   EyeOff,
+  Film,
   FolderOpen,
   KeyRound,
   Link,
   Monitor,
   Palette,
   Play,
-  Plus,
   RefreshCw,
   Save,
-  ScanLine,
   SlidersHorizontal,
   Trash2,
-  ThumbsUp,
   Undo2,
   type LucideIcon,
 } from "lucide-react"
 import {
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
-import { RatingSourceIcon } from "@/components/RatingSourceIcon"
+import { MediaCard } from "@/components/MediaCard"
 import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
@@ -62,8 +63,10 @@ import {
   type RatingsIntegrationStatus,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
+import { PreviewContext, type PreviewApi } from "@/lib/preview"
 import { queryClient, queryKeys } from "@/lib/query-client"
-import { useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
+import { useHome, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import { cssVariables } from "@/lib/style"
@@ -556,30 +559,69 @@ function ApplicationSettings() {
   </div>
 }
 
-function previewRatingValue(source: RatingSourceDefinition) {
-  if (source.format === "percent") return "88%"
-  if (source.format === "stars") return "★4.2"
-  if (source.format === "integer") return "84"
-  return source.scaleMax <= 5 ? "4.2" : "8.4"
+/**
+ * The live preview is the app itself, scaled to a shelf: real `MediaCard`s fed
+ * by the same cached home feed the Home page uses, wrapped in one container
+ * that carries the unsaved draft as data attributes and intensity variables.
+ * The shared token rules re-skin that subtree exactly as they re-skin the root,
+ * so every choice here can be judged against your own artwork before saving.
+ */
+const NO_RATINGS: RatingsContextValue = {
+  items: new Map(),
+  selected: [],
+  definitions: new Map(),
+  register: () => () => {},
 }
 
-function AppearancePreview({
-  appearance,
-  ratingSources,
-}: {
-  appearance: AppearanceSettings
-  ratingSources: RatingSourceDefinition[]
-}) {
+function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
   const systemReducedMotion = usePrefersReducedMotion()
   const reducedMotion = systemReducedMotion || appearance.reducedMotion
-  const previewRatings = appearance.ratingSources
-    .map((id) => ratingSources.find((source) => source.id === id))
-    .filter((source): source is RatingSourceDefinition => Boolean(source))
-    .slice(0, 2)
-  const style = cssVariables({
-    "--preview-artwork-intensity": String(appearance.artworkIntensity / 100),
-    "--preview-backdrop-intensity": String(appearance.backdropIntensity / 100),
+  const home = useHome()
+  const savedRatings = useContext(RatingsContext)
+  // The unsaved source selection drives which overlays render; the fetched
+  // ratings and the shared request scheduler stay the provider's own, so the
+  // preview never issues requests of its own.
+  const draftRatings = useMemo<RatingsContextValue | null>(
+    () => savedRatings && { ...savedRatings, selected: appearance.ratingSources },
+    [savedRatings, appearance.ratingSources],
+  )
+  // A still layer: previews-on keeps the quick actions off the card without
+  // ever arming a real expansion; previews-off puts them on the card.
+  const stillLayer = useMemo<PreviewApi>(
+    () => ({
+      open: () => {},
+      cancel: () => {},
+      release: () => {},
+      hold: () => {},
+      activeId: null,
+      enabled: appearance.cardPreviews,
+    }),
+    [appearance.cardPreviews],
+  )
+  // A demo picture of the app must not be an app: nothing inside may navigate
+  // or act. The card links are marked inert one by one below — inert on the
+  // whole shelf would take the pointer out of play too, and with it the hover
+  // state this preview exists to show — and this capture handler is the belt
+  // to those braces for everything else, such as the inline actions.
+  const holdStill = (event: MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const shelfRef = useRef<HTMLDivElement>(null)
+  // Inert per link keeps it out of tab order, activation, and hit-testing, so
+  // a pointer over the artwork targets the card around it and the real hover
+  // rules fire exactly as they do on an actual shelf.
+  useEffect(() => {
+    for (const link of shelfRef.current?.querySelectorAll("a") ?? []) {
+      link.setAttribute("inert", "")
+    }
   })
+  const style = cssVariables({
+    "--artwork-intensity": String(appearance.artworkIntensity / 100),
+    "--backdrop-intensity": String(appearance.backdropIntensity / 100),
+  })
+  const resume = home.data?.rows.find((row) => row.id === "resume")?.items[0]
+  const recent = home.data?.rows.find((row) => row.id === "recent")?.items.slice(0, 4) ?? []
 
   return (
     <figure
@@ -589,7 +631,7 @@ function AppearancePreview({
       data-density={appearance.density}
       data-reduced-motion={reducedMotion}
       data-card-previews={appearance.cardPreviews}
-      data-show-media-info={appearance.showMediaInfo}
+      data-media-info={appearance.showMediaInfo}
       style={style}
       aria-labelledby="appearance-preview-title"
       aria-describedby="appearance-preview-description appearance-preview-motion-status"
@@ -597,60 +639,48 @@ function AppearancePreview({
       <figcaption className="sr-only">
         <span id="appearance-preview-title">Live appearance preview</span>
         <span id="appearance-preview-description">
-          A contained browsing shelf using the unsaved appearance controls.
+          Your own library rendered with the unsaved appearance choices; the rest
+          of MediaFlick changes after Save.
         </span>
       </figcaption>
-      <div className="appearance-preview-backdrop" aria-hidden />
-      <div className="appearance-preview-scrim" aria-hidden />
-      <div className="appearance-preview-shell">
+      <div className="appearance-preview-stage" aria-hidden>
+        <div className="appearance-preview-backdrop" />
         <header className="appearance-preview-chrome">
-          <span className="appearance-preview-brand">MF</span>
+          <span className="appearance-preview-brand"><Film /></span>
+          <span className="appearance-preview-wordmark">Media<span>Flick</span></span>
           <span>Home</span>
           <span>Movies</span>
-          <span className="appearance-preview-active">My List</span>
+          <span>Series</span>
           <span className="appearance-preview-online">Online</span>
         </header>
-        <div className="appearance-preview-content">
-          <div className="appearance-preview-heading">
-            <span className="appearance-preview-kicker">Continue watching</span>
-            <h3>Tonight’s signal</h3>
-          </div>
-          <div className="appearance-preview-cards" aria-hidden>
-            <div className="appearance-preview-card">
-              <div className="appearance-preview-poster">
-                <div className="appearance-preview-artwork" />
-                {previewRatings.length > 0 && (
-                  <dl className="appearance-preview-ratings">
-                    {previewRatings.map((source) => (
-                      <div key={source.id}>
-                        <dt><RatingSourceIcon sourceId={source.id} /></dt>
-                        <dd>{previewRatingValue(source)}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                )}
-                <div className="appearance-preview-media-info">
-                  <span><ScanLine /> 4K <i>·</i> DV</span>
-                  <span><AudioLines /> TrueHD <i>·</i> Atmos</span>
-                </div>
-                <div className="appearance-preview-card-actions">
-                  <span><Play /></span>
-                  <span><Plus /></span>
-                  <span><ThumbsUp /></span>
-                </div>
-                <span className="appearance-preview-progress"><i /></span>
+        <div ref={shelfRef} className="appearance-preview-shelf" onClickCapture={holdStill}>
+          <PreviewContext.Provider value={stillLayer}>
+            <RatingsContext.Provider value={draftRatings ?? NO_RATINGS}>
+              <div className="flex items-center gap-3">
+                <span className="rail-marker" />
+                <h3 className="text-base font-semibold tracking-tight">Recently added</h3>
+                <span className="rail-rule min-w-6 flex-1" />
               </div>
-              <strong>Midnight Frequency</strong>
-              <small>42 min left</small>
-            </div>
-            <div className="appearance-preview-card appearance-preview-card-secondary">
-              <div className="appearance-preview-poster">
-                <div className="appearance-preview-artwork" />
-              </div>
-              <strong>Green Horizon</strong>
-              <small>2026</small>
-            </div>
-          </div>
+              {home.isPending ? (
+                <div className="flex gap-[var(--card-gap)] overflow-hidden pt-1">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+                  ))}
+                </div>
+              ) : recent.length === 0 ? (
+                <p className="appearance-preview-empty">
+                  Your shelves appear here once your library has loaded.
+                </p>
+              ) : (
+                <div className="flex gap-[var(--card-gap)] overflow-hidden pt-1 pb-1">
+                  {resume && <MediaCard item={resume} landscape className="home-media-card shrink-0" preview={false} />}
+                  {recent.map((item) => (
+                    <MediaCard key={item.id} item={item} className="home-media-card shrink-0" preview={false} />
+                  ))}
+                </div>
+              )}
+            </RatingsContext.Provider>
+          </PreviewContext.Provider>
         </div>
       </div>
       <div className="appearance-preview-motion">
@@ -682,8 +712,8 @@ export function Appearance() {
   if (settingsQuery.error && !settings) return <SettingsError title="Appearance settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Appearance" detail="Tune the MediaFlick shell without changing your library or server settings." />
-    <Section title="Live preview" description="Uses your unsaved choices here only; the rest of MediaFlick changes after Save.">
-      <AppearancePreview appearance={draft} ratingSources={ratings?.sources ?? []} />
+    <Section title="Live preview" description="Your own shelves with your unsaved choices applied here only; the rest of MediaFlick changes after Save.">
+      <AppearancePreview appearance={draft} />
     </Section>
     <Section title="Theme" description="System follows the current operating-system color preference.">
       <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>

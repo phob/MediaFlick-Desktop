@@ -85,7 +85,13 @@
   --backdrop-intensity: 1;
 }
 
-html[data-theme="light"] {
+/* Appearance state is carried by data attributes on <html> — and, for the
+   Appearance settings' live preview, on one scoped container. Attribute-only
+   selectors let both restate the same palette: custom properties resolve from
+   the nearest ancestor that defines them, so a preview element carrying draft
+   attributes re-themes exactly the real components inside it without touching
+   the saved root appearance. */
+[data-theme="light"] {
   --background: #f4f8f5;
   --foreground: #102017;
   --card: #ffffff;
@@ -108,7 +114,7 @@ html[data-theme="light"] {
 }
 
 @media (prefers-color-scheme: light) {
-  html[data-theme="system"] {
+  [data-theme="system"] {
     --background: #f4f8f5;
     --foreground: #102017;
     --card: #ffffff;
@@ -131,15 +137,15 @@ html[data-theme="light"] {
   }
 }
 
-html[data-accent="cobalt"] { --primary: #5da8ff; --primary-foreground: #05152a; --ring: #5da8ff; --signal-deep: #2868ba; --sidebar-primary: #5da8ff; --sidebar-primary-foreground: #05152a; --sidebar-ring: #5da8ff; }
-html[data-accent="amber"] { --primary: #ffbd4a; --primary-foreground: #261500; --ring: #ffbd4a; --signal-deep: #b87814; --sidebar-primary: #ffbd4a; --sidebar-primary-foreground: #261500; --sidebar-ring: #ffbd4a; }
-html[data-accent="violet"] { --primary: #b69cff; --primary-foreground: #160b31; --ring: #b69cff; --signal-deep: #6f54be; --sidebar-primary: #b69cff; --sidebar-primary-foreground: #160b31; --sidebar-ring: #b69cff; }
+[data-accent="cobalt"] { --primary: #5da8ff; --primary-foreground: #05152a; --ring: #5da8ff; --signal-deep: #2868ba; --sidebar-primary: #5da8ff; --sidebar-primary-foreground: #05152a; --sidebar-ring: #5da8ff; }
+[data-accent="amber"] { --primary: #ffbd4a; --primary-foreground: #261500; --ring: #ffbd4a; --signal-deep: #b87814; --sidebar-primary: #ffbd4a; --sidebar-primary-foreground: #261500; --sidebar-ring: #ffbd4a; }
+[data-accent="violet"] { --primary: #b69cff; --primary-foreground: #160b31; --ring: #b69cff; --signal-deep: #6f54be; --sidebar-primary: #b69cff; --sidebar-primary-foreground: #160b31; --sidebar-ring: #b69cff; }
 
-html[data-density="compact"] { --card-gap: 12px; --header-height: 48px; }
+[data-density="compact"] { --card-gap: 12px; --header-height: 48px; }
 
-html[data-reduced-motion="true"] *,
-html[data-reduced-motion="true"] *::before,
-html[data-reduced-motion="true"] *::after {
+[data-reduced-motion="true"] *,
+[data-reduced-motion="true"] *::before,
+[data-reduced-motion="true"] *::after {
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   scroll-behavior: auto !important;
@@ -245,6 +251,58 @@ html[data-reduced-motion="true"] *::after {
     background: var(--primary);
     color: var(--primary-foreground);
   }
+
+  /* An application surface, not a document: drag, double-click, and select-all
+     never produce a text selection. Editing controls keep native text behavior,
+     which is the only place a selection is ever wanted. The arrow cursor follows
+     the Windows convention of reserving the beam for editable fields only. */
+  body {
+    user-select: none;
+    cursor: default;
+    overscroll-behavior: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    user-select: text;
+  }
+
+  /* Artwork is content to look at, not an attachment to pick up. */
+  img {
+    -webkit-user-drag: none;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* When Client settings reveals scrollbars they are overlay-thin and inherit
+     the signal palette instead of Chromium's light-gray defaults; hidden mode
+     removes them entirely at the process level. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: color-mix(in srgb, var(--foreground) 25%, transparent);
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--foreground) 42%, transparent);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 /* ==========================================================================
@@ -340,99 +398,67 @@ html[data-reduced-motion="true"] *::after {
 .rating-source-selector:disabled { opacity: 0.52; }
 .rating-source-selector:disabled label { cursor: not-allowed; }
 
-/* The preview owns a complete miniature token scope. Draft theme/accent values
-   can therefore be judged without leaking into the saved root appearance. It
-   mirrors a real shelf instead of a decorative hero so every card-overlay
-   preference has an honest place to appear. */
+/* The live appearance preview renders the app's own components — real cards,
+   real artwork, real overlays — inside one scoped container carrying the
+   unsaved draft as data attributes plus inline intensity variables. The shared
+   token rules above re-skin that subtree exactly as they re-skin the root, so
+   the preview shows what Save will produce instead of a miniature imitation.
+   Nothing here defines its own palette. */
 .appearance-preview {
-  --preview-background: #070b09;
-  --preview-foreground: #e6ede9;
-  --preview-muted: #83958b;
-  --preview-card: #0f1512;
-  --preview-border: #26342d;
-  --preview-primary: #2bff88;
-  --preview-primary-foreground: #04120b;
-  --preview-signal-deep: #0f7d45;
-  --preview-padding: 1.25rem;
-  --preview-gap: 1.1rem;
   position: relative;
   isolation: isolate;
+  display: flex;
   min-height: 23rem;
+  flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--preview-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--preview-background);
-  color: var(--preview-foreground);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-primary) 6%, transparent);
+  background: var(--background);
+  /* Card and shelf copy inherit their color; without this they would keep
+     reading the saved root foreground across the draft boundary. */
+  color: var(--foreground);
 }
 
-.appearance-preview[data-theme="light"] {
-  --preview-background: #f4f8f5;
-  --preview-foreground: #102017;
-  --preview-muted: #54705f;
-  --preview-card: #fff;
-  --preview-border: #cad8cf;
+.appearance-preview-stage {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
-@media (prefers-color-scheme: light) {
-  .appearance-preview[data-theme="system"] {
-    --preview-background: #f4f8f5;
-    --preview-foreground: #102017;
-    --preview-muted: #54705f;
-    --preview-card: #fff;
-    --preview-border: #cad8cf;
-  }
-}
-
-.appearance-preview[data-accent="cobalt"] { --preview-primary: #5da8ff; --preview-primary-foreground: #05152a; --preview-signal-deep: #2868ba; }
-.appearance-preview[data-accent="amber"] { --preview-primary: #ffbd4a; --preview-primary-foreground: #261500; --preview-signal-deep: #b87814; }
-.appearance-preview[data-accent="violet"] { --preview-primary: #b69cff; --preview-primary-foreground: #160b31; --preview-signal-deep: #6f54be; }
-.appearance-preview[data-density="compact"] { --preview-padding: 0.85rem; --preview-gap: 0.7rem; }
-.appearance-preview[data-show-media-info="false"] .appearance-preview-media-info { display: none; }
-
+/* Ambient wash behind the shelf, faded by the draft backdrop intensity the
+   same way the home billboard's establishing art is. Mixed from the accent and
+   surface tokens rather than fixed colors, so it stays a quiet tint in both
+   themes instead of a dark smear on light surfaces. */
 .appearance-preview-backdrop {
   position: absolute;
-  z-index: -3;
   inset: 0;
+  z-index: -1;
   background:
-    radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--preview-primary) 48%, transparent), transparent 17%),
-    radial-gradient(ellipse at 70% 48%, color-mix(in srgb, var(--preview-signal-deep) 68%, #13251c), transparent 43%),
-    linear-gradient(128deg, #08130d 8%, #173d2b 52%, #09100c 92%);
-  opacity: var(--preview-backdrop-intensity);
+    radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--primary) 32%, transparent), transparent 22%),
+    radial-gradient(ellipse at 70% 48%, color-mix(in srgb, var(--signal-deep) 42%, transparent), transparent 52%),
+    linear-gradient(color-mix(in srgb, var(--signal-deep) 16%, var(--background)), var(--background));
+  opacity: var(--backdrop-intensity);
   transition: opacity 180ms ease;
 }
 
-.appearance-preview-scrim {
-  position: absolute;
-  z-index: -2;
-  inset: 0;
-  background:
-    linear-gradient(90deg, var(--preview-background) 2%, color-mix(in srgb, var(--preview-background) 55%, transparent) 58%, transparent 100%),
-    linear-gradient(0deg, var(--preview-background), transparent 58%);
-}
-
-.appearance-preview-shell {
-  width: calc(100% - 2 * var(--preview-padding));
-  max-width: 42rem;
-  min-height: 18.3rem;
-  margin: var(--preview-padding) auto 0;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--preview-primary) 18%, var(--preview-border));
-  background: color-mix(in srgb, var(--preview-background) 90%, transparent);
-  box-shadow: 0 1.25rem 3rem rgb(0 0 0 / 28%);
-  backdrop-filter: blur(10px);
-}
-
+/* A quiet sketch of the real shell rail: brand mark, wordmark with the accent
+   carried by "Flick", the library entries, and the server pulse. Decorative
+   only — it exists so chrome surfaces have draft tokens on them too. */
 .appearance-preview-chrome {
+  position: relative;
+  z-index: 1;
   display: flex;
-  min-height: 2.55rem;
   align-items: center;
   gap: 1rem;
-  padding-inline: var(--preview-padding);
-  border-bottom: 1px solid var(--preview-border);
-  color: var(--preview-muted);
-  font: 0.56rem/1 var(--font-mono);
-  letter-spacing: 0.07em;
+  padding: 0.55rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--sidebar) 76%, transparent);
+  color: var(--muted-foreground);
+  font: 600 0.62rem/1 var(--font-mono);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
@@ -440,103 +466,98 @@ html[data-reduced-motion="true"] *::after {
   display: grid;
   width: 1.45rem;
   height: 1.45rem;
-  margin-right: 0.25rem;
+  flex: none;
   place-items: center;
-  background: var(--preview-primary);
-  color: var(--preview-primary-foreground);
-  font-weight: 800;
-  letter-spacing: -0.05em;
+  border-radius: var(--radius-media);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
-.appearance-preview-active { color: var(--preview-foreground); }
-.appearance-preview-online { margin-left: auto; color: var(--preview-primary); }
-.appearance-preview-online::before { content: ""; display: inline-block; width: 0.34rem; height: 0.34rem; margin-right: 0.35rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0.45rem currentColor; }
-.appearance-preview-content { padding: var(--preview-padding); }
-.appearance-preview-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--preview-gap); margin-bottom: var(--preview-gap); }
-.appearance-preview-heading h3 { font-size: clamp(1.1rem, 3vw, 1.45rem); font-weight: 700; line-height: 1; letter-spacing: -0.04em; }
-.appearance-preview-kicker { color: var(--preview-primary); font: 0.58rem/1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; }
-.appearance-preview-cards { display: flex; min-width: 0; gap: var(--preview-gap); }
-.appearance-preview-card { display: grid; width: 7.6rem; min-width: 0; gap: 0.28rem; }
-.appearance-preview-card strong { overflow: hidden; color: var(--preview-foreground); font-size: 0.66rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.appearance-preview-card small { color: var(--preview-muted); font: 0.52rem/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.appearance-preview-brand svg { width: 0.85rem; height: 0.85rem; }
 
-.appearance-preview-poster {
+.appearance-preview-wordmark {
+  margin-right: 0.35rem;
+  color: var(--sidebar-foreground);
+  font: 600 0.82rem/1 "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+  text-transform: none;
+}
+
+.appearance-preview-wordmark span { color: var(--primary); }
+
+.appearance-preview-chrome [data-active="true"] { color: var(--foreground); }
+
+.appearance-preview-online {
+  display: inline-flex;
+  margin-left: auto;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--primary);
+}
+
+.appearance-preview-online::before {
+  content: "";
+  width: 0.34rem;
+  height: 0.34rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0.45rem currentColor;
+}
+
+.appearance-preview-shelf {
   position: relative;
-  aspect-ratio: 2 / 3;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--preview-primary) 25%, var(--preview-border));
-  background: var(--preview-card);
-  box-shadow: 0 0.75rem 1.8rem rgb(0 0 0 / 28%);
-}
-
-.appearance-preview-artwork {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(145deg, transparent 0 42%, color-mix(in srgb, var(--preview-primary) 78%, transparent) 43% 46%, transparent 47%),
-    radial-gradient(circle at 62% 34%, color-mix(in srgb, var(--preview-primary) 85%, white) 0 3%, transparent 4%),
-    linear-gradient(155deg, #07100c 12%, #24583e 54%, #080b09 55% 100%);
-  opacity: var(--preview-artwork-intensity);
-  transition: opacity 180ms ease;
-}
-
-.appearance-preview-card-secondary .appearance-preview-artwork {
-  background:
-    radial-gradient(ellipse at 45% 78%, color-mix(in srgb, var(--preview-primary) 62%, transparent) 0 6%, transparent 7%),
-    linear-gradient(28deg, transparent 0 46%, color-mix(in srgb, var(--preview-primary) 65%, transparent) 47% 50%, transparent 51%),
-    linear-gradient(145deg, #0b1110 8%, #18382d 53%, #060a08 54% 100%);
-}
-
-.appearance-preview-ratings {
-  position: absolute;
-  z-index: 2;
-  top: 0.35rem;
-  left: 0.35rem;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.18rem 0.5rem;
-  padding: 0.3rem 1rem 0.3rem 0.3rem;
-  background: linear-gradient(90deg, rgb(2 5 3 / 88%), transparent);
-  color: #f4f8f6;
-  font: 0.48rem/1 var(--font-mono);
-  text-shadow: 0 1px 3px #000;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.85rem;
+  padding: 1.15rem 1.5rem 1.3rem;
 }
 
-.appearance-preview-ratings div { display: flex; align-items: center; gap: 0.2rem; }
-.appearance-preview-ratings dt { display: flex; }
-.appearance-preview-ratings .rating-source-icon { width: 0.62rem; height: 0.62rem; }
-.appearance-preview-ratings dd { font-weight: 700; }
+.appearance-preview-empty {
+  display: grid;
+  min-height: 9.5rem;
+  place-items: center;
+  padding: 1rem;
+  color: var(--muted-foreground);
+  font: 0.66rem/1.6 var(--font-mono);
+  letter-spacing: 0.07em;
+  text-align: center;
+  text-transform: uppercase;
+}
 
-.appearance-preview-media-info { position: absolute; right: 0; bottom: 3px; left: 0; z-index: 1; display: grid; gap: 0.16rem; padding: 1.45rem 0.42rem 0.38rem; background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 90%) 58%); color: rgb(244 248 246 / 94%); font: 600 0.5rem/1 var(--font-mono); letter-spacing: 0.03em; }
-.appearance-preview-media-info span { display: flex; align-items: center; gap: 0.24rem; }
-.appearance-preview-media-info svg { width: 0.58rem; height: 0.58rem; color: color-mix(in srgb, var(--preview-primary) 80%, white); }
-.appearance-preview-media-info i { color: color-mix(in srgb, var(--preview-primary) 60%, transparent); font-style: normal; }
-.appearance-preview-card-actions { position: absolute; right: 0; bottom: 3px; left: 0; z-index: 2; display: none; align-items: center; gap: 0.28rem; padding: 1.6rem 0.42rem 0.38rem; }
-.appearance-preview[data-card-previews="false"] .appearance-preview-card-actions { display: flex; }
-.appearance-preview[data-card-previews="false"] .appearance-preview-media-info span { opacity: 0; }
-.appearance-preview[data-card-previews="false"][data-show-media-info="false"] .appearance-preview-card-actions { background: linear-gradient(to bottom, transparent, rgb(2 5 3 / 90%) 58%); }
-.appearance-preview-card-actions span { display: grid; width: 1.2rem; height: 1.2rem; border: 1px solid color-mix(in srgb, var(--preview-foreground) 35%, transparent); border-radius: 2px; background: rgb(2 5 3 / 72%); color: var(--preview-foreground); place-items: center; }
-.appearance-preview-card-actions span:first-child { border-color: var(--preview-primary); background: var(--preview-primary); color: var(--preview-primary-foreground); }
-.appearance-preview-card-actions svg { width: 0.62rem; height: 0.62rem; }
-.appearance-preview-progress { position: absolute; z-index: 3; right: 0; bottom: 0; left: 0; height: 3px; background: rgb(0 0 0 / 65%); }
-.appearance-preview-progress i { display: block; width: 58%; height: 100%; background: var(--preview-primary); }
+/* Draft-driven card behavior. With previews off, the quick actions live on the
+   card itself in the real app behind hover or focus; the preview is inert, so
+   they are held open here to show honestly what the toggle changes, and the
+   technical readout yields exactly as it does under a real pointer. */
+.appearance-preview[data-card-previews="false"] .card-inline-actions {
+  opacity: 1;
+}
+
+.appearance-preview[data-card-previews="false"] .signal-card:has(.card-inline-actions) .card-technical-row {
+  opacity: 0;
+}
 
 .appearance-preview-motion {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: auto 6rem minmax(0, 1fr);
   gap: 0.65rem;
   align-items: center;
-  min-height: 2.75rem;
-  padding: 0.55rem var(--preview-padding);
-  border-top: 1px solid var(--preview-border);
-  background: color-mix(in srgb, var(--preview-card) 88%, transparent);
-  color: var(--preview-muted);
+  min-height: 2.6rem;
+  padding: 0.5rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--muted-foreground);
   font: 0.62rem/1.25 var(--font-mono);
 }
 
-.appearance-preview-motion-label { color: var(--preview-foreground); letter-spacing: 0.1em; text-transform: uppercase; }
-.appearance-preview-motion-track { display: block; width: 6rem; height: 0.65rem; padding: 2px; border: 1px solid var(--preview-border); border-radius: 999px; background: var(--preview-background); }
-.appearance-preview-motion-track > span { display: block; width: calc(0.65rem - 6px); height: calc(0.65rem - 6px); border-radius: 50%; background: var(--preview-primary); box-shadow: 0 0 8px color-mix(in srgb, var(--preview-primary) 55%, transparent); animation: appearance-preview-motion 900ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.appearance-preview-motion-label { color: var(--foreground); letter-spacing: 0.1em; text-transform: uppercase; }
+.appearance-preview-motion-track { display: block; width: 6rem; height: 0.65rem; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--background); }
+.appearance-preview-motion-track > span { display: block; width: calc(0.65rem - 6px); height: calc(0.65rem - 6px); border-radius: 50%; background: var(--primary); box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 55%, transparent); animation: appearance-preview-motion 900ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 .appearance-preview[data-reduced-motion="true"] .appearance-preview-motion-track > span { animation: none; }
 
 @keyframes appearance-preview-motion {
@@ -560,8 +581,7 @@ html[data-reduced-motion="true"] *::after {
 @media (max-width: 480px) {
   .appearance-preview { min-height: 21.5rem; }
   .appearance-preview-chrome { gap: 0.65rem; }
-  .appearance-preview-chrome > :nth-child(3) { display: none; }
-  .appearance-preview-card-secondary { display: none; }
+  .appearance-preview-shelf { padding-inline: 1rem; }
   .appearance-preview-motion { grid-template-columns: auto minmax(0, 1fr); }
   .appearance-preview-motion-track { display: none; }
 }

@@ -489,29 +489,112 @@ describe("configurable card ratings", () => {
     }
   })
 
-  test("normal Appearance previews and saves card overlay preferences together", () => {
-    const { container } = withSettings(<Appearance />)
+  test("the Appearance preview renders real library cards with the unsaved overlay choices", () => {
+    const movie: ItemSummary = {
+      id: "preview-movie",
+      kind: "Movie",
+      name: "Green Horizon",
+      year: 2026,
+      runtimeTicks: 7_000_000_000,
+      communityRating: null,
+      officialRating: null,
+      seriesId: null,
+      seriesName: null,
+      indexNumber: null,
+      parentIndexNumber: null,
+      primaryImageTag: "tag-movie",
+      thumbImageTag: null,
+      logoImageTag: null,
+      backdropImageTag: null,
+      childCount: null,
+      premiereDate: null,
+      seasonId: null,
+      played: false,
+      playCount: 0,
+      positionTicks: 0,
+      favorite: false,
+    }
+    const show: ItemSummary = {
+      ...movie,
+      id: "preview-series",
+      kind: "Series",
+      name: "Severance",
+      year: null,
+      primaryImageTag: "tag-show",
+      childCount: 2,
+    }
+    const resumeEpisode: ItemSummary = {
+      ...movie,
+      id: "preview-episode",
+      kind: "Episode",
+      name: "What We Leave Behind",
+      seriesId: show.id,
+      seriesName: show.name,
+      indexNumber: 1,
+      parentIndexNumber: 1,
+      thumbImageTag: "tag-still",
+      positionTicks: 1_000_000_000,
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.settings, clientSettings)
+    client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
+    client.setQueryData(queryKeys.home, {
+      rows: [
+        { id: "resume", title: "Continue watching", items: [resumeEpisode] },
+        { id: "recent", title: "Recently added", items: [movie, show] },
+      ],
+    })
+    const register = vi.fn(() => vi.fn())
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RatingsContext.Provider
+            value={{
+              items: new Map([
+                [movie.id, { ...item, id: movie.id, ratings: [display("letterboxd", 4.2).rating] }],
+              ]),
+              selected: ["letterboxd"],
+              definitions: new Map(definitions.map((definition) => [definition.id, definition])),
+              register,
+            }}
+          >
+            <Appearance />
+          </RatingsContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
     expect(screen.getByText("Cards")).toBeTruthy()
     const cardPreviews = screen.getByRole("switch", { name: "Show pop-out previews on cards" })
     expect(cardPreviews.getAttribute("aria-checked")).toBe("true")
     const mediaInfo = screen.getByRole("switch", { name: "Show media info on cards" })
     expect(mediaInfo.getAttribute("aria-checked")).toBe("true")
-    expect(screen.getByRole("checkbox", { name: "Letterboxd" }).getAttribute("aria-checked")).toBe("true")
-    expect(screen.getByLabelText("Rotten Tomatoes Critics")).toBeTruthy()
-    expect(screen.getByLabelText("Rotten Tomatoes Audience")).toBeTruthy()
 
     const preview = requireElement(
       container.querySelector<HTMLElement>(".appearance-preview"),
       "appearance preview",
     )
-    expect(preview.dataset.showMediaInfo).toBe("true")
+    expect(preview.dataset.mediaInfo).toBe("true")
     expect(preview.dataset.cardPreviews).toBe("true")
+    // The shelf is the app's own cards over real home-feed rows: a resuming
+    // episode and both a movie and a series from Recently added.
+    expect(preview.querySelectorAll(".signal-card").length).toBeGreaterThanOrEqual(3)
+    expect(preview.querySelector("[aria-label='Open details for Green Horizon']")).toBeTruthy()
+    expect(preview.querySelector("[aria-label='Open details for Severance']")).toBeTruthy()
+    expect(preview.querySelector(".card-rating-readout")).toBeTruthy()
     expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+
+    // The draft selection drives the overlays before anything is saved.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Letterboxd" }))
+    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeNull()
+    fireEvent.click(screen.getByRole("checkbox", { name: "Letterboxd" }))
+    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
+
+    // With previews off, the quick actions move onto the card itself.
     fireEvent.click(cardPreviews)
     expect(preview.dataset.cardPreviews).toBe("false")
-    expect(preview.querySelector(".appearance-preview-card-actions")).toBeTruthy()
+    expect(preview.querySelector(".card-inline-actions")).toBeTruthy()
     fireEvent.click(mediaInfo)
-    expect(preview.dataset.showMediaInfo).toBe("false")
+    expect(preview.dataset.mediaInfo).toBe("false")
     expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
     expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
   })
