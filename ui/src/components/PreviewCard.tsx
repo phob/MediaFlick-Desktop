@@ -90,10 +90,17 @@ export function PreviewProvider({
   children,
   dependencies = DEFAULT_PREVIEW_DEPENDENCIES,
   enabled = true,
+  container = null,
 }: {
   children: ReactNode
   dependencies?: PreviewDependencies
   enabled?: boolean
+  /**
+   * Where the panel portals. Defaults to `document.body`; the Appearance
+   * settings' live preview aims this at its own draft-themed host instead, so
+   * the panel is re-skinned by the unsaved choices like the shelf beneath it.
+   */
+  container?: HTMLElement | null
 }) {
   const location = useLocation()
   const route = `${location.pathname}\0${location.search}`
@@ -193,7 +200,7 @@ export function PreviewProvider({
             onRelease={api.release}
             dependencies={dependencies}
           />,
-          document.body,
+          container ?? document.body,
         )}
     </PreviewContext.Provider>
   )

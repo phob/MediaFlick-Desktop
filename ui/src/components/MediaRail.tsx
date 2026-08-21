@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react"
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 
@@ -19,6 +19,8 @@ export function MediaRail({
   /** Reserves room to the left of the first card, for the Top 10 numerals. */
   className,
   itemCount,
+  /** Identity of the shelf's first card. A change resets the shelf to it. */
+  resetKey,
 }: {
   title: string
   viewAll?: string
@@ -26,6 +28,8 @@ export function MediaRail({
   className?: string
   /** Re-measures the edges when the shelf's contents change length. */
   itemCount?: number
+  /** Identity of the shelf's first card. A change resets the shelf to it. */
+  resetKey?: string
 }) {
   const rail = useRef<HTMLDivElement>(null)
   const headingId = useId()
@@ -48,6 +52,15 @@ export function MediaRail({
     observer.observe(node)
     return () => observer.disconnect()
   }, [measure, itemCount])
+
+  // A shelf always reads from its first position: at mount, because the browser
+  // may otherwise restore a stale horizontal offset across a reload, and when
+  // the leading item changes, so a freshly synced title is visibly the new
+  // first card while everything after it shifts one slot to the right.
+  useLayoutEffect(() => {
+    const node = rail.current
+    if (node && node.scrollLeft !== 0) node.scrollLeft = 0
+  }, [resetKey])
 
   const move = (direction: -1 | 1) => {
     const node = rail.current

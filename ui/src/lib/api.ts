@@ -792,6 +792,45 @@ export interface SeerrLinkResult {
   status?: SeerrStatusInfo
 }
 
+// ------------------------------------------------------------- collections
+
+/**
+ * One TMDB movie collection the library has movies in, derived by the
+ * Companion plugin. TMDB collections are inherently movie-only; series never
+ * appear in this surface.
+ */
+export interface CollectionSummary {
+  id: number
+  name: string
+  posterPath: string | null
+  backdropPath: string | null
+  movieCount: number | null
+}
+
+export interface CollectionsIndex {
+  collections: CollectionSummary[]
+  libraryMovies: number
+  mappedMovies: number
+  /** Movies whose collection mapping has not been resolved yet. */
+  pendingMovies: number
+}
+
+export interface CollectionDetail {
+  id: number
+  name: string
+  overview: string | null
+  posterPath: string | null
+  backdropPath: string | null
+  /** Movie parts in the shared Seerr result shape, joined to local ownership. */
+  parts: SeerrResult[]
+}
+
+/** The single collection one TMDB movie belongs to, or none. */
+export interface MovieCollection {
+  tmdbId: number
+  collection: { id: number; name: string } | null
+}
+
 export const SEERR_DISCOVER_ROWS = [
   {
     id: "trending",
@@ -1268,6 +1307,16 @@ export const api = {
     }) => request<SeerrRequest>("/api/seerr/request", { method: "POST", body }),
     cancelRequest: (id: number) =>
       request<{ cancelled: boolean }>(`/api/seerr/request/${id}`, { method: "DELETE" }),
+  },
+
+  // ------------------------------------------------------------ collections
+
+  collections: {
+    index: () => request<CollectionsIndex>("/api/collections"),
+    detail: (id: number, signal?: AbortSignal) =>
+      request<CollectionDetail>(`/api/collections/${id}`, { signal }),
+    forMovie: (tmdbId: number) =>
+      request<MovieCollection>(`/api/collections/movie/${tmdbId}`),
   },
 }
 

@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.MediaFlick.Services;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,6 +19,15 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CalendarCache>();
         serviceCollection.AddSingleton<CalendarService>();
         serviceCollection.AddSingleton<SeerrGateway>();
+        serviceCollection.AddSingleton(serviceProvider =>
+        {
+            var dataPath = Plugin.Instance?.DataFolderPath
+                ?? throw new InvalidOperationException("plugin data path is unavailable");
+            return new CollectionsService(
+                serviceProvider.GetRequiredService<SeerrGateway>(),
+                serviceProvider.GetRequiredService<ILibraryManager>(),
+                Path.Combine(dataPath, "collections-v1-cache.json"));
+        });
         serviceCollection.AddSingleton<RatingsCacheStore>(_ =>
         {
             var dataPath = Plugin.Instance?.DataFolderPath

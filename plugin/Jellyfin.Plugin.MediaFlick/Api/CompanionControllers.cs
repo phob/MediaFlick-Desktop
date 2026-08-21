@@ -45,6 +45,7 @@ public sealed class InfoController : ControllerBase
             // or misinterpreting the replacement parameter.
             capabilities.Add("seerr-discovery-v4");
             capabilities.Add("seerr-request-profiles");
+            capabilities.Add("collections-v1");
         }
 
         var ratings = _ratings.Capability();
@@ -227,6 +228,63 @@ public sealed class SeerrController : ControllerBase
             // Authentication already succeeded at Jellyfin's middleware. A
             // 401 from here is Seerr's overloaded permission response, not a
             // reason for the desktop to discard its Jellyfin session.
+            var status = exception.StatusCode == StatusCodes.Status401Unauthorized
+                ? StatusCodes.Status403Forbidden
+                : exception.StatusCode;
+            return StatusCode(status, new { error = exception.Message });
+        }
+    }
+
+    private static Guid CurrentUserId(ClaimsPrincipal principal)
+    {
+        var value = principal.Claims.FirstOrDefault(claim =>
+            claim.Type.Equals("Jellyfin-UserId", StringComparison.OrdinalIgnoreCase))?.Value;
+        return Guid.TryParse(value, out var parsed) ? parsed : Guid.Empty;
+    }
+}
+
+[ApiController]
+[Authorize]
+[Route("MediaFlick/collections")]
+public sealed class CollectionsController : ControllerBase
+{
+    private readonly CollectionsService _collections;
+
+    public CollectionsController(CollectionsService collections)
+    {
+        _collections = collections;
+    }
+
+    [HttpGet]
+    public Task<IActionResult> List(CancellationToken cancellationToken)
+        => RunAsync(userId => _collections.SummaryAsync(userId, cancellationToken));
+
+    /// <summary>The collection one TMDB movie belongs to, for detail-page links.</summary>
+    [HttpGet("movie/{tmdbId:int}")]
+    public Task<IActionResult> ForMovie(int tmdbId, CancellationToken cancellationToken)
+        => RunAsync(userId => _collections.ForMovieAsync(userId, tmdbId, cancellationToken));
+
+    [HttpGet("{collectionId:int}")]
+    public Task<IActionResult> Detail(int collectionId, CancellationToken cancellationToken)
+        => RunAsync(userId => _collections.DetailAsync(userId, collectionId, cancellationToken));
+
+    private async Task<IActionResult> RunAsync(Func<Guid, Task<JsonNode>> action)
+    {
+        var userId = CurrentUserId(User);
+        if (userId == Guid.Empty)
+        {
+            return Unauthorized(new { error = "the Jellyfin user identity is missing" });
+        }
+
+        try
+        {
+            return new JsonResult(await action(userId).ConfigureAwait(false));
+        }
+        catch (GatewayException exception)
+        {
+            // Same posture as the Seerr controller: a 401 from Seerr is its
+            // overloaded permission response, never a reason for the desktop
+            // to discard its Jellyfin session.
             var status = exception.StatusCode == StatusCodes.Status401Unauthorized
                 ? StatusCodes.Status403Forbidden
                 : exception.StatusCode;

@@ -479,6 +479,80 @@ public sealed class SeerrGateway
         return new JsonObject { ["cancelled"] = true, ["id"] = requestId };
     }
 
+    /// <summary>
+    /// The TMDB collection one movie belongs to, or `null`. Overseerr maps
+    /// TMDB's snake_case `belongs_to_collection` into this camelCase object.
+    /// </summary>
+    public async Task<JsonNode> MovieCollectionAsync(
+        Guid jellyfinUserId,
+        int tmdbId,
+        CancellationToken cancellationToken)
+    {
+        ValidatePositive(tmdbId, "TMDB movie id");
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        var response = await SendMappedAsync(
+            HttpMethod.Get,
+            $"api/v1/movie/{tmdbId}",
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+        return new JsonObject
+        {
+            ["tmdbId"] = tmdbId,
+            ["collection"] = Clone(response["collection"])
+        };
+    }
+
+    /// <summary>
+    /// One TMDB collection with its movie parts. Parts reuse the shared search
+    /// result shape so Desktop's local-library join applies unchanged.
+    /// </summary>
+    public async Task<JsonNode> CollectionAsync(
+        Guid jellyfinUserId,
+        int collectionId,
+        CancellationToken cancellationToken)
+    {
+        ValidatePositive(collectionId, "collection id");
+        var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+        var response = await SendMappedAsync(
+            HttpMethod.Get,
+            $"api/v1/collection/{collectionId}",
+            null,
+            user,
+            cancellationToken).ConfigureAwait(false);
+        return ShapeCollection(response);
+    }
+
+    internal static JsonNode ShapeCollection(JsonNode? node)
+    {
+        var detail = node as JsonObject ?? new JsonObject();
+        var parts = new JsonArray(
+            (detail["parts"] as JsonArray ?? new JsonArray())
+                .OfType<JsonObject>()
+                .Where(static part => (IntValue(part, "id") ?? 0) > 0 && !BoolValue(part, "adult"))
+                .Select(static part =>
+                {
+                    // TMDB parts are always movies; tolerate upstreams that omit
+                    // the mediaType marker ShapeSearchResult keys off.
+                    if (part["mediaType"] is null)
+                    {
+                        part["mediaType"] = "movie";
+                    }
+
+                    return ShapeSearchResult(part);
+                })
+                .ToArray());
+        return new JsonObject
+        {
+            ["id"] = IntValue(detail, "id"),
+            ["name"] = StringValue(detail, "name"),
+            ["overview"] = Clone(detail["overview"]),
+            ["posterPath"] = Clone(detail["posterPath"]),
+            ["backdropPath"] = Clone(detail["backdropPath"]),
+            ["parts"] = parts
+        };
+    }
+
     private async Task<int> ResolveUserAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
     {
         if (_mappings.TryGetValue(jellyfinUserId, out var cached)

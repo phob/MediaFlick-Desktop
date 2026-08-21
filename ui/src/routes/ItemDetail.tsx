@@ -1,4 +1,5 @@
-import { Navigate, useLocation, useParams, useSearchParams } from "react-router-dom"
+import { Layers } from "lucide-react"
+import { Navigate, useLocation, useParams, useSearchParams, Link } from "react-router-dom"
 import { CastRow } from "@/components/detail/CastRow"
 import { DetailActions } from "@/components/detail/DetailActions"
 import { DetailFacts } from "@/components/detail/DetailFacts"
@@ -15,13 +16,33 @@ import {
   readDetailNavigationState,
   type DetailNavigationState,
 } from "@/lib/navigation"
-import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
+import { useChildren, useItem, useItemAbout, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
 import { seasonRailOrder } from "@/lib/seasons"
 
 function episodeCode(episode: ItemSummary) {
   return episode.parentIndexNumber != null && episode.indexNumber != null
     ? `S${episode.parentIndexNumber}E${episode.indexNumber}`
     : null
+}
+
+/**
+ * A movie's TMDB collection membership, resolved by the Companion plugin.
+ * Absent whenever the plugin cannot answer — the chip simply does not exist
+ * rather than advertising an unavailable destination.
+ */
+function CollectionChip({ tmdbId }: { tmdbId: number }) {
+  const { data } = useMovieCollection(tmdbId)
+  const collection = data?.collection
+  if (!collection) return null
+  return (
+    <Link
+      to={`/collections/${collection.id}`}
+      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-card/60 px-3 py-1 text-xs text-muted-foreground transition hover:border-white/25 hover:text-foreground"
+    >
+      <Layers className="size-3" aria-hidden />
+      Part of&nbsp;<span className="font-medium text-foreground">{collection.name}</span>
+    </Link>
+  )
 }
 
 /**
@@ -122,6 +143,9 @@ export default function ItemDetail() {
         navigationState={navigationState}
       >
         {isSeries && nextUp.data?.item && <NextUpNote episode={nextUp.data.item} />}
+        {!isSeries && item.providerIds.tmdb && (
+          <CollectionChip tmdbId={Number(item.providerIds.tmdb)} />
+        )}
         <DetailActions
           item={item}
           playTarget={playTarget}
