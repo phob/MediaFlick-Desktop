@@ -105,7 +105,9 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
   const active = { refetchType: "active" as const }
   const exactActive = { ...active, exact: true }
   void queryClient.invalidateQueries({ queryKey: queryKeys.home, ...active })
-  void queryClient.invalidateQueries({ queryKey: queryKeys.billboard, ...exactActive })
+  // Billboard slides come from a randomized endpoint. Their user-data controls
+  // are patched by the mutations, so refreshing that query here would replace
+  // the active title instead of merely updating it.
   void queryClient.invalidateQueries({ queryKey: ["items"], ...active })
   // Explicit user-data writes should refresh a live person card too; metadata
   // batches deliberately do not, because that response is already server-live.
@@ -133,7 +135,9 @@ export function invalidateLibraryChanged(
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey
-      if (["home", "items", "billboard", "genres", "status"].includes(String(root))) return true
+      if (["home", "items", "genres", "status"].includes(String(root))) return true
+      // The billboard endpoint is random. A committed sync batch may update
+      // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))
     },
   })

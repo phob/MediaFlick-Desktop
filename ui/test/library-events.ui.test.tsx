@@ -41,6 +41,7 @@ describe("native library change bridge", () => {
     expect(filters?.predicate?.(queryFor(["item", "series"]))).toBe(true)
     expect(filters?.predicate?.(queryFor(["item", "other"]))).toBe(false)
     expect(filters?.predicate?.(queryFor(["status"]))).toBe(true)
+    expect(filters?.predicate?.(queryFor(queryKeys.billboard))).toBe(false)
   })
 
   test("user-state changes leave rich and technical item queries cached", () => {
@@ -55,7 +56,7 @@ describe("native library change bridge", () => {
     expect(filterFor(queryKeys.item("episode"))?.exact).toBe(true)
     expect(filterFor(queryKeys.children("series"))?.exact).toBe(true)
     expect(filterFor(queryKeys.nextUp("series"))?.exact).toBe(true)
-    expect(filterFor(queryKeys.billboard)?.exact).toBe(true)
+    expect(filterFor(queryKeys.billboard)).toBeUndefined()
     for (const untouched of [
       queryKeys.itemAbout("episode"),
       queryKeys.itemSynopsis("episode"),

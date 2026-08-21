@@ -279,6 +279,10 @@ struct BrowserStateInner {
     title: String,
     settings: AppSettings,
     browsers: Vec<Browser>,
+    main_window: Option<Window>,
+    initial_show_state: ShowState,
+    main_window_reveal_requested: bool,
+    main_window_revealed: bool,
     playback: Arc<PlaybackCoordinator>,
     playback_event_tx: mpsc::Sender<PlaybackEvent>,
     update_available: Option<UpdateRelease>,
@@ -289,7 +293,52 @@ struct BrowserStateInner {
 
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
 
-fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
+fn register_main_window(state: &BrowserState, window: &Window) {
+    let reveal_requested = state.lock().is_ok_and(|mut state| {
+        state.main_window = Some(window.clone());
+        state.main_window_reveal_requested
+    });
+    if reveal_requested {
+        reveal_main_window(state);
+    }
+}
+
+fn clear_main_window(state: &BrowserState) {
+    if let Ok(mut state) = state.lock() {
+        state.main_window = None;
+    }
+}
+
+fn reveal_main_window(state: &BrowserState) {
+    debug_assert_ne!(currently_on(ThreadId::UI), 0);
+
+    let (window, show_state) = {
+        let Ok(mut state) = state.lock() else {
+            tracing::warn!(target: "shell", "failed to read main window state before reveal");
+            return;
+        };
+        state.main_window_reveal_requested = true;
+        if state.main_window_revealed || state.initial_show_state == ShowState::HIDDEN {
+            return;
+        }
+        let Some(window) = state.main_window.clone() else {
+            return;
+        };
+        state.main_window_revealed = true;
+        (window, state.initial_show_state)
+    };
+
+    if show_state == ShowState::MAXIMIZED {
+        window.maximize();
+    }
+    window.show();
+}
+
+fn new_browser_state(
+    title: String,
+    settings: AppSettings,
+    initial_show_state: ShowState,
+) -> BrowserState {
     let (playback_event_tx, playback_event_rx) = mpsc::channel();
     let playback = Arc::new(PlaybackCoordinator::new(build_backend(
         &settings,
@@ -305,6 +354,10 @@ fn new_browser_state(title: String, settings: AppSettings) -> BrowserState {
         title,
         settings,
         browsers: Vec::new(),
+        main_window: None,
+        initial_show_state,
+        main_window_reveal_requested: false,
+        main_window_revealed: false,
         playback,
         playback_event_tx,
         update_available: None,

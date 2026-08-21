@@ -41,6 +41,9 @@ pub struct Services {
 /// on CEF's UI thread; this narrow queue is the boundary between the two.
 #[derive(Debug, Clone)]
 pub enum ShellRequest {
+    /// The startup cover has left the DOM and the completed initial route has
+    /// painted. Revealing the native window must happen on CEF's UI thread.
+    MainWindowReady,
     FilePicker {
         request_id: String,
         target: ShellFilePickerTarget,

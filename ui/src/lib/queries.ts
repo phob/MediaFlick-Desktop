@@ -6,6 +6,7 @@ import {
   api,
   type ExternalProvider,
   type ItemQuery,
+  type ItemSummary,
   type PlayerCommand,
   type MediaInfoResponse,
   type PlaybackTrackPreferenceWrite,
@@ -103,8 +104,10 @@ export function useBillboard(enabled = true) {
     queryKey: queryKeys.billboard,
     queryFn: api.billboard,
     enabled,
-    // Keep one random selection stable while the user moves around the app.
-    staleTime: 10 * 60_000,
+    // The endpoint returns a new random set on every request. Keep the chosen
+    // slides for the session so background syncs, reconnects, and navigation
+    // cannot replace the active title or restart its trailer.
+    staleTime: Infinity,
   })
 }
 
@@ -309,11 +312,30 @@ interface UserDataMutation {
   context?: string | null
 }
 
+type BillboardUserDataPatch = Partial<
+  Pick<ItemSummary, "favorite" | "played" | "positionTicks">
+>
+
+/** Update controls on stable billboard slides without asking the random endpoint again. */
+function patchBillboardItem(id: string, patch: BillboardUserDataPatch) {
+  queryClient.setQueryData<{ items: ItemSummary[] }>(queryKeys.billboard, (previous) => {
+    if (!previous) return previous
+    const index = previous.items.findIndex((item) => item.id === id)
+    if (index < 0) return previous
+    const items = [...previous.items]
+    items[index] = { ...items[index], ...patch }
+    return { ...previous, items }
+  })
+}
+
 export function useSetPlayed() {
   return useMutation({
     mutationFn: ({ id, played }: UserDataMutation & { played: boolean }) =>
       api.setPlayed(id, played),
-    onSuccess: (_result, { id, context }) => invalidateMediaSurfaces(id, context),
+    onSuccess: (_result, { id, context, played }) => {
+      patchBillboardItem(id, { played, positionTicks: 0 })
+      invalidateMediaSurfaces(id, context)
+    },
     onError: reportError,
   })
 }
@@ -322,7 +344,10 @@ export function useSetFavorite() {
   return useMutation({
     mutationFn: ({ id, favorite }: UserDataMutation & { favorite: boolean }) =>
       api.setFavorite(id, favorite),
-    onSuccess: (_result, { id, context }) => invalidateMediaSurfaces(id, context),
+    onSuccess: (_result, { id, context, favorite }) => {
+      patchBillboardItem(id, { favorite })
+      invalidateMediaSurfaces(id, context)
+    },
     onError: reportError,
   })
 }
@@ -363,6 +388,7 @@ export function useLogin() {
     mutationFn: ({ server, username, password }: { server: string; username: string; password: string }) =>
       api.login(server, username, password),
     onSuccess: (status) => {
+      queryClient.removeQueries({ queryKey: queryKeys.billboard })
       queryClient.setQueryData(queryKeys.status, status)
       invalidateMediaSurfaces()
     },
@@ -400,7 +426,9 @@ export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
       const result = await api.quickConnectPoll(started!.serverUrl, started!.secret, signal)
       if (result.authenticated) {
         // The shell gates on `/api/status`; re-reading it is what actually
-        // swaps the sign-in view for the app.
+        // swaps the sign-in view for the app. A billboard selection belongs to
+        // that authenticated session and must not cross into the new account.
+        queryClient.removeQueries({ queryKey: queryKeys.billboard })
         await queryClient.invalidateQueries({ queryKey: queryKeys.status })
         invalidateMediaSurfaces()
       }
@@ -422,6 +450,7 @@ export function useLogout() {
       queryClient.setQueryData(queryKeys.status, status)
       queryClient.removeQueries({ queryKey: ["items"] })
       queryClient.removeQueries({ queryKey: queryKeys.home })
+      queryClient.removeQueries({ queryKey: queryKeys.billboard })
       // The Seerr link belonged to the account that just went away; the shell
       // has already dropped it, so nothing of it may stay in the cache either.
       queryClient.removeQueries({ queryKey: ["seerr"] })

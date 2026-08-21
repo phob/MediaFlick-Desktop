@@ -98,11 +98,19 @@ wrap_browser_process_handler! {
             app_scheme::register();
             services::init_with_settings(self.config.settings.clone());
 
+            let show_state = if self.config.hidden {
+                ShowState::HIDDEN
+            } else if self.config.settings.webui_window.maximized {
+                ShowState::MAXIMIZED
+            } else {
+                ShowState::NORMAL
+            };
             let handler_state = new_browser_state(
                 self.config.title.clone(),
                 services::services()
                     .map(|services| services.preferences.snapshot())
                     .unwrap_or_else(|| self.config.settings.clone()),
+                show_state,
             );
             {
                 let mut client = self.client.borrow_mut();
@@ -130,17 +138,11 @@ wrap_browser_process_handler! {
                 return;
             };
 
-            let show_state = if self.config.hidden {
-                ShowState::HIDDEN
-            } else if self.config.settings.webui_window.maximized {
-                ShowState::MAXIMIZED
-            } else {
-                ShowState::NORMAL
-            };
             let mut window_delegate = JellyfinWindowDelegate::new(
                 RefCell::new(Some(browser_view)),
                 runtime_style,
                 show_state,
+                true,
                 self.config.title.clone(),
                 self.config.settings.webui_window,
                 Some(handler_state),
@@ -172,6 +174,7 @@ wrap_browser_view_delegate! {
                 RefCell::new(popup_browser_view.cloned()),
                 self.runtime_style,
                 ShowState::NORMAL,
+                false,
                 "MediaFlick Desktop".to_string(),
                 WebUiWindowSettings::default(),
                 None,
@@ -191,6 +194,7 @@ wrap_window_delegate! {
         browser_view: RefCell<Option<BrowserView>>,
         runtime_style: RuntimeStyle,
         initial_show_state: ShowState,
+        defer_show: bool,
         title: String,
         window_settings: WebUiWindowSettings,
         state: Option<BrowserState>,
@@ -229,6 +233,9 @@ wrap_window_delegate! {
             };
             window.set_title(Some(&CefString::from(self.title.as_str())));
             set_window_icon(window);
+            if let Some(state) = &self.state {
+                register_main_window(state, window);
+            }
 
             let browser_view = self.browser_view.borrow();
             let Some(browser_view) = browser_view.as_ref() else {
@@ -238,11 +245,13 @@ wrap_window_delegate! {
             let mut view = View::from(browser_view);
             window.add_child_view(Some(&mut view));
 
-            if self.initial_show_state == ShowState::MAXIMIZED {
-                window.maximize();
-            }
-            if self.initial_show_state != ShowState::HIDDEN {
-                window.show();
+            if !self.defer_show {
+                if self.initial_show_state == ShowState::MAXIMIZED {
+                    window.maximize();
+                }
+                if self.initial_show_state != ShowState::HIDDEN {
+                    window.show();
+                }
             }
         }
 
@@ -252,6 +261,9 @@ wrap_window_delegate! {
         }
 
         fn on_window_destroyed(&self, _window: Option<&mut Window>) {
+            if let Some(state) = &self.state {
+                clear_main_window(state);
+            }
             *self.browser_view.borrow_mut() = None;
         }
 
@@ -299,7 +311,11 @@ wrap_window_delegate! {
         }
 
         fn initial_show_state(&self, _window: Option<&mut Window>) -> ShowState {
-            self.initial_show_state
+            if self.defer_show {
+                ShowState::HIDDEN
+            } else {
+                self.initial_show_state
+            }
         }
 
         fn window_runtime_style(&self) -> RuntimeStyle {

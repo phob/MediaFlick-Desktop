@@ -86,42 +86,75 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
   // is, either the in-app preference or the operating system can veto motion.
   const reducedMotion = systemReducedMotion || settings?.appearance.reducedMotion !== false
   const [paused, setPaused] = useState(false)
-  const [index, setIndex] = useState(0)
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [advancePending, setAdvancePending] = useState(false)
   const [mounted, setMounted] = useState<Set<number>>(() => new Set([0]))
-
   // A shorter list must not strand the billboard on an index that no longer
-  // exists.
+  // exists. The stored selection can stay untouched until the next user or
+  // playback event because every render uses this safe index.
+  const index = selectedIndex < items.length ? selectedIndex : 0
+  const current = items[index]
+  const interaction = useRef({
+    currentId: current?.id,
+    index,
+    itemCount: items.length,
+    paused,
+    reducedMotion,
+  })
   useEffect(() => {
-    setIndex((current) => (current < items.length ? current : 0))
-  }, [items.length])
+    interaction.current = {
+      currentId: current?.id,
+      index,
+      itemCount: items.length,
+      paused,
+      reducedMotion,
+    }
+  }, [current?.id, index, items.length, paused, reducedMotion])
 
-  useEffect(() => {
-    setMounted((previous) => (previous.has(index) ? previous : new Set(previous).add(index)))
-  }, [index])
+  const showSlide = useCallback((slide: number) => {
+    setMounted((previous) =>
+      previous.has(slide) ? previous : new Set(previous).add(slide),
+    )
+    setSelectedIndex(slide)
+  }, [])
+  const advanceFrom = useCallback(
+    (slide: number, itemCount: number) => {
+      if (itemCount <= 1) return
+      showSlide((slide + 1) % itemCount)
+    },
+    [showSlide],
+  )
 
   // Playback completion can happen while the pointer or keyboard focus is in
   // the hero. Remember it, then advance once interacting with the hero is no
   // longer able to make a button change underneath the user.
-  useEffect(() => {
-    if (!advancePending || paused || reducedMotion || items.length <= 1) return
-    setAdvancePending(false)
-    setIndex((current) => (current + 1) % items.length)
-  }, [advancePending, items.length, paused, reducedMotion])
-
-  const current = items[index]
-  const currentId = current?.id
-  const currentIdRef = useRef(currentId)
-  currentIdRef.current = currentId
   const finishCurrent = useCallback(
     (itemId: string) => {
-      if (currentIdRef.current === itemId) setAdvancePending(true)
+      const currentInteraction = interaction.current
+      if (
+        currentInteraction.currentId !== itemId ||
+        currentInteraction.reducedMotion ||
+        currentInteraction.itemCount <= 1
+      ) {
+        return
+      }
+      if (currentInteraction.paused) {
+        setAdvancePending(true)
+        return
+      }
+      advanceFrom(currentInteraction.index, currentInteraction.itemCount)
     },
-    [],
+    [advanceFrom],
   )
+  const resumeRotation = () => {
+    setPaused(false)
+    if (!advancePending) return
+    setAdvancePending(false)
+    if (!reducedMotion) advanceFrom(index, items.length)
+  }
   const selectSlide = (slide: number) => {
     setAdvancePending(false)
-    setIndex(slide)
+    showSlide(slide)
   }
   // The synopsis is live-only and arrives after the cached hero has painted;
   // until it lands (or offline) the billboard simply shows no overview.
@@ -137,9 +170,9 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
       // buttons usable: a rotation underneath a reaching cursor swaps the
       // button's meaning out from under the click.
       onPointerEnter={() => setPaused(true)}
-      onPointerLeave={() => setPaused(false)}
+      onPointerLeave={resumeRotation}
       onFocusCapture={() => setPaused(true)}
-      onBlurCapture={() => setPaused(false)}
+      onBlurCapture={resumeRotation}
     >
       {items.map((item, slide) =>
         mounted.has(slide) ? (
@@ -187,6 +220,17 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
   )
 }
 
+interface TrailerPlaybackState {
+  session: string
+  armed: boolean
+  playing: boolean
+  youtubeLoaded: boolean
+}
+
+function initialTrailerPlayback(session: string): TrailerPlaybackState {
+  return { session, armed: false, playing: false, youtubeLoaded: false }
+}
+
 /**
  * One slide's artwork. Both gradients are on this layer rather than over the
  * whole stack so that a fading slide takes its own scrim with it — a shared
@@ -205,31 +249,46 @@ function BillboardBackdrop({
 }) {
   const images = landscapeImageCandidates(item, BACKDROP_WIDTH)
   const [imageIndex, setImageIndex] = useState(0)
-  const [trailerArmed, setTrailerArmed] = useState(false)
-  const [trailerPlaying, setTrailerPlaying] = useState(false)
-  const [youtubeLoaded, setYoutubeLoaded] = useState(false)
+  const session = `${item.id}\0${active}\0${reducedMotion}`
+  const [trailerPlayback, setTrailerPlayback] = useState(() =>
+    initialTrailerPlayback(session),
+  )
   const youtubeFrame = useRef<HTMLIFrameElement>(null)
   const finished = useRef(false)
   const trailer = useTrailer(item.id, active && !reducedMotion)
   const image = images[imageIndex]
 
+  if (trailerPlayback.session !== session) {
+    setTrailerPlayback(initialTrailerPlayback(session))
+  }
+  const trailerArmed =
+    trailerPlayback.session === session && trailerPlayback.armed
+  const trailerPlaying =
+    trailerPlayback.session === session && trailerPlayback.playing
+  const youtubeLoaded =
+    trailerPlayback.session === session && trailerPlayback.youtubeLoaded
+
   const complete = useCallback(() => {
     if (finished.current) return
     finished.current = true
-    setTrailerPlaying(false)
-    setTrailerArmed(false)
+    setTrailerPlayback((current) =>
+      current.session === session
+        ? { ...current, armed: false, playing: false }
+        : current,
+    )
     onFinished(item.id)
-  }, [item.id, onFinished])
+  }, [item.id, onFinished, session])
 
   useEffect(() => {
     finished.current = false
-    setTrailerArmed(false)
-    setTrailerPlaying(false)
-    setYoutubeLoaded(false)
     if (!active || reducedMotion) return
-    const timer = window.setTimeout(() => setTrailerArmed(true), TRAILER_DELAY_MS)
+    const timer = window.setTimeout(() => {
+      setTrailerPlayback((current) =>
+        current.session === session ? { ...current, armed: true } : current,
+      )
+    }, TRAILER_DELAY_MS)
     return () => window.clearTimeout(timer)
-  }, [active, item.id, reducedMotion])
+  }, [active, item.id, reducedMotion, session])
 
   const trailerInfo = trailer.data?.trailer
   const trailerId = trailerInfo?.id
@@ -279,7 +338,11 @@ function BillboardBackdrop({
     const handleMessage = (event: MessageEvent) => {
       if (event.source !== frame.contentWindow || !YOUTUBE_ORIGINS.has(event.origin)) return
       const message = readYouTubeMessage(event.data)
-      if (message?.state === 1) setTrailerPlaying(true)
+      if (message?.state === 1) {
+        setTrailerPlayback((current) =>
+          current.session === session ? { ...current, playing: true } : current,
+        )
+      }
       if (message?.state === 0 || message?.event === "onError") complete()
     }
 
@@ -295,7 +358,7 @@ function BillboardBackdrop({
       window.clearInterval(subscribeTimer)
       window.clearTimeout(stopSubscribing)
     }
-  }, [active, complete, item.id, trailerArmed, trailerEmbed])
+  }, [active, complete, item.id, session, trailerArmed, trailerEmbed])
 
   // The raw state messages are deliberately a progressive enhancement. Reveal
   // a loaded player even if a particular YouTube build does not acknowledge
@@ -303,13 +366,17 @@ function BillboardBackdrop({
   // home screen forever.
   useEffect(() => {
     if (!active || !trailerArmed || !trailerEmbed || !youtubeLoaded) return
-    const reveal = window.setTimeout(() => setTrailerPlaying(true), 600)
+    const reveal = window.setTimeout(() => {
+      setTrailerPlayback((current) =>
+        current.session === session ? { ...current, playing: true } : current,
+      )
+    }, 600)
     const watchdog = window.setTimeout(complete, REMOTE_TRAILER_WATCHDOG_MS)
     return () => {
       window.clearTimeout(reveal)
       window.clearTimeout(watchdog)
     }
-  }, [active, complete, trailerArmed, trailerEmbed, youtubeLoaded])
+  }, [active, complete, session, trailerArmed, trailerEmbed, youtubeLoaded])
 
   if (!image) return null
 
@@ -345,7 +412,11 @@ function BillboardBackdrop({
               playsInline
               preload="auto"
               src={api.trailerStreamUrl(trailerId)}
-              onPlaying={() => setTrailerPlaying(true)}
+              onPlaying={() =>
+                setTrailerPlayback((current) =>
+                  current.session === session ? { ...current, playing: true } : current,
+                )
+              }
               onEnded={complete}
               onError={complete}
               className="billboard-trailer-local"
@@ -370,7 +441,13 @@ function BillboardBackdrop({
               allow="autoplay; encrypted-media"
               sandbox="allow-scripts allow-same-origin allow-presentation"
               src={trailerEmbed}
-              onLoad={() => setYoutubeLoaded(true)}
+              onLoad={() =>
+                setTrailerPlayback((current) =>
+                  current.session === session
+                    ? { ...current, youtubeLoaded: true }
+                    : current,
+                )
+              }
               className="billboard-trailer-youtube"
             />
           </div>

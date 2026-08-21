@@ -298,6 +298,14 @@ wrap_load_handler! {
             }
             apply_scrollbar_settings_to_frame(frame, &self.state);
             show_pending_update_to_frame(frame, &self.state);
+
+            // Main-frame navigation failures are replaced with the native
+            // recovery document below. It has no React startup cover to report
+            // readiness, so reveal it once CEF confirms that document loaded.
+            let frame_url = CefString::from(&frame.url()).to_string();
+            if frame_url.starts_with("data:text/html") {
+                reveal_main_window(&self.state);
+            }
         }
 
         fn on_load_error(

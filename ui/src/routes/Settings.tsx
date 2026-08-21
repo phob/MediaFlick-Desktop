@@ -43,6 +43,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import { useSourceDraft } from "@/hooks/use-source-draft"
 import {
   Select,
   SelectContent,
@@ -87,12 +88,6 @@ const NAVIGATION: SettingsPage[] = [
 
 function same<T>(left: T, right: T) {
   return JSON.stringify(left) === JSON.stringify(right)
-}
-
-function useDraft<T>(value: T | undefined) {
-  const [draft, setDraft] = useState<T | undefined>(value)
-  useEffect(() => setDraft(value), [value])
-  return [draft, setDraft] as const
 }
 
 function saveSettings(saved: ClientSettings, message = "Settings saved") {
@@ -381,7 +376,7 @@ function requestId() {
 function PlayerSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
-  const [draft, setDraft] = useDraft(settings?.client.player)
+  const [draft, setDraft, updateDraft] = useSourceDraft(settings?.client.player)
   const [install, setInstall] = useState<{ state: string; message?: string; downloaded?: number; total?: number | null }>({ state: "idle" })
   const pendingPickers = useRef<Partial<Record<"mpv" | "mpchc", string>>>({})
   const pendingInstall = useRef<string | null>(null)
@@ -414,8 +409,8 @@ function PlayerSettings() {
       // request but deliberately leaves the user's existing draft untouched.
       const path = jsonString(event.payload.path)
       if (path === null) return
-      if (target === "mpv") setDraft((current) => current ? { ...current, mpvPath: path } : current)
-      if (target === "mpchc") setDraft((current) => current ? { ...current, mpchcPath: path } : current)
+      if (target === "mpv") updateDraft((current) => current ? { ...current, mpvPath: path } : current)
+      if (target === "mpchc") updateDraft((current) => current ? { ...current, mpchcPath: path } : current)
     }
     if (event.type === "mpv-install-progress") {
       const completedRequestId = jsonString(event.payload.requestId)
@@ -433,7 +428,7 @@ function PlayerSettings() {
       const installedPath = jsonString(event.payload.path)
       if (state === "completed" && installedPath !== null) {
         pendingInstall.current = null
-        setDraft((current) => current ? { ...current, mpvPath: installedPath } : current)
+        updateDraft((current) => current ? { ...current, mpvPath: installedPath } : current)
         void queryClient.invalidateQueries({ queryKey: queryKeys.settings })
       }
       if (state === "failed") {
@@ -441,7 +436,7 @@ function PlayerSettings() {
         if (message) toast.error(message)
       }
     }
-  }, [setDraft])
+  }, [updateDraft])
   useShellEvents(onShellEvent)
   if (settingsQuery.error && !settings) return <SettingsError title="Player settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
@@ -522,7 +517,7 @@ function PlayerSettings() {
 function PlaybackSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
-  const [draft, setDraft] = useDraft(settings?.client.playback)
+  const [draft, setDraft] = useSourceDraft(settings?.client.playback)
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
@@ -545,7 +540,7 @@ function PlaybackSettings() {
 function ApplicationSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
-  const [draft, setDraft] = useDraft(settings?.client.application)
+  const [draft, setDraft] = useSourceDraft(settings?.client.application)
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Application settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
@@ -682,7 +677,7 @@ export function Appearance() {
   const ratingsQuery = useRatingsStatus()
   const { data: settings } = settingsQuery
   const { data: ratings } = ratingsQuery
-  const [draft, setDraft] = useDraft(settings?.appearance)
+  const [draft, setDraft] = useSourceDraft(settings?.appearance)
   const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Appearance settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />

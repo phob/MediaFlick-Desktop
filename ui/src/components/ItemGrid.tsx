@@ -86,6 +86,8 @@ export function ItemGrid({
   empty = "No items match that query.",
   footer,
 }: ItemGridProps) {
+  "use no memo"
+
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   // Measured on the content box, not the scroller: the scroller carries the
   // horizontal padding, which would otherwise be counted as usable width.
@@ -146,6 +148,9 @@ export function ItemGrid({
   }, [total, onTotal])
 
   const rows = total === null ? 0 : Math.ceil(total / columns)
+  // TanStack Virtual is intentionally outside compiler memoization above. Its
+  // known diagnostic does not honor `use no memo`: TanStack/virtual#1119.
+  // oxlint-disable-next-line react/incompatible-library -- upstream false positive after explicit compiler opt-out
   const virtualizer = useVirtualizer({
     count: rows,
     getScrollElement: () => scroller,

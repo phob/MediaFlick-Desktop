@@ -6,12 +6,20 @@ pub(super) fn route(
     request: &ApiRequest,
 ) -> Option<ApiResponse> {
     let response = match segments {
+        ["shell", "window", "ready"] if request.is("POST") => shell_window_ready(services),
         ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
         ["shell", "mpv", "install"] if request.is("POST") => shell_install_mpv(services, request),
         ["shell", "mpv", "help"] if request.is("POST") => shell_mpv_help(),
         _ => return None,
     };
     Some(response)
+}
+
+fn shell_window_ready(services: &Arc<Services>) -> ApiResponse {
+    match services.shell.request(ShellRequest::MainWindowReady) {
+        Ok(()) => ApiResponse::ok(json!({ "queued": true })),
+        Err(error) => ApiResponse::error(503, error),
+    }
 }
 
 fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {

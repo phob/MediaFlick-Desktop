@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Button } from "@/components/ui/button"
 import {
@@ -157,11 +157,6 @@ export function RequestDialog({
     : defaultQuality?.value
   const selectedQuality = qualityChoices.find((choice) => choice.value === qualityValue)
 
-  useEffect(() => {
-    setChosen(null)
-    setQualityChoice(null)
-  }, [is4k])
-
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
@@ -211,7 +206,11 @@ export function RequestDialog({
               type="checkbox"
               className="size-4 accent-primary"
               checked={is4k}
-              onChange={(event) => setIs4k(event.target.checked)}
+              onChange={(event) => {
+                setIs4k(event.target.checked)
+                setChosen(null)
+                setQualityChoice(null)
+              }}
             />
             Request in 4K
           </Label>

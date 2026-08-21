@@ -49,7 +49,7 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
     }, COALESCE_MS)
   }, [])
 
-  flushRef.current = async () => {
+  const flush = useCallback(async () => {
     if (!enabled.current) return
     const ids = [...pending.current]
       .filter((id) => active.current.has(id) && !inFlight.current.has(id))
@@ -88,7 +88,11 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
       ids.forEach((id) => inFlight.current.delete(id))
       if (pending.current.size > 0) schedule()
     }
-  }
+  }, [schedule])
+
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
 
   // Unknown settings are disabled: otherwise a saved false value can lose a
   // race with the initial settings request and still send a technical batch.

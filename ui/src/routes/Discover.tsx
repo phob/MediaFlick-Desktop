@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useLiveSearch } from "@/hooks/use-live-search"
 import {
   SEERR_DISCOVER_ROWS,
   seerrImageUrl,
@@ -515,7 +516,21 @@ export default function Discover() {
   const [params, setParams] = useSearchParams()
   const companion = useCompanion()
   const term = params.get("q") ?? ""
-  const [draft, setDraft] = useState(term)
+  const commitSearch = useCallback(
+    (next: string) => {
+      setParams(
+        (previous) => {
+          const nextParams = new URLSearchParams(previous)
+          if (next) nextParams.set("q", next)
+          else nextParams.delete("q")
+          return nextParams
+        },
+        { replace: true },
+      )
+    },
+    [setParams],
+  )
+  const [draft, setDraft, flushSearch] = useLiveSearch(term, commitSearch)
   const companionCapabilities = companion.data?.info?.capabilities ?? []
   const companionManaged =
     companion.data?.compatible && companionCapabilities.includes("seerr")
@@ -541,8 +556,6 @@ export default function Discover() {
   const filters = readDiscoveryFilters(params, row, advancedDiscovery, decadeDiscovery)
   const availability = availabilityFilter(params.get("library"))
   const resultSetKey = discoveryResultSetKey(row, filters, availability)
-
-  useEffect(() => setDraft(term), [term])
 
   // Capability changes can make a deep-linked row or control unavailable.
   // Canonicalize only after the probe settles; clearing during the pending
@@ -611,19 +624,6 @@ export default function Discover() {
     [setParams],
   )
 
-  const submitSearch = () => {
-    const next = draft.trim()
-    setParams(
-      (previous) => {
-        const nextParams = new URLSearchParams(previous)
-        if (next.length > 1) nextParams.set("q", next)
-        else nextParams.delete("q")
-        return nextParams
-      },
-      { replace: true },
-    )
-  }
-
   const catalogueMediaType: SeerrMediaType | null =
     row === "movies" ? "movie" : row === "tv" ? "tv" : null
 
@@ -639,7 +639,7 @@ export default function Discover() {
           className="relative max-w-2xl"
           onSubmit={(event) => {
             event.preventDefault()
-            submitSearch()
+            flushSearch()
           }}
         >
           <Search className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-muted-foreground" />
@@ -659,14 +659,7 @@ export default function Discover() {
               aria-label="Clear search"
               onClick={() => {
                 setDraft("")
-                setParams(
-                  (previous) => {
-                    const next = new URLSearchParams(previous)
-                    next.delete("q")
-                    return next
-                  },
-                  { replace: true },
-                )
+                flushSearch("")
               }}
               className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground"
             >

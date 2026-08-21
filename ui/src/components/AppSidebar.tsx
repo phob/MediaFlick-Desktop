@@ -13,7 +13,7 @@ import {
   Settings,
   Tv,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useRef } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -38,8 +38,9 @@ import {
   SidebarMenuItem,
   SidebarRail,
   SidebarTrigger,
-  useSidebar,
 } from "@/components/ui/sidebar"
+import { useSidebar } from "@/components/ui/sidebar-context"
+import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
@@ -68,17 +69,22 @@ function serverLabel(url: string | null | undefined) {
   }
 }
 
-function SearchBox() {
+export function SearchBox() {
   const { state, setOpen } = useSidebar()
   const location = useLocation()
   const navigate = useNavigate()
   const input = useRef<HTMLInputElement>(null)
   const locationSearch = librarySearchFromLocation(location.pathname, location.search)
-  const [search, setSearch] = useState(locationSearch)
-
-  // The library URL owns its filters. Mirroring that value keeps a restored or
-  // deep-linked result visibly tied to the query that produced it.
-  useEffect(() => setSearch(locationSearch), [locationSearch])
+  const commitSearch = useCallback(
+    (term: string) => {
+      if (term) navigate(`/library?search=${encodeURIComponent(term)}`, { replace: true })
+      else if (locationSearch) navigate("/library", { replace: true })
+    },
+    [locationSearch, navigate],
+  )
+  // The library URL owns committed searches. The draft can temporarily hold a
+  // one-character term while the corresponding unfiltered URL remains active.
+  const [search, setSearch, flushSearch] = useLiveSearch(locationSearch, commitSearch)
 
   // Collapsed to icons there is no room for a field, so the icon stands in for
   // it: expanding and focusing is the same gesture as clicking into it.
@@ -106,8 +112,7 @@ function SearchBox() {
       className="relative"
       onSubmit={(event) => {
         event.preventDefault()
-        const term = search.trim()
-        if (term) navigate(`/library?search=${encodeURIComponent(term)}`)
+        flushSearch()
       }}
     >
       <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -117,6 +122,7 @@ function SearchBox() {
         onChange={(event) => setSearch(event.target.value)}
         placeholder="Search…"
         aria-label="Search the library"
+        minLength={2}
         className="pl-8"
       />
     </form>
