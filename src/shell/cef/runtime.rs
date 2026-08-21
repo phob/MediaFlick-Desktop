@@ -49,6 +49,13 @@ wrap_app! {
                 );
             }
 
+            // Trackpad history swipes navigate back and forward like a browser;
+            // the shell owns one surface and has no history to leave.
+            command_line.append_switch_with_value(
+                Some(&CefString::from("disable-features")),
+                Some(&CefString::from("OverscrollHistoryNavigation")),
+            );
+
             #[cfg(target_os = "windows")]
             {
                 // In this windowed Views shell CEF 148 starts the separate GPU

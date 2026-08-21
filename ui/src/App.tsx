@@ -3,6 +3,7 @@ import { AppProviders } from "@/components/AppProviders"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
+import { WindowTitleSync } from "@/components/WindowTitleSync"
 import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
@@ -106,6 +107,7 @@ export default function App() {
         key={status?.authenticated ? "authenticated" : "anonymous"}
         ready={ready}
       />
+      <WindowTitleSync />
       <AppearanceSync />
     </>
   )

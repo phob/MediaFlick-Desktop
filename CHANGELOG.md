@@ -62,6 +62,7 @@
 
 ### Changed
 
+- The home billboard now starts trailers earlier. A slide's player mounts and buffers underneath the establishing still as soon as the slide appears, footage is revealed once playback is confirmed after a 2.5-second establish period instead of five, and the next title's trailer record is prefetched during the current slide so transitions do not wait on an API round trip.
 - Sidebar library search and Discover search now update automatically after a 200 ms typing pause, start at two characters, clear immediately below that threshold, and replace URL history instead of waiting for Enter.
 - Split oversized Rust modules into smaller player, library, integration, synchronization, preferences, and CEF components without changing their public contracts.
 - Reduced the local library cache to a catalog index. Each movie, series, season, or episode keeps one row with identity, titles, year, runtime, community rating, hierarchy, provider ids, genres, and image tags. The details page fetches synopses, cast, critic scores, tags, and studios from `/api/item/{id}/about`. The billboard fetches its synopsis after rendering the cached item, and season requests include episode synopses. MediaFlick does not persist these responses. Their views show loading or error states when Jellyfin is unavailable.
@@ -99,9 +100,15 @@
 - Moved episode browsing onto the series page. A horizontal season row acts as the selector and places Specials last. The selected season shows 16:9 episode cards with episode number, title, community rating, runtime, Play, and watched controls. Synopses remain on episode details. Cards also support hover previews, technical badges, artwork fallbacks, and watched or playback progress. The app selects the season containing Next Up and marks that episode. The URL stores the season selection, and old season routes redirect to it. Episode details now show stills at 16:9.
 - Reduced the sign-in header to the MediaFlick logo. Removed the placeholder film icon, eyebrow text, slogan, and introduction.
 - Replaced custom Settings toggles and rating-source checkboxes with the shadcn/ui Switch and Checkbox components.
+- The app surface no longer behaves like a browser document. Dragging, double-clicking, and select-all never select UI text, while text inputs keep native editing behavior. Dropping files or links onto the window does nothing, page zoom through Ctrl+wheel, pinch, and Ctrl± is pinned, reload, print, save, and view-source shortcuts are ignored, trackpad history swipes no longer navigate, artwork cannot be dragged, and the cursor stays an arrow outside editable fields.
+- Revealed scrollbars are now overlay-thin and inherit the signal palette instead of Chromium's light-gray defaults.
+- Window titles now follow the open view. Alt-tab and the taskbar show the signed-out gate, Home, Library, Releases, Discover, Requests, Settings, or the open movie or series instead of a static app name.
+- The Appearance live preview renders the app's own components — real MediaCards over the cached Continue Watching and Recently Added rows — inside one scoped container that carries the unsaved draft as data attributes and intensity variables. The shared token rules re-skin that subtree exactly as they re-skin the root, so color mode, accent, density, artwork and backdrop intensity, media info, card previews, and the rating-source selection are judged against your own artwork before saving. The preview is inert: nothing inside it can navigate or act.
 
 ### Fixed
 
+- Fixed the Appearance live preview not responding to the pointer. The preview shelf was fully inert, which removed its cards from hit-testing, so hover brackets, lift, and title color never appeared. Links are now inert individually and the cards use the same home-rail card class as the real shelves.
+- Fixed YouTube's transient centre pause overlay flashing over billboard trailers. Embedded footage is revealed only after the player itself reports playback, and every playing event restarts the concealment window — including the deferred seek to the embed's start offset. A trailer that never confirms playback or reports an error advances the billboard without its stage ever being shown.
 - Fixed Linux taskbars showing Chromium's icon. CEF windows now use the MediaFlick Desktop app id/WM_CLASS and carry embedded title-bar and application-switcher icons instead of relying on desktop-entry matching alone.
 - Fixed `just run` and `just run-non-debug` on Linux so the staged CEF runtime directory is added to the dynamic linker path before launching the app.
 - Fixed `just run` cleanup on Linux to stop stale MediaFlick CEF subprocesses and warm mpv children despite the executable name being longer than `pkill -x` can match.
@@ -113,6 +120,7 @@
 - Fixed hover previews missing the selected rating sources because their portal sat outside the ratings context.
 - Fixed the full-page card skeleton flashing despite a valid SQLite home cache. The startup cover now waits for the local snapshot. Cached shelves render without waiting for the separate Next Up and billboard requests, which update their own content later.
 - Fixed the native main window appearing before its initial route was ready. It now remains hidden until the startup cover has left the rendered page, while load failures still reveal their recovery page and `--hidden` continues to suppress the window.
+- Fixed the main window not taking the foreground at startup. The delayed reveal showed the hidden window without activating it, leaving it behind whatever had focus; the reveal now also activates the window.
 - Updated id generation to the current `getrandom` fill API.
 - Fixed discovery filter changes retaining cards or pages from the previous query. Every server and local-library filter now contributes to one immutable query identity. Changes cancel the old infinite query and remount the result list. Release-decade filters also use full labels and the same 1900 lower bound for films and series in Desktop and Companion.
 - Fixed an interrupted initial library sync restarting at zero even though it had saved a page offset. It now resumes from the last committed page, and the progress count no longer moves backward after a temporary failure.
