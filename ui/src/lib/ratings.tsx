@@ -59,7 +59,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
     }, delayMs)
   }, [])
 
-  flushRef.current = async () => {
+  const flush = useCallback(async () => {
     if (!config.current.available || config.current.selected.length === 0) return
     const ids = [...pending.current]
       .filter((id) => active.current.has(id) && !inFlight.current.has(id))
@@ -117,7 +117,11 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
       ids.forEach((id) => inFlight.current.delete(id))
       if (pending.current.size > 0) schedule(retryingOmitted ? OMITTED_RETRY_MS : COALESCE_MS)
     }
-  }
+  }, [schedule])
+
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
 
   const selected = useMemo(
     () => settings.data?.appearance.ratingSources ?? NO_SOURCES,

@@ -10,7 +10,7 @@
 
 ### Added
 
-- Added the anti-slop Oxlint plugin and enabled every rule for the React UI. Updated project-owned UI code and tests to pass without suppressions.
+- Added the anti-slop Oxlint plugin and enabled every rule for the React UI. Updated project-owned UI code and tests to pass without blanket rule exemptions.
 - Added pinned Rust checks with strict Clippy readability and ownership rules, rust-analyzer and Bacon diagnostics, a repository Codex skill, and a Rust-aware stop hook. Updated the project's Rust code and tests to pass without suppressions.
 - Added a Rust file-size check. It reports source files above 1,000 physical lines and rejects those above 1,500, while ignoring build output and other Git-ignored files.
 - Added Latest Movies and Latest Shows after Recently Added on the home page. Each shelf sorts its catalog by release year and links to the matching newest-first library view.
@@ -62,6 +62,7 @@
 
 ### Changed
 
+- Sidebar library search and Discover search now update automatically after a 200 ms typing pause, start at two characters, clear immediately below that threshold, and replace URL history instead of waiting for Enter.
 - Split oversized Rust modules into smaller player, library, integration, synchronization, preferences, and CEF components without changing their public contracts.
 - Reduced the local library cache to a catalog index. Each movie, series, season, or episode keeps one row with identity, titles, year, runtime, community rating, hierarchy, provider ids, genres, and image tags. The details page fetches synopses, cast, critic scores, tags, and studios from `/api/item/{id}/about`. The billboard fetches its synopsis after rendering the cached item, and season requests include episode synopses. MediaFlick does not persist these responses. Their views show loading or error states when Jellyfin is unavailable.
 - Limited each live metadata request to its job. The billboard requests a synopsis without user or image data. Detail responses keep the first 24 cast credits and a bounded crew sample instead of every person and headshot returned by Jellyfin.
@@ -111,6 +112,7 @@
 - Fixed card clicks failing when the hover preview appeared between mouse down and mouse up. The preview now treats that release as the card click that started it. Moving onto a card during a drag no longer opens the preview.
 - Fixed hover previews missing the selected rating sources because their portal sat outside the ratings context.
 - Fixed the full-page card skeleton flashing despite a valid SQLite home cache. The startup cover now waits for the local snapshot. Cached shelves render without waiting for the separate Next Up and billboard requests, which update their own content later.
+- Fixed the native main window appearing before its initial route was ready. It now remains hidden until the startup cover has left the rendered page, while load failures still reveal their recovery page and `--hidden` continues to suppress the window.
 - Updated id generation to the current `getrandom` fill API.
 - Fixed discovery filter changes retaining cards or pages from the previous query. Every server and local-library filter now contributes to one immutable query identity. Changes cancel the old infinite query and remount the result list. Release-decade filters also use full labels and the same 1900 lower bound for films and series in Desktop and Companion.
 - Fixed an interrupted initial library sync restarting at zero even though it had saved a page offset. It now resumes from the last committed page, and the progress count no longer moves backward after a temporary failure.
@@ -155,7 +157,9 @@
 - Reduced Jellyfin response sizes for exact-item reads, child reconciliation, Next Up, and the Upcoming fallback. Each request now asks only for the fields its caller uses.
 - Fixed child reconciliation and confirmed deletion updating SQLite without notifying active shelves, details, or badges. Child snapshots now commit as one transaction. Deletion events include the item's former parent, season, and series ids before requesting a replacement sync.
 - Watched, favorite, and playback-state updates now refresh only summaries, child lists, and Next Up. They no longer refetch cast, synopsis, trailer, or media details.
+- Fixed library refreshes repeatedly replacing the home billboard's featured titles and restarting its background trailer. The selected slides now remain stable for the authenticated session while their user-data controls still update in place.
 - Fixed Companion tests failing before discovery under .NET 10. Local, CI, and release jobs now select Microsoft Testing Platform and pass the test project explicitly.
+- Fixed all remaining React UI lint warnings. Draft fields now follow their URL or saved-settings source without effect-driven renders, preview and billboard state resets happen during state transitions, metadata schedulers update callback refs after commit, and Fast Refresh modules export components only. The library grid also explicitly opts out of compiler memoization around TanStack Virtual's mutable API.
 
 ### Removed
 

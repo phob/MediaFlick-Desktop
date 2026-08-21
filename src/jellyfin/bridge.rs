@@ -1,10 +1,10 @@
-//! Shell actions triggered by the native dialogs.
+//! Shell actions triggered by the native dialogs and startup handshake.
 //!
 //! The jellyfin-web injection bridge is gone: the own UI talks to Rust over
 //! `mediaflick-desktop://app/api/*`. What remains here is the small
-//! `mediaflick-desktop://<action>` protocol that the injected native dialogs
-//! (the About and update-toast dialogs) use to call back into the shell,
-//! plus the per-session token that authenticates those calls.
+//! `mediaflick-desktop://<action>` protocol used by the About and update-toast
+//! dialogs, plus the readiness fallback used when the typed API is unavailable.
+//! A per-session token authenticates every dialog action.
 
 use std::sync::OnceLock;
 
@@ -15,6 +15,7 @@ const BRIDGE_TOKEN_ENV: &str = "MEDIAFLICK_BRIDGE_TOKEN";
 pub enum BridgeAction<'a> {
     About,
     Exit,
+    WindowReady,
     DownloadUpdate(&'a str),
     OpenUpdateRelease,
 }
@@ -33,6 +34,7 @@ pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction<'_>> {
     Some(match action {
         "app-about" => BridgeAction::About,
         "app-exit" => BridgeAction::Exit,
+        "window-ready" => BridgeAction::WindowReady,
         "update-download" => BridgeAction::DownloadUpdate(query),
         "update-release" => BridgeAction::OpenUpdateRelease,
         _ => return None,
@@ -74,6 +76,10 @@ mod tests {
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://update-download?token=x&version=1#ignored"),
             Some(BridgeAction::DownloadUpdate("token=x&version=1"))
+        );
+        assert_eq!(
+            parse_bridge_action("mediaflick-desktop://window-ready"),
+            Some(BridgeAction::WindowReady)
         );
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://client-settings/"),

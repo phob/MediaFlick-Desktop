@@ -37,7 +37,7 @@ function useTechnicalVisibility() {
     return () => observer.disconnect()
   }, [element, intersectionSupported])
 
-  return { ref: setElement, visible }
+  return { observe: setElement, visible }
 }
 
 function subtitleFor(item: ItemSummary) {
@@ -76,7 +76,7 @@ export const MediaCard = memo(function MediaCard({
 }) {
   const location = useLocation()
   const { handlers, expanded, previewsEnabled } = usePreview(item, preview)
-  const technical = useTechnicalVisibility()
+  const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
   const remaining = landscape ? formatRemaining(item.positionTicks, item.runtimeTicks) : null
@@ -93,7 +93,7 @@ export const MediaCard = memo(function MediaCard({
 
   return (
     <article
-      ref={technical.ref}
+      ref={observeTechnical}
       {...handlers}
       // While the expanded panel is over this card, its own lift would push the
       // artwork out from under an opaque panel that is not going to move with
@@ -147,7 +147,7 @@ export const MediaCard = memo(function MediaCard({
               {ribbon}
             </div>
           )}
-          <CardTechnicalReadout item={item} active={technical.visible} />
+          <CardTechnicalReadout item={item} active={technicalVisible} />
           {/* Watched is drawn as a finished progress rule rather than a corner
               badge. The two states use the same thickness and accent fill;
               watched simply fills the track completely. */}

@@ -6,7 +6,7 @@ import { DetailHero } from "@/components/detail/DetailHero"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { DetailPageSkeleton } from "@/components/detail/DetailPrimitives"
-import { SeasonBrowser, seasonRailOrder } from "@/components/detail/SeasonBrowser"
+import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
@@ -16,6 +16,7 @@ import {
   type DetailNavigationState,
 } from "@/lib/navigation"
 import { useChildren, useItem, useItemAbout, useMediaInfo, useNextUp } from "@/lib/queries"
+import { seasonRailOrder } from "@/lib/seasons"
 
 function episodeCode(episode: ItemSummary) {
   return episode.parentIndexNumber != null && episode.indexNumber != null

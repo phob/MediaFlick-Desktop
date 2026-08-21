@@ -3,7 +3,7 @@ import { AppProviders } from "@/components/AppProviders"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
-import { useBillboard, useHome, useStatus } from "@/lib/queries"
+import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
@@ -17,6 +17,7 @@ import Settings, { AppearanceSync } from "@/routes/Settings"
 
 export default function App() {
   const { data: status, isPending } = useStatus()
+  const settings = useSettings()
   const location = useLocation()
   const waitingForLibrary = Boolean(
     status?.authenticated && !(status.libraryReady ?? status.bootstrapped),
@@ -34,6 +35,7 @@ export default function App() {
   const initialBillboard = useBillboard(initialHomeEnabled)
   const ready = startupScreenReady({
     statusPending: isPending,
+    settingsPending: settings.isPending,
     waitingForLibrary,
     showingSettings,
     initialHomeEnabled,

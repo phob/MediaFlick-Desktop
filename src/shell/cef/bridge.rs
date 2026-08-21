@@ -4,13 +4,31 @@ use super::*;
 
 /// The remaining native About and update dialogs talk to the shell over
 /// `mediaflick-desktop://<action>` URLs. Settings-specific native operations
-/// use the typed API and shell queue instead. Only first-party documents
-/// holding this session's token may trigger these legacy actions.
+/// use the typed API and shell queue instead. Dialog actions require this
+/// session's token; the harmless readiness fallback instead requires the exact
+/// action URL and an initiating frame owned by the app scheme.
 pub(super) fn bridge_request_is_trusted(
     request_url: &str,
     browser: Option<&mut Browser>,
     frame: Option<&mut Frame>,
 ) -> bool {
+    if matches!(
+        jellyfin_bridge::parse_bridge_action(request_url),
+        Some(jellyfin_bridge::BridgeAction::WindowReady)
+    ) {
+        let source_url = frame
+            .as_deref()
+            .map(|frame| CefString::from(&frame.url()).to_string())
+            .or_else(|| {
+                browser
+                    .as_deref()
+                    .and_then(Browser::main_frame)
+                    .map(|frame| CefString::from(&frame.url()).to_string())
+            })
+            .unwrap_or_default();
+        return window_ready_request_is_trusted(request_url, &source_url);
+    }
+
     let document_url = browser
         .and_then(|browser| browser.main_frame())
         .map(|frame| CefString::from(&frame.url()).to_string())
@@ -23,6 +41,10 @@ pub(super) fn bridge_request_is_trusted(
     document_url.is_empty()
         || document_url.starts_with("data:")
         || document_url.starts_with("mediaflick-desktop://")
+}
+
+fn window_ready_request_is_trusted(request_url: &str, source_url: &str) -> bool {
+    request_url == "mediaflick-desktop://window-ready" && app_scheme::is_app_url(source_url)
 }
 
 fn bridge_token_is_valid(request_url: &str) -> bool {
@@ -47,6 +69,7 @@ pub(super) fn route_bridge_action(
     match action {
         BridgeAction::About => show_about_dialog(browser, frame),
         BridgeAction::Exit => initiate_app_exit(browser, state),
+        BridgeAction::WindowReady => reveal_main_window(state),
         BridgeAction::DownloadUpdate(query) => start_update_download(query, state),
         BridgeAction::OpenUpdateRelease => open_update_release_page(),
     }
@@ -566,6 +589,22 @@ mod tests {
         assert_eq!(failed["requestId"], "request-two");
         assert_eq!(failed["target"], "mpchc");
         assert_eq!(failed["error"], "dialog failed");
+    }
+
+    #[test]
+    fn window_readiness_requires_the_exact_action_and_app_origin() {
+        assert!(window_ready_request_is_trusted(
+            "mediaflick-desktop://window-ready",
+            "mediaflick-desktop://app/"
+        ));
+        assert!(!window_ready_request_is_trusted(
+            "mediaflick-desktop://window-ready?early=true",
+            "mediaflick-desktop://app/"
+        ));
+        assert!(!window_ready_request_is_trusted(
+            "mediaflick-desktop://window-ready",
+            "https://example.com/"
+        ));
     }
 
     #[test]

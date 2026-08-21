@@ -50,6 +50,12 @@ interface PreviewQuery<Data> {
   data: Data | undefined
 }
 
+interface PreviewLayerState {
+  enabled: boolean
+  route: string
+  target: PreviewTarget | null
+}
+
 interface PreviewMutation<Input> {
   isPending: boolean
   mutate: (input: Input) => void
@@ -89,10 +95,30 @@ export function PreviewProvider({
   dependencies?: PreviewDependencies
   enabled?: boolean
 }) {
-  const [target, setTarget] = useState<PreviewTarget | null>(null)
+  const location = useLocation()
+  const route = `${location.pathname}\0${location.search}`
+  const [layer, setLayer] = useState<PreviewLayerState>(() => ({
+    enabled,
+    route,
+    target: null,
+  }))
   const openTimer = useRef<number | undefined>(undefined)
   const closeTimer = useRef<number | undefined>(undefined)
-  const location = useLocation()
+
+  if (layer.enabled !== enabled || layer.route !== route) {
+    setLayer({ enabled, route, target: null })
+  }
+  const target = layer.enabled === enabled && layer.route === route ? layer.target : null
+  const setTarget = useCallback(
+    (next: PreviewTarget | null) => {
+      setLayer((current) =>
+        current.enabled === enabled && current.route === route
+          ? { ...current, target: next }
+          : current,
+      )
+    },
+    [enabled, route],
+  )
 
   const clearTimers = useCallback(() => {
     window.clearTimeout(openTimer.current)
@@ -121,14 +147,12 @@ export function PreviewProvider({
       activeId: target?.item.id ?? null,
       enabled,
     }),
-    [enabled, target],
+    [enabled, setTarget, target],
   )
 
   useEffect(() => {
-    if (enabled) return
     clearTimers()
-    setTarget(null)
-  }, [clearTimers, enabled])
+  }, [clearTimers, enabled, route])
 
   // Anything that moves the page moves the card out from under the panel, and
   // the panel has no way to follow: its position was resolved from a rect taken
@@ -153,14 +177,7 @@ export function PreviewProvider({
       window.removeEventListener("resize", close)
       window.removeEventListener("keydown", onKeyDown)
     }
-  }, [target, clearTimers])
-
-  // Navigating away through the panel's details target has to take the panel
-  // with it, or it outlives the row it was opened from.
-  useEffect(() => {
-    clearTimers()
-    setTarget(null)
-  }, [location.pathname, location.search, clearTimers])
+  }, [target, clearTimers, setTarget])
 
   useEffect(() => clearTimers, [clearTimers])
 

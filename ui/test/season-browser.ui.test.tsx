@@ -4,7 +4,8 @@ import type { ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { PreviewProvider } from "../src/components/PreviewCard"
-import { EpisodeGrid, SeasonBrowser, seasonRailOrder } from "../src/components/detail/SeasonBrowser"
+import { EpisodeGrid, SeasonBrowser } from "../src/components/detail/SeasonBrowser"
+import { seasonRailOrder } from "../src/lib/seasons"
 import { requireElement, itemSummary } from "./support/fixtures"
 
 function withProviders(ui: ReactNode) {

@@ -1,5 +1,6 @@
 export interface StartupReadiness {
   statusPending: boolean
+  settingsPending: boolean
   waitingForLibrary: boolean
   showingSettings: boolean
   initialHomeEnabled: boolean
@@ -9,6 +10,7 @@ export interface StartupReadiness {
 
 export function startupScreenReady({
   statusPending,
+  settingsPending,
   waitingForLibrary,
   showingSettings,
   initialHomeEnabled,
@@ -16,5 +18,5 @@ export function startupScreenReady({
   billboardPending,
 }: StartupReadiness) {
   const waitingForInitialHome = initialHomeEnabled && (homePending || billboardPending)
-  return !statusPending && (!waitingForLibrary || showingSettings) && !waitingForInitialHome
+  return !statusPending && !settingsPending && (!waitingForLibrary || showingSettings) && !waitingForInitialHome
 }

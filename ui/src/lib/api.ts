@@ -1059,6 +1059,8 @@ export const api = {
       request<ClientSettings>("/api/settings/appearance", { method: "PATCH", body }),
   },
   shell: {
+    windowReady: () =>
+      request<{ queued: boolean }>("/api/shell/window/ready", { method: "POST" }),
     filePicker: (requestId: string, target: "mpv" | "mpchc") =>
       request<{ requestId: string; queued: boolean }>("/api/shell/file-picker", {
         method: "POST",
