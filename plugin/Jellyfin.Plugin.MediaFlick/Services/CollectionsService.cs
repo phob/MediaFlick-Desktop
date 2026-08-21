@@ -390,7 +390,7 @@ public sealed class CollectionsService
                     ["movieCount"] = group.Count()
                 };
             })
-            .OrderBy(collection => StringValue(collection, "name") ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(collection => SortName(StringValue(collection, "name") ?? string.Empty), StringComparer.OrdinalIgnoreCase)
             .ToArray();
         return new JsonObject
         {
@@ -410,6 +410,20 @@ public sealed class CollectionsService
                 ? new JsonObject { ["id"] = id, ["name"] = name }
                 : null
         };
+
+    /// <summary>TMDB names collections with English articles; file them under the real title.</summary>
+    internal static string SortName(string name)
+    {
+        foreach (var article in (string[]) ["The ", "An ", "A "])
+        {
+            if (name.StartsWith(article, StringComparison.OrdinalIgnoreCase))
+            {
+                return name[article.Length..].TrimStart();
+            }
+        }
+
+        return name;
+    }
 
     private static int? IntValue(JsonObject obj, string name)
         => obj[name] is JsonValue value && value.TryGetValue<int>(out var parsed) ? parsed : null;
