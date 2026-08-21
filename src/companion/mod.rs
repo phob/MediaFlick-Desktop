@@ -181,6 +181,36 @@ impl CompanionSession {
         self.fallback_calendar(start, end)
     }
 
+    /// TMDB movie collections derived from the library by the Companion
+    /// plugin. There is no direct-Seerr fallback: only the plugin knows which
+    /// movies the library actually contains, so without it the feature has no
+    /// answer and degrades to `NotConfigured`.
+    pub fn collections(&self) -> Result<Value, ApiError> {
+        self.collections_endpoint("/MediaFlick/collections")
+    }
+
+    /// One collection's movie parts, joined against the local library so the
+    /// UI can tell owned titles from discoverable ones.
+    pub fn collection_detail(&self, collection_id: i64) -> Result<Value, ApiError> {
+        let mut value =
+            self.collections_endpoint(&format!("/MediaFlick/collections/{collection_id}"))?;
+        join_seerr_rows(&self.library, &mut value, "parts");
+        Ok(value)
+    }
+
+    /// The collection one TMDB movie belongs to, for detail-page links.
+    pub fn movie_collection(&self, tmdb_id: i64) -> Result<Value, ApiError> {
+        self.collections_endpoint(&format!("/MediaFlick/collections/movie/{tmdb_id}"))
+    }
+
+    fn collections_endpoint(&self, path: &str) -> Result<Value, ApiError> {
+        let _ = self.probe(false);
+        if !self.supports("collections-v1") {
+            return Err(ApiError::NotConfigured);
+        }
+        self.get_seerr(path, &[])
+    }
+
     fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
         let (client, user_id) = self.session.client_and_user()?;
         let response = items::fetch_upcoming(&client, &user_id, 500)?;
@@ -479,7 +509,14 @@ impl RequestsProvider {
 }
 
 fn join_seerr_results(library: &Library, value: &mut Value) {
-    let Some(results) = value["results"].as_array_mut() else {
+    join_seerr_rows(library, value, "results");
+}
+
+/// Joins one array of shaped Seerr rows against the local cache. `field` is
+/// the array's name: discovery pages answer under `results`, collection
+/// details under `parts`.
+fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
+    let Some(results) = value.get_mut(field).and_then(Value::as_array_mut) else {
         return;
     };
     let movies = provider_ids(results, "movie");

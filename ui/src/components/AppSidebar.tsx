@@ -7,6 +7,7 @@ import {
   Heart,
   House,
   Inbox,
+  Layers,
   LogOut,
   RefreshCw,
   Search,
@@ -52,6 +53,9 @@ const NAV = [
   { title: "Series", to: libraryKindPath("Series"), icon: Tv },
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
+
+/** TMDB movie collections, only when the Companion plugin can derive them. */
+const COLLECTIONS_NAV = { title: "Collections", to: "/collections", icon: Layers }
 
 /** Shown only once Seerr is linked — there is nothing behind them until then. */
 const SEERR_NAV = [
@@ -300,6 +304,9 @@ export function AppSidebar() {
   const companionSeerr =
     status?.companion?.compatible &&
     status.companion.info?.capabilities.includes("seerr")
+  const companionCollections =
+    status?.companion?.compatible &&
+    status.companion.info?.capabilities.includes("collections-v1")
 
   return (
     <Sidebar collapsible="icon" className="app-sidebar-container">
@@ -363,6 +370,23 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {companionCollections && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={
+                      location.pathname === "/collections" ||
+                      location.pathname.startsWith("/collections/")
+                    }
+                    tooltip={COLLECTIONS_NAV.title}
+                  >
+                    <Link to={COLLECTIONS_NAV.to}>
+                      <COLLECTIONS_NAV.icon />
+                      <span>{COLLECTIONS_NAV.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

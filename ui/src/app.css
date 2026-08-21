@@ -528,18 +528,6 @@
   text-transform: uppercase;
 }
 
-/* Draft-driven card behavior. With previews off, the quick actions live on the
-   card itself in the real app behind hover or focus; the preview is inert, so
-   they are held open here to show honestly what the toggle changes, and the
-   technical readout yields exactly as it does under a real pointer. */
-.appearance-preview[data-card-previews="false"] .card-inline-actions {
-  opacity: 1;
-}
-
-.appearance-preview[data-card-previews="false"] .signal-card:has(.card-inline-actions) .card-technical-row {
-  opacity: 0;
-}
-
 .appearance-preview-motion {
   position: relative;
   z-index: 1;
@@ -719,6 +707,11 @@
   overscroll-behavior-inline: contain;
   scroll-padding-inline: 1.5rem;
   scrollbar-width: none;
+  /* A freshly synced title enters its shelf at the first position. Anchoring
+     would pin the scroll offset to the previously visible cards and hide that
+     new first card off to the left, so shelves keep their numeric offset
+     instead and everything after the newcomer shifts one card to the right. */
+  overflow-anchor: none;
 }
 
 .home-media-rail::-webkit-scrollbar {
@@ -729,6 +722,7 @@
   overscroll-behavior-inline: contain;
   scroll-padding-inline: 1.5rem;
   scrollbar-width: none;
+  overflow-anchor: none;
 }
 
 .media-strip::-webkit-scrollbar {

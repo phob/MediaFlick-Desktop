@@ -8,6 +8,8 @@ import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
+import Collections from "@/routes/Collections"
+import CollectionDetail from "@/routes/CollectionDetail"
 import Home from "@/routes/Home"
 import ItemDetail from "@/routes/ItemDetail"
 import Library from "@/routes/Library"
@@ -64,6 +66,8 @@ export default function App() {
               <Route path="/settings/*" element={<Settings />} />
               <Route path="/" element={<Home />} />
               <Route path="/library" element={<Library />} />
+              <Route path="/collections" element={<Collections />} />
+              <Route path="/collections/:id" element={<CollectionDetail />} />
               <Route path="/item/:id" element={<ItemDetail />} />
               <Route path="/calendar" element={<Calendar />} />
               {/* Registered whether or not Seerr is linked: the sidebar hides

@@ -63,6 +63,9 @@ export const queryKeys = {
   seerrRequestOptions: (mediaType: string, is4k: boolean) =>
     ["seerr", "request-options", mediaType, is4k] as const,
   seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
+  collections: ["collections"] as const,
+  collection: (id: number) => ["collections", id] as const,
+  movieCollection: (tmdbId: number) => ["collections", "movie", tmdbId] as const,
 }
 
 /**
@@ -77,6 +80,9 @@ export function invalidateSeerrSurfaces() {
   void queryClient.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
   void queryClient.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
   void queryClient.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
+  // Collection parts carry the same Seerr availability badges as discovery
+  // rows, so a request made from anywhere refreshes them too.
+  void queryClient.invalidateQueries({ queryKey: ["collections"], ...active })
   // The quota moves with every request, and it lives on the status.
   void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }

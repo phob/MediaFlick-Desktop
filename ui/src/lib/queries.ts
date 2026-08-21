@@ -686,3 +686,36 @@ export function useSeerrCancelRequest() {
     },
   })
 }
+
+// ------------------------------------------------------------- collections
+
+export function useCollections(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.collections,
+    queryFn: api.collections.index,
+    // The plugin derives the index from the library and its own cache, so it
+    // moves slowly; a fresh mount should not re-derive it.
+    staleTime: 5 * 60_000,
+    enabled,
+    retry: false,
+  })
+}
+
+export function useCollectionDetail(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.collection(id ?? 0),
+    queryFn: ({ signal }) => api.collections.detail(id!, signal),
+    enabled: id !== null,
+    retry: false,
+  })
+}
+
+export function useMovieCollection(tmdbId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.movieCollection(tmdbId ?? 0),
+    queryFn: () => api.collections.forMovie(tmdbId!),
+    enabled: enabled && tmdbId !== null,
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+}

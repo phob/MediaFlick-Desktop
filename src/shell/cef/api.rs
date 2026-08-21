@@ -203,6 +203,7 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
 mod assets;
 mod auth;
 mod catalog;
+mod collections;
 mod images;
 mod letterboxd;
 mod media;
@@ -217,6 +218,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
     route_status(services, &segments, request)
         .or_else(|| settings::route(services, &segments, request))
         .or_else(|| ratings::route(services, &segments, request))
+        .or_else(|| collections::route(services, &segments, request))
         .or_else(|| shell::route(services, &segments, request))
         .or_else(|| letterboxd::route(services, &segments, request))
         .or_else(|| auth::route(services, &segments, request))

@@ -62,7 +62,7 @@ function GenreRow({ genre }: { genre: string }) {
   if (!results.length) return null
 
   return (
-    <MediaRail title={genre} viewAll={genreHref(genre)} itemCount={results.length}>
+    <MediaRail title={genre} viewAll={genreHref(genre)} itemCount={results.length} resetKey={results[0]?.id}>
       {results.map((item) => (
         <MediaCard key={item.id} item={item} className="home-media-card shrink-0 snap-start" />
       ))}
@@ -94,6 +94,7 @@ function BecauseYouWatched({ seed, genre }: { seed: ItemSummary; genre: string }
       title={`Because you watched ${seed.seriesName ?? seed.name}`}
       viewAll={genreHref(genre)}
       itemCount={results.length}
+      resetKey={results[0]?.id}
     >
       {results.map((item) => (
         <MediaCard key={item.id} item={item} className="home-media-card shrink-0 snap-start" />
@@ -105,7 +106,12 @@ function BecauseYouWatched({ seed, genre }: { seed: ItemSummary; genre: string }
 function Row({ row }: { row: HomeRow }) {
   if (!row.items.length) return null
   return (
-    <MediaRail title={row.title} viewAll={VIEW_ALL.get(row.id)} itemCount={row.items.length}>
+    <MediaRail
+      title={row.title}
+      viewAll={VIEW_ALL.get(row.id)}
+      itemCount={row.items.length}
+      resetKey={row.items[0]?.id}
+    >
       {row.items.map((item) => (
         <MediaCard
           key={item.id}

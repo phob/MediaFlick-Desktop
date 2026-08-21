@@ -36,6 +36,7 @@ import {
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
+import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
 import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -63,10 +64,9 @@ import {
   type RatingsIntegrationStatus,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
-import { PreviewContext, type PreviewApi } from "@/lib/preview"
 import { queryClient, queryKeys } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
-import { useHome, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import { cssVariables } from "@/lib/style"
@@ -573,6 +573,33 @@ const NO_RATINGS: RatingsContextValue = {
   register: () => () => {},
 }
 
+/**
+ * The preview shelf hovers for real — the same delay, the same panel, the same
+ * hold-open behavior as Home — but it remains a picture of the app: the
+ * panel's Play, My List, and watched buttons render and disable exactly as
+ * they do on a shelf yet mutate nothing, so resting on a card cannot launch a
+ * film or rewrite watch state from the settings page. Detail and next-up reads
+ * stay live so the panel fills with the same facts it carries on Home.
+ */
+const PREVIEW_DEPENDENCIES: PreviewDependencies = {
+  item: useItem,
+  nextUp: useNextUp,
+  play: () => ({ isPending: false, mutate: () => {} }),
+  favorite: () => ({ isPending: false, mutate: () => {} }),
+  played: () => ({ isPending: false, mutate: () => {} }),
+}
+
+/**
+ * The expanded panel portals outside this page: `content-viewport` declares
+ * paint containment, which would clip a fixed panel and re-anchor it to the
+ * scrolling pane. One host div at the body level gives the panel the same
+ * escape the real app's body portal provides, while carrying the draft
+ * attributes so the panel is themed by the unsaved choices like the shelf.
+ * Only one preview exists at a time, so a single module-level host is enough;
+ * mounting attaches it to the body and unmounting removes it again.
+ */
+const PANEL_HOST = document.createElement("div")
+
 function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
   const systemReducedMotion = usePrefersReducedMotion()
   const reducedMotion = systemReducedMotion || appearance.reducedMotion
@@ -585,28 +612,29 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
     () => savedRatings && { ...savedRatings, selected: appearance.ratingSources },
     [savedRatings, appearance.ratingSources],
   )
-  // A still layer: previews-on keeps the quick actions off the card without
-  // ever arming a real expansion; previews-off puts them on the card.
-  const stillLayer = useMemo<PreviewApi>(
-    () => ({
-      open: () => {},
-      cancel: () => {},
-      release: () => {},
-      hold: () => {},
-      activeId: null,
-      enabled: appearance.cardPreviews,
-    }),
-    [appearance.cardPreviews],
-  )
-  // A demo picture of the app must not be an app: nothing inside may navigate
-  // or act. The card links are marked inert one by one below — inert on the
-  // whole shelf would take the pointer out of play too, and with it the hover
-  // state this preview exists to show — and this capture handler is the belt
-  // to those braces for everything else, such as the inline actions.
+  // A demo picture of the app must not act from its shelf: the card links are
+  // marked inert one by one below — inert on the whole shelf would take the
+  // pointer out of play too, and with it the hover state this preview exists
+  // to show — and this capture handler is the belt to those braces for
+  // everything else, such as the inline actions. The expanded panel keeps its
+  // real hover behavior and details link; only its state-changing actions are
+  // inerted, through PREVIEW_DEPENDENCIES above.
   const holdStill = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
   }
+  useEffect(() => {
+    document.body.appendChild(PANEL_HOST)
+    return () => PANEL_HOST.remove()
+  }, [])
+  useEffect(() => {
+    PANEL_HOST.dataset.theme = appearance.theme
+    PANEL_HOST.dataset.accent = appearance.accent
+    PANEL_HOST.dataset.density = appearance.density
+    PANEL_HOST.dataset.reducedMotion = String(reducedMotion)
+    PANEL_HOST.style.setProperty("--artwork-intensity", String(appearance.artworkIntensity / 100))
+    PANEL_HOST.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))
+  }, [appearance.theme, appearance.accent, appearance.density, appearance.artworkIntensity, appearance.backdropIntensity, reducedMotion])
   const shelfRef = useRef<HTMLDivElement>(null)
   // Inert per link keeps it out of tab order, activation, and hit-testing, so
   // a pointer over the artwork targets the card around it and the real hover
@@ -643,18 +671,22 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
           of MediaFlick changes after Save.
         </span>
       </figcaption>
-      <div className="appearance-preview-stage" aria-hidden>
-        <div className="appearance-preview-backdrop" />
-        <header className="appearance-preview-chrome">
-          <span className="appearance-preview-brand"><Film /></span>
-          <span className="appearance-preview-wordmark">Media<span>Flick</span></span>
-          <span>Home</span>
-          <span>Movies</span>
-          <span>Series</span>
-          <span className="appearance-preview-online">Online</span>
-        </header>
-        <div ref={shelfRef} className="appearance-preview-shelf" onClickCapture={holdStill}>
-          <PreviewContext.Provider value={stillLayer}>
+      <PreviewProvider
+        enabled={appearance.cardPreviews}
+        container={PANEL_HOST}
+        dependencies={PREVIEW_DEPENDENCIES}
+      >
+        <div className="appearance-preview-stage" aria-hidden>
+          <div className="appearance-preview-backdrop" />
+          <header className="appearance-preview-chrome">
+            <span className="appearance-preview-brand"><Film /></span>
+            <span className="appearance-preview-wordmark">Media<span>Flick</span></span>
+            <span>Home</span>
+            <span>Movies</span>
+            <span>Series</span>
+            <span className="appearance-preview-online">Online</span>
+          </header>
+          <div ref={shelfRef} className="appearance-preview-shelf" onClickCapture={holdStill}>
             <RatingsContext.Provider value={draftRatings ?? NO_RATINGS}>
               <div className="flex items-center gap-3">
                 <span className="rail-marker" />
@@ -673,16 +705,16 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
                 </p>
               ) : (
                 <div className="flex gap-[var(--card-gap)] overflow-hidden pt-1 pb-1">
-                  {resume && <MediaCard item={resume} landscape className="home-media-card shrink-0" preview={false} />}
+                  {resume && <MediaCard item={resume} landscape className="home-media-card shrink-0" />}
                   {recent.map((item) => (
-                    <MediaCard key={item.id} item={item} className="home-media-card shrink-0" preview={false} />
+                    <MediaCard key={item.id} item={item} className="home-media-card shrink-0" />
                   ))}
                 </div>
               )}
             </RatingsContext.Provider>
-          </PreviewContext.Provider>
+          </div>
         </div>
-      </div>
+      </PreviewProvider>
       <div className="appearance-preview-motion">
         <span className="appearance-preview-motion-label">Motion</span>
         <span
