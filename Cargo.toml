@@ -9,7 +9,7 @@ name = "mediaflick-desktop"
 path = "src/main.rs"
 
 [dependencies]
-cef = { version = "=151.6.0", default-features = false }
+cef = { version = "=151.7.0", default-features = false }
 getrandom = "0.4"
 keyring = { version = "3.6.3", default-features = false, features = [
     "apple-native",
