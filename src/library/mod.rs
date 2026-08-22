@@ -91,6 +91,14 @@ impl StoredCredentials {
     }
 }
 
+/// A cached title that may satisfy one TMDB credit after a live id check.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TmdbCandidate {
+    pub tmdb_id: i64,
+    pub kind: String,
+    pub item_id: String,
+}
+
 /// Stable external identity used to batch rating lookups.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

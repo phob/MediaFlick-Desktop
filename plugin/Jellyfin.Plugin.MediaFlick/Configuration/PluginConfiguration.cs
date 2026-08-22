@@ -22,6 +22,14 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     public bool AutoImportSeerrUsers { get; set; }
 
     /// <summary>
+    /// Mirrors the library's TMDB collections into Jellyfin's own BoxSet
+    /// feature. Existing BoxSets with the same TMDB provider id are adopted,
+    /// never duplicated; sets created here are left behind when this is
+    /// turned off.
+    /// </summary>
+    public bool NativeCollections { get; set; }
+
+    /// <summary>
     /// ASP.NET Data Protection ciphertext. The plaintext MDBList key is never
     /// written to Jellyfin's plugin configuration XML.
     /// </summary>

@@ -46,6 +46,13 @@ public sealed class InfoController : ControllerBase
             capabilities.Add("seerr-discovery-v4");
             capabilities.Add("seerr-request-profiles");
             capabilities.Add("collections-v1");
+            if (configuration.NativeCollections)
+            {
+                // Native BoxSet mirroring. A distinct capability keeps older
+                // desktop builds on the derived summary instead of a listing
+                // shape they never learned to read.
+                capabilities.Add("collections-v2");
+            }
         }
 
         var ratings = _ratings.Capability();
@@ -321,7 +328,8 @@ public sealed class AdminController : ControllerBase
             sonarr = Redact(configuration.Sonarr),
             radarr = Redact(configuration.Radarr),
             seerr = Redact(configuration.Seerr),
-            autoImportSeerrUsers = configuration.AutoImportSeerrUsers
+            autoImportSeerrUsers = configuration.AutoImportSeerrUsers,
+            nativeCollections = configuration.NativeCollections
         });
     }
 
@@ -340,6 +348,7 @@ public sealed class AdminController : ControllerBase
             Radarr = Merge(current.Radarr, update.Radarr),
             Seerr = Merge(current.Seerr, update.Seerr),
             AutoImportSeerrUsers = update.AutoImportSeerrUsers,
+            NativeCollections = update.NativeCollections,
             ProtectedMdbListApiKey = current.ProtectedMdbListApiKey,
             ProtectedTmdbApiKey = current.ProtectedTmdbApiKey
         });

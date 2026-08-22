@@ -77,6 +77,7 @@ public sealed class CollectionsService
     public async Task<JsonNode> SummaryAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
     {
         var movieIds = LibraryMovieTmdbIds();
+        PruneMappings(movieIds);
         var (mappings, pending) = await EnsureMappingsAsync(
             jellyfinUserId,
             movieIds,
@@ -112,7 +113,17 @@ public sealed class CollectionsService
             .ConfigureAwait(false);
 
     /// <summary>Current movie TMDB ids from the authoritative server library.</summary>
-    internal IReadOnlyList<int> LibraryMovieTmdbIds()
+    internal IReadOnlyList<int> LibraryMovieTmdbIds() => LibraryMovies()
+        .Select(movie => movie.TmdbId)
+        .Distinct()
+        .Order()
+        .ToArray();
+
+    /// <summary>One library movie that carries a resolvable TMDB id.</summary>
+    internal sealed record LibraryMovie(BaseItem Item, int TmdbId);
+
+    /// <summary>Current library movie items from the authoritative server library.</summary>
+    internal IReadOnlyList<LibraryMovie> LibraryMovies()
     {
         var query = new InternalItemsQuery
         {
@@ -124,14 +135,15 @@ public sealed class CollectionsService
             }
         };
         return _library.GetItemList(query)
-            .Select(item => ParseTmdbId(item))
-            .OfType<int>()
-            .Distinct()
-            .Order()
+            .Select(item => (Item: item, TmdbId: ParseTmdbId(item)))
+            .Where(parsed => parsed.TmdbId is not null)
+            .Select(parsed => new LibraryMovie(parsed.Item, parsed.TmdbId!.Value))
             .ToArray();
+    }
 
-        static int? ParseTmdbId(BaseItem item)
-        {
+    /// <summary>Parses a library item's TMDB provider id, if it has a usable one.</summary>
+    internal static int? ParseTmdbId(BaseItem item)
+    {
             foreach (var key in (string[]) ["Tmdb", "tmdb"])
             {
                 if (item.ProviderIds?.TryGetValue(key, out var value) is true
@@ -143,14 +155,13 @@ public sealed class CollectionsService
             }
 
             return null;
-        }
     }
 
     /// <summary>
     /// Fills missing and stale mappings through Seerr — concurrently, bounded
-    /// by [`ResolveParallelism`] — prunes mappings for movies that left the
-    /// library, and reports how many resolves did not fit in this request's
-    /// budget. A batch of fresh mappings is persisted before the answer.
+    /// by [`ResolveParallelism`] — and reports how many resolves did not fit
+    /// in this request's budget. A batch of fresh mappings is persisted before
+    /// the answer.
     /// </summary>
     internal async Task<(Dictionary<int, Mapping> Mappings, int Pending)> EnsureMappingsAsync(
         Guid jellyfinUserId,
@@ -159,16 +170,9 @@ public sealed class CollectionsService
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        HashSet<int> presentIds;
         Dictionary<int, Mapping> current;
         lock (_gate)
         {
-            // Movies that left the library lose their mapping; the summary is
-            // derived from current ids alone, so stale rows would only age.
-            presentIds = new HashSet<int>(movieIds);
-            _mappings = _mappings
-                .Where(entry => presentIds.Contains(entry.Key))
-                .ToDictionary(entry => entry.Key, entry => entry.Value);
             current = new Dictionary<int, Mapping>(_mappings);
         }
 
@@ -194,6 +198,24 @@ public sealed class CollectionsService
         var pending = movieIds.Count(id =>
             !snapshot.TryGetValue(id, out var mapping) || now - mapping.CachedAt >= MappingLifetime);
         return (snapshot, pending);
+    }
+
+    private void PruneMappings(IReadOnlyList<int> movieIds)
+    {
+        var presentIds = new HashSet<int>(movieIds);
+        var changed = false;
+        lock (_gate)
+        {
+            foreach (var tmdbId in _mappings.Keys.Where(id => !presentIds.Contains(id)).ToArray())
+            {
+                changed |= _mappings.Remove(tmdbId);
+            }
+        }
+
+        if (changed)
+        {
+            PersistMappings();
+        }
     }
 
     private async Task ResolveMappingsAsync(
@@ -375,7 +397,9 @@ public sealed class CollectionsService
         IReadOnlyDictionary<int, Mapping> mappings,
         int pending)
     {
-        var collections = mappings.Values
+        var collections = movieIds
+            .Select(movieId => mappings.TryGetValue(movieId, out var mapping) ? mapping : null)
+            .OfType<Mapping>()
             .Where(mapping => mapping.CollectionId > 0)
             .GroupBy(mapping => mapping.CollectionId)
             .Select(group =>

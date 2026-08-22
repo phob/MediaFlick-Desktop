@@ -65,6 +65,7 @@ export const queryKeys = {
   seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
   collections: ["collections"] as const,
   collection: (id: number) => ["collections", id] as const,
+  boxset: (id: string) => ["collections", "boxset", id] as const,
   movieCollection: (tmdbId: number) => ["collections", "movie", tmdbId] as const,
 }
 

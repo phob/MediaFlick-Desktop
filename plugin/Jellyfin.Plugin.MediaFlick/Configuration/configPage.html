@@ -24,6 +24,18 @@
                         Off by default. When off, an unmapped user is told to ask an administrator.
                     </div>
                 </div>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label class="emby-checkbox-label">
+                        <input id="NativeCollections" type="checkbox" is="emby-checkbox">
+                        <span>Create Jellyfin collections for the library's TMDB movie collections</span>
+                    </label>
+                    <div class="fieldDescription">
+                        Off by default. When on, a scheduled task mirrors TMDB collections into
+                        Jellyfin's own BoxSets so every client sees them. Existing BoxSets with the
+                        same TMDB id are adopted and kept in sync, never duplicated. Turning this
+                        off stops syncing; already-created collections stay in the library.
+                    </div>
+                </div>
                 <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                     <span>Save service settings</span>
                 </button>
@@ -183,6 +195,8 @@
                         });
                         document.querySelector("#AutoImportSeerrUsers").checked =
                             config.autoImportSeerrUsers;
+                        document.querySelector("#NativeCollections").checked =
+                            config.nativeCollections === true;
                         await loadRatingStatus();
                     } finally {
                         Dashboard.hideLoadingMsg();
@@ -275,7 +289,9 @@
                                 radarr: readService("radarr"),
                                 seerr: readService("seerr"),
                                 autoImportSeerrUsers:
-                                    document.querySelector("#AutoImportSeerrUsers").checked
+                                    document.querySelector("#AutoImportSeerrUsers").checked,
+                                nativeCollections:
+                                    document.querySelector("#NativeCollections").checked
                             }
                         });
                         Dashboard.processPluginConfigurationUpdateResult();

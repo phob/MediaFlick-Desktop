@@ -1,98 +1,63 @@
 import { Link } from "react-router-dom"
 import { SeerrResults } from "@/components/seerr/SeerrResults"
 import { castDiscoverResults } from "@/lib/cast-search"
-import { useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
+import type { CastCreditsInput, CastCreditsPhase } from "@/components/seerr/use-cast-credits"
+import { useCastCredits } from "@/components/seerr/use-cast-credits"
 
-export interface CastDiscoverProps {
+export interface CastDiscoverProps extends CastCreditsInput {
   personName: string
-  jellyfinId: string | null
-  tmdbId: number | null
-  resolving?: boolean
-  resolutionError?: Error | null
 }
 
-export function CastDiscover({
-  personName,
-  jellyfinId,
-  tmdbId,
-  resolving = false,
-  resolutionError = null,
-}: CastDiscoverProps) {
-  const seerr = useSeerrStatus()
-  const app = useStatus()
-  const companionCapabilities = app.data?.companion?.info?.capabilities ?? []
-  const companionProvidesSeerr = Boolean(
-    app.data?.companion?.compatible && companionCapabilities.includes("seerr"),
-  )
-  const providerSupportsPeople =
-    !companionProvidesSeerr || companionCapabilities.includes("seerr-person-discovery")
-  const linked = seerr.data?.linked ?? false
-  const catalogComplete = Boolean(app.data?.bootstrap?.complete ?? app.data?.bootstrapped)
-  // With an exact Jellyfin person id the backend verifies every Seerr credit
-  // against the live server relation. Without one, wait for the progressive
-  // catalog to finish so an unseen local title is never offered as a request.
-  const availabilitySafe = jellyfinId !== null || catalogComplete
-  const credits = useSeerrPersonCredits(
-    tmdbId,
-    jellyfinId,
-    linked
-      && providerSupportsPeople
-      && tmdbId !== null
-      && !resolving
-      && !resolutionError
-      && availabilitySafe,
-  )
-  const results = castDiscoverResults(credits.data?.results)
+const PHASE_COPY = {
+  "checking-seerr": "Checking Seerr…",
+  "not-linked":
+    "Seerr is not connected. Your server results above are still complete. ",
+  "needs-plugin": "Update the MediaFlick Companion plugin to discover this person’s Seerr titles.",
+  resolving: "Matching this person with Jellyfin and TMDB…",
+  "waiting-for-catalog":
+    "Finishing the progressive library catalog before showing requestable titles, so local titles are never duplicated here.",
+} satisfies Partial<Record<CastCreditsPhase, string>>
+
+export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps) {
+  const { credits, phase } = useCastCredits(creditsInput)
 
   let content
-  if (seerr.isPending || app.isPending) {
-    content = <p className="py-4 text-sm text-muted-foreground">Checking Seerr…</p>
-  } else if (seerr.error) {
+  if (phase === "seerr-error") {
     content = (
       <p className="py-4 text-sm text-destructive">
-        Seerr is unavailable: {seerr.error.message}
+        Seerr is unavailable: {credits.error?.message ?? "unknown error"}
       </p>
     )
-  } else if (!linked) {
-    content = (
-      <p className="py-4 text-sm text-muted-foreground">
-        Seerr is not connected. Your server results above are still complete.{" "}
-        <Link to="/settings/integrations/seerr" className="text-primary hover:underline">
-          Open Seerr settings
-        </Link>
-        .
-      </p>
-    )
-  } else if (!providerSupportsPeople) {
-    content = (
-      <p className="py-4 text-sm text-muted-foreground">
-        Update the MediaFlick Companion plugin to discover this person’s Seerr titles.
-      </p>
-    )
-  } else if (resolving) {
-    content = <p className="py-4 text-sm text-muted-foreground">Matching this person with Jellyfin and TMDB…</p>
-  } else if (resolutionError) {
+  } else if (phase === "resolution-error") {
     content = (
       <p className="py-4 text-sm text-destructive">
-        This person’s Seerr identity could not be verified: {resolutionError.message}
+        This person’s Seerr identity could not be verified: {creditsInput.resolutionError?.message}
       </p>
     )
-  } else if (tmdbId === null) {
+  } else if (phase === "no-tmdb-identity") {
     content = (
       <p className="py-4 text-sm text-muted-foreground">
         Jellyfin has no TMDB identity for this cast member, so Seerr discovery cannot be matched safely.
       </p>
     )
-  } else if (!availabilitySafe) {
-    content = (
-      <p className="py-4 text-sm text-muted-foreground">
-        Finishing the progressive library catalog before showing requestable titles, so local titles are never duplicated here.
-      </p>
-    )
+  } else if (phase !== "ready") {
+    const copy = PHASE_COPY[phase] ?? "Checking Seerr…"
+    content =
+      phase === "not-linked" ? (
+        <p className="py-4 text-sm text-muted-foreground">
+          {copy}
+          <Link to="/settings/integrations/seerr" className="text-primary hover:underline">
+            Open Seerr settings
+          </Link>
+          .
+        </p>
+      ) : (
+        <p className="py-4 text-sm text-muted-foreground">{copy}</p>
+      )
   } else {
     content = (
       <SeerrResults
-        results={results}
+        results={castDiscoverResults(credits.data?.results)}
         isPending={credits.isPending}
         error={credits.error}
         placeholders={4}

@@ -62,6 +62,23 @@ public sealed class CollectionsTests
     }
 
     [Fact]
+    public void GroupCollectionsIgnoresMappingsOutsideTheCurrentLibrary()
+    {
+        var mappings = new Dictionary<int, CollectionsService.Mapping>
+        {
+            [603] = new(10, "The Matrix Collection", "/a.jpg", null, DateTimeOffset.UtcNow),
+            [1892] = new(2, "Alien Collection", null, "/b.jpg", DateTimeOffset.UtcNow)
+        };
+
+        var summary = CollectionsService.GroupCollections([603], mappings, pending: 0);
+
+        var collections = Assert.IsType<JsonArray>(summary["collections"]);
+        var collection = Assert.IsType<JsonObject>(Assert.Single(collections));
+        Assert.Equal(10, collection["id"]?.GetValue<int>());
+        Assert.Equal(1, collection["movieCount"]?.GetValue<int>());
+    }
+
+    [Fact]
     public void MovieCollectionShapeCarriesIdentityOnlyWhenOneExists()
     {
         var known = CollectionsService.MovieCollectionShape(603, 10, "The Matrix Collection");

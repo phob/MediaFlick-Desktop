@@ -2,7 +2,11 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Row, params, params_from_iter};
 use serde_json::{Value, json};
 
-use super::{ItemPage, ItemQuery, Library, LibraryStats};
+use super::{ItemPage, ItemQuery, Library, LibraryStats, TmdbCandidate};
+
+/// Bound on one `tmdb_id IN (...)` clause so even a full person filmography
+/// stays well under SQLite's host-parameter limit.
+const TMDB_CANDIDATE_CHUNK: usize = 400;
 
 impl Library {
     pub fn stats(&self) -> LibraryStats {
@@ -63,6 +67,47 @@ impl Library {
         })?;
 
         Ok(ItemPage { items, total })
+    }
+
+    /// Cached Jellyfin ids for these TMDB credits. The cache is only a
+    /// pre-filter for live ownership checks because it can hold rows the server
+    /// has since deleted. Callers must fetch the ids from Jellyfin before
+    /// treating them as owned.
+    pub(crate) fn tmdb_candidates(&self, tmdb_ids: &[i64]) -> rusqlite::Result<Vec<TmdbCandidate>> {
+        let mut candidates = Vec::new();
+        if tmdb_ids.is_empty() {
+            return Ok(candidates);
+        }
+        self.db.with_connection(|connection| {
+            for chunk in tmdb_ids.chunks(TMDB_CANDIDATE_CHUNK) {
+                let placeholders = vec!["?"; chunk.len()].join(",");
+                let sql = format!(
+                    "SELECT DISTINCT i.tmdb_id, i.kind, i.jellyfin_id FROM items i \
+                     WHERE i.kind IN ('Movie', 'Series') \
+                     AND i.tmdb_id IN ({placeholders})"
+                );
+                let mut statement = connection.prepare(&sql)?;
+                let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (tmdb_id, kind, item_id) = row?;
+                    if let Ok(tmdb_id) = tmdb_id.parse::<i64>() {
+                        candidates.push(TmdbCandidate {
+                            tmdb_id,
+                            kind,
+                            item_id,
+                        });
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        Ok(candidates)
     }
 
     pub fn item(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
@@ -401,7 +446,7 @@ mod tests {
 
     use super::{ItemQuery, Library, cached_image_tag, civil_from_days, fts_match_expression};
     use crate::library::test_support::{dto, seeded};
-    use crate::library::{ItemSort, current_release_decade, release_decade_from_id};
+    use crate::library::{ItemSort, TmdbCandidate, current_release_decade, release_decade_from_id};
 
     #[test]
     fn cached_image_tags_are_found_whatever_the_server_capitalised() {
@@ -499,6 +544,40 @@ mod tests {
             .expect("not favorites");
         assert_eq!(not_favorites.total, 1);
         assert_eq!(not_favorites.items[0]["id"], "m2");
+    }
+
+    #[test]
+    fn tmdb_candidates_list_only_browsable_kinds_with_parsed_ids() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#),
+                dto(r#"{"Id":"series","Name":"Show","Type":"Series","ProviderIds":{"tmdb":"769"}}"#),
+                dto(r#"{"Id":"episode","Name":"Episode","Type":"Episode","ProviderIds":{"Tmdb":"603"}}"#),
+                dto(r#"{"Id":"unparsed","Name":"Odd","Type":"Movie","ProviderIds":{"Tmdb":"not-a-number"}}"#),
+            ])
+            .expect("seed");
+
+        let mut candidates = library
+            .tmdb_candidates(&[603, 769, 404])
+            .expect("candidates");
+        candidates.sort();
+        assert_eq!(
+            candidates,
+            vec![
+                TmdbCandidate {
+                    tmdb_id: 603,
+                    kind: "Movie".to_string(),
+                    item_id: "movie".to_string(),
+                },
+                TmdbCandidate {
+                    tmdb_id: 769,
+                    kind: "Series".to_string(),
+                    item_id: "series".to_string(),
+                },
+            ]
+        );
+        assert!(library.tmdb_candidates(&[]).expect("empty").is_empty());
     }
 
     #[test]

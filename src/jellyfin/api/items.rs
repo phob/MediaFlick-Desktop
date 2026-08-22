@@ -214,6 +214,51 @@ pub fn fetch_item_synopsis(
     Ok(response.items.into_iter().next())
 }
 
+fn box_sets_query(user_id: &str) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("Recursive", "true".to_string()),
+        ("IncludeItemTypes", "BoxSet".to_string()),
+        // Provider ids carry the TMDB collection identity the native
+        // collections feature matches on; ChildCount feeds the card counter.
+        ("Fields", "ProviderIds,ChildCount".to_string()),
+        ("EnableUserData", "false".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("SortBy", "SortName".to_string()),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+/// Every BoxSet on the server, ordered like a library view. This is the
+/// native collections listing when the Companion plugin mirrors TMDB
+/// collections into real server collections.
+pub fn fetch_box_sets(client: &JellyfinClient, user_id: &str) -> Result<ItemsResponse, ApiError> {
+    client.get_json("/Items", &box_sets_query(user_id))
+}
+
+fn box_set_children_query(user_id: &str, parent_id: &str) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("parentId", parent_id.to_string()),
+        ("IncludeItemTypes", "Movie".to_string()),
+        ("Fields", CATALOG_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("Limit", CHILDREN_PAGE_SIZE.to_string()),
+        ("SortBy", "SortName".to_string()),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+/// One BoxSet's movie children, shaped exactly like any other card row.
+pub fn fetch_box_set_children(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json("/Items", &box_set_children_query(user_id, parent_id))
+}
+
 /// One item's live about-panel metadata. Images stay enabled because cast
 /// entries carry their headshot tags through the `People` field.
 pub fn fetch_item_about(
@@ -564,8 +609,8 @@ mod tests {
     use super::{
         CATALOG_FIELDS, CHILD_FIELDS, CHILDREN_PAGE_SIZE, NEXT_UP_FIELDS, PAGE_SIZE,
         PERSON_ITEM_TYPES, PERSON_PAGE_SIZE, SYNCED_ITEM_TYPES, SYNOPSIS_FIELDS, UPCOMING_FIELDS,
-        children_query, exact_items_query, image_path, items_page_query, next_up_query,
-        person_items_query, synopsis_query, upcoming_query,
+        box_set_children_query, box_sets_query, children_query, exact_items_query, image_path,
+        items_page_query, next_up_query, person_items_query, synopsis_query, upcoming_query,
     };
 
     #[test]
@@ -653,6 +698,31 @@ mod tests {
         assert_eq!(query["Limit"], PAGE_SIZE.to_string());
         assert_eq!(query["SortBy"], "DateCreated");
         assert_eq!(query["SortOrder"], "Descending");
+    }
+
+    #[test]
+    fn a_box_sets_listing_is_lightweight_and_name_ordered() {
+        let query = box_sets_query("uid")
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["userId"], "uid");
+        assert_eq!(query["Recursive"], "true");
+        assert_eq!(query["IncludeItemTypes"], "BoxSet");
+        assert_eq!(query["Fields"], "ProviderIds,ChildCount");
+        assert_eq!(query["EnableUserData"], "false");
+        assert_eq!(query["SortBy"], "SortName");
+    }
+
+    #[test]
+    fn a_box_set_children_request_scopes_movies_under_the_parent() {
+        let query = box_set_children_query("uid", "boxset-1")
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(query["parentId"], "boxset-1");
+        assert_eq!(query["IncludeItemTypes"], "Movie");
+        assert_eq!(query["Fields"], CATALOG_FIELDS);
+        assert_eq!(query["EnableUserData"], "true");
+        assert_eq!(query["SortBy"], "SortName");
     }
 
     /// `Recursive` must stay absent: with it, a series would answer with every

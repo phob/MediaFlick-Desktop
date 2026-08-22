@@ -696,6 +696,15 @@ export interface SeerrPage<T> {
   results: T[]
 }
 
+/**
+ * Person credits plus the server titles the backend proved are on Jellyfin
+ * even though its own cast relation never credited this person to them. They
+ * are excluded from `results`' discoverable set by their `libraryItemId`.
+ */
+export interface SeerrPersonCreditsPage extends SeerrPage<SeerrResult> {
+  libraryExtras?: ItemSummary[]
+}
+
 export interface SeerrRequest {
   id: number
   status: SeerrRequestStatus
@@ -799,20 +808,31 @@ export interface SeerrLinkResult {
  * Companion plugin. TMDB collections are inherently movie-only; series never
  * appear in this surface.
  */
+/**
+ * One collection in the listing. Two sources share the shape: a native
+ * Jellyfin BoxSet carries a string id plus local artwork tags, while a derived
+ * TMDB summary keeps the numeric TMDB id and Seerr poster paths.
+ */
 export interface CollectionSummary {
-  id: number
+  id: number | string
+  /** TMDB collection identity when a BoxSet carries it. */
+  tmdbId?: number | null
   name: string
   posterPath: string | null
   backdropPath: string | null
+  /** Local artwork identity for Jellyfin-native collections. */
+  primaryImageTag?: string | null
   movieCount: number | null
 }
 
 export interface CollectionsIndex {
+  /** `jellyfin` when the listing answers from the server's own BoxSets. */
+  source?: "jellyfin" | "tmdb"
   collections: CollectionSummary[]
-  libraryMovies: number
-  mappedMovies: number
+  libraryMovies?: number
+  mappedMovies?: number
   /** Movies whose collection mapping has not been resolved yet. */
-  pendingMovies: number
+  pendingMovies?: number
 }
 
 export interface CollectionDetail {
@@ -825,10 +845,21 @@ export interface CollectionDetail {
   parts: SeerrResult[]
 }
 
+/** One Jellyfin BoxSet's own record joined with its movie children. */
+export interface BoxSetDetail {
+  id: string
+  tmdbId: number | null
+  name: string
+  primaryImageTag: string | null
+  backdropImageTag: string | null
+  items: ItemSummary[]
+}
+
 /** The single collection one TMDB movie belongs to, or none. */
 export interface MovieCollection {
   tmdbId: number
-  collection: { id: number; name: string } | null
+  /** A BoxSet id when native mirroring is on, otherwise the TMDB id. */
+  collection: { id: number | string; name: string } | null
 }
 
 export const SEERR_DISCOVER_ROWS = [
@@ -1269,7 +1300,7 @@ export const api = {
     search: (q: string, page = 1, signal?: AbortSignal) =>
       request<SeerrPage<SeerrResult>>(`/api/seerr/search${queryString({ q, page })}`, { signal }),
     personCredits: (tmdbId: number, jellyfinId?: string | null, signal?: AbortSignal) =>
-      request<SeerrPage<SeerrResult>>(
+      request<SeerrPersonCreditsPage>(
         `/api/seerr/person/${tmdbId}/credits${queryString({ personId: jellyfinId })}`,
         { signal },
       ),
@@ -1312,9 +1343,11 @@ export const api = {
   // ------------------------------------------------------------ collections
 
   collections: {
-    index: () => request<CollectionsIndex>("/api/collections"),
-    detail: (id: number, signal?: AbortSignal) =>
+    index: (signal?: AbortSignal) => request<CollectionsIndex>("/api/collections", { signal }),
+    detail: (id: number | string, signal?: AbortSignal) =>
       request<CollectionDetail>(`/api/collections/${id}`, { signal }),
+    boxset: (id: string, signal?: AbortSignal) =>
+      request<BoxSetDetail>(`/api/collections/boxset/${encodeURIComponent(id)}`, { signal }),
     forMovie: (tmdbId: number) =>
       request<MovieCollection>(`/api/collections/movie/${tmdbId}`),
   },

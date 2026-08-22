@@ -203,6 +203,13 @@ impl CompanionSession {
         self.collections_endpoint(&format!("/MediaFlick/collections/movie/{tmdb_id}"))
     }
 
+    /// Native BoxSet mirroring: the plugin writes TMDB collections into the
+    /// server's own collections feature. Desktop then lists and browses them
+    /// through ordinary `/Items` queries instead of derived summaries.
+    pub fn native_collections(&self) -> bool {
+        self.supports("collections-v2")
+    }
+
     fn collections_endpoint(&self, path: &str) -> Result<Value, ApiError> {
         let _ = self.probe(false);
         if !self.supports("collections-v1") {
