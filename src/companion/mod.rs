@@ -530,19 +530,23 @@ fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
     let series = provider_ids(results, "tv");
     let movie_ids = library.ids_by_tmdb("Movie", &movies).unwrap_or_default();
     let series_ids = library.ids_by_tmdb("Series", &series).unwrap_or_default();
+    // Watched state rides along so collection pages can sort and filter on
+    // it without hydrating every card first.
+    let movie_played = library.played_by_tmdb("Movie", &movies).unwrap_or_default();
     for item in results {
         let media_type = item["mediaType"].as_str().unwrap_or_default();
         let Some(tmdb_id) = item["tmdbId"].as_i64() else {
             continue;
         };
-        let owned = if media_type == "movie" {
-            &movie_ids
+        let (owned, played) = if media_type == "movie" {
+            (&movie_ids, movie_played.get(&tmdb_id.to_string()).copied())
         } else {
-            &series_ids
+            (&series_ids, None)
         };
         item["libraryItemId"] = owned
             .get(&tmdb_id.to_string())
             .map_or(Value::Null, |id| json!(id));
+        item["played"] = json!(played.unwrap_or(false));
     }
 }
 
@@ -676,6 +680,46 @@ mod tests {
             ..Default::default()
         };
         assert!(!future.supports("calendar"));
+    }
+
+    #[test]
+    fn collection_parts_carry_ownership_and_watched_state() {
+        let library = Library::open_in_memory().expect("library");
+        let items = [
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
+            )
+            .expect("movie"),
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"}}"#,
+            )
+            .expect("movie"),
+        ];
+        library.upsert_page(&items).expect("seed");
+        library
+            .upsert_user_data(&[crate::library::UserDataRecord {
+                jellyfin_id: "m1".to_string(),
+                played: true,
+                ..Default::default()
+            }])
+            .expect("user data");
+        let mut detail = json!({
+            "parts": [
+                { "mediaType": "movie", "tmdbId": 603 },
+                { "mediaType": "movie", "tmdbId": 348 },
+                { "mediaType": "movie", "tmdbId": 624834 }
+            ]
+        });
+
+        super::join_seerr_rows(&library, &mut detail, "parts");
+
+        assert_eq!(detail["parts"][0]["libraryItemId"], "m1");
+        assert_eq!(detail["parts"][0]["played"], true);
+        assert_eq!(detail["parts"][1]["libraryItemId"], "m2");
+        assert_eq!(detail["parts"][1]["played"], false);
+        // Unowned parts are neither joined nor watched.
+        assert!(detail["parts"][2]["libraryItemId"].is_null());
+        assert_eq!(detail["parts"][2]["played"], false);
     }
 
     #[test]

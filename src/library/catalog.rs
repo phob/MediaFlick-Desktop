@@ -251,6 +251,35 @@ impl Library {
         self.ids_by_provider(kind, "tvdb_id", tvdb_ids)
     }
 
+    /// Watched flags for library items matched by provider id. Absent ids are
+    /// unowned; the join reads their absence as unwatched.
+    pub fn played_by_tmdb(
+        &self,
+        kind: &str,
+        tmdb_ids: &[String],
+    ) -> rusqlite::Result<HashMap<String, bool>> {
+        if tmdb_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        self.db.with_connection(|connection| {
+            let placeholders = vec!["?"; tmdb_ids.len()].join(", ");
+            let mut statement = connection.prepare(&format!(
+                "SELECT i.tmdb_id, COALESCE(u.played, 0) FROM items i
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 WHERE i.kind = ?1 AND i.tmdb_id IN ({placeholders})"
+            ))?;
+            let arguments = std::iter::once(kind)
+                .chain(tmdb_ids.iter().map(String::as_str))
+                .collect::<Vec<_>>();
+            let rows = statement
+                .query_map(params_from_iter(arguments), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0))
+                })?
+                .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+            Ok(rows)
+        })
+    }
+
     fn ids_by_provider(
         &self,
         kind: &str,
@@ -530,10 +559,59 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use super::Library;
     use crate::library::test_support::{dto, seeded};
+
+    #[test]
+    fn played_flags_follow_tmdb_ids_and_absence_means_unowned() {
+        let library = Library::open_in_memory().expect("library");
+        let page = [
+            dto(
+                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"},
+                    "UserData":{"Played":false}}"#,
+            ),
+            dto(
+                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"},
+                    "UserData":{"Played":true}}"#,
+            ),
+        ];
+        library.ingest_page(&page).expect("ingest");
+
+        assert_eq!(
+            library
+                .played_by_tmdb(
+                    "Movie",
+                    &["603".to_string(), "348".to_string(), "42".to_string()]
+                )
+                .expect("played flags"),
+            HashMap::from([("603".to_string(), false), ("348".to_string(), true)])
+        );
+    }
+
+    #[test]
+    fn a_user_data_only_write_updates_the_played_join() {
+        let library = Library::open_in_memory().expect("library");
+        let page = [dto(
+            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
+        )];
+        library.ingest_page(&page).expect("ingest");
+        library
+            .upsert_user_data(&[super::UserDataRecord {
+                jellyfin_id: "m1".to_string(),
+                played: true,
+                ..Default::default()
+            }])
+            .expect("user data");
+
+        assert_eq!(
+            library
+                .played_by_tmdb("Movie", &["603".to_string()])
+                .expect("played flags"),
+            HashMap::from([("603".to_string(), true)])
+        );
+    }
 
     #[test]
     fn re_ingesting_an_identical_page_reports_no_changes() {

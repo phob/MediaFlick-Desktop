@@ -245,6 +245,44 @@ describe("Collections", () => {
     expect(document.querySelector('a[href="/discover/movie/624834"]')).toBeTruthy()
   })
 
+  test("collection sort and watched filters drive the visible rows", async () => {
+    const boxset: BoxSetDetail = {
+      id: "bs-1",
+      tmdbId: null,
+      name: "The Matrix Collection",
+      primaryImageTag: null,
+      backdropImageTag: null,
+      items: [
+        itemSummary({ id: "m1", name: "The Matrix", year: 1999, communityRating: 8.7, played: false }),
+        itemSummary({ id: "m2", name: "The Matrix Reloaded", year: 2003, communityRating: 9.1, played: true }),
+        itemSummary({ id: "m3", name: "The Matrix Revolutions", year: 2003, communityRating: 6.7, played: false }),
+      ],
+    }
+    vi.spyOn(api.api.collections, "boxset").mockResolvedValue(boxset)
+
+    // Rating sort puts the highest-rated entry first.
+    const screen1 = render(providers(<CollectionDetail />, "/collections/bs-1?sort=rating"))
+    await waitFor(() => {
+      expect(screen.getAllByRole("link", { name: /Open details for The Matrix/ })).toHaveLength(3)
+    })
+    const names = screen
+      .getAllByRole("link", { name: /Open details for The Matrix/ })
+      .map((link) => link.getAttribute("href"))
+    expect(names).toEqual(["/item/m2", "/item/m1", "/item/m3"])
+    screen1.unmount()
+
+    // The watched filter drops watched entries and reports the reduced count.
+    render(providers(<CollectionDetail />, "/collections/bs-1?watched=false"))
+    await waitFor(() => {
+      expect(screen.getAllByRole("link", { name: /Open details for The Matrix/ })).toHaveLength(2)
+    })
+    const visible = screen
+      .getAllByRole("link", { name: /Open details for The Matrix/ })
+      .map((link) => link.getAttribute("href"))
+    expect(visible).toEqual(["/item/m1", "/item/m3"])
+    expect(screen.getByText("2 movies")).toBeTruthy()
+  })
+
   test("native BoxSet detail without a TMDB identity shows only its children", async () => {
     const boxset: BoxSetDetail = {
       id: "bs-9",

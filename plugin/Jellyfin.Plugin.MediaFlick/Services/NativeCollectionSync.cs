@@ -93,6 +93,7 @@ public sealed class NativeCollectionSync
 
             await SyncMembershipAsync(user, boxset, wanted.Members, movies, cancellationToken)
                 .ConfigureAwait(false);
+            await RenameAsync(boxset, wanted.Name, cancellationToken).ConfigureAwait(false);
             done += 1;
             progress?.Report(40 + done * 60 / desired.Count);
         }
@@ -146,6 +147,20 @@ public sealed class NativeCollectionSync
                 ? id
                 : null;
 
+    private async Task RenameAsync(BoxSet boxset, string name, CancellationToken cancellationToken)
+    {
+        if (string.Equals(boxset.Name, name, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // Upstream renames reach adopted and previously created sets alike;
+        // membership identity stays keyed on the TMDB provider id.
+        boxset.Name = name;
+        boxset.SortName = CollectionsService.SortName(name);
+        await _library.UpdateItemAsync(boxset, boxset, ItemUpdateType.MetadataEdit, cancellationToken)
+            .ConfigureAwait(false);
+    }
     private Dictionary<int, BoxSet> BoxSetsByTmdbId()
     {
         var query = new InternalItemsQuery
@@ -173,8 +188,7 @@ public sealed class NativeCollectionSync
         string name,
         int collectionId,
         CancellationToken cancellationToken)
-    {
-        var boxset = await _collectionManager.CreateCollectionAsync(new CollectionCreationOptions
+    {        var boxset = await _collectionManager.CreateCollectionAsync(new CollectionCreationOptions
         {
             Name = name,
             ProviderIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

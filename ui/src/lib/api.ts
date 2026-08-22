@@ -614,6 +614,8 @@ export interface SeerrResult {
   status: SeerrStatus
   status4k: SeerrStatus
   libraryItemId: string | null
+  /** Watch state from the local catalog join, for owned movies. */
+  played?: boolean
 }
 
 export interface SeerrSeason {
