@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.MediaFlick.Services;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.AspNetCore.DataProtection;
@@ -19,6 +20,11 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CalendarCache>();
         serviceCollection.AddSingleton<CalendarService>();
         serviceCollection.AddSingleton<SeerrGateway>();
+        serviceCollection.AddSingleton(serviceProvider => new NativeCollectionSync(
+            serviceProvider.GetRequiredService<CollectionsService>(),
+            serviceProvider.GetRequiredService<ICollectionManager>(),
+            serviceProvider.GetRequiredService<IUserManager>(),
+            serviceProvider.GetRequiredService<ILibraryManager>()));
         serviceCollection.AddSingleton(serviceProvider =>
         {
             var dataPath = Plugin.Instance?.DataFolderPath

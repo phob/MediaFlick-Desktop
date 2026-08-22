@@ -68,6 +68,7 @@ public sealed record CompanionConfigurationUpdate(
     ServiceConfigurationUpdate Sonarr,
     ServiceConfigurationUpdate Radarr,
     ServiceConfigurationUpdate Seerr,
-    bool AutoImportSeerrUsers);
+    bool AutoImportSeerrUsers,
+    bool NativeCollections);
 
 public sealed record ConnectionTestResponse(string Service, bool Connected, string? Version);

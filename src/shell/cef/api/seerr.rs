@@ -126,11 +126,14 @@ fn seerr_person_credits(
     // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
     // section verify ownership against the live complete person relation. A
     // failure hides Discover only; the independently loaded server grid stays.
-    if let Some(person_id) = request.param("personId")
-        && let Err(error) = join_server_person_availability(services, &person_id, &mut value)
-    {
-        services.session.note_error(&error);
-        return ApiResponse::from_api_error(&error);
+    if let Some(person_id) = request.param("personId") {
+        return match join_server_person_availability(services, &person_id, &mut value) {
+            Ok(()) => ApiResponse::ok(value),
+            Err(error) => {
+                services.session.note_error(&error);
+                ApiResponse::from_api_error(&error)
+            }
+        };
     }
     ApiResponse::ok(value)
 }
@@ -146,15 +149,111 @@ fn join_server_person_availability(
     // live exact-person pass is authoritative, so rebuild availability rather
     // than only adding to that provisional answer.
     clear_person_availability(value);
+    let filmography = fetch_person_filmography(&client, &user_id, person_id, value)?;
+    let extras = verify_off_filmography_titles(services, &client, &user_id, value, &filmography);
+    mark_owned_credits(value, &extras);
+    value["libraryExtras"] = json!(extras.iter().map(summary_from_dto).collect::<Vec<_>>());
+    Ok(())
+}
+
+/// Jellyfin's exact-id endpoint accepts a bounded list, so the usual cast page
+/// proves all extra titles with one request instead of one request per credit.
+const EXTRA_OWNERSHIP_FETCH_CHUNK: usize = 100;
+
+/// Proves which Seerr credits exist on the server even though Jellyfin's own
+/// cast relation never named this person on them.
+///
+/// Jellyfin stores only the head of each title's cast list, so a person can be
+/// missing from a library item they are genuinely in. The catalog maps each
+/// TMDB credit to cached Jellyfin ids, then `/Items?ids=` verifies those ids in
+/// batches. Returned provider ids must still match the expected credit. Stale
+/// cache rows therefore cannot become false proofs.
+fn verify_off_filmography_titles(
+    services: &Arc<Services>,
+    client: &JellyfinClient,
+    user_id: &str,
+    value: &Value,
+    filmography: &HashSet<(String, i64)>,
+) -> Vec<BaseItemDto> {
+    let unmatched = unmatched_credit_keys(value, filmography);
+    if unmatched.is_empty() {
+        return Vec::new();
+    }
+
+    let positions = unmatched
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, identity)| (identity, index))
+        .collect::<HashMap<_, _>>();
+    let tmdb_ids = unmatched
+        .iter()
+        .map(|(_, tmdb_id)| *tmdb_id)
+        .collect::<Vec<_>>();
+    let candidates = match services.library.tmdb_candidates(&tmdb_ids) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::warn!(target: "app.api", "could not read cast ownership candidates from the local catalog: {error}");
+            return Vec::new();
+        }
+    };
+
+    let expected_by_item_id = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let media_type = seerr_media_type(&candidate.kind)?;
+            let identity = (media_type.to_string(), candidate.tmdb_id);
+            positions
+                .contains_key(&identity)
+                .then_some((candidate.item_id, identity))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut candidate_ids = expected_by_item_id.keys().cloned().collect::<Vec<_>>();
+    candidate_ids.sort_unstable();
+
+    let mut verified = Vec::new();
+    let mut verified_identities = HashSet::new();
+    for chunk in candidate_ids.chunks(EXTRA_OWNERSHIP_FETCH_CHUNK) {
+        let page = match items::fetch_items(client, user_id, chunk) {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!(target: "app.api", "could not verify cast titles against the server: {error}");
+                break;
+            }
+        };
+        for dto in page.items {
+            let Some((identity, item_id)) = server_title_identity(&dto) else {
+                continue;
+            };
+            if expected_by_item_id.get(item_id) == Some(&identity)
+                && verified_identities.insert(identity)
+            {
+                verified.push(dto);
+            }
+        }
+    }
+    verified.sort_by_key(|dto| {
+        server_title_identity(dto)
+            .and_then(|(identity, _)| positions.get(&identity).copied())
+            .unwrap_or(usize::MAX)
+    });
+    verified
+}
+
+/// Every page of one exact person's live Jellyfin filmography, joined into the
+/// credits as owned. Returns the filmography's title identities so callers can
+/// tell which credits the relation answered for.
+fn fetch_person_filmography(
+    client: &JellyfinClient,
+    user_id: &str,
+    person_id: &str,
+    value: &mut Value,
+) -> Result<HashSet<(String, i64)>, ApiError> {
+    let mut filmography = HashSet::new();
     let mut offset = 0;
     for _ in 0..MAX_PERSON_QUERY_PAGES {
-        let page = items::fetch_person_items(
-            &client,
-            &user_id,
-            person_id,
-            offset,
-            items::PERSON_PAGE_SIZE,
-        )?;
+        let page =
+            items::fetch_person_items(client, user_id, person_id, offset, items::PERSON_PAGE_SIZE)?;
         let received = i64::try_from(page.items.len()).unwrap_or(i64::MAX);
         if received == 0 {
             if page.total_record_count > offset {
@@ -162,20 +261,70 @@ fn join_server_person_availability(
                     "the server omitted part of an exact person filmography".to_string(),
                 ));
             }
-            return Ok(());
+            return Ok(filmography);
         }
+        filmography.extend(
+            page.items
+                .iter()
+                .filter_map(server_title_identity)
+                .map(|(identity, _)| identity),
+        );
         join_person_items(value, &page.items);
         offset = offset.saturating_add(received);
         if page.total_record_count > 0 && offset >= page.total_record_count {
-            return Ok(());
+            return Ok(filmography);
         }
         if page.total_record_count <= 0 && received < items::PERSON_PAGE_SIZE {
-            return Ok(());
+            return Ok(filmography);
         }
     }
     Err(ApiError::Decode(
         "the exact person filmography exceeded the safe paging limit".to_string(),
     ))
+}
+
+/// Seerr names movie credits `movie` and series credits `tv`; seasons and
+/// episodes have no Seerr credit a card could represent.
+fn seerr_media_type(item_type: &str) -> Option<&'static str> {
+    match item_type {
+        "Movie" => Some("movie"),
+        "Series" => Some("tv"),
+        _ => None,
+    }
+}
+
+/// A browsable server title's `(Seerr media type, TMDB id)` and its Jellyfin
+/// item id.
+fn server_title_identity(item: &BaseItemDto) -> Option<((String, i64), &str)> {
+    let media_type = seerr_media_type(item.item_type.as_deref()?)?;
+    let tmdb_id = item.provider_id("Tmdb")?.parse::<i64>().ok()?;
+    (tmdb_id > 0).then(|| ((media_type.to_string(), tmdb_id), item.id.as_str()))
+}
+
+/// The `(Seerr media type, TMDB id)` identities of every credit in a response.
+fn credit_keys(value: &Value) -> impl Iterator<Item = (String, i64)> + '_ {
+    value["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|result| {
+            let media_type = result["mediaType"].as_str()?;
+            let tmdb_id = result["tmdbId"].as_i64()?;
+            (tmdb_id > 0).then(|| (media_type.to_string(), tmdb_id))
+        })
+}
+
+/// Credits Jellyfin's filmography did not answer for, deduplicated in credit
+/// order so proven extras retain the provider's ordering.
+fn unmatched_credit_keys(
+    value: &Value,
+    filmography: &HashSet<(String, i64)>,
+) -> Vec<(String, i64)> {
+    let mut seen = HashSet::new();
+    credit_keys(value)
+        .filter(|key| !filmography.contains(key))
+        .filter(|key| seen.insert(key.clone()))
+        .collect()
 }
 
 fn clear_person_availability(value: &mut Value) {
@@ -186,17 +335,32 @@ fn clear_person_availability(value: &mut Value) {
     }
 }
 
+/// Marks the credits these server items satisfy as locally owned, so the UI
+/// suppresses them from Discover instead of offering a redundant request.
+fn mark_owned_credits(value: &mut Value, owned: &[BaseItemDto]) {
+    let owned: HashMap<_, _> = owned
+        .iter()
+        .filter_map(|item| server_title_identity(item))
+        .collect();
+    let Some(results) = value["results"].as_array_mut() else {
+        return;
+    };
+    for result in results {
+        let key = match (result["mediaType"].as_str(), result["tmdbId"].as_i64()) {
+            (Some(media_type), Some(tmdb_id)) => (media_type.to_string(), tmdb_id),
+            _ => continue,
+        };
+        if let Some(id) = owned.get(&key) {
+            result["libraryItemId"] = Value::String((*id).to_string());
+        }
+    }
+}
+
 fn join_person_items(value: &mut Value, server_items: &[BaseItemDto]) {
     let local = server_items
         .iter()
         .filter_map(|item| {
-            let media_type = match item.item_type.as_deref() {
-                Some("Movie") => "movie",
-                Some("Series") => "tv",
-                _ => return None,
-            };
-            let tmdb_id = item.provider_id("Tmdb")?.parse::<i64>().ok()?;
-            (tmdb_id > 0).then(|| ((media_type.to_string(), tmdb_id), item.id.clone()))
+            server_title_identity(item).map(|(identity, id)| (identity, id.to_string()))
         })
         .collect::<HashMap<_, _>>();
     let Some(results) = value["results"].as_array_mut() else {
@@ -405,5 +569,47 @@ mod tests {
             credits["results"][2]["libraryItemId"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn off_filmography_credits_exclude_filmography_identities_and_deduplicate() {
+        let credits = json!({ "results": [
+            { "mediaType": "movie", "tmdbId": 769 },
+            { "mediaType": "tv", "tmdbId": 769 },
+            // The filmography answered for this one.
+            { "mediaType": "movie", "tmdbId": 603 },
+            // A repeated credit must not duplicate its ownership lookup.
+            { "mediaType": "movie", "tmdbId": 769 },
+            { "mediaType": "movie", "tmdbId": -5 }
+        ] });
+        let filmography = HashSet::from([("movie".to_string(), 603)]);
+
+        assert_eq!(
+            unmatched_credit_keys(&credits, &filmography),
+            vec![("movie".to_string(), 769), ("tv".to_string(), 769)]
+        );
+    }
+
+    #[test]
+    fn proven_server_items_own_their_credits_without_touching_others() {
+        let proven: Vec<BaseItemDto> = [
+            r#"{"Id":"good1","Name":"GoodFellas","Type":"Movie","ProviderIds":{"Tmdb":"769"}}"#,
+            // A same-id title of the other media kind must not cross-own.
+            r#"{"Id":"other-kind","Name":"Show","Type":"Series","ProviderIds":{"Tmdb":"404"}}"#,
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_str(value).expect("dto"))
+        .collect();
+        let mut credits = json!({ "results": [
+            { "mediaType": "movie", "tmdbId": 769, "libraryItemId": null },
+            { "mediaType": "tv", "tmdbId": 769, "libraryItemId": null },
+            { "mediaType": "movie", "tmdbId": 404, "libraryItemId": null }
+        ] });
+
+        mark_owned_credits(&mut credits, &proven);
+
+        assert_eq!(credits["results"][0]["libraryItemId"], "good1");
+        assert_eq!(credits["results"][1]["libraryItemId"], Value::Null);
+        assert_eq!(credits["results"][2]["libraryItemId"], Value::Null);
     }
 }

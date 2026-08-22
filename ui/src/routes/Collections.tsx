@@ -2,11 +2,28 @@ import { Layers } from "lucide-react"
 import { Link } from "react-router-dom"
 import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
 import { Skeleton } from "@/components/ui/skeleton"
-import { seerrImageUrl, type CollectionSummary } from "@/lib/api"
+import {
+  imageUrl,
+  seerrImageUrl,
+  type CollectionSummary,
+} from "@/lib/api"
 import { useCollections } from "@/lib/queries"
 
+function collectionPoster(summary: CollectionSummary) {
+  // Native BoxSets carry an image tag and draw through the local image proxy;
+  // derived TMDB summaries keep the Seerr poster path.
+  if (summary.primaryImageTag) {
+    return imageUrl(
+      { id: String(summary.id), primaryImageTag: summary.primaryImageTag },
+      "Primary",
+      342,
+    )
+  }
+  return seerrImageUrl(summary.posterPath, "w342")
+}
+
 function CollectionCard({ collection }: { collection: CollectionSummary }) {
-  const poster = seerrImageUrl(collection.posterPath, "w342")
+  const poster = collectionPoster(collection)
   return (
     <Link
       to={`/collections/${collection.id}`}
@@ -40,9 +57,11 @@ function CollectionCard({ collection }: { collection: CollectionSummary }) {
 }
 
 /**
- * Every TMDB movie collection the library has movies in. The Companion plugin
- * derives the set from the library itself; when it or Seerr is unavailable the
- * category has no answer and says so instead of showing a broken grid.
+ * The library's collections. When the Companion plugin mirrors TMDB
+ * collections into Jellyfin's own BoxSets, this page answers from the server
+ * directly; otherwise the plugin's derived TMDB summary stands in. Either
+ * way, a card opens the collection with its owned parts and — where Seerr
+ * knows the full set — its missing entries.
  */
 export default function Collections() {
   const { data, isPending, error } = useCollections()
@@ -52,7 +71,7 @@ export default function Collections() {
       <PageHeader
         eyebrow="Library"
         title="Collections"
-        description="TMDB movie collections your library is part of. Missing entries can be requested from their collection page."
+        description="Movie collections your server carries. Missing entries can be requested from their collection page."
       />
       {error && !data ? (
         <PageErrorState
@@ -68,8 +87,8 @@ export default function Collections() {
       ) : !data?.collections.length ? (
         <PageEmptyState
           icon={<Layers className="size-6" />}
-          title="No collections yet"
-          description="Collections appear here as your movies are matched against TMDB. New movies are matched in the background, so check back after a sync."
+          title="No collections found"
+          description="Collections appear when the Companion plugin mirrors TMDB collections into Jellyfin, or when your server already has BoxSets."
         />
       ) : (
         <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">

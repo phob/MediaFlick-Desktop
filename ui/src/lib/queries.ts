@@ -689,10 +689,21 @@ export function useSeerrCancelRequest() {
 
 // ------------------------------------------------------------- collections
 
+async function loadCompleteCollections(signal: AbortSignal) {
+  let index = await api.collections.index(signal)
+  while ((index.pendingMovies ?? 0) > 0) {
+    // Companion resolves at most one bounded batch per request. Keep the query
+    // pending until every library movie has a resolved collection mapping. The
+    // native BoxSet listing never pends: it answers from the server directly.
+    index = await api.collections.index(signal)
+  }
+  return index
+}
+
 export function useCollections(enabled = true) {
   return useQuery({
     queryKey: queryKeys.collections,
-    queryFn: api.collections.index,
+    queryFn: ({ signal }) => loadCompleteCollections(signal),
     // The plugin derives the index from the library and its own cache, so it
     // moves slowly; a fresh mount should not re-derive it.
     staleTime: 5 * 60_000,
@@ -706,6 +717,15 @@ export function useCollectionDetail(id: number | null) {
     queryKey: queryKeys.collection(id ?? 0),
     queryFn: ({ signal }) => api.collections.detail(id!, signal),
     enabled: id !== null,
+    retry: false,
+  })
+}
+
+export function useBoxSet(boxsetId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.boxset(boxsetId ?? ""),
+    queryFn: ({ signal }) => api.collections.boxset(boxsetId!, signal),
+    enabled: enabled && boxsetId !== null,
     retry: false,
   })
 }

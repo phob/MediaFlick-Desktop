@@ -6,6 +6,7 @@ import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState, PageHeader } from "@/components/PageHeader"
 import { CastDiscover, type CastDiscoverProps } from "@/components/seerr/CastDiscover"
 import { NotInYourLibrary } from "@/components/seerr/NotInYourLibrary"
+import { ServerCastExtras, type ServerCastExtrasProps } from "@/components/seerr/ServerCastExtras"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { PersonIdentity } from "@/lib/api"
@@ -29,6 +30,7 @@ const SEARCH_PERSON_ROW_LIMIT = 12
 interface LibraryComponents {
   ItemGrid: ComponentType<ItemGridProps>
   CastDiscover: ComponentType<CastDiscoverProps>
+  ServerCastExtras: ComponentType<ServerCastExtrasProps>
 }
 
 interface LibraryProps {
@@ -123,6 +125,7 @@ function CastCandidates({
 export default function Library({ components }: LibraryProps = {}) {
   const Grid = components?.ItemGrid ?? ItemGrid
   const CastDiscovery = components?.CastDiscover ?? CastDiscover
+  const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
   const [params, setParams] = useSearchParams()
   const [total, setTotal] = useState<number | null>(null)
 
@@ -263,7 +266,16 @@ export default function Library({ components }: LibraryProps = {}) {
             // the virtualized height, so the block cannot simply follow it.
             footer={
               castPerson ? (
-                castDiscover
+                <>
+                  <ServerExtras
+                    personName={personName}
+                    jellyfinId={jellyfinPersonId}
+                    tmdbId={tmdbPersonId}
+                    resolving={resolution.isPending}
+                    resolutionError={jellyfinPersonId ? resolution.error : null}
+                  />
+                  {castDiscover}
+                </>
               ) : search ? (
                 <>
                   <SearchPersonSection term={search} />
