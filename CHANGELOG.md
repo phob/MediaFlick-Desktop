@@ -66,6 +66,7 @@
 
 ### Changed
 
+- Redesigned the Companion plugin configuration page with compact service cards, responsive one-row connection controls, clearer collection settings, and grouped provider credentials.
 - Redesigned the backdrop treatment on all detail pages. Item, discovery, and collection pages now show one continuous full-bleed artwork behind the entire page — header, seasons, cast, and facts all scroll over it — cropped to fill and left visible to the page's end. Short pages stretch to the viewport so the art always reaches the window's bottom edge. A light even veil keeps sections readable and a soft fade protects the header text, replacing the stacked sharp-edged scrim layers and flat gray band below the artwork.
 - Collection pages now render movies already in the Jellyfin library with the standard local media card, including local artwork, watch progress, actions, technical details, and direct navigation to the local item. Missing collection entries keep the Seerr discovery and request card.
 - Collections now list from Jellyfin's own BoxSets whenever the Companion plugin advertises native collections. Desktop reads them through ordinary `/Items` queries, and a collection page renders movie and series children as standard local cards with watched state and server-side ordering. BoxSets with a TMDB collection identity or MediaFlick curated identity load Seerr-known missing parts underneath with the request flow. Other BoxSets show only their children. When mirroring is off or the plugin predates the capability, Desktop falls back to the derived TMDB summary.
@@ -115,6 +116,7 @@
 
 ### Fixed
 
+- Fixed Linux CI failing strict Clippy checks because the mpv controller imported a Windows-only process type on every platform.
 - Fixed movie details reserving space for a Letterboxd skeleton row on first open. The section no longer shows placeholder tiles while the profile lookup is in flight; it appears only once matching ratings or reviews are actually found, and library and Seerr discovery details both follow the same behavior.
 
 - Fixed the Collections tab appearing later than Discover after launch. The sidebar read Companion capabilities from the status snapshot, which `/api/status` answers from whatever the plugin probe cache held at request time — before the startup warm-up probe finished, that was nothing, and only an unrelated invalidation refreshed it. The sidebar and the Seerr gate now use the probe-backed companion query, so plugin-gated tabs appear (or stay hidden) together.
