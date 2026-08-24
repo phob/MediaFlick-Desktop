@@ -214,12 +214,11 @@ describe("Letterboxd detail activity", () => {
       .toBe("https://letterboxd.com/alice/film/the-matrix/")
   })
 
-  test("uses cast-shaped skeletons only for the initial lookup", () => {
+  test("renders nothing while the initial lookup is in flight", () => {
     itemLookup.mockReturnValue({ isPending: true, error: null, data: undefined })
     const { container } = render(<LetterboxdReviews item={movie} queries={queries} />)
 
-    expect(screen.getByRole("region", { name: "Loading Letterboxd activity" })).not.toBeNull()
-    expect(container.querySelectorAll(".size-24.rounded-full")).toHaveLength(3)
+    expect(container.innerHTML).toBe("")
   })
 
   test("loads the same activity rail for a discovered movie by TMDB id", () => {

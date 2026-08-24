@@ -730,6 +730,15 @@ export function useBoxSet(boxsetId: string | null, enabled = true) {
   })
 }
 
+export function useCuratedCollection(definitionId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.curatedCollection(definitionId ?? ""),
+    queryFn: ({ signal }) => api.collections.curated(definitionId!, signal),
+    enabled: definitionId !== null,
+    retry: false,
+  })
+}
+
 export function useMovieCollection(tmdbId: number | null, enabled = true) {
   return useQuery({
     queryKey: queryKeys.movieCollection(tmdbId ?? 0),

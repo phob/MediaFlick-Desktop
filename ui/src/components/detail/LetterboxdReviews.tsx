@@ -11,7 +11,6 @@ import {
   useState,
 } from "react"
 import { LetterboxdMark } from "@/components/RatingSourceIcon"
-import { Skeleton } from "@/components/ui/skeleton"
 import type {
   ItemDetail,
   LetterboxdReview,
@@ -332,23 +331,6 @@ export function LetterboxdReviewList({ reviews }: { reviews: LetterboxdReview[] 
   )
 }
 
-function LetterboxdLoading() {
-  return (
-    <section className="flex min-w-0 flex-col gap-4" aria-label="Loading Letterboxd activity">
-      <h2 className="section-title px-6 sm:px-10 lg:px-14">Letterboxd</h2>
-      <div className="media-strip flex gap-6 overflow-x-auto px-6 pb-3 sm:px-10 lg:px-14">
-        {Array.from({ length: 3 }, (_, index) => (
-          <div key={index} className="flex w-28 shrink-0 flex-col items-center gap-2" aria-hidden>
-            <Skeleton className="size-24 rounded-full" />
-            <Skeleton className="h-4 w-20 rounded-none" />
-            <Skeleton className="h-3 w-16 rounded-none" />
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 function UnavailableProfiles({ unavailable, configured }: { unavailable: number; configured: number }) {
   if (unavailable <= 0) return null
   const allUnavailable = configured > 0 && unavailable === configured
@@ -370,7 +352,9 @@ function LetterboxdReviewSection({
     data: LetterboxdReviewsResponse | undefined
   }
 }) {
-  if (lookup.isPending) return <LetterboxdLoading />
+  // Reserve no space while the lookup is in flight: without cached data there
+  // is nothing to show yet, so the section appears only once reviews exist.
+  if (lookup.isPending) return null
 
   if (lookup.error) {
     return (

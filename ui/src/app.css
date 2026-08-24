@@ -1477,6 +1477,12 @@
   letter-spacing: -0.02em;
 }
 
+/* Detail pages float their section headings over full-bleed artwork, so the
+   type carries its own contrast shadow to stay readable on light art. */
+.detail-page .section-title {
+  text-shadow: 0 1px 3px rgb(0 0 0 / 65%);
+}
+
 @media (width >= 40rem) {
   .home-media-rail,
   .media-strip {

@@ -14,6 +14,7 @@ import { DetailHeroLayout } from "@/components/detail/DetailHeroLayout"
 import { ExternalLinksMenu } from "@/components/detail/ExternalLinksMenu"
 import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import {
+  DetailBackdrop,
   DetailCastRail,
   DetailFact,
   DetailFactPanel,
@@ -118,7 +119,7 @@ function Seasons({ detail }: { detail: SeerrMediaDetail }) {
         {detail.seasons.map((season) => (
           <div
             key={season.seasonNumber}
-            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-white/5 bg-card/55 px-4 py-3 shadow-lg shadow-black/10"
+            className="flex min-w-0 items-center justify-between gap-4 rounded-xl border border-border/60 bg-card px-4 py-3 shadow-lg shadow-black/40"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">
@@ -255,13 +256,15 @@ export default function DiscoverDetail() {
   ].filter((fact) => fact !== null)
 
   return (
-    <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
+    // `min-h-full` stretches short pages to the viewport so the backdrop
+    // reaches the window's bottom edge instead of stopping with the content.
+    <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
+      {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHeroLayout
         back={{
           to: { pathname: "/discover", search: location.search },
           label: "Back to discovery",
         }}
-        backdrop={backdrop}
         poster={poster ? { src: poster, aspect: "poster" } : null}
         title={item.title}
         subtitle={

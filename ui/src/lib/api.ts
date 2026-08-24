@@ -819,12 +819,14 @@ export interface CollectionSummary {
   id: number | string
   /** TMDB collection identity when a BoxSet carries it. */
   tmdbId?: number | null
+  /** Curated-definition marker when the plugin manages this set. */
+  curatedId?: string | null
   name: string
   posterPath: string | null
   backdropPath: string | null
   /** Local artwork identity for Jellyfin-native collections. */
   primaryImageTag?: string | null
-  movieCount: number | null
+  itemCount: number | null
 }
 
 export interface CollectionsIndex {
@@ -838,19 +840,24 @@ export interface CollectionsIndex {
 }
 
 export interface CollectionDetail {
-  id: number
+  id: number | string
   name: string
   overview: string | null
   posterPath: string | null
   backdropPath: string | null
-  /** Movie parts in the shared Seerr result shape, joined to local ownership. */
+  /** Movie or series parts joined to local ownership by media kind and TMDB id. */
   parts: SeerrResult[]
+  /** Curated definitions report their capped authoritative size. */
+  totalParts?: number
+  /** Entries omitted because TMDB or Seerr could not resolve them. */
+  unresolvedParts?: number
 }
 
-/** One Jellyfin BoxSet's own record joined with its movie children. */
+/** One Jellyfin BoxSet joined with its movie and series children. */
 export interface BoxSetDetail {
   id: string
   tmdbId: number | null
+  curatedId: string | null
   name: string
   primaryImageTag: string | null
   backdropImageTag: string | null
@@ -1350,6 +1357,8 @@ export const api = {
       request<CollectionDetail>(`/api/collections/${id}`, { signal }),
     boxset: (id: string, signal?: AbortSignal) =>
       request<BoxSetDetail>(`/api/collections/boxset/${encodeURIComponent(id)}`, { signal }),
+    curated: (id: string, signal?: AbortSignal) =>
+      request<CollectionDetail>(`/api/collections/curated/${encodeURIComponent(id)}`, { signal }),
     forMovie: (tmdbId: number) =>
       request<MovieCollection>(`/api/collections/movie/${tmdbId}`),
   },

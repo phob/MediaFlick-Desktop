@@ -22,8 +22,53 @@ function collectionPoster(summary: CollectionSummary) {
   return seerrImageUrl(summary.posterPath, "w342")
 }
 
+/** Deterministic hue pair from the collection name so each untitled-art
+ * collection gets a stable, distinct gradient without any image request. */
+function titleCardPalette(name: string) {
+  let hash = 0
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) >>> 0
+  }
+  const hue = hash % 360
+  return {
+    from: `hsl(${hue} 45% 22%)`,
+    via: `hsl(${(hue + 40) % 360} 40% 14%)`,
+    accent: `hsl(${(hue + 40) % 360} 60% 62%)`,
+  }
+}
+
+function CollectionTitleArt({ name }: { name: string }) {
+  const palette = titleCardPalette(name)
+  return (
+    <div
+      className="relative flex h-full w-full flex-col justify-end p-3"
+      style={{
+        backgroundImage: `linear-gradient(155deg, ${palette.from}, ${palette.via} 70%)`,
+      }}
+    >
+      {/* Faint oversized glyph as texture */}
+      <Layers
+        aria-hidden
+        className="absolute -right-2 -top-2 size-20 opacity-10"
+        style={{ color: palette.accent }}
+      />
+      {/* Accent rule tying the card to its palette */}
+      <div
+        aria-hidden
+        className="mb-2 h-px w-8 rounded-full"
+        style={{ backgroundColor: palette.accent }}
+      />
+      <div className="line-clamp-4 text-sm font-semibold leading-snug text-white/90">
+        {name}
+      </div>
+    </div>
+  )
+}
+
 function CollectionCard({ collection }: { collection: CollectionSummary }) {
   const poster = collectionPoster(collection)
+  // Title-art cards carry the name on the artwork; don't repeat it below.
+  const showCaptionName = Boolean(poster)
   return (
     <Link
       to={`/collections/${collection.id}`}
@@ -39,16 +84,16 @@ function CollectionCard({ collection }: { collection: CollectionSummary }) {
             className="media-artwork-image h-full w-full object-cover transition group-hover:scale-[1.03]"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <Layers className="size-8" aria-hidden />
-          </div>
+          <CollectionTitleArt name={collection.name} />
         )}
       </div>
       <div className="min-w-0 pt-2">
-        <div className="truncate text-sm font-medium">{collection.name}</div>
-        {collection.movieCount != null && collection.movieCount > 0 && (
+        {showCaptionName && (
+          <div className="truncate text-sm font-medium">{collection.name}</div>
+        )}
+        {collection.itemCount != null && collection.itemCount > 0 && (
           <div className="data-value text-muted-foreground">
-            {collection.movieCount} {collection.movieCount === 1 ? "movie" : "movies"}
+            {collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}
           </div>
         )}
       </div>
@@ -60,8 +105,8 @@ function CollectionCard({ collection }: { collection: CollectionSummary }) {
  * The library's collections. When the Companion plugin mirrors TMDB
  * collections into Jellyfin's own BoxSets, this page answers from the server
  * directly; otherwise the plugin's derived TMDB summary stands in. Either
- * way, a card opens the collection with its owned parts and — where Seerr
- * knows the full set — its missing entries.
+ * way, a card opens the collection with its owned items. When Seerr knows the
+ * full definition, the page loads its missing entries separately.
  */
 export default function Collections() {
   const { data, isPending, error } = useCollections()
@@ -71,7 +116,7 @@ export default function Collections() {
       <PageHeader
         eyebrow="Library"
         title="Collections"
-        description="Movie collections your server carries. Missing entries can be requested from their collection page."
+        description="Collections your server carries. Missing movies and series can be requested from their collection page."
       />
       {error && !data ? (
         <PageErrorState

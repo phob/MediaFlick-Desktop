@@ -64,11 +64,20 @@ public sealed record ServiceConfigurationUpdate(
     string BaseUrl,
     string? ApiKey);
 
+public sealed record CuratedCollectionUpdate(
+    string Id,
+    string Name,
+    string TmdbIds,
+    string? MdbListSource);
+
 public sealed record CompanionConfigurationUpdate(
     ServiceConfigurationUpdate Sonarr,
     ServiceConfigurationUpdate Radarr,
     ServiceConfigurationUpdate Seerr,
     bool AutoImportSeerrUsers,
-    bool NativeCollections);
+    bool NativeCollections,
+    IReadOnlyList<CuratedCollectionUpdate> CuratedCollections);
+
+public sealed record CuratedSourceTestRequest(string? Source);
 
 public sealed record ConnectionTestResponse(string Service, bool Connected, string? Version);

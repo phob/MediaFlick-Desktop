@@ -4,7 +4,7 @@ import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCompanion, useSeerrStatus } from "@/lib/queries"
 
 /**
  * Guards the Seerr views. The sidebar hides them until Seerr is linked, but a
@@ -13,11 +13,14 @@ import { useSeerrStatus, useStatus } from "@/lib/queries"
  */
 export function SeerrGate({ children }: { children: ReactNode }) {
   const status = useSeerrStatus()
-  const appStatus = useStatus()
+  // The plugin's own probe-backed query, not the status snapshot: the gate
+  // must reflect whether the Companion manages Seerr even when no /api/status
+  // refetch has happened since startup.
+  const companion = useCompanion()
   const [setup, setSetup] = useState(false)
   const companionManaged =
-    appStatus.data?.companion?.compatible &&
-    appStatus.data.companion.info?.capabilities.includes("seerr")
+    companion.data?.compatible &&
+    companion.data.info?.capabilities.includes("seerr")
 
   if (status.isPending) {
     return (

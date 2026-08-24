@@ -55,7 +55,7 @@ public sealed class CollectionsTests
         Assert.Equal(2, collections.Count);
         Assert.Equal("Alien Collection", collections[0]?["name"]?.GetValue<string>());
         Assert.Equal("The Matrix Collection", collections[1]?["name"]?.GetValue<string>());
-        Assert.Equal(2, collections[1]?["movieCount"]?.GetValue<int>());
+        Assert.Equal(2, collections[1]?["itemCount"]?.GetValue<int>());
         Assert.Equal(5, summary["libraryMovies"]?.GetValue<int>());
         Assert.Equal(3, summary["mappedMovies"]?.GetValue<int>());
         Assert.Equal(1, summary["pendingMovies"]?.GetValue<int>());
@@ -75,7 +75,7 @@ public sealed class CollectionsTests
         var collections = Assert.IsType<JsonArray>(summary["collections"]);
         var collection = Assert.IsType<JsonObject>(Assert.Single(collections));
         Assert.Equal(10, collection["id"]?.GetValue<int>());
-        Assert.Equal(1, collection["movieCount"]?.GetValue<int>());
+        Assert.Equal(1, collection["itemCount"]?.GetValue<int>());
     }
 
     [Fact]

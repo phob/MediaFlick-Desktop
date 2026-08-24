@@ -9,6 +9,7 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::app::urls::encode_path_segment;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::Session;
@@ -208,6 +209,24 @@ impl CompanionSession {
     /// through ordinary `/Items` queries instead of derived summaries.
     pub fn native_collections(&self) -> bool {
         self.supports("collections-v2")
+    }
+
+    /// One administrator-defined curated collection's parts, composed by the
+    /// plugin from bounded Seerr lookups in definition order.
+    pub fn curated_collection(&self, definition_id: &str) -> Result<Value, ApiError> {
+        // Administrators can add definitions while Desktop remains signed in.
+        // Refresh the version contract before using this infrequent endpoint.
+        self.probe(true)?;
+        if !self.supports("collections-curated-v1") {
+            return Err(ApiError::NotConfigured);
+        }
+        let definition_id = encode_path_segment(definition_id);
+        let mut value = self.get_seerr(
+            &format!("/MediaFlick/collections/curated/{definition_id}"),
+            &[],
+        )?;
+        join_seerr_rows(&self.library, &mut value, "parts");
+        Ok(value)
     }
 
     fn collections_endpoint(&self, path: &str) -> Result<Value, ApiError> {
@@ -694,6 +713,10 @@ mod tests {
                 r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"}}"#,
             )
             .expect("movie"),
+            serde_json::from_str::<BaseItemDto>(
+                r#"{"Id":"s1","Name":"The 603","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#,
+            )
+            .expect("series"),
         ];
         library.upsert_page(&items).expect("seed");
         library
@@ -707,7 +730,8 @@ mod tests {
             "parts": [
                 { "mediaType": "movie", "tmdbId": 603 },
                 { "mediaType": "movie", "tmdbId": 348 },
-                { "mediaType": "movie", "tmdbId": 624834 }
+                { "mediaType": "movie", "tmdbId": 624834 },
+                { "mediaType": "tv", "tmdbId": 603 }
             ]
         });
 
@@ -720,6 +744,8 @@ mod tests {
         // Unowned parts are neither joined nor watched.
         assert!(detail["parts"][2]["libraryItemId"].is_null());
         assert_eq!(detail["parts"][2]["played"], false);
+        // TMDB numeric ids can overlap across movie and TV namespaces.
+        assert_eq!(detail["parts"][3]["libraryItemId"], "s1");
     }
 
     #[test]

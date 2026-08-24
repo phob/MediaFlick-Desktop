@@ -29,37 +29,8 @@ public sealed class InfoController : ControllerBase
     public ActionResult<PluginInfoResponse> GetInfo()
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        var capabilities = new List<string>();
-        if (IsConfigured(configuration.Sonarr) || IsConfigured(configuration.Radarr))
-        {
-            capabilities.Add("calendar");
-        }
-
-        if (IsConfigured(configuration.Seerr))
-        {
-            capabilities.Add("seerr");
-            capabilities.Add("seerr-person-discovery");
-            capabilities.Add("seerr-discovery-v2");
-            // v3 was the short-lived century contract. A distinct capability
-            // prevents mixed desktop/plugin versions from silently ignoring
-            // or misinterpreting the replacement parameter.
-            capabilities.Add("seerr-discovery-v4");
-            capabilities.Add("seerr-request-profiles");
-            capabilities.Add("collections-v1");
-            if (configuration.NativeCollections)
-            {
-                // Native BoxSet mirroring. A distinct capability keeps older
-                // desktop builds on the derived summary instead of a listing
-                // shape they never learned to read.
-                capabilities.Add("collections-v2");
-            }
-        }
-
         var ratings = _ratings.Capability();
-        if (ratings.Available)
-        {
-            capabilities.Add("ratings-v1");
-        }
+        var capabilities = Capabilities(configuration, ratings.Available);
 
         var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.2.0";
         var info = new PluginInfoResponse(
@@ -76,6 +47,41 @@ public sealed class InfoController : ControllerBase
             },
             ratings);
         return new JsonResult(info, CompanionJson.CamelCase);
+    }
+
+    internal static IReadOnlyList<string> Capabilities(
+        PluginConfiguration configuration,
+        bool ratingsAvailable)
+    {
+        // This names a versioned contract implemented by this plugin build.
+        // Definitions and service configuration can change while Desktop is
+        // signed in, so they must not make the capability itself disappear.
+        var capabilities = new List<string> { "collections-curated-v1" };
+        if (IsConfigured(configuration.Sonarr) || IsConfigured(configuration.Radarr))
+        {
+            capabilities.Add("calendar");
+        }
+
+        if (IsConfigured(configuration.Seerr))
+        {
+            capabilities.Add("seerr");
+            capabilities.Add("seerr-person-discovery");
+            capabilities.Add("seerr-discovery-v2");
+            capabilities.Add("seerr-discovery-v4");
+            capabilities.Add("seerr-request-profiles");
+            capabilities.Add("collections-v1");
+            if (configuration.NativeCollections)
+            {
+                capabilities.Add("collections-v2");
+            }
+        }
+
+        if (ratingsAvailable)
+        {
+            capabilities.Add("ratings-v1");
+        }
+
+        return capabilities;
     }
 
     private static bool IsConfigured(ServiceConfiguration service)
@@ -256,10 +262,17 @@ public sealed class SeerrController : ControllerBase
 public sealed class CollectionsController : ControllerBase
 {
     private readonly CollectionsService _collections;
+    private readonly SeerrGateway _seerr;
+    private readonly CuratedCollectionResolver _curated;
 
-    public CollectionsController(CollectionsService collections)
+    public CollectionsController(
+        CollectionsService collections,
+        SeerrGateway seerr,
+        CuratedCollectionResolver curated)
     {
         _collections = collections;
+        _seerr = seerr;
+        _curated = curated;
     }
 
     [HttpGet]
@@ -274,6 +287,36 @@ public sealed class CollectionsController : ControllerBase
     [HttpGet("{collectionId:int}")]
     public Task<IActionResult> Detail(int collectionId, CancellationToken cancellationToken)
         => RunAsync(userId => _collections.DetailAsync(userId, collectionId, cancellationToken));
+
+    /// <summary>
+    /// One administrator-defined curated collection's parts. Definition order
+    /// is the curation, so it is preserved rather than re-sorted.
+    /// </summary>
+    [HttpGet("curated/{definitionId}")]
+    public async Task<IActionResult> Curated(string definitionId, CancellationToken cancellationToken)
+    {
+        var definition = (Plugin.Instance?.Configuration ?? new PluginConfiguration())
+            .CuratedCollections
+            .FirstOrDefault(def => def.Id == definitionId);
+        if (definition is null)
+        {
+            return NotFound(new { error = "that curated collection does not exist" });
+        }
+
+        return await RunAsync(async userId =>
+        {
+            var items = await _curated.ResolveAsync(
+                definition.TmdbIds,
+                definition.MdbListSource,
+                cancellationToken).ConfigureAwait(false);
+            return await _seerr.CuratedCollectionAsync(
+                userId,
+                definition.Id,
+                definition.Name,
+                items,
+                cancellationToken).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
 
     private async Task<IActionResult> RunAsync(Func<Guid, Task<JsonNode>> action)
     {
@@ -313,10 +356,12 @@ public sealed class CollectionsController : ControllerBase
 public sealed class AdminController : ControllerBase
 {
     private readonly CompanionHttpClient _http;
+    private readonly CuratedCollectionResolver _curated;
 
-    public AdminController(CompanionHttpClient http)
+    public AdminController(CompanionHttpClient http, CuratedCollectionResolver curated)
     {
         _http = http;
+        _curated = curated;
     }
 
     [HttpGet("config")]
@@ -329,7 +374,14 @@ public sealed class AdminController : ControllerBase
             radarr = Redact(configuration.Radarr),
             seerr = Redact(configuration.Seerr),
             autoImportSeerrUsers = configuration.AutoImportSeerrUsers,
-            nativeCollections = configuration.NativeCollections
+            nativeCollections = configuration.NativeCollections,
+            curatedCollections = configuration.CuratedCollections.Select(def => new
+            {
+                id = def.Id,
+                name = def.Name,
+                tmdbIds = def.TmdbIds,
+                mdbListSource = def.MdbListSource
+            }).ToArray()
         });
     }
 
@@ -349,12 +401,55 @@ public sealed class AdminController : ControllerBase
             Seerr = Merge(current.Seerr, update.Seerr),
             AutoImportSeerrUsers = update.AutoImportSeerrUsers,
             NativeCollections = update.NativeCollections,
+            CuratedCollections = update.CuratedCollections
+                .Where(def => !string.IsNullOrWhiteSpace(def.Name))
+                .Select(def => new CuratedCollectionDefinition
+                {
+                    Id = string.IsNullOrWhiteSpace(def.Id) ? Guid.NewGuid().ToString("N") : def.Id,
+                    Name = def.Name.Trim(),
+                    TmdbIds = def.TmdbIds,
+                    MdbListSource = def.MdbListSource?.Trim() ?? string.Empty
+                })
+                .ToList(),
             ProtectedMdbListApiKey = current.ProtectedMdbListApiKey,
             ProtectedTmdbApiKey = current.ProtectedTmdbApiKey
         });
         // The config page reads the response as JSON, and an empty 204 body
         // would make that read fail after a successful save.
         return Ok(new { saved = true });
+    }
+
+    /// <summary>
+    /// Resolves one MDBList source reference without saving anything, so the
+    /// dashboard can prove a list exists and report its movie and series
+    /// counts before the administrator commits the definition.
+    /// </summary>
+    [HttpPost("test/curated-source")]
+    public async Task<IActionResult> TestCuratedSource(
+        [FromBody] CuratedSourceTestRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Source))
+        {
+            return Ok(new { ok = false, error = "enter an MDBList source first" });
+        }
+
+        try
+        {
+            var items = await _curated.ResolveAsync(string.Empty, request.Source, cancellationToken)
+                .ConfigureAwait(false);
+            return Ok(new
+            {
+                ok = true,
+                items = items.Count,
+                movies = items.Count(item => item.Kind == CuratedMediaKind.Movie),
+                series = items.Count(item => item.Kind == CuratedMediaKind.Series)
+            });
+        }
+        catch (GatewayException exception)
+        {
+            return Ok(new { ok = false, error = exception.Message });
+        }
     }
 
     [HttpPost("test/{serviceName}")]

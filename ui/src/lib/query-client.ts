@@ -66,6 +66,7 @@ export const queryKeys = {
   collections: ["collections"] as const,
   collection: (id: number) => ["collections", id] as const,
   boxset: (id: string) => ["collections", "boxset", id] as const,
+  curatedCollection: (id: string) => ["collections", "curated", id] as const,
   movieCollection: (tmdbId: number) => ["collections", "movie", tmdbId] as const,
 }
 

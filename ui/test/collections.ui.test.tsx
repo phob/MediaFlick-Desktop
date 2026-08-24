@@ -35,7 +35,7 @@ function collectionSummary(
     name: "The Matrix Collection",
     posterPath: null,
     backdropPath: null,
-    movieCount: 2,
+    itemCount: 2,
     ...patch,
   }
 }
@@ -108,11 +108,11 @@ function providers(ui: ReactNode, initialEntry: string) {
 afterEach(() => vi.restoreAllMocks())
 
 describe("Collections", () => {
-  test("renders one card per derived collection with its movie count", async () => {
+  test("renders one card per derived collection with its item count", async () => {
     vi.spyOn(api.api.collections, "index").mockResolvedValue({
       collections: [
         collectionSummary({ id: 10, name: "The Matrix Collection" }),
-        collectionSummary({ id: 2, name: "Alien Collection", movieCount: 1 }),
+        collectionSummary({ id: 2, name: "Alien Collection", itemCount: 1 }),
       ],
       libraryMovies: 5,
       mappedMovies: 3,
@@ -123,8 +123,8 @@ describe("Collections", () => {
       expect(screen.getByText("The Matrix Collection")).toBeTruthy()
     })
     expect(screen.getByText("Alien Collection")).toBeTruthy()
-    expect(screen.getByText("2 movies")).toBeTruthy()
-    expect(screen.getByText("1 movie")).toBeTruthy()
+    expect(screen.getByText("2 items")).toBeTruthy()
+    expect(screen.getByText("1 item")).toBeTruthy()
   })
 
   test("loads every pending collection batch before rendering the index", async () => {
@@ -138,7 +138,7 @@ describe("Collections", () => {
       .mockResolvedValueOnce({
         collections: [
           collectionSummary({ id: 10, name: "The Matrix Collection" }),
-          collectionSummary({ id: 2, name: "Alien Collection", movieCount: 1 }),
+          collectionSummary({ id: 2, name: "Alien Collection", itemCount: 1 }),
         ],
         libraryMovies: 5,
         mappedMovies: 3,
@@ -174,9 +174,9 @@ describe("Collections", () => {
           id: "bs-1",
           name: "The Matrix Collection",
           primaryImageTag: "tag-1",
-          movieCount: 2,
+          itemCount: 2,
         }),
-        collectionSummary({ id: "bs-2", name: "Christmas films", movieCount: null }),
+        collectionSummary({ id: "bs-2", name: "Christmas films", itemCount: null }),
       ],
     })
     render(providers(<Collections />, "/collections"))
@@ -216,6 +216,7 @@ describe("Collections", () => {
     const boxset: BoxSetDetail = {
       id: "bs-1",
       tmdbId: 10,
+      curatedId: null,
       name: "The Matrix Collection",
       primaryImageTag: null,
       backdropImageTag: null,
@@ -245,10 +246,74 @@ describe("Collections", () => {
     expect(document.querySelector('a[href="/discover/movie/624834"]')).toBeTruthy()
   })
 
+  test("curated sets load missing movies and series separately from BoxSet children", async () => {
+    const boxset: BoxSetDetail = {
+      id: "bs-7",
+      tmdbId: null,
+      curatedId: "def-1",
+      name: "Heist essentials",
+      primaryImageTag: null,
+      backdropImageTag: null,
+      items: [
+        itemSummary({ id: "m1", name: "Heat" }),
+        itemSummary({ id: "s1", kind: "Series", name: "Money Heist" }),
+      ],
+    }
+    const detail: CollectionDetailData = {
+      id: "def-1",
+      name: "Heist essentials",
+      overview: null,
+      posterPath: null,
+      backdropPath: null,
+      totalParts: 5,
+      unresolvedParts: 1,
+      parts: [
+        result({ tmdbId: 9499, title: "Heat", libraryItemId: "m1" }),
+        result({ mediaType: "tv", tmdbId: 71446, title: "Money Heist", libraryItemId: "s1" }),
+        result({ tmdbId: 100, title: "Rififi" }),
+        result({ mediaType: "tv", tmdbId: 93405, title: "Squid Game" }),
+      ],
+    }
+    vi.spyOn(api.api.collections, "boxset").mockResolvedValue(boxset)
+    const curated = vi.spyOn(api.api.collections, "curated").mockResolvedValue(detail)
+    const tmdb = vi.spyOn(api.api.collections, "detail")
+    render(providers(<CollectionDetail />, "/collections/bs-7"))
+
+    await waitFor(() => {
+      expect(screen.getByText("2 of 5 in your library · 2 missing · 1 unavailable")).toBeTruthy()
+    })
+    expect(screen.getByText("1 entry could not be loaded.")).toBeTruthy()
+    expect(curated).toHaveBeenCalledWith("def-1", expect.any(AbortSignal))
+    expect(tmdb).not.toHaveBeenCalled()
+    expect(document.querySelector('a[href="/item/m1"]')).toBeTruthy()
+    expect(document.querySelector('a[href="/item/s1"]')).toBeTruthy()
+    expect(document.querySelector('a[href="/discover/movie/100"]')).toBeTruthy()
+    expect(document.querySelector('a[href="/discover/tv/93405"]')).toBeTruthy()
+  })
+
+  test("curated enrichment errors do not hide BoxSet children", async () => {
+    vi.spyOn(api.api.collections, "boxset").mockResolvedValue({
+      id: "bs-7",
+      tmdbId: null,
+      curatedId: "def-1",
+      name: "Heist essentials",
+      primaryImageTag: null,
+      backdropImageTag: null,
+      items: [itemSummary({ id: "m1", name: "Heat" })],
+    })
+    vi.spyOn(api.api.collections, "curated").mockRejectedValue(new Error("Seerr is unavailable"))
+    render(providers(<CollectionDetail />, "/collections/bs-7"))
+
+    expect(await screen.findByRole("link", { name: "Open details for Heat" })).toBeTruthy()
+    expect(await screen.findByText("Could not load collection entries")).toBeTruthy()
+    expect(screen.getByText("Seerr is unavailable")).toBeTruthy()
+  })
+
   test("collection sort and watched filters drive the visible rows", async () => {
     const boxset: BoxSetDetail = {
       id: "bs-1",
       tmdbId: null,
+      curatedId: null,
       name: "The Matrix Collection",
       primaryImageTag: null,
       backdropImageTag: null,
@@ -280,13 +345,14 @@ describe("Collections", () => {
       .getAllByRole("link", { name: /Open details for The Matrix/ })
       .map((link) => link.getAttribute("href"))
     expect(visible).toEqual(["/item/m1", "/item/m3"])
-    expect(screen.getByText("2 movies")).toBeTruthy()
+    expect(screen.getByText("2 items")).toBeTruthy()
   })
 
   test("native BoxSet detail without a TMDB identity shows only its children", async () => {
     const boxset: BoxSetDetail = {
       id: "bs-9",
       tmdbId: null,
+      curatedId: null,
       name: "Christmas films",
       primaryImageTag: null,
       backdropImageTag: null,
@@ -300,7 +366,7 @@ describe("Collections", () => {
     render(providers(<CollectionDetail />, "/collections/bs-9"))
 
     await waitFor(() => {
-      expect(screen.getByText("2 movies")).toBeTruthy()
+      expect(screen.getByText("2 items")).toBeTruthy()
     })
     expect(detail).not.toHaveBeenCalled()
     expect(screen.queryByText("Missing from your library")).toBeNull()

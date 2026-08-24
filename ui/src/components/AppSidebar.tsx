@@ -45,7 +45,7 @@ import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
-import { useItem, useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCompanion, useItem, useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
@@ -198,6 +198,11 @@ export function LibrarySyncProgress() {
 }
 
 function UserMenu() {
+  // Companion capability lives on its own probe-backed query, not the status
+  // snapshot: /api/status mirrors whatever the plugin cache held when it was
+  // answered, so a startup race would keep this entry hidden until an
+  // unrelated refetch.
+  const { data: companion } = useCompanion()
   const { data: status } = useStatus()
   const logout = useLogout()
   const name = status?.userName ?? "Signed in"
@@ -246,9 +251,9 @@ function UserMenu() {
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
-            {status?.companion?.available && (
+            {companion?.available && (
               <DropdownMenuItem disabled>
-                Companion {status.companion.info?.pluginVersion ?? "detected"}
+                Companion {companion.info?.pluginVersion ?? "detected"}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => logout.mutate()}>
@@ -300,13 +305,17 @@ export function AppSidebar() {
     return false
   }
   const { data: seerr } = useSeerrStatus()
-  const { data: status } = useStatus()
+  // Both plugin-gated groups read the probe-backed companion query rather
+  // than the status snapshot. `/api/status` never triggers a probe, so its
+  // cached answer predates the warm-up probe at startup and would reveal the
+  // Collections tab only after some later invalidation refreshed it — later
+  // than Seerr, whose status endpoint probes on demand. Sharing this query
+  // makes both groups appear (or stay hidden) together.
+  const { data: companion } = useCompanion()
   const companionSeerr =
-    status?.companion?.compatible &&
-    status.companion.info?.capabilities.includes("seerr")
+    companion?.compatible && companion.info?.capabilities.includes("seerr")
   const companionCollections =
-    status?.companion?.compatible &&
-    status.companion.info?.capabilities.includes("collections-v1")
+    companion?.compatible && companion.info?.capabilities.includes("collections-v1")
 
   return (
     <Sidebar collapsible="icon" className="app-sidebar-container">

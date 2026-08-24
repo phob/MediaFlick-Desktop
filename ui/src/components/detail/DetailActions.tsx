@@ -52,7 +52,14 @@ function QualityPicker() {
         toast.success(`Next playback uses ${label}.`)
       }}
     >
-      <SelectTrigger size="sm" aria-label="Streaming quality">
+      {/* Opaque with the poster's drop shadow: the trigger floats over the
+          full-bleed backdrop, where a transparent control disappears on art
+          with light sky or sand. */}
+      <SelectTrigger
+        size="sm"
+        aria-label="Streaming quality"
+        className="bg-card shadow-2xl shadow-black/60 dark:bg-card"
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

@@ -2,6 +2,7 @@ import { ArrowLeft, Layers } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
+import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/collection-filters"
 import type { ItemSummary } from "@/lib/api"
 import { imageUrl, seerrImageUrl } from "@/lib/api"
-import { useBoxSet, useCollectionDetail } from "@/lib/queries"
+import { useBoxSet, useCollectionDetail, useCuratedCollection } from "@/lib/queries"
 import { useTouchInput } from "@/hooks/use-touch-input"
 import { cn } from "@/lib/utils"
 
@@ -227,7 +228,7 @@ function TmdbCollectionDetail({
   )
 }
 
-/** The native BoxSet view: server-owned children plus Seerr-known missing parts. */
+/** The native BoxSet view: server-owned items plus separately loaded missing parts. */
 function NativeCollectionDetail({
   boxsetId,
   filters,
@@ -238,9 +239,11 @@ function NativeCollectionDetail({
   onFilters: (patch: Partial<CollectionFilterState>) => void
 }) {
   const { data, isPending, error, refetch } = useBoxSet(boxsetId)
-  // Where the BoxSet carries a TMDB identity, the derived detail supplies the
-  // full part list; everything without a library match becomes a request card.
-  const { data: tmdbDetail } = useCollectionDetail(data?.tmdbId ?? null)
+  // Keep external enrichment separate so a long MDBList chart never delays
+  // the BoxSet's own children. Curated definitions and TMDB collections have
+  // different identities but return the same joined part shape.
+  const tmdbParts = useCollectionDetail(data?.tmdbId ?? null)
+  const curatedParts = useCuratedCollection(data?.curatedId ?? null)
 
   if (error && !data) {
     return (
@@ -262,21 +265,29 @@ function NativeCollectionDetail({
     (item) => filters.watched === "" || String(item.played) === filters.watched,
   )
   const sortedItems = applySort(items, filters, nativeItemEntry)
-  // Ownership comes from the derived join itself: a part the local cache
-  // already matches carries a libraryItemId and never shows as missing.
-  const missingParts = tmdbDetail?.parts.filter((part) => !part.libraryItemId) ?? []
+  const hasPartSource = Boolean(data?.curatedId || data?.tmdbId)
+  const partQuery = data?.curatedId ? curatedParts : tmdbParts
+  const allParts = partQuery.data?.parts ?? []
+  const total = (partQuery.data?.totalParts ?? allParts.length) || items.length
+  const unresolvedParts = partQuery.data?.unresolvedParts ?? 0
+  const missingParts = applySort(
+    allParts.filter((part) => !part.libraryItemId),
+    filters,
+    tmdbPartEntry,
+  )
+  const countDetails = [
+    missingParts.length > 0 ? `${missingParts.length} missing` : null,
+    unresolvedParts > 0 ? `${unresolvedParts} unavailable` : null,
+  ].filter((detail) => detail !== null)
+  const countLine = total > items.length || unresolvedParts > 0
+    ? `${items.length} of ${total} in your library${countDetails.length ? ` · ${countDetails.join(" · ")}` : ""}`
+    : `${items.length} ${items.length === 1 ? "item" : "items"}`
 
   return (
     <CollectionShell
       backTo="Collections"
       name={data?.name ?? "…"}
-      countLine={
-        data
-          ? tmdbDetail
-            ? `${items.length} of ${tmdbDetail.parts.length} in your library${missingParts.length > 0 ? ` · ${missingParts.length} missing` : ""}`
-            : `${items.length} ${items.length === 1 ? "movie" : "movies"}`
-          : null
-      }
+      countLine={data ? countLine : null}
       overview={null}
       backdrop={
         data?.backdropImageTag
@@ -303,17 +314,29 @@ function NativeCollectionDetail({
         ) : (
           <p className="py-4 text-sm text-muted-foreground">
             {filters.watched === ""
-              ? "This collection has no movies yet."
-              : "No movies in this collection match the watch filter."}
+              ? "This collection has no items yet."
+              : "No items in this collection match the watch filter."}
           </p>
         )}
       </section>
-      {tmdbDetail && (
+      {hasPartSource && (
         <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
           <h2 className="section-title">Missing from your library</h2>
+          {unresolvedParts > 0 && (
+            <p className="text-sm text-muted-foreground" role="status">
+              {unresolvedParts} {unresolvedParts === 1 ? "entry" : "entries"} could not be loaded.
+            </p>
+          )}
           <SeerrResults
             results={missingParts}
-            empty="Your library is complete for this collection."
+            isPending={partQuery.isPending}
+            error={partQuery.error}
+            errorTitle="Could not load collection entries"
+            empty={
+              unresolvedParts > 0
+                ? "No additional request cards are available right now."
+                : "Your library is complete for this collection."
+            }
             ownedAsLocal
           />
         </section>
@@ -343,19 +366,12 @@ function CollectionShell({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-8 pb-16">
-      <header className="relative overflow-hidden">
-        {backdrop && (
-          <div className="pointer-events-none absolute inset-0" aria-hidden>
-            <img
-              src={backdrop}
-              alt=""
-              decoding="async"
-              className="media-backdrop-image h-full w-full object-cover opacity-25"
-            />
-            <div className="absolute inset-0 bg-linear-to-t from-background via-background/70 to-background/30" />
-          </div>
-        )}
+    // `isolate` pins the negative-z page backdrop between this page's content
+    // and the app shell's opaque background. `min-h-full` stretches short
+    // collections so the backdrop reaches the window's bottom edge.
+    <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-8 pb-16">
+      {backdrop && <DetailBackdrop src={backdrop} />}
+      <header className="relative">
         <div className="relative z-10 flex items-end gap-6 px-6 pt-10 sm:px-10 lg:px-14">
           <div className="hidden h-40 w-27 shrink-0 overflow-hidden rounded-lg bg-card shadow-xl ring-1 ring-white/10 sm:block">
             {poster ? (
