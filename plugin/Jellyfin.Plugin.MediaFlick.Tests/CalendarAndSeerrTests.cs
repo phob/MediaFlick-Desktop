@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Jellyfin.Plugin.MediaFlick.ScheduledTasks;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Xunit;
 
@@ -43,6 +44,9 @@ public sealed class CalendarAndSeerrTests
               "inCinemas":"2026-03-07T00:00:00Z",
               "digitalRelease":"2026-04-01T00:00:00Z",
               "physicalRelease":null
+            },{
+              "title":"Unmonitored","tmdbId":1,"monitored":false,"hasFile":false,
+              "digitalRelease":"2026-04-02T00:00:00Z"
             }]
             """);
 
@@ -50,6 +54,35 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal(2, entries.Count);
         Assert.Equal(["cinema", "digital"], entries.Select(static entry => entry.DateKind));
         Assert.All(entries, static entry => Assert.Equal(696506, entry.TmdbId));
+    }
+
+    [Fact]
+    public void CompleteCalendarSnapshotsAreCachedForOneDay()
+    {
+        Assert.Equal("api/v3/movie?excludeLocalCovers=true", CalendarService.RadarrPath);
+        Assert.Equal(
+            "api/v3/calendar?start=1900-01-01&end=2100-01-01&unmonitored=false&includeSeries=true",
+            CalendarService.SonarrPath());
+        Assert.Equal(TimeSpan.FromHours(24), CalendarService.CacheLifetime);
+        Assert.Equal(TimeSpan.FromMinutes(15), CalendarService.FailureRetryInterval);
+        Assert.Equal(TimeSpan.FromHours(24), CalendarRefreshTask.RefreshInterval);
+
+        var attemptedAt = new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
+        var cache = new CalendarCache();
+        cache.MarkRefreshAttempt(attemptedAt);
+        cache.ReplaceSource(
+            "radarr",
+            [],
+            CalendarService.CalendarStart,
+            CalendarService.CalendarEnd,
+            attemptedAt);
+
+        Assert.True(CalendarService.IsFresh(cache.Snapshot(), attemptedAt.AddHours(23)));
+        Assert.False(CalendarService.IsFresh(cache.Snapshot(), attemptedAt.AddHours(24)));
+
+        cache.MarkFailed("radarr", true, "unreachable");
+        Assert.True(CalendarService.IsFresh(cache.Snapshot(), attemptedAt.AddMinutes(14)));
+        Assert.False(CalendarService.IsFresh(cache.Snapshot(), attemptedAt.AddMinutes(15)));
     }
 
     [Fact]

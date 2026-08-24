@@ -7,7 +7,7 @@ import {
   Play,
   Ticket,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
@@ -168,31 +168,39 @@ function Entry({ entry, compact = false }: { entry: CalendarEntry; compact?: boo
   )
 }
 
-function Agenda({ entries }: { entries: CalendarEntry[] }) {
-  const groups = entriesByDate(entries)
+function Agenda({ entries, today }: { entries: CalendarEntry[]; today: string }) {
+  const groups = [...entriesByDate(entries)].sort(([left], [right]) => left.localeCompare(right))
+  const todayIndex = groups.findIndex(([date]) => date >= today)
   return (
     <div className="flex max-w-6xl flex-col gap-7">
-      {[...groups].map(([date, dayEntries]) => (
-        <section key={date} className="grid gap-3 md:grid-cols-[9rem_1fr]">
-          <div>
-            <div className="font-mono text-sm font-semibold tracking-wide text-primary">
-              {new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-              })}
+      {groups.map(([date, dayEntries], index) => (
+        <div key={date}>
+          {index === todayIndex && <div data-calendar-date={today} className="scroll-mt-4" />}
+          <section className="grid gap-3 md:grid-cols-[9rem_1fr]">
+            <div>
+              <div className="font-mono text-sm font-semibold tracking-wide text-primary">
+                {new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                })}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {dayEntries.length} {dayEntries.length === 1 ? "release" : "releases"}
+              </div>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {dayEntries.length} {dayEntries.length === 1 ? "release" : "releases"}
+            <div className="flex flex-col gap-2">
+              {dayEntries.map((entry, entryIndex) => (
+                <Entry
+                  key={`${entry.kind}-${entry.tmdbId}-${entry.tvdbId}-${entry.dateKind}-${entryIndex}`}
+                  entry={entry}
+                />
+              ))}
             </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {dayEntries.map((entry, index) => (
-              <Entry key={`${entry.kind}-${entry.tmdbId}-${entry.tvdbId}-${entry.dateKind}-${index}`} entry={entry} />
-            ))}
-          </div>
-        </section>
+          </section>
+        </div>
       ))}
+      {todayIndex === -1 && <div data-calendar-date={today} className="scroll-mt-4" />}
     </div>
   )
 }
@@ -229,8 +237,9 @@ function MonthGrid({
           return (
             <div
               key={date}
+              data-calendar-date={date}
               className={cn(
-                "min-h-32 border-r border-b border-white/6 p-2 last:border-r-0",
+                "min-h-32 scroll-mt-4 border-r border-b border-white/6 p-2 last:border-r-0",
                 outside && "bg-black/12 text-muted-foreground/50",
               )}
             >
@@ -272,6 +281,10 @@ export default function Calendar() {
   const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [view, setView] = useState("agenda")
   const [kinds, setKinds] = useState<Set<CalendarDateKind>>(() => new Set(DATE_KINDS.map((kind) => kind.id)))
+  const [todayJumpRequest, setTodayJumpRequest] = useState(1)
+  const completedTodayJump = useRef(0)
+  const calendarRoot = useRef<HTMLDivElement>(null)
+  const today = iso(new Date())
   const window = useMemo(() => calendarWindow(month), [month])
   const calendar = useReleaseCalendar(window.start, window.end)
   const entries = useMemo(
@@ -279,8 +292,25 @@ export default function Calendar() {
     [calendar.data?.entries, kinds],
   )
 
+  useEffect(() => {
+    if (!calendar.data || completedTodayJump.current === todayJumpRequest) return
+    const target = calendarRoot.current?.querySelector<HTMLElement>(`[data-calendar-date="${today}"]`)
+    if (!target) return
+    target.scrollIntoView({
+      behavior: todayJumpRequest === 1 ? "auto" : "smooth",
+      block: "start",
+    })
+    completedTodayJump.current = todayJumpRequest
+  }, [calendar.data, entries, today, todayJumpRequest, view])
+
+  const jumpToToday = () => {
+    const now = new Date()
+    setMonth(new Date(now.getFullYear(), now.getMonth(), 1))
+    setTodayJumpRequest((request) => request + 1)
+  }
+
   return (
-    <div className="flex min-h-full min-w-0 flex-col">
+    <div ref={calendarRoot} className="flex min-h-full min-w-0 flex-col">
       <PageHeader
         eyebrow="Release calendar"
         title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
@@ -291,7 +321,7 @@ export default function Calendar() {
             <Button aria-label="Previous month" variant="outline" size="icon" onClick={() => setMonth(addMonths(month, -1))}>
               <ChevronLeft />
             </Button>
-            <Button variant="outline" onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>
+            <Button variant="outline" onClick={jumpToToday}>
               Today
             </Button>
             <Button aria-label="Next month" variant="outline" size="icon" onClick={() => setMonth(addMonths(month, 1))}>
@@ -351,10 +381,10 @@ export default function Calendar() {
           view === "month" ? (
             <MonthGrid month={month} gridStart={window.gridStart} entries={entries} />
           ) : (
-            <Agenda entries={entries} />
+            <Agenda entries={entries} today={today} />
           )
         ) : (
-          <div className={cn(view === "agenda" && "max-w-6xl")}>
+          <div data-calendar-date={today} className={cn("scroll-mt-4", view === "agenda" && "max-w-6xl")}>
             <PageEmptyState
               icon={<CalendarDays className="size-6" />}
               title="No releases in this window"
