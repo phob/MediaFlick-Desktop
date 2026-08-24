@@ -5,6 +5,8 @@ namespace Jellyfin.Plugin.MediaFlick.ScheduledTasks;
 
 public sealed class CalendarRefreshTask : IScheduledTask
 {
+    internal static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(24);
+
     private readonly CalendarService _calendar;
 
     public CalendarRefreshTask(CalendarService calendar)
@@ -31,7 +33,7 @@ public sealed class CalendarRefreshTask : IScheduledTask
         yield return new TaskTriggerInfo
         {
             Type = TaskTriggerInfoType.IntervalTrigger,
-            IntervalTicks = TimeSpan.FromMinutes(15).Ticks
+            IntervalTicks = RefreshInterval.Ticks
         };
     }
 

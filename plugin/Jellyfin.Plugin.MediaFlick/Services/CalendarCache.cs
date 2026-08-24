@@ -36,7 +36,13 @@ public sealed class CalendarCache
             {
                 [source] = new SourceStatus(true, true, false, refreshedAt, null)
             };
-            _state = new CalendarState(bySource, sources, windowStart, windowEnd, refreshedAt);
+            _state = new CalendarState(
+                bySource,
+                sources,
+                windowStart,
+                windowEnd,
+                refreshedAt,
+                _state.LastAttemptAt);
         }
     }
 
@@ -58,18 +64,28 @@ public sealed class CalendarCache
         }
     }
 
+    public void MarkRefreshAttempt(DateTimeOffset attemptedAt)
+    {
+        lock (_gate)
+        {
+            _state = _state with { LastAttemptAt = attemptedAt };
+        }
+    }
+
     public sealed record CalendarState(
         IReadOnlyDictionary<string, IReadOnlyList<CalendarEntry>> BySource,
         IReadOnlyDictionary<string, SourceStatus> Sources,
         DateOnly WindowStart,
         DateOnly WindowEnd,
-        DateTimeOffset? RefreshedAt)
+        DateTimeOffset? RefreshedAt,
+        DateTimeOffset? LastAttemptAt)
     {
         public static CalendarState Empty { get; } = new(
             new Dictionary<string, IReadOnlyList<CalendarEntry>>(StringComparer.OrdinalIgnoreCase),
             new Dictionary<string, SourceStatus>(StringComparer.OrdinalIgnoreCase),
-            DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-7),
-            DateOnly.FromDateTime(DateTime.UtcNow).AddDays(60),
+            new DateOnly(1900, 1, 1),
+            new DateOnly(2100, 1, 1),
+            null,
             null);
     }
 }
