@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Child;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;

@@ -3,6 +3,167 @@
 <head>
     <meta charset="utf-8">
     <title>MediaFlick Companion</title>
+    <style>
+        #MediaFlickCompanionConfigPage .mf-header {
+            margin-bottom: 1.75em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-header h2,
+        #MediaFlickCompanionConfigPage .mf-section h3,
+        #MediaFlickCompanionConfigPage .mf-card legend {
+            margin: 0;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-header p,
+        #MediaFlickCompanionConfigPage .mf-section-heading p {
+            margin: .4em 0 0;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-section {
+            margin: 0 0 2em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-section-heading {
+            margin-bottom: .85em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-card {
+            border: 1px solid rgba(128, 128, 128, .35);
+            border-radius: .35em;
+            box-sizing: border-box;
+            margin: 0 0 .75em;
+            padding: .85em 1em 1em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-card legend {
+            font-size: 1.08em;
+            font-weight: 600;
+            padding: 0 .35em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-card-header {
+            align-items: center;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: .7em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-card-header .emby-checkbox-label {
+            width: auto;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-connection-row,
+        #MediaFlickCompanionConfigPage .mf-collection-row,
+        #MediaFlickCompanionConfigPage .mf-credential-row,
+        #MediaFlickCompanionConfigPage .mf-action-row {
+            align-items: end;
+            display: flex;
+            gap: .65em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-connection-row .inputContainer,
+        #MediaFlickCompanionConfigPage .mf-collection-row .inputContainer,
+        #MediaFlickCompanionConfigPage .mf-credential-row .inputContainer {
+            flex: 1 1 12em;
+            margin-bottom: 0;
+            min-width: 0;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-connection-row .mf-url {
+            flex-grow: 1.5;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-status {
+            display: block;
+            margin-top: .55em;
+            min-height: 1.2em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-inline-option {
+            border-top: 1px solid rgba(128, 128, 128, .25);
+            margin: .8em 0 0;
+            padding-top: .55em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-inline-option.checkboxContainer,
+        #MediaFlickCompanionConfigPage .mf-compact-check.checkboxContainer {
+            margin-bottom: 0;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-settings-card {
+            padding-bottom: .8em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-settings-card .checkboxContainer + .checkboxContainer {
+            border-top: 1px solid rgba(128, 128, 128, .25);
+            margin-top: .55em;
+            padding-top: .55em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-collection-row {
+            align-items: end;
+            flex-wrap: wrap;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-collection-row .mf-name {
+            flex-grow: .8;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-collection-row .mf-source {
+            flex-grow: 1.35;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-row-actions {
+            display: flex;
+            flex: 0 0 auto;
+            gap: .45em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-provider-grid {
+            display: grid;
+            gap: .75em;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        #MediaFlickCompanionConfigPage .mf-provider-grid .mf-card {
+            margin: 0;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-credential-row {
+            align-items: end;
+            flex-wrap: wrap;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-action-row {
+            align-items: center;
+            flex: 0 0 auto;
+            gap: .4em;
+        }
+
+        #MediaFlickCompanionConfigPage .mf-save-row {
+            border-top: 1px solid rgba(128, 128, 128, .35);
+            padding-top: 1em;
+        }
+
+        @media (max-width: 800px) {
+            #MediaFlickCompanionConfigPage .mf-provider-grid {
+                grid-template-columns: 1fr;
+            }
+
+            #MediaFlickCompanionConfigPage .mf-connection-row {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            #MediaFlickCompanionConfigPage .mf-connection-row .inputContainer {
+                flex-basis: auto;
+            }
+
+            #MediaFlickCompanionConfigPage .mf-connection-row button {
+                align-self: flex-start;
+            }
+        }
+    </style>
 </head>
 <body>
 <div id="MediaFlickCompanionConfigPage"
@@ -11,57 +172,74 @@
      data-require="emby-input,emby-button,emby-checkbox">
     <div data-role="content">
         <div class="content-primary">
-            <h2>MediaFlick Companion</h2>
-            <p>Service keys stay on this server. A blank key keeps the saved value.</p>
+            <header class="mf-header">
+                <h2>MediaFlick Companion</h2>
+                <p class="fieldDescription">
+                    Configure server integrations and collection syncing. Credentials stay on this
+                    Jellyfin server, and blank API key fields keep their saved values.
+                </p>
+            </header>
             <form id="MediaFlickCompanionConfigForm">
-                <div id="MediaFlickServices"></div>
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label class="emby-checkbox-label">
-                        <input id="AutoImportSeerrUsers" type="checkbox" is="emby-checkbox">
-                        <span>Automatically import unmapped Jellyfin users into Seerr</span>
-                    </label>
-                    <div class="fieldDescription">
-                        Off by default. When off, an unmapped user is told to ask an administrator.
+                <section class="mf-section" aria-labelledby="MediaFlickServicesHeading">
+                    <div class="mf-section-heading">
+                        <h3 id="MediaFlickServicesHeading">Service connections</h3>
+                        <p class="fieldDescription">
+                            Connect the services MediaFlick uses for monitoring and requests.
+                        </p>
                     </div>
-                </div>
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label class="emby-checkbox-label">
-                        <input id="NativeCollections" type="checkbox" is="emby-checkbox">
-                        <span>Create Jellyfin collections for the library's TMDB movie collections</span>
-                    </label>
-                    <div class="fieldDescription">
-                        Off by default. When on, a scheduled task mirrors TMDB collections into
-                        Jellyfin's own BoxSets so every client sees them. Existing BoxSets with the
-                        same TMDB id are adopted and kept in sync, never duplicated. Turning this
-                        off stops syncing; already-created collections stay in the library.
+                    <div id="MediaFlickServices"></div>
+                </section>
+
+                <section class="mf-section" aria-labelledby="MediaFlickCollectionsHeading">
+                    <div class="mf-section-heading">
+                        <h3 id="MediaFlickCollectionsHeading">Collections</h3>
+                        <p class="fieldDescription">
+                            Mirror standard TMDB collections and your own lists into Jellyfin BoxSets.
+                        </p>
                     </div>
+                    <fieldset class="mf-card mf-settings-card">
+                        <legend>Collection syncing</legend>
+                        <div class="checkboxContainer checkboxContainer-withDescription mf-compact-check">
+                            <label class="emby-checkbox-label">
+                                <input id="NativeCollections" type="checkbox" is="emby-checkbox">
+                                <span>Create Jellyfin collections for the library's TMDB movie collections</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                The scheduled task creates or adopts matching BoxSets and keeps their
+                                membership in sync. Turning this off leaves existing collections in place.
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <div class="mf-section-heading">
+                        <h4>Curated collections</h4>
+                        <p class="fieldDescription">
+                            Add inline TMDB movie IDs or an MDBList movie, series, or mixed list.
+                            Curated collections require collection syncing above.
+                        </p>
+                    </div>
+                    <div id="MediaFlickCurated"></div>
+                    <button id="CuratedAdd" is="emby-button" type="button" class="raised emby-button">
+                        Add collection
+                    </button>
+                </section>
+
+                <div class="mf-save-row">
+                    <button is="emby-button" type="submit" class="raised button-submit emby-button">
+                        <span>Save settings</span>
+                    </button>
                 </div>
-                <button is="emby-button" type="submit" class="raised button-submit block emby-button">
-                    <span>Save service settings</span>
-                </button>
             </form>
-            <section style="margin-top: 2em;">
-                <h3>Curated collections</h3>
-                <p>
-                    Optional lists you define yourself. Each entry is mirrored into a Jellyfin
-                    BoxSet like the TMDB collections above (requires the native collections
-                    setting), and MediaFlick clients show which entries are missing from your
-                    library so they can be requested.
-                    Fill in TMDB movie ids directly, or point at an MDBList movie, series, or
-                    mixed list. Your MDBList key resolves the list without leaving the server.
-                </p>
-                <div id="MediaFlickCurated"></div>
-                <button id="CuratedAdd" is="emby-button" type="button" class="raised emby-button">Add collection</button>
-            </section>
-            <section style="margin-top: 2em;">
-                <h3>Media rating providers</h3>
-                <p>
-                    These optional administrator credentials are encrypted at rest and are never
-                    returned to Media Flick clients. MDBList is a server fallback only when a client
-                    has no valid local MDBList key. TMDB is stored for future features and is not used
-                    for rating requests.
-                </p>
-                <div id="MediaFlickRatingProviders"></div>
+
+            <section class="mf-section" style="margin-top: 2em;" aria-labelledby="MediaFlickProvidersHeading">
+                <div class="mf-section-heading">
+                    <h3 id="MediaFlickProvidersHeading">Provider credentials</h3>
+                    <p class="fieldDescription">
+                        Optional administrator keys are encrypted at rest and never returned to
+                        MediaFlick clients. Each key is managed separately from the settings above.
+                    </p>
+                </div>
+                <div id="MediaFlickRatingProviders" class="mf-provider-grid"></div>
             </section>
         </div>
     </div>
@@ -82,13 +260,28 @@
 
             function block(name) {
                 const title = name.slice(0, 1).toUpperCase() + name.slice(1);
-                return '<fieldset style="margin: 1.5em 0; padding: 1em;">'
+                const seerrOption = name === "seerr"
+                    ? '<div class="checkboxContainer checkboxContainer-withDescription mf-inline-option">'
+                        + '<label class="emby-checkbox-label">'
+                        + '<input id="AutoImportSeerrUsers" type="checkbox" is="emby-checkbox">'
+                        + '<span>Automatically import unmapped Jellyfin users into Seerr</span>'
+                        + '</label>'
+                        + '<div class="fieldDescription checkboxFieldDescription">'
+                        + 'When disabled, unmapped users are told to ask an administrator.'
+                        + '</div></div>'
+                    : '';
+                return '<fieldset class="mf-card">'
                     + '<legend>' + title + '</legend>'
+                    + '<div class="mf-card-header">'
+                    + '<span class="fieldDescription">'
+                    + (name === "seerr" ? 'Requests and user mapping' : 'Download monitoring')
+                    + '</span>'
                     + '<label class="emby-checkbox-label">'
                     + '<input id="' + name + 'Enabled" type="checkbox" is="emby-checkbox">'
                     + '<span>Enabled</span>'
-                    + '</label>'
-                    + '<div class="inputContainer">'
+                    + '</label></div>'
+                    + '<div class="mf-connection-row">'
+                    + '<div class="inputContainer mf-url">'
                     + '<label class="inputLabel inputLabelUnfocused" for="' + name + 'Url">Base URL</label>'
                     + '<input id="' + name + 'Url" type="url" is="emby-input"'
                     + ' placeholder="http://' + name + ':' + defaultPorts[name] + '">'
@@ -100,29 +293,32 @@
                     + '</div>'
                     + '<button id="' + name + 'Test" is="emby-button" type="button"'
                     + ' class="raised emby-button">Test connection</button>'
-                    + '<span id="' + name + 'Result" style="margin-left: .75em;"></span>'
+                    + '</div>'
+                    + '<span id="' + name + 'Result" class="fieldDescription mf-status" role="status"></span>'
+                    + seerrOption
                     + '</fieldset>';
             }
 
             function ratingBlock(name) {
                 const title = name === "mdblist" ? "MDBList" : "TMDB";
                 const preparation = name === "tmdb"
-                    ? '<div class="fieldDescription">Preparation only; this key is not sent by rating retrieval.</div>'
-                    : '<div class="fieldDescription">Validated with MDBList /user. Shared quota and retry state appear below.</div>';
-                return '<fieldset style="margin: 1.5em 0; padding: 1em;">'
+                    ? 'Reserved for collection features; rating retrieval does not use this key.'
+                    : 'Used for curated lists and as the server rating fallback. Shared quota appears below.';
+                return '<fieldset class="mf-card">'
                     + '<legend>' + title + '</legend>'
+                    + '<p class="fieldDescription">' + preparation + '</p>'
+                    + '<div class="mf-credential-row">'
                     + '<div class="inputContainer">'
                     + '<label class="inputLabel inputLabelUnfocused" for="rating-' + name + '-key">API key</label>'
                     + '<input id="rating-' + name + '-key" type="password" is="emby-input"'
                     + ' autocomplete="new-password" placeholder="API key">'
-                    + preparation
                     + '</div>'
-                    + '<div style="display:flex; gap:.5em; flex-wrap:wrap;">'
+                    + '<div class="mf-action-row">'
                     + '<button id="rating-' + name + '-save" is="emby-button" type="button" class="raised emby-button">Save / replace</button>'
                     + '<button id="rating-' + name + '-validate" is="emby-button" type="button" class="emby-button">Validate</button>'
                     + '<button id="rating-' + name + '-remove" is="emby-button" type="button" class="emby-button">Remove</button>'
-                    + '</div>'
-                    + '<div id="rating-' + name + '-status" class="fieldDescription" style="margin-top:.75em;"></div>'
+                    + '</div></div>'
+                    + '<div id="rating-' + name + '-status" class="fieldDescription mf-status" role="status"></div>'
                     + '</fieldset>';
             }
 
@@ -295,32 +491,48 @@
 
             const curatedRoot = document.querySelector("#MediaFlickCurated");
 
+            function curatedInput(labelText, placeholder, value, className) {
+                const container = document.createElement("div");
+                container.className = "inputContainer " + className;
+                const label = document.createElement("label");
+                label.className = "inputLabel inputLabelUnfocused";
+                label.textContent = labelText;
+                const input = document.createElement("input");
+                input.is = "emby-input";
+                input.className = "emby-input";
+                input.placeholder = placeholder;
+                input.value = value || "";
+                input.setAttribute("aria-label", labelText);
+                container.appendChild(label);
+                container.appendChild(input);
+                return { container: container, input: input };
+            }
+
             function curatedRow(def) {
                 const row = document.createElement("fieldset");
-                row.style.cssText = "margin: .75em 0; padding: 1em;";
+                row.className = "mf-card";
                 if (def.id) row.dataset.definitionId = def.id;
-                const name = document.createElement("input");
-                name.is = "emby-input";
-                name.className = "emby-input";
-                name.placeholder = "Collection name";
-                name.value = def.name || "";
-                name.setAttribute("aria-label", "Collection name");
-                const ids = document.createElement("input");
-                ids.is = "emby-input";
-                ids.className = "emby-input";
-                ids.placeholder = "TMDB movie ids, comma separated (e.g. 603, 11)";
-                ids.value = def.tmdbIds || "";
-                ids.setAttribute("aria-label", "TMDB movie ids");
-                const source = document.createElement("input");
-                source.is = "emby-input";
-                source.className = "emby-input";
-                source.placeholder = "MDBList list (e.g. snoak/imdb-top-250-movies)";
-                source.value = def.mdbListSource || "";
-                source.setAttribute("aria-label", "MDBList source");
+                const fields = document.createElement("div");
+                fields.className = "mf-collection-row";
+                const name = curatedInput("Name", "Collection name", def.name, "mf-name");
+                const ids = curatedInput(
+                    "TMDB movie IDs",
+                    "Comma separated, e.g. 603, 11",
+                    def.tmdbIds,
+                    "mf-source"
+                );
+                const source = curatedInput(
+                    "MDBList source",
+                    "e.g. snoak/imdb-top-250-movies",
+                    def.mdbListSource,
+                    "mf-source"
+                );
+                const actions = document.createElement("div");
+                actions.className = "mf-row-actions";
                 const remove = document.createElement("button");
                 remove.is = "emby-button";
                 remove.type = "button";
-                remove.className = "raised emby-button";
+                remove.className = "emby-button";
                 remove.textContent = "Remove";
                 remove.addEventListener("click", function () { row.remove(); });
                 const check = document.createElement("button");
@@ -329,13 +541,14 @@
                 check.className = "raised emby-button";
                 check.textContent = "Check list";
                 const status = document.createElement("span");
-                status.className = "fieldDescription";
+                status.className = "fieldDescription mf-status";
+                status.setAttribute("role", "status");
                 check.addEventListener("click", async function () {
                     status.textContent = "Checking…";
                     try {
                         var result = await api("MediaFlick/admin/test/curated-source", {
                             method: "POST",
-                            body: { source: source.value.trim() }
+                            body: { source: source.input.value.trim() }
                         });
                         if (result.ok) {
                             const labels = [];
@@ -346,15 +559,17 @@
                             status.textContent = result.error || "That list could not be resolved.";
                         }
                     } catch (error) {
-                        status.textContent = "The check request itself failed; is the plugin healthy?";
+                        status.textContent = "The check request failed. Confirm that the plugin is running.";
                     }
                 });
-                row.appendChild(name);
-                row.appendChild(ids);
-                row.appendChild(source);
-                row.appendChild(check);
+                actions.appendChild(check);
+                actions.appendChild(remove);
+                fields.appendChild(name.container);
+                fields.appendChild(ids.container);
+                fields.appendChild(source.container);
+                fields.appendChild(actions);
+                row.appendChild(fields);
                 row.appendChild(status);
-                row.appendChild(remove);
                 return row;
             }
 
