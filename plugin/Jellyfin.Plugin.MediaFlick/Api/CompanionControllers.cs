@@ -105,13 +105,16 @@ public sealed class CalendarController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType<CalendarResponse>(StatusCodes.Status200OK)]
-    public ActionResult<CalendarResponse> GetCalendar(
+    public async Task<ActionResult<CalendarResponse>> GetCalendar(
         [FromQuery] DateOnly? start,
-        [FromQuery] DateOnly? end)
+        [FromQuery] DateOnly? end,
+        CancellationToken cancellationToken)
     {
         try
         {
-            return new JsonResult(_calendar.Get(start, end), CompanionJson.CamelCase);
+            var response = await _calendar.GetAsync(start, end, cancellationToken)
+                .ConfigureAwait(false);
+            return new JsonResult(response, CompanionJson.CamelCase);
         }
         catch (GatewayException exception)
         {

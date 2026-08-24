@@ -7,9 +7,19 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 
 public sealed class CalendarService
 {
+    // Radarr can return its complete movie list in one request. Sonarr's
+    // calendar requires dates, so this bounded century covers real TV history
+    // and every plausible announced episode without per-series requests.
+    internal static readonly DateOnly CalendarStart = new(1900, 1, 1);
+    internal static readonly DateOnly CalendarEnd = new(2100, 1, 1);
+    internal static readonly TimeSpan CacheLifetime = TimeSpan.FromHours(24);
+    internal static readonly TimeSpan FailureRetryInterval = TimeSpan.FromMinutes(15);
+    internal const string RadarrPath = "api/v3/movie?excludeLocalCovers=true";
+
     private readonly CompanionHttpClient _http;
     private readonly CalendarCache _cache;
     private readonly ServiceHealthStore _health;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
 
     public CalendarService(
         CompanionHttpClient http,
@@ -25,43 +35,78 @@ public sealed class CalendarService
         IProgress<double>? progress,
         CancellationToken cancellationToken)
     {
-        var plugin = Plugin.Instance
-            ?? throw new InvalidOperationException("The MediaFlick plugin is not initialized");
-        var configuration = plugin.Configuration;
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var start = today.AddDays(-7);
-        var end = today.AddDays(60);
-        var completed = 0;
+        await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (IsFresh(_cache.Snapshot(), now))
+            {
+                progress?.Report(100);
+                return;
+            }
 
-        await RefreshSourceAsync(
-            "sonarr",
-            configuration.Sonarr,
-            start,
-            end,
-            ParseSonarr,
-            cancellationToken).ConfigureAwait(false);
-        progress?.Report(++completed * 50);
+            var plugin = Plugin.Instance
+                ?? throw new InvalidOperationException("The MediaFlick plugin is not initialized");
+            var configuration = plugin.Configuration;
+            var completed = 0;
 
-        await RefreshSourceAsync(
-            "radarr",
-            configuration.Radarr,
-            start,
-            end,
-            ParseRadarr,
-            cancellationToken).ConfigureAwait(false);
-        progress?.Report(++completed * 50);
+            await RefreshSourceAsync(
+                "sonarr",
+                configuration.Sonarr,
+                SonarrPath(),
+                ParseSonarr,
+                cancellationToken).ConfigureAwait(false);
+            progress?.Report(++completed * 50);
+
+            await RefreshSourceAsync(
+                "radarr",
+                configuration.Radarr,
+                RadarrPath,
+                ParseRadarr,
+                cancellationToken).ConfigureAwait(false);
+            progress?.Report(++completed * 50);
+            _cache.MarkRefreshAttempt(DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
     }
 
-    public CalendarResponse Get(DateOnly? requestedStart, DateOnly? requestedEnd)
+    public async Task<CalendarResponse> GetAsync(
+        DateOnly? requestedStart,
+        DateOnly? requestedEnd,
+        CancellationToken cancellationToken)
     {
-        var snapshot = _cache.Snapshot();
-        var start = requestedStart ?? snapshot.WindowStart;
-        var end = requestedEnd ?? snapshot.WindowEnd;
+        var start = requestedStart ?? CalendarStart;
+        var end = requestedEnd ?? CalendarEnd;
         if (end < start)
         {
             throw new GatewayException(StatusCodes.Status400BadRequest, "end must not precede start");
         }
 
+        await RefreshAsync(null, cancellationToken).ConfigureAwait(false);
+        return GetCached(start, end);
+    }
+
+    internal static bool IsFresh(CalendarCache.CalendarState snapshot, DateTimeOffset now)
+    {
+        var retryAfter = snapshot.Sources.Values.Any(static source =>
+            source.Enabled && !source.Available)
+            ? FailureRetryInterval
+            : CacheLifetime;
+        return snapshot.LastAttemptAt is { } attemptedAt
+            && now - attemptedAt < retryAfter;
+    }
+
+    internal static string SonarrPath()
+        => string.Create(
+            CultureInfo.InvariantCulture,
+            $"api/v3/calendar?start={CalendarStart:yyyy-MM-dd}&end={CalendarEnd:yyyy-MM-dd}&unmonitored=false&includeSeries=true");
+
+    private CalendarResponse GetCached(DateOnly start, DateOnly end)
+    {
+        var snapshot = _cache.Snapshot();
         var entries = snapshot.BySource.Values
             .SelectMany(static entries => entries)
             .Where(entry => DateOnly.TryParseExact(
@@ -90,8 +135,7 @@ public sealed class CalendarService
     private async Task RefreshSourceAsync(
         string sourceName,
         ServiceConfiguration configuration,
-        DateOnly start,
-        DateOnly end,
+        string path,
         Func<JsonNode?, IReadOnlyList<CalendarEntry>> parse,
         CancellationToken cancellationToken)
     {
@@ -101,21 +145,23 @@ public sealed class CalendarService
             return;
         }
 
-        var query = string.Create(
-            CultureInfo.InvariantCulture,
-            $"api/v3/calendar?start={start:yyyy-MM-dd}&end={end:yyyy-MM-dd}&includeSeries=true");
         try
         {
             var response = await _http.SendAsync(
                 sourceName,
                 configuration,
                 HttpMethod.Get,
-                query,
+                path,
                 null,
                 null,
                 cancellationToken).ConfigureAwait(false);
             var refreshedAt = DateTimeOffset.UtcNow;
-            _cache.ReplaceSource(sourceName, parse(response), start, end, refreshedAt);
+            _cache.ReplaceSource(
+                sourceName,
+                parse(response),
+                CalendarStart,
+                CalendarEnd,
+                refreshedAt);
         }
         catch (GatewayException exception)
         {
@@ -169,7 +215,9 @@ public sealed class CalendarService
         }
 
         var result = new List<CalendarEntry>(movies.Count * 2);
-        foreach (var movie in movies.OfType<JsonObject>())
+        foreach (var movie in movies
+            .OfType<JsonObject>()
+            .Where(static movie => BoolValue(movie, "monitored", true)))
         {
             foreach (var (property, kind) in new[]
             {
