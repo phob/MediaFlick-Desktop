@@ -44,6 +44,15 @@ pub(super) fn route(
                 Err(message) => ApiResponse::error(400, message),
             }
         }
+        ["collections", "curated", definition_id] if request.is("GET") => {
+            match services
+                .companion
+                .curated_collection(&percent_decode(definition_id))
+            {
+                Ok(value) => ApiResponse::ok(value),
+                Err(error) => ApiResponse::from_api_error(&error),
+            }
+        }
         ["collections", "boxset", boxset_id] if request.is("GET") => {
             boxset_detail(services, &percent_decode(boxset_id))
         }
@@ -81,12 +90,13 @@ fn native_index(services: &Arc<Services>) -> ApiResponse {
                             .provider_id("Tmdb")
                             .and_then(|value| value.parse::<i64>().ok())
                             .filter(|id| *id > 0),
+                        "curatedId": dto.provider_id("MediaFlick"),
                         "name": dto.display_name(),
                         "posterPath": Value::Null,
                         "backdropPath": Value::Null,
                         "primaryImageTag": dto.primary_image_tag(),
                         "backdropImageTag": dto.backdrop_image_tags.first(),
-                        "movieCount": dto.child_count,
+                        "itemCount": dto.child_count,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -102,7 +112,7 @@ fn native_index(services: &Arc<Services>) -> ApiResponse {
     }
 }
 
-/// One BoxSet's own record joined with its movie children as ordinary card rows.
+/// One BoxSet joined with its movie and series children as ordinary card rows.
 fn boxset_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
     if id.is_empty() {
         return ApiResponse::error(400, "that is not a collection id");
@@ -127,7 +137,6 @@ fn boxset_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
             return ApiResponse::from_api_error(&error);
         }
     };
-
     ApiResponse::ok(json!({
         "id": set.id,
         "name": set.display_name(),
@@ -135,6 +144,7 @@ fn boxset_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
             .provider_id("Tmdb")
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|id| *id > 0),
+        "curatedId": set.provider_id("MediaFlick"),
         "primaryImageTag": set.primary_image_tag(),
         "backdropImageTag": set.backdrop_image_tags.first(),
         "items": children.items.iter().map(summary_from_dto).collect::<Vec<_>>(),

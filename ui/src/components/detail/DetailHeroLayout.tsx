@@ -19,13 +19,11 @@ interface HeroGenre {
  * The shared visual contract for both library and discovery details.
  *
  * Page-specific components supply data and actions, but the back action,
- * artwork, title, facts, genres, synopsis, spacing, and backdrop treatment all
- * live here. Keeping that dominant structure in one component prevents the two
+ * artwork, title, facts, genres, synopsis, and spacing all live here. Keeping that dominant structure in one component prevents the two
  * routes from drifting into lookalike-but-different pages again.
  */
 export function DetailHeroLayout({
   back,
-  backdrop,
   poster,
   logo,
   title,
@@ -39,7 +37,6 @@ export function DetailHeroLayout({
   children,
 }: {
   back: { to: To; label: string }
-  backdrop?: string | null
   poster?: HeroArtwork | null
   logo?: string | null
   title: string
@@ -52,35 +49,15 @@ export function DetailHeroLayout({
   overview?: ReactNode
   children?: ReactNode
 }) {
-  const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null)
   const [failedPoster, setFailedPoster] = useState<string | null>(null)
   const [failedLogo, setFailedLogo] = useState<string | null>(null)
-  const showBackdrop = Boolean(backdrop) && failedBackdrop !== backdrop
   const showPoster = Boolean(poster?.src) && failedPoster !== poster?.src
   const showLogo = Boolean(logo) && failedLogo !== logo
   const progress = Math.max(0, Math.min(1, poster?.progress ?? 0))
 
   return (
     <header className="relative" data-testid="detail-hero-layout">
-      {showBackdrop && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 aspect-video">
-          <img
-            src={backdrop!}
-            alt=""
-            decoding="async"
-            onError={() => setFailedBackdrop(backdrop!)}
-            className="media-backdrop-image h-full w-full object-cover"
-          />
-          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[26rem] to-background/65 to-[31rem]" />
-          <div className="absolute inset-0 bg-linear-to-b from-transparent from-[80%] to-background" />
-        </div>
-      )}
-
       <div className="relative flex min-h-[26rem] gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14">
-        {showBackdrop && (
-          <div className="pointer-events-none absolute inset-0 -z-1 bg-background/80 [mask-composite:intersect] [mask-image:linear-gradient(to_right,#000_66rem,transparent_82rem),linear-gradient(to_bottom,#000_55%,transparent)]" />
-        )}
-
         {showPoster && (
           <div
             className={cn(

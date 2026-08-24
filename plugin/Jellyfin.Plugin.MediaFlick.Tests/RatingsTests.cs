@@ -8,6 +8,7 @@ using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Xunit;
 
@@ -19,7 +20,17 @@ public sealed class RatingsTests
     public void AdministratorSecretsAreProtectedReplaceableAndRemovable()
     {
         using var directory = new TemporaryDirectory();
-        var configuration = new PluginConfiguration();
+        var definition = new CuratedCollectionDefinition
+        {
+            Id = "top-250",
+            Name = "Top 250",
+            MdbListSource = "snoak/imdb-top-250-movies"
+        };
+        var configuration = new PluginConfiguration
+        {
+            CuratedCollections = [definition],
+            NativeCollections = true
+        };
         var protection = DataProtectionProvider.Create(new DirectoryInfo(directory.Path));
         var store = new DataProtectedRatingSecretStore(
             protection,
@@ -44,6 +55,52 @@ public sealed class RatingsTests
         store.Remove("mdblist");
         Assert.False(store.IsConfigured("mdblist"));
         Assert.Null(store.Get("mdblist"));
+        Assert.True(configuration.NativeCollections);
+        Assert.Same(definition, Assert.Single(configuration.CuratedCollections));
+    }
+
+    [Fact]
+    public void CuratedListRequestsKeepTheFullRankedItemPayload()
+    {
+        var path = MdbListHttpTransport.BuildListItemsPath(
+            "key with +",
+            "lists/snoak/imdb-top-250-movies/items");
+
+        Assert.Equal(
+            "lists/snoak/imdb-top-250-movies/items?limit=500&apikey=key%20with%20%2B",
+            path);
+        Assert.DoesNotContain("extended=ids_only", path, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CuratedResolverRejectsNonemptyListsWithoutUsableTmdbIds()
+    {
+        var transport = new FakeTransport
+        {
+            ListItemsResponse = new MdbListResponse(
+                HttpStatusCode.OK,
+                JsonNode.Parse(
+                    """
+                    {
+                      "movies": [{"tmdb": 238}],
+                      "shows": [],
+                      "pagination": {"total": 1}
+                    }
+                    """),
+                new RatingQuotaResponse(null, null, null),
+                null)
+        };
+        var secrets = new MemorySecretStore();
+        secrets.Set("mdblist", "secret");
+        var resolver = new CuratedCollectionResolver(transport, secrets);
+
+        var exception = await Assert.ThrowsAsync<GatewayException>(() => resolver.ResolveAsync(
+            string.Empty,
+            "snoak/imdb-top-250-movies",
+            CancellationToken.None));
+
+        Assert.Equal(StatusCodes.Status502BadGateway, exception.StatusCode);
+        Assert.Contains("without usable TMDB identities", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -558,6 +615,19 @@ public sealed class RatingsTests
 
             return BatchResponse;
         }
+
+        public Task<MdbListResponse> ListItemsAsync(
+            string apiKey,
+            string resource,
+            CancellationToken cancellationToken)
+        {
+            LastListResource = resource;
+            return Task.FromResult(ListItemsResponse ?? BatchResponse);
+        }
+
+        public string? LastListResource { get; private set; }
+
+        public MdbListResponse? ListItemsResponse { get; set; }
     }
 
     private static class InterlockedExtensions

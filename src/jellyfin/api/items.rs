@@ -240,7 +240,7 @@ fn box_set_children_query(user_id: &str, parent_id: &str) -> Vec<(&'static str, 
     vec![
         user_query(user_id),
         ("parentId", parent_id.to_string()),
-        ("IncludeItemTypes", "Movie".to_string()),
+        ("IncludeItemTypes", "Movie,Series".to_string()),
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -250,7 +250,7 @@ fn box_set_children_query(user_id: &str, parent_id: &str) -> Vec<(&'static str, 
     ]
 }
 
-/// One BoxSet's movie children, shaped exactly like any other card row.
+/// One BoxSet's movie and series children, shaped like any other card row.
 pub fn fetch_box_set_children(
     client: &JellyfinClient,
     user_id: &str,
@@ -714,12 +714,12 @@ mod tests {
     }
 
     #[test]
-    fn a_box_set_children_request_scopes_movies_under_the_parent() {
+    fn a_box_set_children_request_scopes_media_under_the_parent() {
         let query = box_set_children_query("uid", "boxset-1")
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["parentId"], "boxset-1");
-        assert_eq!(query["IncludeItemTypes"], "Movie");
+        assert_eq!(query["IncludeItemTypes"], "Movie,Series");
         assert_eq!(query["Fields"], CATALOG_FIELDS);
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["SortBy"], "SortName");

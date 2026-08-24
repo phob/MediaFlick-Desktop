@@ -6,11 +6,11 @@ import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHero } from "@/components/detail/DetailHero"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
-import { DetailPageSkeleton } from "@/components/detail/DetailPrimitives"
+import { DetailPageSkeleton, DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
-import type { ItemDetail as Item, ItemSummary } from "@/lib/api"
+import { backdropUrl, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
 import {
   defaultDetailNavigationState,
   readDetailNavigationState,
@@ -37,7 +37,7 @@ function CollectionChip({ tmdbId }: { tmdbId: number }) {
   return (
     <Link
       to={`/collections/${collection.id}`}
-      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-card/60 px-3 py-1 text-xs text-muted-foreground transition hover:border-white/25 hover:text-foreground"
+      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-card px-3 py-1 text-xs text-muted-foreground shadow-lg shadow-black/40 transition hover:border-white/25 hover:text-foreground"
     >
       <Layers className="size-3" aria-hidden />
       Part of&nbsp;<span className="font-medium text-foreground">{collection.name}</span>
@@ -123,17 +123,21 @@ export default function ItemDetail() {
   const episodeCount = isSeries
     ? seasons.reduce((total, season) => total + (season.childCount ?? 0), 0)
     : 0
+  const backdrop = backdropUrl(item)
 
   // A series cannot be played itself, so its Play button stands in for the
   // Next Up episode; everything else plays itself and needs no target at all.
   const playTarget = isSeries ? nextUpItem : undefined
 
   return (
-    // `isolate` scopes the hero's backdrop, which is painted at a negative
+    // `isolate` scopes the page backdrop, which is painted at a negative
     // z-index: it has to sit behind every section on this page and in front of the
     // app shell's opaque background, and this stacking context is what pins it
-    // between the two.
-    <div className="detail-page relative isolate flex min-w-0 flex-col gap-12 pb-16">
+    // between the two. `min-h-full` stretches short pages to the viewport so
+    // the backdrop reaches the window's bottom edge instead of stopping with
+    // the content.
+    <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
+      {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHero
         item={item}
         about={about.data}

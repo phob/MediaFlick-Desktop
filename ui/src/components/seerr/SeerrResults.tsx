@@ -37,6 +37,7 @@ export function SeerrResults({
   results,
   isPending,
   error,
+  errorTitle = "Could not load discovery results",
   empty = "Nothing found.",
   placeholders = 6,
   resultSetKey,
@@ -45,6 +46,7 @@ export function SeerrResults({
   results: SeerrResult[] | undefined
   isPending?: boolean
   error?: Error | null
+  errorTitle?: string
   empty?: string
   placeholders?: number
   resultSetKey?: string
@@ -53,7 +55,9 @@ export function SeerrResults({
 }) {
   const status = useSeerrStatus()
 
-  if (error && !results?.length) return <PageErrorState title="Could not load discovery results" description={error.message} />
+  if (error && !results?.length) {
+    return <PageErrorState title={errorTitle} description={error.message} />
+  }
   if (isPending) {
     return (
       <div className="flex flex-wrap gap-[var(--card-gap)]">

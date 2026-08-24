@@ -144,17 +144,17 @@ public sealed class CollectionsService
     /// <summary>Parses a library item's TMDB provider id, if it has a usable one.</summary>
     internal static int? ParseTmdbId(BaseItem item)
     {
-            foreach (var key in (string[]) ["Tmdb", "tmdb"])
+        foreach (var key in (string[])["Tmdb", "tmdb"])
+        {
+            if (item.ProviderIds?.TryGetValue(key, out var value) is true
+                && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
+                && id > 0)
             {
-                if (item.ProviderIds?.TryGetValue(key, out var value) is true
-                    && int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
-                    && id > 0)
-                {
-                    return id;
-                }
+                return id;
             }
+        }
 
-            return null;
+        return null;
     }
 
     /// <summary>
@@ -411,7 +411,7 @@ public sealed class CollectionsService
                     ["name"] = first.Name,
                     ["posterPath"] = first.PosterPath,
                     ["backdropPath"] = first.BackdropPath,
-                    ["movieCount"] = group.Count()
+                    ["itemCount"] = group.Count()
                 };
             })
             .OrderBy(collection => SortName(StringValue(collection, "name") ?? string.Empty), StringComparer.OrdinalIgnoreCase)
@@ -438,7 +438,7 @@ public sealed class CollectionsService
     /// <summary>TMDB names collections with English articles; file them under the real title.</summary>
     internal static string SortName(string name)
     {
-        foreach (var article in (string[]) ["The ", "An ", "A "])
+        foreach (var article in (string[])["The ", "An ", "A "])
         {
             if (name.StartsWith(article, StringComparison.OrdinalIgnoreCase))
             {

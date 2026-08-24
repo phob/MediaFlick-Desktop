@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Xunit;
 
@@ -51,5 +52,77 @@ public sealed class NativeCollectionSyncTests
 
         Assert.Empty(add);
         Assert.Empty(remove);
+    }
+
+    [Fact]
+    public void CuratedTmdbIdParsingKeepsDefinitionOrderAndDropsJunk()
+    {
+        var ids = CuratedCollectionResolver.ParseTmdbIds(" 603, not-an-id, 11, 603, -5, 0 ");
+
+        Assert.Equal([603, 11], ids);
+    }
+
+    [Theory]
+    [InlineData("user/snoak/imdb-top-250-movies", "lists/snoak/imdb-top-250-movies/items")]
+    [InlineData("snoak/imdb-top-250-movies", "lists/snoak/imdb-top-250-movies/items")]
+    [InlineData("official/imdb-top-250", "lists/official/imdb-top-250/items")]
+    [InlineData("USER/Snoak/List_1-x.y", "lists/Snoak/List_1-x.y/items")]
+    public void MdbListSourcesParseIntoAllowlistedApiPaths(string raw, string expected)
+    {
+        Assert.True(CuratedCollectionResolver.TryParseSource(raw, out var resource, out _));
+        Assert.Equal(expected, resource);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("imdb-top-250-movies")]
+    [InlineData("user/a/b/c")]
+    [InlineData("official/a/b")]
+    [InlineData("user/snoak/../admin")]
+    [InlineData("https://evil.example/list")]
+    public void MdbListSourcePathsOutsideTheListsNamespaceAreRejected(string raw)
+    {
+        Assert.False(CuratedCollectionResolver.TryParseSource(raw, out _, out _));
+    }
+
+    [Fact]
+    public void MdbListItemsKeepRankAndMediaNamespace()
+    {
+        var body = JsonNode.Parse(
+            """
+            {
+              "movies": [
+                {"rank":1,"ids":{"tmdb":603,"imdb":"tt0133093"}},
+                {"rank":3,"ids":{"tmdb":11}},
+                {"rank":4,"ids":{"tmdb":null}}
+              ],
+              "shows": [{"rank":2,"id":1396}]
+            }
+            """);
+
+        var items = CuratedCollectionResolver.ExtractItems(body);
+
+        Assert.Equal(
+            [
+                new CuratedItem(CuratedMediaKind.Movie, 603),
+                new CuratedItem(CuratedMediaKind.Series, 1396),
+                new CuratedItem(CuratedMediaKind.Movie, 11)
+            ],
+            items);
+    }
+
+    [Fact]
+    public void CuratedMembershipKeepsMovieAndSeriesTmdbNamespacesSeparate()
+    {
+        var movie = new CuratedItem(CuratedMediaKind.Movie, 603);
+        var oldSeries = new CuratedItem(CuratedMediaKind.Series, 603);
+        var newSeries = new CuratedItem(CuratedMediaKind.Series, 1396);
+
+        var (add, remove) = NativeCollectionSync.CuratedMembershipDiff(
+            new HashSet<CuratedItem> { movie, oldSeries },
+            [movie, newSeries]);
+
+        Assert.Equal([newSeries], add);
+        Assert.Equal([oldSeries], remove);
     }
 }

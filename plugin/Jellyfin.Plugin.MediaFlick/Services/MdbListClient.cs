@@ -24,6 +24,11 @@ internal interface IMdbListTransport
         string mediaType,
         IReadOnlyList<string> ids,
         CancellationToken cancellationToken);
+
+    Task<MdbListResponse> ListItemsAsync(
+        string apiKey,
+        string resource,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -86,6 +91,29 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
     }
 
     public void Dispose() => _client.Dispose();
+
+    /// <summary>
+    /// Fetches one MDBList list's items. `resource` is an already-validated
+    /// lists-relative path built by [`CuratedCollectionResolver`]; no caller
+    /// can select a host, path, port, or arbitrary upstream query.
+    /// </summary>
+    public Task<MdbListResponse> ListItemsAsync(
+        string apiKey,
+        string resource,
+        CancellationToken cancellationToken)
+        => SendAsync(
+            HttpMethod.Get,
+            BuildListItemsPath(apiKey, resource),
+            null,
+            cancellationToken);
+
+    internal static string BuildListItemsPath(string apiKey, string resource)
+    {
+        // The regular payload carries rank and media-specific ids. MDBList's
+        // ids_only payload drops rank and moves TMDB to a different field,
+        // which cannot preserve the order of a mixed movie and show list.
+        return resource + "?limit=500&apikey=" + Uri.EscapeDataString(apiKey);
+    }
 
     private async Task<MdbListResponse> SendAsync(
         HttpMethod method,

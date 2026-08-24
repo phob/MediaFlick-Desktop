@@ -20,6 +20,31 @@ export function DetailPageSkeleton() {
   )
 }
 
+/**
+ * Full-page backdrop behind a detail route. The artwork spans the entire page
+ * instead of stopping at the header, so every section scrolls over one
+ * continuous image, cropped to fill. A light even veil keeps content readable
+ * over the art, and a soft fade protects the header text at the top. The art
+ * stays visible to the page's end — no scrim band cuts it off.
+ */
+export function DetailBackdrop({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return null
+  return (
+    <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
+      <img
+        src={src}
+        alt=""
+        decoding="async"
+        onError={() => setFailed(true)}
+        className="media-backdrop-image h-full w-full object-cover"
+      />
+      <div className="absolute inset-0 bg-background/30" />
+      <div className="absolute inset-x-0 top-0 h-80 bg-linear-to-b from-background/90 via-background/40 to-transparent" />
+    </div>
+  )
+}
+
 export function DetailBackLink({ to, label }: { to: To; label: string }) {
   return (
     <Button variant="ghost" size="sm" className="w-fit px-0 text-muted-foreground" asChild>
@@ -42,7 +67,7 @@ export function DetailFact({ label, children }: { label: string; children: React
 
 export function DetailFactPanel({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <dl className={cn("divide-y divide-border/60 rounded-xl border border-white/5 bg-card/55 px-4 py-1 shadow-lg shadow-black/10", className)}>
+    <dl className={cn("divide-y divide-border/60 rounded-xl border border-border/60 bg-card px-4 py-1 shadow-lg shadow-black/40", className)}>
       {children}
     </dl>
   )
@@ -91,7 +116,9 @@ export function DetailCastRail({ entries }: { entries: DetailCastEntry[] }) {
             className="flex w-28 shrink-0 flex-col items-center gap-2 rounded-media text-center outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Headshot entry={entry} />
-            <span className="flex flex-col gap-0.5">
+            {/* The labels float over the page backdrop, so they carry their own
+                contrast shadow for light artwork. */}
+            <span className="flex flex-col gap-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
               <span className="text-xs leading-tight">{entry.name}</span>
               {entry.role && (
                 <span className="text-xs leading-tight text-muted-foreground">{entry.role}</span>

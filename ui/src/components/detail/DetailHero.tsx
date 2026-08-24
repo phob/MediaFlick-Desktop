@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   DETAIL_POSTER_WIDTH,
-  backdropUrl,
   imageUrl,
   logoUrl,
   progressFraction,
@@ -114,7 +113,6 @@ export function DetailHero({
   return (
     <DetailHeroLayout
       back={{ to: navigationState.from, label: navigationState.label }}
-      backdrop={backdropUrl(item)}
       poster={poster}
       logo={logoUrl(item)}
       title={item.name}
