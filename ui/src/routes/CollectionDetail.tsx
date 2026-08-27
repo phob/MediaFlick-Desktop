@@ -1,18 +1,19 @@
 import { ArrowLeft, Layers } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { toast } from "sonner"
+import { CollectionTitleGrid } from "@/components/CollectionTitleGrid"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
 import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
 import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
   api,
   imageUrl,
   type ClassifiedCollectionTitle,
+  type ItemSummary,
   type NormalizedCollectionTitle,
   type SeerrCapabilities,
   type SeerrResult,
@@ -20,7 +21,6 @@ import {
 import {
   useCollectionSettings,
   useFranchise,
-  useItem,
   useJellyfinCollection,
   useMyCollection,
   useSeerrStatus,
@@ -105,19 +105,18 @@ function TitleArtwork({ title }: { title: NormalizedCollectionTitle }) {
   )
 }
 
-function OwnedCard({ title }: { title: ClassifiedCollectionTitle }) {
+function OwnedCard({
+  title,
+  item,
+}: {
+  title: ClassifiedCollectionTitle
+  item: ItemSummary | undefined
+}) {
   const primary = title.localItems[0]
-  const item = useItem(primary?.id)
   return (
     <div className="flex w-poster-w flex-col" data-collection-owned-card>
-      {item.data ? (
-        <MediaCard item={item.data} className="catalog-card" />
-      ) : item.isPending ? (
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-poster-h w-poster-w rounded-lg" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-3 w-1/3" />
-        </div>
+      {item ? (
+        <MediaCard item={item} className="catalog-card" />
       ) : (
         <article className="catalog-card flex w-poster-w flex-col">
           {primary ? (
@@ -204,16 +203,22 @@ function SnapshotSections({
   owned,
   missing,
   items,
+  libraryItems,
   ownershipAvailable,
 }: {
   owned: ClassifiedCollectionTitle[]
   missing: NormalizedCollectionTitle[]
   items: NormalizedCollectionTitle[]
+  libraryItems: ItemSummary[]
   ownershipAvailable: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const seerr = useSeerrStatus(ownershipAvailable && missing.length > 0)
   const visibleMissing = expanded ? missing : missing.slice(0, 24)
+  const libraryById = useMemo(
+    () => new Map(libraryItems.map((item) => [item.id, item])),
+    [libraryItems],
+  )
   if (!ownershipAvailable) {
     return (
       <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
@@ -221,7 +226,11 @@ function SnapshotSections({
           <h2 className="section-title">Titles</h2>
           <p className="mt-1 text-sm text-muted-foreground">Ownership unavailable</p>
         </div>
-        <TitleGrid>{items.map((title) => <MissingCard key={`${title.mediaType}:${title.tmdbId}`} title={title} requestsEnabled={false} />)}</TitleGrid>
+        <CollectionTitleGrid
+          items={items}
+          itemKey={(title) => `${title.mediaType}:${title.tmdbId}`}
+          renderItem={(title) => <MissingCard title={title} requestsEnabled={false} />}
+        />
       </section>
     )
   }
@@ -230,19 +239,25 @@ function SnapshotSections({
       <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
         <h2 className="section-title">Owned</h2>
         {owned.length ? (
-          <TitleGrid>{owned.map((title) => <OwnedCard key={`${title.mediaType}:${title.tmdbId}`} title={title} />)}</TitleGrid>
+          <CollectionTitleGrid
+            items={owned}
+            itemKey={(title) => `${title.mediaType}:${title.tmdbId}`}
+            renderItem={(title) => (
+              <OwnedCard title={title} item={libraryById.get(title.localItems[0]?.id ?? "")} />
+            )}
+          />
         ) : <p className="text-sm text-muted-foreground">No matching titles are in your library.</p>}
       </section>
       {missing.length > 0 && (
         <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
           <h2 className="section-title">Missing</h2>
-          <TitleGrid>{visibleMissing.map((title) => (
-            <MissingCard
-              key={`${title.mediaType}:${title.tmdbId}`}
-              title={title}
-              capabilities={seerr.data?.capabilities}
-            />
-          ))}</TitleGrid>
+          <CollectionTitleGrid
+            items={visibleMissing}
+            itemKey={(title) => `${title.mediaType}:${title.tmdbId}`}
+            renderItem={(title) => (
+              <MissingCard title={title} capabilities={seerr.data?.capabilities} />
+            )}
+          />
           {missing.length >= 25 && (
             <Button className="self-start" variant="outline" onClick={() => setExpanded((value) => !value)}>
               {expanded ? "Show fewer" : `Show all ${missing.length}`}
@@ -304,7 +319,7 @@ export function MyCollectionDetail() {
       status={stale}
       onRetry={refreshing ? undefined : retry}
     >
-      {data && <SnapshotSections owned={data.owned} missing={data.missing} items={data.items} ownershipAvailable={data.ownershipAvailable !== false} />}
+      {data && <SnapshotSections owned={data.owned} missing={data.missing} items={data.items} libraryItems={data.libraryItems} ownershipAvailable={data.ownershipAvailable !== false} />}
     </CollectionShell>
   )
 }
@@ -327,7 +342,7 @@ export function FranchiseCollectionDetail() {
       backdrop={api.collections.providerArtworkUrl(data?.backdropPath, "w1280")}
       poster={api.collections.providerArtworkUrl(data?.posterPath, "w342")}
     >
-      {data && <SnapshotSections owned={data.owned} missing={data.missing} items={data.items ?? [...data.owned, ...data.missing]} ownershipAvailable={data.ownershipAvailable !== false} />}
+      {data && <SnapshotSections owned={data.owned} missing={data.missing} items={data.items ?? [...data.owned, ...data.missing]} libraryItems={data.libraryItems} ownershipAvailable={data.ownershipAvailable !== false} />}
     </CollectionShell>
   )
 }

@@ -4,20 +4,13 @@ import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { useSettings } from "@/lib/queries"
+import { sidebarShouldBeOpen } from "@/lib/sidebar-state"
 
-const SIDEBAR_OPEN_KEY = "mediaflick.sidebar.open"
 const routeScrollPositions = new Map<string, number>()
-
-function storedSidebarOpen() {
-  try {
-    return localStorage.getItem(SIDEBAR_OPEN_KEY) !== "false"
-  } catch {
-    return true
-  }
-}
 
 /** The route-owned scroll container, separated from sidebar/player chrome for focused testing. */
 export function RouteScrollViewport({ children }: { children: ReactNode }) {
@@ -43,10 +36,10 @@ export function RouteScrollViewport({ children }: { children: ReactNode }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  // shadcn persists the rail state in a cookie, which the app scheme is not
-  // registered for (STANDARD | SECURE | CORS | FETCH — no cookie option), so
-  // that write silently no-ops. Drive the provider instead.
-  const [open, setOpen] = useState(storedSidebarOpen)
+  const location = useLocation()
+  const isMobile = useIsMobile()
+  const [pointerIsOverSidebar, setPointerIsOverSidebar] = useState(false)
+  const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar)
   const settings = useSettings()
   const cardPreviews = settings.data?.appearance.cardPreviews !== false
   usePlaybackStoppedBridge()
@@ -54,18 +47,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        try {
-          localStorage.setItem(SIDEBAR_OPEN_KEY, String(next))
-        } catch {
-          // A blocked storage partition is not a reason to refuse to collapse.
-        }
-      }}
+      open={sidebarOpen}
+      onOpenChange={() => undefined}
       className="app-experience h-full min-w-0 overflow-hidden"
     >
-      <AppSidebar />
+      <AppSidebar
+        onPointerEnter={() => setPointerIsOverSidebar(true)}
+        onPointerLeave={() => setPointerIsOverSidebar(false)}
+      />
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
         {/* The shell never scrolls; the content pane does. */}
         <RouteScrollViewport>

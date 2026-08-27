@@ -1,4 +1,5 @@
 use super::*;
+use crate::collections::ClassifiedTitle;
 use crate::collections::franchises::visible_franchises;
 use crate::collections::matching::{OwnershipPolicy, classify, local_item_map};
 use crate::collections::snapshots::SnapshotRepository;
@@ -46,12 +47,12 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
                 "owned": [],
                 "missing": [],
                 "items": [],
+                "libraryItems": [],
                 "refresh": refresh,
             }));
         }
         Err(error) => return storage_failure(&error),
     };
-    crate::collections::scheduler::hydrate_identity_map(services);
     let classified = match classify(
         &services.library,
         &account,
@@ -62,6 +63,10 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         },
     ) {
         Ok(classified) => classified,
+        Err(error) => return storage_failure(&error),
+    };
+    let library_items = match primary_library_items(services, &classified.owned) {
+        Ok(items) => items,
         Err(error) => return storage_failure(&error),
     };
     let overdue = crate::collections::scheduler::is_due(
@@ -75,6 +80,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         "owned": classified.owned,
         "missing": classified.missing,
         "items": classified.items,
+        "libraryItems": library_items,
         "ownershipAvailable": classified.ownership_available,
         "refresh": refresh,
         "overdue": overdue,
@@ -102,26 +108,21 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
     } else {
         "updating"
     };
-    crate::collections::scheduler::hydrate_identity_map(services);
     let snapshots = match repository.franchises(&account) {
         Ok(snapshots) => snapshots,
         Err(error) => return storage_failure(&error),
     };
     if !ownership_available {
-        let restricted = services.session.user_restricted();
         let franchises = snapshots
             .into_iter()
-            .map(|mut snapshot| {
-                snapshot.items.sort_by_key(|item| item.source_order);
-                snapshot.items.retain(|item| !item.adult);
+            .map(|snapshot| {
                 json!({
                     "collectionId": snapshot.collection_id,
                     "name": snapshot.name,
                     "posterPath": snapshot.poster_path,
                     "backdropPath": snapshot.backdrop_path,
-                    "owned": [],
-                    "missing": [],
-                    "items": if restricted { Vec::new() } else { snapshot.items },
+                    "ownedCount": 0,
+                    "missingCount": 0,
                     "ownershipAvailable": false,
                 })
             })
@@ -161,9 +162,8 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
             "name": franchise.name,
             "posterPath": franchise.poster_path,
             "backdropPath": franchise.backdrop_path,
-            "owned": franchise.owned,
-            "missing": franchise.missing,
-            "items": [],
+            "ownedCount": franchise.owned.len(),
+            "missingCount": franchise.missing.len(),
             "ownershipAvailable": true,
         })).collect::<Vec<_>>()
     }))
@@ -178,18 +178,90 @@ pub(super) fn franchise_detail(
         Some(id) => id,
         None => return ApiResponse::error(400, "that is not a TMDB collection id"),
     };
-    let response = franchises(services, request);
-    if response.status != 200 {
-        return response;
+    let account = match active_account(services) {
+        Ok(account) => account,
+        Err(response) => return response,
+    };
+    let repository = SnapshotRepository::new(&services.library);
+    let snapshot = match repository.franchise(&account, id) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return ApiResponse::error(404, "that movie franchise does not exist"),
+        Err(error) => return storage_failure(&error),
+    };
+    let ownership_available = crate::library::sync::ownership_available(&services.library);
+    if !ownership_available {
+        let mut items = snapshot.items;
+        items.sort_by_key(|item| item.source_order);
+        items.retain(|item| !item.adult);
+        if services.session.user_restricted() {
+            items.clear();
+        }
+        return ApiResponse::ok(json!({
+            "collectionId": snapshot.collection_id,
+            "name": snapshot.name,
+            "posterPath": snapshot.poster_path,
+            "backdropPath": snapshot.backdrop_path,
+            "owned": [],
+            "missing": [],
+            "items": items,
+            "libraryItems": [],
+            "ownershipAvailable": false,
+        }));
     }
-    let value: Value = serde_json::from_slice(&response.body).unwrap_or_default();
-    match value["franchises"].as_array().and_then(|rows| {
-        rows.iter()
-            .find(|row| row["collectionId"].as_u64() == Some(id))
-    }) {
-        Some(franchise) => ApiResponse::ok(franchise.clone()),
-        None => ApiResponse::error(404, "that movie franchise is not visible"),
+    let local = match local_item_map(&services.library, &snapshot.items) {
+        Ok(local) => local,
+        Err(error) => return storage_failure(&error),
+    };
+    let date = request
+        .param("localDate")
+        .unwrap_or_else(crate::collections::scheduler::current_utc_date);
+    let include_unreleased = services
+        .collections
+        .account(&account)
+        .franchises
+        .include_unreleased;
+    let Some(mut franchise) = visible_franchises(
+        std::slice::from_ref(&snapshot),
+        &local,
+        include_unreleased,
+        &date,
+    )
+    .pop() else {
+        return ApiResponse::error(404, "that movie franchise is not visible");
+    };
+    if services.session.user_restricted() {
+        franchise.missing.clear();
+        if franchise.owned.len() < 2 {
+            return ApiResponse::error(404, "that movie franchise is not visible");
+        }
     }
+    let library_items = match primary_library_items(services, &franchise.owned) {
+        Ok(items) => items,
+        Err(error) => return storage_failure(&error),
+    };
+    ApiResponse::ok(json!({
+        "collectionId": franchise.collection_id,
+        "name": franchise.name,
+        "posterPath": franchise.poster_path,
+        "backdropPath": franchise.backdrop_path,
+        "owned": franchise.owned,
+        "missing": franchise.missing,
+        "items": [],
+        "libraryItems": library_items,
+        "ownershipAvailable": true,
+    }))
+}
+
+fn primary_library_items(
+    services: &Services,
+    owned: &[ClassifiedTitle],
+) -> rusqlite::Result<Vec<Value>> {
+    let ids = owned
+        .iter()
+        .filter_map(|title| title.local_items.first())
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+    services.library.items_by_ids(&ids)
 }
 
 pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> ApiResponse {

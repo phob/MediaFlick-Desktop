@@ -1,4 +1,5 @@
 import { Layers, MoreHorizontal, Pencil, RefreshCw } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Link, Navigate, Outlet } from "react-router-dom"
 import { toast } from "sonner"
 import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
@@ -14,16 +15,20 @@ import {
   api,
   imageUrl,
   type CollectionProfile,
-  type FranchiseCollection,
+  type FranchiseCollectionSummary,
   type JellyfinCollectionSummary,
 } from "@/lib/api"
 import { queryClient } from "@/lib/query-client"
 import { useLocalDate } from "@/lib/local-date"
 import {
+  collectionAccountKey,
+  franchiseQueryOptions,
+  myCollectionQueryOptions,
   useCollectionSettings,
   useFranchises,
   useJellyfinCollections,
   useMyCollections,
+  useStatus,
 } from "@/lib/queries"
 
 function titleCardPalette(name: string) {
@@ -65,16 +70,23 @@ function CardFrame({
   poster,
   detail,
   menu,
+  onPrefetch,
 }: {
   to: string
   name: string
   poster: string | null
   detail: string | null
   menu?: React.ReactNode
+  onPrefetch?: () => void
 }) {
   return (
     <article className="catalog-card group relative flex w-poster-w flex-col rounded-lg">
-      <Link to={to} aria-label={`Open ${name}`}>
+      <Link
+        to={to}
+        aria-label={`Open ${name}`}
+        onPointerEnter={onPrefetch}
+        onFocus={onPrefetch}
+      >
         <CollectionArtwork name={name} poster={poster} />
         <div className="min-w-0 pt-2">
           <div className="truncate text-sm font-medium">{name}</div>
@@ -143,6 +155,9 @@ export default function Collections() {
 export function FranchiseCollections() {
   const date = useLocalDate()
   const query = useFranchises(date)
+  const cache = useQueryClient()
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   const rows = query.data?.franchises
   return (
     <CollectionPage
@@ -170,7 +185,7 @@ export function FranchiseCollections() {
         />
       ) : (
         <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
-          {rows.map((collection: FranchiseCollection) => (
+          {rows.map((collection: FranchiseCollectionSummary) => (
             <CardFrame
               key={collection.collectionId}
               to={`/collections/franchises/${collection.collectionId}`}
@@ -178,7 +193,13 @@ export function FranchiseCollections() {
               poster={api.collections.providerArtworkUrl(collection.posterPath, "w342")}
               detail={collection.ownershipAvailable === false
                 ? "Ownership unavailable"
-                : `${collection.owned.length} owned${collection.missing.length ? ` · ${collection.missing.length} missing` : ""}`}
+                : `${collection.ownedCount} owned${collection.missingCount ? ` · ${collection.missingCount} missing` : ""}`}
+              onPrefetch={() => {
+                if (!status?.authenticated) return
+                void cache.prefetchQuery(
+                  franchiseQueryOptions(account, collection.collectionId, date),
+                )
+              }}
             />
           ))}
         </div>
@@ -187,11 +208,15 @@ export function FranchiseCollections() {
   )
 }
 
-function ProfileMenu({ profile, error }: { profile: CollectionProfile; error?: string }) {
-  const settings = useCollectionSettings()
-  const providerAvailable = profile.source.kind === "mdbListPublicList"
-    ? Boolean(settings.data?.readiness.mdblist)
-    : Boolean(settings.data?.readiness.tmdb)
+function ProfileMenu({
+  profile,
+  error,
+  providerAvailable,
+}: {
+  profile: CollectionProfile
+  error?: string
+  providerAvailable: boolean
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -230,6 +255,10 @@ function ProfileMenu({ profile, error }: { profile: CollectionProfile; error?: s
 
 export function MyCollections() {
   const query = useMyCollections()
+  const settings = useCollectionSettings()
+  const cache = useQueryClient()
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   const profiles = query.data?.profiles
   return (
     <CollectionPage
@@ -257,7 +286,17 @@ export function MyCollections() {
               name={profile.title}
               poster={profile.customPosterId ? api.collections.artworkUrl(profile.customPosterId) : null}
               detail={profile.description || null}
-              menu={<ProfileMenu profile={profile} error={query.data?.errors?.[profile.id]} />}
+              menu={<ProfileMenu
+                profile={profile}
+                error={query.data?.errors?.[profile.id]}
+                providerAvailable={profile.source.kind === "mdbListPublicList"
+                  ? Boolean(settings.data?.readiness.mdblist)
+                  : Boolean(settings.data?.readiness.tmdb)}
+              />}
+              onPrefetch={() => {
+                if (!status?.authenticated) return
+                void cache.prefetchQuery(myCollectionQueryOptions(account, profile.id))
+              }}
             />
           ))}
         </div>

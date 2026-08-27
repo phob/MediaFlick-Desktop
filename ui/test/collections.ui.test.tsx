@@ -177,6 +177,16 @@ describe("mode-aware collections", () => {
   })
 
   test("franchise cards use exact TMDB collection identities", async () => {
+    const detail = vi.spyOn(api.api.collections, "franchise").mockResolvedValue({
+      collectionId: 2344,
+      name: "The Matrix Collection",
+      posterPath: null,
+      backdropPath: null,
+      owned: [],
+      missing: [],
+      libraryItems: [],
+      ownershipAvailable: true,
+    })
     vi.spyOn(api.api.collections, "franchises").mockResolvedValue({
       status: "ready",
       franchises: [{
@@ -184,14 +194,18 @@ describe("mode-aware collections", () => {
         name: "The Matrix Collection",
         posterPath: null,
         backdropPath: null,
-        owned: [owned(603)],
-        missing: [title(624834)],
+        ownedCount: 1,
+        missingCount: 1,
+        ownershipAvailable: true,
       }],
     })
     render(providers(<FranchiseCollections />, "/collections/franchises"))
-    expect(await screen.findByRole("link", { name: "Open The Matrix Collection" })).toBeTruthy()
+    const link = await screen.findByRole("link", { name: "Open The Matrix Collection" })
     expect(document.querySelector('a[href="/collections/franchises/2344"]')).toBeTruthy()
     expect(screen.getByText("1 owned · 1 missing")).toBeTruthy()
+    fireEvent.pointerEnter(link)
+    await waitFor(() => expect(detail).toHaveBeenCalled())
+    expect(detail.mock.calls[0]?.[0]).toBe(2344)
   })
 
   test("an uninitialized franchise cache stays in the background rebuilding state", async () => {
@@ -205,13 +219,25 @@ describe("mode-aware collections", () => {
   })
 
   test("My Collections preserves profile order", async () => {
+    const first = profile("a".repeat(16), "First")
+    const detail = vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
+      profile: first,
+      status: "ready",
+      owned: [],
+      missing: [],
+      items: [],
+      libraryItems: [],
+      ownershipAvailable: true,
+    })
     vi.spyOn(api.api.collections, "mine").mockResolvedValue({
-      profiles: [profile("a".repeat(16), "First"), profile("c".repeat(16), "Second")],
+      profiles: [first, profile("c".repeat(16), "Second")],
     })
     render(providers(<MyCollections />, "/collections/mine"))
-    await screen.findByRole("link", { name: "Open First" })
+    const firstLink = await screen.findByRole("link", { name: "Open First" })
     const names = screen.getAllByRole("link", { name: /Open (First|Second)/ }).map((link) => link.getAttribute("aria-label"))
     expect(names).toEqual(["Open First", "Open Second"])
+    fireEvent.pointerEnter(firstLink)
+    await waitFor(() => expect(detail).toHaveBeenCalledWith(first.id, expect.any(AbortSignal)))
   })
 
   test("Jellyfin mode loads BoxSets directly", async () => {
@@ -233,6 +259,7 @@ describe("mode-aware collections", () => {
       owned: [owned(1)],
       missing: Array.from({ length: 25 }, (_, index) => title(index + 10)),
       items: [],
+      libraryItems: [],
       ownershipAvailable: true,
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
@@ -251,6 +278,7 @@ describe("mode-aware collections", () => {
       owned: [],
       missing: Array.from({ length: 24 }, (_, index) => title(index + 10)),
       items: [],
+      libraryItems: [],
       ownershipAvailable: true,
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
@@ -266,6 +294,7 @@ describe("mode-aware collections", () => {
       owned: [owned(1, 2)],
       missing: [],
       items: [],
+      libraryItems: [],
       ownershipAvailable: true,
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
@@ -281,9 +310,10 @@ describe("mode-aware collections", () => {
       owned: [owned(1)],
       missing: [title(2)],
       items: [],
+      libraryItems: [libraryItem("local-1-0", "Movie 1")],
       ownershipAvailable: true,
     })
-    vi.spyOn(api.api, "item").mockResolvedValue(libraryItem("local-1-0", "Movie 1"))
+    const itemRequest = vi.spyOn(api.api, "item")
     vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
 
     render(providers(
@@ -299,6 +329,7 @@ describe("mode-aware collections", () => {
     expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
     expect(await screen.findByRole("button", { name: "Request Movie 2" })).toBeTruthy()
     expect(document.querySelector('a[href="/discover/movie/2"]')).toBeTruthy()
+    expect(itemRequest).not.toHaveBeenCalled()
   })
 
   test("an untrusted library sync shows the ungrouped snapshot without request links", async () => {
@@ -309,6 +340,7 @@ describe("mode-aware collections", () => {
       owned: [],
       missing: [],
       items: [title(10), title(11)],
+      libraryItems: [],
       ownershipAvailable: false,
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))

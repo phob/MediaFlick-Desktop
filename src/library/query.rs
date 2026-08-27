@@ -7,6 +7,7 @@ use super::{ItemPage, ItemQuery, Library, LibraryStats, TmdbCandidate};
 /// Bound on one `tmdb_id IN (...)` clause so even a full person filmography
 /// stays well under SQLite's host-parameter limit.
 const TMDB_CANDIDATE_CHUNK: usize = 400;
+const ITEM_ID_CHUNK: usize = 400;
 
 impl Library {
     pub fn stats(&self) -> LibraryStats {
@@ -122,6 +123,35 @@ impl Library {
                 Some(row) => Ok(Some(detail_row(row)?)),
                 None => Ok(None),
             }
+        })
+    }
+
+    /// Card rows for a bounded set of Jellyfin ids. Collection pages already
+    /// know their exact local members, so one batched read avoids a separate
+    /// app-scheme request and SQLite connection for every mounted card.
+    pub fn items_by_ids(&self, item_ids: &[String]) -> rusqlite::Result<Vec<Value>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut seen = std::collections::HashSet::new();
+        let ids = item_ids
+            .iter()
+            .filter(|id| seen.insert(id.as_str()))
+            .collect::<Vec<_>>();
+        self.db.with_connection(|connection| {
+            let mut items = Vec::with_capacity(ids.len());
+            for chunk in ids.chunks(ITEM_ID_CHUNK) {
+                let placeholders = vec!["?"; chunk.len()].join(",");
+                let sql = format!(
+                    "SELECT {SUMMARY_COLUMNS} FROM items i
+                     LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                     WHERE i.jellyfin_id IN ({placeholders})"
+                );
+                let mut statement = connection.prepare(&sql)?;
+                let rows = statement.query_map(params_from_iter(chunk.iter()), summary_row)?;
+                items.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            }
+            Ok(items)
         })
     }
 
@@ -444,7 +474,9 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{ItemQuery, Library, cached_image_tag, civil_from_days, fts_match_expression};
+    use super::{
+        ITEM_ID_CHUNK, ItemQuery, Library, cached_image_tag, civil_from_days, fts_match_expression,
+    };
     use crate::library::test_support::{dto, seeded};
     use crate::library::{ItemSort, TmdbCandidate, current_release_decade, release_decade_from_id};
 
@@ -578,6 +610,36 @@ mod tests {
             ]
         );
         assert!(library.tmdb_candidates(&[]).expect("empty").is_empty());
+    }
+
+    #[test]
+    fn items_by_ids_batches_large_sets_and_deduplicates_requested_ids() {
+        let library = Library::open_in_memory().expect("library");
+        let source = (0..=ITEM_ID_CHUNK)
+            .map(|index| {
+                dto(&format!(
+                    r#"{{"Id":"item-{index}","Name":"Movie {index}","Type":"Movie", "Overview":"Rich metadata"}}"#
+                ))
+            })
+            .collect::<Vec<_>>();
+        library.upsert_page(&source).expect("seed items");
+        let mut ids = (0..=ITEM_ID_CHUNK)
+            .rev()
+            .map(|index| format!("item-{index}"))
+            .collect::<Vec<_>>();
+        ids.push("item-0".to_string());
+        ids.push("missing".to_string());
+
+        let rows = library.items_by_ids(&ids).expect("batch lookup");
+        assert_eq!(rows.len(), ITEM_ID_CHUNK + 1);
+        assert_eq!(
+            rows.iter()
+                .filter_map(|row| row["id"].as_str())
+                .collect::<HashSet<_>>()
+                .len(),
+            ITEM_ID_CHUNK + 1
+        );
+        assert!(rows.iter().all(|row| row.get("overview").is_none()));
     }
 
     #[test]

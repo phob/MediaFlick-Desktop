@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::params;
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, params_from_iter};
 use serde::{Deserialize, Serialize};
 
 use crate::library::Library;
@@ -213,56 +214,115 @@ pub(crate) fn local_item_map(
     library: &Library,
     provider_items: &[NormalizedTitle],
 ) -> rusqlite::Result<HashMap<CanonicalIdentity, Vec<LocalItem>>> {
+    const MATCH_CHUNK_SIZE: usize = 300;
+
+    let mut seen = HashSet::new();
+    let mut wanted = provider_items
+        .iter()
+        .filter(|item| item.identity.media_type != MediaType::Mixed)
+        .filter(|item| seen.insert(item.identity.clone()))
+        .filter_map(|item| {
+            i64::try_from(item.identity.tmdb_id)
+                .ok()
+                .map(|tmdb_id| (item.identity.clone(), tmdb_id))
+        })
+        .collect::<Vec<_>>();
+    wanted.sort_by_key(|(identity, _)| (media_type_key(identity.media_type), identity.tmdb_id));
+
     library.with_connection(|connection| {
         let mut result: HashMap<CanonicalIdentity, Vec<LocalItem>> = HashMap::new();
-        let mut statement = connection.prepare(
-            "SELECT DISTINCT items.jellyfin_id, items.name, items.kind,
-                    COALESCE(user_data.played, 0)
-             FROM items
-             LEFT JOIN user_data ON user_data.jellyfin_id = items.jellyfin_id
-             LEFT JOIN provider_identity_map imdb_mapping
-               ON imdb_mapping.media_type = ?3
-              AND imdb_mapping.provider = 'imdb'
-              AND imdb_mapping.provider_id = items.imdb_id
-             LEFT JOIN provider_identity_map tvdb_mapping
-               ON tvdb_mapping.media_type = ?3
-              AND tvdb_mapping.provider = 'tvdb'
-              AND tvdb_mapping.provider_id = items.tvdb_id
-             WHERE items.kind = ?1
-               AND (items.tmdb_id = ?2
-                    OR imdb_mapping.tmdb_id = ?2
-                    OR tvdb_mapping.tmdb_id = ?2)
-             ORDER BY items.jellyfin_id",
-        )?;
-        for item in provider_items {
-            let jellyfin_kind = match item.identity.media_type {
-                MediaType::Movie => "Movie",
-                MediaType::Series => "Series",
-                MediaType::Mixed => continue,
-            };
-            let rows = statement
-                .query_map(
-                    params![
-                        jellyfin_kind,
-                        item.identity.tmdb_id.to_string(),
-                        media_type_key(item.identity.media_type),
-                    ],
-                    |row| {
-                        Ok(LocalItem {
-                            id: row.get(0)?,
-                            name: row.get(1)?,
-                            kind: row.get(2)?,
-                            played: row.get(3)?,
-                        })
-                    },
-                )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            if !rows.is_empty() {
-                result.insert(item.identity.clone(), rows);
+        for chunk in wanted.chunks(MATCH_CHUNK_SIZE) {
+            let values = vec!["(?, ?)"; chunk.len()].join(", ");
+            let sql = format!(
+                "WITH wanted(media_type, tmdb_id) AS (VALUES {values}),
+                 candidates(media_type, tmdb_id, jellyfin_id) AS (
+                    SELECT wanted.media_type, wanted.tmdb_id, items.jellyfin_id
+                    FROM wanted
+                    JOIN items
+                      ON items.kind = CASE wanted.media_type
+                           WHEN 'movie' THEN 'Movie' ELSE 'Series' END
+                     AND items.tmdb_id = CAST(wanted.tmdb_id AS TEXT)
+                    UNION
+                    SELECT wanted.media_type, wanted.tmdb_id, items.jellyfin_id
+                    FROM wanted
+                    JOIN provider_identity_map mappings
+                      ON mappings.media_type = wanted.media_type
+                     AND mappings.tmdb_id = wanted.tmdb_id
+                     AND mappings.provider = 'imdb'
+                    JOIN items
+                      ON items.kind = CASE wanted.media_type
+                           WHEN 'movie' THEN 'Movie' ELSE 'Series' END
+                     AND items.imdb_id = mappings.provider_id
+                    UNION
+                    SELECT wanted.media_type, wanted.tmdb_id, items.jellyfin_id
+                    FROM wanted
+                    JOIN provider_identity_map mappings
+                      ON mappings.media_type = wanted.media_type
+                     AND mappings.tmdb_id = wanted.tmdb_id
+                     AND mappings.provider = 'tvdb'
+                    JOIN items
+                      ON items.kind = CASE wanted.media_type
+                           WHEN 'movie' THEN 'Movie' ELSE 'Series' END
+                     AND items.tvdb_id = mappings.provider_id
+                 )
+                 SELECT candidates.media_type, candidates.tmdb_id,
+                        items.jellyfin_id, items.name, items.kind,
+                        COALESCE(user_data.played, 0)
+                 FROM candidates
+                 JOIN items ON items.jellyfin_id = candidates.jellyfin_id
+                 LEFT JOIN user_data ON user_data.jellyfin_id = items.jellyfin_id
+                 ORDER BY candidates.media_type, candidates.tmdb_id, items.jellyfin_id"
+            );
+            let arguments = chunk
+                .iter()
+                .flat_map(|(identity, tmdb_id)| {
+                    [
+                        SqlValue::Text(media_type_key(identity.media_type).to_string()),
+                        SqlValue::Integer(*tmdb_id),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let mut statement = connection.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(arguments), matched_item_row)?;
+            for row in rows {
+                let (identity, item) = row?;
+                result.entry(identity).or_default().push(item);
             }
         }
         Ok(result)
     })
+}
+
+fn matched_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(CanonicalIdentity, LocalItem)> {
+    let media_type = match row.get::<_, String>(0)?.as_str() {
+        "movie" => MediaType::Movie,
+        "series" => MediaType::Series,
+        value => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                format!("unsupported media type {value}").into(),
+            ));
+        }
+    };
+    let tmdb_id = u64::try_from(row.get::<_, i64>(1)?)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let identity = CanonicalIdentity::new(media_type, tmdb_id).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            1,
+            rusqlite::types::Type::Integer,
+            "invalid collection identity".into(),
+        )
+    })?;
+    Ok((
+        identity,
+        LocalItem {
+            id: row.get(2)?,
+            name: row.get(3)?,
+            kind: row.get(4)?,
+            played: row.get(5)?,
+        },
+    ))
 }
 
 fn media_type_key(media_type: MediaType) -> &'static str {
