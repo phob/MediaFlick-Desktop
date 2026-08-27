@@ -926,6 +926,7 @@ export interface CollectionProfileDetail {
   owned: ClassifiedCollectionTitle[]
   missing: NormalizedCollectionTitle[]
   items: NormalizedCollectionTitle[]
+  libraryItems: ItemSummary[]
   ownershipAvailable?: boolean
   refresh?: {
     lastAttempt: number | null
@@ -945,12 +946,23 @@ export interface FranchiseCollection {
   owned: ClassifiedCollectionTitle[]
   missing: NormalizedCollectionTitle[]
   items?: NormalizedCollectionTitle[]
+  libraryItems: ItemSummary[]
   ownershipAvailable?: boolean
+}
+
+export interface FranchiseCollectionSummary {
+  collectionId: number
+  name: string
+  posterPath: string | null
+  backdropPath: string | null
+  ownedCount: number
+  missingCount: number
+  ownershipAvailable: boolean
 }
 
 export interface FranchiseCollectionsIndex {
   status: "updating" | "resultsUnavailable" | "ready"
-  franchises: FranchiseCollection[]
+  franchises: FranchiseCollectionSummary[]
 }
 
 export interface JellyfinCollectionSummary {

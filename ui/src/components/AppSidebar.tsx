@@ -14,7 +14,8 @@ import {
   Settings,
   Tv,
 } from "lucide-react"
-import { useCallback, useRef } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import { useCallback, useEffect, useRef, type ComponentProps } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -37,15 +38,23 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { useSidebar } from "@/components/ui/sidebar-context"
 import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
+import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
-import { useCollectionSettings, useCompanion, useItem, useLogout, useStatus } from "@/lib/queries"
+import {
+  collectionAccountKey,
+  franchisesQueryOptions,
+  myCollectionsQueryOptions,
+  useCollectionSettings,
+  useCompanion,
+  useItem,
+  useLogout,
+  useStatus,
+} from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
@@ -254,8 +263,14 @@ function UserMenu() {
   )
 }
 
-export function AppSidebar() {
+type AppSidebarProps = Pick<ComponentProps<typeof Sidebar>, "onPointerEnter" | "onPointerLeave">
+
+export function AppSidebar(props: AppSidebarProps = {}) {
   const location = useLocation()
+  const cache = useQueryClient()
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  const localDate = useLocalDate()
   const libraryParams = new URLSearchParams(location.search)
   const detailMatch = location.pathname.match(/^\/item\/([^/]+)$/)
   let detailId: string | undefined
@@ -301,27 +316,46 @@ export function AppSidebar() {
         { title: "My Collections", to: "/collections/mine" },
       ]
     : [{ title: "Jellyfin Collections", to: "/collections/jellyfin" }]
+  const prefetchCollection = useCallback((path: string) => {
+    if (!status?.authenticated) return
+    if (path === "/collections/franchises") {
+      void cache.prefetchQuery(franchisesQueryOptions(account, localDate))
+    } else if (path === "/collections/mine") {
+      void cache.prefetchQuery(myCollectionsQueryOptions(account))
+    }
+  }, [account, cache, localDate, status?.authenticated])
+
+  useEffect(() => {
+    if (!status?.authenticated || collectionSettings?.effectiveMode !== "mediaFlick") return
+    const warm = () => {
+      prefetchCollection("/collections/franchises")
+      prefetchCollection("/collections/mine")
+    }
+    if (window.requestIdleCallback) {
+      const idle = window.requestIdleCallback(warm, { timeout: 2_000 })
+      return () => window.cancelIdleCallback(idle)
+    }
+    const timer = window.setTimeout(warm, 750)
+    return () => window.clearTimeout(timer)
+  }, [collectionSettings?.effectiveMode, prefetchCollection, status?.authenticated])
 
   return (
-    <Sidebar collapsible="icon" className="app-sidebar-container">
+    <Sidebar collapsible="icon" className="app-sidebar-container" {...props}>
       <SidebarHeader>
         <div className="flex items-center gap-2">
           <Link
             to="/"
-            className="flex min-w-0 items-center gap-2 font-medium group-data-[collapsible=icon]:hidden"
+            className="flex min-w-0 items-center gap-2 font-medium"
           >
             <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-media bg-primary text-primary-foreground shadow-lg shadow-primary/25">
               <Film className="size-4" />
             </div>
             {/* "Flick" carries the accent, so the wordmark states the palette
                 the rest of the shell is built from. */}
-            <span className="truncate text-[0.95rem] font-semibold tracking-tight">
+            <span className="truncate text-[0.95rem] font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
               Media<span className="text-primary">Flick</span>
             </span>
           </Link>
-          {/* Stays visible collapsed — it is the only always-on way back to the
-              expanded rail besides the hover rail and Ctrl+B. */}
-          <SidebarTrigger className="ml-auto" />
         </div>
       </SidebarHeader>
 
@@ -371,7 +405,11 @@ export function AppSidebar() {
                     isActive={location.pathname.startsWith(item.to)}
                     tooltip={item.title}
                   >
-                    <Link to={item.to}>
+                    <Link
+                      to={item.to}
+                      onPointerEnter={() => prefetchCollection(item.to)}
+                      onFocus={() => prefetchCollection(item.to)}
+                    >
                       <Layers />
                       <span>{item.title}</span>
                     </Link>
@@ -421,7 +459,6 @@ export function AppSidebar() {
         </SidebarMenu>
         <UserMenu />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   )
 }

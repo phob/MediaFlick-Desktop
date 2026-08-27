@@ -341,31 +341,91 @@ impl<'a> SnapshotRepository<'a> {
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             drop(headers);
+
+            let mut statement = connection.prepare(
+                "SELECT tmdb_collection_id, media_type, tmdb_id, title, original_title,
+                        year, overview, release_date, source_order, poster_path,
+                        backdrop_path, adult
+                 FROM franchise_snapshot_items
+                 WHERE server_id = ?1 AND user_id = ?2
+                 ORDER BY tmdb_collection_id, source_order ASC",
+            )?;
+            let mut items_by_collection = HashMap::<i64, Vec<NormalizedTitle>>::new();
+            let items = statement
+                .query_map(params![account.server_id(), account.user_id()], |row| {
+                    Ok((row.get::<_, i64>(0)?, title_from_row_at(row, 1)?))
+                })?;
+            for item in items {
+                let (collection_id, item) = item?;
+                items_by_collection
+                    .entry(collection_id)
+                    .or_default()
+                    .push(item);
+            }
+            drop(statement);
+
             rows.into_iter()
                 .map(|(id, name, poster_path, backdrop_path, committed_at)| {
-                    let mut statement = connection.prepare(
-                        "SELECT media_type, tmdb_id, title, original_title, year, overview,
-                                release_date, source_order, poster_path, backdrop_path, adult
-                         FROM franchise_snapshot_items
-                         WHERE server_id = ?1 AND user_id = ?2 AND tmdb_collection_id = ?3
-                         ORDER BY source_order ASC",
-                    )?;
-                    let items = statement
-                        .query_map(
-                            params![account.server_id(), account.user_id(), id],
-                            title_from_row,
-                        )?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
                     Ok(FranchiseSnapshot {
                         collection_id: u64_from_sql(id)?,
                         name,
                         poster_path,
                         backdrop_path,
                         committed_at,
-                        items,
+                        items: items_by_collection.remove(&id).unwrap_or_default(),
                     })
                 })
                 .collect()
+        })
+    }
+
+    pub fn franchise(
+        &self,
+        account: &AccountKey,
+        collection_id: u64,
+    ) -> rusqlite::Result<Option<FranchiseSnapshot>> {
+        let collection_id = i64_from_id(collection_id)?;
+        self.library.with_connection(|connection| {
+            let header = connection
+                .query_row(
+                    "SELECT name, poster_path, backdrop_path, committed_at
+                     FROM franchise_snapshots
+                     WHERE server_id = ?1 AND user_id = ?2 AND tmdb_collection_id = ?3",
+                    params![account.server_id(), account.user_id(), collection_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((name, poster_path, backdrop_path, committed_at)) = header else {
+                return Ok(None);
+            };
+            let mut statement = connection.prepare(
+                "SELECT media_type, tmdb_id, title, original_title, year, overview,
+                        release_date, source_order, poster_path, backdrop_path, adult
+                 FROM franchise_snapshot_items
+                 WHERE server_id = ?1 AND user_id = ?2 AND tmdb_collection_id = ?3
+                 ORDER BY source_order ASC",
+            )?;
+            let items = statement
+                .query_map(
+                    params![account.server_id(), account.user_id(), collection_id],
+                    title_from_row,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(Some(FranchiseSnapshot {
+                collection_id: u64_from_sql(collection_id)?,
+                name,
+                poster_path,
+                backdrop_path,
+                committed_at,
+                items,
+            }))
         })
     }
 
@@ -523,23 +583,27 @@ fn insert_franchise(
 }
 
 fn title_from_row(row: &Row<'_>) -> rusqlite::Result<NormalizedTitle> {
-    let media_type = match row.get::<_, String>(0)?.as_str() {
+    title_from_row_at(row, 0)
+}
+
+fn title_from_row_at(row: &Row<'_>, offset: usize) -> rusqlite::Result<NormalizedTitle> {
+    let media_type = match row.get::<_, String>(offset)?.as_str() {
         "movie" => MediaType::Movie,
         "series" => MediaType::Series,
         value => return Err(text_conversion_error(value)),
     };
     Ok(NormalizedTitle {
-        identity: CanonicalIdentity::new(media_type, u64_from_sql(row.get(1)?)?)
+        identity: CanonicalIdentity::new(media_type, u64_from_sql(row.get(offset + 1)?)?)
             .ok_or_else(|| text_conversion_error("mixed"))?,
-        title: row.get(2)?,
-        original_title: row.get(3)?,
-        year: row.get(4)?,
-        overview: row.get(5)?,
-        release_date: row.get(6)?,
-        source_order: row.get(7)?,
-        poster_path: row.get(8)?,
-        backdrop_path: row.get(9)?,
-        adult: row.get(10)?,
+        title: row.get(offset + 2)?,
+        original_title: row.get(offset + 3)?,
+        year: row.get(offset + 4)?,
+        overview: row.get(offset + 5)?,
+        release_date: row.get(offset + 6)?,
+        source_order: row.get(offset + 7)?,
+        poster_path: row.get(offset + 8)?,
+        backdrop_path: row.get(offset + 9)?,
+        adult: row.get(offset + 10)?,
     })
 }
 
@@ -665,5 +729,54 @@ mod tests {
         assert!(failed.initialized);
         assert_eq!(failed.last_success, Some(123));
         assert_eq!(failed.last_attempt, Some(456));
+    }
+
+    #[test]
+    fn one_franchise_is_loaded_without_materializing_the_full_cache() {
+        let library = Library::open_in_memory().expect("library");
+        let repository = SnapshotRepository::new(&library);
+        let snapshots = vec![
+            FranchiseSnapshot {
+                collection_id: 10,
+                name: "First".to_string(),
+                poster_path: None,
+                backdrop_path: None,
+                committed_at: 50,
+                items: vec![title(1, 1, false)],
+            },
+            FranchiseSnapshot {
+                collection_id: 20,
+                name: "Second".to_string(),
+                poster_path: Some("/poster.jpg".to_string()),
+                backdrop_path: None,
+                committed_at: 50,
+                items: vec![title(2, 2, false), title(3, 1, false)],
+            },
+        ];
+        repository
+            .commit_franchises(&account(), &snapshots, 50)
+            .expect("commit franchises");
+
+        let loaded = repository
+            .franchise(&account(), 20)
+            .expect("load franchise")
+            .expect("matching franchise");
+        assert_eq!(loaded.collection_id, 20);
+        assert_eq!(loaded.name, "Second");
+        assert_eq!(loaded.poster_path.as_deref(), Some("/poster.jpg"));
+        assert_eq!(
+            loaded
+                .items
+                .iter()
+                .map(|item| item.identity.tmdb_id)
+                .collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert!(
+            repository
+                .franchise(&account(), 99)
+                .expect("missing")
+                .is_none()
+        );
     }
 }

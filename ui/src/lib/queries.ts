@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import { queryOptions, useInfiniteQuery, useMutation, useQueries, useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ApiError,
@@ -680,13 +680,27 @@ export function useCollectionProfiles(enabled = true) {
   })
 }
 
+export function myCollectionsQueryOptions(account: string) {
+  return queryOptions({
+    queryKey: queryKeys.collectionMine(account),
+    queryFn: ({ signal }) => api.collections.mine(signal),
+    retry: false,
+  })
+}
+
 export function useMyCollections(enabled = true) {
   const { data: status } = useStatus()
   const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionMine(account),
-    queryFn: ({ signal }) => api.collections.mine(signal),
+    ...myCollectionsQueryOptions(account),
     enabled: enabled && Boolean(status?.authenticated),
+  })
+}
+
+export function myCollectionQueryOptions(account: string, id: string) {
+  return queryOptions({
+    queryKey: queryKeys.collectionMineDetail(account, id),
+    queryFn: ({ signal }) => api.collections.mineDetail(id, signal),
     retry: false,
   })
 }
@@ -695,9 +709,16 @@ export function useMyCollection(id: string | null) {
   const { data: status } = useStatus()
   const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionMineDetail(account, id ?? ""),
-    queryFn: ({ signal }) => api.collections.mineDetail(id!, signal),
+    ...myCollectionQueryOptions(account, id ?? ""),
     enabled: id !== null && Boolean(status?.authenticated),
+  })
+}
+
+export function franchisesQueryOptions(account: string, localDate: string) {
+  return queryOptions({
+    queryKey: queryKeys.collectionFranchises(account, localDate),
+    queryFn: ({ signal }) => api.collections.franchises(localDate, signal),
+    staleTime: 6 * 60 * 60_000,
     retry: false,
   })
 }
@@ -706,11 +727,16 @@ export function useFranchises(localDate: string) {
   const { data: status } = useStatus()
   const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionFranchises(account, localDate),
-    queryFn: ({ signal }) => api.collections.franchises(localDate, signal),
+    ...franchisesQueryOptions(account, localDate),
     enabled: Boolean(status?.authenticated),
-    staleTime: 6 * 60 * 60_000,
     refetchOnMount: "always",
+  })
+}
+
+export function franchiseQueryOptions(account: string, id: number, localDate: string) {
+  return queryOptions({
+    queryKey: queryKeys.collectionFranchise(account, id, localDate),
+    queryFn: ({ signal }) => api.collections.franchise(id, localDate, signal),
     retry: false,
   })
 }
@@ -719,10 +745,8 @@ export function useFranchise(id: number | null, localDate: string) {
   const { data: status } = useStatus()
   const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collectionFranchise(account, id ?? 0, localDate),
-    queryFn: ({ signal }) => api.collections.franchise(id!, localDate, signal),
+    ...franchiseQueryOptions(account, id ?? 0, localDate),
     enabled: id !== null && Boolean(status?.authenticated),
-    retry: false,
   })
 }
 
