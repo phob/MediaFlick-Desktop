@@ -8,8 +8,17 @@ import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
-import Collections from "@/routes/Collections"
-import CollectionDetail from "@/routes/CollectionDetail"
+import Collections, {
+  CollectionModeRoute,
+  FranchiseCollections,
+  JellyfinCollections,
+  MyCollections,
+} from "@/routes/Collections"
+import {
+  FranchiseCollectionDetail,
+  JellyfinCollectionDetail,
+  MyCollectionDetail,
+} from "@/routes/CollectionDetail"
 import Home from "@/routes/Home"
 import ItemDetail from "@/routes/ItemDetail"
 import Library from "@/routes/Library"
@@ -25,9 +34,8 @@ export default function App() {
   const waitingForLibrary = Boolean(
     status?.authenticated && !(status.libraryReady ?? status.bootstrapped),
   )
-  // Player and appearance configuration has always been available from the
-  // sign-in screen. Keep that promise while the rest of the app remains
-  // account-gated: a direct /settings link is a real anonymous route.
+  // Device-owned player and application configuration remain available from
+  // the sign-in screen. Account-owned settings explain that sign-in is needed.
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
   const showingHome = location.pathname === "/"
   const showShell = Boolean(status?.authenticated || showingSettings)
@@ -67,13 +75,21 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/library" element={<Library />} />
               <Route path="/collections" element={<Collections />} />
-              <Route path="/collections/:id" element={<CollectionDetail />} />
+              <Route element={<CollectionModeRoute mode="mediaFlick" />}>
+                <Route path="/collections/franchises" element={<FranchiseCollections />} />
+                <Route path="/collections/franchises/:tmdbCollectionId" element={<FranchiseCollectionDetail />} />
+                <Route path="/collections/mine" element={<MyCollections />} />
+                <Route path="/collections/mine/:profileId" element={<MyCollectionDetail />} />
+              </Route>
+              <Route element={<CollectionModeRoute mode="jellyfin" />}>
+                <Route path="/collections/jellyfin" element={<JellyfinCollections />} />
+                <Route path="/collections/jellyfin/:boxSetId" element={<JellyfinCollectionDetail />} />
+              </Route>
               <Route path="/item/:id" element={<ItemDetail />} />
               <Route path="/calendar" element={<Calendar />} />
-              {/* Registered whether or not Seerr is linked: the sidebar hides
-                  them until it is, but a deep link or a session that lapsed
-                  mid-use must land on the offer to set it up rather than on a
-                  blank page. */}
+              {/* Registered even when Companion does not provide Seerr. The
+                  sidebar hides them, while a deep link still receives the
+                  capability or user-mapping explanation. */}
               <Route
                 path="/discover"
                 element={
@@ -84,11 +100,7 @@ export default function App() {
               />
               <Route
                 path="/discover/:mediaType/:tmdbId"
-                element={
-                  <SeerrGate>
-                    <DiscoverDetail />
-                  </SeerrGate>
-                }
+                element={<DiscoverDetail />}
               />
               <Route
                 path="/requests"

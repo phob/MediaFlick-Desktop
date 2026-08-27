@@ -57,6 +57,7 @@ pub(super) const META_WATERMARK_IDS: &str = "sync.watermark_ids";
 pub(super) const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
 pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
+pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
 
 /// Durable progress for the resumable initial cache fill.
 ///
@@ -91,6 +92,11 @@ pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
         // A migration/backfill over an existing cache is never first-time setup.
         initial: library.meta(META_LAST_BOOTSTRAP).is_none() && stats.total == 0,
     }
+}
+
+pub fn ownership_available(library: &Library) -> bool {
+    bootstrap_progress(library).complete
+        && library.meta(META_LATEST_FAILURE).as_deref() != Some("1")
 }
 
 fn meta_count(library: &Library, key: &str) -> Option<i64> {

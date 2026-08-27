@@ -73,6 +73,15 @@ pub fn start(
     let prepared = prepare(
         &services.session,
         &services.library,
+        services
+            .session
+            .account_key()
+            .and_then(|account| {
+                services
+                    .playback_preferences
+                    .get(&account, &options.item_id)
+            })
+            .as_ref(),
         settings.streaming_quality,
         options,
     )
@@ -119,6 +128,7 @@ fn context_from(request: &PlaybackRequest) -> PlaybackContext {
 pub fn prepare(
     session: &Session,
     library: &Library,
+    saved_preference: Option<&crate::library::ItemPlaybackPreference>,
     quality: StreamingQuality,
     options: &PlayOptions,
 ) -> Result<PreparedPlayback, ApiError> {
@@ -144,33 +154,19 @@ pub fn prepare(
         || options.media_source_index.is_some()
         || options.audio_stream_index.is_some()
         || options.subtitle_stream_index.is_some();
-    if !has_explicit_track_options {
-        match library.playback_preference(&options.item_id) {
-            Ok(Some(preference)) => {
-                match items::fetch_media_sources(&client, &user_id, &options.item_id) {
-                    Ok(sources) => {
-                        if let Some(resolved) =
-                            resolve_playback_preference(Some(&preference), &sources)
-                        {
-                            apply_saved_preference(&mut effective_options, resolved);
-                        }
-                    }
-                    Err(error) => {
-                        session.note_error(&error);
-                        tracing::warn!(
-                            target: "playback",
-                            item_id = %options.item_id,
-                            "could not validate saved track preference; using server defaults: {error}"
-                        );
-                    }
+    if !has_explicit_track_options && let Some(preference) = saved_preference {
+        match items::fetch_media_sources(&client, &user_id, &options.item_id) {
+            Ok(sources) => {
+                if let Some(resolved) = resolve_playback_preference(Some(preference), &sources) {
+                    apply_saved_preference(&mut effective_options, resolved);
                 }
             }
-            Ok(None) => {}
             Err(error) => {
+                session.note_error(&error);
                 tracing::warn!(
                     target: "playback",
                     item_id = %options.item_id,
-                    "could not read saved track preference; using server defaults: {error}"
+                    "could not validate saved track preference; using server defaults: {error}"
                 );
             }
         }

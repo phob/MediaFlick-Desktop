@@ -4,20 +4,24 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::AppSettings;
+use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
 
 static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
+static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mutex::new(None);
 
 impl AppSettings {
     pub fn load() -> Self {
         let path = config_file_path();
-        let Ok(bytes) = std::fs::read(&path) else {
-            return Self::default();
-        };
-        match serde_json::from_slice::<Self>(&bytes) {
-            Ok(mut settings) => {
+        match load_with_recovery::<Self>(&path) {
+            Ok(Some(loaded)) => {
+                if let Ok(mut recovery) = DEVICE_RECOVERY.lock() {
+                    *recovery = loaded.recovery;
+                }
+                let mut settings = loaded.document;
                 settings.sanitize();
                 settings
             }
+            Ok(None) => load_legacy_settings(),
             Err(error) => {
                 tracing::warn!("failed to read {}: {error}", path.display());
                 Self::default()
@@ -26,16 +30,24 @@ impl AppSettings {
     }
 
     pub fn save(&self) -> io::Result<()> {
-        let mut settings = self.clone();
-        settings.sanitize();
+        let settings = device_settings(self);
 
         let path = config_file_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_vec_pretty(&settings).map_err(io::Error::other)?;
-        atomic_write(&path, &json)
+        save_with_backup(&path, &settings)
     }
+}
+
+fn device_settings(settings: &AppSettings) -> AppSettings {
+    let mut settings = settings.clone();
+    settings.sanitize();
+    // The runtime snapshot carries the active account's appearance so all
+    // consumers can keep one concrete settings type. It belongs only in
+    // accounts.json and must never leak back into the device file.
+    settings.appearance = Default::default();
+    settings
 }
 
 /// Persistence port for the application's user preferences.
@@ -58,7 +70,7 @@ impl SettingsStore for FileSettingsStore {
     }
 }
 
-fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
@@ -135,7 +147,28 @@ fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
 }
 
 pub fn config_file_path() -> PathBuf {
-    config_dir().join("config.json")
+    config_dir().join("settings.json")
+}
+
+pub fn take_device_recovery_notice() -> Option<RecoveryNotice> {
+    DEVICE_RECOVERY
+        .lock()
+        .ok()
+        .and_then(|mut recovery| recovery.take())
+}
+
+fn load_legacy_settings() -> AppSettings {
+    let path = config_dir().join("config.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return AppSettings::default();
+    };
+    serde_json::from_slice::<AppSettings>(&bytes).map_or_else(
+        |_| AppSettings::default(),
+        |mut settings| {
+            settings.sanitize();
+            settings
+        },
+    )
 }
 
 pub fn config_dir() -> PathBuf {
@@ -173,4 +206,27 @@ fn roaming_base_dir() -> PathBuf {
     }
 
     std::env::temp_dir()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preferences::{AppearanceSettings, AppearanceTheme};
+
+    #[test]
+    fn the_device_snapshot_excludes_account_owned_appearance() {
+        let settings = AppSettings {
+            appearance: AppearanceSettings {
+                theme: AppearanceTheme::Dark,
+                ..AppearanceSettings::default()
+            },
+            log_level: "debug".to_string(),
+            ..AppSettings::default()
+        };
+
+        let device = device_settings(&settings);
+
+        assert_eq!(device.appearance, AppearanceSettings::default());
+        assert_eq!(device.log_level, "debug");
+    }
 }

@@ -21,15 +21,15 @@ supports them.
 
 MDBList is validated through the inexpensive fixed-origin `/user` endpoint.
 The page distinguishes valid, rejected, unreachable, and rate-limited states
-and shows only non-secret quota/retry facts. TMDB is preparation-only in this
-release: its v3/v4 key shape is checked locally, but the key is not sent by
-rating retrieval.
+and shows only non-secret quota/retry facts. TMDB credentials accept supported
+v3 and v4 shapes and are verified with a bounded provider request before the
+collection capability becomes available.
 
-A configured local Desktop MDBList credential always wins. The Companion's
-administrator key is only the fallback selected by Desktop when no valid local
-key exists; the plugin cannot read or override client settings. MDBList OAuth
-is intentionally not used—the official API documents the same account-tier
-rate limits for API keys and OAuth.
+Desktop reads MDBList ratings only through the Companion's authenticated
+contract. The administrator key stays on the Jellyfin server and is never
+returned to Desktop. MDBList OAuth is intentionally not used because the
+official API documents the same account-tier rate limits for API keys and
+OAuth.
 
 ## Ratings v1 contract
 
@@ -37,11 +37,11 @@ Authenticated clients probe `GET /MediaFlick/info` (Companion API version 1).
 When the saved MDBList key is valid, the response advertises `ratings-v1` and a
 non-secret `ratings` capability object containing:
 
-- ratings boundary version/range (`1`), fallback-only precedence metadata, and
+- ratings boundary version/range (`1`), server ownership metadata, and
   server-key validity;
 - the supported source catalog, including Letterboxd and separate Rotten
   Tomatoes critic/audience entries;
-- quota, retry, validation timestamp, and TMDB preparation status—never an API
+- quota, retry, validation timestamp, and TMDB validation status—never an API
   key, bearer token, or reusable credential.
 
 Desktop v1 then posts its exact versioned payload to
@@ -92,3 +92,17 @@ MediaFlick's progressive catalog readiness never wait on this service.
 Older clients ignore the new capability data. Unsupported ratings boundary
 versions receive `409` with the supported range, while a plugin without a valid
 server key simply omits `ratings-v1` from the established capability list.
+
+## Collection experience v1
+
+Authenticated Desktop clients use `collection-experience-v1` for normalized
+TMDB Discover and exact-collection results, public MDBList search and list
+results, franchise resolution, IMDb/TVDB-to-TMDB mapping, and provider artwork.
+The plugin filters adult results, owns request bounds and caching, accepts only
+public MDBList selectors, and reduces private, forbidden, or missing lists to
+`List not available`. Desktop never receives provider credentials or calls a
+provider host directly.
+
+This contract replaces the former derived, curated, and native-mirroring
+collection APIs. The hard cut does not import legacy collection definitions and
+does not create, change, or delete Jellyfin BoxSets.

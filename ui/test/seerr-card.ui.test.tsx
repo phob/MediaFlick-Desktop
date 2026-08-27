@@ -35,10 +35,8 @@ const movie: SeerrResult = {
 }
 
 const status: SeerrStatusInfo = {
-  configured: true,
   linked: true,
-  expired: false,
-  serverUrl: "https://seerr.test",
+  mapped: true,
   instance: {
     movie4kEnabled: false,
     series4kEnabled: false,

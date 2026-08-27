@@ -38,14 +38,16 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     );
     match result {
         Ok(_) => {
-            // Signing in as somebody else must not inherit their Seerr link.
-            services.seerr.revalidate();
+            if let Err(response) = activate_account_preferences(services) {
+                return response;
+            }
             services.companion.clear();
             if let Err(error) = services.companion.probe(true) {
                 services.session.note_error(&error);
                 tracing::debug!(target: "companion", "post-login probe failed: {error}");
             }
             services.sync.request();
+            crate::collections::scheduler::request_run(services.clone());
             status(services)
         }
         Err(error) => ApiResponse::from_api_error(&error),
@@ -72,13 +74,16 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
     match result {
         Ok(value) => {
             if value["authenticated"] == json!(true) {
-                services.seerr.revalidate();
+                if let Err(response) = activate_account_preferences(services) {
+                    return response;
+                }
                 services.companion.clear();
                 if let Err(error) = services.companion.probe(true) {
                     services.session.note_error(&error);
                     tracing::debug!(target: "companion", "post-login probe failed: {error}");
                 }
                 services.sync.request();
+                crate::collections::scheduler::request_run(services.clone());
             }
             ApiResponse::ok(value)
         }
@@ -89,10 +94,28 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let forget = request.json()["forgetLibrary"].as_bool().unwrap_or(false);
     services.session.logout(forget);
+    if let Err(error) = services.preferences.activate_account(None) {
+        tracing::error!("could not clear account preferences after logout: {error}");
+        return ApiResponse::error(500, "could not clear account preferences");
+    }
     services.companion.clear();
-    // The Seerr link belongs to the account that just went away. Every read
-    // path re-checks that anyway, but doing it here means a signed-out machine
-    // keeps no Seerr cookie on disk.
-    services.seerr.revalidate();
     status(services)
+}
+
+fn activate_account_preferences(services: &Arc<Services>) -> Result<(), ApiResponse> {
+    let Some(account) = services.session.account_key() else {
+        tracing::error!("authenticated Jellyfin session has no stable account identity");
+        return Err(ApiResponse::error(
+            500,
+            "the signed-in account has no stable identity",
+        ));
+    };
+    services
+        .preferences
+        .activate_account(Some(account))
+        .map(|_| ())
+        .map_err(|error| {
+            tracing::error!("could not activate account preferences: {error}");
+            ApiResponse::error(500, "could not load account preferences")
+        })
 }

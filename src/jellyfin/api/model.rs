@@ -29,6 +29,44 @@ pub struct AuthenticationResult {
 pub struct UserDto {
     pub id: String,
     pub name: String,
+    pub policy: Option<UserPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct UserPolicy {
+    pub max_parental_rating: Option<i32>,
+    pub blocked_tags: Vec<String>,
+    pub block_unrated_items: Vec<String>,
+    #[serde(default = "enabled_by_default")]
+    pub enable_all_folders: bool,
+    pub enabled_folders: Vec<String>,
+}
+
+impl Default for UserPolicy {
+    fn default() -> Self {
+        Self {
+            max_parental_rating: None,
+            blocked_tags: Vec::new(),
+            block_unrated_items: Vec::new(),
+            enable_all_folders: true,
+            enabled_folders: Vec::new(),
+        }
+    }
+}
+
+impl UserPolicy {
+    pub fn restricts_catalog(&self) -> bool {
+        self.max_parental_rating.is_some()
+            || !self.blocked_tags.is_empty()
+            || !self.block_unrated_items.is_empty()
+            || !self.enable_all_folders
+            || !self.enabled_folders.is_empty()
+    }
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

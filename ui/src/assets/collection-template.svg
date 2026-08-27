@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" role="img" aria-label="">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17372f"/>
+      <stop offset="1" stop-color="#07110e"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#4ade80" stop-opacity="0"/>
+      <stop offset="1" stop-color="#4ade80" stop-opacity="0.8"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" fill="url(#background)"/>
+  <path d="M-20 160 110 30l42 42L242-18" fill="none" stroke="url(#signal)" stroke-width="18"/>
+  <g fill="none" stroke="#d9ffe8" stroke-opacity="0.38" stroke-width="3">
+    <rect x="34" y="38" width="78" height="104" rx="4"/>
+    <rect x="121" y="25" width="78" height="117" rx="4"/>
+    <rect x="208" y="48" width="78" height="94" rx="4"/>
+  </g>
+  <g fill="#d9ffe8" fill-opacity="0.2">
+    <circle cx="51" cy="55" r="4"/><circle cx="95" cy="55" r="4"/>
+    <circle cx="138" cy="42" r="4"/><circle cx="182" cy="42" r="4"/>
+    <circle cx="225" cy="65" r="4"/><circle cx="269" cy="65" r="4"/>
+  </g>
+</svg>

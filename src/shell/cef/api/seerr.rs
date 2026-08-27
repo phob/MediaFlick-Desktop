@@ -7,17 +7,9 @@ pub(super) fn route(
     request: &ApiRequest,
 ) -> Option<ApiResponse> {
     let response = match segments {
-        ["seerr", "status"] if request.is("GET") => match services.requests_provider().status() {
-            Ok(value) => ApiResponse::ok(value),
-            Err(error) => ApiResponse::from_provider_error(&error),
-        },
-        ["seerr", "connect"] if request.is("POST") => seerr_connect(services, request),
-        ["seerr", "link"] if request.is("POST") => seerr_link(services),
-        ["seerr", "link", "poll"] if request.is("POST") => seerr_link_poll(services, request),
-        ["seerr", "link", "password"] if request.is("POST") => {
-            seerr_link_password(services, request)
+        ["seerr", "status"] if request.is("GET") => {
+            companion_response(services, services.companion.seerr_status())
         }
-        ["seerr", "unlink"] if request.is("POST") => ApiResponse::ok(services.seerr.unlink()),
         ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
         ["seerr", "person", tmdb_id, "credits"] if request.is("GET") => {
             seerr_person_credits(services, &percent_decode(tmdb_id), request)
@@ -42,68 +34,29 @@ pub(super) fn route(
             seerr_cancel_request(services, &percent_decode(id))
         }
         ["seerr", "image", size, file] if request.is("GET") => {
-            seerr_image(&percent_decode(size), &percent_decode(file))
+            seerr_image(services, &percent_decode(size), &percent_decode(file))
         }
         _ => return None,
     };
     Some(response)
 }
 
-// ---------------------------------------------------------------------- seerr
-
-fn seerr_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    match services
-        .seerr
-        .connect(body["server"].as_str().unwrap_or_default())
-    {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
-    }
-}
-
-/// Starts the password-less link. Answers `{"method":"password"}` — not an
-/// error — whenever Quick Connect is unavailable on either side, since every
-/// Seerr release supports the password path this then falls back to.
-fn seerr_link(services: &Arc<Services>) -> ApiResponse {
-    match services.seerr.link_start() {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
-    }
-}
-
-fn seerr_link_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    match services
-        .seerr
-        .link_poll(body["secret"].as_str().unwrap_or_default())
-    {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
-    }
-}
-
-fn seerr_link_password(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let result = services.seerr.link_with_password(
-        body["username"].as_str().unwrap_or_default(),
-        body["password"].as_str().unwrap_or_default(),
-    );
+fn companion_response(services: &Arc<Services>, result: Result<Value, ApiError>) -> ApiResponse {
     match result {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_seerr_error(&error),
+        Err(error) => {
+            services.session.note_error(&error);
+            ApiResponse::from_api_error(&error)
+        }
     }
 }
 
 fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let query = request.param("q").unwrap_or_default();
-    match services
-        .requests_provider()
-        .search(&query, page_param(request))
-    {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(
+        services,
+        services.companion.seerr_search(&query, page_param(request)),
+    )
 }
 
 fn seerr_person_credits(
@@ -118,9 +71,12 @@ fn seerr_person_credits(
         return ApiResponse::error(400, "that is not a TMDB person id");
     }
 
-    let mut value = match services.requests_provider().person_credits(tmdb_id) {
+    let mut value = match services.companion.seerr_person_credits(tmdb_id) {
         Ok(value) => value,
-        Err(error) => return ApiResponse::from_provider_error(&error),
+        Err(error) => {
+            services.session.note_error(&error);
+            return ApiResponse::from_api_error(&error);
+        }
     };
     // During progressive catalog fill, SQLite cannot yet prove that every
     // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
@@ -394,33 +350,29 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
         Ok(options) => options,
         Err(error) => return ApiResponse::error(400, &error),
     };
-    match services
-        .requests_provider()
-        .discover(kind, page_param(request), &options)
-    {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(
+        services,
+        services
+            .companion
+            .seerr_discover(kind, page_param(request), &options),
+    )
 }
 
 fn seerr_genres(services: &Arc<Services>, media_type: &str) -> ApiResponse {
     if !matches!(media_type, "movie" | "tv") {
         return ApiResponse::error(404, "unknown genre kind");
     }
-    match services.requests_provider().genres(media_type) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(services, services.companion.seerr_genres(media_type))
 }
 
 fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> ApiResponse {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a TMDB id");
     };
-    match services.requests_provider().media(media_type, tmdb_id) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(
+        services,
+        services.companion.seerr_media(media_type, tmdb_id),
+    )
 }
 
 fn seerr_request_options(
@@ -431,13 +383,10 @@ fn seerr_request_options(
     let is_4k = request
         .param("is4k")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-    match services
-        .requests_provider()
-        .request_options(media_type, is_4k)
-    {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(
+        services,
+        services.companion.seerr_request_options(media_type, is_4k),
+    )
 }
 
 fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -467,17 +416,14 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
             );
         }
     };
-    let result = services.requests_provider().create(
+    let result = services.companion.seerr_create_request(
         body["mediaType"].as_str().unwrap_or_default(),
         body["tmdbId"].as_i64().unwrap_or_default(),
-        seasons,
+        seasons.as_deref(),
         body["is4k"].as_bool().unwrap_or(false),
         profile,
     );
-    match result {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(services, result)
 }
 
 fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -487,38 +433,33 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
             .and_then(|value| value.parse().ok())
             .unwrap_or(fallback)
     };
-    let result = services.requests_provider().requests(
+    let result = services.companion.seerr_requests(
         number("take", 20),
         number("skip", 0),
         &request.param("filter").unwrap_or_else(|| "all".to_string()),
     );
-    match result {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(services, result)
 }
 
 fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiResponse {
     let Ok(request_id) = request_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a request id");
     };
-    match services.requests_provider().cancel(request_id) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_provider_error(&error),
-    }
+    companion_response(
+        services,
+        services.companion.seerr_cancel_request(request_id),
+    )
 }
 
-/// The TMDB poster proxy, in the same posture as [`open_external`]: the UI
-/// names a rendition size and an image file, never an address, and
-/// [`tmdb_image_url`] is what decides whether those two compose into a request
-/// at all.
+/// The poster proxy accepts only a named rendition and a plain image file.
+/// The Companion owns the fixed provider origin and Desktop caches the bytes.
 ///
 /// Art for titles the library does not have is exactly the browsing that pulls
 /// the most bytes, so it shares the pruned on-disk cache the Jellyfin image
 /// proxy already has, and is served as immutable — a TMDB file name addresses
 /// one unchanging image.
-fn seerr_image(size: &str, file: &str) -> ApiResponse {
-    let Some(url) = tmdb_image_url(size, file) else {
+fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> ApiResponse {
+    let Some(path) = tmdb_image_path(size, file) else {
         return ApiResponse::error(404, "no such poster");
     };
     let key = cache_key("tmdb", size, file, 0);
@@ -528,15 +469,12 @@ fn seerr_image(size: &str, file: &str) -> ApiResponse {
     {
         return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
     }
-    match fetch_tmdb_image(&url) {
+    match services.companion.collection_artwork(size, &path) {
         Ok((bytes, content_type)) => {
             store_image(&cache_path, &bytes);
             ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
         }
-        Err(error) => {
-            tracing::debug!(target: "app.api", "could not fetch poster art: {error}");
-            ApiResponse::from_seerr_error(&error)
-        }
+        Err(error) => ApiResponse::from_api_error(&error),
     }
 }
 

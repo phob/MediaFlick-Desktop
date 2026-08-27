@@ -8,10 +8,8 @@ import type { ItemSummary, SeerrStatusInfo, Status } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 
 const linked: SeerrStatusInfo = {
-  configured: true,
   linked: true,
-  expired: false,
-  serverUrl: "https://seerr.test",
+  mapped: true,
   instance: {
     movie4kEnabled: false,
     series4kEnabled: false,
@@ -114,7 +112,7 @@ describe("proven server cast extras", () => {
 
   test("an unlinked Seerr never renders the section", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    client.setQueryData(queryKeys.seerrStatus, { ...linked, configured: false, linked: false })
+    client.setQueryData(queryKeys.seerrStatus, { ...linked, linked: false, mapped: false })
     client.setQueryData(queryKeys.status, appStatus)
 
     renderExtras(

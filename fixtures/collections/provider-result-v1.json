@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "mediaType": "movie",
+      "tmdbId": 603,
+      "title": "The Matrix",
+      "originalTitle": "The Matrix",
+      "year": 1999,
+      "overview": "A hacker discovers the world is not what it seems.",
+      "releaseDate": "1999-03-30",
+      "sourceOrder": 0,
+      "posterPath": "/matrix.jpg",
+      "backdropPath": "/matrix-backdrop.jpg",
+      "adult": false
+    },
+    {
+      "mediaType": "series",
+      "tmdbId": 1396,
+      "title": "Breaking Bad",
+      "originalTitle": null,
+      "year": 2008,
+      "overview": "A chemistry teacher changes course.",
+      "releaseDate": "2008-01-20",
+      "sourceOrder": 1,
+      "posterPath": null,
+      "backdropPath": null,
+      "adult": false
+    }
+  ],
+  "total": 2,
+  "movies": 1,
+  "series": 1,
+  "sourceIdentity": "fixture-v1"
+}

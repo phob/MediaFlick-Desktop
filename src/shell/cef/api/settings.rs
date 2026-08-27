@@ -25,10 +25,44 @@ pub(super) fn route(
 }
 
 fn settings_snapshot(services: &Arc<Services>) -> ApiResponse {
-    settings_response(&services.preferences.snapshot())
+    let mut recoveries = Vec::new();
+    push_recovery(
+        &mut recoveries,
+        "Application settings",
+        crate::preferences::store::take_device_recovery_notice(),
+    );
+    push_recovery(
+        &mut recoveries,
+        "Account settings",
+        services.accounts.take_recovery_notice(),
+    );
+    push_recovery(
+        &mut recoveries,
+        "Playback preferences",
+        services.playback_preferences.take_recovery_notice(),
+    );
+    push_recovery(
+        &mut recoveries,
+        "Deletion journal",
+        services.pending_deletions.take_recovery_notice(),
+    );
+    settings_response(&services.preferences.snapshot(), &recoveries)
 }
 
-fn settings_response(settings: &AppSettings) -> ApiResponse {
+fn push_recovery(
+    recoveries: &mut Vec<Value>,
+    area: &str,
+    notice: Option<crate::preferences::RecoveryNotice>,
+) {
+    if let Some(notice) = notice {
+        recoveries.push(json!({
+            "area": area,
+            "restoredBackup": notice.restored_backup,
+        }));
+    }
+}
+
+fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiResponse {
     let bindings = MpvInputBindings::load();
     ApiResponse::ok(json!({
         "client": {
@@ -69,6 +103,7 @@ fn settings_response(settings: &AppSettings) -> ApiResponse {
             "mpchc": cfg!(target_os = "windows"),
             "mpvInstaller": player_setup::supported(),
         },
+        "recoveries": recoveries,
         // Retained for small existing consumers while they move to the
         // sectioned shape above.
         "streamingQuality": settings.streaming_quality.as_str(),
@@ -84,7 +119,7 @@ fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiR
         Err(error) => return ApiResponse::error(400, format!("invalid player settings: {error}")),
     };
     match services.preferences.patch_player(patch) {
-        Ok(change) => settings_response(&change.settings),
+        Ok(change) => settings_response(&change.settings, &[]),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -97,7 +132,7 @@ fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Ap
         }
     };
     match services.preferences.patch_playback(patch) {
-        Ok(change) => settings_response(&change.settings),
+        Ok(change) => settings_response(&change.settings, &[]),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -110,7 +145,7 @@ fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) ->
         }
     };
     match services.preferences.patch_application(patch) {
-        Ok(change) => settings_response(&change.settings),
+        Ok(change) => settings_response(&change.settings, &[]),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }
@@ -123,7 +158,7 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
         }
     };
     match services.preferences.patch_appearance(patch) {
-        Ok(change) => settings_response(&change.settings),
+        Ok(change) => settings_response(&change.settings, &[]),
         Err(error) => ApiResponse::error(400, error.to_string()),
     }
 }

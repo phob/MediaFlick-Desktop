@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod collections;
 mod companion;
 mod integrations;
 mod jellyfin;
@@ -57,10 +58,6 @@ fn main() {
     if cli.library_sync_once {
         std::process::exit(library::headless::sync_once());
     }
-    if cli.seerr_status {
-        std::process::exit(seerr::headless::print_status());
-    }
-
     let instance_id = crate::app::instance::instance_id();
     let _instance_guard = match crate::app::instance::InstanceGuard::acquire(&instance_id) {
         Some(guard) => guard,

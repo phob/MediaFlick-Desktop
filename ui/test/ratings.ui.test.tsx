@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
-import type { ReactNode } from "react"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { EpisodeGrid } from "../src/components/detail/SeasonBrowser"
 import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
@@ -21,12 +20,10 @@ import {
   type DisplayRating,
 } from "../src/lib/rating-context"
 import { RatingsProvider } from "../src/lib/ratings"
-import {
+import Settings, {
   Appearance,
   AppearanceSync,
-  RatingsIntegration,
   RatingSourceSelector,
-  SecureCredentialField,
 } from "../src/routes/Settings"
 import { queryKeys } from "../src/lib/query-client"
 import { requireElement } from "./support/fixtures"
@@ -55,16 +52,10 @@ function display(sourceId: string, value: number): DisplayRating {
 
 const integrationStatus: RatingsIntegrationStatus = {
   boundaryVersion: 1,
-  auth: { currentMode: "api_key", supportedModes: ["api_key"], futureModes: ["public_pkce"] },
-  credentialPrecedence: ["local", "plugin", "none"],
-  effectiveOrigin: "local_mdblist",
+  effectiveOrigin: "plugin",
   available: true,
   selectionEnabled: true,
-  local: {
-    mdblist: { configured: true, valid: true, validation: "valid", detail: "Valid", quota: { limit: 1000, remaining: 900, resetAt: null }, retryAt: null, lastCheckedAt: 1, storage: "os_credential_vault", usedForRatings: true },
-    tmdb: { configured: false, valid: false, validation: "absent", detail: null, quota: { limit: null, remaining: null, resetAt: null }, retryAt: null, lastCheckedAt: null, storage: "os_credential_vault", usedForRatings: false },
-  },
-  plugin: { available: false, capability: "ratings-v1", boundaryVersion: 1, detail: "Not available" },
+  plugin: { available: true, capability: "ratings-v1", boundaryVersion: 1, detail: "Available" },
   sources: definitions,
   selectedSources: ["letterboxd"],
 }
@@ -83,17 +74,10 @@ const clientSettings: ClientSettings = {
   serverUrl: null,
 }
 
-function withSettings(ui: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
-  client.setQueryData(queryKeys.settings, clientSettings)
-  client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
-}
-
 const item: ItemRatings = {
   id: "movie-1",
   ratings: [],
-  origin: "local_mdblist",
+  origin: "plugin",
   fetchedAt: 1,
   sourceUpdatedAt: "2026-08-04T20:00:00Z",
   stale: false,
@@ -158,11 +142,11 @@ describe("configurable card ratings", () => {
     expect(overlay.textContent).not.toContain("RT A")
     expect(overlay.querySelector(".card-rating-separator")).toBeNull()
     expect(overlay.querySelectorAll(".rating-readout-value")).toHaveLength(3)
-    expect(overlay.getAttribute("data-rating-origin")).toBe("local_mdblist")
+    expect(overlay.getAttribute("data-rating-origin")).toBe("plugin")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()
-    expect(overlay.querySelector("[title*='via local MDBList']")).toBeTruthy()
+    expect(overlay.querySelector("[title*='via MDBList']")).toBeTruthy()
   })
 
   test("renders the selected MDBList sources in title details", () => {
@@ -242,7 +226,7 @@ describe("configurable card ratings", () => {
       }
       return new Response(JSON.stringify({
         available: true,
-        effectiveOrigin: "local_mdblist",
+        effectiveOrigin: "plugin",
         retryAt: null,
         diagnostic: null,
         items: [{ ...item, ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }] }],
@@ -251,6 +235,7 @@ describe("configurable card ratings", () => {
     vi.stubGlobal("fetch", fetchMock)
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
     client.setQueryData(queryKeys.settings, clientSettings)
+    client.setQueryData(queryKeys.status, { authenticated: true })
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
     try {
       render(
@@ -302,7 +287,7 @@ describe("configurable card ratings", () => {
           signal: init?.signal,
           resolve: (ratedItems) => resolve(new Response(JSON.stringify({
             available: true,
-            effectiveOrigin: "local_mdblist",
+            effectiveOrigin: "plugin",
             retryAt: null,
             diagnostic: null,
             items: ratedItems,
@@ -382,7 +367,7 @@ describe("configurable card ratings", () => {
       }]
       return new Response(JSON.stringify({
         available: true,
-        effectiveOrigin: "local_mdblist",
+        effectiveOrigin: "plugin",
         retryAt: null,
         diagnostic: null,
         items,
@@ -427,7 +412,7 @@ describe("configurable card ratings", () => {
       batchCalls.push((JSON.parse(String(init?.body)) as { ids: string[] }).ids)
       return new Response(JSON.stringify({
         available: true,
-        effectiveOrigin: "local_mdblist",
+        effectiveOrigin: "plugin",
         retryAt: null,
         diagnostic: null,
         items: [],
@@ -453,38 +438,6 @@ describe("configurable card ratings", () => {
       expect(screen.getByText("episode-1:ready")).toBeTruthy()
     } finally {
       vi.useRealTimers()
-      vi.unstubAllGlobals()
-    }
-  })
-
-  test("keeps saved credentials masked and reveals them only on an explicit action", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ key: "local-secret" }), { status: 200 }),
-    )
-    vi.stubGlobal("fetch", fetchMock)
-    try {
-      render(
-        <SecureCredentialField
-          provider="mdblist"
-          label="MDBList API key"
-          status={integrationStatus.local.mdblist}
-          onStatus={vi.fn()}
-        />,
-      )
-      const input = screen.getByLabelText<HTMLInputElement>("MDBList API key")
-      expect(input.type).toBe("password")
-      expect(input.value).toBe("")
-      expect(input.placeholder).toContain("••••")
-      expect(screen.getByRole("button", { name: "Copy MDBList API key" })).toBeTruthy()
-      expect(screen.getByRole("button", { name: "Remove MDBList API key" })).toBeTruthy()
-      fireEvent.click(screen.getByRole("button", { name: "Reveal MDBList API key" }))
-      expect(await screen.findByDisplayValue("local-secret")).toBeTruthy()
-      expect(input.type).toBe("text")
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/integrations/ratings/credential/mdblist/reveal",
-        expect.objectContaining({ method: "POST" }),
-      )
-    } finally {
       vi.unstubAllGlobals()
     }
   })
@@ -538,6 +491,7 @@ describe("configurable card ratings", () => {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
     client.setQueryData(queryKeys.settings, clientSettings)
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
+    client.setQueryData(queryKeys.status, { authenticated: true })
     client.setQueryData(queryKeys.home, {
       rows: [
         { id: "resume", title: "Continue watching", items: [resumeEpisode] },
@@ -599,14 +553,6 @@ describe("configurable card ratings", () => {
     expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
   })
 
-  test("the ratings page holds the credential and status while source selection lives in Appearance", () => {
-    withSettings(<RatingsIntegration />)
-    expect(screen.getByLabelText("MDBList API key")).toBeTruthy()
-    expect(screen.queryByText(/TMDB/)).toBeNull()
-    expect(screen.queryByLabelText("Rotten Tomatoes Audience")).toBeNull()
-    expect(screen.getByText("available")).toBeTruthy()
-  })
-
   test("saved media-info visibility reaches library cards through the root appearance state", () => {
     const disabled = {
       ...clientSettings,
@@ -629,6 +575,48 @@ describe("configurable card ratings", () => {
     render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
     expect(document.documentElement.dataset.cardPreviews).toBe("false")
     delete document.documentElement.dataset.cardPreviews
+  })
+
+  test("reports Companion services and the current Seerr user mapping", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.status, { authenticated: true })
+    client.setQueryData(queryKeys.companion, {
+      available: true,
+      compatible: true,
+      checked: true,
+      error: null,
+      supportedApi: { min: 1, max: 1 },
+      info: {
+        pluginVersion: "0.2.0",
+        apiVersion: 1,
+        capabilities: ["seerr", "ratings-v1", "collection-experience-v1"],
+        services: { seerr: true, sonarr: true, radarr: false, mdblist: true, tmdb: true },
+      },
+    })
+    client.setQueryData(queryKeys.seerrStatus, {
+      linked: true,
+      mapped: true,
+      instance: { movie4kEnabled: false, series4kEnabled: false, partialRequestsEnabled: true },
+      user: { id: 1, name: "Neo", avatar: null, jellyfinUserId: "neo" },
+      capabilities: null,
+      quota: null,
+    })
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/settings/integrations/companion"]}>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByRole("heading", { name: "MediaFlick Companion" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: "MediaFlick Companion" }).getAttribute("href")).toBe("/settings/integrations/companion")
+    expect(screen.getByText(/This account is mapped as Neo/)).toBeTruthy()
+    expect(screen.getByText("Radarr").closest(".settings-row")?.textContent).toContain("unavailable")
+    expect(screen.getByText("TMDB").closest(".settings-row")?.textContent).toContain("available")
   })
 
   test("disables all source choices without a credential/capability", () => {

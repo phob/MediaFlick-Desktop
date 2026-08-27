@@ -100,7 +100,6 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
           }
         }
       }
-      // Quota, 401 and Retry-After state is canonical in the native service.
       // Refetch only if the status view is active; cards do not need another
       // network request to display the response they just received.
       void queryClient.invalidateQueries({

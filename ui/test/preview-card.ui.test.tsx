@@ -85,7 +85,7 @@ const movieRatings: ItemRatings = {
     votes: 1_000,
     scaleMax: 5,
   }],
-  origin: "local_mdblist",
+  origin: "plugin",
   fetchedAt: 1,
   sourceUpdatedAt: null,
   stale: false,

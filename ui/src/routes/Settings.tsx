@@ -2,18 +2,16 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle,
   CheckCircle2,
-  Copy,
   Download,
   ExternalLink,
-  Eye,
-  EyeOff,
   Film,
   FolderOpen,
-  KeyRound,
   Link,
+  Layers,
   Monitor,
   Palette,
   Play,
+  Plug,
   RefreshCw,
   Save,
   SlidersHorizontal,
@@ -37,7 +35,6 @@ import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-
 import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
-import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -55,21 +52,22 @@ import {
 } from "@/components/ui/select"
 import {
   api,
+  ApiError,
   playerSettingsWrite,
   type AppearanceSettings,
   type ClientSettings,
+  type CompanionService,
   type LetterboxdProfile,
-  type RatingCredentialStatus,
   type RatingSourceDefinition,
-  type RatingsIntegrationStatus,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
 import { queryClient, queryKeys } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
-import { useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { useCompanion, useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import { cssVariables } from "@/lib/style"
+import CollectionSettingsPage from "@/routes/CollectionSettings"
 
 type SettingsPage = {
   to: string
@@ -83,10 +81,10 @@ const NAVIGATION: SettingsPage[] = [
   { to: "/settings/client/player", title: "Player", icon: Play, group: "Client" },
   { to: "/settings/client/playback", title: "Playback", icon: SlidersHorizontal, group: "Client" },
   { to: "/settings/client/application", title: "Application", icon: Monitor, group: "Client" },
-  { to: "/settings/appearance", title: "Appearance", icon: Palette },
-  { to: "/settings/integrations/ratings", title: "MDBList Ratings", icon: KeyRound, group: "Integrations" },
+  { to: "/settings/appearance", title: "Appearance", icon: Palette, signedIn: true, group: "Account" },
+  { to: "/settings/collections", title: "Collections", icon: Layers, signedIn: true, group: "Account" },
+  { to: "/settings/integrations/companion", title: "MediaFlick Companion", icon: Plug, signedIn: true, group: "Integrations" },
   { to: "/settings/integrations/letterboxd", title: "Letterboxd", icon: Link, signedIn: true, group: "Integrations" },
-  { to: "/settings/integrations/seerr", title: "Seerr", icon: Link, signedIn: true, group: "Integrations" },
 ]
 
 function same<T>(left: T, right: T) {
@@ -162,110 +160,9 @@ export function RatingSourceSelector({
       <p id={helpId} className="mt-3 text-xs text-muted-foreground">
         {enabled
           ? "A source that has no rating for a title is simply not shown."
-          : "Add an MDBList API key under Integrations to choose sources."}
+          : "MDBList rating sources are unavailable for this server."}
       </p>
     </fieldset>
-  )
-}
-
-function credentialStatusText(status: RatingCredentialStatus) {
-  const quota = status.quota
-  const quotaText = quota.limit != null && quota.remaining != null
-    ? ` · ${quota.remaining.toLocaleString()} of ${quota.limit.toLocaleString()} requests remaining`
-    : ""
-  const retry = status.retryAt && status.retryAt * 1000 > Date.now()
-    ? ` · retry after ${new Date(status.retryAt * 1000).toLocaleString()}`
-    : ""
-  return `${status.detail ?? (status.configured ? "Credential saved securely." : "No credential saved.")}${quotaText}${retry}`
-}
-
-export function SecureCredentialField({
-  provider,
-  label,
-  status,
-  onStatus,
-}: {
-  provider: "mdblist" | "tmdb"
-  label: string
-  status: RatingCredentialStatus
-  onStatus: (status: RatingsIntegrationStatus) => void
-}) {
-  const [key, setKey] = useState("")
-  const [revealed, setRevealed] = useState(false)
-  const [busy, setBusy] = useState<string | null>(null)
-  const configuredPlaceholder = status.configured ? "••••••••••••••••" : `Enter ${label}`
-  const act = async (name: string, work: () => Promise<void>) => {
-    setBusy(name)
-    try {
-      await work()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Credential operation failed")
-    } finally {
-      setBusy(null)
-    }
-  }
-  const reveal = () => void act("reveal", async () => {
-    if (!key) setKey((await api.ratings.revealCredential(provider)).key)
-    setRevealed((current) => !current || !key)
-  })
-  const copy = () => void act("copy", async () => {
-    const value = key || (await api.ratings.revealCredential(provider)).key
-    if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable")
-    await navigator.clipboard.writeText(value)
-    toast.success(`${label} copied`)
-  })
-  return (
-    <div className="secure-credential-field">
-      <form
-        className="flex min-w-0 flex-1 gap-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!key.trim()) return
-          void act("save", async () => {
-            const saved = await api.ratings.saveCredential(provider, key)
-            onStatus(saved)
-            if (saved.local[provider].configured) {
-              setKey("")
-              setRevealed(false)
-            }
-          })
-        }}
-      >
-        <Input
-          aria-label={label}
-          type={revealed ? "text" : "password"}
-          value={key}
-          onChange={(event) => setKey(event.target.value)}
-          placeholder={configuredPlaceholder}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <Button type="submit" variant={status.configured ? "outline" : "default"} disabled={!key.trim() || busy !== null}>
-          {busy === "save" ? "Checking…" : status.configured ? "Replace" : "Save"}
-        </Button>
-      </form>
-      {status.configured && (
-        <div className="flex shrink-0 gap-1">
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={`${revealed ? "Hide" : "Reveal"} ${label}`} aria-pressed={revealed} onClick={reveal} disabled={busy !== null}>
-            {revealed ? <EyeOff /> : <Eye />}
-          </Button>
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Copy ${label}`} onClick={copy} disabled={busy !== null}><Copy /></Button>
-          <Button type="button" size="icon-sm" variant="ghost" aria-label={`Remove ${label}`} onClick={() => void act("remove", async () => {
-            onStatus(await api.ratings.removeCredential(provider))
-            setKey("")
-            setRevealed(false)
-          })} disabled={busy !== null}><Trash2 /></Button>
-        </div>
-      )}
-      {status.configured && provider === "mdblist" && (
-        <Button type="button" variant="ghost" size="sm" disabled={busy !== null} onClick={() => void act("validate", async () => onStatus(await api.ratings.validateCredential(provider)))}>
-          {busy === "validate" ? "Checking…" : "Validate"}
-        </Button>
-      )}
-      <p className="secure-credential-status" data-status={status.validation} aria-live="polite">
-        {credentialStatusText(status)}
-      </p>
-    </div>
   )
 }
 
@@ -543,11 +440,27 @@ function PlaybackSettings() {
 function ApplicationSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
+  const { data: status } = useStatus()
   const [draft, setDraft] = useSourceDraft(settings?.client.application)
+  const [deleteConfirmation, setDeleteConfirmation] = useState("")
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  const deleteAccount = useMutation({
+    mutationFn: api.collections.deleteLocalAccount,
+    onSuccess: () => {
+      queryClient.clear()
+      void queryClient.invalidateQueries({ queryKey: queryKeys.status })
+      toast.success("Local account data deleted")
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
   if (settingsQuery.error && !settings) return <SettingsError title="Application settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Application" detail="Control window behavior and the diagnostics recorded by the desktop client." />
+    {(settings.recoveries?.length ?? 0) > 0 && <Section title="Recovered local settings" description="MediaFlick preserved each damaged file before continuing.">
+      {settings.recoveries?.map((recovery) => <p key={recovery.area} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
+        {recovery.area}: {recovery.restoredBackup ? "the last valid backup was restored." : "defaults are in use because no valid backup was available."}
+      </p>)}
+    </Section>}
     <Section title="Window" description="These choices are applied immediately after saving.">
       <SettingsRow title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
       <SettingsRow title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Switch aria-label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
@@ -555,6 +468,16 @@ function ApplicationSettings() {
     <Section title="Diagnostics" description="A log-level change is picked up on the next application launch.">
       <SettingsRow title="Log level" description="Use Debug only while investigating a problem."><SelectField label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
     </Section>
+    {status?.authenticated && <Section title="Local account data" description={`Remove this device's data for ${status.userName ?? "this account"} on ${status.serverUrl ?? "this server"}. Nothing is deleted from Jellyfin.`}>
+      <SettingsRow title="Delete local account data" description="This removes account settings, playback choices, collection snapshots, and custom collection posters, then signs this device out.">
+        <div className="flex w-full max-w-md flex-col gap-2">
+          <Input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} placeholder="Type DELETE to confirm" aria-label="Type DELETE to confirm local account deletion" />
+          <Button variant="destructive" disabled={deleteConfirmation !== "DELETE" || deleteAccount.isPending} onClick={() => {
+            if (window.confirm(`Delete local data for ${status.userName ?? "this account"} on ${status.serverUrl ?? "this server"}?`)) deleteAccount.mutate()
+          }}><Trash2 />{deleteAccount.isPending ? "Deleting…" : "Delete local account data"}</Button>
+        </div>
+      </SettingsRow>
+    </Section>}
     <SaveBar dirty={!same(draft, settings.client.application)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.application)} onReset={() => setDraft({ closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" })} restartRequired={draft.logLevel !== settings.client.application.logLevel} />
   </div>
 }
@@ -735,15 +658,20 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
 }
 
 export function Appearance() {
+  const statusQuery = useStatus()
+  const { data: status } = statusQuery
   const settingsQuery = useSettings()
-  const ratingsQuery = useRatingsStatus()
+  const ratingsQuery = useRatingsStatus(Boolean(status?.authenticated))
   const { data: settings } = settingsQuery
   const { data: ratings } = ratingsQuery
   const [draft, setDraft] = useSourceDraft(settings?.appearance)
   const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  if (statusQuery.error && !status) return <SettingsError title="Appearance unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
+  if (statusQuery.isPending) return <SettingsLoading />
+  if (!status?.authenticated) return <SignInRequired name="Appearance" />
   if (settingsQuery.error && !settings) return <SettingsError title="Appearance settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
-  return <div className="settings-page"><PageTitle title="Appearance" detail="Tune the MediaFlick shell without changing your library or server settings." />
+  return <div className="settings-page"><PageTitle title="Appearance" detail="Tune MediaFlick for this Jellyfin account without changing library or server settings." />
     <Section title="Live preview" description="Your own shelves with your unsaved choices applied here only; the rest of MediaFlick changes after Save.">
       <AppearancePreview appearance={draft} />
     </Section>
@@ -786,33 +714,8 @@ export function Appearance() {
   </div>
 }
 
-export function RatingsIntegration() {
-  const statusQuery = useRatingsStatus()
-  const { data: status } = statusQuery
-  const onStatus = (next: RatingsIntegrationStatus) => queryClient.setQueryData(queryKeys.ratingsStatus, next)
-  if (statusQuery.error && !status) return <SettingsError title="Ratings status unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
-  if (!status) return <SettingsLoading />
-  const origin = status.effectiveOrigin === "local_mdblist"
-    ? "Your local MDBList key"
-    : status.effectiveOrigin === "plugin"
-      ? "Your server's MediaFlick plugin"
-      : "Disabled — add an MDBList key or enable ratings on your server's MediaFlick plugin"
-  return <div className="settings-page">
-    <PageTitle title="MDBList Ratings" detail="Show ratings from MDBList on artwork and title details." />
-    <Section title="Credential" description="The key is stored in the operating-system credential vault and never sent to your Jellyfin server.">
-      <SettingsRow title="MDBList API key" description="Your personal key from mdblist.com. A local key takes precedence over the server's plugin.">
-        <SecureCredentialField provider="mdblist" label="MDBList API key" status={status.local.mdblist} onStatus={onStatus} />
-      </SettingsRow>
-    </Section>
-    <Section title="Status" description="Which rating sources appear on cards is chosen in Appearance.">
-      <SettingsRow title="Ratings come from" description={origin}><span className="settings-status" data-status={status.available ? "verified" : "unverified"}>{status.available ? <CheckCircle2 /> : <AlertTriangle />}{status.available ? "available" : "disabled"}</span></SettingsRow>
-      <SettingsRow title="Server plugin" description={status.plugin.detail}><span className="data-value">{status.plugin.available ? "available" : "not available"}</span></SettingsRow>
-    </Section>
-  </div>
-}
-
 function SignInRequired({ name }: { name: string }) {
-  return <div className="settings-page"><PageTitle title={name} detail="This integration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description="Sign in to your Jellyfin server to configure this integration."><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
+  return <div className="settings-page"><PageTitle title={name} detail="This configuration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description={`Sign in to your Jellyfin server to view or configure ${name}.`}><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
 }
 
 function Letterboxd() {
@@ -844,22 +747,64 @@ function ProfileCard({ profile, onEnabled, onRefresh, onOpen, onRemove }: { prof
   return <div className="settings-profile-card"><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="font-medium">{profile.displayName}</h3><span className="settings-status" data-status={profile.verificationStatus}>{profile.verificationStatus === "verified" ? <CheckCircle2 /> : <AlertTriangle />}{profile.verificationStatus}</span></div><p className="mt-1 truncate text-sm text-muted-foreground">{profile.canonicalUrl}</p></div><div className="flex flex-wrap items-center justify-end gap-1"><Switch aria-label={`Enable ${profile.displayName}`} checked={profile.enabled} onCheckedChange={onEnabled} /><Button size="icon-sm" variant="ghost" aria-label="Refresh profile" onClick={onRefresh}><RefreshCw /></Button><Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button><Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button></div></div>
 }
 
-function Seerr() {
+const COMPANION_SERVICES: ReadonlyArray<{
+  id: CompanionService
+  name: string
+  description: string
+}> = [
+  { id: "seerr", name: "Seerr", description: "Discovery and requests for mapped Jellyfin users." },
+  { id: "sonarr", name: "Sonarr", description: "Upcoming episodes and download status." },
+  { id: "radarr", name: "Radarr", description: "Upcoming films and download status." },
+  { id: "mdblist", name: "MDBList", description: "Shared ratings and public list sources." },
+  { id: "tmdb", name: "TMDB", description: "Movie franchises and collection metadata." },
+]
+
+function Availability({ available }: { available: boolean }) {
+  return <span className="settings-status" data-status={available ? "verified" : "unverified"}>{available ? <CheckCircle2 /> : <AlertTriangle />}{available ? "available" : "unavailable"}</span>
+}
+
+export function CompanionIntegration() {
   const statusQuery = useStatus()
-  const seerrQuery = useSeerrStatus()
+  const companionQuery = useCompanion()
   const { data: status } = statusQuery
-  const { data: seerr } = seerrQuery
-  const [setup, setSetup] = useState(false)
-  if (statusQuery.error && !status) return <SettingsError title="Seerr unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
+  const { data: companion } = companionQuery
+  const companionSeerr = Boolean(companion?.compatible && companion.info?.services.seerr)
+  const seerrQuery = useSeerrStatus(companionSeerr)
+  if (statusQuery.error && !status) return <SettingsError title="Companion status unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
   if (statusQuery.isPending) return <SettingsLoading />
-  if (!status?.authenticated) return <SignInRequired name="Seerr" />
-  if (seerrQuery.error && !seerr) return <SettingsError title="Seerr status unavailable" error={seerrQuery.error} onRetry={() => void seerrQuery.refetch()} />
-  if (seerrQuery.isPending) return <SettingsLoading />
-  return <div className="settings-page"><PageTitle title="Seerr" detail="Connect Seerr to discover titles and submit requests from MediaFlick." />
-    <Section title="Connection" description="Seerr signs in with your Jellyfin account; no server password is retained by MediaFlick.">
-      <SettingsRow title="Status" description={seerr?.linked ? "This Jellyfin account can request through the connected Seerr instance." : "No Seerr instance is linked for this Jellyfin account."}><Button variant={seerr?.linked ? "outline" : "default"} onClick={() => setSetup(true)}>{seerr?.linked ? "Manage connection" : "Set up Seerr"}</Button></SettingsRow>
+  if (!status?.authenticated) return <SignInRequired name="MediaFlick Companion" />
+  if (companionQuery.error && !companion) return <SettingsError title="Companion status unavailable" error={companionQuery.error} onRetry={() => void companionQuery.refetch()} />
+  if (!companion) return <SettingsLoading />
+
+  const pluginDescription = !companion.available
+    ? companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
+    : companion.compatible
+      ? `Plugin ${companion.info?.pluginVersion ?? "unknown"}, API ${companion.info?.apiVersion ?? "unknown"}.`
+      : `Plugin API ${companion.info?.apiVersion ?? "unknown"} is outside Desktop's supported range ${companion.supportedApi.min} to ${companion.supportedApi.max}.`
+  const pluginAvailable = companion.available && companion.compatible
+
+  return <div className="settings-page"><PageTitle title="MediaFlick Companion" detail="Server-managed integrations available to this Jellyfin account." />
+    <Section title="Plugin" description="Administrators configure these services in Jellyfin's MediaFlick Companion dashboard.">
+      <SettingsRow title="Connection" description={pluginDescription}><Availability available={pluginAvailable} /></SettingsRow>
     </Section>
-    {setup && <SeerrSetupDialog onClose={() => setSetup(false)} />}
+    <Section title="Services" description="Desktop reads these connections through Companion and never receives their addresses or credentials.">
+      {COMPANION_SERVICES.map((service) => {
+        const available = Boolean(pluginAvailable && companion.info?.services[service.id])
+        let description = service.description
+        if (service.id === "seerr" && available) {
+          if (seerrQuery.data?.mapped) {
+            description += ` This account is mapped${seerrQuery.data.user?.name ? ` as ${seerrQuery.data.user.name}` : ""}.`
+          } else if (seerrQuery.error instanceof ApiError && seerrQuery.error.status === 409) {
+            description += " This Jellyfin account has not been imported into Seerr."
+          } else if (seerrQuery.error) {
+            description += " The account mapping could not be checked."
+          } else {
+            description += " Checking this account's mapping."
+          }
+        }
+        return <SettingsRow key={service.id} title={service.name} description={description}><Availability available={available} /></SettingsRow>
+      })}
+    </Section>
   </div>
 }
 
@@ -888,5 +833,5 @@ export function AppearanceSync() {
 }
 
 export default function Settings() {
-  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="integrations/ratings" element={<RatingsIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="integrations/seerr" element={<Seerr />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
+  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
 }

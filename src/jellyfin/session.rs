@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use serde_json::{Value, json};
 
 use crate::library::{Library, StoredCredentials};
-use crate::preferences::{AppSettings, normalize_server_url};
+use crate::preferences::{AccountKey, AppSettings, normalize_server_url};
 
 use super::api::auth::{self, Credentials};
 use super::api::{ApiError, JellyfinClient};
@@ -15,10 +15,12 @@ use super::api::{ApiError, JellyfinClient};
 struct SessionState {
     server_url: Option<String>,
     server_name: Option<String>,
+    server_id: Option<String>,
     user_id: Option<String>,
     user_name: Option<String>,
     device_id: String,
     token: Option<String>,
+    restricted: bool,
     /// Set when the server rejected our token; the UI must re-authenticate.
     expired: bool,
 }
@@ -30,7 +32,7 @@ pub struct Session {
 
 impl Session {
     /// Restores the persisted session, falling back to the server URL that the
-    /// pre-own-UI releases kept in `config.json`.
+    /// pre-own-UI releases kept in the legacy `config.json`.
     pub fn restore(library: Arc<Library>) -> Self {
         let stored = library.credentials();
         let server_url = stored
@@ -40,10 +42,14 @@ impl Session {
         let state = SessionState {
             server_url,
             server_name: None,
+            server_id: stored.server_id,
             user_id: stored.user_id.clone(),
             user_name: stored.user_name.clone(),
             device_id: stored.device_id.clone(),
             token: stored.token,
+            // Restored sessions hide Missing until a live user-policy read
+            // proves that the account has no catalog restrictions.
+            restricted: true,
             expired: false,
         };
         Self {
@@ -67,12 +73,39 @@ impl Session {
         self.read().user_id
     }
 
+    pub fn account_key(&self) -> Option<AccountKey> {
+        let state = self.read();
+        AccountKey::new(state.server_id?, state.user_id?)
+    }
+
     pub fn is_authenticated(&self) -> bool {
         let state = self.read();
         !state.expired
             && state.token.is_some()
             && state.user_id.is_some()
+            && state.server_id.is_some()
             && state.server_url.is_some()
+    }
+
+    pub fn user_restricted(&self) -> bool {
+        self.read().restricted
+    }
+
+    pub fn refresh_user_policy(&self) {
+        let Ok((client, user_id)) = self.client_and_user() else {
+            return;
+        };
+        let path = format!("/Users/{}", crate::app::urls::encode_path_segment(&user_id));
+        let Ok(user) = client.get_json::<super::api::model::UserDto>(&path, &[]) else {
+            return;
+        };
+        let restricted = user
+            .policy
+            .as_ref()
+            .is_none_or(super::api::model::UserPolicy::restricts_catalog);
+        if let Ok(mut state) = self.state.write() {
+            state.restricted = restricted;
+        }
     }
 
     /// An authenticated client, or the reason one cannot be built.
@@ -197,9 +230,11 @@ impl Session {
 
         if let Ok(mut state) = self.state.write() {
             state.server_url = Some(server_url.to_string());
+            state.server_id = Some(credentials.server_id.clone());
             state.user_id = Some(credentials.user_id.clone());
             state.user_name = Some(credentials.user_name.clone());
             state.token = Some(credentials.token);
+            state.restricted = credentials.restricted;
             state.expired = false;
         }
         tracing::info!(
@@ -210,8 +245,8 @@ impl Session {
         Ok(self.status())
     }
 
-    /// Keeps `config.json` in step so the "Open Jellyfin dashboard" action and
-    /// upgrades from older releases keep working.
+    /// Keeps `settings.json` in step so the dashboard action and upgrades from
+    /// older releases keep working.
     fn remember_server_url(&self, server_url: &str) {
         let Some(services) = crate::app::services::services() else {
             tracing::warn!(target: "jellyfin.session", "preferences service was unavailable while saving the server URL");
@@ -231,16 +266,22 @@ impl Session {
         {
             tracing::debug!(target: "jellyfin.session", "server-side logout failed: {error}");
         }
+        self.clear_local(forget_library);
+        tracing::info!(target: "jellyfin.session", "signed out of Jellyfin");
+    }
+
+    pub fn clear_local(&self, forget_library: bool) {
         if let Err(error) = self.library.clear_session(forget_library) {
             tracing::warn!(target: "jellyfin.session", "failed to clear the local session: {error}");
         }
         if let Ok(mut state) = self.state.write() {
             state.user_id = None;
             state.user_name = None;
+            state.server_id = None;
             state.token = None;
+            state.restricted = true;
             state.expired = false;
         }
-        tracing::info!(target: "jellyfin.session", "signed out of Jellyfin");
     }
 
     /// Called when the server answers 401/403: pauses sync and sends the UI
@@ -317,6 +358,7 @@ mod tests {
         let mut credentials = library.credentials();
         credentials.server_url = Some("http://server:8096".to_string());
         credentials.user_id = Some("uid".to_string());
+        credentials.server_id = Some("server".to_string());
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 
@@ -334,6 +376,7 @@ mod tests {
         let mut credentials = library.credentials();
         credentials.server_url = Some("http://server:8096".to_string());
         credentials.user_id = Some("uid".to_string());
+        credentials.server_id = Some("server".to_string());
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 
@@ -350,6 +393,7 @@ mod tests {
         let mut credentials = library.credentials();
         credentials.server_url = Some("http://server:8096".to_string());
         credentials.user_id = Some("uid".to_string());
+        credentials.server_id = Some("server".to_string());
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 

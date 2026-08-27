@@ -2,7 +2,7 @@
 // `mediaflick-desktop://app/` scheme. Shapes mirror `summary_row` / `detail_row`
 // in `src/library/mod.rs` and the handlers in `api.rs`.
 
-import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "./json.ts"
+import { isJsonObject, jsonBoolean, jsonString, type JsonObject, type JsonValue } from "./json.ts"
 
 const TICKS_PER_MS = 10_000
 const POSTER_WIDTH = 400
@@ -336,6 +336,7 @@ interface BootstrapProgress {
 export interface Status {
   authenticated?: boolean
   serverUrl?: string | null
+  userId?: string | null
   userName?: string | null
   library?: LibraryStats
   syncing?: boolean
@@ -347,11 +348,13 @@ export interface Status {
   companion?: CompanionStatus
 }
 
-interface CompanionInfo {
+export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"
+
+export interface CompanionInfo {
   pluginVersion: string
   apiVersion: number
   capabilities: string[]
-  services: Record<"sonarr" | "radarr" | "seerr", boolean>
+  services: Record<CompanionService, boolean>
 }
 
 export interface CompanionStatus {
@@ -446,6 +449,7 @@ export interface ClientSettings {
     mpchc: boolean
     mpvInstaller: boolean
   }
+  recoveries?: { area: string; restoredBackup: boolean }[]
   /** Legacy aliases retained by the shell during the API transition. */
   streamingQuality: StreamingQualityId
   playerBackend: "mpv" | "mpchc"
@@ -470,7 +474,7 @@ export interface AppearanceSettings {
   ratingSources: string[]
 }
 
-type RatingOrigin = "local_mdblist" | "plugin"
+type RatingOrigin = "plugin"
 
 export interface RatingSourceDefinition {
   id: string
@@ -481,37 +485,11 @@ export interface RatingSourceDefinition {
   known: boolean
 }
 
-export interface RatingCredentialStatus {
-  configured: boolean
-  valid: boolean
-  validation: "absent" | "unchecked" | "valid" | "invalid" | "offline" | "rate_limited" | "unavailable" | "saved" | (string & {})
-  detail: string | null
-  quota: {
-    limit: number | null
-    remaining: number | null
-    resetAt: number | null
-  }
-  retryAt: number | null
-  lastCheckedAt: number | null
-  storage: "os_credential_vault"
-  usedForRatings: boolean
-}
-
 export interface RatingsIntegrationStatus {
   boundaryVersion: 1
-  auth: {
-    currentMode: "api_key"
-    supportedModes: string[]
-    futureModes: string[]
-  }
-  credentialPrecedence: ["local", "plugin", "none"]
   effectiveOrigin: RatingOrigin | "none"
   available: boolean
   selectionEnabled: boolean
-  local: {
-    mdblist: RatingCredentialStatus
-    tmdb: RatingCredentialStatus
-  }
   plugin: {
     available: boolean
     capability: "ratings-v1"
@@ -585,7 +563,7 @@ export interface QuickConnectStart {
 /** The two TMDB namespaces; `person` results never reach the UI. */
 export type SeerrMediaType = "movie" | "tv"
 
-/** `status_name` in `src/seerr/api/model.rs`. */
+/** Normalized media availability returned by Companion's Seerr contract. */
 export type SeerrStatus =
   | "unknown"
   | "pending"
@@ -594,7 +572,7 @@ export type SeerrStatus =
   | "available"
   | "blacklisted"
 
-/** `request_status_name` in `src/seerr/api/model.rs`. */
+/** Normalized request state returned by Companion's Seerr contract. */
 export type SeerrRequestStatus = "unknown" | "pending" | "approved" | "declined" | "failed"
 
 /**
@@ -760,12 +738,9 @@ interface SeerrQuotaStatus {
   restricted: boolean
 }
 
-/** Mirrors `SeerrSession::status` in `src/seerr/mod.rs`. */
+/** The signed-in user's Seerr state reported by MediaFlick Companion. */
 export interface SeerrStatusInfo {
-  configured: boolean
   linked: boolean
-  expired: boolean
-  serverUrl: string | null
   instance: {
     movie4kEnabled: boolean
     series4kEnabled: boolean
@@ -774,101 +749,231 @@ export interface SeerrStatusInfo {
   user: { id: number; name: string; avatar: string | null; jellyfinUserId: string | null } | null
   capabilities: SeerrCapabilities | null
   quota: { movie: SeerrQuotaStatus; tv: SeerrQuotaStatus } | null
-  mapped?: boolean
-}
-
-/** What `POST /api/seerr/connect` reports about the instance it probed. */
-export interface SeerrServerInfo {
-  serverUrl: string
-  version: string
-  applicationTitle: string | null
-  localLogin: boolean
-  mediaServerLogin: boolean
-  newSignInAllowed: boolean
-  movie4kEnabled: boolean
-  series4kEnabled: boolean
-  partialRequestsEnabled: boolean
-  linked: boolean
-}
-
-/**
- * `link` answers `{ method: "password" }` whenever Quick Connect is unavailable
- * on either side — that is the expected answer on every stable Seerr, not an
- * error, so the dialog just shows the password form.
- */
-export interface SeerrLinkResult {
-  method: "password" | "quickconnect"
-  linked: boolean
-  secret?: string
-  status?: SeerrStatusInfo
+  mapped: boolean
 }
 
 // ------------------------------------------------------------- collections
 
-/**
- * One TMDB movie collection the library has movies in, derived by the
- * Companion plugin. TMDB collections are inherently movie-only; series never
- * appear in this surface.
- */
-/**
- * One collection in the listing. Two sources share the shape: a native
- * Jellyfin BoxSet carries a string id plus local artwork tags, while a derived
- * TMDB summary keeps the numeric TMDB id and Seerr poster paths.
- */
-export interface CollectionSummary {
-  id: number | string
-  /** TMDB collection identity when a BoxSet carries it. */
-  tmdbId?: number | null
-  /** Curated-definition marker when the plugin manages this set. */
-  curatedId?: string | null
+export type CollectionMode = "mediaFlick" | "jellyfin"
+export type CollectionMediaType = "movie" | "series" | "mixed"
+export type RefreshCadence = "manual" | "daily" | "weekly" | "monthly"
+export type CollectionCategory =
+  | "trending"
+  | "popular"
+  | "streamingServices"
+  | "topRated"
+  | "inTheaters"
+  | "upcoming"
+  | "onAir"
+  | "editorial"
+  | "custom"
+
+export type CollectionTemplatePictogram =
+  | "award"
+  | "binary"
+  | "blocks"
+  | "bone"
+  | "bookOpen"
+  | "briefcase"
+  | "bug"
+  | "calendarClock"
+  | "calendarDays"
+  | "circle"
+  | "compass"
+  | "crosshair"
+  | "drama"
+  | "film"
+  | "flame"
+  | "ghost"
+  | "heart"
+  | "landmark"
+  | "languages"
+  | "laugh"
+  | "listVideo"
+  | "monitorPlay"
+  | "mountain"
+  | "music"
+  | "orbit"
+  | "palette"
+  | "pawPrint"
+  | "popcorn"
+  | "rocket"
+  | "search"
+  | "slidersHorizontal"
+  | "sparkles"
+  | "star"
+  | "swords"
+  | "telescope"
+  | "trendingUp"
+  | "trophy"
+  | "tv"
+  | "usersRound"
+  | "wandSparkles"
+  | "zap"
+
+export interface ProviderReadiness {
+  tmdb: boolean
+  mdblist: boolean
+}
+
+export interface CollectionSettings {
+  effectiveMode: CollectionMode
+  mediaFlickAvailable: boolean
+  modeSelection: CollectionMode | null
+  franchises: { includeUnreleased: boolean }
+  readiness: ProviderReadiness
+  recovery: { damagedPath: string; restoredBackup: boolean } | null
+  access: { readOnly: boolean; version?: number }
+}
+
+export type CollectionSource =
+  | {
+      kind: "tmdbDiscover"
+      schemaVersion: number
+      parameters: JsonObject
+    }
+  | {
+      kind: "tmdbCollection"
+      schemaVersion: number
+      collectionId: number
+      includeUnreleased: boolean
+    }
+  | {
+      kind: "mdbListPublicList"
+      schemaVersion: number
+      listId: string
+    }
+
+export type CollectionResultLimit =
+  | { kind: "all" }
+  | { kind: "maximum"; count: number }
+
+export interface CollectionTemplateReference {
+  id: string
+  version: number
+}
+
+export interface CollectionProfileDraft {
+  template: CollectionTemplateReference
+  title: string
+  description: string
+  customPosterId: string | null
+  source: CollectionSource
+  mediaType: CollectionMediaType
+  limit: CollectionResultLimit
+  ordering: "source"
+  cadence: RefreshCadence
+}
+
+export interface CollectionProfile extends CollectionProfileDraft {
+  id: string
+  revision: string
+}
+
+export interface CollectionTemplate extends Omit<CollectionProfileDraft, "template" | "customPosterId"> {
+  id: string
+  version: number
+  category: CollectionCategory
+  pictogram: CollectionTemplatePictogram
+}
+
+export interface CollectionTemplates {
+  categories: CollectionCategory[]
+  templates: { template: CollectionTemplate; available: boolean }[]
+  readiness: ProviderReadiness
+}
+
+export interface NormalizedCollectionTitle {
+  mediaType: CollectionMediaType
+  tmdbId: number
+  title: string
+  originalTitle?: string | null
+  year?: number | null
+  overview: string
+  releaseDate?: string | null
+  sourceOrder: number
+  posterPath?: string | null
+  backdropPath?: string | null
+  adult: boolean
+}
+
+export interface ClassifiedCollectionTitle extends NormalizedCollectionTitle {
+  localItems: { id: string; name: string; kind: string; played: boolean }[]
+}
+
+export interface CollectionPreview {
+  items: NormalizedCollectionTitle[]
+  total: number
+  movies: number
+  series: number
+  sourceIdentity?: string | null
+}
+
+export interface PublicCollectionList {
+  id: string
+  name: string
+  owner: string | null
+}
+
+export interface CollectionProfilesIndex {
+  profiles: CollectionProfile[]
+  errors?: Record<string, string>
+}
+
+export interface CollectionProfileDetail {
+  profile: CollectionProfile
+  status: "updating" | "resultsUnavailable" | "ready"
+  owned: ClassifiedCollectionTitle[]
+  missing: NormalizedCollectionTitle[]
+  items: NormalizedCollectionTitle[]
+  ownershipAvailable?: boolean
+  refresh?: {
+    lastAttempt: number | null
+    lastSuccess: number | null
+    latestFailure: string | null
+    nextDue: number | null
+    initialized: boolean
+  }
+  overdue?: boolean
+}
+
+export interface FranchiseCollection {
+  collectionId: number
   name: string
   posterPath: string | null
   backdropPath: string | null
-  /** Local artwork identity for Jellyfin-native collections. */
-  primaryImageTag?: string | null
+  owned: ClassifiedCollectionTitle[]
+  missing: NormalizedCollectionTitle[]
+  items?: NormalizedCollectionTitle[]
+  ownershipAvailable?: boolean
+}
+
+export interface FranchiseCollectionsIndex {
+  status: "updating" | "resultsUnavailable" | "ready"
+  franchises: FranchiseCollection[]
+}
+
+export interface JellyfinCollectionSummary {
+  id: string
+  name: string
+  primaryImageTag: string | null
+  backdropImageTag: string | null
   itemCount: number | null
 }
 
-export interface CollectionsIndex {
-  /** `jellyfin` when the listing answers from the server's own BoxSets. */
-  source?: "jellyfin" | "tmdb"
-  collections: CollectionSummary[]
-  libraryMovies?: number
-  mappedMovies?: number
-  /** Movies whose collection mapping has not been resolved yet. */
-  pendingMovies?: number
-}
-
-export interface CollectionDetail {
-  id: number | string
-  name: string
-  overview: string | null
-  posterPath: string | null
-  backdropPath: string | null
-  /** Movie or series parts joined to local ownership by media kind and TMDB id. */
-  parts: SeerrResult[]
-  /** Curated definitions report their capped authoritative size. */
-  totalParts?: number
-  /** Entries omitted because TMDB or Seerr could not resolve them. */
-  unresolvedParts?: number
-}
-
-/** One Jellyfin BoxSet joined with its movie and series children. */
-export interface BoxSetDetail {
+export interface JellyfinCollectionDetail {
   id: string
-  tmdbId: number | null
-  curatedId: string | null
   name: string
   primaryImageTag: string | null
   backdropImageTag: string | null
   items: ItemSummary[]
+  totalRecordCount: number
 }
 
-/** The single collection one TMDB movie belongs to, or none. */
+/** The single exact TMDB franchise a movie belongs to, or none. */
 export interface MovieCollection {
   tmdbId: number
-  /** A BoxSet id when native mirroring is on, otherwise the TMDB id. */
-  collection: { id: number | string; name: string } | null
+  collection: { id: number; name: string } | null
 }
 
 export const SEERR_DISCOVER_ROWS = [
@@ -937,9 +1042,8 @@ export interface SeerrGenre {
 }
 
 /**
- * TMDB art through the Rust proxy. The size is a name from the allowlist in
- * `tmdb_image_url` (`src/seerr/api/client.rs`) — the UI never composes an
- * address, exactly as with the Jellyfin image proxy and the external links.
+ * Provider art through the Desktop and Companion proxies. The UI supplies
+ * only an allowlisted rendition name and provider-issued image path.
  */
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
@@ -1039,19 +1143,11 @@ export class ApiError extends Error {
   readonly status: number
   /** The server rejected the stored token — the shell must return to sign-in. */
   readonly expired: boolean
-  /**
-   * The *Seerr* session lapsed, which `from_seerr_error` reports under its own
-   * name. Signing out of the app over it would be wrong: the Jellyfin session
-   * is untouched, and only the Seerr link needs establishing again.
-   */
-  readonly seerrExpired: boolean
-
-  constructor(message: string, status: number, expired: boolean, seerrExpired = false) {
+  constructor(message: string, status: number, expired: boolean) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.expired = expired
-    this.seerrExpired = seerrExpired
   }
 }
 
@@ -1064,18 +1160,15 @@ interface RequestOptions {
 interface ApiErrorEnvelope {
   error?: string
   expired?: boolean
-  seerrExpired?: boolean
 }
 
 function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   if (!isJsonObject(value)) return null
   const error = jsonString(value.error)
   const expired = jsonBoolean(value.expired)
-  const seerrExpired = jsonBoolean(value.seerrExpired)
   return {
     error: error ?? undefined,
     expired: expired ?? undefined,
-    seerrExpired: seerrExpired ?? undefined,
   }
 }
 
@@ -1100,11 +1193,31 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       envelope?.error ?? `request failed (${response.status})`,
       response.status,
       Boolean(envelope?.expired),
-      Boolean(envelope?.seerrExpired),
     )
   }
   // SAFETY: The embedded UI and Rust shell ship together, and every request<T>
   // call names the response type owned by that same-version local API route.
+  return payload as T
+}
+
+async function upload<T>(path: string, body: ArrayBuffer): Promise<T> {
+  const response = await fetch(path, { method: "POST", body })
+  let payload: JsonValue = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+  if (!response.ok) {
+    const envelope = readApiErrorEnvelope(payload)
+    throw new ApiError(
+      envelope?.error ?? `request failed (${response.status})`,
+      response.status,
+      Boolean(envelope?.expired),
+    )
+  }
+  // SAFETY: Every upload call names the response type owned by the
+  // same-version local Rust route.
   return payload as T
 }
 
@@ -1154,26 +1267,6 @@ export const api = {
   },
   ratings: {
     status: () => request<RatingsIntegrationStatus>("/api/integrations/ratings"),
-    saveCredential: (provider: "mdblist" | "tmdb", key: string) =>
-      request<RatingsIntegrationStatus>(
-        `/api/integrations/ratings/credential/${provider}`,
-        { method: "PUT", body: { key } },
-      ),
-    validateCredential: (provider: "mdblist" | "tmdb") =>
-      request<RatingsIntegrationStatus>(
-        `/api/integrations/ratings/credential/${provider}/validate`,
-        { method: "POST" },
-      ),
-    revealCredential: (provider: "mdblist" | "tmdb") =>
-      request<{ key: string }>(
-        `/api/integrations/ratings/credential/${provider}/reveal`,
-        { method: "POST" },
-      ),
-    removeCredential: (provider: "mdblist" | "tmdb") =>
-      request<RatingsIntegrationStatus>(
-        `/api/integrations/ratings/credential/${provider}`,
-        { method: "DELETE" },
-      ),
     batch: (ids: string[], signal?: AbortSignal) =>
       request<RatingsBatchResponse>("/api/ratings/batch", {
         method: "POST",
@@ -1293,19 +1386,6 @@ export const api = {
 
   seerr: {
     status: () => request<SeerrStatusInfo>("/api/seerr/status"),
-    connect: (server: string) =>
-      request<SeerrServerInfo>("/api/seerr/connect", { method: "POST", body: { server } }),
-    /** Tries the password-less path; answers `method: "password"` if unavailable. */
-    link: () => request<SeerrLinkResult>("/api/seerr/link", { method: "POST" }),
-    linkPoll: (secret: string) =>
-      request<SeerrLinkResult>("/api/seerr/link/poll", { method: "POST", body: { secret } }),
-    linkPassword: (username: string, password: string) =>
-      request<SeerrLinkResult>("/api/seerr/link/password", {
-        method: "POST",
-        body: { username, password },
-      }),
-    unlink: () => request<SeerrStatusInfo>("/api/seerr/unlink", { method: "POST" }),
-
     search: (q: string, page = 1, signal?: AbortSignal) =>
       request<SeerrPage<SeerrResult>>(`/api/seerr/search${queryString({ q, page })}`, { signal }),
     personCredits: (tmdbId: number, jellyfinId?: string | null, signal?: AbortSignal) =>
@@ -1352,15 +1432,96 @@ export const api = {
   // ------------------------------------------------------------ collections
 
   collections: {
-    index: (signal?: AbortSignal) => request<CollectionsIndex>("/api/collections", { signal }),
-    detail: (id: number | string, signal?: AbortSignal) =>
-      request<CollectionDetail>(`/api/collections/${id}`, { signal }),
-    boxset: (id: string, signal?: AbortSignal) =>
-      request<BoxSetDetail>(`/api/collections/boxset/${encodeURIComponent(id)}`, { signal }),
-    curated: (id: string, signal?: AbortSignal) =>
-      request<CollectionDetail>(`/api/collections/curated/${encodeURIComponent(id)}`, { signal }),
+    settings: (reprobe = false) =>
+      request<CollectionSettings>(
+        reprobe ? "/api/collections/settings/reprobe" : "/api/collections/settings",
+        reprobe ? { method: "POST" } : undefined,
+      ),
+    patchSettings: (body: { modeSelection?: CollectionMode; includeUnreleased?: boolean }) =>
+      request<CollectionSettings>("/api/collections/settings", { method: "PATCH", body }),
+    templates: (signal?: AbortSignal) =>
+      request<CollectionTemplates>("/api/collections/templates", { signal }),
+    searchPublicLists: (query: string, signal?: AbortSignal) =>
+      request<{ lists: PublicCollectionList[] }>("/api/collections/mdblist/search", {
+        method: "POST",
+        body: { query },
+        signal,
+      }),
+    validatePublicList: (selector: string, signal?: AbortSignal) =>
+      request<PublicCollectionList>("/api/collections/mdblist/validate", {
+        method: "POST",
+        body: { selector },
+        signal,
+      }),
+    preview: (body: CollectionProfileDraft, signal?: AbortSignal) =>
+      request<CollectionPreview>("/api/collections/preview", { method: "POST", body, signal }),
+    profiles: (signal?: AbortSignal) =>
+      request<CollectionProfilesIndex>("/api/collections/profiles", { signal }),
+    createProfile: (body: CollectionProfileDraft) =>
+      request<{ profile: CollectionProfile; total: number }>("/api/collections/profiles", {
+        method: "POST",
+        body,
+      }),
+    updateProfile: (id: string, body: CollectionProfileDraft) =>
+      request<CollectionProfile | { profile: CollectionProfile; total: number }>(
+        `/api/collections/profiles/${encodeURIComponent(id)}`,
+        { method: "PATCH", body },
+      ),
+    deleteProfile: (id: string) =>
+      request<{ deleted: boolean }>(`/api/collections/profiles/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    reorderProfiles: (profileIds: string[]) =>
+      request<CollectionProfilesIndex>("/api/collections/profiles/order", {
+        method: "PUT",
+        body: { profileIds },
+      }),
+    refreshProfile: (id: string) =>
+      request<{ profile: CollectionProfile; total: number }>(
+        `/api/collections/profiles/${encodeURIComponent(id)}/refresh`,
+        { method: "POST" },
+      ),
+    mine: (signal?: AbortSignal) =>
+      request<CollectionProfilesIndex>("/api/collections/mine", { signal }),
+    mineDetail: (id: string, signal?: AbortSignal) =>
+      request<CollectionProfileDetail>(`/api/collections/mine/${encodeURIComponent(id)}`, {
+        signal,
+      }),
+    franchises: (localDate: string, signal?: AbortSignal) =>
+      request<FranchiseCollectionsIndex>(
+        `/api/collections/franchises${queryString({ localDate })}`,
+        { signal },
+      ),
+    franchise: (id: number, localDate: string, signal?: AbortSignal) =>
+      request<FranchiseCollection>(
+        `/api/collections/franchises/${id}${queryString({ localDate })}`,
+        { signal },
+      ),
+    jellyfin: (signal?: AbortSignal) =>
+      request<{ collections: JellyfinCollectionSummary[] }>("/api/collections/jellyfin", {
+        signal,
+      }),
+    jellyfinDetail: (id: string, signal?: AbortSignal) =>
+      request<JellyfinCollectionDetail>(`/api/collections/jellyfin/${encodeURIComponent(id)}`, {
+        signal,
+      }),
+    uploadArtwork: (body: ArrayBuffer) =>
+      upload<{ id: string }>("/api/collections/artwork", body),
+    artworkUrl: (id: string) => `/api/collections/artwork/${encodeURIComponent(id)}`,
+    providerArtworkUrl: (path: string | null | undefined, size = "w342") =>
+      path ? `/api/collections/provider-artwork${queryString({ path, size })}` : null,
+    title: (mediaType: SeerrMediaType, tmdbId: number, signal?: AbortSignal) =>
+      request<{ item: NormalizedCollectionTitle }>(
+        `/api/collections/title/${mediaType}/${tmdbId}`,
+        { signal },
+      ),
     forMovie: (tmdbId: number) =>
       request<MovieCollection>(`/api/collections/movie/${tmdbId}`),
+    deleteLocalAccount: () =>
+      request<{ deleted: boolean }>("/api/collections/local-account", {
+        method: "DELETE",
+        body: { confirmed: true },
+      }),
   },
 }
 

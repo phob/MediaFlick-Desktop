@@ -130,10 +130,10 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     };
     match items::fetch_media_sources(&client, &user_id, item_id) {
         Ok(sources) => {
-            let preference = match services.library.playback_preference(item_id) {
-                Ok(preference) => preference,
-                Err(error) => return storage_failure(&error),
-            };
+            let preference = services
+                .session
+                .account_key()
+                .and_then(|account| services.playback_preferences.get(&account, item_id));
             ApiResponse::ok(json!({
                 "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
                 "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
@@ -220,11 +220,15 @@ fn set_item_playback_preference(
     }
 
     let preference = ItemPlaybackPreference::capture(source, source_index, audio, subtitle);
+    let Some(account) = services.session.account_key() else {
+        return ApiResponse::error(401, "sign in to save playback preferences");
+    };
     if let Err(error) = services
-        .library
-        .save_playback_preference(item_id, &preference)
+        .playback_preferences
+        .save(&account, item_id, &preference)
     {
-        return storage_failure(&error);
+        tracing::warn!(target: "app.api", "could not save playback preference: {error}");
+        return ApiResponse::error(500, format!("could not save playback preference: {error}"));
     }
     ApiResponse::ok(json!({
         "playbackPreference": resolve_playback_preference(Some(&preference), &sources),

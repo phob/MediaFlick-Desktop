@@ -12,7 +12,7 @@ const PHASE_COPY = {
   "checking-seerr": "Checking Seerr…",
   "not-linked":
     "Seerr is not connected. Your server results above are still complete. ",
-  "needs-plugin": "Update the MediaFlick Companion plugin to discover this person’s Seerr titles.",
+  "needs-plugin": "Seerr person discovery is unavailable on this server.",
   resolving: "Matching this person with Jellyfin and TMDB…",
   "waiting-for-catalog":
     "Finishing the progressive library catalog before showing requestable titles, so local titles are never duplicated here.",
@@ -46,8 +46,8 @@ export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps)
       phase === "not-linked" ? (
         <p className="py-4 text-sm text-muted-foreground">
           {copy}
-          <Link to="/settings/integrations/seerr" className="text-primary hover:underline">
-            Open Seerr settings
+          <Link to="/" className="text-primary hover:underline">
+            Back to Home
           </Link>
           .
         </p>

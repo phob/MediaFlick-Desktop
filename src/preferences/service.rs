@@ -1,14 +1,14 @@
 use std::fmt;
-use std::sync::{Mutex, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 
 use serde::{Deserialize, Deserializer};
 
 use crate::players::mpv::input::MpvInputBindings;
 
 use super::{
-    AppSettings, AppearanceAccent, AppearanceDensity, AppearanceTheme, CloseBehavior,
-    FileSettingsStore, FullscreenBehavior, PlayerBackend, SegmentSkipMode, SettingsStore,
-    StreamingQuality, WebUiWindowSettings,
+    AccountConfigurationService, AccountKey, AppSettings, AppearanceAccent, AppearanceDensity,
+    AppearanceTheme, CloseBehavior, FileSettingsStore, FullscreenBehavior, PlayerBackend,
+    SegmentSkipMode, SettingsStore, StreamingQuality, WebUiWindowSettings,
 };
 
 /// Serialized patches accepted by the settings API.  These deliberately name
@@ -114,24 +114,72 @@ impl std::error::Error for PreferencesError {}
 /// caller receives a normalized snapshot, while CEF subscribes to changes to
 /// perform UI-thread-only work such as rebuilding the playback backend.
 pub struct PreferencesService {
-    settings: Mutex<AppSettings>,
+    state: Mutex<PreferencesState>,
+    accounts: Arc<AccountConfigurationService>,
     listener: Mutex<Option<mpsc::Sender<SettingsChange>>>,
 }
 
+struct PreferencesState {
+    settings: AppSettings,
+    active_account: Option<AccountKey>,
+}
+
 impl PreferencesService {
-    pub fn new(mut settings: AppSettings) -> Self {
+    pub fn new(
+        mut settings: AppSettings,
+        accounts: Arc<AccountConfigurationService>,
+        active_account: Option<AccountKey>,
+    ) -> Self {
         settings.sanitize();
+        settings.appearance = active_account
+            .as_ref()
+            .map(|key| accounts.appearance(key))
+            .unwrap_or_default();
         Self {
-            settings: Mutex::new(settings),
+            state: Mutex::new(PreferencesState {
+                settings,
+                active_account,
+            }),
+            accounts,
             listener: Mutex::new(None),
         }
     }
 
     pub fn snapshot(&self) -> AppSettings {
-        self.settings
+        self.state
             .lock()
-            .map(|settings| settings.clone())
+            .map(|state| state.settings.clone())
             .unwrap_or_default()
+    }
+
+    /// Selects the account-owned appearance after sign-in, or the neutral
+    /// defaults after sign-out. The account document itself is retained.
+    pub fn activate_account(
+        &self,
+        active_account: Option<AccountKey>,
+    ) -> Result<SettingsChange, PreferencesError> {
+        let change = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| PreferencesError("settings service is unavailable".to_string()))?;
+            let previous = state.settings.clone();
+            let mut next = previous.clone();
+            next.appearance = active_account
+                .as_ref()
+                .map(|key| self.accounts.appearance(key))
+                .unwrap_or_default();
+            state.active_account = active_account;
+            state.settings = next.clone();
+            let change = SettingsChange {
+                plan: SettingsApplyPlan::between(&previous, &next),
+                settings: next,
+            };
+            drop(state);
+            change
+        };
+        self.notify(&change);
+        Ok(change)
     }
 
     /// The shell has one top-level browser, so a single registered receiver is
@@ -260,7 +308,16 @@ impl PreferencesService {
         &self,
         patch: AppearanceSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
-        self.update(move |next| {
+        let change = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| PreferencesError("settings service is unavailable".to_string()))?;
+            let account = state.active_account.clone().ok_or_else(|| {
+                PreferencesError("sign in to save appearance settings".to_string())
+            })?;
+            let previous = state.settings.clone();
+            let mut next = previous.clone();
             if let Some(value) = patch.theme.as_deref() {
                 next.appearance.theme = AppearanceTheme::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("theme"))?;
@@ -291,8 +348,22 @@ impl PreferencesService {
             if let Some(value) = patch.rating_sources {
                 next.appearance.rating_sources = value;
             }
-            Ok(())
-        })
+            next.appearance.sanitize();
+            self.accounts
+                .save_appearance(&account, &next.appearance)
+                .map_err(|error| {
+                    PreferencesError(format!("could not save account config: {error}"))
+                })?;
+            state.settings = next.clone();
+            let change = SettingsChange {
+                plan: SettingsApplyPlan::between(&previous, &next),
+                settings: next,
+            };
+            drop(state);
+            change
+        };
+        self.notify(&change);
+        Ok(change)
     }
 
     /// Installation is a shell operation, but writing its discovered path
@@ -337,11 +408,11 @@ impl PreferencesService {
         augment_plan: impl FnOnce(&mut SettingsApplyPlan),
     ) -> Result<SettingsChange, PreferencesError> {
         let change = {
-            let mut current = self
-                .settings
+            let mut state = self
+                .state
                 .lock()
                 .map_err(|_| PreferencesError("settings service is unavailable".to_string()))?;
-            let previous = current.clone();
+            let previous = state.settings.clone();
             let mut next = previous.clone();
             mutate(&mut next)?;
             next.sanitize();
@@ -354,15 +425,19 @@ impl PreferencesService {
                 settings: next.clone(),
                 plan,
             };
-            *current = next;
+            state.settings = next;
             change
         };
+        self.notify(&change);
+        Ok(change)
+    }
+
+    fn notify(&self, change: &SettingsChange) {
         if let Ok(listener) = self.listener.lock()
             && let Some(listener) = listener.as_ref()
         {
             let _ = listener.send(change.clone());
         }
-        Ok(change)
     }
 }
 
@@ -411,9 +486,32 @@ impl SettingsApplyPlan {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
-    use crate::preferences::{SegmentSkipMode, StreamingQuality};
+    use crate::preferences::{
+        AccountConfigurationService, AccountKey, AppearanceSettings, AppearanceTheme,
+        SegmentSkipMode, StreamingQuality,
+    };
     use serde_json::json;
+
+    static TEST_PATH_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    fn account_test_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "mediaflick-preferences-accounts-{}-{}.json",
+            std::process::id(),
+            TEST_PATH_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn cleanup_account_test(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let mut backup = path.as_os_str().to_os_string();
+        backup.push(".bak");
+        let _ = std::fs::remove_file(PathBuf::from(backup));
+    }
 
     #[test]
     fn player_patch_contract_accepts_only_writable_fields() {
@@ -465,6 +563,56 @@ mod tests {
         .expect("appearance patch");
         assert_eq!(patch.card_previews, Some(false));
         assert_eq!(patch.show_media_info, Some(false));
+    }
+
+    #[test]
+    fn appearance_follows_the_active_account_and_survives_logout() {
+        let path = account_test_path();
+        let accounts = Arc::new(
+            AccountConfigurationService::open(path.clone()).expect("open account settings"),
+        );
+        let alice = AccountKey::new("server", "alice").expect("alice account");
+        let bob = AccountKey::new("server", "bob").expect("bob account");
+        let service =
+            PreferencesService::new(AppSettings::default(), accounts, Some(alice.clone()));
+
+        service
+            .patch_appearance(AppearanceSettingsPatch {
+                theme: Some("dark".to_string()),
+                ..AppearanceSettingsPatch::default()
+            })
+            .expect("save Alice appearance");
+        assert_eq!(service.snapshot().appearance.theme, AppearanceTheme::Dark);
+
+        service.activate_account(None).expect("log out");
+        assert_eq!(service.snapshot().appearance, AppearanceSettings::default());
+        service.activate_account(Some(bob)).expect("activate Bob");
+        assert_eq!(service.snapshot().appearance, AppearanceSettings::default());
+        service
+            .activate_account(Some(alice))
+            .expect("activate Alice again");
+        assert_eq!(service.snapshot().appearance.theme, AppearanceTheme::Dark);
+
+        cleanup_account_test(&path);
+    }
+
+    #[test]
+    fn appearance_writes_require_an_active_account() {
+        let path = account_test_path();
+        let accounts = Arc::new(
+            AccountConfigurationService::open(path.clone()).expect("open account settings"),
+        );
+        let service = PreferencesService::new(AppSettings::default(), accounts, None);
+
+        let error = service
+            .patch_appearance(AppearanceSettingsPatch {
+                theme: Some("dark".to_string()),
+                ..AppearanceSettingsPatch::default()
+            })
+            .expect_err("anonymous appearance write must fail");
+        assert_eq!(error.to_string(), "sign in to save appearance settings");
+
+        cleanup_account_test(&path);
     }
 
     #[test]

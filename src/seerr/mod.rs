@@ -1,17 +1,16 @@
-//! Seerr, the project formerly called Jellyseerr, as a request backend.
-//!
-//! MediaFlick is a client to Seerr, not a second arr orchestrator. Seerr owns
-//! quality profiles, root folders, approval rules, and quotas. MediaFlick keeps
-//! the user's session cookie, never an instance-wide API key.
-//!
-//! A session belongs to one Jellyfin account. Every client acquisition checks
-//! that binding so one user's Seerr cookie cannot serve another user.
-
-pub mod api;
-pub mod headless;
+//! Desktop-side input validation and artwork handling for Companion-backed
+//! Seerr features. Companion owns every authenticated Seerr request.
 
 mod discovery;
-mod session;
+mod images;
 
 pub use discovery::{DiscoverKind, DiscoverOptions};
-pub use session::{RequestProfileSelection, SeerrSession};
+pub use images::tmdb_image_path;
+
+/// An advanced request pins a title to one Seerr download destination and one
+/// quality profile owned by that destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestProfileSelection {
+    pub server_id: i64,
+    pub profile_id: i64,
+}

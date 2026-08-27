@@ -7,17 +7,20 @@ namespace Jellyfin.Plugin.MediaFlick.Tests;
 public sealed class CompanionControllerTests
 {
     [Fact]
-    public void CuratedContractDoesNotDependOnSavedDefinitions()
+    public void CollectionExperienceContractDoesNotDependOnProviderReadiness()
     {
         var capabilities = InfoController.Capabilities(new PluginConfiguration(), false);
 
-        Assert.Contains("collections-curated-v1", capabilities);
+        Assert.Contains("collection-experience-v1", capabilities);
+        Assert.DoesNotContain("collections-v1", capabilities);
+        Assert.DoesNotContain("collections-v2", capabilities);
+        Assert.DoesNotContain("collections-curated-v1", capabilities);
     }
 
     [Fact]
-    public void CollectionsControllerCanBeActivatedByMvc()
+    public void CollectionExperienceControllerCanBeActivatedByMvc()
     {
-        var constructor = Assert.Single(typeof(CollectionsController).GetConstructors());
+        var constructor = Assert.Single(typeof(CollectionExperienceController).GetConstructors());
 
         Assert.True(constructor.IsPublic);
     }

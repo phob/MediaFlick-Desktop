@@ -20,17 +20,7 @@ public sealed class RatingsTests
     public void AdministratorSecretsAreProtectedReplaceableAndRemovable()
     {
         using var directory = new TemporaryDirectory();
-        var definition = new CuratedCollectionDefinition
-        {
-            Id = "top-250",
-            Name = "Top 250",
-            MdbListSource = "snoak/imdb-top-250-movies"
-        };
-        var configuration = new PluginConfiguration
-        {
-            CuratedCollections = [definition],
-            NativeCollections = true
-        };
+        var configuration = new PluginConfiguration();
         var protection = DataProtectionProvider.Create(new DirectoryInfo(directory.Path));
         var store = new DataProtectedRatingSecretStore(
             protection,
@@ -55,12 +45,10 @@ public sealed class RatingsTests
         store.Remove("mdblist");
         Assert.False(store.IsConfigured("mdblist"));
         Assert.Null(store.Get("mdblist"));
-        Assert.True(configuration.NativeCollections);
-        Assert.Same(definition, Assert.Single(configuration.CuratedCollections));
     }
 
     [Fact]
-    public void CuratedListRequestsKeepTheFullRankedItemPayload()
+    public void PublicListRequestsKeepTheFullRankedItemPayload()
     {
         var path = MdbListHttpTransport.BuildListItemsPath(
             "key with +",
@@ -73,38 +61,7 @@ public sealed class RatingsTests
     }
 
     [Fact]
-    public async Task CuratedResolverRejectsNonemptyListsWithoutUsableTmdbIds()
-    {
-        var transport = new FakeTransport
-        {
-            ListItemsResponse = new MdbListResponse(
-                HttpStatusCode.OK,
-                JsonNode.Parse(
-                    """
-                    {
-                      "movies": [{"tmdb": 238}],
-                      "shows": [],
-                      "pagination": {"total": 1}
-                    }
-                    """),
-                new RatingQuotaResponse(null, null, null),
-                null)
-        };
-        var secrets = new MemorySecretStore();
-        secrets.Set("mdblist", "secret");
-        var resolver = new CuratedCollectionResolver(transport, secrets);
-
-        var exception = await Assert.ThrowsAsync<GatewayException>(() => resolver.ResolveAsync(
-            string.Empty,
-            "snoak/imdb-top-250-movies",
-            CancellationToken.None));
-
-        Assert.Equal(StatusCodes.Status502BadGateway, exception.StatusCode);
-        Assert.Contains("without usable TMDB identities", exception.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CapabilityAndAdminStatusAreAuthenticatedAndRedactSecrets()
+    public async Task CapabilityAndAdminStatusAreAuthenticatedAndRedactSecrets()
     {
         AssertAuthorizeAttribute(typeof(RatingsController), null);
         AssertAuthorizeAttribute(typeof(InfoController), null);
@@ -125,10 +82,13 @@ public sealed class RatingsTests
 
         var capability = fixture.Service.Capability();
         Assert.True(capability.Available);
-        Assert.True(capability.FallbackOnly);
-        Assert.Equal(["local", "plugin", "none"], capability.CredentialPrecedence);
+        Assert.False(capability.FallbackOnly);
+        Assert.Equal(["plugin", "none"], capability.CredentialPrecedence);
         Assert.Equal(1, capability.BoundaryVersion);
-        var infoResult = new InfoController(new ServiceHealthStore(), fixture.Service).GetInfo();
+        var infoResult = await new InfoController(
+            new ServiceHealthStore(),
+            fixture.Service,
+            fixture.Collections).GetInfo(TestContext.Current.CancellationToken);
         var infoJson = Assert.IsType<JsonResult>(infoResult.Result);
         var info = Assert.IsType<PluginInfoResponse>(infoJson.Value);
         Assert.Contains("ratings-v1", info.Capabilities);
@@ -144,7 +104,7 @@ public sealed class RatingsTests
         Assert.DoesNotContain("0123456789abcdef", json);
         Assert.DoesNotContain("apiKey", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("aspnet_data_protection", json);
-        Assert.Contains("\"fallbackOnly\":true", json);
+        Assert.Contains("\"fallbackOnly\":false", json);
     }
 
     [Fact]
@@ -173,9 +133,23 @@ public sealed class RatingsTests
             "0123456789abcdef0123456789abcdef",
             CancellationToken.None);
         Assert.True(status.Tmdb.Valid);
-        Assert.True(status.Tmdb.PreparationOnly);
+        Assert.False(status.Tmdb.PreparationOnly);
         Assert.False(status.Tmdb.UsedForRatings);
         Assert.Equal(1, fixture.Transport.ValidateCalls);
+
+        fixture.TmdbTransport.Response = new TmdbResponse(
+            HttpStatusCode.Unauthorized,
+            new JsonObject(),
+            null);
+        await Assert.ThrowsAsync<RatingRequestException>(() =>
+            fixture.Service.SaveCredentialAsync(
+                "tmdb",
+                "abcdef0123456789abcdef0123456789",
+                CancellationToken.None));
+        Assert.Equal(
+            "0123456789abcdef0123456789abcdef",
+            fixture.Secrets.Get("tmdb"));
+        Assert.True(fixture.Cache.Health("tmdb").Valid);
 
         var error = await Assert.ThrowsAsync<RatingRequestException>(() =>
             fixture.Service.SaveCredentialAsync(
@@ -522,7 +496,12 @@ public sealed class RatingsTests
         {
             CachePath = System.IO.Path.Combine(_directory.Path, "ratings.json");
             Cache = new RatingsCacheStore(CachePath);
-            Service = new RatingsService(Cache, Secrets, Transport);
+            Service = new RatingsService(Cache, Secrets, Transport, tmdbTransport: TmdbTransport);
+            Collections = new CollectionProviderService(
+                TmdbTransport,
+                Transport,
+                Secrets,
+                Cache);
         }
 
         public string CachePath { get; }
@@ -533,7 +512,11 @@ public sealed class RatingsTests
 
         public FakeTransport Transport { get; } = new();
 
+        public FakeTmdbTransport TmdbTransport { get; } = new();
+
         public RatingsService Service { get; }
+
+        public CollectionProviderService Collections { get; }
 
         public void ConfigureValidKey()
         {
@@ -628,6 +611,30 @@ public sealed class RatingsTests
         public string? LastListResource { get; private set; }
 
         public MdbListResponse? ListItemsResponse { get; set; }
+    }
+
+    private sealed class FakeTmdbTransport : ITmdbTransport
+    {
+        public TmdbResponse Response { get; set; } = new(
+            HttpStatusCode.OK,
+            new JsonObject(),
+            null);
+
+        public Task<ArtworkResponse> GetArtworkAsync(
+            string size,
+            string path,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new ArtworkResponse(
+                HttpStatusCode.OK,
+                [0xFF, 0xD8, 0xFF],
+                "image/jpeg"));
+
+        public Task<TmdbResponse> GetAsync(
+            string credential,
+            string path,
+            IReadOnlyDictionary<string, string> query,
+            CancellationToken cancellationToken)
+            => Task.FromResult(Response);
     }
 
     private static class InterlockedExtensions

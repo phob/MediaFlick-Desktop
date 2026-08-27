@@ -45,10 +45,6 @@ pub struct Cli {
     /// Print local library cache statistics and exit.
     #[arg(long, default_value_t = false)]
     pub library_stats: bool,
-
-    /// Print the Seerr link state, probe it, and exit.
-    #[arg(long, default_value_t = false)]
-    pub seerr_status: bool,
 }
 
 impl Cli {

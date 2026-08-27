@@ -60,13 +60,23 @@ export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.settings })
 }
 
-export function useRatingsStatus() {
+export function useRatingsStatus(enabled = true) {
   return useQuery({
     queryKey: queryKeys.ratingsStatus,
     queryFn: api.ratings.status,
+    enabled,
     staleTime: 5 * 60_000,
     retry: false,
   })
+}
+
+function resetAccountQueries() {
+  queryClient.removeQueries({ queryKey: ["letterboxd"] })
+  queryClient.removeQueries({ queryKey: ["seerr"] })
+  queryClient.removeQueries({ queryKey: ["collections"] })
+  queryClient.removeQueries({ queryKey: queryKeys.companion })
+  queryClient.removeQueries({ queryKey: queryKeys.ratingsStatus })
+  void queryClient.resetQueries({ queryKey: queryKeys.settings })
 }
 
 export function useHome(enabled = true) {
@@ -390,6 +400,7 @@ export function useLogin() {
     onSuccess: (status) => {
       queryClient.removeQueries({ queryKey: queryKeys.billboard })
       queryClient.setQueryData(queryKeys.status, status)
+      resetAccountQueries()
       invalidateMediaSurfaces()
     },
   })
@@ -430,6 +441,7 @@ export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
         // that authenticated session and must not cross into the new account.
         queryClient.removeQueries({ queryKey: queryKeys.billboard })
         await queryClient.invalidateQueries({ queryKey: queryKeys.status })
+        resetAccountQueries()
         invalidateMediaSurfaces()
       }
       return result
@@ -451,9 +463,7 @@ export function useLogout() {
       queryClient.removeQueries({ queryKey: ["items"] })
       queryClient.removeQueries({ queryKey: queryKeys.home })
       queryClient.removeQueries({ queryKey: queryKeys.billboard })
-      // The Seerr link belonged to the account that just went away; the shell
-      // has already dropped it, so nothing of it may stay in the cache either.
-      queryClient.removeQueries({ queryKey: ["seerr"] })
+      resetAccountQueries()
     },
   })
 }
@@ -461,75 +471,18 @@ export function useLogout() {
 // -------------------------------------------------------------------- seerr
 
 /**
- * Seerr's own failure handler. Deliberately not `reportError`: that invalidates
- * the *Jellyfin* status on a 401, which would bounce the user to the sign-in
- * screen because a Seerr cookie lapsed. Only the Seerr status is re-read, which
- * is what puts the re-link prompt on screen.
+ * Whether Companion mapped this Jellyfin user to Seerr, and what they may ask
+ * for. Every Seerr feature gates on this shared answer.
  */
-function reportSeerrError(error: Error) {
-  toast.error(error.message)
-  if (error instanceof ApiError && (error.seerrExpired || error.status === 401)) {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
-  }
-}
-
-/**
- * Whether Seerr is linked, and what this user may ask for. Every Seerr surface
- * gates on it, so it is fetched once and shared.
- */
-export function useSeerrStatus() {
+export function useSeerrStatus(enabled = true) {
   return useQuery({
     queryKey: queryKeys.seerrStatus,
     queryFn: api.seerr.status,
-    // The answer costs a round trip to Seerr, and it only changes when the user
-    // links, unlinks, or the session lapses.
+    enabled,
+    // The answer costs a Companion and Seerr round trip. It changes only when
+    // an administrator updates the service or user mapping.
     staleTime: 5 * 60_000,
     retry: false,
-  })
-}
-
-export function useSeerrConnect() {
-  return useMutation({
-    mutationFn: (server: string) => api.seerr.connect(server),
-    onSuccess: () => {
-      // Destination ids are local to one Seerr instance. Never carry a
-      // Radarr/Sonarr profile list across an instance switch.
-      queryClient.removeQueries({ queryKey: ["seerr", "request-options"] })
-    },
-  })
-}
-
-export function useSeerrLink() {
-  return useMutation({
-    mutationFn: () => api.seerr.link(),
-    onSuccess: (result) => {
-      if (result.linked) void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
-    },
-  })
-}
-
-export function useSeerrLinkPassword() {
-  return useMutation({
-    mutationFn: ({ username, password }: { username: string; password: string }) =>
-      api.seerr.linkPassword(username, password),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus })
-    },
-  })
-}
-
-export function useSeerrUnlink() {
-  return useMutation({
-    mutationFn: api.seerr.unlink,
-    onError: reportSeerrError,
-    onSuccess: (status) => {
-      queryClient.setQueryData(queryKeys.seerrStatus, status)
-      queryClient.removeQueries({ queryKey: ["seerr", "requests"] })
-      queryClient.removeQueries({ queryKey: ["seerr", "discover"] })
-      queryClient.removeQueries({ queryKey: ["seerr", "search"] })
-      queryClient.removeQueries({ queryKey: ["seerr", "person"] })
-      queryClient.removeQueries({ queryKey: ["seerr", "request-options"] })
-    },
   })
 }
 
@@ -666,7 +619,7 @@ export function useSeerrRequest() {
       serverId?: number
       profileId?: number
     }) => api.seerr.request(body),
-    onError: reportSeerrError,
+    onError: reportError,
     onSuccess: (created) => {
       // The dialog is kept even for an auto-approving user (chunk 11's resolved
       // default), so the outcome is reported from what Seerr actually did.
@@ -679,7 +632,7 @@ export function useSeerrRequest() {
 export function useSeerrCancelRequest() {
   return useMutation({
     mutationFn: (id: number) => api.seerr.cancelRequest(id),
-    onError: reportSeerrError,
+    onError: reportError,
     onSuccess: () => {
       toast.success("Request cancelled")
       invalidateSeerrSurfaces()
@@ -689,61 +642,134 @@ export function useSeerrCancelRequest() {
 
 // ------------------------------------------------------------- collections
 
-async function loadCompleteCollections(signal: AbortSignal) {
-  let index = await api.collections.index(signal)
-  while ((index.pendingMovies ?? 0) > 0) {
-    // Companion resolves at most one bounded batch per request. Keep the query
-    // pending until every library movie has a resolved collection mapping. The
-    // native BoxSet listing never pends: it answers from the server directly.
-    index = await api.collections.index(signal)
-  }
-  return index
+export function collectionAccountKey(status: ReturnType<typeof useStatus>["data"]) {
+  return `${status?.serverUrl ?? "anonymous"}:${status?.userId ?? "anonymous"}`
 }
 
-export function useCollections(enabled = true) {
+export function useCollectionSettings(enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collections,
-    queryFn: ({ signal }) => loadCompleteCollections(signal),
-    // The plugin derives the index from the library and its own cache, so it
-    // moves slowly; a fresh mount should not re-derive it.
-    staleTime: 5 * 60_000,
-    enabled,
+    queryKey: queryKeys.collectionSettings(account),
+    queryFn: () => api.collections.settings(),
+    enabled: enabled && Boolean(status?.authenticated),
     retry: false,
   })
 }
 
-export function useCollectionDetail(id: number | null) {
+export function useCollectionTemplates(enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.collection(id ?? 0),
-    queryFn: ({ signal }) => api.collections.detail(id!, signal),
-    enabled: id !== null,
+    queryKey: queryKeys.collectionTemplates(account),
+    queryFn: ({ signal }) => api.collections.templates(signal),
+    enabled: enabled && Boolean(status?.authenticated),
+    staleTime: 30 * 60_000,
     retry: false,
   })
 }
 
-export function useBoxSet(boxsetId: string | null, enabled = true) {
+export function useCollectionProfiles(enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.boxset(boxsetId ?? ""),
-    queryFn: ({ signal }) => api.collections.boxset(boxsetId!, signal),
-    enabled: enabled && boxsetId !== null,
+    queryKey: queryKeys.collectionProfiles(account),
+    queryFn: ({ signal }) => api.collections.profiles(signal),
+    enabled: enabled && Boolean(status?.authenticated),
     retry: false,
   })
 }
 
-export function useCuratedCollection(definitionId: string | null) {
+export function useMyCollections(enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.curatedCollection(definitionId ?? ""),
-    queryFn: ({ signal }) => api.collections.curated(definitionId!, signal),
-    enabled: definitionId !== null,
+    queryKey: queryKeys.collectionMine(account),
+    queryFn: ({ signal }) => api.collections.mine(signal),
+    enabled: enabled && Boolean(status?.authenticated),
+    retry: false,
+  })
+}
+
+export function useMyCollection(id: string | null) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionMineDetail(account, id ?? ""),
+    queryFn: ({ signal }) => api.collections.mineDetail(id!, signal),
+    enabled: id !== null && Boolean(status?.authenticated),
+    retry: false,
+  })
+}
+
+export function useFranchises(localDate: string) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionFranchises(account, localDate),
+    queryFn: ({ signal }) => api.collections.franchises(localDate, signal),
+    enabled: Boolean(status?.authenticated),
+    staleTime: 6 * 60 * 60_000,
+    refetchOnMount: "always",
+    retry: false,
+  })
+}
+
+export function useFranchise(id: number | null, localDate: string) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionFranchise(account, id ?? 0, localDate),
+    queryFn: ({ signal }) => api.collections.franchise(id!, localDate, signal),
+    enabled: id !== null && Boolean(status?.authenticated),
+    retry: false,
+  })
+}
+
+export function useCollectionTitle(
+  mediaType: SeerrMediaType | undefined,
+  tmdbId: number | null,
+  enabled = true,
+) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionTitle(account, mediaType ?? "", tmdbId ?? 0),
+    queryFn: ({ signal }) => api.collections.title(mediaType!, tmdbId!, signal),
+    enabled: enabled && Boolean(status?.authenticated) && Boolean(mediaType) && tmdbId !== null,
+    retry: false,
+  })
+}
+
+export function useJellyfinCollections(enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionJellyfin(account),
+    queryFn: ({ signal }) => api.collections.jellyfin(signal),
+    enabled: enabled && Boolean(status?.authenticated),
+    retry: false,
+  })
+}
+
+export function useJellyfinCollection(id: string | null) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  return useQuery({
+    queryKey: queryKeys.collectionJellyfinDetail(account, id ?? ""),
+    queryFn: ({ signal }) => api.collections.jellyfinDetail(id!, signal),
+    enabled: id !== null && Boolean(status?.authenticated),
     retry: false,
   })
 }
 
 export function useMovieCollection(tmdbId: number | null, enabled = true) {
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
   return useQuery({
-    queryKey: queryKeys.movieCollection(tmdbId ?? 0),
+    queryKey: queryKeys.movieCollection(account, tmdbId ?? 0),
     queryFn: () => api.collections.forMovie(tmdbId!),
-    enabled: enabled && tmdbId !== null,
+    enabled: enabled && tmdbId !== null && Boolean(status?.authenticated),
     staleTime: 30 * 60_000,
     retry: false,
   })

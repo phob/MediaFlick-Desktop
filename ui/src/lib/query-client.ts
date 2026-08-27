@@ -63,11 +63,23 @@ export const queryKeys = {
   seerrRequestOptions: (mediaType: string, is4k: boolean) =>
     ["seerr", "request-options", mediaType, is4k] as const,
   seerrRequests: (filter: string) => ["seerr", "requests", filter] as const,
-  collections: ["collections"] as const,
-  collection: (id: number) => ["collections", id] as const,
-  boxset: (id: string) => ["collections", "boxset", id] as const,
-  curatedCollection: (id: string) => ["collections", "curated", id] as const,
-  movieCollection: (tmdbId: number) => ["collections", "movie", tmdbId] as const,
+  collectionSettings: (account: string) => ["collections", account, "settings"] as const,
+  collectionTemplates: (account: string) => ["collections", account, "templates"] as const,
+  collectionProfiles: (account: string) => ["collections", account, "profiles"] as const,
+  collectionMine: (account: string) => ["collections", account, "mine"] as const,
+  collectionMineDetail: (account: string, id: string) =>
+    ["collections", account, "mine", id] as const,
+  collectionFranchises: (account: string, localDate: string) =>
+    ["collections", account, "franchises", localDate] as const,
+  collectionFranchise: (account: string, id: number, localDate: string) =>
+    ["collections", account, "franchises", id, localDate] as const,
+  collectionTitle: (account: string, mediaType: string, tmdbId: number) =>
+    ["collections", account, "title", mediaType, tmdbId] as const,
+  collectionJellyfin: (account: string) => ["collections", account, "jellyfin"] as const,
+  collectionJellyfinDetail: (account: string, id: string) =>
+    ["collections", account, "jellyfin", id] as const,
+  movieCollection: (account: string, tmdbId: number) =>
+    ["collections", account, "movie", tmdbId] as const,
 }
 
 /**
@@ -143,7 +155,7 @@ export function invalidateLibraryChanged(
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey
-      if (["home", "items", "genres", "status"].includes(String(root))) return true
+      if (["home", "items", "genres", "status", "collections"].includes(String(root))) return true
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))
