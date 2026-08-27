@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags};
 /// Bump whenever the schema changes. Pre-1.0 databases are not migrated: an
 /// older version is dropped wholesale and recreated, and the app resyncs the
 /// catalog from the server.
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 15;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -349,34 +349,6 @@ CREATE TABLE meta (
     value TEXT NOT NULL
 );
 
--- The Seerr link, in the same single-row style as `credentials` and with the
--- same posture: plaintext, no OS keychain, exactly like the Jellyfin token
--- next to it.
---
--- `jellyfin_server_id` / `jellyfin_user_id` record the account the link was
--- made under. Without them an in-process account switch would leave user A's
--- Seerr cookie serving user B.
---
--- The Sonarr/Radarr pairs share the row: they are the same kind of optional,
--- instance-wide configuration.
-CREATE TABLE seerr_config (
-    id                       INTEGER PRIMARY KEY CHECK (id = 1),
-    base_url                 TEXT,
-    cookies                  TEXT,
-    user_id                  INTEGER,
-    user_name                TEXT,
-    jellyfin_server_id       TEXT,
-    jellyfin_user_id         TEXT,
-    movie_4k_enabled         INTEGER NOT NULL DEFAULT 0,
-    series_4k_enabled        INTEGER NOT NULL DEFAULT 0,
-    partial_requests_enabled INTEGER NOT NULL DEFAULT 0,
-    sonarr_url               TEXT,
-    sonarr_api_key           TEXT,
-    radarr_url               TEXT,
-    radarr_api_key           TEXT,
-    updated_at               INTEGER NOT NULL
-);
-
 -- Public integrations are user-associated application data, not process
 -- configuration. A household sharing one desktop must never inherit another
 -- Jellyfin user's connected profile.
@@ -397,32 +369,11 @@ CREATE TABLE external_profiles (
 CREATE INDEX external_profiles_account
     ON external_profiles (jellyfin_server_id, jellyfin_user_id, provider);
 
--- Item-scoped source and track choices.
---
--- JSON snapshots retain both Jellyfin's current stream index and the language,
--- title, codec, channel, forced, external, and accessibility descriptors used
--- to identify what the user meant. A nullable subtitle snapshot in an existing
--- row is the explicit subtitles-off choice. The account identity follows the
--- same Jellyfin server/user scoping as other user-associated data, while the
--- item foreign key makes cache eviction remove every account's orphaned row.
-CREATE TABLE item_playback_preferences (
-    jellyfin_id         TEXT NOT NULL
-                         REFERENCES items(jellyfin_id) ON DELETE CASCADE,
-    jellyfin_server_key TEXT NOT NULL,
-    jellyfin_user_id    TEXT NOT NULL,
-    media_source        TEXT NOT NULL CHECK (json_valid(media_source)),
-    audio_track         TEXT CHECK (audio_track IS NULL OR json_valid(audio_track)),
-    subtitle_track      TEXT CHECK (subtitle_track IS NULL OR json_valid(subtitle_track)),
-    updated_at          INTEGER NOT NULL,
-    PRIMARY KEY (jellyfin_id, jellyfin_server_key, jellyfin_user_id)
-);
-
--- Stable-provider rating cache and non-secret integration health.
+-- Stable-provider rating cache.
 --
 -- Cache identity deliberately excludes Jellyfin IDs: when Jellyfin recreates
--- an item, its TMDB/IMDb identity can reuse the same durable result. Secrets
--- are never stored here; `integration_state` contains validation/quota facts
--- only and the API key stays in the operating-system credential vault.
+-- an item, its TMDB/IMDb identity can reuse the same durable result. Provider
+-- credentials stay in Companion and never enter this database.
 CREATE TABLE rating_cache (
     provider           TEXT NOT NULL,
     provider_id        TEXT NOT NULL,
@@ -433,23 +384,109 @@ CREATE TABLE rating_cache (
     stale_at           INTEGER NOT NULL,
     expires_at         INTEGER NOT NULL,
     schema_version     INTEGER NOT NULL,
-    origin             TEXT NOT NULL CHECK (origin IN ('local_mdblist', 'plugin')),
-    PRIMARY KEY (provider, provider_id, media_type, origin)
+    PRIMARY KEY (provider, provider_id, media_type)
 );
 CREATE INDEX rating_cache_expiry ON rating_cache (expires_at);
 
-CREATE TABLE integration_state (
-    service          TEXT PRIMARY KEY,
-    validation       TEXT NOT NULL,
-    valid            INTEGER NOT NULL DEFAULT 0,
-    detail           TEXT,
-    quota_limit      INTEGER,
-    quota_remaining  INTEGER,
-    quota_reset_at   INTEGER,
-    retry_at         INTEGER,
-    failure_count    INTEGER NOT NULL DEFAULT 0,
-    updated_at       INTEGER NOT NULL
+-- Collection configuration lives in collections.json. These tables contain
+-- provider and ownership results that the app may discard and rebuild.
+CREATE TABLE collection_snapshots (
+    server_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    profile_id      TEXT NOT NULL,
+    revision        TEXT NOT NULL,
+    committed_at    INTEGER NOT NULL,
+    item_count      INTEGER NOT NULL,
+    PRIMARY KEY (server_id, user_id, profile_id, revision)
 );
+
+CREATE TABLE collection_snapshot_items (
+    server_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    profile_id      TEXT NOT NULL,
+    revision        TEXT NOT NULL,
+    media_type      TEXT NOT NULL CHECK (media_type IN ('movie', 'series')),
+    tmdb_id         INTEGER NOT NULL CHECK (tmdb_id > 0),
+    title           TEXT NOT NULL,
+    original_title  TEXT,
+    year            INTEGER,
+    overview        TEXT NOT NULL,
+    release_date    TEXT,
+    source_order    INTEGER NOT NULL,
+    poster_path     TEXT,
+    backdrop_path   TEXT,
+    adult           INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, user_id, profile_id, revision, media_type, tmdb_id),
+    FOREIGN KEY (server_id, user_id, profile_id, revision)
+        REFERENCES collection_snapshots(server_id, user_id, profile_id, revision)
+        ON DELETE CASCADE
+);
+CREATE INDEX collection_snapshot_order
+    ON collection_snapshot_items (server_id, user_id, profile_id, revision, source_order);
+CREATE INDEX collection_snapshot_identity
+    ON collection_snapshot_items (server_id, user_id, media_type, tmdb_id);
+
+CREATE TABLE collection_refresh_state (
+    server_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    profile_id      TEXT NOT NULL,
+    last_attempt    INTEGER,
+    last_success    INTEGER,
+    latest_failure  TEXT,
+    next_due        INTEGER,
+    initialized     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, user_id, profile_id)
+);
+CREATE INDEX collection_refresh_due
+    ON collection_refresh_state (server_id, user_id, next_due);
+
+CREATE TABLE franchise_snapshots (
+    server_id          TEXT NOT NULL,
+    user_id            TEXT NOT NULL,
+    tmdb_collection_id INTEGER NOT NULL CHECK (tmdb_collection_id > 0),
+    name               TEXT NOT NULL,
+    poster_path        TEXT,
+    backdrop_path      TEXT,
+    committed_at       INTEGER NOT NULL,
+    PRIMARY KEY (server_id, user_id, tmdb_collection_id)
+);
+
+CREATE TABLE franchise_snapshot_items (
+    server_id          TEXT NOT NULL,
+    user_id            TEXT NOT NULL,
+    tmdb_collection_id INTEGER NOT NULL,
+    media_type         TEXT NOT NULL CHECK (media_type = 'movie'),
+    tmdb_id            INTEGER NOT NULL CHECK (tmdb_id > 0),
+    title              TEXT NOT NULL,
+    original_title     TEXT,
+    year               INTEGER,
+    overview           TEXT NOT NULL,
+    release_date       TEXT,
+    source_order       INTEGER NOT NULL,
+    poster_path        TEXT,
+    backdrop_path      TEXT,
+    adult              INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, user_id, tmdb_collection_id, tmdb_id),
+    FOREIGN KEY (server_id, user_id, tmdb_collection_id)
+        REFERENCES franchise_snapshots(server_id, user_id, tmdb_collection_id)
+        ON DELETE CASCADE
+);
+CREATE INDEX franchise_snapshot_order
+    ON franchise_snapshot_items (server_id, user_id, tmdb_collection_id, source_order);
+CREATE INDEX franchise_snapshot_identity
+    ON franchise_snapshot_items (server_id, user_id, media_type, tmdb_id);
+
+CREATE TABLE provider_identity_map (
+    media_type      TEXT NOT NULL CHECK (media_type IN ('movie', 'series')),
+    provider        TEXT NOT NULL CHECK (provider IN ('imdb', 'tvdb')),
+    provider_id     TEXT NOT NULL,
+    tmdb_id         INTEGER NOT NULL CHECK (tmdb_id > 0),
+    resolved_at     INTEGER NOT NULL,
+    PRIMARY KEY (media_type, provider, provider_id)
+);
+CREATE INDEX provider_identity_tmdb
+    ON provider_identity_map (media_type, tmdb_id);
+
 "#;
 
 #[cfg(test)]
@@ -467,11 +504,14 @@ mod tests {
             "items",
             "user_data",
             "meta",
-            "seerr_config",
             "external_profiles",
-            "item_playback_preferences",
             "rating_cache",
-            "integration_state",
+            "collection_snapshots",
+            "collection_snapshot_items",
+            "collection_refresh_state",
+            "franchise_snapshots",
+            "franchise_snapshot_items",
+            "provider_identity_map",
         ] {
             let count: i64 = database
                 .with_connection(|connection| {
@@ -501,7 +541,7 @@ mod tests {
     #[test]
     fn an_older_database_is_recreated_rather_than_migrated() {
         let connection = Connection::open_in_memory().expect("open");
-        // A minimal stand-in for a pre-13 database: an items table with a rich
+        // A minimal stand-in for a pre-14 database: an items table with a rich
         // column this schema no longer has, plus the queue table v13 removed.
         connection
             .execute_batch(
@@ -566,21 +606,15 @@ mod tests {
         let connection = Connection::open_in_memory().expect("open");
         migrate(&connection).expect("first migrate");
         connection
-            .execute(
-                "INSERT INTO seerr_config (id, base_url, updated_at)
-                 VALUES (1, 'https://seerr.test', 0)",
-                [],
-            )
+            .execute("INSERT INTO meta (key, value) VALUES ('kept', 'yes')", [])
             .expect("seed");
         migrate(&connection).expect("second migrate");
-        let url: String = connection
-            .query_row(
-                "SELECT base_url FROM seerr_config WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
+        let value: String = connection
+            .query_row("SELECT value FROM meta WHERE key = 'kept'", [], |row| {
+                row.get(0)
+            })
             .expect("row survived");
-        assert_eq!(url, "https://seerr.test");
+        assert_eq!(value, "yes");
     }
 
     #[test]

@@ -1,42 +1,28 @@
-//! Quota-aware MDBList ratings for desktop cards.
+//! Companion-mediated MDBList ratings for desktop cards.
 //!
 //! Catalog queries never call this module. Mounted cards request IDs after they
 //! render; those IDs are deduplicated, resolved to stable TMDB/IMDb identities,
 //! served stale-while-revalidate from SQLite, and refreshed in bounded batches.
-//! A versioned Companion boundary is the fallback only when no valid local key
-//! exists, and never returns the plugin administrator's credential. Every
-//! upstream/cache value is rebuilt through a fixed public rating schema before
-//! persistence or desktop serialization.
+//! The versioned Companion boundary owns all provider access and never returns
+//! the plugin administrator's credential. Every response and cache value is
+//! rebuilt through a fixed public rating schema before persistence or desktop
+//! serialization.
 
 mod cache;
-mod credentials;
 mod schema;
-mod transport;
 
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use serde_json::{Value, json};
+
 use crate::companion::CompanionSession;
-use crate::integrations::credentials::{CredentialStore, OsCredentialStore};
 use crate::library::Library;
 
-use self::transport::{HttpTransport, MdbTransport};
+use self::schema::known_source_definitions;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Origin {
-    Local,
-    Plugin,
-}
-
-impl Origin {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local_mdblist",
-            Self::Plugin => "plugin",
-        }
-    }
-}
+const CACHE_ORIGIN: &str = "plugin";
 
 #[derive(Debug)]
 pub struct RatingsError(String);
@@ -58,8 +44,6 @@ impl std::error::Error for RatingsError {}
 pub struct RatingsService {
     library: Arc<Library>,
     companion: Arc<CompanionSession>,
-    credentials: Arc<dyn CredentialStore>,
-    transport: Arc<dyn MdbTransport>,
     in_flight: Mutex<HashSet<String>>,
 }
 
@@ -68,9 +52,30 @@ impl RatingsService {
         Self {
             library,
             companion,
-            credentials: Arc::new(OsCredentialStore),
-            transport: Arc::new(HttpTransport::new()),
             in_flight: Mutex::new(HashSet::new()),
         }
+    }
+
+    pub fn status(&self, selected_sources: &[String]) -> Value {
+        let _ = self.companion.probe(false);
+        let available = self.companion.supports("ratings-v1");
+        json!({
+            "boundaryVersion": 1,
+            "effectiveOrigin": if available { CACHE_ORIGIN } else { "none" },
+            "available": available,
+            "selectionEnabled": available,
+            "plugin": {
+                "available": available,
+                "capability": "ratings-v1",
+                "boundaryVersion": 1,
+                "detail": if available {
+                    "Server ratings are available."
+                } else {
+                    "Server ratings are unavailable."
+                },
+            },
+            "sources": known_source_definitions(),
+            "selectedSources": selected_sources,
+        })
     }
 }

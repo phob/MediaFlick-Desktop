@@ -314,6 +314,33 @@ impl JellyfinClient {
         })
     }
 
+    pub fn companion_get_bytes(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<(Vec<u8>, String), ApiError> {
+        let url = self.url(path, query);
+        let mut response = self
+            .companion_agent
+            .get(url.as_str())
+            .header("Authorization", self.authorization_header())
+            .call()
+            .map_err(|error| map_companion_ureq_error_safe(&error))?;
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = response
+            .body_mut()
+            .with_config()
+            .limit(12 * 1024 * 1024)
+            .read_to_vec()
+            .map_err(|error| ApiError::Transport(error.to_string()))?;
+        Ok((bytes, content_type))
+    }
+
     pub fn post_json<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,

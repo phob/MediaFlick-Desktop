@@ -16,7 +16,7 @@ import {
   readDetailNavigationState,
   type DetailNavigationState,
 } from "@/lib/navigation"
-import { useChildren, useItem, useItemAbout, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
+import { useChildren, useCollectionSettings, useItem, useItemAbout, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
 import { seasonRailOrder } from "@/lib/seasons"
 
 function episodeCode(episode: ItemSummary) {
@@ -26,17 +26,16 @@ function episodeCode(episode: ItemSummary) {
 }
 
 /**
- * A movie's TMDB collection membership, resolved by the Companion plugin.
- * Absent whenever the plugin cannot answer — the chip simply does not exist
- * rather than advertising an unavailable destination.
+ * A movie's exact TMDB collection membership in MediaFlick mode.
  */
 function CollectionChip({ tmdbId }: { tmdbId: number }) {
-  const { data } = useMovieCollection(tmdbId)
+  const settings = useCollectionSettings()
+  const { data } = useMovieCollection(tmdbId, settings.data?.effectiveMode === "mediaFlick")
   const collection = data?.collection
   if (!collection) return null
   return (
     <Link
-      to={`/collections/${collection.id}`}
+      to={`/collections/franchises/${collection.id}`}
       className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-card px-3 py-1 text-xs text-muted-foreground shadow-lg shadow-black/40 transition hover:border-white/25 hover:text-foreground"
     >
       <Layers className="size-3" aria-hidden />

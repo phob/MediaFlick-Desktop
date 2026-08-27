@@ -1,0 +1,21 @@
+{
+  "id": "tmdb.discover.movie.popular",
+  "version": 1,
+  "title": "Popular movies",
+  "description": "",
+  "category": "popular",
+  "pictogram": "star",
+  "source": {
+    "kind": "tmdbDiscover",
+    "schemaVersion": 1,
+    "parameters": {
+      "sortBy": "popularity.desc"
+    }
+  },
+  "mediaType": "movie",
+  "limit": {
+    "kind": "all"
+  },
+  "ordering": "source",
+  "cadence": "daily"
+}

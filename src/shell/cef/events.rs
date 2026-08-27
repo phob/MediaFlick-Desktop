@@ -712,6 +712,9 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
                 json!({ "itemIds": item_ids, "contextIds": context_ids }),
             );
         }
+        ShellRequest::CollectionsChanged => {
+            dispatch_shell_event(state, "collections-changed", json!({}));
+        }
         ShellRequest::SessionExpired => {
             dispatch_shell_event(state, "jellyfin-session-expired", json!({}));
         }

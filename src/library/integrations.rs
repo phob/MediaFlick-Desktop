@@ -1,128 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
+use rusqlite::{OptionalExtension, params, params_from_iter};
 use serde_json::json;
 
-use super::{CachedRatings, ExternalProfile, IntegrationState, Library, RatingTarget, now_unix};
+use super::{CachedRatings, Library, RatingTarget, now_unix};
 
 impl Library {
-    pub fn external_profiles(
-        &self,
-        provider: &str,
-        jellyfin_server_id: &str,
-        jellyfin_user_id: &str,
-    ) -> rusqlite::Result<Vec<ExternalProfile>> {
-        self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
-                        verification_status, created_at, last_checked_at,
-                        jellyfin_server_id, jellyfin_user_id
-                 FROM external_profiles
-                 WHERE provider = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3
-                 ORDER BY created_at DESC",
-            )?;
-            statement
-                .query_map(
-                    params![provider, jellyfin_server_id, jellyfin_user_id],
-                    external_profile_from_row,
-                )?
-                .collect()
-        })
-    }
-
-    pub fn save_external_profile(
-        &self,
-        profile: &ExternalProfile,
-    ) -> rusqlite::Result<ExternalProfile> {
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO external_profiles (
-                     id, provider, profile_key, display_name, canonical_url,
-                     jellyfin_server_id, jellyfin_user_id, enabled,
-                     verification_status, created_at, last_checked_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(provider, profile_key, jellyfin_server_id, jellyfin_user_id)
-                 DO UPDATE SET display_name = excluded.display_name,
-                               canonical_url = excluded.canonical_url,
-                               enabled = excluded.enabled,
-                               verification_status = excluded.verification_status,
-                               last_checked_at = excluded.last_checked_at",
-                params![
-                    profile.id,
-                    profile.provider,
-                    profile.profile_key,
-                    profile.display_name,
-                    profile.canonical_url,
-                    profile.jellyfin_server_id,
-                    profile.jellyfin_user_id,
-                    profile.enabled,
-                    profile.verification_status,
-                    profile.created_at,
-                    profile.last_checked_at,
-                ],
-            )?;
-            connection.query_row(
-                "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
-                        verification_status, created_at, last_checked_at,
-                        jellyfin_server_id, jellyfin_user_id
-                 FROM external_profiles
-                 WHERE provider = ?1 AND profile_key = ?2
-                   AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
-                params![
-                    profile.provider,
-                    profile.profile_key,
-                    profile.jellyfin_server_id,
-                    profile.jellyfin_user_id,
-                ],
-                external_profile_from_row,
-            )
-        })
-    }
-
-    pub fn set_external_profile_enabled(
-        &self,
-        id: &str,
-        jellyfin_server_id: &str,
-        jellyfin_user_id: &str,
-        enabled: bool,
-    ) -> rusqlite::Result<Option<ExternalProfile>> {
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "UPDATE external_profiles SET enabled = ?1
-                 WHERE id = ?2 AND jellyfin_server_id = ?3 AND jellyfin_user_id = ?4",
-                params![enabled, id, jellyfin_server_id, jellyfin_user_id],
-            )?;
-            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
-        })
-    }
-
-    pub fn remove_external_profile(
-        &self,
-        id: &str,
-        jellyfin_server_id: &str,
-        jellyfin_user_id: &str,
-    ) -> rusqlite::Result<bool> {
-        self.db.with_connection(|connection| {
-            let changed = connection.execute(
-                "DELETE FROM external_profiles
-                 WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
-                params![id, jellyfin_server_id, jellyfin_user_id],
-            )?;
-            Ok(changed > 0)
-        })
-    }
-
-    pub fn external_profile(
-        &self,
-        id: &str,
-        jellyfin_server_id: &str,
-        jellyfin_user_id: &str,
-    ) -> rusqlite::Result<Option<ExternalProfile>> {
-        self.db.with_connection(|connection| {
-            external_profile_by_id(connection, id, jellyfin_server_id, jellyfin_user_id)
-        })
-    }
-
     /// Resolves requested cards to one preferred MDBList lookup identity.
     /// TMDB is numeric and cheapest to batch; IMDb is the stable fallback.
     pub fn rating_targets(&self, item_ids: &[String]) -> rusqlite::Result<Vec<RatingTarget>> {
@@ -192,25 +75,19 @@ impl Library {
     pub fn cached_ratings(
         &self,
         targets: &[RatingTarget],
-        origin: &str,
     ) -> rusqlite::Result<HashMap<String, CachedRatings>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(
                 "SELECT ratings, source_updated_at, fetched_at, stale_at, expires_at,
-                        schema_version, origin
+                        schema_version
                  FROM rating_cache
-                 WHERE provider = ?1 AND provider_id = ?2 AND media_type = ?3 AND origin = ?4",
+                 WHERE provider = ?1 AND provider_id = ?2 AND media_type = ?3",
             )?;
             let mut result = HashMap::new();
             for target in targets {
                 let cached = statement
                     .query_row(
-                        params![
-                            target.provider,
-                            target.provider_id,
-                            target.media_type,
-                            origin
-                        ],
+                        params![target.provider, target.provider_id, target.media_type],
                         |row| {
                             let raw: String = row.get(0)?;
                             Ok(CachedRatings {
@@ -220,7 +97,6 @@ impl Library {
                                 stale_at: row.get(3)?,
                                 expires_at: row.get(4)?,
                                 schema_version: row.get(5)?,
-                                origin: row.get(6)?,
                             })
                         },
                     )
@@ -242,9 +118,9 @@ impl Library {
                 transaction.execute(
                     "INSERT INTO rating_cache (
                          provider, provider_id, media_type, ratings, source_updated_at,
-                         fetched_at, stale_at, expires_at, schema_version, origin
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                     ON CONFLICT(provider, provider_id, media_type, origin) DO UPDATE SET
+                         fetched_at, stale_at, expires_at, schema_version
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     ON CONFLICT(provider, provider_id, media_type) DO UPDATE SET
                          ratings = excluded.ratings,
                          source_updated_at = excluded.source_updated_at,
                          fetched_at = excluded.fetched_at,
@@ -261,7 +137,6 @@ impl Library {
                         cached.stale_at,
                         cached.expires_at,
                         cached.schema_version,
-                        cached.origin,
                     ],
                 )?;
             }
@@ -272,161 +147,14 @@ impl Library {
             Ok(())
         })
     }
-
-    pub fn integration_state(&self, service: &str) -> rusqlite::Result<Option<IntegrationState>> {
-        self.db.with_connection(|connection| {
-            connection
-                .query_row(
-                    "SELECT service, validation, valid, detail, quota_limit, quota_remaining,
-                            quota_reset_at, retry_at, failure_count, updated_at
-                     FROM integration_state WHERE service = ?1",
-                    params![service],
-                    |row| {
-                        Ok(IntegrationState {
-                            service: row.get(0)?,
-                            validation: row.get(1)?,
-                            valid: row.get::<_, i64>(2)? != 0,
-                            detail: row.get(3)?,
-                            quota_limit: row.get(4)?,
-                            quota_remaining: row.get(5)?,
-                            quota_reset_at: row.get(6)?,
-                            retry_at: row.get(7)?,
-                            failure_count: row.get(8)?,
-                            updated_at: row.get(9)?,
-                        })
-                    },
-                )
-                .optional()
-        })
-    }
-
-    pub fn save_integration_state(&self, state: &IntegrationState) -> rusqlite::Result<()> {
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "INSERT INTO integration_state (
-                     service, validation, valid, detail, quota_limit, quota_remaining,
-                     quota_reset_at, retry_at, failure_count, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                 ON CONFLICT(service) DO UPDATE SET
-                     validation = excluded.validation,
-                     valid = excluded.valid,
-                     detail = excluded.detail,
-                     quota_limit = excluded.quota_limit,
-                     quota_remaining = excluded.quota_remaining,
-                     quota_reset_at = excluded.quota_reset_at,
-                     retry_at = excluded.retry_at,
-                     failure_count = excluded.failure_count,
-                     updated_at = excluded.updated_at",
-                params![
-                    state.service,
-                    state.validation,
-                    state.valid,
-                    state.detail,
-                    state.quota_limit,
-                    state.quota_remaining,
-                    state.quota_reset_at,
-                    state.retry_at,
-                    state.failure_count,
-                    state.updated_at,
-                ],
-            )?;
-            Ok(())
-        })
-    }
-
-    pub fn clear_integration_state(&self, service: &str) -> rusqlite::Result<()> {
-        self.db.with_connection(|connection| {
-            connection.execute(
-                "DELETE FROM integration_state WHERE service = ?1",
-                params![service],
-            )?;
-            Ok(())
-        })
-    }
-}
-
-fn external_profile_by_id(
-    connection: &Connection,
-    id: &str,
-    jellyfin_server_id: &str,
-    jellyfin_user_id: &str,
-) -> rusqlite::Result<Option<ExternalProfile>> {
-    match connection.query_row(
-        "SELECT id, provider, profile_key, display_name, canonical_url, enabled,
-                verification_status, created_at, last_checked_at,
-                jellyfin_server_id, jellyfin_user_id
-         FROM external_profiles
-         WHERE id = ?1 AND jellyfin_server_id = ?2 AND jellyfin_user_id = ?3",
-        params![id, jellyfin_server_id, jellyfin_user_id],
-        external_profile_from_row,
-    ) {
-        Ok(profile) => Ok(Some(profile)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn external_profile_from_row(row: &Row<'_>) -> rusqlite::Result<ExternalProfile> {
-    Ok(ExternalProfile {
-        id: row.get(0)?,
-        provider: row.get(1)?,
-        profile_key: row.get(2)?,
-        display_name: row.get(3)?,
-        canonical_url: row.get(4)?,
-        enabled: row.get::<_, i64>(5)? != 0,
-        verification_status: row.get(6)?,
-        created_at: row.get(7)?,
-        last_checked_at: row.get(8)?,
-        jellyfin_server_id: row.get(9)?,
-        jellyfin_user_id: row.get(10)?,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{CachedRatings, ExternalProfile, IntegrationState, Library};
+    use super::{CachedRatings, Library};
     use crate::library::test_support::dto;
-
-    #[test]
-    fn external_profiles_are_scoped_to_the_jellyfin_account() {
-        let library = Library::open_in_memory().expect("library");
-        let profile = ExternalProfile {
-            id: "profile-a".to_string(),
-            provider: "letterboxd".to_string(),
-            profile_key: "alice".to_string(),
-            display_name: "alice".to_string(),
-            canonical_url: "https://letterboxd.com/alice/".to_string(),
-            enabled: true,
-            verification_status: "verified".to_string(),
-            created_at: 1,
-            last_checked_at: Some(2),
-            jellyfin_server_id: "server-a".to_string(),
-            jellyfin_user_id: "user-a".to_string(),
-        };
-        let saved = library.save_external_profile(&profile).expect("save");
-        assert_eq!(saved.profile_key, "alice");
-        assert_eq!(
-            library
-                .external_profiles("letterboxd", "server-a", "user-a")
-                .expect("profiles")
-                .len(),
-            1
-        );
-        assert!(
-            library
-                .external_profiles("letterboxd", "server-a", "user-b")
-                .expect("other account")
-                .is_empty()
-        );
-        assert!(
-            library
-                .set_external_profile_enabled("profile-a", "server-a", "user-b", false)
-                .expect("set other account")
-                .is_none()
-        );
-    }
 
     #[test]
     fn rating_targets_prefer_tmdb_and_cache_by_stable_identity() {
@@ -465,7 +193,6 @@ mod tests {
             stale_at: 20,
             expires_at: i64::MAX,
             schema_version: 1,
-            origin: "local_mdblist".to_string(),
             source_updated_at: Some("2026-08-04T20:00:00Z".to_string()),
         };
         library
@@ -473,37 +200,9 @@ mod tests {
             .expect("cache");
         assert_eq!(
             library
-                .cached_ratings(std::slice::from_ref(movie), "local_mdblist")
+                .cached_ratings(std::slice::from_ref(movie))
                 .expect("cached")["m1"],
             cached
-        );
-    }
-
-    #[test]
-    fn integration_health_persists_without_a_secret_column() {
-        let library = Library::open_in_memory().expect("library");
-        let state = IntegrationState {
-            service: "mdblist-api-key".to_string(),
-            validation: "rate_limited".to_string(),
-            valid: true,
-            detail: Some("quota exhausted".to_string()),
-            quota_limit: Some(1000),
-            quota_remaining: Some(0),
-            retry_at: Some(1234),
-            updated_at: 100,
-            ..IntegrationState::default()
-        };
-        library.save_integration_state(&state).expect("save state");
-        assert_eq!(
-            library.integration_state("mdblist-api-key").expect("state"),
-            Some(state)
-        );
-        library
-            .clear_integration_state("mdblist-api-key")
-            .expect("clear");
-        assert_eq!(
-            library.integration_state("mdblist-api-key").expect("state"),
-            None
         );
     }
 }

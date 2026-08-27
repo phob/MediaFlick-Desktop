@@ -15,6 +15,7 @@ public sealed class RatingsService : IDisposable
     private readonly RatingsCacheStore _cache;
     private readonly IRatingSecretStore _secrets;
     private readonly IMdbListTransport _transport;
+    private readonly ITmdbTransport? _tmdbTransport;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _background =
@@ -25,11 +26,13 @@ public sealed class RatingsService : IDisposable
         RatingsCacheStore cache,
         IRatingSecretStore secrets,
         IMdbListTransport transport,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ITmdbTransport? tmdbTransport = null)
     {
         _cache = cache;
         _secrets = secrets;
         _transport = transport;
+        _tmdbTransport = tmdbTransport;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
@@ -44,8 +47,8 @@ public sealed class RatingsService : IDisposable
             mdblist.Configured && mdblist.Valid,
             mdblist.Validation,
             RatingsContract.Origin,
-            true,
-            ["local", "plugin", "none"],
+            false,
+            ["plugin", "none"],
             RatingsContract.SourceCatalog,
             mdblist.Quota,
             mdblist.RetryAt,
@@ -66,15 +69,23 @@ public sealed class RatingsService : IDisposable
         var normalized = RatingProviders.Normalize(provider);
         secret = secret.Trim();
         ValidateSecret(normalized, secret);
-        _secrets.Set(normalized, secret);
-        _cache.ResetHealth(normalized);
-        if (normalized == RatingProviders.Tmdb)
+        var previousHealth = _cache.Health(normalized);
+        try
         {
-            SetTmdbShapeStatus(secret);
+            if (normalized == RatingProviders.Tmdb)
+            {
+                await ValidateTmdbAsync(secret, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await ValidateMdbListAsync(secret, false, cancellationToken).ConfigureAwait(false);
+            }
+            _secrets.Set(normalized, secret);
         }
-        else
+        catch
         {
-            await ValidateMdbListAsync(secret, false, cancellationToken).ConfigureAwait(false);
+            _cache.SetHealth(normalized, previousHealth);
+            throw;
         }
 
         return AdminStatus();
@@ -89,7 +100,7 @@ public sealed class RatingsService : IDisposable
             ?? throw new RatingRequestException("no credential is saved");
         if (normalized == RatingProviders.Tmdb)
         {
-            SetTmdbShapeStatus(secret);
+            await ValidateTmdbAsync(secret, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -117,7 +128,7 @@ public sealed class RatingsService : IDisposable
         if (key is null || !status.Valid)
         {
             throw new RatingsUnavailableException(
-                "the server MDBList fallback is not configured and valid");
+                "server MDBList ratings are not configured and valid");
         }
 
         var now = Now();
@@ -226,7 +237,7 @@ public sealed class RatingsService : IDisposable
             RatingsContract.NormalizeTimestamp(state.LastCheckedAt),
             "aspnet_data_protection",
             provider == RatingProviders.MdbList,
-            provider == RatingProviders.Tmdb);
+            false);
     }
 
     private async Task ValidateMdbListAsync(
@@ -247,20 +258,41 @@ public sealed class RatingsService : IDisposable
             StateFromResponse(response, previous, now, preserveValidOnTransientFailure));
     }
 
-    private void SetTmdbShapeStatus(string key)
+    private async Task ValidateTmdbAsync(string key, CancellationToken cancellationToken)
     {
-        var valid = RatingsContract.ValidTmdbKeyShape(key);
+        if (_tmdbTransport is null)
+        {
+            _cache.SetHealth(
+                RatingProviders.Tmdb,
+                new ProviderHealthState
+                {
+                    Validation = "unchecked",
+                    Valid = false,
+                    Detail = "TMDB validation is unavailable.",
+                    LastCheckedAt = Now()
+                });
+            return;
+        }
+        var response = await _tmdbTransport.GetAsync(
+            key,
+            "3/configuration",
+            new Dictionary<string, string>(),
+            cancellationToken).ConfigureAwait(false);
+        var valid = response.StatusCode.IsSuccess();
         _cache.SetHealth(
             RatingProviders.Tmdb,
             new ProviderHealthState
             {
-                Validation = valid ? "saved" : "invalid",
+                Validation = valid ? "valid" : "invalid",
                 Valid = valid,
-                Detail = valid
-                    ? "Saved for future TMDB features. Rating retrieval does not use this key."
-                    : "TMDB keys are normally a 32-character v3 key or a v4 JWT token.",
+                Detail = valid ? null : "TMDB rejected the saved credential.",
+                RetryAt = response.RetryAt,
                 LastCheckedAt = Now()
             });
+        if (!valid)
+        {
+            throw new RatingRequestException("TMDB rejected the supplied credential");
+        }
     }
 
     private void QueueStaleRefresh(IReadOnlyList<RatingTargetRequest> targets, string key)

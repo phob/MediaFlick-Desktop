@@ -9,10 +9,8 @@ import { castDiscoverResults } from "../src/lib/cast-search"
 import { queryKeys } from "../src/lib/query-client"
 
 const linked: SeerrStatusInfo = {
-  configured: true,
   linked: true,
-  expired: false,
-  serverUrl: "https://seerr.test",
+  mapped: true,
   instance: {
     movie4kEnabled: false,
     series4kEnabled: false,
@@ -147,8 +145,8 @@ describe("cast Discover results", () => {
     expect(screen.queryByText("Request")).toBeNull()
   })
 
-  test("an unconfigured Seerr explains the limitation without affecting local results", () => {
-    const client = clientWithStatus({ ...linked, configured: false, linked: false })
+  test("an unavailable Seerr explains the limitation without affecting local results", () => {
+    const client = clientWithStatus({ ...linked, linked: false, mapped: false })
     render(
       <CastDiscover
         personName="Keanu Reeves"
@@ -159,6 +157,6 @@ describe("cast Discover results", () => {
     )
 
     expect(screen.getByText(/Seerr is not connected/)).toBeTruthy()
-    expect(screen.getByRole("link", { name: "Open Seerr settings" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: "Back to Home" })).toBeTruthy()
   })
 })

@@ -4,40 +4,9 @@ use serde_json::{Value, json};
 
 const MAX_VOTES: i64 = 1_000_000_000_000;
 
-pub(super) fn normalize_media(item: &Value) -> Value {
-    let mut ratings = normalize_rating_array(item.get("ratings").unwrap_or(&Value::Null))
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    if let Some(score) = number(item.get("score")).filter(|score| (0.0..=100.0).contains(score)) {
-        ratings.push(normalized_rating(
-            "mdblist_score",
-            100.0,
-            score,
-            Some(score),
-            None,
-        ));
-    }
-    if let Some(score) = number(
-        item.get("score_average")
-            .or_else(|| item.get("scoreAverage")),
-    )
-    .filter(|score| (0.0..=100.0).contains(score))
-    {
-        ratings.push(normalized_rating(
-            "mdblist_score_average",
-            100.0,
-            score,
-            Some(score),
-            None,
-        ));
-    }
-    deduplicate_ratings(ratings)
-}
-
-/// Positive response allowlist shared by local MDBList, the server-plugin
-/// fallback, and legacy cache repair. It reads only catalog source IDs and
-/// bounded numeric fields; all other JSON is intentionally forgotten.
+/// Positive response allowlist shared by Companion responses and cache repair.
+/// It reads only catalog source IDs and bounded numeric fields; all other JSON
+/// is intentionally forgotten.
 pub(super) fn normalize_rating_array(value: &Value) -> Value {
     let mut ratings = Vec::new();
     for rating in value.as_array().into_iter().flatten() {
@@ -278,17 +247,15 @@ mod tests {
 
     #[test]
     fn normalization_uses_native_scales_and_drops_unknown_source_text() {
-        let ratings = normalize_media(&json!({
-            "score": 84,
-            "score_average": 81,
-            "ratings": [
+        let ratings = normalize_rating_array(&json!([
+                { "source": "mdblist_score", "value": 84, "score": 84 },
+                { "source": "score_average", "value": 81, "score": 81 },
                 { "source": "imdb", "value": 8.1, "score": 81, "votes": 10 },
                 { "source": "letterboxd", "value": 8, "score": 80 },
                 { "source": "tomatoes", "value": 97, "score": 97 },
                 { "source": "audience", "value": 91, "score": 91 },
                 { "source": "future-meter!", "value": 7.25, "score": 73 }
-            ]
-        }));
+        ]));
         let by_source = ratings
             .as_array()
             .expect("ratings")

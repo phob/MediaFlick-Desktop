@@ -30,16 +30,6 @@ impl DiscoverKind {
             Self::UpcomingTv => "upcoming-tv",
         }
     }
-
-    pub(super) fn path(self) -> &'static str {
-        match self {
-            Self::Trending => "discover/trending",
-            Self::Movies => "discover/movies",
-            Self::Tv => "discover/tv",
-            Self::UpcomingMovies => "discover/movies/upcoming",
-            Self::UpcomingTv => "discover/tv/upcoming",
-        }
-    }
 }
 
 /// The small, allowlisted set of Seerr discovery controls exposed by the UI.
@@ -61,8 +51,6 @@ const EARLIEST_RELEASE_DECADE: u16 = 1900;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct UtcDate {
     pub(super) year: u16,
-    pub(super) month: u8,
-    pub(super) day: u8,
 }
 
 impl UtcDate {
@@ -85,22 +73,15 @@ impl UtcDate {
         let mut year = year_of_era + era * 400;
         let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
         let month_prime = (5 * day_of_year + 2) / 153;
-        let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
         let month = month_prime + if month_prime < 10 { 3 } else { -9 };
         year += i64::from(month <= 2);
         Self {
             year: u16::try_from(year).unwrap_or_default(),
-            month: u8::try_from(month).unwrap_or_default(),
-            day: u8::try_from(day).unwrap_or_default(),
         }
     }
 
     fn decade(self) -> u16 {
         self.year / 10 * 10
-    }
-
-    fn iso8601(self) -> String {
-        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
 }
 
@@ -204,29 +185,8 @@ impl DiscoverOptions {
         })
     }
 
-    /// Query pairs accepted by Seerr's documented discovery routes.
+    /// Query pairs accepted by the typed Companion discovery route.
     pub fn query_pairs(&self, kind: DiscoverKind, page: i64) -> Vec<(&'static str, String)> {
-        self.query_pairs_for(kind, page, false, UtcDate::today())
-    }
-
-    /// The Companion API keeps the application-level decade allowlist rather
-    /// than exposing arbitrary upstream date strings. A current plugin expands
-    /// this value to the same Seerr date pair as a direct session.
-    pub fn companion_query_pairs(
-        &self,
-        kind: DiscoverKind,
-        page: i64,
-    ) -> Vec<(&'static str, String)> {
-        self.query_pairs_for(kind, page, true, UtcDate::today())
-    }
-
-    pub(super) fn query_pairs_for(
-        &self,
-        kind: DiscoverKind,
-        page: i64,
-        companion: bool,
-        today: UtcDate,
-    ) -> Vec<(&'static str, String)> {
         let mut query = vec![("page", page.clamp(1, 1_000).to_string())];
 
         match kind {
@@ -258,24 +218,7 @@ impl DiscoverOptions {
                     query.push(("genre", genre.to_string()));
                 }
                 if let Some(decade) = self.release_decade {
-                    if companion {
-                        query.push(("releaseDecade", decade.to_string()));
-                    } else {
-                        let upper_bound = if decade == today.decade() {
-                            today.iso8601()
-                        } else {
-                            format!("{}-12-31", decade + 9)
-                        };
-                        let (gte, lte) = match kind {
-                            DiscoverKind::Movies => {
-                                ("primaryReleaseDateGte", "primaryReleaseDateLte")
-                            }
-                            DiscoverKind::Tv => ("firstAirDateGte", "firstAirDateLte"),
-                            _ => unreachable!(),
-                        };
-                        query.push((gte, format!("{decade:04}-01-01")));
-                        query.push((lte, upper_bound));
-                    }
+                    query.push(("releaseDecade", decade.to_string()));
                 }
                 if let Some(sort) = self.sort {
                     let value = match (sort, kind) {

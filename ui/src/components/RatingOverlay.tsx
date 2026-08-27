@@ -19,7 +19,7 @@ function RatingReadoutView({
   hasRibbon?: boolean
 }) {
   if (!ratingItem || ratings.length === 0) return null
-  const originLabel = ratingItem.origin === "local_mdblist" ? "local MDBList" : "MediaFlick server plugin"
+  const originLabel = "MDBList"
   return (
     <dl
       className={variant === "card" ? "card-rating-readout" : "detail-rating-readout"}

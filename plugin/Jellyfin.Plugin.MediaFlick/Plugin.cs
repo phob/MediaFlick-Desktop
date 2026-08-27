@@ -15,6 +15,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
+        DeleteLegacyCollectionCache();
     }
 
     public override string Name => "MediaFlick Companion";
@@ -22,6 +23,20 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override Guid Id => Guid.Parse("11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f");
 
     public static Plugin? Instance { get; private set; }
+
+    private void DeleteLegacyCollectionCache()
+    {
+        try
+        {
+            File.Delete(Path.Combine(DataFolderPath, "collections-v1-cache.json"));
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 
     /// <summary>
     /// Applies a whole-configuration mutation under one lock. Secret writes and

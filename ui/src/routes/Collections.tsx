@@ -1,147 +1,303 @@
-import { Layers } from "lucide-react"
-import { Link } from "react-router-dom"
+import { Layers, MoreHorizontal, Pencil, RefreshCw } from "lucide-react"
+import { Link, Navigate, Outlet } from "react-router-dom"
+import { toast } from "sonner"
 import { PageEmptyState, PageErrorState, PageHeader } from "@/components/PageHeader"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
+  api,
   imageUrl,
-  seerrImageUrl,
-  type CollectionSummary,
+  type CollectionProfile,
+  type FranchiseCollection,
+  type JellyfinCollectionSummary,
 } from "@/lib/api"
-import { useCollections } from "@/lib/queries"
+import { queryClient } from "@/lib/query-client"
+import { useLocalDate } from "@/lib/local-date"
+import {
+  useCollectionSettings,
+  useFranchises,
+  useJellyfinCollections,
+  useMyCollections,
+} from "@/lib/queries"
 
-function collectionPoster(summary: CollectionSummary) {
-  // Native BoxSets carry an image tag and draw through the local image proxy;
-  // derived TMDB summaries keep the Seerr poster path.
-  if (summary.primaryImageTag) {
-    return imageUrl(
-      { id: String(summary.id), primaryImageTag: summary.primaryImageTag },
-      "Primary",
-      342,
-    )
-  }
-  return seerrImageUrl(summary.posterPath, "w342")
-}
-
-/** Deterministic hue pair from the collection name so each untitled-art
- * collection gets a stable, distinct gradient without any image request. */
 function titleCardPalette(name: string) {
   let hash = 0
-  for (let index = 0; index < name.length; index += 1) {
-    hash = (hash * 31 + name.charCodeAt(index)) >>> 0
-  }
+  for (const character of name) hash = (hash * 31 + character.charCodeAt(0)) >>> 0
   const hue = hash % 360
   return {
-    from: `hsl(${hue} 45% 22%)`,
-    via: `hsl(${(hue + 40) % 360} 40% 14%)`,
-    accent: `hsl(${(hue + 40) % 360} 60% 62%)`,
+    backgroundImage: `linear-gradient(155deg, hsl(${hue} 45% 22%), hsl(${(hue + 40) % 360} 40% 14%) 70%)`,
   }
 }
 
-function CollectionTitleArt({ name }: { name: string }) {
-  const palette = titleCardPalette(name)
+function CollectionArtwork({ name, poster }: { name: string; poster: string | null }) {
   return (
     <div
-      className="relative flex h-full w-full flex-col justify-end p-3"
-      style={{
-        backgroundImage: `linear-gradient(155deg, ${palette.from}, ${palette.via} 70%)`,
-      }}
+      className="relative flex h-poster-h w-poster-w flex-col justify-end overflow-hidden rounded-lg bg-card shadow-lg ring-1 ring-white/10 transition group-hover:ring-white/25"
+      style={poster ? undefined : titleCardPalette(name)}
     >
-      {/* Faint oversized glyph as texture */}
-      <Layers
-        aria-hidden
-        className="absolute -right-2 -top-2 size-20 opacity-10"
-        style={{ color: palette.accent }}
-      />
-      {/* Accent rule tying the card to its palette */}
-      <div
-        aria-hidden
-        className="mb-2 h-px w-8 rounded-full"
-        style={{ backgroundColor: palette.accent }}
-      />
-      <div className="line-clamp-4 text-sm font-semibold leading-snug text-white/90">
-        {name}
-      </div>
+      {poster ? (
+        <img
+          src={poster}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="media-artwork-image h-full w-full object-cover transition group-hover:scale-[1.03]"
+        />
+      ) : (
+        <>
+          <Layers aria-hidden className="absolute -right-2 -top-2 size-20 opacity-10" />
+          <span className="p-3 text-sm font-semibold leading-snug text-white/90">{name}</span>
+        </>
+      )}
     </div>
   )
 }
 
-function CollectionCard({ collection }: { collection: CollectionSummary }) {
-  const poster = collectionPoster(collection)
-  // Title-art cards carry the name on the artwork; don't repeat it below.
-  const showCaptionName = Boolean(poster)
+function CardFrame({
+  to,
+  name,
+  poster,
+  detail,
+  menu,
+}: {
+  to: string
+  name: string
+  poster: string | null
+  detail: string | null
+  menu?: React.ReactNode
+}) {
   return (
-    <Link
-      to={`/collections/${collection.id}`}
-      className="catalog-card group flex w-poster-w flex-col rounded-lg"
-    >
-      <div className="relative h-poster-h w-poster-w overflow-hidden rounded-lg bg-card shadow-lg ring-1 ring-white/10 transition group-hover:ring-white/25">
-        {poster ? (
-          <img
-            src={poster}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            className="media-artwork-image h-full w-full object-cover transition group-hover:scale-[1.03]"
-          />
-        ) : (
-          <CollectionTitleArt name={collection.name} />
-        )}
-      </div>
-      <div className="min-w-0 pt-2">
-        {showCaptionName && (
-          <div className="truncate text-sm font-medium">{collection.name}</div>
-        )}
-        {collection.itemCount != null && collection.itemCount > 0 && (
-          <div className="data-value text-muted-foreground">
-            {collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}
-          </div>
-        )}
-      </div>
-    </Link>
+    <article className="catalog-card group relative flex w-poster-w flex-col rounded-lg">
+      <Link to={to} aria-label={`Open ${name}`}>
+        <CollectionArtwork name={name} poster={poster} />
+        <div className="min-w-0 pt-2">
+          <div className="truncate text-sm font-medium">{name}</div>
+          {detail && <div className="data-value truncate text-muted-foreground">{detail}</div>}
+        </div>
+      </Link>
+      {menu && <div className="absolute right-1 top-1">{menu}</div>}
+    </article>
   )
 }
 
-/**
- * The library's collections. When the Companion plugin mirrors TMDB
- * collections into Jellyfin's own BoxSets, this page answers from the server
- * directly; otherwise the plugin's derived TMDB summary stands in. Either
- * way, a card opens the collection with its owned items. When Seerr knows the
- * full definition, the page loads its missing entries separately.
- */
-export default function Collections() {
-  const { data, isPending, error } = useCollections()
+function LoadingGrid() {
+  return (
+    <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
+      {Array.from({ length: 8 }, (_, index) => (
+        <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+      ))}
+    </div>
+  )
+}
 
+export function CollectionModeRoute({ mode }: { mode: "mediaFlick" | "jellyfin" }) {
+  const settings = useCollectionSettings()
+  if (!settings.data) return <LoadingGrid />
+  if (settings.data.effectiveMode !== mode) return <Navigate to="/collections" replace />
+  return <Outlet />
+}
+
+function CollectionPage({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow: string
+  title: string
+  description: string
+  children: React.ReactNode
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-6 pb-16">
-      <PageHeader
-        eyebrow="Library"
-        title="Collections"
-        description="Collections your server carries. Missing movies and series can be requested from their collection page."
-      />
-      {error && !data ? (
+      <PageHeader eyebrow={eyebrow} title={title} description={description} />
+      {children}
+    </div>
+  )
+}
+
+export default function Collections() {
+  const settings = useCollectionSettings()
+  if (settings.error) {
+    return (
+      <div className="p-6 sm:p-10 lg:p-14">
+        <PageErrorState title="Could not open collections" description={settings.error.message} />
+      </div>
+    )
+  }
+  if (!settings.data) return <LoadingGrid />
+  return (
+    <Navigate
+      to={settings.data.effectiveMode === "mediaFlick" ? "/collections/franchises" : "/collections/jellyfin"}
+      replace
+    />
+  )
+}
+
+export function FranchiseCollections() {
+  const date = useLocalDate()
+  const query = useFranchises(date)
+  const rows = query.data?.franchises
+  return (
+    <CollectionPage
+      eyebrow="Collections"
+      title="Movie Franchises"
+      description="Movie series found from the exact TMDB collection identities in your library."
+    >
+      {query.error && !rows ? (
+        <PageErrorState title="Could not find movie franchises" description={query.error.message} />
+      ) : query.isPending || query.data?.status === "updating" ? (
+        <>
+          <p className="px-6 text-sm text-muted-foreground sm:px-10 lg:px-14">Finding movie franchises...</p>
+          <LoadingGrid />
+        </>
+      ) : query.data?.status === "resultsUnavailable" ? (
         <PageErrorState
-          title="Could not load collections"
-          description={error.message}
+          title="Results unavailable"
+          description="Movie franchises will retry when provider results are available."
         />
-      ) : isPending ? (
-        <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
-          {Array.from({ length: 8 }, (_, index) => (
-            <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
-          ))}
-        </div>
-      ) : !data?.collections.length ? (
+      ) : !rows?.length ? (
         <PageEmptyState
           icon={<Layers className="size-6" />}
-          title="No collections found"
-          description="Collections appear when the Companion plugin mirrors TMDB collections into Jellyfin, or when your server already has BoxSets."
+          title="No movie franchises found."
+          description="A franchise appears after at least one owned movie and one other visible movie are matched."
         />
       ) : (
         <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
-          {data.collections.map((collection) => (
-            <CollectionCard key={collection.id} collection={collection} />
+          {rows.map((collection: FranchiseCollection) => (
+            <CardFrame
+              key={collection.collectionId}
+              to={`/collections/franchises/${collection.collectionId}`}
+              name={collection.name}
+              poster={api.collections.providerArtworkUrl(collection.posterPath, "w342")}
+              detail={collection.ownershipAvailable === false
+                ? "Ownership unavailable"
+                : `${collection.owned.length} owned${collection.missing.length ? ` · ${collection.missing.length} missing` : ""}`}
+            />
           ))}
         </div>
       )}
-    </div>
+    </CollectionPage>
+  )
+}
+
+function ProfileMenu({ profile, error }: { profile: CollectionProfile; error?: string }) {
+  const settings = useCollectionSettings()
+  const providerAvailable = profile.source.kind === "mdbListPublicList"
+    ? Boolean(settings.data?.readiness.mdblist)
+    : Boolean(settings.data?.readiness.tmdb)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon" variant="secondary" aria-label={`Actions for ${profile.title}`}>
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {error ? (
+          <DropdownMenuItem disabled><Pencil /> Edit</DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem asChild>
+            <Link to={`/settings/collections?edit=${encodeURIComponent(profile.id)}`}>
+              <Pencil /> Edit
+            </Link>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          disabled={Boolean(error) || !providerAvailable}
+          onSelect={() => {
+            void api.collections.refreshProfile(profile.id).then(
+              () => {
+                void queryClient.invalidateQueries({ queryKey: ["collections"] })
+                toast.success(`${profile.title} updated`)
+              },
+              (error: Error) => toast.error(error.message),
+            )
+          }}
+        >
+          <RefreshCw /> Check for updates
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+export function MyCollections() {
+  const query = useMyCollections()
+  const profiles = query.data?.profiles
+  return (
+    <CollectionPage
+      eyebrow="Collections"
+      title="My Collections"
+      description="Collections chosen and ordered for this account."
+    >
+      {query.error && !profiles ? (
+        <PageErrorState title="Could not load your collections" description={query.error.message} />
+      ) : query.isPending ? (
+        <LoadingGrid />
+      ) : !profiles?.length ? (
+        <PageEmptyState
+          icon={<Layers className="size-6" />}
+          title="No collections yet"
+          description="Choose a template, preview its titles, and save it for this account."
+          action={<Button asChild><Link to="/settings/collections">Choose templates</Link></Button>}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
+          {profiles.map((profile) => (
+            <CardFrame
+              key={profile.id}
+              to={`/collections/mine/${profile.id}`}
+              name={profile.title}
+              poster={profile.customPosterId ? api.collections.artworkUrl(profile.customPosterId) : null}
+              detail={profile.description || null}
+              menu={<ProfileMenu profile={profile} error={query.data?.errors?.[profile.id]} />}
+            />
+          ))}
+        </div>
+      )}
+    </CollectionPage>
+  )
+}
+
+export function JellyfinCollections() {
+  const query = useJellyfinCollections()
+  const rows = query.data?.collections
+  return (
+    <CollectionPage
+      eyebrow="Collections"
+      title="Jellyfin Collections"
+      description="BoxSets from your Jellyfin server, shown without importing or changing them."
+    >
+      {query.error && !rows ? (
+        <PageErrorState title="Could not load Jellyfin collections" description={query.error.message} />
+      ) : query.isPending ? (
+        <LoadingGrid />
+      ) : !rows?.length ? (
+        <PageEmptyState
+          icon={<Layers className="size-6" />}
+          title="No Jellyfin collections found."
+          description="BoxSets created on your server will appear here."
+        />
+      ) : (
+        <div className="flex flex-wrap gap-[var(--card-gap)] px-6 sm:px-10 lg:px-14">
+          {rows.map((collection: JellyfinCollectionSummary) => (
+            <CardFrame
+              key={collection.id}
+              to={`/collections/jellyfin/${encodeURIComponent(collection.id)}`}
+              name={collection.name}
+              poster={collection.primaryImageTag ? imageUrl({ id: collection.id, primaryImageTag: collection.primaryImageTag }, "Primary", 342) : null}
+              detail={collection.itemCount == null ? null : `${collection.itemCount} ${collection.itemCount === 1 ? "item" : "items"}`}
+            />
+          ))}
+        </div>
+      )}
+    </CollectionPage>
   )
 }

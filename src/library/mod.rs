@@ -12,7 +12,6 @@ pub mod sync;
 
 mod catalog;
 mod integrations;
-mod playback_preferences;
 mod query;
 mod session_store;
 
@@ -87,7 +86,10 @@ pub struct StoredCredentials {
 
 impl StoredCredentials {
     pub fn is_authenticated(&self) -> bool {
-        self.token.is_some() && self.user_id.is_some() && self.server_url.is_some()
+        self.token.is_some()
+            && self.user_id.is_some()
+            && self.server_id.is_some()
+            && self.server_url.is_some()
     }
 }
 
@@ -118,61 +120,6 @@ pub struct CachedRatings {
     pub stale_at: i64,
     pub expires_at: i64,
     pub schema_version: i64,
-    pub origin: String,
-}
-
-/// Non-secret validation and quota state. API keys are held by the OS vault.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct IntegrationState {
-    pub service: String,
-    pub validation: String,
-    pub valid: bool,
-    pub detail: Option<String>,
-    pub quota_limit: Option<i64>,
-    pub quota_remaining: Option<i64>,
-    pub quota_reset_at: Option<i64>,
-    pub retry_at: Option<i64>,
-    pub failure_count: i64,
-    pub updated_at: i64,
-}
-
-/// An optional, public profile associated with one Jellyfin account.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalProfile {
-    pub id: String,
-    pub provider: String,
-    pub profile_key: String,
-    pub display_name: String,
-    pub canonical_url: String,
-    pub enabled: bool,
-    pub verification_status: String,
-    pub created_at: i64,
-    pub last_checked_at: Option<i64>,
-    #[serde(skip)]
-    pub jellyfin_server_id: String,
-    #[serde(skip)]
-    pub jellyfin_user_id: String,
-}
-
-/// The Seerr link, persisted as the single row of `seerr_config`.
-///
-/// `jellyfin_server_id` / `jellyfin_user_id` are the Jellyfin account the link
-/// was made under; everything that acquires a Seerr client checks them, so an
-/// account switch cannot leave one user's Seerr cookie serving another's.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SeerrConfig {
-    pub base_url: Option<String>,
-    /// The whole cookie set as JSON, not just the session cookie: a
-    /// CSRF-protected instance needs its `_csrf` / `XSRF-TOKEN` pair back too.
-    pub cookies: Option<String>,
-    pub user_id: Option<i64>,
-    pub user_name: Option<String>,
-    pub jellyfin_server_id: Option<String>,
-    pub jellyfin_user_id: Option<String>,
-    pub movie_4k_enabled: bool,
-    pub series_4k_enabled: bool,
-    pub partial_requests_enabled: bool,
 }
 
 /// How the library grid is ordered.
@@ -289,6 +236,20 @@ impl Library {
             )?;
             Ok(())
         })
+    }
+
+    pub(crate) fn with_connection<T>(
+        &self,
+        work: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        self.db.with_connection(work)
+    }
+
+    pub(crate) fn with_transaction<T>(
+        &self,
+        work: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        self.db.with_transaction(work)
     }
 }
 

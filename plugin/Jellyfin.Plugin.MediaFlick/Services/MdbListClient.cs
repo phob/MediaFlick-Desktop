@@ -12,7 +12,8 @@ internal sealed record MdbListResponse(
     HttpStatusCode StatusCode,
     JsonNode? Body,
     RatingQuotaResponse Quota,
-    long? RetryAt);
+    long? RetryAt,
+    bool HasMore = false);
 
 internal interface IMdbListTransport
 {
@@ -94,7 +95,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 
     /// <summary>
     /// Fetches one MDBList list's items. `resource` is an already-validated
-    /// lists-relative path built by [`CuratedCollectionResolver`]; no caller
+    /// validated lists-relative path built by the collection provider; no caller
     /// can select a host, path, port, or arbitrary upstream query.
     /// </summary>
     public Task<MdbListResponse> ListItemsAsync(
@@ -112,7 +113,8 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         // The regular payload carries rank and media-specific ids. MDBList's
         // ids_only payload drops rank and moves TMDB to a different field,
         // which cannot preserve the order of a mixed movie and show list.
-        return resource + "?limit=500&apikey=" + Uri.EscapeDataString(apiKey);
+        var separator = resource.Contains('?', StringComparison.Ordinal) ? "&" : "?limit=500&";
+        return resource + separator + "apikey=" + Uri.EscapeDataString(apiKey);
     }
 
     private async Task<MdbListResponse> SendAsync(
@@ -178,7 +180,22 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                 }
             }
 
-            return new MdbListResponse(response.StatusCode, parsed, quota, retryAt);
+            var hasMore = response.Headers.TryGetValues("X-Has-More", out var values)
+                && values.Any(value => value.Equals("true", StringComparison.OrdinalIgnoreCase));
+            if (!hasMore && parsed is JsonObject detail)
+            {
+                hasMore = detail["has_more"]?.GetValue<bool>() == true
+                    || detail["pagination"]?["has_more"]?.GetValue<bool>() == true;
+                if (!hasMore
+                    && detail["pagination"] is JsonObject pagination
+                    && Integer(pagination["total"]) is { } total
+                    && Integer(pagination["offset"]) is { } offset
+                    && Integer(pagination["limit"]) is { } limit)
+                {
+                    hasMore = offset + limit < total;
+                }
+            }
+            return new MdbListResponse(response.StatusCode, parsed, quota, retryAt, hasMore);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -202,6 +219,13 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         => response.Headers.TryGetValues(name, out var values)
             && long.TryParse(values.FirstOrDefault(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
                 ? parsed
+                : null;
+
+    private static long? Integer(JsonNode? node)
+        => node is JsonValue value && value.TryGetValue<long>(out var number)
+            ? number
+            : long.TryParse(node?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
+                ? number
                 : null;
 
     private static long? ReadRetryAt(HttpResponseMessage response, long? quotaResetAt)

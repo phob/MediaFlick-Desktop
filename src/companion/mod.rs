@@ -9,13 +9,12 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::app::urls::encode_path_segment;
+use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::Session;
 use crate::library::Library;
-use crate::seerr::api::error::SeerrError;
-use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, SeerrSession};
+use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
@@ -182,59 +181,87 @@ impl CompanionSession {
         self.fallback_calendar(start, end)
     }
 
-    /// TMDB movie collections derived from the library by the Companion
-    /// plugin. There is no direct-Seerr fallback: only the plugin knows which
-    /// movies the library actually contains, so without it the feature has no
-    /// answer and degrades to `NotConfigured`.
-    pub fn collections(&self) -> Result<Value, ApiError> {
-        self.collections_endpoint("/MediaFlick/collections")
-    }
-
-    /// One collection's movie parts, joined against the local library so the
-    /// UI can tell owned titles from discoverable ones.
-    pub fn collection_detail(&self, collection_id: i64) -> Result<Value, ApiError> {
-        let mut value =
-            self.collections_endpoint(&format!("/MediaFlick/collections/{collection_id}"))?;
-        join_seerr_rows(&self.library, &mut value, "parts");
-        Ok(value)
-    }
-
-    /// The collection one TMDB movie belongs to, for detail-page links.
-    pub fn movie_collection(&self, tmdb_id: i64) -> Result<Value, ApiError> {
-        self.collections_endpoint(&format!("/MediaFlick/collections/movie/{tmdb_id}"))
-    }
-
-    /// Native BoxSet mirroring: the plugin writes TMDB collections into the
-    /// server's own collections feature. Desktop then lists and browses them
-    /// through ordinary `/Items` queries instead of derived summaries.
-    pub fn native_collections(&self) -> bool {
-        self.supports("collections-v2")
-    }
-
-    /// One administrator-defined curated collection's parts, composed by the
-    /// plugin from bounded Seerr lookups in definition order.
-    pub fn curated_collection(&self, definition_id: &str) -> Result<Value, ApiError> {
-        // Administrators can add definitions while Desktop remains signed in.
-        // Refresh the version contract before using this infrequent endpoint.
-        self.probe(true)?;
-        if !self.supports("collections-curated-v1") {
-            return Err(ApiError::NotConfigured);
+    pub fn collection_readiness(&self, force: bool) -> ProviderReadiness {
+        let info = self.probe(force).ok().flatten();
+        let Some(info) = info.filter(|info| info.supports("collection-experience-v1")) else {
+            return ProviderReadiness::default();
+        };
+        ProviderReadiness {
+            tmdb: info.services.get("tmdb").copied().unwrap_or(false),
+            mdblist: info.services.get("mdblist").copied().unwrap_or(false),
         }
-        let definition_id = encode_path_segment(definition_id);
-        let mut value = self.get_seerr(
-            &format!("/MediaFlick/collections/curated/{definition_id}"),
-            &[],
+    }
+
+    pub fn preview_collection(&self, body: &Value) -> Result<ProviderResult, ApiError> {
+        self.collection_operation("preview", body)
+    }
+
+    pub fn refresh_collection(&self, body: &Value) -> Result<ProviderResult, ApiError> {
+        self.collection_operation("results", body)
+    }
+
+    pub fn resolve_franchises(&self, tmdb_ids: &[u64]) -> Result<Value, ApiError> {
+        self.require_collection_experience()?;
+        self.client()?.companion_post_json_once(
+            "/MediaFlick/collection-experience/v1/franchises",
+            &json!({ "tmdbIds": tmdb_ids }),
+        )
+    }
+
+    pub fn search_public_lists(&self, query: &str) -> Result<Value, ApiError> {
+        self.collection_json_operation("mdblist/search", &json!({ "query": query }))
+    }
+
+    pub fn validate_public_list(&self, selector: &str) -> Result<Value, ApiError> {
+        self.collection_json_operation("mdblist/validate", &json!({ "selector": selector }))
+    }
+
+    pub fn resolve_collection_identities(&self, items: &Value) -> Result<Value, ApiError> {
+        self.collection_json_operation("identities", &json!({ "items": items }))
+    }
+
+    pub fn collection_artwork(
+        &self,
+        size: &str,
+        path: &str,
+    ) -> Result<(Vec<u8>, String), ApiError> {
+        self.require_collection_experience()?;
+        self.client()?.companion_get_bytes(
+            "/MediaFlick/collection-experience/v1/artwork",
+            &[("size", size.to_string()), ("path", path.to_string())],
+        )
+    }
+
+    fn collection_operation(
+        &self,
+        operation: &str,
+        body: &Value,
+    ) -> Result<ProviderResult, ApiError> {
+        self.require_collection_experience()?;
+        let value = self.client()?.companion_post_json_once(
+            &format!("/MediaFlick/collection-experience/v1/{operation}"),
+            body,
         )?;
-        join_seerr_rows(&self.library, &mut value, "parts");
-        Ok(value)
+        serde_json::from_value(value).map_err(|error| {
+            ApiError::Decode(format!("invalid collection provider response: {error}"))
+        })
     }
 
-    fn collections_endpoint(&self, path: &str) -> Result<Value, ApiError> {
-        let _ = self.probe(false);
-        if !self.supports("collections-v1") {
-            return Err(ApiError::NotConfigured);
+    fn collection_json_operation(&self, operation: &str, body: &Value) -> Result<Value, ApiError> {
+        self.require_collection_experience()?;
+        self.client()?.companion_post_json_once(
+            &format!("/MediaFlick/collection-experience/v1/{operation}"),
+            body,
+        )
+    }
+
+    fn require_collection_experience(&self) -> Result<(), ApiError> {
+        self.probe(false)?;
+        if self.supports("collection-experience-v1") {
+            Ok(())
+        } else {
+            Err(ApiError::NotConfigured)
         }
-        self.get_seerr(path, &[])
     }
 
     fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
@@ -320,217 +347,125 @@ impl CompanionSession {
     fn post_seerr(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
         self.client()?.companion_post_json_once(path, body)
     }
-}
-
-#[derive(Debug)]
-pub enum ProviderError {
-    Companion(ApiError),
-    Direct(SeerrError),
-}
-
-impl std::fmt::Display for ProviderError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Companion(error) => error.fmt(formatter),
-            Self::Direct(error) => error.fmt(formatter),
+    fn require_capability(&self, capability: &str, message: &str) -> Result<(), ApiError> {
+        self.probe(false)?;
+        if self.supports(capability) {
+            return Ok(());
         }
-    }
-}
-
-pub enum RequestsProvider {
-    Companion(Arc<CompanionSession>),
-    Direct(Arc<SeerrSession>),
-}
-
-impl RequestsProvider {
-    pub fn select(companion: Arc<CompanionSession>, direct: Arc<SeerrSession>) -> Self {
-        if companion.supports("seerr") {
-            Self::Companion(companion)
-        } else {
-            Self::Direct(direct)
-        }
+        Err(ApiError::Remote {
+            status: 409,
+            message: message.to_string(),
+        })
     }
 
-    pub fn status(&self) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => companion
-                .get_seerr("/MediaFlick/seerr/status", &[])
-                .map_err(ProviderError::Companion),
-            Self::Direct(direct) => Ok(direct.status()),
-        }
+    pub fn seerr_status(&self) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        self.get_seerr("/MediaFlick/seerr/status", &[])
     }
 
-    pub fn search(&self, query: &str, page: i64) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                let mut value = companion
-                    .get_seerr(
-                        "/MediaFlick/seerr/search",
-                        &[("query", query.to_string()), ("page", page.to_string())],
-                    )
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_results(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct.search(query, page).map_err(ProviderError::Direct),
-        }
+    pub fn seerr_search(&self, query: &str, page: i64) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        let mut value = self.get_seerr(
+            "/MediaFlick/seerr/search",
+            &[("query", query.to_string()), ("page", page.to_string())],
+        )?;
+        join_seerr_results(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn person_credits(&self, tmdb_id: i64) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                if !companion.supports("seerr-person-discovery") {
-                    return Err(ProviderError::Companion(ApiError::Remote {
-                        status: 409,
-                        message:
-                            "the MediaFlick Companion plugin must be updated for cast discovery"
-                                .to_string(),
-                    }));
-                }
-                let mut value = companion
-                    .get_seerr(&format!("/MediaFlick/seerr/person/{tmdb_id}/credits"), &[])
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_results(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct
-                .person_credits(tmdb_id)
-                .map_err(ProviderError::Direct),
-        }
+    pub fn seerr_person_credits(&self, tmdb_id: i64) -> Result<Value, ApiError> {
+        self.require_capability(
+            "seerr-person-discovery",
+            "the MediaFlick Companion plugin must be updated for cast discovery",
+        )?;
+        let mut value =
+            self.get_seerr(&format!("/MediaFlick/seerr/person/{tmdb_id}/credits"), &[])?;
+        join_seerr_results(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn discover(
+    pub fn seerr_discover(
         &self,
         kind: DiscoverKind,
         page: i64,
         options: &DiscoverOptions,
-    ) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                let query = options.companion_query_pairs(kind, page);
-                let mut value = companion
-                    .get_seerr(
-                        &format!("/MediaFlick/seerr/discover/{}", kind.id()),
-                        query.as_slice(),
-                    )
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_results(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct
-                .discover(kind, page, options)
-                .map_err(ProviderError::Direct),
-        }
+    ) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        let query = options.query_pairs(kind, page);
+        let mut value = self.get_seerr(
+            &format!("/MediaFlick/seerr/discover/{}", kind.id()),
+            query.as_slice(),
+        )?;
+        join_seerr_results(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn genres(&self, media_type: &str) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => companion
-                .get_seerr(&format!("/MediaFlick/seerr/genres/{media_type}"), &[])
-                .map_err(ProviderError::Companion),
-            Self::Direct(direct) => direct.genres(media_type).map_err(ProviderError::Direct),
-        }
+    pub fn seerr_genres(&self, media_type: &str) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        self.get_seerr(&format!("/MediaFlick/seerr/genres/{media_type}"), &[])
     }
 
-    pub fn media(&self, media_type: &str, tmdb_id: i64) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                let mut value = companion
-                    .get_seerr(
-                        &format!("/MediaFlick/seerr/media/{media_type}/{tmdb_id}"),
-                        &[],
-                    )
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_item(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct
-                .media_detail(media_type, tmdb_id)
-                .map_err(ProviderError::Direct),
-        }
+    pub fn seerr_media(&self, media_type: &str, tmdb_id: i64) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        let mut value = self.get_seerr(
+            &format!("/MediaFlick/seerr/media/{media_type}/{tmdb_id}"),
+            &[],
+        )?;
+        join_seerr_item(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => companion
-                .get_seerr(
-                    &format!("/MediaFlick/seerr/request-options/{media_type}"),
-                    &[("is4k", is_4k.to_string())],
-                )
-                .map_err(ProviderError::Companion),
-            Self::Direct(direct) => direct
-                .request_options(media_type, is_4k)
-                .map_err(ProviderError::Direct),
-        }
+    pub fn seerr_request_options(&self, media_type: &str, is_4k: bool) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        self.get_seerr(
+            &format!("/MediaFlick/seerr/request-options/{media_type}"),
+            &[("is4k", is_4k.to_string())],
+        )
     }
 
-    pub fn create(
+    pub fn seerr_create_request(
         &self,
         media_type: &str,
         tmdb_id: i64,
-        seasons: Option<Vec<i64>>,
+        seasons: Option<&[i64]>,
         is_4k: bool,
         profile: Option<RequestProfileSelection>,
-    ) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                let mut value = companion
-                    .post_seerr(
-                        "/MediaFlick/seerr/request",
-                        &json!({
-                            "mediaType": media_type,
-                            "tmdbId": tmdb_id,
-                            "seasons": seasons,
-                            "is4k": is_4k,
-                            "serverId": profile.map(|selection| selection.server_id),
-                            "profileId": profile.map(|selection| selection.profile_id),
-                        }),
-                    )
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_item(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct
-                .create_request(media_type, tmdb_id, seasons, is_4k, profile)
-                .map_err(ProviderError::Direct),
-        }
+    ) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        let mut value = self.post_seerr(
+            "/MediaFlick/seerr/request",
+            &json!({
+                "mediaType": media_type,
+                "tmdbId": tmdb_id,
+                "seasons": seasons,
+                "is4k": is_4k,
+                "serverId": profile.map(|selection| selection.server_id),
+                "profileId": profile.map(|selection| selection.profile_id),
+            }),
+        )?;
+        join_seerr_item(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn requests(&self, take: i64, skip: i64, filter: &str) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => {
-                let mut value = companion
-                    .get_seerr(
-                        "/MediaFlick/seerr/requests",
-                        &[
-                            ("take", take.to_string()),
-                            ("skip", skip.to_string()),
-                            ("filter", filter.to_string()),
-                        ],
-                    )
-                    .map_err(ProviderError::Companion)?;
-                join_seerr_results(&companion.library, &mut value);
-                Ok(value)
-            }
-            Self::Direct(direct) => direct
-                .requests(take, skip, filter)
-                .map_err(ProviderError::Direct),
-        }
+    pub fn seerr_requests(&self, take: i64, skip: i64, filter: &str) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        let mut value = self.get_seerr(
+            "/MediaFlick/seerr/requests",
+            &[
+                ("take", take.to_string()),
+                ("skip", skip.to_string()),
+                ("filter", filter.to_string()),
+            ],
+        )?;
+        join_seerr_results(&self.library, &mut value);
+        Ok(value)
     }
 
-    pub fn cancel(&self, request_id: i64) -> Result<Value, ProviderError> {
-        match self {
-            Self::Companion(companion) => companion
-                .client()
-                .and_then(|client| {
-                    client.companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))
-                })
-                .map(|()| json!({ "cancelled": true, "id": request_id }))
-                .map_err(ProviderError::Companion),
-            Self::Direct(direct) => direct
-                .cancel_request(request_id)
-                .map_err(ProviderError::Direct),
-        }
+    pub fn seerr_cancel_request(&self, request_id: i64) -> Result<Value, ApiError> {
+        self.require_capability("seerr", "MediaFlick Companion does not provide Seerr")?;
+        self.client()?
+            .companion_delete_once(&format!("/MediaFlick/seerr/request/{request_id}"))?;
+        Ok(json!({ "cancelled": true, "id": request_id }))
     }
 }
 

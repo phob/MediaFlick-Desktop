@@ -808,6 +808,7 @@ mod tests {
         let mut credentials = library.credentials();
         credentials.server_url = Some(format!("http://{address}"));
         credentials.user_id = Some("uid".to_string());
+        credentials.server_id = Some("server".to_string());
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
         library

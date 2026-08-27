@@ -38,7 +38,8 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Its own native UI** — sign-in (password or Quick Connect), home rows for Continue Watching / Next Up, Recently Added, Latest Movies, and Latest Shows, a virtualized poster grid, and a details view with cast, seasons, and episodes.
 - **Local metadata cache** — your library is mirrored into SQLite with full-text search over titles, overviews, genres, and cast, kept current by a background sync.
 - **Release calendar** — agenda and month views of upcoming episodes and film releases. It works from Jellyfin metadata alone and gains monitored/file truth from the optional Companion plugin.
-- **Server-mediated requests and ratings** — the optional MediaFlick Companion keeps Sonarr, Radarr, Seerr, MDBList, and preparation-only TMDB credentials on the Jellyfin server. A local Desktop MDBList key wins; the plugin is a quota-aware cached fallback only when no valid local key exists.
+- **Server-mediated requests and ratings** — the optional MediaFlick Companion keeps Sonarr, Radarr, Seerr, MDBList, and TMDB credentials on the Jellyfin server. It serves MDBList ratings through a quota-aware shared cache without exposing the administrator key to Desktop.
+- **Two collection modes** — use exact TMDB franchises and template-created personal collections, or browse Jellyfin BoxSets unchanged. Collection preferences stay local to each account.
 - **Server administration in your browser** — anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
 - **One-click mpv download on Windows** — no manual setup; Linux and macOS auto-detect a system `mpv`.
 - **Optional MPC-HC backend on Windows** — switchable live from Client Settings (mpv stays the default).
@@ -61,8 +62,18 @@ See [BUILDING.md](BUILDING.md).
 
 The optional server plugin lives in [`plugin/`](plugin/README.md). It targets
 Jellyfin 10.11.11 and exposes only typed, authenticated operations—there is no
-generic service proxy. Configure Sonarr, Radarr, Seerr, MDBList, and preparation-only TMDB support
-from Jellyfin's plugin dashboard; desktop clients discover it automatically
-through Jellyfin and never receive the service API keys. MDBList ratings use a
+generic service proxy. Configure Sonarr, Radarr, Seerr, MDBList, and TMDB support
+from Jellyfin's plugin dashboard. Desktop clients discover it automatically,
+report plugin and service availability under **Settings → MediaFlick Companion**,
+and never receive service addresses or API keys. MDBList ratings use a
 shared stable-ID cache, stale-while-revalidate, bounded batches, and durable
 quota/backoff state so one administrator key can safely serve multiple users.
+
+## Local data ownership
+
+MediaFlick keeps device settings in `settings.json` and account-owned intent in
+`accounts.json`, `collections.json`, and `playback-preferences.json`. Custom
+collection posters live beside those app-owned files. They are not a supported
+manual-editing interface; use Settings so writes, backups, and validation stay
+atomic. `library.db` contains only rebuildable catalog and collection results
+and may be recreated without removing those preferences or posters.

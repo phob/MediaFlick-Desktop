@@ -120,8 +120,6 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
             Radarr = previous.Radarr,
             Seerr = previous.Seerr,
             AutoImportSeerrUsers = previous.AutoImportSeerrUsers,
-            CuratedCollections = previous.CuratedCollections,
-            NativeCollections = previous.NativeCollections,
             ProtectedMdbListApiKey = provider == RatingProviders.MdbList
                 ? protectedValue
                 : previous.ProtectedMdbListApiKey,

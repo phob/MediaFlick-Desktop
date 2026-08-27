@@ -24,8 +24,10 @@ import { PageErrorState } from "@/components/PageHeader"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
+  api,
   discoveryExternalLinksFor,
   seerrImageUrl,
+  type NormalizedCollectionTitle,
   type SeerrCapabilities,
   type SeerrMediaDetail,
   type SeerrReleaseDate,
@@ -33,7 +35,29 @@ import {
 import { castSearchPath } from "@/lib/cast-search"
 import { formatDate, formatLanguage } from "@/lib/format"
 import { detailNavigationState } from "@/lib/navigation"
-import { useSeerrMedia, useSeerrStatus } from "@/lib/queries"
+import { useCollectionTitle, useSeerrMedia, useSeerrStatus } from "@/lib/queries"
+
+function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle }) {
+  const poster = api.collections.providerArtworkUrl(item.posterPath, "w500")
+  const backdrop = api.collections.providerArtworkUrl(item.backdropPath, "w1280")
+  return (
+    <div className="detail-page relative isolate flex min-h-full flex-col pb-16">
+      {backdrop && <DetailBackdrop src={backdrop} />}
+      <div className="relative z-10 flex flex-col gap-6 px-6 pt-10 sm:flex-row sm:px-10 lg:px-14">
+        <div className="h-72 w-48 shrink-0 overflow-hidden rounded-lg bg-card ring-1 ring-white/10">
+          {poster ? <img src={poster} alt="" className="media-artwork-image h-full w-full object-cover" /> : <div className="h-full bg-gradient-to-br from-slate-700 to-slate-950" />}
+        </div>
+        <div className="max-w-3xl self-end pb-2">
+          <Button asChild variant="ghost" className="-ml-3 mb-2"><Link to="/collections">Back to Collections</Link></Button>
+          <h1 className="text-3xl font-semibold tracking-tight">{item.title}</h1>
+          <div className="mt-2 flex gap-2"><Badge variant="secondary">{item.mediaType === "series" ? "Series" : "Movie"}</Badge>{item.year && <Badge variant="outline">{item.year}</Badge>}</div>
+          {item.overview && <p className="mt-5 text-sm leading-relaxed text-foreground/85">{item.overview}</p>}
+          <p className="mt-5 text-sm text-muted-foreground">Seerr is unavailable for this title. Request actions are not available.</p>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function runtimeLabel(minutes: number | null) {
   if (!minutes || minutes <= 0) return null
@@ -171,6 +195,11 @@ export default function DiscoverDetail() {
   const parsedId = Number(tmdbId)
   const validId = Number.isSafeInteger(parsedId) && parsedId > 0 ? parsedId : null
   const detail = useSeerrMedia(validMediaType, validId)
+  const collectionTitle = useCollectionTitle(
+    validMediaType,
+    validId,
+    Boolean(detail.error && !detail.data),
+  )
   const seerrStatus = useSeerrStatus()
   const [requesting, setRequesting] = useState(false)
 
@@ -178,11 +207,15 @@ export default function DiscoverDetail() {
     return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Invalid discovery title" description="That address does not identify a valid Seerr title." /></div>
   }
   if (detail.isPending) return <DetailPageSkeleton />
+  if (detail.error && !detail.data && collectionTitle.isPending) return <DetailPageSkeleton />
+  if (detail.error && !detail.data && collectionTitle.data) {
+    return <CollectionSnapshotDetail item={collectionTitle.data.item} />
+  }
   if (detail.error && !detail.data) return (
     <div className="p-6 sm:p-10 lg:p-14">
       <PageErrorState
         title="Could not load title details"
-        description={detail.error.message}
+        description="Seerr is unavailable for this title."
         action={<Button variant="outline" onClick={() => void detail.refetch()}>Try again</Button>}
       />
     </div>

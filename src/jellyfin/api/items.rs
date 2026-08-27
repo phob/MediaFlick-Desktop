@@ -229,9 +229,8 @@ fn box_sets_query(user_id: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Every BoxSet on the server, ordered like a library view. This is the
-/// native collections listing when the Companion plugin mirrors TMDB
-/// collections into real server collections.
+/// Every BoxSet visible to the signed-in user, ordered like a library view.
+/// Collection mode reads these rows without creating or modifying BoxSets.
 pub fn fetch_box_sets(client: &JellyfinClient, user_id: &str) -> Result<ItemsResponse, ApiError> {
     client.get_json("/Items", &box_sets_query(user_id))
 }

@@ -1,28 +1,27 @@
 import { Compass } from "lucide-react"
-import { useState, type ReactNode } from "react"
-import { SeerrSetupDialog } from "@/components/seerr/SeerrSetupDialog"
+import type { ReactNode } from "react"
+import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ApiError } from "@/lib/api"
 import { useCompanion, useSeerrStatus } from "@/lib/queries"
 
 /**
- * Guards the Seerr views. The sidebar hides them until Seerr is linked, but a
- * deep link, a reload, or a session that lapsed while the app was open all land
- * here — and an unexplained empty page is worse than an offer to set it up.
+ * Guards the Seerr views. The sidebar hides them without the Companion
+ * capability, while deep links and unmapped users land on an explanation.
  */
 export function SeerrGate({ children }: { children: ReactNode }) {
-  const status = useSeerrStatus()
   // The plugin's own probe-backed query, not the status snapshot: the gate
   // must reflect whether the Companion manages Seerr even when no /api/status
   // refetch has happened since startup.
   const companion = useCompanion()
-  const [setup, setSetup] = useState(false)
   const companionManaged =
     companion.data?.compatible &&
     companion.data.info?.capabilities.includes("seerr")
+  const status = useSeerrStatus(Boolean(companionManaged))
 
-  if (status.isPending) {
+  if (companion.isPending || (companionManaged && status.isPending)) {
     return (
       <div className="p-6">
         <Skeleton className="h-10 w-48" />
@@ -30,6 +29,11 @@ export function SeerrGate({ children }: { children: ReactNode }) {
     )
   }
   if (status.data?.linked) return <>{children}</>
+
+  const mappingMissing =
+    companionManaged &&
+    status.error instanceof ApiError &&
+    status.error.status === 409
 
   return (
     <div className="grid h-full place-items-center p-6">
@@ -39,30 +43,23 @@ export function SeerrGate({ children }: { children: ReactNode }) {
             <Compass className="size-6" />
           </div>
           <CardTitle className="text-xl">
-            {companionManaged
-              ? "Your Seerr account is not mapped"
-              : status.data?.expired
-                ? "The Seerr session has lapsed"
-                : "Request through Seerr"}
+            {mappingMissing ? "Your Seerr account is not mapped" : "Seerr is unavailable"}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
-            {companionManaged
-              ? "Ask your Jellyfin administrator to import this account into Seerr. MediaFlick never needs a separate Seerr login when the Companion plugin is enabled."
-              : status.data?.expired
-              ? "Sign in to Seerr again to keep requesting movies and series."
-              : "Link a Seerr instance to search beyond your library and request what it does not have."}
+            {mappingMissing
+              ? "Ask your Jellyfin administrator to import this account into Seerr."
+              : companionManaged
+                ? "Seerr is unavailable for this account."
+                : "This Jellyfin server does not provide Seerr discovery and requests."}
           </p>
           {status.error && <p className="text-sm text-destructive">{status.error.message}</p>}
-          {!companionManaged && (
-            <Button className="self-start" onClick={() => setSetup(true)}>
-              {status.data?.configured ? "Sign in to Seerr" : "Set up Seerr"}
-            </Button>
-          )}
+          <Button asChild className="self-start">
+            <Link to="/">Back to Home</Link>
+          </Button>
         </CardContent>
       </Card>
-      {setup && !companionManaged && <SeerrSetupDialog onClose={() => setSetup(false)} />}
     </div>
   )
 }

@@ -48,35 +48,9 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
 
 const ratingsStatus: RatingsIntegrationStatus = {
   boundaryVersion: 1,
-  auth: { currentMode: "api_key", supportedModes: ["api_key"], futureModes: [] },
-  credentialPrecedence: ["local", "plugin", "none"],
   effectiveOrigin: "none",
   available: false,
   selectionEnabled: true,
-  local: {
-    mdblist: {
-      configured: false,
-      valid: false,
-      validation: "absent",
-      detail: null,
-      quota: { limit: null, remaining: null, resetAt: null },
-      retryAt: null,
-      lastCheckedAt: null,
-      storage: "os_credential_vault",
-      usedForRatings: false,
-    },
-    tmdb: {
-      configured: false,
-      valid: false,
-      validation: "absent",
-      detail: null,
-      quota: { limit: null, remaining: null, resetAt: null },
-      retryAt: null,
-      lastCheckedAt: null,
-      storage: "os_credential_vault",
-      usedForRatings: false,
-    },
-  },
   plugin: { available: false, capability: "ratings-v1", boundaryVersion: 1, detail: "" },
   sources: [],
   selectedSources: [],
@@ -89,11 +63,12 @@ function LocationProbe() {
   return <output data-location>{location.pathname}</output>
 }
 
-function renderAppearance(cardPreviews: boolean) {
+function renderAppearance(cardPreviews: boolean, authenticated = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
+  client.setQueryData(queryKeys.status, { authenticated })
   client.setQueryData(queryKeys.home, {
     rows: [
       { id: "resume", title: "Continue Watching", items: [] },
@@ -151,6 +126,13 @@ afterEach(() => {
 })
 
 describe("appearance settings live preview", () => {
+  test("requires a Jellyfin account before showing account-owned settings", () => {
+    renderAppearance(true, false)
+
+    expect(screen.getByText("Sign in required")).not.toBeNull()
+    expect(screen.queryByRole("heading", { name: "Live preview" })).toBeNull()
+  })
+
   test("opens the real expanded panel after resting the pointer on a preview card", () => {
     renderAppearance(true)
     restOnCard()

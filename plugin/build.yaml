@@ -7,7 +7,7 @@ framework: "net9.0"
 overview: "Secure MediaFlick gateway for requests, calendars, and cached ratings"
 description: >
   Adds an authenticated MediaFlick API to Jellyfin, including a cached release
-  calendar, user-scoped Seerr requests, and quota-aware MDBList rating fallback
+  calendar, user-scoped Seerr requests, and quota-aware MDBList ratings
   without exposing service credentials to desktop clients.
 category: "General"
 owner: "phob"

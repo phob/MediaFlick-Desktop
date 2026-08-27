@@ -381,12 +381,6 @@
 .settings-status svg { width: 0.82rem; height: 0.82rem; }
 .settings-status[data-status="verified"] { color: var(--primary); }
 
-.secure-credential-field { display: flex; width: min(100%, 34rem); min-width: min(100%, 20rem); flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem; }
-.secure-credential-status { width: 100%; color: var(--muted-foreground); font-size: 0.72rem; line-height: 1.4; text-align: right; }
-.secure-credential-status[data-status="valid"],
-.secure-credential-status[data-status="saved"] { color: color-mix(in srgb, var(--primary) 72%, var(--foreground)); }
-.secure-credential-status[data-status="invalid"],
-.secure-credential-status[data-status="rate_limited"] { color: var(--destructive); }
 
 .rating-source-selector { min-width: 0; }
 .rating-source-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem; }
@@ -561,8 +555,6 @@
   .settings-main { padding: 1.25rem; }
   .settings-row { grid-template-columns: 1fr; }
   .settings-control { justify-content: flex-start; }
-  .secure-credential-field { justify-content: flex-start; }
-  .secure-credential-status { text-align: left; }
   .settings-save-bar { align-items: flex-start; flex-direction: column; }
 }
 

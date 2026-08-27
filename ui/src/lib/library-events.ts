@@ -11,6 +11,10 @@ export function useLibraryMetadataBridge() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.status })
         return
       }
+      if (detail?.type === "collections-changed") {
+        void queryClient.invalidateQueries({ queryKey: ["collections"] })
+        return
+      }
       if (detail?.type !== "library-changed") return
       const itemIds = shellEventIds(detail.payload.itemIds)
       const contextIds = shellEventIds(detail.payload.contextIds)

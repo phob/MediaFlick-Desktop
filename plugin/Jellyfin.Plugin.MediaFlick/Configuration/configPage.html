@@ -175,7 +175,7 @@
             <header class="mf-header">
                 <h2>MediaFlick Companion</h2>
                 <p class="fieldDescription">
-                    Configure server integrations and collection syncing. Credentials stay on this
+                    Configure server integrations and provider credentials. Credentials stay on this
                     Jellyfin server, and blank API key fields keep their saved values.
                 </p>
             </header>
@@ -188,40 +188,6 @@
                         </p>
                     </div>
                     <div id="MediaFlickServices"></div>
-                </section>
-
-                <section class="mf-section" aria-labelledby="MediaFlickCollectionsHeading">
-                    <div class="mf-section-heading">
-                        <h3 id="MediaFlickCollectionsHeading">Collections</h3>
-                        <p class="fieldDescription">
-                            Mirror standard TMDB collections and your own lists into Jellyfin BoxSets.
-                        </p>
-                    </div>
-                    <fieldset class="mf-card mf-settings-card">
-                        <legend>Collection syncing</legend>
-                        <div class="checkboxContainer checkboxContainer-withDescription mf-compact-check">
-                            <label class="emby-checkbox-label">
-                                <input id="NativeCollections" type="checkbox" is="emby-checkbox">
-                                <span>Create Jellyfin collections for the library's TMDB movie collections</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                The scheduled task creates or adopts matching BoxSets and keeps their
-                                membership in sync. Turning this off leaves existing collections in place.
-                            </div>
-                        </div>
-                    </fieldset>
-
-                    <div class="mf-section-heading">
-                        <h4>Curated collections</h4>
-                        <p class="fieldDescription">
-                            Add inline TMDB movie IDs or an MDBList movie, series, or mixed list.
-                            Curated collections require collection syncing above.
-                        </p>
-                    </div>
-                    <div id="MediaFlickCurated"></div>
-                    <button id="CuratedAdd" is="emby-button" type="button" class="raised emby-button">
-                        Add collection
-                    </button>
                 </section>
 
                 <div class="mf-save-row">
@@ -302,8 +268,8 @@
             function ratingBlock(name) {
                 const title = name === "mdblist" ? "MDBList" : "TMDB";
                 const preparation = name === "tmdb"
-                    ? 'Reserved for collection features; rating retrieval does not use this key.'
-                    : 'Used for curated lists and as the server rating fallback. Shared quota appears below.';
+                    ? 'Used for Movie Franchises and My Collections; rating retrieval does not use this key.'
+                    : 'Used for public-list collections and Desktop ratings. Shared quota appears below.';
                 return '<fieldset class="mf-card">'
                     + '<legend>' + title + '</legend>'
                     + '<p class="fieldDescription">' + preparation + '</p>'
@@ -404,9 +370,6 @@
                         });
                         document.querySelector("#AutoImportSeerrUsers").checked =
                             config.autoImportSeerrUsers;
-                        document.querySelector("#NativeCollections").checked =
-                            config.nativeCollections === true;
-                        renderCurated(config.curatedCollections || []);
                         await loadRatingStatus();
                     } finally {
                         Dashboard.hideLoadingMsg();
@@ -487,118 +450,6 @@
                 });
             });
 
-            // ------------------------------------------------ curated lists
-
-            const curatedRoot = document.querySelector("#MediaFlickCurated");
-
-            function curatedInput(labelText, placeholder, value, className) {
-                const container = document.createElement("div");
-                container.className = "inputContainer " + className;
-                const label = document.createElement("label");
-                label.className = "inputLabel inputLabelUnfocused";
-                label.textContent = labelText;
-                const input = document.createElement("input");
-                input.is = "emby-input";
-                input.className = "emby-input";
-                input.placeholder = placeholder;
-                input.value = value || "";
-                input.setAttribute("aria-label", labelText);
-                container.appendChild(label);
-                container.appendChild(input);
-                return { container: container, input: input };
-            }
-
-            function curatedRow(def) {
-                const row = document.createElement("fieldset");
-                row.className = "mf-card";
-                if (def.id) row.dataset.definitionId = def.id;
-                const fields = document.createElement("div");
-                fields.className = "mf-collection-row";
-                const name = curatedInput("Name", "Collection name", def.name, "mf-name");
-                const ids = curatedInput(
-                    "TMDB movie IDs",
-                    "Comma separated, e.g. 603, 11",
-                    def.tmdbIds,
-                    "mf-source"
-                );
-                const source = curatedInput(
-                    "MDBList source",
-                    "e.g. snoak/imdb-top-250-movies",
-                    def.mdbListSource,
-                    "mf-source"
-                );
-                const actions = document.createElement("div");
-                actions.className = "mf-row-actions";
-                const remove = document.createElement("button");
-                remove.is = "emby-button";
-                remove.type = "button";
-                remove.className = "emby-button";
-                remove.textContent = "Remove";
-                remove.addEventListener("click", function () { row.remove(); });
-                const check = document.createElement("button");
-                check.is = "emby-button";
-                check.type = "button";
-                check.className = "raised emby-button";
-                check.textContent = "Check list";
-                const status = document.createElement("span");
-                status.className = "fieldDescription mf-status";
-                status.setAttribute("role", "status");
-                check.addEventListener("click", async function () {
-                    status.textContent = "Checking…";
-                    try {
-                        var result = await api("MediaFlick/admin/test/curated-source", {
-                            method: "POST",
-                            body: { source: source.input.value.trim() }
-                        });
-                        if (result.ok) {
-                            const labels = [];
-                            if (result.movies) labels.push(result.movies + " movies");
-                            if (result.series) labels.push(result.series + " series");
-                            status.textContent = "Resolved " + (labels.join(" and ") || "0 items") + ".";
-                        } else {
-                            status.textContent = result.error || "That list could not be resolved.";
-                        }
-                    } catch (error) {
-                        status.textContent = "The check request failed. Confirm that the plugin is running.";
-                    }
-                });
-                actions.appendChild(check);
-                actions.appendChild(remove);
-                fields.appendChild(name.container);
-                fields.appendChild(ids.container);
-                fields.appendChild(source.container);
-                fields.appendChild(actions);
-                row.appendChild(fields);
-                row.appendChild(status);
-                return row;
-            }
-
-            function renderCurated(defs) {
-                curatedRoot.innerHTML = "";
-                defs.forEach(function (def) {
-                    curatedRoot.appendChild(curatedRow(def));
-                });
-            }
-
-            function readCurated() {
-                return Array.prototype.map.call(
-                    curatedRoot.querySelectorAll("fieldset"),
-                    function (row) {
-                        var inputs = row.querySelectorAll("input");
-                        return {
-                            id: row.dataset.definitionId || "",
-                            name: inputs[0].value.trim(),
-                            tmdbIds: inputs[1].value.trim(),
-                            mdbListSource: inputs[2].value.trim()
-                        };
-                    }
-                ).filter(function (def) { return def.name !== ""; });
-            }
-
-            document.querySelector("#CuratedAdd").addEventListener("click", function () {
-                curatedRoot.appendChild(curatedRow({ id: "", name: "", tmdbIds: "", mdbListSource: "" }));
-            });
-
             document.querySelector("#MediaFlickCompanionConfigForm")
                 .addEventListener("submit", async function (event) {
                     event.preventDefault();
@@ -611,10 +462,7 @@
                                 radarr: readService("radarr"),
                                 seerr: readService("seerr"),
                                 autoImportSeerrUsers:
-                                    document.querySelector("#AutoImportSeerrUsers").checked,
-                                nativeCollections:
-                                    document.querySelector("#NativeCollections").checked,
-                                curatedCollections: readCurated()
+                                    document.querySelector("#AutoImportSeerrUsers").checked
                             }
                         });
                         Dashboard.processPluginConfigurationUpdateResult();

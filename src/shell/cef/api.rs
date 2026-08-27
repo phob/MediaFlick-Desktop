@@ -12,13 +12,12 @@ use serde_json::{Value, json};
 use crate::app::services::{self, Services};
 use crate::app::services::{ShellFilePickerTarget, ShellRequest};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
-use crate::companion::ProviderError;
 use crate::integrations::letterboxd as letterboxd_integration;
+use crate::integrations::letterboxd::ExternalProfile;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
-use crate::library::ExternalProfile;
 use crate::library::model::technical_media_streams_json;
 use crate::library::{
     ItemPlaybackPreference, ItemQuery, ItemSort, Library, resolve_playback_preference, sync,
@@ -26,12 +25,10 @@ use crate::library::{
 use crate::maintenance::player_setup;
 use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
-    AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch, PlaybackSettingsPatch,
-    PlayerSettingsPatch, StreamingQuality,
+    AccountKey, AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch,
+    PlaybackSettingsPatch, PlayerSettingsPatch, StreamingQuality,
 };
-use crate::seerr::api::SeerrError;
-use crate::seerr::api::client::{fetch_tmdb_image, tmdb_image_url};
-use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
+use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, tmdb_image_path};
 
 /// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
@@ -115,26 +112,6 @@ impl ApiResponse {
             error.client_status(),
             json!({ "error": error.to_string(), "expired": *error == ApiError::Unauthorized }),
         )
-    }
-
-    /// Seerr failures get their own mapping: routed through [`Self::from_api_error`]
-    /// a lapsed Seerr session would read to the UI as a lapsed *Jellyfin* one and
-    /// send it to the sign-in screen.
-    fn from_seerr_error(error: &SeerrError) -> Self {
-        Self::json(
-            error.client_status(),
-            json!({
-                "error": error.to_string(),
-                "seerrExpired": *error == SeerrError::Unauthorized,
-            }),
-        )
-    }
-
-    fn from_provider_error(error: &ProviderError) -> Self {
-        match error {
-            ProviderError::Companion(error) => Self::from_api_error(error),
-            ProviderError::Direct(error) => Self::from_seerr_error(error),
-        }
     }
 
     fn asset(content_type: &str, body: &'static [u8], cache_control: &'static str) -> Self {
@@ -411,16 +388,5 @@ mod tests {
         assert_eq!(response.status, 404);
         let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
         assert_eq!(body["expired"], false);
-    }
-
-    #[test]
-    fn seerr_errors_do_not_carry_the_jellyfin_expiry_flag() {
-        use crate::seerr::api::SeerrError;
-
-        let response = ApiResponse::from_seerr_error(&SeerrError::Unauthorized);
-        assert_eq!(response.status, 401);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).expect("json");
-        assert!(body.get("expired").is_none());
-        assert_eq!(body["seerrExpired"], true);
     }
 }

@@ -10,8 +10,8 @@ use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
     META_CATALOG_READY, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, META_LAST_SYNC,
-    META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
-    Trigger, now_unix,
+    META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle,
+    SyncPhase, SyncReport, Trigger, now_unix,
 };
 
 /// Runs one full cycle. Public so `--library-sync-once` can reuse it.
@@ -33,6 +33,7 @@ pub(super) fn run_cycle_inner(
     let (client, user_id) = session.client_and_user()?;
     let initial_catalog = library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
         && library.meta(META_LAST_BOOTSTRAP).is_none();
+    let recovering_ownership = library.meta(META_LATEST_FAILURE).as_deref() == Some("1");
     let mut report = SyncReport::default();
 
     let result = (|| -> Result<(), ApiError> {
@@ -76,6 +77,7 @@ pub(super) fn run_cycle_inner(
     })();
 
     if let Err(error) = &result {
+        let _ = library.set_meta(META_LATEST_FAILURE, "1");
         session.note_error(error);
         // Bootstrap/incremental pages commit independently. A later network
         // failure must not strand already-visible SQLite changes without the
@@ -86,6 +88,10 @@ pub(super) fn run_cycle_inner(
     }
     result?;
 
+    let _ = library.set_meta(META_LATEST_FAILURE, "0");
+    if recovering_ownership {
+        crate::app::services::notify_collections_changed();
+    }
     report.elapsed_ms = started.elapsed().as_millis() as u64;
     touch(library, META_LAST_SYNC);
     let _ = library.set_meta(
@@ -94,6 +100,9 @@ pub(super) fn run_cycle_inner(
     );
     if !report.changes.is_empty() {
         crate::app::services::notify_library_changed(report.changes.clone());
+    }
+    if initial_catalog || report.changed() || recovering_ownership {
+        crate::app::services::notify_library_sync_completed();
     }
     Ok(report)
 }

@@ -45,7 +45,7 @@ import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
-import { useCompanion, useItem, useLogout, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCollectionSettings, useCompanion, useItem, useLogout, useStatus } from "@/lib/queries"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
@@ -54,10 +54,7 @@ const NAV = [
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
 
-/** TMDB movie collections, only when the Companion plugin can derive them. */
-const COLLECTIONS_NAV = { title: "Collections", to: "/collections", icon: Layers }
-
-/** Shown only once Seerr is linked — there is nothing behind them until then. */
+/** Shown only when Companion advertises its typed Seerr capability. */
 const SEERR_NAV = [
   { title: "Discover", to: "/discover", icon: Compass },
   { title: "Requests", to: "/requests", icon: Inbox },
@@ -198,11 +195,6 @@ export function LibrarySyncProgress() {
 }
 
 function UserMenu() {
-  // Companion capability lives on its own probe-backed query, not the status
-  // snapshot: /api/status mirrors whatever the plugin cache held when it was
-  // answered, so a startup race would keep this entry hidden until an
-  // unrelated refetch.
-  const { data: companion } = useCompanion()
   const { data: status } = useStatus()
   const logout = useLogout()
   const name = status?.userName ?? "Signed in"
@@ -251,11 +243,6 @@ function UserMenu() {
               <RefreshCw />
               {status?.syncing ? "Syncing…" : "Sync library"}
             </DropdownMenuItem>
-            {companion?.available && (
-              <DropdownMenuItem disabled>
-                Companion {companion.info?.pluginVersion ?? "detected"}
-              </DropdownMenuItem>
-            )}
             <DropdownMenuItem onSelect={() => logout.mutate()}>
               <LogOut />
               Sign out
@@ -304,18 +291,16 @@ export function AppSidebar() {
     }
     return false
   }
-  const { data: seerr } = useSeerrStatus()
-  // Both plugin-gated groups read the probe-backed companion query rather
-  // than the status snapshot. `/api/status` never triggers a probe, so its
-  // cached answer predates the warm-up probe at startup and would reveal the
-  // Collections tab only after some later invalidation refreshed it — later
-  // than Seerr, whose status endpoint probes on demand. Sharing this query
-  // makes both groups appear (or stay hidden) together.
   const { data: companion } = useCompanion()
+  const { data: collectionSettings } = useCollectionSettings()
   const companionSeerr =
     companion?.compatible && companion.info?.capabilities.includes("seerr")
-  const companionCollections =
-    companion?.compatible && companion.info?.capabilities.includes("collections-v1")
+  const collectionNavigation = collectionSettings?.effectiveMode === "mediaFlick"
+    ? [
+        { title: "Movie Franchises", to: "/collections/franchises" },
+        { title: "My Collections", to: "/collections/mine" },
+      ]
+    : [{ title: "Jellyfin Collections", to: "/collections/jellyfin" }]
 
   return (
     <Sidebar collapsible="icon" className="app-sidebar-container">
@@ -379,28 +364,25 @@ export function AppSidebar() {
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-              {companionCollections && (
-                <SidebarMenuItem>
+              {collectionNavigation.map((item) => (
+                <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
-                    isActive={
-                      location.pathname === "/collections" ||
-                      location.pathname.startsWith("/collections/")
-                    }
-                    tooltip={COLLECTIONS_NAV.title}
+                    isActive={location.pathname.startsWith(item.to)}
+                    tooltip={item.title}
                   >
-                    <Link to={COLLECTIONS_NAV.to}>
-                      <COLLECTIONS_NAV.icon />
-                      <span>{COLLECTIONS_NAV.title}</span>
+                    <Link to={item.to}>
+                      <Layers />
+                      <span>{item.title}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              )}
+              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {(seerr?.linked || companionSeerr) && (
+        {companionSeerr && (
           <SidebarGroup>
             <SidebarGroupLabel>Seerr</SidebarGroupLabel>
             <SidebarGroupContent>

@@ -10,9 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
-
-use crate::library::ExternalProfile;
+use serde::{Deserialize, Serialize};
 
 const MAX_RSS_BYTES: usize = 512 * 1024;
 const MAX_REVIEW_CHARS: usize = 6_000;
@@ -30,6 +28,43 @@ pub const MAX_CONNECTED_PROFILES: usize = 16;
 pub struct Profile {
     pub username: String,
     pub canonical_url: String,
+}
+
+/// One public Letterboxd profile selected by a Jellyfin account. Account ids
+/// are supplied by the owning account configuration and never written into the
+/// nested profile object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExternalProfile {
+    pub id: String,
+    pub provider: String,
+    pub profile_key: String,
+    pub display_name: String,
+    pub canonical_url: String,
+    pub enabled: bool,
+    pub verification_status: String,
+    pub created_at: i64,
+    pub last_checked_at: Option<i64>,
+    #[serde(skip)]
+    pub jellyfin_server_id: String,
+    #[serde(skip)]
+    pub jellyfin_user_id: String,
+}
+
+impl ExternalProfile {
+    pub(crate) fn valid_for_storage(&self) -> bool {
+        let normalized = normalize_profile(&self.profile_key).ok();
+        self.provider == "letterboxd"
+            && !self.id.is_empty()
+            && self.id.len() <= 64
+            && self.id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && !self.display_name.trim().is_empty()
+            && self.display_name.chars().count() <= MAX_DISPLAY_NAME_CHARS
+            && matches!(self.verification_status.as_str(), "verified" | "unverified")
+            && normalized.as_ref().is_some_and(|profile| {
+                profile.username == self.profile_key && profile.canonical_url == self.canonical_url
+            })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,10 +645,9 @@ fn decode_html_entity(entity: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MemberReview, canonical_entry_url, normalize_profile, parse_feed, verification_from_xml,
+        ExternalProfile, MemberReview, canonical_entry_url, normalize_profile, parse_feed,
+        verification_from_xml,
     };
-    use crate::library::ExternalProfile;
-
     fn profile() -> ExternalProfile {
         ExternalProfile {
             id: "profile-1".to_string(),

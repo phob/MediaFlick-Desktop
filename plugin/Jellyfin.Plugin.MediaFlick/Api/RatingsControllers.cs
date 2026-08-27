@@ -67,10 +67,14 @@ public sealed class RatingsController : ControllerBase
 public sealed class RatingsAdminController : ControllerBase
 {
     private readonly RatingsService _ratings;
+    private readonly CollectionProviderService _collections;
 
-    public RatingsAdminController(RatingsService ratings)
+    public RatingsAdminController(
+        RatingsService ratings,
+        CollectionProviderService collections)
     {
         _ratings = ratings;
+        _collections = collections;
     }
 
     [HttpGet]
@@ -145,9 +149,9 @@ public sealed class RatingsAdminController : ControllerBase
     {
         try
         {
-            return new JsonResult(
-                _ratings.RemoveCredential(provider),
-                CompanionJson.CamelCase);
+            var response = _ratings.RemoveCredential(provider);
+            _collections.ClearProviderCache(provider);
+            return new JsonResult(response, CompanionJson.CamelCase);
         }
         catch (ArgumentException exception)
         {

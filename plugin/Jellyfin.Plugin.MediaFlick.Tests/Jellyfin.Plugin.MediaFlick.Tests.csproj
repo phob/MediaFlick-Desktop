@@ -18,5 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Jellyfin.Plugin.MediaFlick\Jellyfin.Plugin.MediaFlick.csproj" />
+    <EmbeddedResource Include="..\..\fixtures\collections\provider-result-v1.json"
+                      Link="Fixtures\provider-result-v1.json" />
   </ItemGroup>
 </Project>
