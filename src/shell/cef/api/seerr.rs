@@ -1,4 +1,4 @@
-use super::images::{cache_key, mime_for_image, store_image};
+use super::images::{cache_key, image_mime_type, store_image};
 use super::*;
 
 pub(super) fn route(
@@ -467,12 +467,22 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> ApiResponse 
     if let Ok(bytes) = std::fs::read(&cache_path)
         && !bytes.is_empty()
     {
-        return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
+        if let Some(content_type) = image_mime_type(&bytes) {
+            return ApiResponse::bytes(content_type.to_string(), bytes, IMMUTABLE_CACHE);
+        }
+        // An earlier Companion proxy cached JSON error bodies under image keys.
+        // Drop only the invalid entry so the same request repairs it below.
+        let _ = std::fs::remove_file(&cache_path);
     }
     match services.companion.collection_artwork(size, &path) {
-        Ok((bytes, content_type)) => {
+        Ok((bytes, _)) => {
+            let Some(content_type) = image_mime_type(&bytes) else {
+                return ApiResponse::from_api_error(&ApiError::Decode(
+                    "the companion artwork response was not an image".to_string(),
+                ));
+            };
             store_image(&cache_path, &bytes);
-            ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
+            ApiResponse::bytes(content_type.to_string(), bytes, IMMUTABLE_CACHE)
         }
         Err(error) => ApiResponse::from_api_error(&error),
     }

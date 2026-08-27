@@ -9,7 +9,8 @@ Building is mainly intended for developers and advanced users.
 - CMake and Ninja, required by `cef-dll-sys`
 - A CEF cache. By default, `just` downloads/caches CEF in this checkout at `.cache/cef`; set `CEF_PATH=...` to override it.
 - Node and pnpm for the embedded React UI.
-- .NET 9 SDK for the optional server-side Companion plugin.
+- .NET 10 SDK for the optional server-side Companion plugin. The plugin still
+  targets `net9.0` because Jellyfin 10.11 runs on that host framework.
 
 ## Build a local debug app
 

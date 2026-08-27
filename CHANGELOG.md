@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Companion-proxied Seerr posters failing at the `w92`, `w154`, `w185`, and `w300` renditions. Desktop now rejects error bodies before caching them, repairs invalid image-cache entries on access, and uses a new browser-cache URL so previously cached failures do not survive the update.
+
 ### Breaking Changes
 
 - Replaced the embedded Jellyfin Web client with MediaFlick Desktop's own UI. The app now signs in to Jellyfin and loads its login, home, library, and details views from `mediaflick-desktop://app/`. Existing users keep their server URL but must sign in again. The "Open Jellyfin dashboard" context-menu item opens server administration in the system browser.

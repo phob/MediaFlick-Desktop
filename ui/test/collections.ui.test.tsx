@@ -8,13 +8,16 @@ import {
   JellyfinCollections,
   MyCollections,
 } from "../src/routes/Collections"
+import { PreviewProvider } from "../src/components/PreviewCard"
 import { MyCollectionDetail } from "../src/routes/CollectionDetail"
 import CollectionSettingsPage from "../src/routes/CollectionSettings"
 import DiscoverDetail from "../src/routes/DiscoverDetail"
 import type {
   ClassifiedCollectionTitle,
   CollectionProfile,
+  ItemDetail,
   NormalizedCollectionTitle,
+  SeerrStatusInfo,
 } from "../src/lib/api"
 import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
@@ -41,6 +44,60 @@ function owned(id: number, editions = 1): ClassifiedCollectionTitle {
       played: false,
     })),
   }
+}
+
+function libraryItem(id: string, name: string): ItemDetail {
+  return {
+    id,
+    kind: "Movie",
+    name,
+    year: 1999,
+    runtimeTicks: 8_160_000_000,
+    communityRating: 8.7,
+    officialRating: "R",
+    seriesId: null,
+    seriesName: null,
+    indexNumber: null,
+    parentIndexNumber: null,
+    primaryImageTag: "poster",
+    thumbImageTag: null,
+    logoImageTag: null,
+    backdropImageTag: null,
+    childCount: null,
+    premiereDate: "1999-03-31T00:00:00Z",
+    seasonId: null,
+    played: false,
+    playCount: 0,
+    positionTicks: 0,
+    favorite: false,
+    genres: ["Action"],
+    originalTitle: null,
+    providerIds: { tmdb: null, imdb: null, tvdb: null },
+    parentId: null,
+    dateCreated: null,
+  }
+}
+
+const seerrStatus: SeerrStatusInfo = {
+  linked: true,
+  mapped: true,
+  instance: {
+    movie4kEnabled: false,
+    series4kEnabled: false,
+    partialRequestsEnabled: true,
+  },
+  user: { id: 1, name: "Neo", avatar: null, jellyfinUserId: "user-1" },
+  capabilities: {
+    movie: { request: true, autoApprove: false },
+    tv: { request: true, autoApprove: false },
+    movie4k: { request: false, autoApprove: false },
+    tv4k: { request: false, autoApprove: false },
+    advancedRequest: false,
+  },
+  quota: {
+    movie: { days: null, limit: null, used: 0, remaining: null, restricted: false },
+    tv: { days: null, limit: null, used: 0, remaining: null, restricted: false },
+  },
 }
 
 function profile(id: string, name: string): CollectionProfile {
@@ -213,7 +270,35 @@ describe("mode-aware collections", () => {
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
     const chooser = await screen.findByText("Choose edition")
-    expect(chooser.closest("article")?.querySelectorAll('a[href^="/item/"]')).toHaveLength(2)
+    expect(chooser.closest("details")?.querySelectorAll('a[href^="/item/"]')).toHaveLength(2)
+  })
+
+  test("collection contents use the standard library and discovery card controls", async () => {
+    const id = "2".repeat(16)
+    vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
+      profile: profile(id, "Card controls"),
+      status: "ready",
+      owned: [owned(1)],
+      missing: [title(2)],
+      items: [],
+      ownershipAvailable: true,
+    })
+    vi.spyOn(api.api, "item").mockResolvedValue(libraryItem("local-1-0", "Movie 1"))
+    vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
+
+    render(providers(
+      <PreviewProvider enabled={false}>
+        <MyCollectionDetail />
+      </PreviewProvider>,
+      `/collections/mine/${id}`,
+      "/collections/mine/:profileId",
+    ))
+
+    expect(await screen.findByRole("button", { name: "Play" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Add to My List" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
+    expect(await screen.findByRole("button", { name: "Request Movie 2" })).toBeTruthy()
+    expect(document.querySelector('a[href="/discover/movie/2"]')).toBeTruthy()
   })
 
   test("an untrusted library sync shows the ungrouped snapshot without request links", async () => {

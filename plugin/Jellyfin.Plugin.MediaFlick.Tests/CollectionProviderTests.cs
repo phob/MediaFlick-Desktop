@@ -80,6 +80,29 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal(("w342", "/matrix.jpg"), _tmdb.ArtworkRequest);
     }
 
+    [Theory]
+    [InlineData("w92")]
+    [InlineData("w154")]
+    [InlineData("w185")]
+    [InlineData("w300")]
+    [InlineData("w342")]
+    [InlineData("w500")]
+    [InlineData("w780")]
+    [InlineData("w1280")]
+    public void ArtworkTransportAcceptsEveryDesktopRendition(string size)
+    {
+        Assert.True(TmdbHttpTransport.SafeArtwork(size, "/matrix.jpg"));
+    }
+
+    [Theory]
+    [InlineData("w91")]
+    [InlineData("../w300")]
+    [InlineData("")]
+    public void ArtworkTransportRejectsUnknownRenditions(string size)
+    {
+        Assert.False(TmdbHttpTransport.SafeArtwork(size, "/matrix.jpg"));
+    }
+
     [Fact]
     public async Task PersistedHealthRequiresOneRealValidationAfterPluginStartup()
     {
@@ -227,9 +250,9 @@ public sealed class CollectionProviderTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Contains(response.Mappings, mapping => mapping is
-            { MediaType: "movie", Provider: "imdb", ProviderId: "tt0133093", TmdbId: 603 });
+        { MediaType: "movie", Provider: "imdb", ProviderId: "tt0133093", TmdbId: 603 });
         Assert.Contains(response.Mappings, mapping => mapping is
-            { MediaType: "series", Provider: "tvdb", ProviderId: "81189", TmdbId: 1396 });
+        { MediaType: "series", Provider: "tvdb", ProviderId: "81189", TmdbId: 1396 });
     }
 
     [Fact]

@@ -1041,13 +1041,17 @@ export interface SeerrGenre {
   backdrops: string[]
 }
 
+// The first Companion-backed image proxy cached error JSON as immutable art.
+// Keep the same disk key while forcing CEF to ask the repaired proxy once.
+const SEERR_IMAGE_CACHE_VERSION = 2
+
 /**
  * Provider art through the Desktop and Companion proxies. The UI supplies
  * only an allowlisted rendition name and provider-issued image path.
  */
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
-  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}`
+  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}?v=${SEERR_IMAGE_CACHE_VERSION}`
 }
 
 /** Ids accepted by `StreamingQuality::from_id` (`src/preferences/model.rs`). */
