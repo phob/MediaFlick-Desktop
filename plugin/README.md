@@ -5,9 +5,10 @@ Jellyfin-authenticated endpoints under `/MediaFlick`, keeps provider
 credentials on the server, and runs Seerr calls as the mapped Jellyfin user.
 There is no arbitrary proxy endpoint.
 
-The plugin targets Jellyfin 10.11.11 (`net9.0`). Build it with `just plugin`,
-test it with `just plugin-test`, and deploy the release publish output to the
-configured development server with `just plugin-deploy`.
+The plugin targets Jellyfin 10.11.11 (`net9.0`) and builds with the .NET 10 SDK
+pinned in the repository's `global.json`. Build it with `just plugin`, test it
+with `just plugin-test`, and deploy the release publish output to the configured
+development server with `just plugin-deploy`.
 
 ## MDBList and TMDB administrator setup
 

@@ -5,15 +5,26 @@ import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
 import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
+import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   api,
   imageUrl,
   type ClassifiedCollectionTitle,
   type NormalizedCollectionTitle,
+  type SeerrCapabilities,
+  type SeerrResult,
 } from "@/lib/api"
-import { useCollectionSettings, useFranchise, useJellyfinCollection, useMyCollection } from "@/lib/queries"
+import {
+  useCollectionSettings,
+  useFranchise,
+  useItem,
+  useJellyfinCollection,
+  useMyCollection,
+  useSeerrStatus,
+} from "@/lib/queries"
 import { useLocalDate } from "@/lib/local-date"
 
 function CollectionShell({
@@ -95,39 +106,88 @@ function TitleArtwork({ title }: { title: NormalizedCollectionTitle }) {
 }
 
 function OwnedCard({ title }: { title: ClassifiedCollectionTitle }) {
-  const only = title.localItems.length === 1 ? title.localItems[0] : null
-  const artwork = <TitleArtwork title={title} />
+  const primary = title.localItems[0]
+  const item = useItem(primary?.id)
   return (
-    <article className="catalog-card flex w-poster-w flex-col">
-      {only ? <Link to={`/item/${encodeURIComponent(only.id)}`}>{artwork}</Link> : artwork}
-      <div className="min-w-0 pt-2">
-        <div className="truncate text-sm font-medium">{title.title}</div>
-        <div className="data-value text-muted-foreground">{title.year ?? "Year unknown"}</div>
-        {title.localItems.length > 1 && (
-          <details className="mt-1 text-xs">
-            <summary className="cursor-pointer text-muted-foreground">Choose edition</summary>
-            <div className="mt-1 flex flex-col gap-1">
-              {title.localItems.map((item) => (
-                <Link key={item.id} className="hover:underline" to={`/item/${encodeURIComponent(item.id)}`}>
-                  {item.name}
-                </Link>
-              ))}
+    <div className="flex w-poster-w flex-col" data-collection-owned-card>
+      {item.data ? (
+        <MediaCard item={item.data} className="catalog-card" />
+      ) : item.isPending ? (
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-poster-h w-poster-w rounded-lg" />
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-3 w-1/3" />
+        </div>
+      ) : (
+        <article className="catalog-card flex w-poster-w flex-col">
+          {primary ? (
+            <Link to={`/item/${encodeURIComponent(primary.id)}`}>
+              <TitleArtwork title={title} />
+            </Link>
+          ) : (
+            <TitleArtwork title={title} />
+          )}
+          <div className="min-w-0 pt-2">
+            <div className="truncate text-sm font-medium">{title.title}</div>
+            <div className="data-value text-muted-foreground">
+              {title.year ?? "Year unknown"}
             </div>
-          </details>
-        )}
-      </div>
-    </article>
+          </div>
+        </article>
+      )}
+      {title.localItems.length > 1 && (
+        <details className="mt-1 text-xs">
+          <summary className="cursor-pointer text-muted-foreground">Choose edition</summary>
+          <div className="mt-1 flex flex-col gap-1">
+            {title.localItems.map((edition) => (
+              <Link
+                key={edition.id}
+                className="hover:underline"
+                to={`/item/${encodeURIComponent(edition.id)}`}
+              >
+                {edition.name}
+              </Link>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
   )
 }
 
-function MissingCard({ title, requestsEnabled = true }: { title: NormalizedCollectionTitle; requestsEnabled?: boolean }) {
-  const mediaType = title.mediaType === "series" ? "tv" : "movie"
+function discoveryResult(title: NormalizedCollectionTitle): SeerrResult {
+  return {
+    mediaType: title.mediaType === "series" ? "tv" : "movie",
+    tmdbId: title.tmdbId,
+    title: title.title,
+    year: title.year ?? null,
+    overview: title.overview,
+    posterPath: title.posterPath ?? null,
+    backdropPath: title.backdropPath ?? null,
+    voteAverage: null,
+    status: "unknown",
+    status4k: "unknown",
+    libraryItemId: null,
+  }
+}
+
+function MissingCard({
+  title,
+  requestsEnabled = true,
+  capabilities,
+}: {
+  title: NormalizedCollectionTitle
+  requestsEnabled?: boolean
+  capabilities?: SeerrCapabilities | null
+}) {
+  if (requestsEnabled) {
+    return <SeerrCard result={discoveryResult(title)} capabilities={capabilities} />
+  }
+
   const artwork = <TitleArtwork title={title} />
   return (
     <article className="catalog-card flex w-poster-w flex-col">
-      {requestsEnabled ? (
-        <Link to={`/discover/${mediaType}/${title.tmdbId}`}>{artwork}</Link>
-      ) : artwork}
+      {artwork}
       <div className="min-w-0 pt-2">
         <div className="truncate text-sm font-medium">{title.title}</div>
         <div className="data-value text-muted-foreground">{title.year ?? "Year unknown"}</div>
@@ -152,6 +212,7 @@ function SnapshotSections({
   ownershipAvailable: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
+  const seerr = useSeerrStatus(ownershipAvailable && missing.length > 0)
   const visibleMissing = expanded ? missing : missing.slice(0, 24)
   if (!ownershipAvailable) {
     return (
@@ -175,7 +236,13 @@ function SnapshotSections({
       {missing.length > 0 && (
         <section className="flex flex-col gap-4 px-6 sm:px-10 lg:px-14">
           <h2 className="section-title">Missing</h2>
-          <TitleGrid>{visibleMissing.map((title) => <MissingCard key={`${title.mediaType}:${title.tmdbId}`} title={title} />)}</TitleGrid>
+          <TitleGrid>{visibleMissing.map((title) => (
+            <MissingCard
+              key={`${title.mediaType}:${title.tmdbId}`}
+              title={title}
+              capabilities={seerr.data?.capabilities}
+            />
+          ))}</TitleGrid>
           {missing.length >= 25 && (
             <Button className="self-start" variant="outline" onClick={() => setExpanded((value) => !value)}>
               {expanded ? "Show fewer" : `Show all ${missing.length}`}

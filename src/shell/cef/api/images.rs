@@ -155,15 +155,20 @@ fn prune_image_cache(directory: &std::path::Path) {
     tracing::debug!(target: "app.api", removed = remove, "pruned the poster cache");
 }
 
+pub(super) fn image_mime_type(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [b'G', b'I', b'F', ..] => Some("image/gif"),
+        [b'R', b'I', b'F', b'F', ..] => Some("image/webp"),
+        _ => None,
+    }
+}
+
 pub(super) fn mime_for_image(bytes: &[u8]) -> String {
-    let kind = match bytes {
-        [0x89, b'P', b'N', b'G', ..] => "image/png",
-        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
-        [b'G', b'I', b'F', ..] => "image/gif",
-        [b'R', b'I', b'F', b'F', ..] => "image/webp",
-        _ => "application/octet-stream",
-    };
-    kind.to_string()
+    image_mime_type(bytes)
+        .unwrap_or("application/octet-stream")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -180,6 +185,7 @@ mod tests {
 
     #[test]
     fn image_mime_types_are_sniffed_from_the_payload() {
+        assert_eq!(image_mime_type(b"nonsense"), None);
         assert_eq!(mime_for_image(&[0x89, b'P', b'N', b'G', 0]), "image/png");
         assert_eq!(mime_for_image(&[0xFF, 0xD8, 0xFF, 0]), "image/jpeg");
         assert_eq!(mime_for_image(b"RIFF...."), "image/webp");

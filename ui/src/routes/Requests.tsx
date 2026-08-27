@@ -39,6 +39,7 @@ function requestedOn(request: SeerrRequest) {
  */
 function RequestCard({ request }: { request: SeerrRequest }) {
   const location = useLocation()
+  const [failedPoster, setFailedPoster] = useState<string | null>(null)
   const media = useSeerrMedia(request.mediaType, request.tmdbId)
   const cancel = useSeerrCancelRequest()
   const poster = seerrImageUrl(media.data?.posterPath, "w154")
@@ -56,7 +57,19 @@ function RequestCard({ request }: { request: SeerrRequest }) {
         </div>
       )}
       <div className="relative z-10 h-28 w-[4.7rem] shrink-0 overflow-hidden rounded-lg bg-card shadow-xl ring-1 ring-white/10">
-        {poster && <img src={poster} alt="" decoding="async" className="media-artwork-image h-full w-full object-cover" />}
+        {poster && failedPoster !== poster ? (
+          <img
+            src={poster}
+            alt=""
+            decoding="async"
+            onError={() => setFailedPoster(poster)}
+            className="media-artwork-image h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center px-2 text-center text-[0.65rem] text-muted-foreground">
+            {media.data?.title}
+          </div>
+        )}
       </div>
 
       <div className="relative z-10 flex min-w-0 flex-1 flex-col gap-1.5">

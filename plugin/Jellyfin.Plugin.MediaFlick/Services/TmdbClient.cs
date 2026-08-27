@@ -185,8 +185,9 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
         => path.StartsWith("3/", StringComparison.Ordinal)
             && path.All(character => char.IsAsciiLetterOrDigit(character) || character is '/' or '-' or '_');
 
-    private static bool SafeArtwork(string size, string path)
-        => size is "w342" or "w500" or "w780" or "w1280" or "original"
+    internal static bool SafeArtwork(string size, string path)
+        => size is "w92" or "w154" or "w185" or "w300" or "w342" or "w500"
+            or "w780" or "w1280" or "original"
             && path.Length is > 4 and <= 200
             && path[0] == '/'
             && !path.Contains("..", StringComparison.Ordinal)

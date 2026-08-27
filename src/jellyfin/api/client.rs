@@ -326,6 +326,13 @@ impl JellyfinClient {
             .header("Authorization", self.authorization_header())
             .call()
             .map_err(|error| map_companion_ureq_error_safe(&error))?;
+        let status = response.status().as_u16();
+        if status == 401 {
+            return Err(ApiError::Unauthorized);
+        }
+        if status >= 400 {
+            return Err(companion_status_error(&mut response, status));
+        }
         let content_type = response
             .headers()
             .get("content-type")
@@ -727,6 +734,38 @@ mod tests {
             error,
             ApiError::RateLimited {
                 retry_after_secs: Some(600)
+            }
+        );
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn companion_byte_requests_reject_error_bodies() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 2_048];
+            let _ = stream.read(&mut request).expect("request");
+            let body = r#"{"error":"Artwork not available"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("response");
+        });
+        let client = JellyfinClient::new(&format!("http://{address}"), "device", Some("token"));
+
+        let error = client
+            .companion_get_bytes("/MediaFlick/artwork", &[])
+            .expect_err("error body");
+
+        assert_eq!(
+            error,
+            ApiError::Remote {
+                status: 404,
+                message: "Artwork not available".to_string()
             }
         );
         server.join().expect("server");
