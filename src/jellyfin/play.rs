@@ -63,7 +63,7 @@ pub fn start(
     origin: &str,
 ) -> Result<PreparedPlayback, StartError> {
     let settings = services.preferences.snapshot();
-    let Some(player_path) = settings.player_path().map(str::to_string) else {
+    let Some(player_path) = crate::players::configured_player_path(&settings) else {
         return Err(StartError::NoPlayer);
     };
     let Some(playback) = services.playback() else {

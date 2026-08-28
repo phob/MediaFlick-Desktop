@@ -213,7 +213,7 @@ impl PreferencesService {
                             "MPC-HC is only available on Windows".to_string(),
                         ));
                     }
-                    next.player_backend = backend;
+                    next.player_backend = Some(backend);
                 }
                 match patch.mpv_path {
                     NullablePatch::Unchanged => {}
@@ -379,7 +379,7 @@ impl PreferencesService {
             // Choosing the one-click installer is an explicit choice of mpv;
             // make its completed installation immediately usable even if the
             // previous backend was MPC-HC.
-            next.player_backend = PlayerBackend::Mpv;
+            next.player_backend = Some(PlayerBackend::Mpv);
             Ok(())
         })
     }
@@ -478,6 +478,7 @@ impl SettingsApplyPlan {
         Self {
             rebuild_player: previous.effective_backend() != next.effective_backend()
                 || match next.effective_backend() {
+                    super::PlayerBackend::Libmpv => false,
                     super::PlayerBackend::Mpv => previous.mpv_path != next.mpv_path,
                     super::PlayerBackend::Mpchc => previous.mpchc_path != next.mpchc_path,
                 },
@@ -634,6 +635,7 @@ mod tests {
     fn reports_only_the_runtime_effects_required_by_a_change() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
+        next.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
         next.mpv_path = Some("other-mpv".to_string());
         next.streaming_quality = StreamingQuality::Auto;
         next.skip_intro = SegmentSkipMode::Always;
@@ -666,7 +668,7 @@ mod tests {
     fn switching_the_effective_backend_rebuilds_the_player() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
-        next.player_backend = crate::preferences::PlayerBackend::Mpchc;
+        next.player_backend = Some(crate::preferences::PlayerBackend::Mpchc);
 
         let plan = SettingsApplyPlan::between(&previous, &next);
         assert!(plan.rebuild_player);

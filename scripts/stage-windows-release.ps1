@@ -11,6 +11,7 @@ if (-not $IsWindows) {
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BuildDir = Join-Path $RepoRoot "build"
 $StagingPath = Join-Path $RepoRoot $StagingDir
+$LibmpvDir = Join-Path $BuildDir "libmpv-windows-x64"
 
 if (-not (Test-Path (Join-Path $BuildDir "mediaflick-desktop.exe"))) {
     throw "Missing build/mediaflick-desktop.exe. Run 'just release' before staging the installer payload."
@@ -59,14 +60,27 @@ foreach ($File in $OptionalFiles) {
     }
 }
 
+$LibmpvSource = Join-Path $LibmpvDir "libmpv-2.dll"
+if (-not (Test-Path $LibmpvSource)) {
+    throw "Missing bundled libmpv runtime: build/libmpv-windows-x64/libmpv-2.dll. Run the libmpv build first."
+}
+Copy-Item $LibmpvSource -Destination (Join-Path $StagingPath "libmpv-2.dll") -Force
+
+$LibmpvNotices = Join-Path $StagingPath "licenses/libmpv"
+New-Item -ItemType Directory -Force $LibmpvNotices | Out-Null
+foreach ($File in @("LICENSE.mpv-GPL", "LICENSE.mpv-LGPL", "Copyright.mpv", "THIRD-PARTY-NOTICES.md", "SOURCE-REVISIONS.txt", "libmpv-2.dll.sha256")) {
+    $Source = Join-Path $LibmpvDir $File
+    if (-not (Test-Path $Source)) {
+        throw "Missing bundled libmpv notice: build/libmpv-windows-x64/$File"
+    }
+    Copy-Item $Source -Destination $LibmpvNotices -Force
+}
+
 $LocalesSource = Join-Path $BuildDir "locales"
 if (-not (Test-Path $LocalesSource)) {
     throw "Required CEF locales directory is missing from build/."
 }
 Copy-Item $LocalesSource -Destination (Join-Path $StagingPath "locales") -Recurse -Force
-
-# mpv is no longer bundled. The app downloads it on first run (Windows) or guides
-# the user to install it per platform from the welcome/settings screens.
 
 $Bytes = (Get-ChildItem $StagingPath -Recurse -File | Measure-Object -Property Length -Sum).Sum
 $MiB = [math]::Round($Bytes / 1MB, 1)

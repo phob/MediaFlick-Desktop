@@ -1,7 +1,5 @@
 use std::io;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::Child;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::thread;
@@ -12,7 +10,6 @@ use serde_json::{Value, json};
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::flush_playstate_reports;
 use crate::playback::{PlaybackRequest, PlayerCommand, seconds_to_ticks};
-use crate::players::mpv::ExternalMpv;
 use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::players::mpv::ipc::{
     IpcCommandFailure, IpcWorker, MpvEvent, cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path,
@@ -94,7 +91,7 @@ impl ControllerState {
             return false;
         }
 
-        if self.child_is_alive() {
+        if self.runtime_is_alive() {
             if !self.current_mpv_path_matches(mpv_path) {
                 tracing::info!(
                     target: "mpv.ipc",
@@ -126,57 +123,55 @@ impl ControllerState {
             self.reset_mpv();
         }
         let ipc_path = make_mpv_ipc_path();
-        let mpv = ExternalMpv::new(PathBuf::from(mpv_path));
         tracing::info!(
             target: "mpv.ipc",
-            executable = %mpv.executable().display(),
+            runtime = ?self.runtime_kind,
+            path = %mpv_path,
             ipc_path = %ipc_path,
-            "starting idle mpv process"
+            "starting idle mpv runtime"
         );
-        let mut child = match mpv
-            .command_for_idle_with_ipc_and_fullscreen(&ipc_path, fullscreen)
-            .spawn()
-        {
-            Ok(child) => child,
+        let mut runtime = match crate::players::mpv::runtime::MpvRuntime::start(
+            self.runtime_kind,
+            &PathBuf::from(mpv_path),
+            &ipc_path,
+            fullscreen,
+        ) {
+            Ok(runtime) => runtime,
             Err(error) => {
                 tracing::warn!(
                     target: "mpv.ipc",
-                    executable = %mpv.executable().display(),
-                    "failed to launch mpv for Jellyfin stream: {error}"
+                    runtime = ?self.runtime_kind,
+                    path = %mpv_path,
+                    "failed to start mpv for Jellyfin stream: {error}"
                 );
                 cleanup_ipc_path(&ipc_path);
                 return false;
             }
         };
-        crate::windows::confine_to_app_lifetime(&child);
 
         let (ipc_worker, event_rx) = match start_ipc_worker(
             &ipc_path,
             IPC_CONNECT_TIMEOUT,
-            &mut child,
             &self.shutdown_requested,
+            || runtime.is_alive(),
         ) {
             Ok(worker) => worker,
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", ipc_path = %ipc_path, "failed to connect mpv IPC: {error}");
-                if matches!(child.try_wait(), Ok(None)) {
-                    let _ = child.kill();
-                }
-                let _ = child.wait();
+                runtime.stop();
                 cleanup_ipc_path(&ipc_path);
                 return false;
             }
         };
         if self.shutdown_requested.load(Ordering::SeqCst) {
             tracing::debug!(target: "mpv.ipc", "closing newly connected mpv because shutdown is requested");
-            let _ = child.kill();
-            let _ = child.wait();
+            runtime.stop();
             cleanup_ipc_path(&ipc_path);
             ipc_worker.shutdown();
             return false;
         }
 
-        self.child = Some(child);
+        self.runtime = Some(runtime);
         self.current_mpv_path = Some(mpv_path.to_string());
         self.ipc_path = Some(ipc_path.clone());
         self.ipc_worker = Some(ipc_worker);
@@ -471,20 +466,20 @@ impl ControllerState {
         }
     }
 
-    pub(super) fn poll_child(&mut self) {
-        let Some(child) = &mut self.child else {
+    pub(super) fn poll_runtime(&mut self) {
+        let Some(runtime) = &mut self.runtime else {
             return;
         };
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                tracing::info!(target: "mpv.ipc", %status, "mpv process exited");
+        match runtime.is_alive() {
+            Ok(false) => {
+                tracing::info!(target: "mpv.ipc", "mpv runtime stopped");
                 self.finish_active(Some("quit"));
                 self.reset_mpv();
-                self.restart_configured_mpv("mpv process exited");
+                self.restart_configured_mpv("mpv runtime stopped");
             }
-            Ok(None) => {}
+            Ok(true) => {}
             Err(error) => {
-                tracing::warn!(target: "mpv.ipc", "failed to poll mpv process: {error}");
+                tracing::warn!(target: "mpv.ipc", "failed to poll mpv runtime: {error}");
             }
         }
     }
@@ -525,7 +520,7 @@ impl ControllerState {
     }
 
     fn configured_mpv_session_ready(&mut self, config: &ConfiguredMpv) -> bool {
-        self.child_is_alive()
+        self.runtime_is_alive()
             && self.current_mpv_path_matches(&config.mpv_path)
             && self
                 .ipc_worker
@@ -578,9 +573,13 @@ impl ControllerState {
 
     #[cfg(windows)]
     fn begin_mpv_raise(&self, reason: &'static str) -> bool {
-        let Some(process_id) = self.child.as_ref().map(Child::id) else {
-            tracing::trace!(target: "mpv.focus", reason, "cannot activate mpv because its child process is unavailable");
+        let Some(runtime) = self.runtime.as_ref() else {
+            tracing::trace!(target: "mpv.focus", reason, "cannot activate mpv because its runtime is unavailable");
             return false;
+        };
+        let Some(process_id) = runtime.process_id() else {
+            tracing::debug!(target: "mpv.focus", reason, "raising the same-process libmpv window with a minimize/restore pulse");
+            return self.set_mpv_bool_property("window-minimized", true, reason);
         };
         match crate::windows::activate_process_window(process_id) {
             crate::windows::ProcessWindowActivation::Activated => {
@@ -630,11 +629,10 @@ impl ControllerState {
         }
     }
 
-    fn child_is_alive(&mut self) -> bool {
-        self.child
+    fn runtime_is_alive(&mut self) -> bool {
+        self.runtime
             .as_mut()
-            .map(|child| matches!(child.try_wait(), Ok(None)))
-            .unwrap_or(false)
+            .is_some_and(|runtime| runtime.is_alive().unwrap_or(false))
     }
 
     pub(super) fn is_duplicate(&mut self, key: &str) -> bool {
@@ -679,15 +677,16 @@ impl ControllerState {
         }
         let deadline = Instant::now() + SHUTDOWN_WAIT;
         while Instant::now() < deadline {
-            if !self.child_is_alive() {
+            if !self.runtime_is_alive() {
                 break;
             }
             thread::sleep(Duration::from_millis(50));
         }
-        let still_alive = self.child_is_alive();
-        if still_alive && let Some(child) = &mut self.child {
-            tracing::warn!(target: "mpv.ipc", "mpv did not exit before shutdown deadline; killing process");
-            let _ = child.kill();
+        if self.runtime_is_alive()
+            && let Some(runtime) = &mut self.runtime
+        {
+            tracing::warn!(target: "mpv.ipc", "mpv did not exit before shutdown deadline; terminating runtime");
+            runtime.stop();
         }
         self.reset_mpv();
         if !flush_playstate_reports(PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT) {
@@ -706,12 +705,9 @@ impl ControllerState {
             self.playback_runtime_ticks = None;
             self.mpv_playback_active = false;
         }
-        if let Some(mut child) = self.child.take() {
-            if matches!(child.try_wait(), Ok(None)) {
-                tracing::debug!(target: "mpv.ipc", "killing live mpv process during reset");
-                let _ = child.kill();
-            }
-            let _ = child.wait();
+        if let Some(mut runtime) = self.runtime.take() {
+            tracing::debug!(target: "mpv.ipc", "stopping live mpv runtime during reset");
+            runtime.stop();
         }
         self.current_mpv_path = None;
         if let Some(path) = self.ipc_path.take() {

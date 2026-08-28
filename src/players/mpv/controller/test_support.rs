@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::playback::PlaybackRequest;
+use crate::players::mpv::runtime::MpvRuntimeKind;
 use crate::preferences::SegmentSkipConfig;
 
 use super::{ControllerState, PendingPlayback, PlaybackIdentity};
@@ -20,6 +21,7 @@ pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> Con
         None,
         Arc::new(AtomicBool::new(false)),
         SegmentSkipConfig::default(),
+        MpvRuntimeKind::External,
     );
     state.pending = Some(PendingPlayback {
         key: "test-load".to_string(),

@@ -38,7 +38,7 @@ const settings: ClientSettings = {
     showMediaInfo: true,
     ratingSources: [],
   },
-  capabilities: { platform: "windows", mpchc: true, mpvInstaller: true },
+  capabilities: { platform: "windows", libmpv: true, mpchc: true, mpvInstaller: true },
   streamingQuality: "original",
   playerBackend: "mpv",
   playerConfigured: false,
