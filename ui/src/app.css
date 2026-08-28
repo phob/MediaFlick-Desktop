@@ -1355,6 +1355,12 @@
   box-shadow: 16px 0 40px rgb(0 0 0 / 30%);
 }
 
+/* Outside Home, the page only reserves room for the icon rail. Expanding the
+   fixed sidebar then covers the page instead of changing its available width. */
+.app-experience[data-sidebar-overlay="true"] [data-slot="sidebar-gap"] {
+  width: var(--sidebar-width-icon);
+}
+
 .content-viewport {
   contain: paint;
 }

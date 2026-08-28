@@ -23,6 +23,7 @@ import {
   useFranchise,
   useJellyfinCollection,
   useMyCollection,
+  useSeerrMedia,
   useSeerrStatus,
 } from "@/lib/queries"
 import { useLocalDate } from "@/lib/local-date"
@@ -179,8 +180,16 @@ function MissingCard({
   requestsEnabled?: boolean
   capabilities?: SeerrCapabilities | null
 }) {
+  const mediaType = title.mediaType === "series" ? "tv" : "movie"
+  const media = useSeerrMedia(mediaType, title.tmdbId, requestsEnabled)
+
   if (requestsEnabled) {
-    return <SeerrCard result={discoveryResult(title)} capabilities={capabilities} />
+    return (
+      <SeerrCard
+        result={media.data ?? discoveryResult(title)}
+        capabilities={capabilities}
+      />
+    )
   }
 
   const artwork = <TitleArtwork title={title} />
@@ -255,7 +264,11 @@ function SnapshotSections({
             items={visibleMissing}
             itemKey={(title) => `${title.mediaType}:${title.tmdbId}`}
             renderItem={(title) => (
-              <MissingCard title={title} capabilities={seerr.data?.capabilities} />
+              <MissingCard
+                title={title}
+                requestsEnabled={Boolean(seerr.data?.linked && seerr.data.mapped)}
+                capabilities={seerr.data?.capabilities}
+              />
             )}
           />
           {missing.length >= 25 && (

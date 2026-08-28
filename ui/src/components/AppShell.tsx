@@ -8,7 +8,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { useSettings } from "@/lib/queries"
-import { sidebarShouldBeOpen } from "@/lib/sidebar-state"
+import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
 
 const routeScrollPositions = new Map<string, number>()
 
@@ -49,6 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <SidebarProvider
       open={sidebarOpen}
       onOpenChange={() => undefined}
+      data-sidebar-overlay={sidebarShouldOverlayContent(location.pathname) || undefined}
       className="app-experience h-full min-w-0 overflow-hidden"
     >
       <AppSidebar

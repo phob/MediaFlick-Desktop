@@ -41,6 +41,7 @@ describe("native library change bridge", () => {
     expect(filters?.predicate?.(queryFor(["item", "series"]))).toBe(true)
     expect(filters?.predicate?.(queryFor(["item", "other"]))).toBe(false)
     expect(filters?.predicate?.(queryFor(["status"]))).toBe(true)
+    expect(filters?.predicate?.(queryFor(["collections", "account", "mine", "profile"]))).toBe(true)
     expect(filters?.predicate?.(queryFor(queryKeys.billboard))).toBe(false)
   })
 
