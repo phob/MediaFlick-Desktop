@@ -113,6 +113,7 @@ fn finish_without_reporter_emits_stopped_event() {
         Some(event_tx),
         Arc::new(AtomicBool::new(false)),
         SegmentSkipConfig::default(),
+        crate::players::mpv::runtime::MpvRuntimeKind::External,
     );
     state.pending = Some(PendingPlayback {
         key: "test-load".to_string(),

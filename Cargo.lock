@@ -809,6 +809,7 @@ dependencies = [
  "cef",
  "clap",
  "getrandom 0.4.3",
+ "libloading",
  "roxmltree",
  "rusqlite",
  "serde",

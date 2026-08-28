@@ -15,6 +15,8 @@
 
 ### Added
 
+- Added bundled libmpv as the default backend for fresh Windows installs. It loads dynamically, reuses the existing mpv IPC controller in a dedicated native video window, and leaves external mpv and MPC-HC available as live-selectable alternatives. Existing installations with an mpv path continue using external mpv, and `--mpv-path` explicitly selects it.
+- Added a pinned, source-recording Windows libmpv cross-build. The release workflow produces a lean x86-64 DLL without mpv's command-line player, scripting, Vulkan, or GPL-only codec features, packages its notices and checksum, and publishes the corresponding source archive.
 - Added separate MediaFlick and Jellyfin collection modes. MediaFlick mode derives exact TMDB Movie Franchises and supports account-owned My Collections created from a packaged template catalog. Jellyfin mode reads existing BoxSets without modifying them.
 - Added durable account-scoped collection configuration, playback preferences, custom posters, crash-safe local-account deletion, rebuildable collection snapshots, exact secondary-provider identity mapping, and automatic profile refresh.
 - Added the authenticated `collection-experience-v1` provider boundary for normalized TMDB and public MDBList results, public-list selection, franchise and external-ID resolution, and fixed-origin artwork proxying.

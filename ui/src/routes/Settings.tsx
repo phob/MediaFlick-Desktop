@@ -385,31 +385,31 @@ function PlayerSettings() {
     : install.state === "failed" ? install.message : undefined
   return (
     <div className="settings-page">
-      <PageTitle title="Player" detail="Choose the native player MediaFlick launches for playback." />
-      <Section title="Playback backend" description="MPC-HC is available only on Windows; mpv is the portable default.">
-        <SettingsRow title="Player" description="The active backend determines which executable is required.">
-          <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "mpv", label: "mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
+      <PageTitle title="Player" detail="Use MediaFlick's built-in player or hand playback to an external app." />
+      <Section title="Playback backend" description="The built-in libmpv player works without a separate mpv installation.">
+        <SettingsRow title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
+          <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
         </SettingsRow>
         <SettingsRow title="Start fullscreen" description="Use a full-screen player window by default.">
           <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
-        <SettingsRow title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
+        {draft.playerBackend !== "mpchc" && <SettingsRow title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
           <Input className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
-        </SettingsRow>
+        </SettingsRow>}
       </Section>
-      <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
-        <SettingsRow title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
+      {draft.playerBackend !== "libmpv" && <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
+        {draft.playerBackend === "mpv" && <SettingsRow title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
           <div className="flex w-full max-w-md gap-2"><Input value={draft.mpvPath ?? ""} onChange={(event) => setDraft({ ...draft, mpvPath: event.target.value || null })} placeholder="Path to mpv" /><Button variant="outline" size="icon" aria-label="Choose mpv executable" aria-busy={picking.mpv} disabled={picking.mpv} onClick={() => pick("mpv")}><FolderOpen /></Button></div>
-        </SettingsRow>
-        {settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description={installDetail ?? "Download and install the supported mpv build beside MediaFlick."}>
+        </SettingsRow>}
+        {draft.playerBackend === "mpv" && settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description={installDetail ?? "Download and install the supported mpv build beside MediaFlick."}>
           <div className="flex gap-2"><Button variant="outline" onClick={installMpv} disabled={["queued", "downloading", "extracting"].includes(install.state)}><Download /> {install.state === "idle" || install.state === "failed" ? "Install mpv" : "Installing…"}</Button><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></div>
         </SettingsRow>}
-        {!settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description="See mpv’s installation guide for your operating system."><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></SettingsRow>}
-        {settings.capabilities.mpchc && <SettingsRow title="MPC-HC executable" description="Only required when MPC-HC is the selected backend.">
+        {draft.playerBackend === "mpv" && !settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description="See mpv’s installation guide for your operating system."><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></SettingsRow>}
+        {draft.playerBackend === "mpchc" && settings.capabilities.mpchc && <SettingsRow title="MPC-HC executable" description="Select the MPC-HC executable used for playback.">
           <div className="flex w-full max-w-md gap-2"><Input value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
         </SettingsRow>}
-      </Section>
-      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} />
+      </Section>}
+      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} />
     </div>
   )
 }

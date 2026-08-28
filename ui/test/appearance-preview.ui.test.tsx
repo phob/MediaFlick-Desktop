@@ -39,7 +39,7 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "info" },
   },
   appearance: appearance(cardPreviews),
-  capabilities: { platform: "windows", mpchc: false, mpvInstaller: false },
+  capabilities: { platform: "windows", libmpv: true, mpchc: false, mpvInstaller: false },
   streamingQuality: "original",
   playerBackend: "mpv",
   playerConfigured: true,

@@ -67,7 +67,9 @@ jobs:
   build-windows:
     name: Build Windows installer and zip
     runs-on: windows-latest
-    needs: prepare
+    needs:
+      - prepare
+      - build-libmpv-windows
 
     env:
       CEF_PATH: ${{ github.workspace }}\.cache\cef
@@ -85,6 +87,12 @@ jobs:
       - name: Apply prepared release patch
         shell: pwsh
         run: git apply release-prep\release.patch
+
+      - name: Download bundled libmpv runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: libmpv-windows-x64-runtime
+          path: build/libmpv-windows-x64
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -131,7 +139,7 @@ jobs:
 
           New-Item -ItemType Directory -Force build | Out-Null
           Get-ChildItem "$env:CARGO_TARGET_DIR\release" -File | Copy-Item -Destination build -Force
-          Remove-Item -Force -ErrorAction SilentlyContinue build\jellyfin-desktop*, build\jellyfin_desktop*, build\*mpv*
+          Remove-Item -Force -ErrorAction SilentlyContinue build\jellyfin-desktop*, build\jellyfin_desktop*
           if (Test-Path "$env:CARGO_TARGET_DIR\release\locales") {
             Copy-Item "$env:CARGO_TARGET_DIR\release\locales" build -Recurse -Force
           }
@@ -158,6 +166,79 @@ jobs:
           path: |
             dist/installer/MediaFlickDesktop-Setup-${{ needs.prepare.outputs.version }}.exe
             dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-windows-x64.zip
+
+  build-libmpv-windows:
+    name: Build bundled Windows libmpv
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install libmpv cross-build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            automake \
+            autopoint \
+            bison \
+            build-essential \
+            ccache \
+            cmake \
+            flex \
+            gettext \
+            git \
+            gperf \
+            gyp \
+            libgmp-dev \
+            libmpc-dev \
+            libmpfr-dev \
+            libtool \
+            libtool-bin \
+            mercurial \
+            meson \
+            nasm \
+            ninja-build \
+            p7zip-full \
+            pkgconf \
+            python3-jinja2 \
+            ragel \
+            re2c \
+            subversion \
+            texinfo \
+            unzip \
+            yasm \
+            zstd
+
+      - name: Cache libmpv toolchain and dependency builds
+        uses: actions/cache@v6
+        with:
+          path: .cache/libmpv-windows-x64
+          key: libmpv-windows-x64-${{ hashFiles('scripts/build-libmpv-windows.sh', 'packaging/libmpv/windows/mpv-winbuild-cmake.patch') }}
+
+      - name: Build libmpv and corresponding sources
+        run: bash scripts/build-libmpv-windows.sh
+
+      - name: Upload libmpv runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: libmpv-windows-x64-runtime
+          if-no-files-found: error
+          path: |
+            build/libmpv-windows-x64/libmpv-2.dll
+            build/libmpv-windows-x64/libmpv-2.dll.sha256
+            build/libmpv-windows-x64/LICENSE.mpv-GPL
+            build/libmpv-windows-x64/LICENSE.mpv-LGPL
+            build/libmpv-windows-x64/Copyright.mpv
+            build/libmpv-windows-x64/THIRD-PARTY-NOTICES.md
+            build/libmpv-windows-x64/SOURCE-REVISIONS.txt
+
+      - name: Upload libmpv corresponding sources as a release asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-asset-libmpv-sources
+          if-no-files-found: error
+          path: build/libmpv-windows-x64/mediaflick-libmpv-sources.tar.zst
 
   build-linux:
     name: Build Linux AppImage

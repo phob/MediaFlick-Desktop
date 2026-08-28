@@ -12,8 +12,11 @@ pub struct AppSettings {
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpv_path: Option<String>,
-    #[serde(default, skip_serializing_if = "PlayerBackend::is_default")]
-    pub player_backend: PlayerBackend,
+    /// `None` preserves the legacy migration rule: an existing `mpv_path`
+    /// selects external mpv. Fresh Windows installs select bundled libmpv;
+    /// other platforms keep using external mpv until they ship a bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_backend: Option<PlayerBackend>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpchc_path: Option<String>,
     #[serde(
@@ -360,17 +363,15 @@ impl SegmentSkipConfig {
 #[serde(rename_all = "snake_case")]
 pub enum PlayerBackend {
     #[default]
+    Libmpv,
     Mpv,
     Mpchc,
 }
 
 impl PlayerBackend {
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
-    }
-
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Libmpv => "libmpv",
             Self::Mpv => "mpv",
             Self::Mpchc => "mpchc",
         }
@@ -378,6 +379,7 @@ impl PlayerBackend {
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "libmpv" | "built_in" | "builtin" => Some(Self::Libmpv),
             "mpv" => Some(Self::Mpv),
             "mpchc" | "mpc-hc" | "mpc_hc" => Some(Self::Mpchc),
             _ => None,
@@ -501,7 +503,7 @@ impl Default for AppSettings {
         Self {
             jellyfin_url: None,
             mpv_path: None,
-            player_backend: PlayerBackend::default(),
+            player_backend: None,
             mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: FullscreenBehavior::default(),
@@ -521,17 +523,34 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn effective_backend(&self) -> PlayerBackend {
         #[cfg(target_os = "windows")]
+        let default_backend = PlayerBackend::Libmpv;
+        #[cfg(not(target_os = "windows"))]
+        let default_backend = PlayerBackend::Mpv;
+
+        let selected = self.player_backend.unwrap_or_else(|| {
+            if self.mpv_path.is_some() {
+                PlayerBackend::Mpv
+            } else {
+                default_backend
+            }
+        });
+        #[cfg(target_os = "windows")]
         {
-            self.player_backend
+            selected
         }
         #[cfg(not(target_os = "windows"))]
         {
-            PlayerBackend::Mpv
+            if selected == PlayerBackend::Mpchc {
+                PlayerBackend::Mpv
+            } else {
+                selected
+            }
         }
     }
 
     pub fn player_path(&self) -> Option<&str> {
         let path = match self.effective_backend() {
+            PlayerBackend::Libmpv => None,
             PlayerBackend::Mpv => self.mpv_path.as_deref(),
             PlayerBackend::Mpchc => self.mpchc_path.as_deref(),
         };
@@ -706,12 +725,56 @@ mod tests {
 
     #[test]
     fn player_backend_round_trips_by_id() {
+        assert_eq!(PlayerBackend::Libmpv.as_str(), "libmpv");
         assert_eq!(PlayerBackend::Mpv.as_str(), "mpv");
         assert_eq!(PlayerBackend::Mpchc.as_str(), "mpchc");
+        assert_eq!(
+            PlayerBackend::from_id("libmpv"),
+            Some(PlayerBackend::Libmpv)
+        );
         assert_eq!(PlayerBackend::from_id("mpv"), Some(PlayerBackend::Mpv));
         assert_eq!(PlayerBackend::from_id("MPC-HC"), Some(PlayerBackend::Mpchc));
         assert_eq!(PlayerBackend::from_id("mpchc"), Some(PlayerBackend::Mpchc));
         assert_eq!(PlayerBackend::from_id("vlc"), None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn pathless_settings_use_bundled_libmpv_by_default() {
+        let settings: AppSettings = serde_json::from_str("{}").expect("fresh settings");
+
+        assert_eq!(settings.player_backend, None);
+        assert_eq!(settings.effective_backend(), PlayerBackend::Libmpv);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn pathless_settings_keep_external_mpv_until_a_bundle_is_shipped() {
+        let settings: AppSettings = serde_json::from_str("{}").expect("fresh settings");
+
+        assert_eq!(settings.player_backend, None);
+        assert_eq!(settings.effective_backend(), PlayerBackend::Mpv);
+    }
+
+    #[test]
+    fn legacy_mpv_path_keeps_external_mpv_selected() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"mpv_path":"C:/mpv/mpv.exe"}"#).expect("legacy settings");
+
+        assert_eq!(settings.player_backend, None);
+        assert_eq!(settings.effective_backend(), PlayerBackend::Mpv);
+        assert_eq!(settings.player_path(), Some("C:/mpv/mpv.exe"));
+    }
+
+    #[test]
+    fn explicit_libmpv_wins_over_a_retained_external_path() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"player_backend":"libmpv","mpv_path":"C:/mpv/mpv.exe"}"#)
+                .expect("explicit built-in backend");
+
+        assert_eq!(settings.player_backend, Some(PlayerBackend::Libmpv));
+        assert_eq!(settings.effective_backend(), PlayerBackend::Libmpv);
+        assert_eq!(settings.player_path(), None);
     }
 
     #[test]
@@ -831,7 +894,7 @@ mod tests {
     #[test]
     fn mpchc_backend_reads_the_mpchc_path() {
         let mut settings = AppSettings {
-            player_backend: PlayerBackend::Mpchc,
+            player_backend: Some(PlayerBackend::Mpchc),
             ..Default::default()
         };
         assert_eq!(settings.effective_backend(), PlayerBackend::Mpchc);

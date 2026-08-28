@@ -27,7 +27,7 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// A request to open media in the selected external player.
+/// A request to open media in the selected player.
 ///
 /// The serialized field names remain compatible with the existing Jellyfin Web
 /// bridge. Backend-specific track translation happens in each player adapter.

@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -16,6 +15,7 @@ use crate::playback::{
     PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot, ReportingState,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
+use crate::players::mpv::runtime::{MpvRuntime, MpvRuntimeKind};
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 pub use super::commands::{control_command, loadfile_command};
@@ -102,7 +102,8 @@ struct ControllerState {
     tx: Sender<ControllerMessage>,
     rx: Receiver<ControllerMessage>,
     snapshot: Arc<Mutex<PlayerSnapshot>>,
-    child: Option<Child>,
+    runtime_kind: MpvRuntimeKind,
+    runtime: Option<MpvRuntime>,
     configured_mpv: Option<ConfiguredMpv>,
     current_mpv_path: Option<String>,
     ipc_path: Option<String>,
@@ -191,6 +192,21 @@ impl MpvController {
         event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
     ) -> Self {
+        Self::with_runtime(MpvRuntimeKind::External, event_tx, segment_skip_config)
+    }
+
+    pub fn new_libmpv(
+        event_tx: Option<Sender<PlaybackEvent>>,
+        segment_skip_config: SegmentSkipConfig,
+    ) -> Self {
+        Self::with_runtime(MpvRuntimeKind::Library, event_tx, segment_skip_config)
+    }
+
+    fn with_runtime(
+        runtime_kind: MpvRuntimeKind,
+        event_tx: Option<Sender<PlaybackEvent>>,
+        segment_skip_config: SegmentSkipConfig,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(PlayerSnapshot::default()));
         let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -205,6 +221,7 @@ impl MpvController {
                 event_tx,
                 controller_shutdown_requested,
                 segment_skip_config,
+                runtime_kind,
             )
             .run()
         });
@@ -283,12 +300,14 @@ impl ControllerState {
         event_tx: Option<Sender<PlaybackEvent>>,
         shutdown_requested: Arc<AtomicBool>,
         segment_skip_config: SegmentSkipConfig,
+        runtime_kind: MpvRuntimeKind,
     ) -> Self {
         Self {
             tx,
             rx,
             snapshot,
-            child: None,
+            runtime_kind,
+            runtime: None,
             configured_mpv: None,
             current_mpv_path: None,
             ipc_path: None,
@@ -401,7 +420,7 @@ impl ControllerState {
 
             self.drain_events();
             self.maybe_send_startup_seek();
-            self.poll_child();
+            self.poll_runtime();
             self.maybe_poll_mpv_session();
             self.maybe_finish_mpv_raise();
             self.maybe_apply_chapter_markers();

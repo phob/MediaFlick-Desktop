@@ -3,6 +3,7 @@ pub mod controller;
 pub mod external;
 pub mod input;
 pub mod ipc;
+mod runtime;
 
 pub use controller::MpvController;
 pub use external::ExternalMpv;

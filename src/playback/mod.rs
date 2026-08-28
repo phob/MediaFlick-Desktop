@@ -1,6 +1,6 @@
 //! Backend-neutral playback domain.
 //!
-//! This module owns the contracts and policies used by every external player.
+//! This module owns the contracts and policies used by every player backend.
 //! Concrete mpv and MPC-HC protocol implementations live under `players`.
 
 pub mod coordinator;
@@ -41,7 +41,7 @@ pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
     pushes_position: false,
 };
 
-/// Port implemented by each external player adapter.
+/// Port implemented by each player adapter.
 pub trait PlayerBackend: Send {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);

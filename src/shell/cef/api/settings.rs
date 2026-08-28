@@ -72,7 +72,7 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
                 "mpchcPath": settings.mpchc_path,
                 "defaultFullscreen": settings.default_fullscreen.as_str(),
                 "markWatchedNext": bindings.mark_watched_next,
-                "playerConfigured": settings.player_path().is_some(),
+                "playerConfigured": crate::players::configured_player_path(settings).is_some(),
             },
             "playback": {
                 "streamingQuality": settings.streaming_quality.as_str(),
@@ -100,6 +100,7 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
         },
         "capabilities": {
             "platform": player_setup::platform_id(),
+            "libmpv": crate::players::bundled_libmpv_path().is_some(),
             "mpchc": cfg!(target_os = "windows"),
             "mpvInstaller": player_setup::supported(),
         },
@@ -108,7 +109,7 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
         // sectioned shape above.
         "streamingQuality": settings.streaming_quality.as_str(),
         "playerBackend": settings.effective_backend().as_str(),
-        "playerConfigured": settings.player_path().is_some(),
+        "playerConfigured": crate::players::configured_player_path(settings).is_some(),
         "serverUrl": settings.jellyfin_url,
     }))
 }

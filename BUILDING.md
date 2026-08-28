@@ -51,7 +51,17 @@ just release
 
 ## Build a Windows release package
 
-To stage a Windows release payload with the app, CEF runtime files, and locales (mpv is no longer bundled; the app downloads it on first run):
+Windows packages require the MediaFlick libmpv build. From Linux or WSL, install
+the prerequisites in
+[`packaging/libmpv/windows/README.md`](packaging/libmpv/windows/README.md), then
+build the runtime and its corresponding-source archive:
+
+```sh
+bash scripts/build-libmpv-windows.sh
+```
+
+Then stage a Windows release payload with the app, CEF runtime, locales, and
+`libmpv-2.dll`:
 
 ```powershell
 just windows-dist
@@ -62,6 +72,10 @@ The staged payload is created in:
 ```text
 dist/MediaFlickDesktop/
 ```
+
+The source archive under `build/libmpv-windows-x64/` must be published beside
+the installer and zip. Linux and macOS packages continue to use an external
+system mpv until equivalent native libmpv bundles are added.
 
 ## Build the Windows installer
 

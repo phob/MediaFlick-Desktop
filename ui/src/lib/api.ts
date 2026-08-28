@@ -406,7 +406,7 @@ export interface ReleaseCalendar {
 }
 
 export interface PlayerSettings {
-  playerBackend: "mpv" | "mpchc"
+  playerBackend: "libmpv" | "mpv" | "mpchc"
   mpvPath: string | null
   mpchcPath: string | null
   defaultFullscreen: "fullscreen" | "windowed"
@@ -446,13 +446,14 @@ export interface ClientSettings {
   appearance: AppearanceSettings
   capabilities: {
     platform: "windows" | "macos" | "linux" | "other"
+    libmpv: boolean
     mpchc: boolean
     mpvInstaller: boolean
   }
   recoveries?: { area: string; restoredBackup: boolean }[]
   /** Legacy aliases retained by the shell during the API transition. */
   streamingQuality: StreamingQualityId
-  playerBackend: "mpv" | "mpchc"
+  playerBackend: "libmpv" | "mpv" | "mpchc"
   playerConfigured: boolean
   serverUrl: string | null
 }

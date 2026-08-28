@@ -18,7 +18,7 @@ use clap::Parser;
 
 use crate::app::cli::Cli;
 use crate::app::logger;
-use crate::preferences::{FileSettingsStore, SettingsStore};
+use crate::preferences::{FileSettingsStore, PlayerBackend, SettingsStore};
 use crate::shell::cef::AppConfig;
 
 fn main() {
@@ -79,8 +79,10 @@ fn main() {
     }
     if let Some(mpv_path) = &cli.mpv_path {
         settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
+        settings.player_backend = Some(PlayerBackend::Mpv);
         should_save_settings = true;
-    } else if settings.mpv_path.is_none()
+    } else if settings.effective_backend() == PlayerBackend::Mpv
+        && settings.mpv_path.is_none()
         && let Some(mpv_path) = default_mpv_path()
     {
         settings.mpv_path = Some(mpv_path.to_string_lossy().into_owned());
@@ -91,12 +93,13 @@ fn main() {
         tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
     }
 
+    let player_path = crate::players::configured_player_path(&settings);
     tracing::info!(
         target: "main",
         "Starting mediaflick-desktop: server={}, player_backend={}, player={}",
         settings.jellyfin_url.as_deref().unwrap_or("not configured"),
         settings.effective_backend().as_str(),
-        settings.player_path().unwrap_or("not configured")
+        player_path.as_deref().unwrap_or("not configured")
     );
 
     std::process::exit(crate::shell::cef::run(&AppConfig {

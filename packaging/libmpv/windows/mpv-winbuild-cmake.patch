@@ -1,0 +1,343 @@
+diff --git a/packages/ffmpeg.cmake b/packages/ffmpeg.cmake
+index b9ab7a3..b2ef90d 100644
+--- a/packages/ffmpeg.cmake
++++ b/packages/ffmpeg.cmake
+@@ -1,53 +1,12 @@
+ ExternalProject_Add(ffmpeg
+     DEPENDS
+-        amf-headers
+-        avisynth-headers
+-        nvcodec-headers
+-        bzip2
+-        lame
+-        lcms2
+-        openssl
+-        libssh
+-        libsrt
+-        libass
+-        libbluray
+-        libdvdnav
+-        libdvdread
+-        libmodplug
+-        libpng
+-        libsoxr
+-        libbs2b
+-        libvpx
+-        libwebp
+-        libzimg
+-        libmysofa
+-        fontconfig
+-        harfbuzz
+-        opus
+-        speex
+-        vorbis
+-        x264
+-        ${ffmpeg_x265}
+-        libxml2
+-        libvpl
+-        libopenmpt
+-        libjxl
+-        libplacebo
+-        libzvbi
+-        libaribcaption
+-        aom
+-        svtav1
+         dav1d
+-        vapoursynth
+-        ${ffmpeg_uavs3d}
+-        ${ffmpeg_davs2}
+-        rubberband
+-        libva
+-        openal-soft
+     GIT_REPOSITORY https://github.com/FFmpeg/FFmpeg.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--sparse --filter=tree:0"
+     GIT_CLONE_POST_COMMAND "sparse-checkout set --no-cone /* !tests/ref/fate"
++    GIT_REMOTE_NAME origin
++    GIT_RESET 894da5ca7d742e4429ffb2af534fcda0103ef593 # n8.0.1
+     UPDATE_COMMAND ""
+     CONFIGURE_COMMAND ${EXEC} CONF=1 <SOURCE_DIR>/configure
+         --cross-prefix=${TARGET_ARCH}-
+@@ -57,65 +16,20 @@ ExternalProject_Add(ffmpeg
+         --pkg-config-flags=--static
+         --enable-cross-compile
+         --enable-runtime-cpudetect
+-        --enable-gpl
+-        --enable-version3
+-        --enable-avisynth
+-        --enable-vapoursynth
+-        --enable-libass
+-        --enable-libbluray
+-        --enable-libdvdnav
+-        --enable-libdvdread
+-        --enable-libfreetype
+-        --enable-libfribidi
+-        --enable-libfontconfig
+-        --enable-libharfbuzz
+-        --enable-libmodplug
+-        --enable-libopenmpt
+-        --enable-libmp3lame
+-        --enable-lcms2
+-        --enable-libopus
+-        --enable-libsoxr
+-        --enable-libspeex
+-        --enable-libvorbis
+-        --enable-libbs2b
+-        --enable-librubberband
+-        --enable-libvpx
+-        --enable-libwebp
+-        --enable-libx264
+-        --enable-libx265
+-        --enable-libaom
+-        --enable-libsvtav1
++        --disable-autodetect
++        --disable-gpl
+         --enable-libdav1d
+-        ${ffmpeg_davs2_cmd}
+-        ${ffmpeg_uavs3d_cmd}
+-        --enable-libzimg
+-        --enable-openssl
+-        --enable-libxml2
+-        --enable-libmysofa
+-        --enable-libssh
+-        --enable-libsrt
+-        --enable-libvpl
+-        --enable-libjxl
+-        --enable-libplacebo
+-        --enable-libzvbi
+-        --enable-libaribcaption
+-        --enable-cuda-llvm
+-        --enable-cuvid
+-        --enable-nvdec
+-        --enable-nvenc
+-        --enable-amf
+-        --enable-openal
+-        --enable-opengl
++        --enable-schannel
++        --enable-d3d11va
++        --enable-dxva2
+         --disable-doc
+-        --disable-ffplay
+-        --disable-ffprobe
+-        --enable-vaapi
+-        --disable-vdpau
+-        --disable-videotoolbox
+-        --disable-decoder=libaom_av1
++        --disable-programs
++        --disable-avdevice
++        --enable-static
++        --disable-shared
+         ${ffmpeg_lto}
+         --extra-cflags='-Wno-error=int-conversion'
+-        "--extra-libs='${ffmpeg_extra_libs}'" # -lstdc++ / -lc++ needs by libjxl and shaderc
++        "--extra-libs='${ffmpeg_extra_libs}'"
+     BUILD_COMMAND ${MAKE}
+     INSTALL_COMMAND ${MAKE} install
+     LOG_DOWNLOAD 1 LOG_UPDATE 1 LOG_CONFIGURE 1 LOG_BUILD 1 LOG_INSTALL 1
+diff --git a/packages/libass.cmake b/packages/libass.cmake
+index ed27477..73a1a5d 100644
+--- a/packages/libass.cmake
++++ b/packages/libass.cmake
+@@ -4,8 +4,6 @@ ExternalProject_Add(libass
+         freetype2
+         fribidi
+         libiconv
+-        fontconfig
+-        libunibreak
+     GIT_REPOSITORY https://github.com/libass/libass.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--filter=tree:0"
+@@ -16,10 +14,10 @@ ExternalProject_Add(libass
+         --cross-file=${MESON_CROSS}
+         --buildtype=release
+         --default-library=static
+-        -Dfontconfig=enabled
++        -Dfontconfig=disabled
+         -Ddirectwrite=enabled
+         -Dasm=enabled
+-        -Dlibunibreak=enabled
++        -Dlibunibreak=disabled
+         -Dtest=disabled
+         -Dcompare=disabled
+         -Dprofile=disabled
+diff --git a/packages/libplacebo.cmake b/packages/libplacebo.cmake
+index b5797dc..c8da7c0 100644
+--- a/packages/libplacebo.cmake
++++ b/packages/libplacebo.cmake
+@@ -2,9 +2,8 @@ get_property(src_glad TARGET glad PROPERTY _EP_SOURCE_DIR)
+ get_property(src_fast_float TARGET fast_float PROPERTY _EP_SOURCE_DIR)
+ ExternalProject_Add(libplacebo
+     DEPENDS
+-        vulkan
+-        shaderc
+         spirv-cross
++        vulkan-header
+         lcms2
+         glad
+         fast_float
+@@ -28,7 +27,7 @@ ExternalProject_Add(libplacebo
+         -Ddebug=true
+         -Db_ndebug=true
+         -Doptimization=3
+-        -Dvulkan-registry='${MINGW_INSTALL_PREFIX}/share/vulkan/registry/vk.xml'
++        -Dvulkan=disabled
+         -Ddemos=false
+     BUILD_COMMAND ${EXEC} ninja -C <BINARY_DIR>
+     INSTALL_COMMAND ${EXEC} ninja -C <BINARY_DIR> install
+diff --git a/packages/mpv.cmake b/packages/mpv.cmake
+index a2954d5..2a7ef98 100644
+--- a/packages/mpv.cmake
++++ b/packages/mpv.cmake
+@@ -1,33 +1,16 @@
+ ExternalProject_Add(mpv
+     DEPENDS
+-        angle-headers
+         ffmpeg
+         fribidi
+         lcms2
+-        libarchive
+         libass
+-        libdvdnav
+-        libdvdread
+-        libiconv
+-        libjpeg
+-        libpng
+-        luajit
+-        rubberband
+-        uchardet
+-        openal-soft
+-        mujs
+-        vulkan
+-        shaderc
+         libplacebo
+-        spirv-cross
+-        vapoursynth
+-        libsdl2
+-        subrandr
+-        libsixel
+-        curl
++        shaderc
+     GIT_REPOSITORY https://github.com/mpv-player/mpv.git
+     SOURCE_DIR ${SOURCE_LOCATION}
+     GIT_CLONE_FLAGS "--filter=tree:0"
++    GIT_REMOTE_NAME origin
++    GIT_RESET 41f6a645068483470267271e1d09966ca3b9f413 # v0.41.0
+     UPDATE_COMMAND ""
+     CONFIGURE_COMMAND ${EXEC} CONF=1 meson setup <BINARY_DIR> <SOURCE_DIR>
+         --prefix=${MINGW_INSTALL_PREFIX}
+@@ -41,24 +24,28 @@ ExternalProject_Add(mpv
+         -Db_lto=true
+         ${mpv_lto_mode}
+         -Dlibmpv=true
+-        -Dpdf-build=enabled
+-        -Dlua=enabled
+-        -Djavascript=enabled
+-        -Dsdl2-gamepad=enabled
+-        -Dlibarchive=enabled
+-        -Dlibbluray=enabled
+-        -Ddvdnav=enabled
+-        -Duchardet=enabled
+-        -Drubberband=enabled
++        -Dgpl=false
++        -Dcplayer=false
++        -Dpdf-build=disabled
++        -Dlua=disabled
++        -Djavascript=disabled
++        -Dsdl2-gamepad=disabled
++        -Dlibarchive=disabled
++        -Dlibbluray=disabled
++        -Ddvdnav=disabled
++        -Duchardet=disabled
++        -Drubberband=disabled
+         -Dlcms2=enabled
+-        -Dopenal=enabled
++        -Dopenal=disabled
++        -Dshaderc=enabled
+         -Dspirv-cross=enabled
+-        -Dvulkan=enabled
+-        -Dvapoursynth=enabled
+-        -Dsubrandr=enabled
+-        -Dsixel=enabled
+-        ${mpv_gl}
+-        -Dlibcurl=enabled
++        -Dvulkan=disabled
++        -Dvapoursynth=disabled
++        -Dsixel=disabled
++        -Dgl=enabled
++        -Dgl-win32=enabled
++        -Degl-angle=disabled
++        -Dd3d11=enabled
+         -Dc_args='-Wno-error=int-conversion'
+     BUILD_COMMAND ${EXEC} LTO_JOB=1 PDB=1 ninja -C <BINARY_DIR>
+     INSTALL_COMMAND ""
+@@ -67,47 +54,29 @@ ExternalProject_Add(mpv
+ 
+ ExternalProject_Add_Step(mpv strip-binary
+     DEPENDEES build
+-    ${mpv_add_debuglink}
+-    COMMENT "Stripping mpv binaries"
++    COMMAND ${EXEC} ${TARGET_ARCH}-strip -s <BINARY_DIR>/libmpv-2.dll
++    COMMENT "Stripping libmpv"
+ )
+ 
+ ExternalProject_Add_Step(mpv copy-binary
+     DEPENDEES strip-binary
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.exe                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv.exe
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.com                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv.com
+-    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/etc/mpv-register.bat              ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv-register.bat
+-    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/etc/mpv-unregister.bat            ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv-unregister.bat
+-    COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/mpv.pdf                           ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/doc/manual.pdf
+-    COMMAND ${CMAKE_COMMAND} -E copy ${MINGW_INSTALL_PREFIX}/etc/fonts/fonts.conf   ${CMAKE_CURRENT_BINARY_DIR}/mpv-package/mpv/fonts.conf
+-    ${mpv_copy_debug}
+     COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv-2.dll          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv-2.dll
+     COMMAND ${CMAKE_COMMAND} -E copy <BINARY_DIR>/libmpv.dll.a          ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/libmpv.dll.a
+     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/client.h       ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/client.h
+     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/stream_cb.h    ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/stream_cb.h
+     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/render.h       ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/render.h
+     COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/include/mpv/render_gl.h    ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/include/mpv/render_gl.h
+-    COMMENT "Copying mpv binaries and manual"
++    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/LICENSE.GPL                 ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/LICENSE.GPL
++    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/LICENSE.LGPL                ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/LICENSE.LGPL
++    COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/Copyright                   ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev/Copyright
++    COMMENT "Copying libmpv binaries, headers, and license notices"
+ )
+ 
+-set(RENAME ${CMAKE_CURRENT_BINARY_DIR}/mpv-prefix/src/rename.sh)
+-file(WRITE ${RENAME}
+-"#!/bin/bash
+-cd $1
+-GIT=$(git rev-parse --short=10 HEAD)
+-mv $2 $2-git-\${GIT}")
+-
+ ExternalProject_Add_Step(mpv copy-package-dir
+     DEPENDEES copy-binary
+-    COMMAND chmod 755 ${RENAME}
+-    COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-package ${CMAKE_BINARY_DIR}/mpv-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-
+-    COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-debug ${CMAKE_BINARY_DIR}/mpv-debug-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-debug-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-
+-    COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMAND ${RENAME} <SOURCE_DIR> ${CMAKE_BINARY_DIR}/mpv-dev-${TARGET_CPU}${x86_64_LEVEL}-${BUILDDATE}
+-    COMMENT "Moving mpv package folder"
++    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}/mediaflick-libmpv-${TARGET_CPU}${x86_64_LEVEL}
++    COMMAND ${CMAKE_COMMAND} -E rename ${CMAKE_CURRENT_BINARY_DIR}/mpv-dev ${CMAKE_BINARY_DIR}/mediaflick-libmpv-${TARGET_CPU}${x86_64_LEVEL}
++    COMMENT "Moving libmpv package folder"
+     LOG 1
+ )
+ 
+diff --git a/packages/spirv-cross.cmake b/packages/spirv-cross.cmake
+index d49b9d3..056af81 100644
+--- a/packages/spirv-cross.cmake
++++ b/packages/spirv-cross.cmake
+@@ -5,7 +5,8 @@ ExternalProject_Add(spirv-cross
+     GIT_REMOTE_NAME origin
+     GIT_TAG main
+     UPDATE_COMMAND ""
+-    PATCH_COMMAND ${EXEC} git am --3way ${CMAKE_CURRENT_SOURCE_DIR}/spirv-cross-*.patch
++    PATCH_COMMAND ${EXEC} git reset --hard origin/main
++    COMMAND ${EXEC} git am --3way ${CMAKE_CURRENT_SOURCE_DIR}/spirv-cross-*.patch
+     CONFIGURE_COMMAND ${EXEC} CONF=1 cmake -H<SOURCE_DIR> -B<BINARY_DIR>
+         -G Ninja
+         -DCMAKE_BUILD_TYPE=Release

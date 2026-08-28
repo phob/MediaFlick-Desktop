@@ -4,12 +4,12 @@
   MediaFlick Desktop
 </h1>
 
-<p align="center"><b>The Jellyfin desktop client that plays through your <i>real</i> mpv.</b></p>
+<p align="center"><b>Jellyfin playback that works immediately and still respects a serious mpv setup.</b></p>
 
 <p align="center">
-  Not libmpv baked into an app — your actual external <code>mpv</code> process, with SVP4 motion
-  interpolation, SDR-to-HDR, custom shaders, and your full <code>mpv.conf</code>. Browse a fast native
-  library, hit play, and mpv takes over while watched state and resume points sync straight back to your server.
+  A bundled libmpv player is the Windows default, so playback needs no separate install. Power users can switch
+  to their own external <code>mpv</code> process for SVP4, custom shaders, HDR profiles, and their full
+  <code>mpv.conf</code>. Watched state and resume points sync straight back to the server in either mode.
 </p>
 
 <p align="center">
@@ -20,9 +20,9 @@
 
 ## Why this exists, and why it's different
 
-Every other Jellyfin desktop app plays video *inside* itself with libmpv. That's convenient, but it quietly caps what mpv can do — the features power users actually chase, like **SVP 4 frame interpolation** and **SDR-to-HDR tone mapping**, are exactly the ones that don't survive being embedded.
+Most people should not have to install or configure a player before watching something. MediaFlick therefore ships a focused libmpv runtime on Windows and uses it by default. It opens video in a dedicated native player window while the app keeps Jellyfin progress, resume position, and watched state synchronized.
 
-MediaFlick Desktop takes the opposite approach. It has its **own UI** — no embedded Jellyfin Web — and when you press play it hands the stream to the **external `mpv` you already configured**. Original-quality direct playback remains the default, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections. Your `mpv.conf`, your scripts, your shaders, your SVP4 pipeline, your HDR profiles, your input bindings — all of it applies, because it's the real mpv, not a stripped-down copy.
+That convenience does not replace the original power-user path. Select **External mpv** and MediaFlick hands the stream to the executable you configured. Your `mpv.conf`, scripts, shaders, SVP4 pipeline, HDR profiles, and input bindings continue to apply. Original-quality direct playback remains the default in both modes, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections.
 
 Browsing is fast because it isn't a web client talking to a server on every keystroke: the app keeps a **local SQLite mirror of your library** and searches it directly, so type-ahead search stays instant even on a big library and posters keep working while the server is slow.
 
@@ -30,7 +30,8 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 
 ## Features
 
-- **Real external mpv playback** — original or server-transcoded streams handed to your own `mpv` process, so your entire setup applies: `mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, input bindings.
+- **Built-in playback on Windows** — a bundled libmpv runtime works without downloading or configuring a separate player.
+- **Full external mpv mode** — hand streams to your own `mpv` process when you want `mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, or personal input bindings.
 - **Selectable streaming quality** — keep original quality, use Jellyfin's automatic connection limit, or cap playback from 1.5 to 120 Mbps with server-transcoding fallback.
 - **Playstate synced to Jellyfin** — playback start, progress, watched state, and resume positions report back to your server.
 - **Media-segment skipping** — skip intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings.
@@ -41,14 +42,14 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Server-mediated requests and ratings** — the optional MediaFlick Companion keeps Sonarr, Radarr, Seerr, MDBList, and TMDB credentials on the Jellyfin server. It serves MDBList ratings through a quota-aware shared cache without exposing the administrator key to Desktop.
 - **Two collection modes** — use exact TMDB franchises and template-created personal collections, or browse Jellyfin BoxSets unchanged. Collection preferences stay local to each account.
 - **Server administration in your browser** — anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
-- **One-click mpv download on Windows** — no manual setup; Linux and macOS auto-detect a system `mpv`.
-- **Optional MPC-HC backend on Windows** — switchable live from Client Settings (mpv stays the default).
+- **Optional external-player setup** — one-click mpv download on Windows; Linux and macOS auto-detect a system `mpv`.
+- **Optional MPC-HC backend on Windows** — switchable live from Client Settings.
 - **Automatic in-app updates** from GitHub Releases (Windows).
 - **Cross-platform** — Windows, Linux, and macOS.
 
 ## Install
 
-**Windows** — download the latest `MediaFlickDesktop-Setup-<version>.exe` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it. Don't have mpv yet? There's a one-click **Download mpv** in the app.
+**Windows** — download the latest `MediaFlickDesktop-Setup-<version>.exe` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it. The built-in player is ready immediately; installing external mpv is optional.
 
 On first launch, enter your Jellyfin server address and sign in. Right-click anywhere for **Client Settings**, **Open Jellyfin dashboard**, and **About**.
 

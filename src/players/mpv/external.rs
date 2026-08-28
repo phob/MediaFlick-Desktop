@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 #[cfg(windows)]
 use std::process::Stdio;
@@ -23,10 +23,6 @@ impl ExternalMpv {
         Self {
             executable: executable.into(),
         }
-    }
-
-    pub fn executable(&self) -> &Path {
-        &self.executable
     }
 
     pub fn command_for_idle_with_ipc_and_fullscreen(

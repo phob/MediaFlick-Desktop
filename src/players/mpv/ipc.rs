@@ -1,7 +1,6 @@
 //! mpv IPC endpoint allocation, command transport, and event decoding.
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::process::Child;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -494,8 +493,8 @@ fn read_events(stream: &IpcConnection, tx: &Sender<MpvEvent>) {
 pub(super) fn start_ipc_worker(
     path: &str,
     timeout: Duration,
-    child: &mut Child,
     shutdown_requested: &AtomicBool,
+    mut runtime_is_alive: impl FnMut() -> io::Result<bool>,
 ) -> io::Result<(IpcWorker, Receiver<MpvEvent>)> {
     let deadline = Instant::now() + timeout;
     let mut last_error = None;
@@ -519,19 +518,11 @@ pub(super) fn start_ipc_worker(
                 last_error = Some(error);
             }
         }
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("mpv exited before IPC became ready: {status}"),
-                ));
-            }
-            Ok(None) => {}
-            Err(error) => {
-                return Err(io::Error::other(format!(
-                    "failed to poll mpv while waiting for IPC: {error}"
-                )));
-            }
+        if !runtime_is_alive()? {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "mpv stopped before IPC became ready",
+            ));
         }
         thread::sleep(Duration::from_millis(50));
     }

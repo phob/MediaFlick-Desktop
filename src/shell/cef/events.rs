@@ -4,11 +4,11 @@ use super::*;
 
 pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings) {
     playback.configure_segments(settings.segment_skip_config());
-    let Some(path) = settings.player_path() else {
-        tracing::debug!(target: "mpv.ipc", "skipped player warmup because no executable is configured");
+    let Some(path) = crate::players::configured_player_path(settings) else {
+        tracing::debug!(target: "mpv.ipc", "skipped player warmup because the selected runtime is unavailable");
         return;
     };
-    playback.warm(path.to_string(), settings.default_fullscreen);
+    playback.warm(path, settings.default_fullscreen);
 }
 
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
