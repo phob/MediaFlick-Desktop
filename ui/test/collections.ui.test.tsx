@@ -17,10 +17,11 @@ import type {
   CollectionProfile,
   ItemDetail,
   NormalizedCollectionTitle,
+  SeerrMediaDetail,
   SeerrStatusInfo,
 } from "../src/lib/api"
 import * as api from "../src/lib/api"
-import { queryKeys } from "../src/lib/query-client"
+import { queryClient, queryKeys } from "../src/lib/query-client"
 
 function title(id: number, patch: Partial<NormalizedCollectionTitle> = {}): NormalizedCollectionTitle {
   return {
@@ -100,6 +101,53 @@ const seerrStatus: SeerrStatusInfo = {
   },
 }
 
+function seerrMedia(id: number, status: SeerrMediaDetail["status"]): SeerrMediaDetail {
+  return {
+    mediaType: "movie",
+    tmdbId: id,
+    title: `Movie ${id}`,
+    year: 1999,
+    overview: "",
+    posterPath: null,
+    backdropPath: null,
+    voteAverage: null,
+    status,
+    status4k: "unknown",
+    libraryItemId: null,
+    runtimeMinutes: null,
+    genres: [],
+    seasons: [],
+    tagline: null,
+    originalTitle: null,
+    voteCount: null,
+    releaseDate: null,
+    firstAirDate: null,
+    lastAirDate: null,
+    productionStatus: null,
+    inProduction: false,
+    seriesType: null,
+    numberOfSeasons: null,
+    numberOfEpisodes: null,
+    originalLanguage: null,
+    homepage: null,
+    externalIds: { imdb: null, tvdb: null },
+    budget: null,
+    revenue: null,
+    studios: [],
+    networks: [],
+    creators: [],
+    directors: [],
+    writers: [],
+    productionCountries: [],
+    spokenLanguages: [],
+    cast: [],
+    trailer: null,
+    releaseDates: [],
+    contentRatings: [],
+    nextEpisode: null,
+  }
+}
+
 function profile(id: string, name: string): CollectionProfile {
   return {
     id,
@@ -116,8 +164,12 @@ function profile(id: string, name: string): CollectionProfile {
   }
 }
 
-function providers(ui: ReactNode, initialEntry: string, path = "*") {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function providers(
+  ui: ReactNode,
+  initialEntry: string,
+  path = "*",
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   client.setQueryData(queryKeys.status, {
     authenticated: true,
     serverUrl: "https://jellyfin.example",
@@ -133,7 +185,10 @@ function providers(ui: ReactNode, initialEntry: string, path = "*") {
   )
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  queryClient.clear()
+})
 
 describe("mode-aware collections", () => {
   test("collection settings renders the flat template contract and opens its wizard", async () => {
@@ -330,6 +385,49 @@ describe("mode-aware collections", () => {
     expect(await screen.findByRole("button", { name: "Request Movie 2" })).toBeTruthy()
     expect(document.querySelector('a[href="/discover/movie/2"]')).toBeTruthy()
     expect(itemRequest).not.toHaveBeenCalled()
+  })
+
+  test("a requested collection card refreshes to its current Seerr status", async () => {
+    const id = "3".repeat(16)
+    vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
+      profile: profile(id, "Request status"),
+      status: "ready",
+      owned: [],
+      missing: [title(2)],
+      items: [],
+      libraryItems: [],
+      ownershipAvailable: true,
+    })
+    vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
+    const media = vi.spyOn(api.api.seerr, "media")
+      .mockResolvedValueOnce(seerrMedia(2, "unknown"))
+      .mockResolvedValue(seerrMedia(2, "processing"))
+    vi.spyOn(api.api.seerr, "request").mockResolvedValue({
+      id: 12,
+      status: "approved",
+      mediaType: "movie",
+      tmdbId: 2,
+      is4k: false,
+      createdAt: null,
+      updatedAt: null,
+      mediaStatus: "processing",
+      seasons: [],
+      libraryItemId: null,
+    })
+
+    render(providers(
+      <MyCollectionDetail />,
+      `/collections/mine/${id}`,
+      "/collections/mine/:profileId",
+      queryClient,
+    ))
+
+    fireEvent.click(await screen.findByRole("button", { name: "Request Movie 2" }))
+    fireEvent.click(screen.getByRole("button", { name: "Request" }))
+
+    expect(await screen.findByText("Downloading")).toBeTruthy()
+    expect(media).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole("button", { name: "Request Movie 2" })).toBeNull()
   })
 
   test("an untrusted library sync shows the ungrouped snapshot without request links", async () => {
