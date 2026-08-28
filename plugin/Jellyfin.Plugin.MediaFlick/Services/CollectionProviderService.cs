@@ -163,15 +163,12 @@ public sealed class CollectionProviderService
     public async Task<CollectionProviderResult> PreviewAsync(
         CollectionProviderRequest request,
         CancellationToken cancellationToken)
-    {
-        var result = await ResolveAsync(request, cancellationToken).ConfigureAwait(false);
-        return result with { Items = result.Items.Take(PreviewSize).ToArray() };
-    }
+        => await ResolveAsync(request, PreviewSize, cancellationToken).ConfigureAwait(false);
 
     public Task<CollectionProviderResult> ResultsAsync(
         CollectionProviderRequest request,
         CancellationToken cancellationToken)
-        => ResolveAsync(request, cancellationToken);
+        => ResolveAsync(request, null, cancellationToken);
 
     public async Task<FranchiseResolveResponse> FranchisesAsync(
         FranchiseResolveRequest request,
@@ -179,12 +176,21 @@ public sealed class CollectionProviderService
     {
         var ids = request.TmdbIds.Where(id => id > 0).Distinct().Take(10_000).ToArray();
         var credential = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
-        var collectionIds = new HashSet<long>();
+        var collectionIds = request.CollectionIds?
+            .Where(id => id > 0)
+            .Distinct()
+            .Take(10_000)
+            .ToHashSet() ?? [];
+        var memberships = new List<FranchiseMembership>(ids.Length);
         foreach (var chunk in ids.Chunk(4))
         {
-            var tasks = chunk.Select(id => MovieCollectionIdAsync(credential, id, cancellationToken));
-            foreach (var collectionId in await Task.WhenAll(tasks).ConfigureAwait(false))
+            var chunkIds = chunk.ToArray();
+            var tasks = chunkIds.Select(id => MovieCollectionIdAsync(credential, id, cancellationToken));
+            var resolved = await Task.WhenAll(tasks).ConfigureAwait(false);
+            for (var index = 0; index < resolved.Length; index++)
             {
+                var collectionId = resolved[index];
+                memberships.Add(new FranchiseMembership(chunkIds[index], collectionId));
                 if (collectionId is > 0)
                 {
                     collectionIds.Add(collectionId.Value);
@@ -204,15 +210,16 @@ public sealed class CollectionProviderService
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 NormalizeTmdbRows(detail["parts"] as JsonArray, "movie")));
         }
-        return new FranchiseResolveResponse(franchises);
+        return new FranchiseResolveResponse(franchises, memberships);
     }
 
     private async Task<CollectionProviderResult> ResolveAsync(
         CollectionProviderRequest request,
+        int? fetchLimit,
         CancellationToken cancellationToken)
     {
         ValidateRequest(request);
-        var cacheKey = JsonSerializer.Serialize(request, CompanionJson.CamelCase);
+        var cacheKey = JsonSerializer.Serialize(new { Request = request, FetchLimit = fetchLimit }, CompanionJson.CamelCase);
         var kind = String(request.Source, "kind");
         var provider = kind == "mdbListPublicList" ? RatingProviders.MdbList : RatingProviders.Tmdb;
         if (provider == RatingProviders.MdbList)
@@ -238,11 +245,11 @@ public sealed class CollectionProviderService
             }
             var result = kind switch
             {
-                "tmdbDiscover" => await TmdbDiscoverAsync(request, cancellationToken)
+                "tmdbDiscover" => await TmdbDiscoverAsync(request, fetchLimit, cancellationToken)
                     .ConfigureAwait(false),
-                "tmdbCollection" => await ExactCollectionAsync(request, cancellationToken)
+                "tmdbCollection" => await ExactCollectionAsync(request, fetchLimit, cancellationToken)
                     .ConfigureAwait(false),
-                "mdbListPublicList" => await MdbListAsync(request, cancellationToken)
+                "mdbListPublicList" => await MdbListAsync(request, fetchLimit, cancellationToken)
                     .ConfigureAwait(false),
                 _ => throw new GatewayException(
                     StatusCodes.Status400BadRequest,
@@ -259,6 +266,7 @@ public sealed class CollectionProviderService
 
     private async Task<CollectionProviderResult> TmdbDiscoverAsync(
         CollectionProviderRequest request,
+        int? maximumItems,
         CancellationToken cancellationToken)
     {
         var mediaType = NormalizeMediaType(request.MediaType);
@@ -267,13 +275,14 @@ public sealed class CollectionProviderService
             throw new GatewayException(StatusCodes.Status400BadRequest, "TMDB Discover requires one media type");
         }
         var credential = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
-        var limit = RequestedLimit(request.Limit);
+        var requestedLimit = RequestedLimit(request.Limit);
+        var fetchLimit = EffectiveFetchLimit(requestedLimit, maximumItems);
         var parameters = request.Source["parameters"] as JsonObject;
         var query = DiscoverQuery(parameters, mediaType);
         var rows = new List<NormalizedProviderTitle>();
         var total = 0;
         var totalPages = 1;
-        for (var page = 1; page <= totalPages && rows.Count < limit; page += 1)
+        for (var page = 1; page <= totalPages && rows.Count < fetchLimit; page += 1)
         {
             query["page"] = page.ToString(CultureInfo.InvariantCulture);
             var response = await _tmdb.GetAsync(
@@ -286,11 +295,12 @@ public sealed class CollectionProviderService
             totalPages = (int)Math.Min(Positive(body["total_pages"]) ?? 1, 500);
             rows.AddRange(NormalizeTmdbRows(body["results"] as JsonArray, mediaType));
         }
-        return Result(rows.Take(limit), Math.Min(total, limit));
+        return Result(rows.Take(fetchLimit), Math.Min(total, requestedLimit));
     }
 
     private async Task<CollectionProviderResult> ExactCollectionAsync(
         CollectionProviderRequest request,
+        int? maximumItems,
         CancellationToken cancellationToken)
     {
         var id = Positive(request.Source["collectionId"])
@@ -309,12 +319,14 @@ public sealed class CollectionProviderService
                     && release <= today)
                 .ToArray();
         }
-        var limit = RequestedLimit(request.Limit);
-        return Result(rows.Take(limit), Math.Min(rows.Count, limit));
+        var requestedLimit = RequestedLimit(request.Limit);
+        var fetchLimit = EffectiveFetchLimit(requestedLimit, maximumItems);
+        return Result(rows.Take(fetchLimit), Math.Min(rows.Count, requestedLimit));
     }
 
     private async Task<CollectionProviderResult> MdbListAsync(
         CollectionProviderRequest request,
+        int? maximumItems,
         CancellationToken cancellationToken)
     {
         var selector = String(request.Source, "listId") ?? string.Empty;
@@ -323,10 +335,18 @@ public sealed class CollectionProviderService
             .ConfigureAwait(false);
         var rows = new List<NormalizedProviderTitle>();
         var offset = 0;
-        var limit = RequestedLimit(request.Limit);
-        while (rows.Count < limit)
+        var requestedLimit = RequestedLimit(request.Limit);
+        var fetchLimit = EffectiveFetchLimit(requestedLimit, maximumItems);
+        var mediaType = NormalizeMediaType(request.MediaType);
+        while (rows.Count < fetchLimit)
         {
-            var resource = $"lists/{list.Id}/items?unified=true&limit=1000&offset={offset}";
+            var typeFilter = mediaType switch
+            {
+                "movie" => "&mediatype=movie",
+                "series" => "&mediatype=show",
+                _ => string.Empty
+            };
+            var resource = $"lists/{list.Id}/items?unified=true{typeFilter}&limit=1000&offset={offset}";
             var response = await _mdbList.ListItemsAsync(credential, resource, cancellationToken)
                 .ConfigureAwait(false);
             RecordProviderOutcome(RatingProviders.MdbList, response.StatusCode, response.RetryAt);
@@ -339,15 +359,15 @@ public sealed class CollectionProviderService
             {
                 throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "MDBList unavailable");
             }
-            var page = NormalizeMdbListRows(response.Body, rows.Count);
-            rows.AddRange(page);
-            offset += page.Count;
-            if (!response.HasMore || page.Count == 0)
+            var page = NormalizeMdbListRows(response.Body, rows.Count, mediaType);
+            rows.AddRange(page.Items);
+            offset += page.SourceCount;
+            if (!response.HasMore || page.SourceCount == 0)
             {
                 break;
             }
         }
-        return Result(rows.Take(limit), rows.Count, list.Id);
+        return Result(rows.Take(fetchLimit), Math.Min(rows.Count, requestedLimit), list.Id);
     }
 
     private async Task<string> ValidTmdbCredentialAsync(CancellationToken cancellationToken)
@@ -377,13 +397,22 @@ public sealed class CollectionProviderService
                 new Dictionary<string, string>(),
                 cancellationToken).ConfigureAwait(false);
             var valid = response.StatusCode.IsSuccess();
-            _health.SetHealth(RatingProviders.Tmdb, new ProviderHealthState
+            var rejected = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
+            var next = valid ? new ProviderHealthState
             {
-                Validation = valid ? "valid" : "invalid",
-                Valid = valid,
+                Validation = "valid",
+                Valid = true,
                 RetryAt = response.RetryAt,
                 LastCheckedAt = now
-            });
+            } : rejected ? RejectedCredentialState(response.RetryAt, now) : health with
+            {
+                Validation = (int)response.StatusCode == StatusCodes.Status429TooManyRequests
+                    ? "rate_limited"
+                    : "unavailable",
+                RetryAt = response.RetryAt ?? now + 60,
+                LastCheckedAt = now
+            };
+            _health.SetHealth(RatingProviders.Tmdb, next);
             if (!valid)
             {
                 throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "TMDB unavailable");
@@ -421,16 +450,28 @@ public sealed class CollectionProviderService
             var response = await _mdbList.ValidateAsync(credential, cancellationToken)
                 .ConfigureAwait(false);
             var valid = response.StatusCode.IsSuccess();
-            _health.SetHealth(RatingProviders.MdbList, new ProviderHealthState
+            var rejected = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
+            var next = valid ? new ProviderHealthState
             {
-                Validation = valid ? "valid" : "invalid",
-                Valid = valid,
+                Validation = "valid",
+                Valid = true,
                 QuotaLimit = response.Quota.Limit,
                 QuotaRemaining = response.Quota.Remaining,
                 QuotaResetAt = response.Quota.ResetAt,
                 RetryAt = response.RetryAt,
                 LastCheckedAt = now
-            });
+            } : rejected ? RejectedCredentialState(response.RetryAt, now) : health with
+            {
+                Validation = (int)response.StatusCode == StatusCodes.Status429TooManyRequests
+                    ? "rate_limited"
+                    : "unavailable",
+                QuotaLimit = response.Quota.Limit ?? health.QuotaLimit,
+                QuotaRemaining = response.Quota.Remaining ?? health.QuotaRemaining,
+                QuotaResetAt = response.Quota.ResetAt ?? health.QuotaResetAt,
+                RetryAt = response.RetryAt ?? now + 60,
+                LastCheckedAt = now
+            };
+            _health.SetHealth(RatingProviders.MdbList, next);
             if (!valid)
             {
                 throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "MDBList unavailable");
@@ -443,6 +484,15 @@ public sealed class CollectionProviderService
             _mdbListValidationGate.Release();
         }
     }
+
+    private static ProviderHealthState RejectedCredentialState(long? retryAt, long now)
+        => new()
+        {
+            Validation = "invalid",
+            Valid = false,
+            RetryAt = retryAt,
+            LastCheckedAt = now
+        };
 
     private async Task ValidateReadinessAsync(
         string provider,
@@ -815,28 +865,48 @@ public sealed class CollectionProviderService
         return result;
     }
 
-    private static IReadOnlyList<NormalizedProviderTitle> NormalizeMdbListRows(JsonNode? body, int offset)
+    private static NormalizedMdbListPage NormalizeMdbListRows(
+        JsonNode? body,
+        int offset,
+        string requestedMediaType)
     {
-        var rows = body switch
+        var rows = new List<(JsonNode? Row, string? MediaType)>();
+        switch (body)
         {
-            JsonArray array => array,
-            JsonObject detail when detail["items"] is JsonArray items => items,
-            _ => null
-        };
-        if (rows is null)
-        {
-            return [];
+            case JsonArray array:
+                rows.AddRange(array.Select(row => (row, (string?)null)));
+                break;
+            case JsonObject detail when detail["items"] is JsonArray items:
+                rows.AddRange(items.Select(row => (row, (string?)null)));
+                break;
+            case JsonObject detail:
+                rows.AddRange(BucketedMdbListRows(detail));
+                break;
         }
         var result = new List<NormalizedProviderTitle>();
-        foreach (var row in rows.OfType<JsonObject>())
+        foreach (var (node, bucketMediaType) in rows)
         {
-            var id = Positive(row["id"]) ?? Positive(row["tmdbid"])
-                ?? Positive(row["ids"]?["tmdb"]);
-            if (id is null || row["adult"]?.GetValue<bool>() == true)
+            if (node is not JsonObject row)
             {
                 continue;
             }
-            var type = NormalizeMediaType(String(row, "mediatype") ?? String(row, "type") ?? "movie");
+            var id = Positive(row["id"]) ?? Positive(row["tmdbid"])
+                ?? Positive(row["ids"]?["tmdb"]);
+            if (id is null || Adult(row["adult"]))
+            {
+                continue;
+            }
+            var type = bucketMediaType switch
+            {
+                "movie" => "movie",
+                "series" => "series",
+                _ => NormalizeMediaType(
+                    String(row, "mediatype") ?? String(row, "type") ?? "movie")
+            };
+            if (requestedMediaType != "mixed" && type != requestedMediaType)
+            {
+                continue;
+            }
             var release = String(row, "released") ?? String(row, "release_date");
             result.Add(new NormalizedProviderTitle(
                 type,
@@ -851,7 +921,47 @@ public sealed class CollectionProviderService
                 String(row, "backdrop"),
                 false));
         }
-        return result;
+        return new NormalizedMdbListPage(result, rows.Count);
+    }
+
+    private static IEnumerable<(JsonNode? Row, string? MediaType)> BucketedMdbListRows(
+        JsonObject detail)
+    {
+        if (detail["movies"] is JsonArray movies)
+        {
+            foreach (var row in movies)
+            {
+                yield return (row, "movie");
+            }
+        }
+        if (detail["shows"] is JsonArray shows)
+        {
+            foreach (var row in shows)
+            {
+                yield return (row, "series");
+            }
+        }
+    }
+
+    private static bool Adult(JsonNode? node)
+    {
+        if (node is not JsonValue value)
+        {
+            return false;
+        }
+        if (value.TryGetValue<bool>(out var boolean))
+        {
+            return boolean;
+        }
+        if (value.TryGetValue<long>(out var number))
+        {
+            return number != 0;
+        }
+        if (value.TryGetValue<int>(out var integer))
+        {
+            return integer != 0;
+        }
+        return bool.TryParse(node.ToString(), out boolean) && boolean;
     }
 
     private static IReadOnlyList<PublicListSummary> NormalizePublicLists(JsonNode? body)
@@ -912,6 +1022,9 @@ public sealed class CollectionProviderService
             "maximum" when limit.Count is >= 1 and <= 500 => limit.Count.Value,
             _ => throw new GatewayException(StatusCodes.Status400BadRequest, "Invalid result limit")
         };
+
+    private static int EffectiveFetchLimit(int requestedLimit, int? maximumItems)
+        => maximumItems is { } maximum ? Math.Min(requestedLimit, maximum) : requestedLimit;
 
     private static string NormalizeMediaType(string value)
         => value.Trim().ToLowerInvariant() switch
@@ -1004,4 +1117,8 @@ public sealed class CollectionProviderService
         DateTimeOffset StoredAt,
         string Provider,
         CollectionProviderResult Result);
+
+    private sealed record NormalizedMdbListPage(
+        IReadOnlyList<NormalizedProviderTitle> Items,
+        int SourceCount);
 }

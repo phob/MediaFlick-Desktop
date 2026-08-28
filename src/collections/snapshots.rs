@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::library::Library;
 use crate::preferences::AccountKey;
 
-use super::franchises::FranchiseSnapshot;
+use super::franchises::{FranchiseMembership, FranchiseSnapshot};
 use super::{CanonicalIdentity, CollectionSnapshot, MediaType, NormalizedTitle, valid_opaque_id};
 
 // Profile IDs are hexadecimal, so this non-hex key cannot collide with a
@@ -27,6 +27,12 @@ pub struct RefreshState {
 
 pub struct SnapshotRepository<'a> {
     library: &'a Library,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FranchiseResolutionPlan {
+    pub stale_movie_ids: Vec<u64>,
+    pub known_collection_ids: Vec<u64>,
 }
 
 impl<'a> SnapshotRepository<'a> {
@@ -292,13 +298,75 @@ impl<'a> SnapshotRepository<'a> {
         self.save_refresh_state(account, FRANCHISE_REFRESH_KEY, &state)
     }
 
-    pub fn commit_franchises(
+    pub fn franchise_resolution_plan(
+        &self,
+        account: &AccountKey,
+        owned_tmdb_ids: &[u64],
+        stale_before: i64,
+    ) -> rusqlite::Result<FranchiseResolutionPlan> {
+        self.library.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT tmdb_id, collection_id, resolved_at
+                 FROM franchise_movie_membership
+                 WHERE server_id = ?1 AND user_id = ?2",
+            )?;
+            let mapped =
+                statement.query_map(params![account.server_id(), account.user_id()], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })?;
+            let mut rows = HashMap::new();
+            for row in mapped {
+                let (tmdb_id, collection_id, resolved_at) = row?;
+                rows.insert(tmdb_id, (collection_id, resolved_at));
+            }
+            let mut plan = FranchiseResolutionPlan::default();
+            let mut known = HashSet::new();
+            for tmdb_id in owned_tmdb_ids {
+                let sql_id = i64_from_id(*tmdb_id)?;
+                match rows.get(&sql_id) {
+                    Some((collection_id, resolved_at)) if *resolved_at > stale_before => {
+                        if let Some(collection_id) = collection_id {
+                            known.insert(u64_from_sql(*collection_id)?);
+                        }
+                    }
+                    _ => plan.stale_movie_ids.push(*tmdb_id),
+                }
+            }
+            plan.known_collection_ids = known.into_iter().collect();
+            plan.known_collection_ids.sort_unstable();
+            Ok(plan)
+        })
+    }
+
+    pub fn commit_franchise_resolution(
         &self,
         account: &AccountKey,
         snapshots: &[FranchiseSnapshot],
+        memberships: &[FranchiseMembership],
         refreshed_at: i64,
     ) -> rusqlite::Result<()> {
         self.library.with_transaction(|transaction| {
+            for membership in memberships {
+                transaction.execute(
+                    "INSERT INTO franchise_movie_membership (
+                         server_id, user_id, tmdb_id, collection_id, resolved_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(server_id, user_id, tmdb_id) DO UPDATE SET
+                         collection_id = excluded.collection_id,
+                         resolved_at = excluded.resolved_at",
+                    params![
+                        account.server_id(),
+                        account.user_id(),
+                        i64_from_id(membership.tmdb_id)?,
+                        membership.collection_id.map(i64_from_id).transpose()?,
+                        refreshed_at,
+                    ],
+                )?;
+            }
             transaction.execute(
                 "DELETE FROM franchise_snapshots WHERE server_id = ?1 AND user_id = ?2",
                 params![account.server_id(), account.user_id()],
@@ -435,6 +503,7 @@ impl<'a> SnapshotRepository<'a> {
                 "collection_snapshots",
                 "collection_refresh_state",
                 "franchise_snapshots",
+                "franchise_movie_membership",
             ] {
                 transaction.execute(
                     &format!("DELETE FROM {table} WHERE server_id = ?1 AND user_id = ?2"),
@@ -705,7 +774,7 @@ mod tests {
         let library = Library::open_in_memory().expect("library");
         let repository = SnapshotRepository::new(&library);
         repository
-            .commit_franchises(&account(), &[], 123)
+            .commit_franchise_resolution(&account(), &[], &[], 123)
             .expect("commit empty result");
 
         let state = repository
@@ -732,6 +801,41 @@ mod tests {
     }
 
     #[test]
+    fn franchise_membership_plan_scales_and_reuses_positive_and_negative_lookups() {
+        let library = Library::open_in_memory().expect("library");
+        let repository = SnapshotRepository::new(&library);
+        let owned = (1..=10_000).collect::<Vec<_>>();
+        let memberships = owned
+            .iter()
+            .map(|tmdb_id| FranchiseMembership {
+                tmdb_id: *tmdb_id,
+                collection_id: (tmdb_id % 2 == 0).then_some(42),
+            })
+            .collect::<Vec<_>>();
+        repository
+            .commit_franchise_resolution(&account(), &[], &memberships, 1_000)
+            .expect("commit memberships");
+
+        let fresh = repository
+            .franchise_resolution_plan(&account(), &owned, 999)
+            .expect("fresh plan");
+        assert!(fresh.stale_movie_ids.is_empty());
+        assert_eq!(fresh.known_collection_ids, vec![42]);
+
+        let mut changed_library = owned;
+        changed_library.push(10_001);
+        let incremental = repository
+            .franchise_resolution_plan(&account(), &changed_library, 999)
+            .expect("incremental plan");
+        assert_eq!(incremental.stale_movie_ids, vec![10_001]);
+
+        let stale = repository
+            .franchise_resolution_plan(&account(), &changed_library, 1_000)
+            .expect("stale plan");
+        assert_eq!(stale.stale_movie_ids.len(), 10_001);
+    }
+
+    #[test]
     fn one_franchise_is_loaded_without_materializing_the_full_cache() {
         let library = Library::open_in_memory().expect("library");
         let repository = SnapshotRepository::new(&library);
@@ -754,7 +858,7 @@ mod tests {
             },
         ];
         repository
-            .commit_franchises(&account(), &snapshots, 50)
+            .commit_franchise_resolution(&account(), &snapshots, &[], 50)
             .expect("commit franchises");
 
         let loaded = repository

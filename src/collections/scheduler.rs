@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::json;
@@ -6,7 +7,7 @@ use serde_json::json;
 use crate::app::services::{Services, ShellRequest};
 use crate::preferences::AccountKey;
 
-use super::franchises::FranchiseSnapshot;
+use super::franchises::{FranchiseMembership, FranchiseSnapshot};
 use super::matching::{
     ResolvedIdentityMapping, owned_tmdb_ids, save_identity_mappings,
     unresolved_secondary_identities,
@@ -15,6 +16,34 @@ use super::snapshots::{RefreshState, SnapshotRepository};
 use super::{CollectionMode, CollectionProfile, CollectionSnapshot, MediaType, RefreshCadence};
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const FRANCHISE_MEMBERSHIP_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
+static FRANCHISE_FLIGHTS: OnceLock<Mutex<HashSet<AccountKey>>> = OnceLock::new();
+
+struct FranchiseFlight {
+    account: AccountKey,
+}
+
+impl FranchiseFlight {
+    fn acquire(account: &AccountKey) -> Option<Self> {
+        let mut flights = FRANCHISE_FLIGHTS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        flights.insert(account.clone()).then(|| Self {
+            account: account.clone(),
+        })
+    }
+}
+
+impl Drop for FranchiseFlight {
+    fn drop(&mut self) {
+        let mut flights = FRANCHISE_FLIGHTS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        flights.remove(&self.account);
+    }
+}
 
 pub fn start(services: Arc<Services>) {
     std::thread::spawn(move || {
@@ -48,20 +77,11 @@ fn refresh_due_work(services: &Arc<Services>) {
     let Some(account) = active_mediaflick_account(services) else {
         return;
     };
-    let repository = SnapshotRepository::new(&services.library);
-    let franchise_state = repository
-        .franchise_refresh_state(&account)
-        .unwrap_or_default();
-    let mut changed =
-        franchise_refresh_due(&franchise_state) && refresh_franchises(services, &account);
+    let mut changed = refresh_franchises(services, &account);
     changed |= refresh_due_profiles_for_account(services, &account);
     if changed {
         let _ = services.shell.request(ShellRequest::CollectionsChanged);
     }
-}
-
-fn franchise_refresh_due(state: &RefreshState) -> bool {
-    !state.initialized
 }
 
 fn active_mediaflick_account(services: &Services) -> Option<AccountKey> {
@@ -101,17 +121,47 @@ fn refresh_due_profiles_for_account(services: &Services, account: &AccountKey) -
 }
 
 pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
+    let Some(_flight) = FranchiseFlight::acquire(account) else {
+        return false;
+    };
+    let scope = match services.session.scope() {
+        Ok(scope) if scope.account() == account => scope,
+        _ => return false,
+    };
     let attempted_at = crate::library::now_unix();
     let repository = SnapshotRepository::new(&services.library);
     hydrate_identity_map(services);
+    if !services.session.scope_is_current(&scope) {
+        return false;
+    }
     let ids = owned_tmdb_ids(&services.library, MediaType::Movie).unwrap_or_default();
+    let plan = match repository.franchise_resolution_plan(
+        account,
+        &ids,
+        attempted_at.saturating_sub(FRANCHISE_MEMBERSHIP_TTL_SECONDS),
+    ) {
+        Ok(plan) => plan,
+        Err(error) => {
+            tracing::warn!(target: "collections", "could not plan movie franchise refresh: {error}");
+            return false;
+        }
+    };
+    if !ids.is_empty() && plan.stale_movie_ids.is_empty() {
+        return false;
+    }
+    let mut memberships = Vec::new();
     let snapshots = if ids.is_empty() {
         Vec::new()
     } else {
-        let value = match services.companion.resolve_franchises(&ids) {
+        let value = match services.companion.resolve_franchises(
+            &scope,
+            &plan.stale_movie_ids,
+            &plan.known_collection_ids,
+        ) {
             Ok(value) => value,
             Err(error) => {
-                save_failed_franchise_refresh(&repository, account, attempted_at);
+                services.session.note_scoped_error(&scope, &error);
+                save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
                 tracing::debug!(
                     target: "collections",
                     "automatic movie franchise refresh failed: {error}"
@@ -120,14 +170,29 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
             }
         };
         let Some(rows) = value.get("franchises").cloned() else {
-            save_failed_franchise_refresh(&repository, account, attempted_at);
+            save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
             tracing::warn!(target: "collections", "movie franchise response has no results");
             return true;
         };
+        memberships = value
+            .get("memberships")
+            .cloned()
+            .and_then(|rows| serde_json::from_value::<Vec<FranchiseMembership>>(rows).ok())
+            .unwrap_or_default();
+        let expected = plan.stale_movie_ids.iter().copied().collect::<HashSet<_>>();
+        let resolved = memberships
+            .iter()
+            .map(|membership| membership.tmdb_id)
+            .collect::<HashSet<_>>();
+        if resolved != expected || memberships.len() != expected.len() {
+            save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
+            tracing::warn!(target: "collections", "movie franchise response has incomplete membership results");
+            return true;
+        }
         match serde_json::from_value::<Vec<FranchiseSnapshot>>(rows) {
             Ok(snapshots) => snapshots,
             Err(error) => {
-                save_failed_franchise_refresh(&repository, account, attempted_at);
+                save_failed_franchise_refresh(services, &scope, &repository, account, attempted_at);
                 tracing::warn!(
                     target: "collections",
                     "could not read movie franchise results: {error}"
@@ -136,26 +201,65 @@ pub fn refresh_franchises(services: &Services, account: &AccountKey) -> bool {
             }
         }
     };
-    match repository.commit_franchises(account, &snapshots, attempted_at) {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(target: "collections", "could not save movie franchises: {error}");
-            false
-        }
-    }
+    commit_franchise_refresh(
+        services,
+        &scope,
+        &repository,
+        account,
+        &snapshots,
+        &memberships,
+        attempted_at,
+    )
+}
+
+fn commit_franchise_refresh(
+    services: &Services,
+    scope: &crate::jellyfin::session::SessionScope,
+    repository: &SnapshotRepository<'_>,
+    account: &AccountKey,
+    snapshots: &[FranchiseSnapshot],
+    memberships: &[FranchiseMembership],
+    attempted_at: i64,
+) -> bool {
+    services
+        .session
+        .commit_if_current(scope, || false, || {
+            Ok(match repository.commit_franchise_resolution(
+                account,
+                snapshots,
+                memberships,
+                attempted_at,
+            ) {
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::warn!(target: "collections", "could not save movie franchises: {error}");
+                    false
+                }
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn save_failed_franchise_refresh(
+    services: &Services,
+    scope: &crate::jellyfin::session::SessionScope,
     repository: &SnapshotRepository<'_>,
     account: &AccountKey,
     attempted_at: i64,
 ) {
-    if let Err(error) = repository.save_franchise_refresh_failure(account, attempted_at) {
-        tracing::warn!(
-            target: "collections",
-            "could not save movie franchise refresh failure: {error}"
-        );
-    }
+    let _ = services.session.commit_if_current(
+        scope,
+        || (),
+        || {
+            if let Err(error) = repository.save_franchise_refresh_failure(account, attempted_at) {
+                tracing::warn!(
+                    target: "collections",
+                    "could not save movie franchise refresh failure: {error}"
+                );
+            }
+            Ok(())
+        },
+    );
 }
 
 pub fn hydrate_identity_map(services: &Services) {
@@ -385,12 +489,13 @@ mod tests {
     }
 
     #[test]
-    fn a_persisted_franchise_result_is_not_due_at_startup() {
-        assert!(franchise_refresh_due(&RefreshState::default()));
-        assert!(!franchise_refresh_due(&RefreshState {
-            initialized: true,
-            last_success: Some(100),
-            ..RefreshState::default()
-        }));
+    fn franchise_refreshes_are_single_flight_per_account() {
+        let alice = AccountKey::new("server", "alice").expect("Alice");
+        let bob = AccountKey::new("server", "bob").expect("Bob");
+        let first = FranchiseFlight::acquire(&alice).expect("first Alice flight");
+        assert!(FranchiseFlight::acquire(&alice).is_none());
+        let _bob = FranchiseFlight::acquire(&bob).expect("independent Bob flight");
+        drop(first);
+        assert!(FranchiseFlight::acquire(&alice).is_some());
     }
 }

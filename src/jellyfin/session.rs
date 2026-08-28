@@ -1,7 +1,7 @@
 //! The one authenticated Jellyfin session shared by the UI API, the sync
 //! thread, the play path, and the playback reporter.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::{Value, json};
 
@@ -23,11 +23,36 @@ struct SessionState {
     restricted: bool,
     /// Set when the server rejected our token; the UI must re-authenticate.
     expired: bool,
+    generation: u64,
+    deleting: bool,
 }
 
 pub struct Session {
     library: Arc<Library>,
     state: RwLock<SessionState>,
+    operation_gate: Mutex<()>,
+}
+
+#[derive(Clone)]
+pub struct SessionScope {
+    generation: u64,
+    account: AccountKey,
+    client: JellyfinClient,
+    user_id: String,
+}
+
+impl SessionScope {
+    pub fn account(&self) -> &AccountKey {
+        &self.account
+    }
+
+    pub fn client(&self) -> &JellyfinClient {
+        &self.client
+    }
+
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
 }
 
 impl Session {
@@ -35,6 +60,7 @@ impl Session {
     /// pre-own-UI releases kept in the legacy `config.json`.
     pub fn restore(library: Arc<Library>) -> Self {
         let stored = library.credentials();
+        let authenticated = stored.is_authenticated();
         let server_url = stored
             .server_url
             .clone()
@@ -51,10 +77,13 @@ impl Session {
             // proves that the account has no catalog restrictions.
             restricted: true,
             expired: false,
+            generation: u64::from(authenticated),
+            deleting: false,
         };
         Self {
             library,
             state: RwLock::new(state),
+            operation_gate: Mutex::new(()),
         }
     }
 
@@ -81,6 +110,7 @@ impl Session {
     pub fn is_authenticated(&self) -> bool {
         let state = self.read();
         !state.expired
+            && !state.deleting
             && state.token.is_some()
             && state.user_id.is_some()
             && state.server_id.is_some()
@@ -92,26 +122,88 @@ impl Session {
     }
 
     pub fn refresh_user_policy(&self) {
-        let Ok((client, user_id)) = self.client_and_user() else {
+        let Ok(scope) = self.scope() else {
             return;
         };
-        let path = format!("/Users/{}", crate::app::urls::encode_path_segment(&user_id));
-        let Ok(user) = client.get_json::<super::api::model::UserDto>(&path, &[]) else {
+        let path = format!(
+            "/Users/{}",
+            crate::app::urls::encode_path_segment(scope.user_id())
+        );
+        let Ok(user) = scope
+            .client()
+            .get_json::<super::api::model::UserDto>(&path, &[])
+        else {
             return;
         };
         let restricted = user
             .policy
             .as_ref()
             .is_none_or(super::api::model::UserPolicy::restricts_catalog);
-        if let Ok(mut state) = self.state.write() {
-            state.restricted = restricted;
+        let _ = self.commit_if_current(
+            &scope,
+            || (),
+            || {
+                if let Ok(mut state) = self.state.write() {
+                    state.restricted = restricted;
+                }
+                Ok(())
+            },
+        );
+    }
+
+    pub fn scope(&self) -> Result<SessionScope, ApiError> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let state = self.read();
+        if state.expired || state.deleting {
+            return Err(ApiError::Unauthorized);
         }
+        let server_url = state.server_url.as_deref().ok_or(ApiError::NotConfigured)?;
+        let token = state.token.as_deref().ok_or(ApiError::NotConfigured)?;
+        let user_id = state.user_id.clone().ok_or(ApiError::NotConfigured)?;
+        let account = AccountKey::new(
+            state.server_id.clone().ok_or(ApiError::NotConfigured)?,
+            user_id.clone(),
+        )
+        .ok_or(ApiError::NotConfigured)?;
+        Ok(SessionScope {
+            generation: state.generation,
+            account,
+            client: JellyfinClient::new(server_url, &state.device_id, Some(token)),
+            user_id,
+        })
+    }
+
+    pub fn scope_is_current(&self, scope: &SessionScope) -> bool {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.read().matches(scope)
+    }
+
+    pub fn commit_if_current<T, E>(
+        &self,
+        scope: &SessionScope,
+        stale: impl FnOnce() -> E,
+        commit: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.read().matches(scope) {
+            return Err(stale());
+        }
+        commit()
     }
 
     /// An authenticated client, or the reason one cannot be built.
     pub fn client(&self) -> Result<JellyfinClient, ApiError> {
         let state = self.read();
-        if state.expired {
+        if state.expired || state.deleting {
             return Err(ApiError::Unauthorized);
         }
         let (Some(server_url), Some(token)) = (state.server_url, state.token) else {
@@ -195,24 +287,28 @@ impl Session {
     }
 
     fn accept(&self, server_url: &str, credentials: Credentials) -> Result<Value, ApiError> {
-        // A different server (or user) invalidates every cached row.
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = self.library.credentials();
-        let switched_server = previous
-            .server_url
-            .as_deref()
-            .is_some_and(|previous| previous != server_url);
-        let switched_user = previous
-            .user_id
-            .as_deref()
-            .is_some_and(|previous| previous != credentials.user_id);
-        if switched_server || switched_user {
+        let cache_owner = self
+            .library
+            .cache_owner()
+            .or_else(|| previous.server_id.clone().zip(previous.user_id.clone()));
+        let next_owner = (credentials.server_id.clone(), credentials.user_id.clone());
+        let switched_account = cache_owner
+            .as_ref()
+            .is_some_and(|owner| owner != &next_owner)
+            || cache_owner.is_none() && self.library.stats().total > 0;
+        if switched_account {
             tracing::info!(
                 target: "jellyfin.session",
-                switched_server,
-                switched_user,
                 "clearing the metadata cache for a new Jellyfin account"
             );
-            let _ = self.library.clear_session(true);
+            self.library
+                .clear_session(true)
+                .map_err(|error| storage_error(&error))?;
         }
 
         let stored = StoredCredentials {
@@ -223,9 +319,9 @@ impl Session {
             device_id: previous.device_id,
             token: Some(credentials.token.clone()),
         };
-        if let Err(error) = self.library.save_credentials(&stored) {
-            tracing::warn!(target: "jellyfin.session", "failed to persist credentials: {error}");
-        }
+        self.library
+            .save_credentials(&stored)
+            .map_err(|error| storage_error(&error))?;
         self.remember_server_url(server_url);
 
         if let Ok(mut state) = self.state.write() {
@@ -236,6 +332,8 @@ impl Session {
             state.token = Some(credentials.token);
             state.restricted = credentials.restricted;
             state.expired = false;
+            state.deleting = false;
+            state.generation = next_generation(state.generation);
         }
         tracing::info!(
             target: "jellyfin.session",
@@ -260,20 +358,23 @@ impl Session {
         }
     }
 
-    pub fn logout(&self, forget_library: bool) {
+    pub fn logout(&self, forget_library: bool) -> rusqlite::Result<()> {
         if let Ok(client) = self.client()
             && let Err(error) = auth::logout(&client)
         {
             tracing::debug!(target: "jellyfin.session", "server-side logout failed: {error}");
         }
-        self.clear_local(forget_library);
+        self.clear_local(forget_library)?;
         tracing::info!(target: "jellyfin.session", "signed out of Jellyfin");
+        Ok(())
     }
 
-    pub fn clear_local(&self, forget_library: bool) {
-        if let Err(error) = self.library.clear_session(forget_library) {
-            tracing::warn!(target: "jellyfin.session", "failed to clear the local session: {error}");
-        }
+    pub fn clear_local(&self, forget_library: bool) -> rusqlite::Result<()> {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.library.clear_session(forget_library)?;
         if let Ok(mut state) = self.state.write() {
             state.user_id = None;
             state.user_name = None;
@@ -281,7 +382,26 @@ impl Session {
             state.token = None;
             state.restricted = true;
             state.expired = false;
+            state.deleting = false;
+            state.generation = next_generation(state.generation);
         }
+        Ok(())
+    }
+
+    pub fn begin_account_deletion(&self, account: &AccountKey) -> bool {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Ok(mut state) = self.state.write() else {
+            return false;
+        };
+        if state.account_key().as_ref() != Some(account) {
+            return false;
+        }
+        state.generation = next_generation(state.generation);
+        state.deleting = true;
+        true
     }
 
     /// Called when the server answers 401/403: pauses sync and sends the UI
@@ -292,12 +412,8 @@ impl Session {
     /// about panel); without the push the app could sit on authenticated
     /// screens with dead controls until something re-read `/api/status`.
     pub fn mark_expired(&self) {
-        let already = self.read().expired;
-        if already {
+        if !self.mark_expired_inner(None) {
             return;
-        }
-        if let Ok(mut state) = self.state.write() {
-            state.expired = true;
         }
         tracing::warn!(
             target: "jellyfin.session",
@@ -313,10 +429,37 @@ impl Session {
         }
     }
 
+    pub fn note_scoped_error(&self, scope: &SessionScope, error: &ApiError) {
+        if *error == ApiError::Unauthorized && self.mark_expired_inner(Some(scope)) {
+            tracing::warn!(
+                target: "jellyfin.session",
+                "the Jellyfin server rejected the stored token; re-authentication required"
+            );
+            crate::app::services::notify_session_expired();
+        }
+    }
+
+    fn mark_expired_inner(&self, scope: Option<&SessionScope>) -> bool {
+        let _gate = self
+            .operation_gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Ok(mut state) = self.state.write() else {
+            return false;
+        };
+        if state.expired || state.deleting || scope.is_some_and(|scope| !state.matches(scope)) {
+            return false;
+        }
+        state.expired = true;
+        state.generation = next_generation(state.generation);
+        true
+    }
+
     pub fn status(&self) -> Value {
         let state = self.read();
         json!({
-            "authenticated": !state.expired && state.token.is_some() && state.user_id.is_some(),
+            "authenticated": !state.expired && !state.deleting
+                && state.token.is_some() && state.user_id.is_some(),
             "expired": state.expired,
             "serverUrl": state.server_url,
             "serverName": state.server_name,
@@ -327,15 +470,48 @@ impl Session {
     }
 }
 
+impl SessionState {
+    fn account_key(&self) -> Option<AccountKey> {
+        AccountKey::new(self.server_id.clone()?, self.user_id.clone()?)
+    }
+
+    fn matches(&self, scope: &SessionScope) -> bool {
+        !self.expired
+            && !self.deleting
+            && self.generation == scope.generation
+            && self.account_key().as_ref() == Some(scope.account())
+    }
+}
+
+fn next_generation(generation: u64) -> u64 {
+    generation.wrapping_add(1).max(1)
+}
+
+fn storage_error(error: &rusqlite::Error) -> ApiError {
+    ApiError::Decode(format!("session storage failed: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::Session;
     use crate::jellyfin::api::ApiError;
+    use crate::jellyfin::api::auth::Credentials;
     use crate::library::Library;
+    use crate::library::test_support::dto;
     use std::sync::Arc;
 
     fn session() -> Session {
         Session::restore(Arc::new(Library::open_in_memory().expect("library")))
+    }
+
+    fn credentials(user: &str) -> Credentials {
+        Credentials {
+            token: format!("token-{user}"),
+            user_id: user.to_string(),
+            user_name: user.to_string(),
+            server_id: "server".to_string(),
+            restricted: false,
+        }
     }
 
     #[test]
@@ -426,5 +602,80 @@ mod tests {
         let client = session.anonymous_client("http://server:8096");
         assert_eq!(client.device_id(), device_id);
         assert_eq!(client.token(), None);
+    }
+
+    #[test]
+    fn old_successes_and_unauthorized_errors_are_discarded_after_account_switch() {
+        let session = session();
+        session
+            .accept("http://server:8096", credentials("alice"))
+            .expect("sign in Alice");
+        let alice = session.scope().expect("Alice scope");
+        session
+            .accept("http://server:8096", credentials("bob"))
+            .expect("sign in Bob");
+
+        let result = session.commit_if_current(
+            &alice,
+            || "stale",
+            || -> Result<(), &str> { panic!("an obsolete success committed") },
+        );
+        assert_eq!(result, Err("stale"));
+        session.note_scoped_error(&alice, &ApiError::Unauthorized);
+        assert!(session.is_authenticated());
+        assert_eq!(session.user_id().as_deref(), Some("bob"));
+        assert_eq!(session.status()["expired"], false);
+    }
+
+    #[test]
+    fn a_restricted_user_gets_an_empty_cache_after_a_normal_logout_and_switch() {
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let session = Session::restore(library.clone());
+        session
+            .accept("http://server:8096", credentials("alice"))
+            .expect("sign in Alice");
+        library
+            .upsert_page(&[dto(
+                r#"{"Id":"alice-movie","Name":"Alice Only","Type":"Movie"}"#,
+            )])
+            .expect("cache Alice's library");
+
+        session.clear_local(false).expect("normal logout");
+        assert_eq!(library.stats().total, 1);
+        assert_eq!(
+            library.cache_owner(),
+            Some(("server".to_string(), "alice".to_string()))
+        );
+
+        let mut bob = credentials("bob");
+        bob.restricted = true;
+        session
+            .accept("http://server:8096", bob)
+            .expect("sign in restricted Bob");
+
+        assert_eq!(library.stats().total, 0);
+        assert!(session.user_restricted());
+        assert_eq!(
+            library.cache_owner(),
+            Some(("server".to_string(), "bob".to_string()))
+        );
+    }
+
+    #[test]
+    fn deletion_tombstone_blocks_new_and_in_flight_account_work() {
+        let session = session();
+        session
+            .accept("http://server:8096", credentials("alice"))
+            .expect("sign in Alice");
+        let scope = session.scope().expect("Alice scope");
+        assert!(session.begin_account_deletion(scope.account()));
+
+        assert!(!session.is_authenticated());
+        assert!(session.scope().is_err());
+        assert!(session.client().is_err());
+        assert_eq!(
+            session.commit_if_current(&scope, || "stale", || Ok::<_, &str>(())),
+            Err("stale")
+        );
     }
 }

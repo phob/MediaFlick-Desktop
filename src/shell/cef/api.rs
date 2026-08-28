@@ -18,6 +18,7 @@ use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
+use crate::jellyfin::session::SessionScope;
 use crate::library::model::technical_media_streams_json;
 use crate::library::{
     ItemPlaybackPreference, ItemQuery, ItemSort, Library, resolve_playback_preference, sync,
@@ -158,6 +159,13 @@ impl ApiResponse {
     }
 }
 
+fn stale_account_response() -> ApiResponse {
+    ApiResponse::error(
+        409,
+        "the Jellyfin account changed while the request was running",
+    )
+}
+
 pub fn handle(request: &ApiRequest) -> ApiResponse {
     if let Some(response) = assets::static_asset(&request.path) {
         return response;
@@ -247,10 +255,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
 fn companion_info(services: &Arc<Services>, force: bool) -> ApiResponse {
     match services.companion.probe(force) {
         Ok(_) => ApiResponse::ok(services.companion.status()),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => ApiResponse::from_api_error(&error),
     }
 }
 

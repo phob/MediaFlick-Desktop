@@ -31,7 +31,11 @@ public sealed record CollectionProviderResult(
     int Series,
     string? SourceIdentity = null);
 
-public sealed record FranchiseResolveRequest(IReadOnlyList<long> TmdbIds);
+public sealed record FranchiseResolveRequest(
+    IReadOnlyList<long> TmdbIds,
+    IReadOnlyList<long>? CollectionIds = null);
+
+public sealed record FranchiseMembership(long TmdbId, long? CollectionId);
 
 public sealed record NormalizedFranchise(
     long CollectionId,
@@ -41,7 +45,9 @@ public sealed record NormalizedFranchise(
     long CommittedAt,
     IReadOnlyList<NormalizedProviderTitle> Items);
 
-public sealed record FranchiseResolveResponse(IReadOnlyList<NormalizedFranchise> Franchises);
+public sealed record FranchiseResolveResponse(
+    IReadOnlyList<NormalizedFranchise> Franchises,
+    IReadOnlyList<FranchiseMembership> Memberships);
 
 public sealed record PublicListSearchRequest(string Query);
 

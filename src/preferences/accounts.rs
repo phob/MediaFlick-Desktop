@@ -70,6 +70,8 @@ struct AccountConfigurationFile {
     version: u32,
     #[serde(default)]
     accounts: Vec<AccountConfiguration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_appearance: Option<AppearanceSettings>,
 }
 
 impl Default for AccountConfigurationFile {
@@ -77,6 +79,7 @@ impl Default for AccountConfigurationFile {
         Self {
             version: ACCOUNT_CONFIG_VERSION,
             accounts: Vec::new(),
+            legacy_appearance: None,
         }
     }
 }
@@ -129,6 +132,46 @@ impl AccountConfigurationService {
     ) -> io::Result<()> {
         self.mutate(|document| {
             account_mut(document, key).appearance = appearance.clone();
+            Ok(())
+        })
+    }
+
+    /// Moves the pre-account-scoping appearance into durable account storage.
+    /// When startup is signed out, keep it pending until the next account can
+    /// claim it instead of stripping the only copy from settings.json.
+    pub fn import_legacy_appearance(
+        &self,
+        key: Option<&AccountKey>,
+        appearance: &AppearanceSettings,
+    ) -> io::Result<()> {
+        if appearance.is_default() {
+            return Ok(());
+        }
+        self.mutate(|document| {
+            if let Some(key) = key {
+                let account = account_mut(document, key);
+                if account.appearance.is_default() {
+                    account.appearance = appearance.clone();
+                }
+            } else if document.legacy_appearance.is_none() {
+                document.legacy_appearance = Some(appearance.clone());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn claim_legacy_appearance(&self, key: &AccountKey) -> io::Result<()> {
+        if self.with_document(|document| document.legacy_appearance.is_none()) {
+            return Ok(());
+        }
+        self.mutate(|document| {
+            let Some(appearance) = document.legacy_appearance.take() else {
+                return Ok(());
+            };
+            let account = account_mut(document, key);
+            if account.appearance.is_default() {
+                account.appearance = appearance;
+            }
             Ok(())
         })
     }
@@ -311,6 +354,12 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
             document.version
         )));
     }
+    if let Some(appearance) = &mut document.legacy_appearance {
+        appearance.sanitize();
+        if appearance.is_default() {
+            document.legacy_appearance = None;
+        }
+    }
     let mut accounts = HashSet::new();
     for account in &mut document.accounts {
         if !accounts.insert(account.key.clone()) {
@@ -435,6 +484,59 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].jellyfin_server_id, "server");
         assert_eq!(profiles[0].jellyfin_user_id, "alice");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn signed_out_legacy_appearance_waits_for_the_next_account() {
+        let path = test_path("pending-appearance");
+        let appearance = AppearanceSettings {
+            theme: AppearanceTheme::Dark,
+            accent: AppearanceAccent::Violet,
+            ..AppearanceSettings::default()
+        };
+        let alice = key("server", "alice");
+        let service = AccountConfigurationService::open(path.clone()).expect("open");
+
+        service
+            .import_legacy_appearance(None, &appearance)
+            .expect("stage signed-out appearance");
+        drop(service);
+
+        let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
+        assert_eq!(reopened.appearance(&alice), AppearanceSettings::default());
+        reopened
+            .claim_legacy_appearance(&alice)
+            .expect("claim appearance");
+        assert_eq!(reopened.appearance(&alice), appearance);
+        // A startup retry cannot move or overwrite the value a second time.
+        reopened
+            .claim_legacy_appearance(&key("server", "bob"))
+            .expect("idempotent retry");
+        assert_eq!(reopened.appearance(&alice), appearance);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn authenticated_legacy_appearance_does_not_overwrite_account_settings() {
+        let path = test_path("authenticated-appearance");
+        let alice = key("server", "alice");
+        let service = AccountConfigurationService::open(path.clone()).expect("open");
+        let existing = AppearanceSettings {
+            theme: AppearanceTheme::Dark,
+            ..AppearanceSettings::default()
+        };
+        let legacy = AppearanceSettings {
+            accent: AppearanceAccent::Violet,
+            ..AppearanceSettings::default()
+        };
+        service
+            .save_appearance(&alice, &existing)
+            .expect("seed account appearance");
+        service
+            .import_legacy_appearance(Some(&alice), &legacy)
+            .expect("import legacy appearance");
+        assert_eq!(service.appearance(&alice), existing);
         cleanup(&path);
     }
 

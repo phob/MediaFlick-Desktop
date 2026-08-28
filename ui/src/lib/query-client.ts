@@ -82,6 +82,30 @@ export const queryKeys = {
     ["collections", account, "movie", tmdbId] as const,
 }
 
+const ACCOUNT_QUERY_ROOTS = new Set([
+  "billboard",
+  "calendar",
+  "collections",
+  "companion",
+  "genres",
+  "home",
+  "item",
+  "items",
+  "letterboxd",
+  "person",
+  "person-items",
+  "player",
+  "ratings",
+  "seerr",
+])
+
+/** Removes data whose meaning depends on the signed-in Jellyfin account. */
+export function removeAccountQueryData() {
+  queryClient.removeQueries({
+    predicate: (query) => ACCOUNT_QUERY_ROOTS.has(String(query.queryKey[0])),
+  })
+}
+
 /**
  * Everything that changes when a request is made or cancelled. Kept apart from
  * `invalidateMediaSurfaces`: a Seerr write changes nothing about the local

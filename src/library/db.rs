@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags};
 /// Bump whenever the schema changes. Pre-1.0 databases are not migrated: an
 /// older version is dropped wholesale and recreated, and the app resyncs the
 /// catalog from the server.
-pub const SCHEMA_VERSION: i32 = 15;
+pub const SCHEMA_VERSION: i32 = 16;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -142,6 +142,7 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
     let mut session = None;
+    let mut legacy_account_data = None;
     if version > 0 {
         // Pre-1.0 rule: no migrations. An older database is dropped wholesale
         // and the catalog resyncs from scratch. Only the signed-in session
@@ -153,11 +154,17 @@ fn migrate(connection: &Connection) -> rusqlite::Result<()> {
             "recreating the pre-1.0 library database at schema {SCHEMA_VERSION}"
         );
         session = saved_session(connection);
+        if version == 13 {
+            legacy_account_data = Some(saved_legacy_account_data(connection)?);
+        }
         drop_everything(connection)?;
     }
     connection.execute_batch(SCHEMA)?;
     if let Some(session) = session {
         restore_session(connection, &session)?;
+    }
+    if let Some(legacy_account_data) = legacy_account_data {
+        restore_legacy_account_data(connection, &legacy_account_data)?;
     }
     connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tracing::debug!(target: "library.db", version = SCHEMA_VERSION, "library schema ready");
@@ -171,6 +178,36 @@ struct SavedSession {
     server_id: Option<String>,
     device_id: String,
     token: Option<String>,
+    updated_at: i64,
+}
+
+#[derive(Default)]
+struct SavedLegacyAccountData {
+    profiles: Vec<SavedExternalProfile>,
+    playback: Vec<SavedPlaybackPreference>,
+}
+
+struct SavedExternalProfile {
+    id: String,
+    provider: String,
+    profile_key: String,
+    display_name: String,
+    canonical_url: String,
+    server_id: String,
+    user_id: String,
+    enabled: bool,
+    verification_status: String,
+    created_at: i64,
+    last_checked_at: Option<i64>,
+}
+
+struct SavedPlaybackPreference {
+    item_id: String,
+    server_key: String,
+    user_id: String,
+    media_source: String,
+    audio_track: Option<String>,
+    subtitle_track: Option<String>,
     updated_at: i64,
 }
 
@@ -210,6 +247,101 @@ fn restore_session(connection: &Connection, session: &SavedSession) -> rusqlite:
             session.updated_at,
         ],
     )?;
+    Ok(())
+}
+
+fn saved_legacy_account_data(connection: &Connection) -> rusqlite::Result<SavedLegacyAccountData> {
+    let profiles = {
+        let mut statement = connection.prepare(
+            "SELECT id, provider, profile_key, display_name, canonical_url,
+                    jellyfin_server_id, jellyfin_user_id, enabled,
+                    verification_status, created_at, last_checked_at
+             FROM external_profiles",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(SavedExternalProfile {
+                    id: row.get(0)?,
+                    provider: row.get(1)?,
+                    profile_key: row.get(2)?,
+                    display_name: row.get(3)?,
+                    canonical_url: row.get(4)?,
+                    server_id: row.get(5)?,
+                    user_id: row.get(6)?,
+                    enabled: row.get(7)?,
+                    verification_status: row.get(8)?,
+                    created_at: row.get(9)?,
+                    last_checked_at: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let playback = {
+        let mut statement = connection.prepare(
+            "SELECT jellyfin_id, jellyfin_server_key, jellyfin_user_id,
+                    media_source, audio_track, subtitle_track, updated_at
+             FROM item_playback_preferences",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(SavedPlaybackPreference {
+                    item_id: row.get(0)?,
+                    server_key: row.get(1)?,
+                    user_id: row.get(2)?,
+                    media_source: row.get(3)?,
+                    audio_track: row.get(4)?,
+                    subtitle_track: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(SavedLegacyAccountData { profiles, playback })
+}
+
+fn restore_legacy_account_data(
+    connection: &Connection,
+    data: &SavedLegacyAccountData,
+) -> rusqlite::Result<()> {
+    for profile in &data.profiles {
+        connection.execute(
+            "INSERT INTO external_profiles (
+                 id, provider, profile_key, display_name, canonical_url,
+                 jellyfin_server_id, jellyfin_user_id, enabled,
+                 verification_status, created_at, last_checked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                profile.id,
+                profile.provider,
+                profile.profile_key,
+                profile.display_name,
+                profile.canonical_url,
+                profile.server_id,
+                profile.user_id,
+                profile.enabled,
+                profile.verification_status,
+                profile.created_at,
+                profile.last_checked_at,
+            ],
+        )?;
+    }
+    for preference in &data.playback {
+        connection.execute(
+            "INSERT INTO legacy_item_playback_preferences (
+                 jellyfin_id, jellyfin_server_key, jellyfin_user_id,
+                 media_source, audio_track, subtitle_track, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                preference.item_id,
+                preference.server_key,
+                preference.user_id,
+                preference.media_source,
+                preference.audio_track,
+                preference.subtitle_track,
+                preference.updated_at,
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -369,6 +501,20 @@ CREATE TABLE external_profiles (
 CREATE INDEX external_profiles_account
     ON external_profiles (jellyfin_server_id, jellyfin_user_id, provider);
 
+-- Schema-13 playback rows cannot be copied into the account JSON files until
+-- those stores open later in startup. This durable handoff survives a crash
+-- between database recreation and the file imports.
+CREATE TABLE legacy_item_playback_preferences (
+    jellyfin_id         TEXT NOT NULL,
+    jellyfin_server_key TEXT NOT NULL,
+    jellyfin_user_id    TEXT NOT NULL,
+    media_source        TEXT NOT NULL CHECK (json_valid(media_source)),
+    audio_track         TEXT CHECK (audio_track IS NULL OR json_valid(audio_track)),
+    subtitle_track      TEXT CHECK (subtitle_track IS NULL OR json_valid(subtitle_track)),
+    updated_at          INTEGER NOT NULL,
+    PRIMARY KEY (jellyfin_id, jellyfin_server_key, jellyfin_user_id)
+);
+
 -- Stable-provider rating cache.
 --
 -- Cache identity deliberately excludes Jellyfin IDs: when Jellyfin recreates
@@ -471,6 +617,20 @@ CREATE TABLE franchise_snapshot_items (
         REFERENCES franchise_snapshots(server_id, user_id, tmdb_collection_id)
         ON DELETE CASCADE
 );
+
+-- TMDB movie membership changes rarely. Keeping negative lookups as NULL is
+-- just as important as positive ones: otherwise every non-franchise movie is
+-- fetched again after each library sync.
+CREATE TABLE franchise_movie_membership (
+    server_id      TEXT NOT NULL,
+    user_id        TEXT NOT NULL,
+    tmdb_id        INTEGER NOT NULL CHECK (tmdb_id > 0),
+    collection_id  INTEGER CHECK (collection_id > 0),
+    resolved_at    INTEGER NOT NULL,
+    PRIMARY KEY (server_id, user_id, tmdb_id)
+);
+CREATE INDEX franchise_movie_membership_age
+    ON franchise_movie_membership (server_id, user_id, resolved_at);
 CREATE INDEX franchise_snapshot_order
     ON franchise_snapshot_items (server_id, user_id, tmdb_collection_id, source_order);
 CREATE INDEX franchise_snapshot_identity
@@ -505,12 +665,14 @@ mod tests {
             "user_data",
             "meta",
             "external_profiles",
+            "legacy_item_playback_preferences",
             "rating_cache",
             "collection_snapshots",
             "collection_snapshot_items",
             "collection_refresh_state",
             "franchise_snapshots",
             "franchise_snapshot_items",
+            "franchise_movie_membership",
             "provider_identity_map",
         ] {
             let count: i64 = database
@@ -599,6 +761,83 @@ mod tests {
             .expect("session survived");
         assert_eq!(token, "tok");
         assert_eq!(device_id, "dev");
+    }
+
+    #[test]
+    fn schema_13_account_data_survives_recreation_for_the_file_import() {
+        let connection = Connection::open_in_memory().expect("open");
+        connection
+            .execute_batch(
+                r#"CREATE TABLE credentials (
+                     id INTEGER PRIMARY KEY CHECK (id = 1),
+                     server_url TEXT, user_id TEXT, user_name TEXT, server_id TEXT,
+                     device_id TEXT NOT NULL, token TEXT, updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO credentials
+                     (id, server_url, user_id, server_id, device_id, token, updated_at)
+                 VALUES
+                     (1, 'http://server:8096', NULL, 'server-a', 'device', NULL, 7);
+                 CREATE TABLE items (
+                     id INTEGER PRIMARY KEY,
+                     jellyfin_id TEXT NOT NULL UNIQUE
+                 );
+                 INSERT INTO items (jellyfin_id) VALUES ('movie-1');
+                 CREATE TABLE external_profiles (
+                     id TEXT PRIMARY KEY, provider TEXT NOT NULL, profile_key TEXT NOT NULL,
+                     display_name TEXT NOT NULL, canonical_url TEXT NOT NULL,
+                     jellyfin_server_id TEXT NOT NULL, jellyfin_user_id TEXT NOT NULL,
+                     enabled INTEGER NOT NULL, verification_status TEXT NOT NULL,
+                     created_at INTEGER NOT NULL, last_checked_at INTEGER
+                 );
+                 INSERT INTO external_profiles VALUES (
+                     '0123456789abcdef', 'letterboxd', 'alice', 'Alice',
+                     'https://letterboxd.com/alice/', 'server-a', 'user-a',
+                     1, 'verified', 10, 11
+                 );
+                 CREATE TABLE item_playback_preferences (
+                     jellyfin_id TEXT NOT NULL REFERENCES items(jellyfin_id) ON DELETE CASCADE,
+                     jellyfin_server_key TEXT NOT NULL, jellyfin_user_id TEXT NOT NULL,
+                     media_source TEXT NOT NULL, audio_track TEXT, subtitle_track TEXT,
+                     updated_at INTEGER NOT NULL,
+                     PRIMARY KEY (jellyfin_id, jellyfin_server_key, jellyfin_user_id)
+                 );
+                 INSERT INTO item_playback_preferences VALUES (
+                     'movie-1', 'server-a', 'user-a',
+                     '{"index":0,"name":"Main"}',
+                     '{"index":1,"language":"jpn"}', NULL, 12
+                 );"#,
+            )
+            .expect("schema 13 fixture");
+        connection
+            .pragma_update(None, "user_version", 13)
+            .expect("stamp schema 13");
+
+        migrate(&connection).expect("migrate schema 13");
+        migrate(&connection).expect("idempotent retry");
+
+        let profile: (String, String, String) = connection
+            .query_row(
+                "SELECT profile_key, jellyfin_server_id, jellyfin_user_id
+                 FROM external_profiles",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("staged profile");
+        assert_eq!(
+            profile,
+            ("alice".into(), "server-a".into(), "user-a".into())
+        );
+        let playback: (String, String, Option<String>) = connection
+            .query_row(
+                "SELECT jellyfin_id, media_source, subtitle_track
+                 FROM legacy_item_playback_preferences",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("staged playback preference");
+        assert_eq!(playback.0, "movie-1");
+        assert!(playback.1.contains("Main"));
+        assert_eq!(playback.2, None);
     }
 
     #[test]

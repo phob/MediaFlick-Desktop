@@ -22,6 +22,7 @@ import {
   invalidateSeerrSurfaces,
   queryClient,
   queryKeys,
+  removeAccountQueryData,
 } from "./query-client"
 import {
   discoveryResultSetKey,
@@ -71,11 +72,7 @@ export function useRatingsStatus(enabled = true) {
 }
 
 function resetAccountQueries() {
-  queryClient.removeQueries({ queryKey: ["letterboxd"] })
-  queryClient.removeQueries({ queryKey: ["seerr"] })
-  queryClient.removeQueries({ queryKey: ["collections"] })
-  queryClient.removeQueries({ queryKey: queryKeys.companion })
-  queryClient.removeQueries({ queryKey: queryKeys.ratingsStatus })
+  removeAccountQueryData()
   void queryClient.resetQueries({ queryKey: queryKeys.settings })
 }
 
@@ -398,10 +395,8 @@ export function useLogin() {
     mutationFn: ({ server, username, password }: { server: string; username: string; password: string }) =>
       api.login(server, username, password),
     onSuccess: (status) => {
-      queryClient.removeQueries({ queryKey: queryKeys.billboard })
       queryClient.setQueryData(queryKeys.status, status)
       resetAccountQueries()
-      invalidateMediaSurfaces()
     },
   })
 }
@@ -460,9 +455,6 @@ export function useLogout() {
     onError: reportError,
     onSuccess: (status) => {
       queryClient.setQueryData(queryKeys.status, status)
-      queryClient.removeQueries({ queryKey: ["items"] })
-      queryClient.removeQueries({ queryKey: queryKeys.home })
-      queryClient.removeQueries({ queryKey: queryKeys.billboard })
       resetAccountQueries()
     },
   })

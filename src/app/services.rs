@@ -16,9 +16,10 @@ use crate::library::LibraryChangeBatch;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
-    AccountConfigurationService, AppSettings, CollectionConfigurationService, PendingDeletion,
-    PendingDeletionService, PlaybackPreferenceService, PreferencesService, accounts_file_path,
-    collections_file_path, pending_deletions_file_path, playback_preferences_file_path,
+    AccountConfigurationService, AccountKey, AppSettings, CollectionConfigurationService,
+    PendingDeletion, PendingDeletionService, PlaybackPreferenceService, PreferencesService,
+    accounts_file_path, collections_file_path, pending_deletions_file_path,
+    playback_preferences_file_path,
 };
 
 static SERVICES: OnceLock<Arc<Services>> = OnceLock::new();
@@ -163,15 +164,26 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     let session = Arc::new(Session::restore(library.clone()));
     let account_path = accounts_file_path();
     let accounts = open_configuration(&account_path, AccountConfigurationService::open)?;
-    let preferences = Arc::new(PreferencesService::new(
-        initial_settings,
-        accounts.clone(),
-        session.account_key(),
-    ));
+    let active_account = session.account_key();
+    if let Err(error) =
+        accounts.import_legacy_appearance(active_account.as_ref(), &initial_settings.appearance)
+    {
+        return initialization_failure(format!(
+            "could not import legacy appearance settings: {error}"
+        ));
+    }
     let collections_path = collections_file_path();
     let collections = open_configuration(&collections_path, CollectionConfigurationService::open)?;
     let playback_path = playback_preferences_file_path();
     let playback_preferences = open_configuration(&playback_path, PlaybackPreferenceService::open)?;
+    if let Err(error) = import_legacy_account_data(&library, &accounts, &playback_preferences) {
+        return initialization_failure(error);
+    }
+    let preferences = Arc::new(PreferencesService::new(
+        initial_settings,
+        accounts.clone(),
+        active_account,
+    ));
     let artwork_path = custom_art_dir();
     let artwork = open_configuration(&artwork_path, ArtworkStore::open)?;
     if let Err(error) = artwork.collect_orphans(&collections_path, std::time::SystemTime::now()) {
@@ -189,7 +201,6 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         std::thread::spawn(move || {
             session.refresh_user_policy();
             if let Err(error) = companion.probe(false) {
-                session.note_error(&error);
                 tracing::debug!(target: "companion", "initial companion probe failed: {error}");
             }
         });
@@ -220,8 +231,17 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         shell: ShellBridge::new(),
         playback: RwLock::new(None),
     });
+    resume_pending_deletions(&services);
+    let _ = SERVICES.set(services.clone());
+    crate::collections::scheduler::start(services.clone());
+    tracing::info!(target: "library.db", path = %path.display(), "library database ready");
+    Some(services)
+}
+
+fn resume_pending_deletions(services: &Arc<Services>) {
     for deletion in services.pending_deletions.pending() {
-        if let Err(error) = complete_pending_deletion(&services, &deletion) {
+        let _ = services.session.begin_account_deletion(&deletion.account);
+        if let Err(error) = complete_pending_deletion(services, &deletion) {
             tracing::warn!(
                 target: "account-deletion",
                 server_id = deletion.account.server_id(),
@@ -230,10 +250,6 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
             );
         }
     }
-    let _ = SERVICES.set(services.clone());
-    crate::collections::scheduler::start(services.clone());
-    tracing::info!(target: "library.db", path = %path.display(), "library database ready");
-    Some(services)
 }
 
 fn open_configuration<T>(
@@ -251,6 +267,60 @@ fn open_configuration<T>(
     }
 }
 
+fn initialization_failure(message: String) -> Option<Arc<Services>> {
+    tracing::error!(target: "config", "{message}");
+    let _ = INIT_ERROR.set(message);
+    None
+}
+
+fn import_legacy_account_data(
+    library: &Library,
+    accounts: &AccountConfigurationService,
+    playback_preferences: &PlaybackPreferenceService,
+) -> Result<(), String> {
+    let profiles = library
+        .legacy_external_profiles()
+        .map_err(|error| format!("could not read legacy Letterboxd profiles: {error}"))?;
+    let preferences = library
+        .legacy_playback_preferences()
+        .map_err(|error| format!("could not read legacy playback preferences: {error}"))?;
+    if profiles.is_empty() && preferences.is_empty() {
+        return Ok(());
+    }
+
+    for profile in profiles {
+        let account = AccountKey::new(
+            profile.jellyfin_server_id.clone(),
+            profile.jellyfin_user_id.clone(),
+        )
+        .ok_or_else(|| "a legacy Letterboxd profile has no account identity".to_string())?;
+        accounts
+            .save_letterboxd_profile(&account, &profile)
+            .map_err(|error| format!("could not import a Letterboxd profile: {error}"))?;
+    }
+
+    let credentials = library.credentials();
+    for legacy in preferences {
+        let server_id = if credentials.server_url.as_deref() == Some(&legacy.server_key) {
+            credentials
+                .server_id
+                .as_deref()
+                .unwrap_or(&legacy.server_key)
+        } else {
+            &legacy.server_key
+        };
+        let account = AccountKey::new(server_id, legacy.user_id)
+            .ok_or_else(|| "a legacy playback preference has no account identity".to_string())?;
+        playback_preferences
+            .save(&account, &legacy.item_id, &legacy.preference)
+            .map_err(|error| format!("could not import a playback preference: {error}"))?;
+    }
+
+    library
+        .finish_legacy_account_import()
+        .map_err(|error| format!("could not finish the legacy account import: {error}"))
+}
+
 pub fn delete_local_account_data(services: &Arc<Services>) -> Result<(), String> {
     let account = services
         .session
@@ -265,6 +335,7 @@ pub fn delete_local_account_data(services: &Arc<Services>) -> Result<(), String>
         .pending_deletions
         .begin(deletion.clone())
         .map_err(|error| format!("could not start the deletion journal: {error}"))?;
+    let _ = services.session.begin_account_deletion(&deletion.account);
     complete_pending_deletion(services, &deletion)
 }
 
@@ -294,7 +365,10 @@ fn complete_pending_deletion(
             .map_err(|error| format!("could not remove custom artwork: {error}"))?;
     }
     if services.session.account_key().as_ref() == Some(&deletion.account) {
-        services.session.clear_local(true);
+        services
+            .session
+            .clear_local(true)
+            .map_err(|error| format!("could not clear persistent session data: {error}"))?;
         services
             .preferences
             .activate_account(None)

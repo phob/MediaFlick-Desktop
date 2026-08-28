@@ -333,6 +333,19 @@ function CollectionWizard({
 
   if (!draft) return null
 
+  const mediaTypeChoices = draft.source.kind === "mdbListPublicList"
+    ? [
+        { value: "movie" as const, label: "Movie" },
+        { value: "series" as const, label: "Series" },
+        { value: "mixed" as const, label: "Mixed" },
+      ]
+    : draft.source.kind === "tmdbDiscover"
+      ? [
+          { value: "movie" as const, label: "Movie" },
+          { value: "series" as const, label: "Series" },
+        ]
+      : [{ value: "movie" as const, label: "Movie" }]
+
   const requiresPreview = !profileId || resultSignature(draft) !== resultSignature(initial ?? draft)
   const readOnly = settings.data?.access.readOnly ?? true
   const providerAvailable = draft.source.kind === "mdbListPublicList"
@@ -340,7 +353,8 @@ function CollectionWizard({
     : Boolean(settings.data?.readiness.tmdb)
   const validLimit = draft.limit.kind === "all"
     || Number.isInteger(draft.limit.count) && draft.limit.count >= 1 && draft.limit.count <= 500
-  const validDraft = Boolean(draft.title.trim()) && validLimit
+  const validMediaType = mediaTypeChoices.some((choice) => choice.value === draft.mediaType)
+  const validDraft = Boolean(draft.title.trim()) && validLimit && validMediaType
 
   const invalidatePreview = () => {
     previewRequest.current.generation += 1
@@ -357,7 +371,17 @@ function CollectionWizard({
     if (resultAffecting) invalidatePreview()
   }
   const patchSource = (source: CollectionProfileDraft["source"]) => {
-    patch({ source }, true)
+    setDraft((current) => {
+      if (!current) return current
+      const supported = source.kind === "mdbListPublicList"
+        || current.mediaType !== "mixed" && (source.kind !== "tmdbCollection" || current.mediaType === "movie")
+      return {
+        ...current,
+        source,
+        mediaType: supported ? current.mediaType : "movie",
+      }
+    })
+    invalidatePreview()
   }
   const patchDiscoverParameter = (key: "language" | "region", value: string) => {
     if (draft.source.kind !== "tmdbDiscover") return
@@ -449,9 +473,9 @@ function CollectionWizard({
             >
               <SelectTrigger id="collection-media"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="movie">Movie</SelectItem>
-                <SelectItem value="series">Series</SelectItem>
-                <SelectItem value="mixed">Mixed</SelectItem>
+                {mediaTypeChoices.map((choice) => (
+                  <SelectItem key={choice.value} value={choice.value}>{choice.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -627,6 +651,7 @@ export default function CollectionSettingsPage() {
       (next) => {
         if (cancelled) return
         cache.setQueryData(queryKeys.collectionSettings(account), next)
+        void cache.invalidateQueries({ queryKey: queryKeys.companion })
         void cache.invalidateQueries({ queryKey: queryKeys.collectionTemplates(account) })
       },
       () => undefined,

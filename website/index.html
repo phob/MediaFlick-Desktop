@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="MediaFlick Desktop is a native Jellyfin client that plays through your external mpv setup."
+    />
+    <meta name="theme-color" content="#111119" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="MediaFlick Desktop" />
+    <meta
+      property="og:description"
+      content="Your Jellyfin library. Your mpv setup."
+    />
+    <meta property="og:url" content="https://flick.media/" />
+    <link rel="canonical" href="https://flick.media/" />
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>MediaFlick Desktop</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="MediaFlick home">
+        <img src="/app-icon.svg" alt="" width="38" height="38" />
+        <span>MediaFlick</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it works</a>
+        <a href="https://github.com/phob/MediaFlick-Desktop">GitHub</a>
+      </nav>
+      <a
+        class="button button-small"
+        href="https://github.com/phob/MediaFlick-Desktop/releases/latest"
+      >Download</a>
+    </header>
+
+    <main id="top">
+      <section class="hero section-shell">
+        <div class="hero-copy">
+          <p class="eyebrow">A native Jellyfin desktop client</p>
+          <h1>Your Jellyfin library.<br /><span>Your mpv setup.</span></h1>
+          <p class="hero-summary">
+            Browse in a fast native app, then play through the external mpv you
+            already configured. MediaFlick keeps watched state and resume
+            positions in sync with Jellyfin.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button"
+              href="https://github.com/phob/MediaFlick-Desktop/releases/latest"
+            >Download latest release</a>
+            <a
+              class="text-link"
+              href="https://github.com/phob/MediaFlick-Desktop"
+            >View the source <span aria-hidden="true">&rarr;</span></a>
+          </div>
+          <p class="platforms">Windows, Linux and macOS</p>
+        </div>
+
+        <div class="app-preview" aria-label="Stylized preview of the MediaFlick library">
+          <div class="preview-bar">
+            <div class="preview-brand">
+              <img src="/app-icon.svg" alt="" width="22" height="22" />
+              <span>MediaFlick</span>
+            </div>
+            <div class="preview-search">Search your library</div>
+            <div class="preview-avatar">P</div>
+          </div>
+          <div class="preview-body">
+            <aside class="preview-sidebar" aria-hidden="true">
+              <span class="sidebar-item active"></span>
+              <span class="sidebar-item"></span>
+              <span class="sidebar-item short"></span>
+              <span class="sidebar-space"></span>
+              <span class="sidebar-item short"></span>
+            </aside>
+            <div class="preview-content" aria-hidden="true">
+              <div class="preview-heading">
+                <span>Continue watching</span>
+                <span class="preview-arrow">&rarr;</span>
+              </div>
+              <div class="poster-grid">
+                <div class="poster poster-one"><span></span></div>
+                <div class="poster poster-two"><span></span></div>
+                <div class="poster poster-three"><span></span></div>
+                <div class="poster poster-four"><span></span></div>
+              </div>
+              <div class="preview-heading second-row">
+                <span>Recently added</span>
+              </div>
+              <div class="poster-grid poster-grid-small">
+                <div class="poster poster-five"></div>
+                <div class="poster poster-six"></div>
+                <div class="poster poster-seven"></div>
+                <div class="poster poster-eight"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature-section section-shell" id="features">
+        <div class="section-intro">
+          <p class="eyebrow">Built around your player</p>
+          <h2>Keep everything you tuned in mpv.</h2>
+          <p>
+            MediaFlick launches the real mpv process. Your config, shaders,
+            scripts, HDR profiles and input bindings all come with it.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <span class="feature-number">01</span>
+            <h3>External mpv playback</h3>
+            <p>
+              Play original-quality streams through your installed mpv, with
+              optional Jellyfin transcoding when the connection needs it.
+            </p>
+          </article>
+          <article>
+            <span class="feature-number">02</span>
+            <h3>A local, searchable library</h3>
+            <p>
+              MediaFlick mirrors metadata into SQLite, so browsing and search
+              stay responsive even with a large library.
+            </p>
+          </article>
+          <article>
+            <span class="feature-number">03</span>
+            <h3>Playback stays in sync</h3>
+            <p>
+              Start, progress, watched state and resume position report back to
+              Jellyfin while mpv handles the video.
+            </p>
+          </article>
+          <article>
+            <span class="feature-number">04</span>
+            <h3>Optional server companion</h3>
+            <p>
+              Add calendar data, requests, ratings and collection tools without
+              exposing service credentials to desktop clients.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow-section" id="how-it-works">
+        <div class="section-shell workflow-shell">
+          <div class="section-intro compact">
+            <p class="eyebrow">How it works</p>
+            <h2>The app browses. mpv plays.</h2>
+          </div>
+          <ol class="workflow-list">
+            <li>
+              <span>1</span>
+              <div>
+                <h3>Connect Jellyfin</h3>
+                <p>Sign in with your password or Jellyfin Quick Connect.</p>
+              </div>
+            </li>
+            <li>
+              <span>2</span>
+              <div>
+                <h3>Choose something to watch</h3>
+                <p>Browse your local library mirror and pick a title.</p>
+              </div>
+            </li>
+            <li>
+              <span>3</span>
+              <div>
+                <h3>Hand off to mpv</h3>
+                <p>Your external player opens while MediaFlick handles sync.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="download-section section-shell" id="download">
+        <img src="/app-icon.svg" alt="MediaFlick icon" width="88" height="88" />
+        <p class="eyebrow">Ready to try it?</p>
+        <h2>Bring your own mpv.</h2>
+        <p>
+          Windows includes one-click mpv setup. Linux and macOS use your
+          system installation.
+        </p>
+        <a
+          class="button"
+          href="https://github.com/phob/MediaFlick-Desktop/releases/latest"
+        >Open the latest release</a>
+      </section>
+    </main>
+
+    <footer class="site-footer section-shell">
+      <div class="brand footer-brand">
+        <img src="/app-icon.svg" alt="" width="30" height="30" />
+        <span>MediaFlick</span>
+      </div>
+      <p>Open source software for Jellyfin and mpv users.</p>
+      <a href="https://github.com/phob/MediaFlick-Desktop">GitHub</a>
+    </footer>
+  </body>
+</html>

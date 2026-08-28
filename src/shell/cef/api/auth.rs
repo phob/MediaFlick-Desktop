@@ -43,7 +43,6 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             }
             services.companion.clear();
             if let Err(error) = services.companion.probe(true) {
-                services.session.note_error(&error);
                 tracing::debug!(target: "companion", "post-login probe failed: {error}");
             }
             services.sync.request();
@@ -79,7 +78,6 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
                 }
                 services.companion.clear();
                 if let Err(error) = services.companion.probe(true) {
-                    services.session.note_error(&error);
                     tracing::debug!(target: "companion", "post-login probe failed: {error}");
                 }
                 services.sync.request();
@@ -93,7 +91,10 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 
 fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let forget = request.json()["forgetLibrary"].as_bool().unwrap_or(false);
-    services.session.logout(forget);
+    if let Err(error) = services.session.logout(forget) {
+        tracing::error!("could not clear the local session after logout: {error}");
+        return ApiResponse::error(500, "could not clear the local session");
+    }
     if let Err(error) = services.preferences.activate_account(None) {
         tracing::error!("could not clear account preferences after logout: {error}");
         return ApiResponse::error(500, "could not clear account preferences");

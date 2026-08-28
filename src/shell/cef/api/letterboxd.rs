@@ -33,17 +33,18 @@ pub(super) fn route(
     Some(response)
 }
 
-fn letterboxd_scope(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
-    if !services.session.is_authenticated() {
-        return Err(ApiResponse::error(
-            401,
-            "sign in to manage connected profiles",
-        ));
-    }
+fn letterboxd_scope(services: &Arc<Services>) -> Result<SessionScope, ApiResponse> {
     services
         .session
-        .account_key()
-        .ok_or_else(|| ApiResponse::error(401, "sign in to manage connected profiles"))
+        .scope()
+        .map_err(|_| ApiResponse::error(401, "sign in to manage connected profiles"))
+}
+
+fn stale_account() -> ApiResponse {
+    ApiResponse::error(
+        409,
+        "the Jellyfin account changed while the request was running",
+    )
 }
 
 fn valid_profile_id(id: &str) -> bool {
@@ -58,19 +59,20 @@ fn unix_now() -> i64 {
 }
 
 fn letterboxd_profiles(services: &Arc<Services>) -> ApiResponse {
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    let profiles = services.accounts.letterboxd_profiles(&account);
+    let profiles = services.accounts.letterboxd_profiles(scope.account());
     ApiResponse::ok(json!({ "profiles": profiles }))
 }
 
 fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let profile = match letterboxd_integration::normalize_profile(
         request.json()["profile"].as_str().unwrap_or_default(),
     ) {
@@ -110,56 +112,80 @@ fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> Api
         jellyfin_server_id: account.server_id().to_string(),
         jellyfin_user_id: account.user_id().to_string(),
     };
-    match services.accounts.save_letterboxd_profile(&account, &record) {
-        Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
-        Err(error) => account_config_failure(&error),
-    }
+    services
+        .session
+        .commit_if_current(&scope, stale_account, || {
+            Ok(
+                match services.accounts.save_letterboxd_profile(&account, &record) {
+                    Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+                    Err(error) => account_config_failure(&error),
+                },
+            )
+        })
+        .unwrap_or_else(|response| response)
 }
 
 fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiRequest) -> ApiResponse {
     if !valid_profile_id(id) {
         return ApiResponse::error(404, "profile not found");
     }
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let Some(enabled) = request.json()["enabled"].as_bool() else {
         return ApiResponse::error(400, "enabled must be true or false");
     };
-    match services
-        .accounts
-        .set_letterboxd_profile_enabled(&account, id, enabled)
-    {
-        Ok(Some(profile)) => ApiResponse::ok(json!({ "profile": profile })),
-        Ok(None) => ApiResponse::error(404, "profile not found"),
-        Err(error) => account_config_failure(&error),
-    }
+    services
+        .session
+        .commit_if_current(&scope, stale_account, || {
+            Ok(
+                match services
+                    .accounts
+                    .set_letterboxd_profile_enabled(&account, id, enabled)
+                {
+                    Ok(Some(profile)) => ApiResponse::ok(json!({ "profile": profile })),
+                    Ok(None) => ApiResponse::error(404, "profile not found"),
+                    Err(error) => account_config_failure(&error),
+                },
+            )
+        })
+        .unwrap_or_else(|response| response)
 }
 
 fn letterboxd_remove_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
     if !valid_profile_id(id) {
         return ApiResponse::error(404, "profile not found");
     }
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    match services.accounts.remove_letterboxd_profile(&account, id) {
-        Ok(true) => ApiResponse::ok(json!({ "removed": true })),
-        Ok(false) => ApiResponse::error(404, "profile not found"),
-        Err(error) => account_config_failure(&error),
-    }
+    let account = scope.account().clone();
+    services
+        .session
+        .commit_if_current(&scope, stale_account, || {
+            Ok(
+                match services.accounts.remove_letterboxd_profile(&account, id) {
+                    Ok(true) => ApiResponse::ok(json!({ "removed": true })),
+                    Ok(false) => ApiResponse::error(404, "profile not found"),
+                    Err(error) => account_config_failure(&error),
+                },
+            )
+        })
+        .unwrap_or_else(|response| response)
 }
 
 fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
     if !valid_profile_id(id) {
         return ApiResponse::error(404, "profile not found");
     }
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let existing = match services.accounts.letterboxd_profile(&account, id) {
         Some(profile) if profile.provider == "letterboxd" => profile,
         _ => return ApiResponse::error(404, "profile not found"),
@@ -180,21 +206,28 @@ fn letterboxd_refresh_profile(services: &Arc<Services>, id: &str) -> ApiResponse
         last_checked_at: Some(unix_now()),
         ..existing
     };
-    match services.accounts.save_letterboxd_profile(&account, &record) {
-        Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
-        Err(error) => account_config_failure(&error),
-    }
+    services
+        .session
+        .commit_if_current(&scope, stale_account, || {
+            Ok(
+                match services.accounts.save_letterboxd_profile(&account, &record) {
+                    Ok(profile) => ApiResponse::ok(json!({ "profile": profile })),
+                    Err(error) => account_config_failure(&error),
+                },
+            )
+        })
+        .unwrap_or_else(|response| response)
 }
 
 fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
     if !valid_profile_id(id) {
         return ApiResponse::error(404, "profile not found");
     }
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    match services.accounts.letterboxd_profile(&account, id) {
+    match services.accounts.letterboxd_profile(scope.account(), id) {
         Some(profile) if profile.provider == "letterboxd" => {
             super::super::bridge::open_external_link(&profile.canonical_url);
             ApiResponse::ok(json!({ "opened": true, "url": profile.canonical_url }))
@@ -204,7 +237,7 @@ fn letterboxd_open_profile(services: &Arc<Services>, id: &str) -> ApiResponse {
 }
 
 fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
@@ -233,18 +266,18 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> ApiResponse {
             "unavailableProfiles": 0,
         }));
     };
-    letterboxd_reviews_for_movie(services, &account, tmdb_id)
+    letterboxd_reviews_for_movie(services, scope.account(), tmdb_id)
 }
 
 fn movie_letterboxd(services: &Arc<Services>, tmdb_id: &str) -> ApiResponse {
     let Some(tmdb_id) = canonical_tmdb_movie_id(tmdb_id) else {
         return ApiResponse::error(400, "that is not a TMDB movie id");
     };
-    let account = match letterboxd_scope(services) {
+    let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    letterboxd_reviews_for_movie(services, &account, &tmdb_id)
+    letterboxd_reviews_for_movie(services, scope.account(), &tmdb_id)
 }
 
 fn canonical_tmdb_movie_id(value: &str) -> Option<String> {

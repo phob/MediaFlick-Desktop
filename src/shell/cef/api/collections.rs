@@ -101,11 +101,15 @@ fn configuration_route(
     }
 }
 
-fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
+fn active_scope(services: &Arc<Services>) -> Result<SessionScope, ApiResponse> {
     services
         .session
-        .account_key()
-        .ok_or_else(|| ApiResponse::error(401, "sign in to use collections"))
+        .scope()
+        .map_err(|_| ApiResponse::error(401, "sign in to use collections"))
+}
+
+fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
+    active_scope(services).map(|scope| scope.account().clone())
 }
 
 fn jellyfin_index(services: &Arc<Services>) -> ApiResponse {
@@ -170,11 +174,24 @@ fn configuration_failure(error: &std::io::Error) -> ApiResponse {
 }
 
 fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    if let Err(response) = active_account(services) {
-        return response;
-    }
+    let scope = match active_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
     match services.artwork.stage(&request.body) {
-        Ok(id) => ApiResponse::ok(json!({ "id": id })),
+        Ok(id) => match services
+            .session
+            .commit_if_current(&scope, stale_account_response, || {
+                Ok(ApiResponse::ok(json!({ "id": &id })))
+            }) {
+            Ok(response) => response,
+            Err(response) => {
+                if let Err(error) = services.artwork.remove(&id) {
+                    tracing::warn!(target: "collections", "could not remove stale custom artwork: {error}");
+                }
+                response
+            }
+        },
         Err(error) => configuration_failure(&error),
     }
 }
@@ -269,7 +286,7 @@ fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> ApiRe
         return ApiResponse::error(400, "confirm the local account deletion first");
     }
     match crate::app::services::delete_local_account_data(services) {
-        Ok(()) => ApiResponse::ok(json!({ "deleted": true })),
+        Ok(()) => super::status(services),
         Err(error) => ApiResponse::error(500, error),
     }
 }

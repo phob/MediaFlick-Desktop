@@ -12,6 +12,7 @@ pub mod sync;
 
 mod catalog;
 mod integrations;
+mod legacy;
 mod query;
 mod session_store;
 

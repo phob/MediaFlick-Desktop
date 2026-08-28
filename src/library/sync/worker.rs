@@ -72,6 +72,10 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                     jittered(SYNC_INTERVAL)
                 }
                 Err(ApiError::Cancelled) if handle.is_stopped() => return,
+                // A sign-out, account deletion, or account switch invalidates
+                // the old generation. It is an expected handoff, not a
+                // failing sync that should poison the next account's backoff.
+                Err(ApiError::Cancelled) => IDLE_INTERVAL,
                 Err(ApiError::Unauthorized) => {
                     // `mark_expired` itself notifies the UI, exactly once.
                     session.mark_expired();

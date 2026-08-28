@@ -214,6 +214,15 @@ impl CollectionSource {
             _ => Ok(()),
         }
     }
+
+    fn supports_media_type(&self, media_type: MediaType) -> bool {
+        match self {
+            Self::TmdbDiscover { .. } => matches!(media_type, MediaType::Movie | MediaType::Series),
+            Self::TmdbCollection { .. } => media_type == MediaType::Movie,
+            Self::MdbListPublicList { .. } => true,
+            Self::Unsupported { .. } => false,
+        }
+    }
 }
 
 fn validate_discover_parameters(parameters: &BTreeMap<String, Value>) -> Result<(), &'static str> {
@@ -342,6 +351,9 @@ impl CollectionProfile {
         }
         if matches!(self.limit, ResultLimit::Maximum { count: 0 | 501.. }) {
             return Err("the collection result limit must be between 1 and 500");
+        }
+        if !self.source.supports_media_type(self.media_type) {
+            return Err("the collection source does not support that media type");
         }
         if let CollectionSource::TmdbDiscover { parameters, .. } = &self.source
             && (parameters.contains_key("language") || parameters.contains_key("region"))
@@ -492,6 +504,33 @@ mod tests {
             parameters: BTreeMap::from([("url".to_string(), json!("https://example.com"))]),
         };
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn every_source_accepts_only_media_types_its_provider_honors() {
+        let discover = CollectionSource::TmdbDiscover {
+            schema_version: 1,
+            parameters: BTreeMap::new(),
+        };
+        let exact = CollectionSource::TmdbCollection {
+            schema_version: 1,
+            collection_id: 10,
+            include_unreleased: false,
+        };
+        let mdblist = CollectionSource::MdbListPublicList {
+            schema_version: 1,
+            list_id: "42".to_string(),
+        };
+
+        assert!(discover.supports_media_type(MediaType::Movie));
+        assert!(discover.supports_media_type(MediaType::Series));
+        assert!(!discover.supports_media_type(MediaType::Mixed));
+        assert!(exact.supports_media_type(MediaType::Movie));
+        assert!(!exact.supports_media_type(MediaType::Series));
+        assert!(!exact.supports_media_type(MediaType::Mixed));
+        assert!(mdblist.supports_media_type(MediaType::Movie));
+        assert!(mdblist.supports_media_type(MediaType::Series));
+        assert!(mdblist.supports_media_type(MediaType::Mixed));
     }
 
     #[test]
