@@ -86,43 +86,57 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiRespon
 }
 
 pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
+    let scope = match active_scope(services) {
+        Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let body = request.json();
-    if let Some(mode) = body.get("modeSelection") {
-        let mode = match serde_json::from_value::<CollectionMode>(mode.clone()) {
+    let mode = match body.get("modeSelection") {
+        Some(mode) => match serde_json::from_value::<CollectionMode>(mode.clone()) {
             Ok(mode) => mode,
             Err(_) => return ApiResponse::error(400, "modeSelection is invalid"),
-        };
-        if mode == CollectionMode::MediaFlick {
-            let readiness = services.companion.collection_readiness(false);
-            let has_results = SnapshotRepository::new(&services.library)
-                .has_account_results(&account)
-                .unwrap_or(false);
-            let has_configuration = !services.collections.account(&account).profiles.is_empty();
-            if !readiness.tmdb && !has_configuration && !has_results {
-                return ApiResponse::error(409, "MediaFlick collections are unavailable");
-            }
-        }
-        if let Err(error) = services.collections.set_mode(&account, mode) {
-            return configuration_failure(&error);
-        }
-        if mode == CollectionMode::MediaFlick {
-            crate::collections::scheduler::request_run(services.clone());
+        },
+        None => CollectionMode::default(),
+    };
+    let updates_mode = body.get("modeSelection").is_some();
+    if updates_mode && mode == CollectionMode::MediaFlick {
+        let readiness = services.companion.collection_readiness(false);
+        let has_results = SnapshotRepository::new(&services.library)
+            .has_account_results(&account)
+            .unwrap_or(false);
+        let has_configuration = !services.collections.account(&account).profiles.is_empty();
+        if !readiness.tmdb && !has_configuration && !has_results {
+            return ApiResponse::error(409, "MediaFlick collections are unavailable");
         }
     }
-    if let Some(include) = body
+    let include_unreleased = body
         .get("includeUnreleased")
-        .and_then(serde_json::Value::as_bool)
-        && let Err(error) = services
-            .collections
-            .set_include_unreleased(&account, include)
-    {
-        return configuration_failure(&error);
+        .and_then(serde_json::Value::as_bool);
+    let mutation = services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            if updates_mode {
+                if let Err(error) = services.collections.set_mode(&account, mode) {
+                    return Ok(Some(configuration_failure(&error)));
+                }
+                if mode == CollectionMode::MediaFlick {
+                    crate::collections::scheduler::request_run(services.clone());
+                }
+            }
+            if let Some(include) = include_unreleased
+                && let Err(error) = services
+                    .collections
+                    .set_include_unreleased(&account, include)
+            {
+                return Ok(Some(configuration_failure(&error)));
+            }
+            Ok(None)
+        });
+    match mutation {
+        Err(response) | Ok(Some(response)) => response,
+        Ok(None) => settings(services, false),
     }
-    settings(services, false)
 }
 
 pub(super) fn templates(services: &Arc<Services>) -> ApiResponse {
@@ -261,10 +275,11 @@ pub(super) fn edit(
     profile_id: &str,
     request: &ApiRequest,
 ) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
+    let scope = match active_scope(services) {
+        Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let Some(previous) = profile(services, &account, profile_id) else {
         return ApiResponse::error(404, "that collection does not exist");
     };
@@ -294,16 +309,21 @@ pub(super) fn edit(
         }
         response
     } else {
-        match services.collections.save_profile(&account, next) {
-            Ok(profile) => {
-                update_next_due(services, &account, &profile);
-                ApiResponse::ok(json!(profile))
-            }
-            Err(error) => {
-                remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
-                configuration_failure(&error)
-            }
-        }
+        services
+            .session
+            .commit_if_current(&scope, stale_account_response, || {
+                Ok(match services.collections.save_profile(&account, next) {
+                    Ok(profile) => {
+                        update_next_due(services, &account, &profile);
+                        ApiResponse::ok(json!(profile))
+                    }
+                    Err(error) => {
+                        remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
+                        configuration_failure(&error)
+                    }
+                })
+            })
+            .unwrap_or_else(|response| response)
     }
 }
 
@@ -335,28 +355,35 @@ pub(super) fn refresh(services: &Arc<Services>, profile_id: &str) -> ApiResponse
 }
 
 pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
+    let scope = match active_scope(services) {
+        Ok(scope) => scope,
         Err(response) => return response,
     };
-    match services.collections.remove_profile(&account, profile_id) {
-        Ok(Some(_)) => {
-            let repository = SnapshotRepository::new(&services.library);
-            if let Err(error) = repository.remove_profile(&account, profile_id) {
-                tracing::warn!(target: "collections", "could not remove collection cache: {error}");
-            }
-            ApiResponse::ok(json!({ "deleted": true }))
-        }
-        Ok(None) => ApiResponse::error(404, "that collection does not exist"),
-        Err(error) => configuration_failure(&error),
-    }
+    let account = scope.account().clone();
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            Ok(match services.collections.remove_profile(&account, profile_id) {
+                Ok(Some(_)) => {
+                    let repository = SnapshotRepository::new(&services.library);
+                    if let Err(error) = repository.remove_profile(&account, profile_id) {
+                        tracing::warn!(target: "collections", "could not remove collection cache: {error}");
+                    }
+                    ApiResponse::ok(json!({ "deleted": true }))
+                }
+                Ok(None) => ApiResponse::error(404, "that collection does not exist"),
+                Err(error) => configuration_failure(&error),
+            })
+        })
+        .unwrap_or_else(|response| response)
 }
 
 pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
+    let scope = match active_scope(services) {
+        Ok(scope) => scope,
         Err(response) => return response,
     };
+    let account = scope.account().clone();
     let ids = request
         .json()
         .get("profileIds")
@@ -369,10 +396,24 @@ pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    match services.collections.reorder_profiles(&account, &ids) {
-        Ok(()) => list(services),
-        Err(error) => configuration_failure(&error),
-    }
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            Ok(
+                match services.collections.reorder_profiles(&account, &ids) {
+                    Ok(()) => {
+                        let settings = services.collections.account(&account);
+                        let errors = services.collections.profile_errors(&account);
+                        ApiResponse::ok(json!({
+                            "profiles": settings.profiles,
+                            "errors": errors,
+                        }))
+                    }
+                    Err(error) => configuration_failure(&error),
+                },
+            )
+        })
+        .unwrap_or_else(|response| response)
 }
 
 fn commit_result_profile(
@@ -381,6 +422,10 @@ fn commit_result_profile(
     mut profile: CollectionProfile,
     save_configuration: bool,
 ) -> ApiResponse {
+    let scope = match services.session.scope() {
+        Ok(scope) if scope.account() == account => scope,
+        _ => return stale_account_response(),
+    };
     let repository = SnapshotRepository::new(&services.library);
     let attempt = crate::library::now_unix();
     let result = match services
@@ -389,7 +434,16 @@ fn commit_result_profile(
     {
         Ok(result) => result,
         Err(error) => {
-            save_failed_refresh(&repository, account, &profile.id, attempt);
+            if let Err(response) =
+                services
+                    .session
+                    .commit_if_current(&scope, stale_account_response, || {
+                        save_failed_refresh(&repository, account, &profile.id, attempt);
+                        Ok(())
+                    })
+            {
+                return response;
+            }
             return ApiResponse::from_api_error(&error);
         }
     };
@@ -419,45 +473,59 @@ fn commit_result_profile(
     } else {
         result.total
     };
-    if let Err(error) = repository.commit_profile(account, &snapshot) {
-        return storage_failure(&error);
-    }
-    if save_configuration
-        && let Err(error) = services.collections.save_profile(account, profile.clone())
-    {
-        if let Err(cleanup_error) =
-            repository.remove_revision(account, &profile.id, &profile.revision)
-        {
-            tracing::warn!(
-                target: "collections",
-                "could not roll back an unreferenced collection revision: {cleanup_error}"
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            if let Err(error) = repository.commit_profile(account, &snapshot) {
+                return Ok(storage_failure(&error));
+            }
+            if save_configuration
+                && let Err(error) = services.collections.save_profile(account, profile.clone())
+            {
+                if let Err(cleanup_error) =
+                    repository.remove_revision(account, &profile.id, &profile.revision)
+                {
+                    tracing::warn!(
+                        target: "collections",
+                        "could not roll back an unreferenced collection revision: {cleanup_error}"
+                    );
+                }
+                return Ok(configuration_failure(&error));
+            }
+            if save_configuration {
+                let active = services
+                    .collections
+                    .account(account)
+                    .profiles
+                    .into_iter()
+                    .map(|stored| (stored.id, stored.revision))
+                    .collect();
+                let _ = repository.remove_unreferenced_revisions(account, &active);
+            }
+            let next_due = crate::collections::scheduler::next_due_at(attempt, profile.cadence);
+            let _ = repository.save_refresh_state(
+                account,
+                &profile.id,
+                &RefreshState {
+                    last_attempt: Some(attempt),
+                    last_success: Some(attempt),
+                    latest_failure: None,
+                    next_due,
+                    initialized: true,
+                },
             );
-        }
-        return configuration_failure(&error);
-    }
-    if save_configuration {
-        let active = services
-            .collections
-            .account(account)
-            .profiles
-            .into_iter()
-            .map(|stored| (stored.id, stored.revision))
-            .collect();
-        let _ = repository.remove_unreferenced_revisions(account, &active);
-    }
-    let next_due = crate::collections::scheduler::next_due_at(attempt, profile.cadence);
-    let _ = repository.save_refresh_state(
-        account,
-        &profile.id,
-        &RefreshState {
-            last_attempt: Some(attempt),
-            last_success: Some(attempt),
-            latest_failure: None,
-            next_due,
-            initialized: true,
-        },
-    );
-    ApiResponse::ok(json!({ "profile": profile, "total": visible_total }))
+            Ok(ApiResponse::ok(
+                json!({ "profile": profile, "total": visible_total }),
+            ))
+        })
+        .unwrap_or_else(|response| response)
+}
+
+fn stale_account_response() -> ApiResponse {
+    ApiResponse::error(
+        409,
+        "the Jellyfin account changed while the request was running",
+    )
 }
 
 fn save_failed_refresh(

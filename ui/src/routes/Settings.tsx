@@ -61,7 +61,7 @@ import {
   type RatingSourceDefinition,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
-import { queryClient, queryKeys } from "@/lib/query-client"
+import { queryClient, queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
 import { useCompanion, useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
@@ -446,9 +446,10 @@ function ApplicationSettings() {
   const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
   const deleteAccount = useMutation({
     mutationFn: api.collections.deleteLocalAccount,
-    onSuccess: () => {
-      queryClient.clear()
-      void queryClient.invalidateQueries({ queryKey: queryKeys.status })
+    onSuccess: (anonymousStatus) => {
+      queryClient.setQueryData(queryKeys.status, anonymousStatus)
+      removeAccountQueryData()
+      void queryClient.resetQueries({ queryKey: queryKeys.settings })
       toast.success("Local account data deleted")
     },
     onError: (error: Error) => toast.error(error.message),

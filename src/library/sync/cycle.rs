@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
-use crate::jellyfin::session::Session;
+use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
 use super::{
@@ -30,7 +30,9 @@ pub(super) fn run_cycle_inner(
     control: Option<&SyncHandle>,
 ) -> Result<SyncReport, ApiError> {
     let started = Instant::now();
-    let (client, user_id) = session.client_and_user()?;
+    let scope = session.scope()?;
+    let client = scope.client();
+    let user_id = scope.user_id();
     let initial_catalog = library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
         && library.meta(META_LAST_BOOTSTRAP).is_none();
     let recovering_ownership = library.meta(META_LATEST_FAILURE).as_deref() == Some("1");
@@ -40,64 +42,90 @@ pub(super) fn run_cycle_inner(
         if full_bootstrap_due(library) {
             // Re-page everything. Upserts are idempotent, so this refreshes
             // metadata in place rather than churning rows.
-            let _ = library.set_meta(META_BOOTSTRAP_DONE, "0");
-            let _ = library.set_meta(META_BOOTSTRAP_OFFSET, "0");
-            // An empty value deliberately means "the first page has not told
-            // us the new total yet"; retaining the previous week's total would
-            // make the determinate bar move against stale information.
-            let _ = library.set_meta(META_BOOTSTRAP_TOTAL, "");
+            commit(session, &scope, || {
+                library
+                    .set_meta(META_BOOTSTRAP_DONE, "0")
+                    .map_err(|error| storage_error(&error))?;
+                library
+                    .set_meta(META_BOOTSTRAP_OFFSET, "0")
+                    .map_err(|error| storage_error(&error))?;
+                // An empty value deliberately means "the first page has not told
+                // us the new total yet"; retaining the previous week's total would
+                // make the determinate bar move against stale information.
+                library
+                    .set_meta(META_BOOTSTRAP_TOTAL, "")
+                    .map_err(|error| storage_error(&error))?;
+                Ok(())
+            })?;
         }
         if library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
             && let Some(control) = control
         {
             control.set_phase(SyncPhase::Catalog);
         }
-        report.bootstrapped = bootstrap(library, &client, &user_id, control)?;
-        cancelled(control)?;
+        report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
+        cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
         }
-        report.updated = incremental(library, &client, &user_id, &mut report.changes, control)?;
+        report.updated = incremental(
+            library,
+            session,
+            &scope,
+            client,
+            user_id,
+            &mut report.changes,
+            control,
+        )?;
         if initial_catalog {
             // The just-completed catalog itself is a complete identity and user
             // data observation; repeating every page immediately would double
             // first-run request load without finding a stale row.
-            touch(library, META_LAST_IDENTITY_SWEEP);
+            commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
         } else if trigger.forces_identity_sweep()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
         {
             let (refreshed, deletion_changes) =
-                identity_sweep(library, &client, &user_id, control)?;
+                identity_sweep(library, session, &scope, client, user_id, control)?;
             report.user_data_refreshed = refreshed;
             report.deleted = deletion_changes.item_ids.len();
             report.changes.merge(deletion_changes);
-            touch(library, META_LAST_IDENTITY_SWEEP);
+            commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
         }
         Ok(())
     })();
 
     if let Err(error) = &result {
-        let _ = library.set_meta(META_LATEST_FAILURE, "1");
-        session.note_error(error);
+        let _ = commit(session, &scope, || {
+            library
+                .set_meta(META_LATEST_FAILURE, "1")
+                .map_err(|storage| storage_error(&storage))
+        });
+        session.note_scoped_error(&scope, error);
         // Bootstrap/incremental pages commit independently. A later network
         // failure must not strand already-visible SQLite changes without the
         // same batched UI notification a fully successful cycle receives.
-        if !report.changes.is_empty() {
+        if !report.changes.is_empty() && session.scope_is_current(&scope) {
             crate::app::services::notify_library_changed(report.changes.clone());
         }
     }
     result?;
 
-    let _ = library.set_meta(META_LATEST_FAILURE, "0");
+    report.elapsed_ms = started.elapsed().as_millis() as u64;
+    let serialized_report = serde_json::to_string(&report).unwrap_or_default();
+    commit(session, &scope, || {
+        library
+            .set_meta(META_LATEST_FAILURE, "0")
+            .map_err(|error| storage_error(&error))?;
+        touch(library, META_LAST_SYNC)?;
+        library
+            .set_meta("sync.last_report", &serialized_report)
+            .map_err(|error| storage_error(&error))?;
+        Ok(())
+    })?;
     if recovering_ownership {
         crate::app::services::notify_collections_changed();
     }
-    report.elapsed_ms = started.elapsed().as_millis() as u64;
-    touch(library, META_LAST_SYNC);
-    let _ = library.set_meta(
-        "sync.last_report",
-        &serde_json::to_string(&report).unwrap_or_default(),
-    );
     if !report.changes.is_empty() {
         crate::app::services::notify_library_changed(report.changes.clone());
     }
@@ -111,6 +139,8 @@ pub(super) fn run_cycle_inner(
 /// or a mid-sync sign-out.
 fn bootstrap(
     library: &Library,
+    session: &Session,
+    scope: &SessionScope,
     client: &JellyfinClient,
     user_id: &str,
     control: Option<&SyncHandle>,
@@ -131,7 +161,7 @@ fn bootstrap(
 
     let mut pages = 0;
     let truncated = loop {
-        cancelled(control)?;
+        cancelled(control, session, scope)?;
         if pages >= MAX_BOOTSTRAP_PAGES {
             break true;
         }
@@ -139,34 +169,42 @@ fn bootstrap(
         // Jellyfin normally reports the total on every page. Preserve the last
         // useful value if a trailing empty page omits it, while still recording
         // a real zero for an empty library.
-        if page.total_record_count > 0 || offset == 0 {
-            let _ = library.set_meta(
-                META_BOOTSTRAP_TOTAL,
-                &page.total_record_count.max(0).to_string(),
-            );
-        }
         if page.items.is_empty() {
-            // Even an empty library has a successful first catalog page.
-            let _ = library.set_meta(META_CATALOG_READY, "1");
-            if offset == 0 {
-                tracing::info!(
-                    target: "library.sync",
-                    ready_ms = phase_started.elapsed().as_millis() as u64,
-                    "empty catalog confirmed; library is ready"
-                );
-            }
+            commit_empty_bootstrap_page(
+                library,
+                session,
+                scope,
+                page.total_record_count,
+                offset,
+                phase_started.elapsed(),
+            )?;
             break false;
         }
         advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
-        let page_changes = library
-            .ingest_page(&page.items)
-            .map_err(|error| storage_error(&error))?;
-        // Readiness is written only after the page transaction commits.
-        let _ = library.set_meta(META_CATALOG_READY, "1");
+        let next_offset = offset + page.items.len() as i64;
+        let page_changes = commit(session, scope, || {
+            let changes = library
+                .ingest_page(&page.items)
+                .map_err(|error| storage_error(&error))?;
+            if page.total_record_count > 0 || offset == 0 {
+                library
+                    .set_meta(
+                        META_BOOTSTRAP_TOTAL,
+                        &page.total_record_count.max(0).to_string(),
+                    )
+                    .map_err(|error| storage_error(&error))?;
+            }
+            library
+                .set_meta(META_CATALOG_READY, "1")
+                .map_err(|error| storage_error(&error))?;
+            library
+                .set_meta(META_BOOTSTRAP_OFFSET, &next_offset.to_string())
+                .map_err(|error| storage_error(&error))?;
+            Ok(changes)
+        })?;
         written += page.items.len();
-        offset += page.items.len() as i64;
+        offset = next_offset;
         pages += 1;
-        let _ = library.set_meta(META_BOOTSTRAP_OFFSET, &offset.to_string());
         if pages == 1 {
             tracing::info!(
                 target: "library.sync",
@@ -195,10 +233,13 @@ fn bootstrap(
         }
     };
 
-    if let Some(watermark) = watermark {
-        let _ = library.set_meta(META_WATERMARK, &watermark);
-        write_watermark_ids(library, &watermark_ids);
-    }
+    commit_bootstrap_watermark(
+        library,
+        session,
+        scope,
+        watermark.as_deref(),
+        &watermark_ids,
+    )?;
     if truncated {
         // The offset is stored, so the next cycle picks up where this one
         // stopped. Marking the bootstrap done here would instead declare a
@@ -211,10 +252,71 @@ fn bootstrap(
         );
         return Ok(written);
     }
-    let _ = library.set_meta(META_BOOTSTRAP_DONE, "1");
-    touch(library, META_LAST_BOOTSTRAP);
+    finish_bootstrap(library, session, scope, written)
+}
+
+fn finish_bootstrap(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    written: usize,
+) -> Result<usize, ApiError> {
+    commit(session, scope, || {
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .map_err(|error| storage_error(&error))?;
+        touch(library, META_LAST_BOOTSTRAP)
+    })?;
     tracing::info!(target: "library.sync", items = written, "library bootstrap complete");
     Ok(written)
+}
+
+fn commit_bootstrap_watermark(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    watermark: Option<&str>,
+    watermark_ids: &HashSet<String>,
+) -> Result<(), ApiError> {
+    let Some(watermark) = watermark else {
+        return Ok(());
+    };
+    commit(session, scope, || {
+        library
+            .set_meta(META_WATERMARK, watermark)
+            .map_err(|error| storage_error(&error))?;
+        write_watermark_ids(library, watermark_ids)
+    })
+}
+
+fn commit_empty_bootstrap_page(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    total_record_count: i64,
+    offset: i64,
+    elapsed: Duration,
+) -> Result<(), ApiError> {
+    commit(session, scope, || {
+        if total_record_count > 0 || offset == 0 {
+            library
+                .set_meta(META_BOOTSTRAP_TOTAL, &total_record_count.max(0).to_string())
+                .map_err(|error| storage_error(&error))?;
+        }
+        // Even an empty library has a successful first catalog page.
+        library
+            .set_meta(META_CATALOG_READY, "1")
+            .map_err(|error| storage_error(&error))?;
+        Ok(())
+    })?;
+    if offset == 0 {
+        tracing::info!(
+            target: "library.sync",
+            ready_ms = elapsed.as_millis() as u64,
+            "empty catalog confirmed; library is ready"
+        );
+    }
+    Ok(())
 }
 
 /// Walks `DateCreated` descending until it reaches items already cached.
@@ -223,6 +325,8 @@ fn bootstrap(
 /// adds a new one with a new id and a fresh `DateCreated`.
 fn incremental(
     library: &Library,
+    session: &Session,
+    scope: &SessionScope,
     client: &JellyfinClient,
     user_id: &str,
     changes: &mut LibraryChangeBatch,
@@ -236,7 +340,7 @@ fn incremental(
     let mut newest_ids = known_watermark_ids.clone();
 
     for _ in 0..MAX_INCREMENTAL_PAGES {
-        cancelled(control)?;
+        cancelled(control, session, scope)?;
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Descending")?;
         if page.items.is_empty() {
             break;
@@ -258,9 +362,11 @@ fn incremental(
                 .is_some_and(|(candidate, watermark)| candidate < watermark)
                 || item.date_created.is_none()
         });
-        let page_changes = library
-            .ingest_page(&fresh)
-            .map_err(|error| storage_error(&error))?;
+        let page_changes = commit(session, scope, || {
+            library
+                .ingest_page(&fresh)
+                .map_err(|error| storage_error(&error))
+        })?;
         written += fresh.len();
         changes.merge(page_changes);
 
@@ -271,8 +377,12 @@ fn incremental(
     }
 
     if let Some(newest) = newest {
-        let _ = library.set_meta(META_WATERMARK, &newest);
-        write_watermark_ids(library, &newest_ids);
+        commit(session, scope, || {
+            library
+                .set_meta(META_WATERMARK, &newest)
+                .map_err(|error| storage_error(&error))?;
+            write_watermark_ids(library, &newest_ids)
+        })?;
     }
     Ok(written)
 }
@@ -288,6 +398,8 @@ fn incremental(
 /// same cycle can notify item and hierarchy caches after committing removals.
 fn identity_sweep(
     library: &Library,
+    session: &Session,
+    scope: &SessionScope,
     client: &JellyfinClient,
     user_id: &str,
     control: Option<&SyncHandle>,
@@ -297,7 +409,7 @@ fn identity_sweep(
     let mut seen = HashSet::new();
     let mut pages = 0;
     let truncated = loop {
-        cancelled(control)?;
+        cancelled(control, session, scope)?;
         if pages >= MAX_IDENTITY_PAGES {
             break true;
         }
@@ -315,9 +427,11 @@ fn identity_sweep(
                     .map(|user_data| UserDataRecord::from_dto(&item.id, user_data))
             })
             .collect::<Vec<_>>();
-        refreshed += library
-            .upsert_user_data(&records)
-            .map_err(|error| storage_error(&error))?;
+        refreshed += commit(session, scope, || {
+            library
+                .upsert_user_data(&records)
+                .map_err(|error| storage_error(&error))
+        })?;
         offset += page.items.len() as i64;
         pages += 1;
         if (page.items.len() as i64) < IDENTITY_PAGE_SIZE {
@@ -340,9 +454,11 @@ fn identity_sweep(
         // emptied library, so never treat it as "delete everything".
         return Ok((refreshed, LibraryChangeBatch::default()));
     }
-    let deletion_changes = library
-        .retain_ids(&seen)
-        .map_err(|error| storage_error(&error))?;
+    let deletion_changes = commit(session, scope, || {
+        library
+            .retain_ids(&seen)
+            .map_err(|error| storage_error(&error))
+    })?;
     Ok((refreshed, deletion_changes))
 }
 
@@ -380,13 +496,15 @@ fn read_watermark_ids(library: &Library) -> HashSet<String> {
         .collect()
 }
 
-fn write_watermark_ids(library: &Library, ids: &HashSet<String>) {
+fn write_watermark_ids(library: &Library, ids: &HashSet<String>) -> Result<(), ApiError> {
     let mut ids = ids.iter().cloned().collect::<Vec<_>>();
     ids.sort_unstable();
-    let _ = library.set_meta(
-        META_WATERMARK_IDS,
-        &serde_json::to_string(&ids).unwrap_or_default(),
-    );
+    library
+        .set_meta(
+            META_WATERMARK_IDS,
+            &serde_json::to_string(&ids).unwrap_or_default(),
+        )
+        .map_err(|error| storage_error(&error))
 }
 
 /// Jellyfin timestamps are ISO-8601 UTC, so lexicographic order is chronological.
@@ -426,18 +544,32 @@ fn full_bootstrap_due(library: &Library) -> bool {
         && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)
 }
 
-fn touch(library: &Library, key: &str) {
-    let _ = library.set_meta(key, &now_unix().to_string());
+fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
+    library
+        .set_meta(key, &now_unix().to_string())
+        .map_err(|error| storage_error(&error))
 }
 
 /// Storage failures are reported through the same channel as API failures so a
 /// cycle stops on the first problem instead of half-applying a page.
-fn cancelled(control: Option<&SyncHandle>) -> Result<(), ApiError> {
-    if control.is_some_and(SyncHandle::is_stopped) {
+fn cancelled(
+    control: Option<&SyncHandle>,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    if control.is_some_and(SyncHandle::is_stopped) || !session.scope_is_current(scope) {
         Err(ApiError::Cancelled)
     } else {
         Ok(())
     }
+}
+
+fn commit<T>(
+    session: &Session,
+    scope: &SessionScope,
+    work: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    session.commit_if_current(scope, || ApiError::Cancelled, work)
 }
 
 fn storage_error(error: &rusqlite::Error) -> ApiError {

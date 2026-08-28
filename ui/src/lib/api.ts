@@ -1534,7 +1534,7 @@ export const api = {
     forMovie: (tmdbId: number) =>
       request<MovieCollection>(`/api/collections/movie/${tmdbId}`),
     deleteLocalAccount: () =>
-      request<{ deleted: boolean }>("/api/collections/local-account", {
+      request<Status>("/api/collections/local-account", {
         method: "DELETE",
         body: { confirmed: true },
       }),

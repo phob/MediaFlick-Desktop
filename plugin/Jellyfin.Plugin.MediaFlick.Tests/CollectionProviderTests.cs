@@ -68,6 +68,46 @@ public sealed class CollectionProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task PreviewStopsPagingAsSoonAsTwentyFourUsableTitlesExist()
+    {
+        ConfigureTmdb();
+        var calls = 0;
+        _tmdb.Handler = (path, query) =>
+        {
+            if (path == "3/configuration")
+            {
+                return Ok(new JsonObject());
+            }
+            Assert.Equal("3/discover/movie", path);
+            calls += 1;
+            var page = int.Parse(query["page"]);
+            return Ok(new JsonObject
+            {
+                ["total_results"] = 10_000,
+                ["total_pages"] = 500,
+                ["results"] = new JsonArray(Enumerable.Range(1, 20).Select(index =>
+                    (JsonNode)new JsonObject
+                    {
+                        ["id"] = (page - 1) * 20 + index,
+                        ["title"] = $"Movie {(page - 1) * 20 + index}"
+                    }).ToArray())
+            });
+        };
+
+        var result = await _service.PreviewAsync(
+            Request(new JsonObject
+            {
+                ["kind"] = "tmdbDiscover",
+                ["parameters"] = new JsonObject()
+            }),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, calls);
+        Assert.Equal(24, result.Items.Count);
+        Assert.Equal(10_000, result.Total);
+    }
+
+    [Fact]
     public async Task ArtworkReturnsTheRequestedTmdbRendition()
     {
         var result = await _service.ArtworkAsync(
@@ -115,6 +155,41 @@ public sealed class CollectionProviderTests : IDisposable
 
         Assert.True(_service.TmdbReady);
         Assert.True(_service.MdbListReady);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task TransientReadinessFailuresDoNotInvalidateAPreviouslyValidMdbListKey(
+        HttpStatusCode status)
+    {
+        ConfigureMdbList();
+        _mdbList.Handler = resource => resource == "user"
+            ? new(status, null, new(null, null, null), null)
+            : new(HttpStatusCode.NotFound, null, new(null, null, null), null);
+
+        await _service.RefreshReadinessAsync(TestContext.Current.CancellationToken);
+
+        var health = _health.Health("mdblist");
+        Assert.True(health.Valid);
+        Assert.NotEqual("invalid", health.Validation);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task CredentialRejectionsStillInvalidateMdbListReadiness(HttpStatusCode status)
+    {
+        ConfigureMdbList();
+        _mdbList.Handler = resource => resource == "user"
+            ? new(status, null, new(null, null, null), null)
+            : new(HttpStatusCode.NotFound, null, new(null, null, null), null);
+
+        await _service.RefreshReadinessAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(_health.Health("mdblist").Valid);
+        Assert.Equal("invalid", _health.Health("mdblist").Validation);
     }
 
     [Fact]
@@ -206,6 +281,91 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal(603, Assert.Single(fromUrl.Items).TmdbId);
     }
 
+    [Fact]
+    public async Task DocumentedMdbListBucketsAndIntegerAdultFlagsAreNormalized()
+    {
+        ConfigureMdbList();
+        _mdbList.Handler = resource => resource switch
+        {
+            "user" => new(HttpStatusCode.OK, new JsonObject(), new(null, null, null), null),
+            "lists/42" => new(
+                HttpStatusCode.OK,
+                new JsonObject { ["id"] = 42, ["name"] = "Mixed" },
+                new(null, null, null),
+                null),
+            "lists/42/items?unified=true&limit=1000&offset=0" => new(
+                HttpStatusCode.OK,
+                new JsonObject
+                {
+                    ["movies"] = new JsonArray(
+                        new JsonObject { ["id"] = 603, ["title"] = "The Matrix", ["adult"] = 0 },
+                        new JsonObject { ["id"] = 604, ["title"] = "Adult", ["adult"] = 1 }),
+                    ["shows"] = new JsonArray(
+                        new JsonObject { ["id"] = 1396, ["title"] = "Breaking Bad", ["adult"] = 0 },
+                        new JsonObject { ["title"] = "Missing identity", ["adult"] = 0 })
+                },
+                new(null, null, null),
+                null),
+            _ => new(HttpStatusCode.NotFound, null, new(null, null, null), null)
+        };
+
+        var result = await _service.ResultsAsync(
+            Request(new JsonObject { ["kind"] = "mdbListPublicList", ["listId"] = "42" }, "mixed"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(["movie", "series"], result.Items.Select(item => item.MediaType));
+        Assert.Equal([603L, 1396L], result.Items.Select(item => item.TmdbId));
+    }
+
+    [Fact]
+    public async Task MdbListFilteringUsesTheProviderQueryAndRawPageCountForPagination()
+    {
+        ConfigureMdbList();
+        var resources = new List<string>();
+        _mdbList.Handler = resource =>
+        {
+            resources.Add(resource);
+            return resource switch
+            {
+                "user" => new(HttpStatusCode.OK, new JsonObject(), new(null, null, null), null),
+                "lists/42" => new(
+                    HttpStatusCode.OK,
+                    new JsonObject { ["id"] = 42, ["name"] = "Movies" },
+                    new(null, null, null),
+                    null),
+                "lists/42/items?unified=true&mediatype=movie&limit=1000&offset=0" => new(
+                    HttpStatusCode.OK,
+                    new JsonArray(
+                        new JsonObject { ["id"] = 1, ["title"] = "Movie", ["mediatype"] = "movie" },
+                        new JsonObject { ["id"] = 2, ["title"] = "Filtered show", ["mediatype"] = "show" },
+                        new JsonObject { ["title"] = "Missing id", ["mediatype"] = "movie" }),
+                    new(null, null, null),
+                    null,
+                    true),
+                "lists/42/items?unified=true&mediatype=movie&limit=1000&offset=3" => new(
+                    HttpStatusCode.OK,
+                    new JsonArray(new JsonObject
+                    {
+                        ["id"] = 3,
+                        ["title"] = "Second page",
+                        ["mediatype"] = "movie"
+                    }),
+                    new(null, null, null),
+                    null),
+                _ => new(HttpStatusCode.NotFound, null, new(null, null, null), null)
+            };
+        };
+
+        var result = await _service.ResultsAsync(
+            Request(new JsonObject { ["kind"] = "mdbListPublicList", ["listId"] = "42" }, "movie"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([1L, 3L], result.Items.Select(item => item.TmdbId));
+        Assert.Contains(
+            "lists/42/items?unified=true&mediatype=movie&limit=1000&offset=3",
+            resources);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.Unauthorized)]
@@ -286,6 +446,45 @@ public sealed class CollectionProviderTests : IDisposable
             TestContext.Current.CancellationToken);
 
         Assert.Equal([1L, 2L], result.Items.Select(item => item.TmdbId));
+    }
+
+    [Fact]
+    public async Task FranchiseResolutionReusesKnownCollectionsAndReturnsNegativeMemberships()
+    {
+        ConfigureTmdb();
+        var movieCalls = 0;
+        _tmdb.Handler = (path, query) =>
+        {
+            if (path.StartsWith("3/movie/", StringComparison.Ordinal))
+            {
+                movieCalls += 1;
+                return Ok(new JsonObject { ["belongs_to_collection"] = null });
+            }
+            if (path == "3/collection/10")
+            {
+                return Ok(new JsonObject
+                {
+                    ["id"] = 10,
+                    ["name"] = "Known collection",
+                    ["parts"] = new JsonArray()
+                });
+            }
+            return Ok(new JsonObject());
+        };
+
+        var result = await _service.FranchisesAsync(
+            new FranchiseResolveRequest([101, 102], [10]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, movieCalls);
+        Assert.Equal([101L, 102L], result.Memberships.Select(row => row.TmdbId));
+        Assert.All(result.Memberships, row => Assert.Null(row.CollectionId));
+        Assert.Equal(10, Assert.Single(result.Franchises).CollectionId);
+
+        _ = await _service.FranchisesAsync(
+            new FranchiseResolveRequest([], [10]),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(2, movieCalls);
     }
 
     [Fact]

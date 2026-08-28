@@ -158,6 +158,11 @@ impl PreferencesService {
         &self,
         active_account: Option<AccountKey>,
     ) -> Result<SettingsChange, PreferencesError> {
+        if let Some(account) = &active_account {
+            self.accounts
+                .claim_legacy_appearance(account)
+                .map_err(|error| PreferencesError(error.to_string()))?;
+        }
         let change = {
             let mut state = self
                 .state

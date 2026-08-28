@@ -157,8 +157,17 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
             return ApiResponse::error(400, format!("invalid appearance settings: {error}"));
         }
     };
-    match services.preferences.patch_appearance(patch) {
-        Ok(change) => settings_response(&change.settings, &[]),
-        Err(error) => ApiResponse::error(400, error.to_string()),
-    }
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            Ok(match services.preferences.patch_appearance(patch) {
+                Ok(change) => settings_response(&change.settings, &[]),
+                Err(error) => ApiResponse::error(400, error.to_string()),
+            })
+        })
+        .unwrap_or_else(|response| response)
 }

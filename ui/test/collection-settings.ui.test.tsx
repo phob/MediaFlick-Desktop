@@ -126,7 +126,7 @@ function page(
 }
 
 async function openTemplate(name = "Popular movies") {
-  fireEvent.click(await screen.findByRole("button", { name: new RegExp(name) }))
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${name}`) }))
   await screen.findByRole("heading", { name: "Add collection" })
 }
 
@@ -141,6 +141,33 @@ function isDisabled(element: Element) {
 afterEach(() => vi.restoreAllMocks())
 
 describe("collection settings wizard", () => {
+  test("offers only media types the selected provider implements", async () => {
+    mockPage({
+      templates: catalog(
+        template(),
+        template({
+          id: "mdblist.public-list",
+          title: "MDBList list",
+          source: { kind: "mdbListPublicList", schemaVersion: 1, listId: "42" },
+          mediaType: "mixed",
+        }),
+      ),
+    })
+    page()
+
+    await openTemplate()
+    fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
+    expect(screen.queryByRole("option", { name: "Mixed" })).toBeNull()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    await openTemplate("MDBList list")
+    fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
+    expect(screen.getByRole("option", { name: "Movie" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Series" })).toBeTruthy()
+    expect(screen.getByRole("option", { name: "Mixed" })).toBeTruthy()
+  })
+
   test("renders a colored Lucide pictogram instead of the shared template banner", async () => {
     mockPage()
     page()

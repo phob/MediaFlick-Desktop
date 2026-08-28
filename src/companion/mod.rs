@@ -5,6 +5,7 @@
 //! selects the plugin backend only when the advertised v1 capability exists.
 
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -12,12 +13,13 @@ use serde_json::{Value, json};
 use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
-use crate::jellyfin::session::Session;
+use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::Library;
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
+const FAILED_PROBE_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -47,6 +49,17 @@ struct ProbeState {
     checked: bool,
     info: Option<CompanionInfo>,
     error: Option<String>,
+    checked_at: Option<Instant>,
+}
+
+impl ProbeState {
+    fn reusable(&self) -> bool {
+        self.checked
+            && (self.error.is_none()
+                || self
+                    .checked_at
+                    .is_some_and(|checked_at| checked_at.elapsed() < FAILED_PROBE_RETRY))
+    }
 }
 
 pub struct CompanionSession {
@@ -67,7 +80,7 @@ impl CompanionSession {
     pub fn probe(&self, force: bool) -> Result<Option<CompanionInfo>, ApiError> {
         if !force {
             let state = self.read();
-            if state.checked {
+            if state.reusable() {
                 return Ok(state.info);
             }
         }
@@ -77,12 +90,16 @@ impl CompanionSession {
                 checked: true,
                 info: None,
                 error: None,
+                checked_at: Some(Instant::now()),
             });
             return Ok(None);
         }
 
-        let client = self.session.client()?;
-        match client.companion_get_info_json::<CompanionInfo>("/MediaFlick/info") {
+        let scope = self.session.scope()?;
+        match scope
+            .client()
+            .companion_get_info_json::<CompanionInfo>("/MediaFlick/info")
+        {
             Ok(info) => {
                 let compatible = info.is_compatible();
                 tracing::info!(
@@ -92,24 +109,32 @@ impl CompanionSession {
                     compatible,
                     "probed the MediaFlick Companion plugin"
                 );
-                self.replace(ProbeState {
-                    checked: true,
-                    error: (!compatible).then(|| {
-                        format!(
-                            "companion API {} is outside the supported range {}–{}",
-                            info.api_version, MIN_API_VERSION, MAX_API_VERSION
-                        )
-                    }),
-                    info: Some(info.clone()),
-                });
+                self.replace_scoped(
+                    &scope,
+                    ProbeState {
+                        checked: true,
+                        error: (!compatible).then(|| {
+                            format!(
+                                "companion API {} is outside the supported range {}–{}",
+                                info.api_version, MIN_API_VERSION, MAX_API_VERSION
+                            )
+                        }),
+                        info: Some(info.clone()),
+                        checked_at: Some(Instant::now()),
+                    },
+                )?;
                 Ok(Some(info))
             }
             Err(ApiError::Status { status: 404 } | ApiError::Remote { status: 404, .. }) => {
-                self.replace(ProbeState {
-                    checked: true,
-                    info: None,
-                    error: None,
-                });
+                self.replace_scoped(
+                    &scope,
+                    ProbeState {
+                        checked: true,
+                        info: None,
+                        error: None,
+                        checked_at: Some(Instant::now()),
+                    },
+                )?;
                 tracing::debug!(target: "companion", "the server has no companion plugin");
                 Ok(None)
             }
@@ -117,11 +142,19 @@ impl CompanionSession {
                 // The capability/status object is browser-visible. The info
                 // client already strips HTTP diagnostics; retain only a fixed
                 // state label so logs and telemetry cannot reintroduce them.
-                self.replace(ProbeState {
-                    checked: true,
-                    info: None,
-                    error: Some("the MediaFlick Companion plugin could not be reached".to_string()),
-                });
+                let previous = self.read();
+                self.replace_scoped(
+                    &scope,
+                    ProbeState {
+                        checked: true,
+                        info: previous.info,
+                        error: Some(
+                            "the MediaFlick Companion plugin could not be reached".to_string(),
+                        ),
+                        checked_at: Some(Instant::now()),
+                    },
+                )?;
+                self.session.note_scoped_error(&scope, &error);
                 Err(error)
             }
         }
@@ -200,11 +233,19 @@ impl CompanionSession {
         self.collection_operation("results", body)
     }
 
-    pub fn resolve_franchises(&self, tmdb_ids: &[u64]) -> Result<Value, ApiError> {
+    pub fn resolve_franchises(
+        &self,
+        scope: &SessionScope,
+        tmdb_ids: &[u64],
+        collection_ids: &[u64],
+    ) -> Result<Value, ApiError> {
         self.require_collection_experience()?;
-        self.client()?.companion_post_json_once(
+        if !self.session.scope_is_current(scope) {
+            return Err(ApiError::Cancelled);
+        }
+        scope.client().companion_post_json_once(
             "/MediaFlick/collection-experience/v1/franchises",
-            &json!({ "tmdbIds": tmdb_ids }),
+            &json!({ "tmdbIds": tmdb_ids, "collectionIds": collection_ids }),
         )
     }
 
@@ -334,6 +375,17 @@ impl CompanionSession {
             .state
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+    }
+
+    fn replace_scoped(&self, scope: &SessionScope, state: ProbeState) -> Result<(), ApiError> {
+        self.session.commit_if_current(
+            scope,
+            || ApiError::Cancelled,
+            || {
+                self.replace(state);
+                Ok(())
+            },
+        )
     }
 
     fn client(&self) -> Result<JellyfinClient, ApiError> {
@@ -614,7 +666,7 @@ fn join_calendar(library: &Library, value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompanionInfo, join_calendar};
+    use super::{CompanionInfo, FAILED_PROBE_RETRY, ProbeState, join_calendar};
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
     use serde_json::json;
@@ -634,6 +686,23 @@ mod tests {
             ..Default::default()
         };
         assert!(!future.supports("calendar"));
+    }
+
+    #[test]
+    fn transient_probe_failures_are_retried_without_logging_out() {
+        let recent_failure = ProbeState {
+            checked: true,
+            error: Some("temporarily unavailable".to_string()),
+            checked_at: Some(std::time::Instant::now()),
+            ..ProbeState::default()
+        };
+        assert!(recent_failure.reusable());
+
+        let expired_failure = ProbeState {
+            checked_at: Some(std::time::Instant::now() - FAILED_PROBE_RETRY),
+            ..recent_failure
+        };
+        assert!(!expired_failure.reusable());
     }
 
     #[test]

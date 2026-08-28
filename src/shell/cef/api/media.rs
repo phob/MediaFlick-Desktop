@@ -173,14 +173,14 @@ fn set_item_playback_preference(
         .as_str()
         .map(str::trim)
         .filter(|id| !id.is_empty());
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
         Err(error) => return ApiResponse::from_api_error(&error),
     };
-    let sources = match items::fetch_media_sources(&client, &user_id, item_id) {
+    let sources = match items::fetch_media_sources(scope.client(), scope.user_id(), item_id) {
         Ok(sources) => sources,
         Err(error) => {
-            services.session.note_error(&error);
+            services.session.note_scoped_error(&scope, &error);
             return ApiResponse::from_api_error(&error);
         }
     };
@@ -220,19 +220,25 @@ fn set_item_playback_preference(
     }
 
     let preference = ItemPlaybackPreference::capture(source, source_index, audio, subtitle);
-    let Some(account) = services.session.account_key() else {
-        return ApiResponse::error(401, "sign in to save playback preferences");
-    };
-    if let Err(error) = services
-        .playback_preferences
-        .save(&account, item_id, &preference)
-    {
-        tracing::warn!(target: "app.api", "could not save playback preference: {error}");
-        return ApiResponse::error(500, format!("could not save playback preference: {error}"));
-    }
-    ApiResponse::ok(json!({
-        "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
-    }))
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            if let Err(error) =
+                services
+                    .playback_preferences
+                    .save(scope.account(), item_id, &preference)
+            {
+                tracing::warn!(target: "app.api", "could not save playback preference: {error}");
+                return Ok(ApiResponse::error(
+                    500,
+                    format!("could not save playback preference: {error}"),
+                ));
+            }
+            Ok(ApiResponse::ok(json!({
+                "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
+            })))
+        })
+        .unwrap_or_else(|response| response)
 }
 
 /// The first local trailer attached to an item, if the server has one.

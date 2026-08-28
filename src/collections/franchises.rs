@@ -15,6 +15,13 @@ pub struct FranchiseSnapshot {
     pub items: Vec<NormalizedTitle>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FranchiseMembership {
+    pub tmdb_id: u64,
+    pub collection_id: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FranchiseView {
