@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="MediaFlick Desktop is a Jellyfin client that hands playback to your external mpv process." />
-    <meta name="theme-color" content="#f2f0e9" />
+    <meta name="theme-color" content="#070b09" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="MediaFlick Desktop" />
     <meta property="og:description" content="A Jellyfin desktop client built for people who already have mpv set up the way they like it." />
@@ -16,67 +16,167 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-    <header class="site-header">
-      <a class="brand" href="#top" aria-label="MediaFlick home">
-        <img src="/app-icon.svg" alt="" width="34" height="34" />
-        <span>MediaFlick</span>
-      </a>
-      <nav aria-label="Main navigation">
-        <a href="#why">Why external mpv?</a>
-        <a href="#details">What it does</a>
-        <a href="https://github.com/phob/MediaFlick-Desktop">Source</a>
-      </nav>
-      <a class="header-download" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">Get the app</a>
+
+    <header class="site-chrome">
+      <div class="shell chrome-row">
+        <a class="brand" href="#top" aria-label="MediaFlick home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+          </span>
+          <span class="wordmark">Media<b>Flick</b></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a href="#why">Why mpv</a>
+          <a href="#details">Features</a>
+          <a href="#setup">First run</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
+        </nav>
+        <a class="btn btn-primary chrome-download" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+          Get the app
+        </a>
+      </div>
     </header>
 
     <main id="main">
       <section class="hero" id="top">
-        <div class="hero-copy">
-          <p class="kicker">Jellyfin desktop client · Windows, Linux, macOS</p>
-          <h1>Keep your<br />mpv setup.</h1>
-          <p class="hero-lede">
-            MediaFlick gives Jellyfin its own desktop library, then opens video in the real mpv process on your machine. Your shaders, scripts, profiles, bindings and <code>mpv.conf</code> still apply.
-          </p>
-          <div class="hero-actions">
-            <a class="primary-link" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
-              Download the latest release <span aria-hidden="true">↘</span>
-            </a>
-            <a class="plain-link" href="https://github.com/phob/MediaFlick-Desktop">Read the code on GitHub</a>
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="kicker data-label">Featured</p>
+            <h1>Keep your<br />mpv setup.</h1>
+            <p class="hero-facts data-value" aria-label="Platforms and license">
+              <span>Windows</span><span class="slash" aria-hidden="true">/</span>
+              <span>Linux</span><span class="slash" aria-hidden="true">/</span>
+              <span>macOS</span><span class="slash" aria-hidden="true">/</span>
+              <span class="fact-accent">Open source</span>
+            </p>
+            <p class="hero-lede">
+              MediaFlick gives Jellyfin its own desktop library, then opens video in the
+              real mpv process on your machine. Your shaders, scripts, profiles, bindings
+              and <code>mpv.conf</code> still apply.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary btn-lg" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+                Download latest release
+              </a>
+              <a class="btn btn-outline btn-lg" href="#why">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.25"/><path d="M12 11v5.5"/><path d="M12 7.6v.2"/></svg>
+                How it works
+              </a>
+            </div>
           </div>
-        </div>
 
-        <div class="handoff" aria-label="MediaFlick hands a Jellyfin stream to external mpv">
-          <div class="handoff-topline"><span>PLAYBACK HANDOFF</span><span>01 / 02</span></div>
-          <div class="process process-app">
-            <span class="process-id">01</span>
-            <img src="/app-icon.svg" alt="" width="46" height="46" />
-            <div><strong>MediaFlick</strong><span>Browse · search · choose tracks</span></div>
+          <div class="hero-stage">
+            <div class="app-window" role="img" aria-label="Preview of the MediaFlick app: a shelf of continue-watching cards handing playback to external mpv">
+              <div class="app-chrome">
+                <span class="app-brand" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+                </span>
+                <span class="app-wordmark" aria-hidden="true">Media<b>Flick</b></span>
+                <span class="app-nav data-label" aria-hidden="true">Home</span>
+                <span class="app-nav data-label" aria-hidden="true">Library</span>
+                <span class="app-nav data-label" aria-hidden="true">Calendar</span>
+                <span class="app-server data-label" aria-hidden="true">Server</span>
+              </div>
+
+              <div class="app-shelf">
+                <div class="rail-head" aria-hidden="true">
+                  <span class="rail-marker"></span>
+                  <span class="rail-title data-label">Continue watching</span>
+                  <span class="rail-rule"></span>
+                </div>
+                <div class="shelf-track" aria-hidden="true">
+                  <figure class="poster-card">
+                    <span class="media-frame art-art1">
+                      <span class="poster-readout data-label"><b>★ 8.4</b> 2024 / 2H 12M</span>
+                      <span class="poster-progress"><i style="width: 64%"></i></span>
+                    </span>
+                    <figcaption>
+                      <strong>Night Drive</strong>
+                      <span class="data-label">64% · 51m left</span>
+                    </figcaption>
+                  </figure>
+                  <figure class="poster-card">
+                    <span class="media-frame art-art2">
+                      <span class="poster-readout data-label"><b>★ 7.9</b> 2023 / 9 EP</span>
+                      <span class="poster-progress"><i style="width: 22%"></i></span>
+                    </span>
+                    <figcaption>
+                      <strong>The Long Season</strong>
+                      <span class="data-label">S01E04 · 22%</span>
+                    </figcaption>
+                  </figure>
+                  <figure class="poster-card">
+                    <span class="media-frame art-art3">
+                      <span class="poster-readout data-label"><b>★ 8.8</b> 2025 / 1H 58M</span>
+                      <span class="poster-progress"><i style="width: 47%"></i></span>
+                    </span>
+                    <figcaption>
+                      <strong>Cold Orbit</strong>
+                      <span class="data-label">47% · 56m left</span>
+                    </figcaption>
+                  </figure>
+                  <figure class="poster-card">
+                    <span class="media-frame art-art4">
+                      <span class="poster-readout data-label"><b>★ 7.6</b> 2022 / 2H 04M</span>
+                      <span class="poster-progress"><i style="width: 81%"></i></span>
+                    </span>
+                    <figcaption>
+                      <strong>Paper Lanterns</strong>
+                      <span class="data-label">81% · 24m left</span>
+                    </figcaption>
+                  </figure>
+                </div>
+              </div>
+
+              <div class="app-status" aria-hidden="true">
+                <span class="status-id data-label">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+                  Playing via mpv
+                </span>
+                <span class="status-track"><i style="width: 41%"></i></span>
+                <span class="data-label status-facts">Direct play · Original · 38.4 Mbps</span>
+              </div>
+            </div>
+            <p class="stage-note data-label">Progress and watched state report back to Jellyfin while mpv plays.</p>
           </div>
-          <div class="handoff-line" aria-hidden="true"><span>Jellyfin stream + headers</span><b>↓</b></div>
-          <div class="process process-mpv">
-            <span class="process-id">02</span>
-            <span class="mpv-mark">mpv</span>
-            <div><strong>Your external player</strong><span>Direct play by default</span></div>
-          </div>
-          <p class="handoff-note">MediaFlick reports progress and watched state back to Jellyfin while mpv plays.</p>
         </div>
       </section>
 
-      <div class="fact-strip" aria-label="Key facts">
-        <p><strong>Real process</strong><span>Not embedded libmpv</span></p>
-        <p><strong>Local index</strong><span>SQLite full-text search</span></p>
-        <p><strong>Original quality</strong><span>Transcoding remains optional</span></p>
+      <div class="shell">
+        <div class="fact-strip" aria-label="Key facts">
+          <p><span class="data-label fact-title">Real process</span><span>Not embedded libmpv — the executable you already use.</span></p>
+          <p><span class="data-label fact-title">Local index</span><span>SQLite mirror with full-text search.</span></p>
+          <p><span class="data-label fact-title">Original quality</span><span>Direct play by default; transcoding stays optional.</span></p>
+        </div>
       </div>
 
-      <section class="argument section-shell" id="why">
-        <div class="section-label"><span>01</span><p>Why external mpv?</p></div>
-        <div class="argument-copy">
+      <section class="section section-shell" id="why">
+        <div class="rail-head">
+          <span class="rail-marker"></span>
+          <p class="rail-title data-label">01 · Why external mpv?</p>
+          <span class="rail-rule"></span>
+        </div>
+        <div class="argument">
           <h2>An embedded player is convenient. It is also not your player.</h2>
-          <p>
-            People who tune mpv tend to depend on the parts around it: SVP4, SDR-to-HDR conversion, custom shaders, Lua scripts and precise input bindings. MediaFlick does not try to reproduce that setup inside a web view. It launches the executable you already use.
+          <p class="section-lede">
+            People who tune mpv depend on the parts around it. MediaFlick does not try to
+            reproduce that setup inside a web view — it launches the executable you already
+            use, with every flag and script intact.
           </p>
-          <div class="config-sample" aria-label="Example mpv configuration">
-            <div class="config-title"><span>~/.config/mpv/mpv.conf</span><span>unchanged</span></div>
+          <ul class="chip-row" aria-label="What carries over to mpv">
+            <li>SVP4</li>
+            <li>SDR → HDR</li>
+            <li>GLSL shaders</li>
+            <li>Lua scripts</li>
+            <li>Input bindings</li>
+          </ul>
+          <div class="config-sample">
+            <div class="config-title">
+              <span>~/.config/mpv/mpv.conf</span>
+              <span class="config-state">Unchanged</span>
+            </div>
             <pre><code>profile=gpu-hq
 vo=gpu-next
 glsl-shaders-append="~~/shaders/FSRCNNX_x2.glsl"
@@ -85,64 +185,116 @@ input-conf="~~/input.conf"</code></pre>
         </div>
       </section>
 
-      <section class="details section-shell" id="details">
-        <div class="section-label"><span>02</span><p>What the app handles</p></div>
-        <div class="detail-list">
-          <article>
+      <section class="section section-shell" id="details">
+        <div class="rail-head">
+          <span class="rail-marker"></span>
+          <p class="rail-title data-label">02 · What the app handles</p>
+          <span class="rail-rule"></span>
+        </div>
+        <div class="detail-grid">
+          <article class="feature-card">
             <h3>Library</h3>
-            <p>MediaFlick mirrors titles, summaries, genres and cast into SQLite. Search runs against that local index instead of waiting on a server request for every keystroke.</p>
-            <span class="detail-meta">Background sync · Full-text search</span>
+            <p>Titles, summaries, genres and cast are mirrored into SQLite. Search runs against the local index instead of waiting on a server round trip for every keystroke.</p>
+            <span class="data-label feature-meta">Background sync · Full-text search</span>
           </article>
-          <article>
+          <article class="feature-card">
             <h3>Playback</h3>
-            <p>Original-quality streams go straight to mpv. For slower links, choose Jellyfin's automatic limit or set a bitrate from 1.5 to 120 Mbps.</p>
-            <span class="detail-meta">mpv · MPC-HC on Windows · Track selection</span>
+            <p>Original-quality streams go straight to external mpv. For slower links, use Jellyfin's automatic limit or set a bitrate from 1.5 to 120 Mbps.</p>
+            <span class="data-label feature-meta">mpv · MPC-HC on Windows · Track selection</span>
           </article>
-          <article>
+          <article class="feature-card">
             <h3>Playstate</h3>
-            <p>The app sends playback start, progress, watched status and resume position to Jellyfin. Finishing a film in mpv updates the server for your other devices.</p>
-            <span class="detail-meta">Progress reports · Resume points</span>
+            <p>Playback start, progress, watched status and resume position report back to Jellyfin. Finishing a film in mpv updates the server for your other devices.</p>
+            <span class="data-label feature-meta">Progress reports · Resume points</span>
           </article>
-          <article>
-            <h3>Library extras</h3>
-            <p>Browse a release calendar and collections in the desktop app. The optional server companion adds Seerr requests, external ratings and richer collection data without sharing service keys with clients.</p>
-            <span class="detail-meta">Optional companion plugin</span>
+          <article class="feature-card">
+            <h3>Extras</h3>
+            <p>A release calendar and collections in the app. The optional server companion adds Seerr requests, external ratings and richer collection data without sharing service keys.</p>
+            <span class="data-label feature-meta">Calendar · Collections · Companion plugin</span>
           </article>
         </div>
       </section>
 
-      <section class="setup">
+      <section class="section" id="setup">
         <div class="section-shell setup-grid">
-          <div class="section-label light"><span>03</span><p>First run</p></div>
+          <div class="rail-head">
+            <span class="rail-marker"></span>
+            <p class="rail-title data-label">03 · First run</p>
+            <span class="rail-rule"></span>
+          </div>
           <div class="setup-copy">
             <h2>Point it at Jellyfin.<br />Press play.</h2>
             <ol>
-              <li><span>01</span><p>Sign in with a password or Jellyfin Quick Connect.</p></li>
-              <li><span>02</span><p>Let MediaFlick index the libraries on your account.</p></li>
-              <li><span>03</span><p>Pick a title. MediaFlick opens it in mpv and keeps Jellyfin updated.</p></li>
+              <li>
+                <span class="data-label">01</span>
+                <div><strong>Sign in.</strong><p>Password or Jellyfin Quick Connect.</p></div>
+              </li>
+              <li>
+                <span class="data-label">02</span>
+                <div><strong>Index.</strong><p>MediaFlick mirrors the libraries on your account into a local SQLite cache.</p></div>
+              </li>
+              <li>
+                <span class="data-label">03</span>
+                <div><strong>Play.</strong><p>Pick a title. MediaFlick opens it in mpv and keeps Jellyfin updated.</p></div>
+              </li>
             </ol>
-            <p class="platform-note">Windows can download mpv from inside the app. Linux and macOS use a system installation.</p>
+            <p class="platform-note data-value">Windows can download mpv from inside the app. Linux and macOS use a system installation.</p>
           </div>
         </div>
       </section>
 
-      <section class="download section-shell">
-        <div>
-          <p class="kicker">Open source · Releases on GitHub</p>
+      <section class="section section-shell download">
+        <div class="download-copy">
+          <p class="kicker data-label">Open source · Releases on GitHub</p>
           <h2>Your config took time.<br />Use it.</h2>
         </div>
-        <a class="download-link" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
-          <span>Download<br />MediaFlick</span><b aria-hidden="true">↘</b>
+        <a class="btn btn-primary btn-lg download-btn" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+          Download MediaFlick
         </a>
       </section>
     </main>
 
     <footer class="site-footer">
-      <div class="section-shell footer-inner">
-        <a class="brand" href="#top"><img src="/app-icon.svg" alt="" width="30" height="30" /><span>MediaFlick</span></a>
-        <p>Made for Jellyfin users who care what plays the video.</p>
-        <a href="https://github.com/phob/MediaFlick-Desktop">GitHub</a>
+      <div class="shell footer-inner">
+        <a class="brand" href="#top">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+          </span>
+          <span class="wordmark">Media<b>Flick</b></span>
+        </a>
+        <p class="footer-tag data-value">Made for Jellyfin users who care what plays the video.</p>
+        <div class="accent-switch" role="group" aria-label="Accent color, as in the app's appearance settings">
+          <span class="data-label accent-label">Accent</span>
+          <button type="button" data-accent-choice="signal" aria-pressed="true" aria-label="Signal green accent" class="accent-swatch accent-signal"></button>
+          <button type="button" data-accent-choice="cobalt" aria-pressed="false" aria-label="Cobalt accent" class="accent-swatch accent-cobalt"></button>
+          <button type="button" data-accent-choice="amber" aria-pressed="false" aria-label="Amber accent" class="accent-swatch accent-amber"></button>
+          <button type="button" data-accent-choice="violet" aria-pressed="false" aria-label="Violet accent" class="accent-swatch accent-violet"></button>
+        </div>
+        <a class="footer-link data-label" href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
       </div>
     </footer>
+
+    <script>
+      (() => {
+        const root = document.documentElement
+        const choices = document.querySelectorAll("[data-accent-choice]")
+        const apply = (value) => {
+          if (value === "signal") delete root.dataset.accent
+          else root.dataset.accent = value
+          choices.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.accentChoice === value)))
+        }
+        try {
+          const saved = localStorage.getItem("mf-accent")
+          if (saved) apply(saved)
+        } catch {}
+        choices.forEach((b) =>
+          b.addEventListener("click", () => {
+            apply(b.dataset.accentChoice)
+            try { localStorage.setItem("mf-accent", b.dataset.accentChoice) } catch {}
+          }),
+        )
+      })()
+    </script>
   </body>
 </html>
