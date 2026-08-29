@@ -6,14 +6,19 @@ mod transport;
 pub use controller::MpcHcController;
 
 use crate::playback::{
-    Capabilities, MPCHC_CAPABILITIES, PlaybackContext, PlaybackRequest, PlayerBackend,
-    PlayerCommand, PlayerSnapshot,
+    Capabilities, MPCHC_CAPABILITIES, NativeWindowHandle, PlaybackContext, PlaybackRequest,
+    PlayerBackend, PlayerCommand, PlayerSnapshot,
 };
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use std::time::Duration;
 
 impl PlayerBackend for MpcHcController {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior) {
         self.warm(path, fullscreen);
+    }
+
+    fn native_window(&self, _timeout: Duration) -> Option<NativeWindowHandle> {
+        None
     }
 
     fn load(&self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {

@@ -58,9 +58,9 @@ wrap_app! {
 
             #[cfg(target_os = "windows")]
             {
-                // In this windowed Views shell CEF 148 starts the separate GPU
-                // process with GL disabled, which loops through STATUS_BREAKPOINT
-                // exits. Keeping the GPU service in-process avoids that crash loop.
+                // CEF's separate Windows GPU process can loop through
+                // STATUS_BREAKPOINT exits with GL disabled. Keeping the GPU
+                // service in-process avoids that crash loop for both browser modes.
                 command_line.append_switch(Some(&CefString::from("in-process-gpu")));
                 command_line.append_switch_with_value(
                     Some(&CefString::from("use-angle")),
@@ -112,23 +112,56 @@ wrap_browser_process_handler! {
             } else {
                 ShowState::NORMAL
             };
+            let settings = services::services()
+                .map(|services| services.preferences.snapshot())
+                .unwrap_or_else(|| self.config.settings.clone());
             let handler_state = new_browser_state(
                 self.config.title.clone(),
-                services::services()
-                    .map(|services| services.preferences.snapshot())
-                    .unwrap_or_else(|| self.config.settings.clone()),
+                settings.clone(),
                 show_state,
             );
-            {
-                let mut client = self.client.borrow_mut();
-                *client = Some(JellyfinClient::new(handler_state.clone()));
-            }
-
-            let settings = BrowserSettings::default();
             let url = CefString::from(app_scheme::APP_URL);
             let runtime_style = RuntimeStyle::ALLOY;
 
+            let playback = handler_state
+                .lock()
+                .ok()
+                .map(|state| state.playback.clone());
+            if let Some(surface) = playback.and_then(|playback| {
+                prototype_osr::PrototypeOsrSurface::select(&settings, playback)
+            }) {
+                prepare_player_for_window(&handler_state);
+                let native_window = configured_player_native_window(
+                    &handler_state,
+                    std::time::Duration::from_secs(20),
+                );
+                if let Some(native_window) = native_window {
+                    match surface.bind(native_window) {
+                        Ok(()) => {
+                            let mut client = JellyfinClient::new(
+                                handler_state.clone(),
+                                Some(surface.clone()),
+                            );
+                            if surface.create_browser(&mut client).is_some() {
+                                *self.client.borrow_mut() = Some(client);
+                                surface.show();
+                                return;
+                            }
+                            tracing::error!(target: "cef.osr", "failed to create the windowless React browser");
+                            surface.destroy();
+                        }
+                        Err(error) => {
+                            tracing::error!(target: "cef.osr", "failed to bind the libmpv overlay: {error}");
+                        }
+                    }
+                } else {
+                    tracing::error!(target: "cef.osr", "libmpv did not expose a native window; using the regular CEF shell");
+                }
+            }
+
+            *self.client.borrow_mut() = Some(JellyfinClient::new(handler_state.clone(), None));
             let mut client = self.default_client();
+            let settings = BrowserSettings::default();
             let mut browser_delegate = JellyfinBrowserViewDelegate::new(runtime_style);
             let browser_view = browser_view_create(
                 client.as_mut(),
@@ -150,8 +183,10 @@ wrap_browser_process_handler! {
                 runtime_style,
                 show_state,
                 true,
-                self.config.title.clone(),
-                self.config.settings.webui_window,
+                WindowIdentity {
+                    title: self.config.title.clone(),
+                    settings: self.config.settings.webui_window,
+                },
                 Some(handler_state),
             );
             window_create_top_level(Some(&mut window_delegate));
@@ -182,8 +217,10 @@ wrap_browser_view_delegate! {
                 self.runtime_style,
                 ShowState::NORMAL,
                 false,
-                "MediaFlick Desktop".to_string(),
-                WebUiWindowSettings::default(),
+                WindowIdentity {
+                    title: "MediaFlick Desktop".to_string(),
+                    settings: WebUiWindowSettings::default(),
+                },
                 None,
             );
             window_create_top_level(Some(&mut window_delegate));
@@ -196,20 +233,25 @@ wrap_browser_view_delegate! {
     }
 }
 
+#[derive(Clone)]
+struct WindowIdentity {
+    title: String,
+    settings: WebUiWindowSettings,
+}
+
 wrap_window_delegate! {
     struct JellyfinWindowDelegate {
         browser_view: RefCell<Option<BrowserView>>,
         runtime_style: RuntimeStyle,
         initial_show_state: ShowState,
         defer_show: bool,
-        title: String,
-        window_settings: WebUiWindowSettings,
+        identity: WindowIdentity,
         state: Option<BrowserState>,
     }
 
     impl ViewDelegate {
         fn preferred_size(&self, _view: Option<&mut View>) -> Size {
-            let (width, height) = self.window_settings.size();
+            let (width, height) = self.identity.settings.size();
             Size {
                 width,
                 height,
@@ -238,7 +280,7 @@ wrap_window_delegate! {
             let Some(window) = window else {
                 return;
             };
-            window.set_title(Some(&CefString::from(self.title.as_str())));
+            window.set_title(Some(&CefString::from(self.identity.title.as_str())));
             set_window_icon(window);
             if let Some(state) = &self.state {
                 register_main_window(state, window);
@@ -251,6 +293,9 @@ wrap_window_delegate! {
 
             let mut view = View::from(browser_view);
             window.add_child_view(Some(&mut view));
+            if let Some(state) = &self.state {
+                prepare_player_for_window(state);
+            }
 
             if !self.defer_show {
                 if self.initial_show_state == ShowState::MAXIMIZED {
@@ -305,10 +350,10 @@ wrap_window_delegate! {
             }
 
             let browser_view = self.browser_view.borrow();
-            let Some(browser_view) = browser_view.as_ref() else {
-                return 1;
-            };
-            let Some(browser) = browser_view.browser() else {
+            let browser = browser_view
+                .as_ref()
+                .and_then(BrowserView::browser);
+            let Some(browser) = browser else {
                 return 1;
             };
             let Some(browser_host) = browser.host() else {

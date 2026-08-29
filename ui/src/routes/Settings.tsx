@@ -203,20 +203,20 @@ function SelectField<const Value extends string>({
   )
 }
 
-function SaveBar({ dirty, saving, onSave, onDiscard, onReset, restartRequired = false }: {
+function SaveBar({ dirty, saving, onSave, onDiscard, onReset, restartMessage }: {
   dirty: boolean
   saving: boolean
   onSave: () => void
   onDiscard: () => void
   onReset: () => void
-  restartRequired?: boolean
+  restartMessage?: string
 }) {
   if (!dirty) return null
   return (
     <div className="settings-save-bar">
       <div className="flex min-w-0 items-center gap-2 text-sm">
-        {restartRequired && <AlertTriangle className="size-4 shrink-0 text-primary" />}
-        <span>{restartRequired ? "Log-level changes apply after restart." : "You have unsaved changes."}</span>
+        {restartMessage && <AlertTriangle className="size-4 shrink-0 text-primary" />}
+        <span>{restartMessage ?? "You have unsaved changes."}</span>
       </div>
       <div className="flex shrink-0 gap-2">
         <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}><Undo2 /> Reset</Button>
@@ -283,7 +283,13 @@ function PlayerSettings() {
   const [picking, setPicking] = useState<Partial<Record<"mpv" | "mpchc", boolean>>>({})
   const mutation = useMutation({
     mutationFn: api.settingsPatch.player,
-    onSuccess: (saved) => saveSettings(saved),
+    onSuccess: (saved, submitted) => saveSettings(
+      saved,
+      submitted.playerBackend !== settings?.client.player.playerBackend &&
+        (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")
+        ? "Player saved. Restart MediaFlick to switch player backends."
+        : "Player settings saved",
+    ),
     onError: (error: Error) => toast.error(error.message),
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
@@ -341,6 +347,14 @@ function PlayerSettings() {
   if (settingsQuery.error && !settings) return <SettingsError title="Player settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const dirty = !same(draft, settings.client.player)
+  const backendChanged = draft.playerBackend !== settings.client.player.playerBackend
+  const backendChangeNeedsRestart = backendChanged &&
+    (draft.playerBackend === "libmpv" || settings.client.player.playerBackend === "libmpv")
+  const restartMessage = backendChangeNeedsRestart
+    ? draft.playerBackend === "libmpv"
+      ? "Restart MediaFlick to enable the built-in player."
+      : "Restart MediaFlick to switch player backends."
+    : undefined
   const pick = (target: "mpv" | "mpchc") => {
     if (pendingPickers.current[target]) return
     const id = requestId()
@@ -409,7 +423,7 @@ function PlayerSettings() {
           <div className="flex w-full max-w-md gap-2"><Input value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
         </SettingsRow>}
       </Section>}
-      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} />
+      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
     </div>
   )
 }
@@ -479,7 +493,7 @@ function ApplicationSettings() {
         </div>
       </SettingsRow>
     </Section>}
-    <SaveBar dirty={!same(draft, settings.client.application)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.application)} onReset={() => setDraft({ closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" })} restartRequired={draft.logLevel !== settings.client.application.logLevel} />
+    <SaveBar dirty={!same(draft, settings.client.application)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.application)} onReset={() => setDraft({ closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" })} restartMessage={draft.logLevel !== settings.client.application.logLevel ? "Log-level changes apply after restarting MediaFlick." : undefined} />
   </div>
 }
 
@@ -760,8 +774,44 @@ const COMPANION_SERVICES: ReadonlyArray<{
   { id: "tmdb", name: "TMDB", description: "Movie franchises and collection metadata." },
 ]
 
+const COMPANION_FEATURES: ReadonlyArray<{
+  capability: string
+  requires: string
+  name: string
+  description: string
+}> = [
+  {
+    capability: "franchise-memberships-v1",
+    requires: "collection-experience-v1",
+    name: "Movie franchises",
+    description: "The server plugin cannot supply the franchise membership data this Desktop build needs.",
+  },
+  {
+    capability: "seerr-person-discovery",
+    requires: "seerr",
+    name: "Cast discovery",
+    description: "Cast pages cannot load a person's Seerr credits with this server plugin.",
+  },
+  {
+    capability: "seerr-discovery-v4",
+    requires: "seerr",
+    name: "Release-decade filters",
+    description: "Discover cannot send release-decade filters to this server plugin.",
+  },
+  {
+    capability: "seerr-request-profiles",
+    requires: "seerr",
+    name: "Request profile selection",
+    description: "Requests cannot select a Sonarr or Radarr quality profile with this server plugin.",
+  },
+]
+
 function Availability({ available }: { available: boolean }) {
   return <span className="settings-status" data-status={available ? "verified" : "unverified"}>{available ? <CheckCircle2 /> : <AlertTriangle />}{available ? "available" : "unavailable"}</span>
+}
+
+function FeatureCompatibility({ compatible }: { compatible: boolean }) {
+  return <span className="settings-status" data-status={compatible ? "verified" : "unverified"}>{compatible ? <CheckCircle2 /> : <AlertTriangle />}{compatible ? "compatible" : "missing"}</span>
 }
 
 export function CompanionIntegration() {
@@ -777,17 +827,24 @@ export function CompanionIntegration() {
   if (companionQuery.error && !companion) return <SettingsError title="Companion status unavailable" error={companionQuery.error} onRetry={() => void companionQuery.refetch()} />
   if (!companion) return <SettingsLoading />
 
-  const pluginDescription = !companion.available
-    ? companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
-    : companion.compatible
-      ? `Plugin ${companion.info?.pluginVersion ?? "unknown"}, API ${companion.info?.apiVersion ?? "unknown"}.`
-      : `Plugin API ${companion.info?.apiVersion ?? "unknown"} is outside Desktop's supported range ${companion.supportedApi.min} to ${companion.supportedApi.max}.`
+  const pluginDescription = companion.available
+    ? "Companion answered this Desktop build's authenticated status check."
+    : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
   const pluginAvailable = companion.available && companion.compatible
+  const capabilities = companion.info?.capabilities ?? []
+  const missingFeatures = companion.available && companion.compatible
+    ? COMPANION_FEATURES.filter((feature) => capabilities.includes(feature.requires) && !capabilities.includes(feature.capability))
+    : []
 
   return <div className="settings-page"><PageTitle title="MediaFlick Companion" detail="Server-managed integrations available to this Jellyfin account." />
     <Section title="Plugin" description="Administrators configure these services in Jellyfin's MediaFlick Companion dashboard.">
-      <SettingsRow title="Connection" description={pluginDescription}><Availability available={pluginAvailable} /></SettingsRow>
+      <SettingsRow title="Connection" description={pluginDescription}><Availability available={companion.available} /></SettingsRow>
     </Section>
+    {companion.available && <Section title="Feature compatibility" description="Desktop checks the features advertised by Companion. Plugin version numbers are not used for this check.">
+      {!companion.compatible && <SettingsRow title="Companion protocol" description="This Desktop build cannot read the plugin's status contract."><FeatureCompatibility compatible={false} /></SettingsRow>}
+      {missingFeatures.map((feature) => <SettingsRow key={feature.capability} title={feature.name} description={feature.description}><FeatureCompatibility compatible={false} /></SettingsRow>)}
+      {companion.compatible && missingFeatures.length === 0 && <SettingsRow title="Desktop features" description="This Companion provides every server feature used by this Desktop build."><FeatureCompatibility compatible /></SettingsRow>}
+    </Section>}
     <Section title="Services" description="Desktop reads these connections through Companion and never receives their addresses or credentials.">
       {COMPANION_SERVICES.map((service) => {
         const available = Boolean(pluginAvailable && companion.info?.services[service.id])

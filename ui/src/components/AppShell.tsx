@@ -7,8 +7,9 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackStoppedBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
-import { useSettings } from "@/lib/queries"
+import { usePlayerState, useSettings } from "@/lib/queries"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
+import mediaFlickLogo from "../../../resources/app-icon.svg"
 
 const routeScrollPositions = new Map<string, number>()
 
@@ -41,9 +42,35 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pointerIsOverSidebar, setPointerIsOverSidebar] = useState(false)
   const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar)
   const settings = useSettings()
+  const player = usePlayerState()
   const cardPreviews = settings.data?.appearance.cardPreviews !== false
+  const integratedPlayback = Boolean(
+    settings.data?.capabilities.integratedLibmpvOverlay &&
+      player.data?.active,
+  )
   usePlaybackStoppedBridge()
   useLibraryMetadataBridge()
+
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute("data-libmpv-playback", integratedPlayback)
+    return () => document.documentElement.removeAttribute("data-libmpv-playback")
+  }, [integratedPlayback])
+
+  if (integratedPlayback) {
+    return (
+      <main className="libmpv-overlay pointer-events-none flex h-full min-w-0 flex-col justify-between overflow-hidden">
+        <div className="libmpv-overlay-brand" aria-label="MediaFlick">
+          <img src={mediaFlickLogo} alt="" />
+          <span>
+            Media<span>Flick</span>
+          </span>
+        </div>
+        <div className="pointer-events-auto">
+          <PlayerBar />
+        </div>
+      </main>
+    )
+  }
 
   return (
     <SidebarProvider

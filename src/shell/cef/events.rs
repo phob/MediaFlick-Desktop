@@ -1,6 +1,7 @@
 use super::bridge::*;
 use super::document::*;
 use super::*;
+use crate::preferences::FullscreenBehavior;
 
 pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings) {
     playback.configure_segments(settings.segment_skip_config());
@@ -8,7 +9,15 @@ pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &
         tracing::debug!(target: "mpv.ipc", "skipped player warmup because the selected runtime is unavailable");
         return;
     };
-    playback.warm(path, settings.default_fullscreen);
+    playback.warm(path, player_warmup_mode(settings));
+}
+
+fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
+    if prototype_osr::is_configured(settings) {
+        FullscreenBehavior::Windowed
+    } else {
+        settings.default_fullscreen
+    }
 }
 
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
@@ -840,7 +849,7 @@ fn execute_mpv_setup_script(frame: &Frame, script: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preferences::{AppSettings, AppearanceTheme, WebUiWindowSettings};
+    use crate::preferences::{AppSettings, AppearanceTheme, PlayerBackend, WebUiWindowSettings};
 
     #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
@@ -873,5 +882,17 @@ mod tests {
         assert!(script.contains("__mediaFlickDesktopPlaybackCacheRefreshed"));
         assert!(script.contains("item-after-a-slow-refresh"));
         assert!(script.contains("refreshed"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn integrated_shell_warms_windowed_before_playback() {
+        let settings = AppSettings {
+            player_backend: Some(PlayerBackend::Libmpv),
+            default_fullscreen: FullscreenBehavior::Fullscreen,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(player_warmup_mode(&settings), FullscreenBehavior::Windowed);
     }
 }

@@ -141,7 +141,7 @@ non-debug: release
 [private]
 [windows]
 stop-running-app:
-    $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'mediaflick-desktop.exe' -and $_.CommandLine -notmatch '--type=' }); foreach ($entry in $running) { $process = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue; if (-not $process) { continue }; if ($process.MainWindowHandle -ne 0) { $null = $process.CloseMainWindow(); $null = $process.WaitForExit(5000) }; if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force } }
+    $running = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'mediaflick-desktop.exe' -and $_.CommandLine -and $_.CommandLine -notmatch '--type=' }); foreach ($entry in $running) { $process = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue; if (-not $process) { continue }; if ($process.MainWindowHandle -ne 0) { $null = $process.CloseMainWindow(); $null = $process.WaitForExit(5000) }; if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force } }
 
 # Stop the interactive app that owns the config-wide single-instance gate.
 [private]

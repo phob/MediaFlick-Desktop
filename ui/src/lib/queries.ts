@@ -93,6 +93,7 @@ export function useCompanion() {
     queryKey: queryKeys.companion,
     queryFn: api.companion.info,
     staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
     retry: false,
   })
 }

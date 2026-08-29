@@ -14,6 +14,7 @@ pub use model::{
 };
 
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Capabilities {
@@ -22,6 +23,21 @@ pub struct Capabilities {
     pub injected_hotkeys: bool,
     pub absolute_volume: bool,
     pub pushes_position: bool,
+}
+
+/// Opaque native window identity owned by a playback backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeWindowHandle(usize);
+
+impl NativeWindowHandle {
+    #[cfg(target_os = "windows")]
+    pub fn new(raw: usize) -> Option<Self> {
+        (raw != 0).then_some(Self(raw))
+    }
+
+    pub fn raw(self) -> usize {
+        self.0
+    }
 }
 
 pub const MPV_CAPABILITIES: Capabilities = Capabilities {
@@ -44,6 +60,8 @@ pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
 /// Port implemented by each player adapter.
 pub trait PlayerBackend: Send {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
+    /// Return the native window owned by this backend, if it exposes one.
+    fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle>;
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
     /// Re-read backend-specific hotkeys without restarting a running player.

@@ -4,28 +4,63 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 
 public sealed class ServiceHealthStore
 {
-    private static readonly TimeSpan HealthyFor = TimeSpan.FromMinutes(30);
     private readonly ConcurrentDictionary<string, HealthRecord> _records =
         new(StringComparer.OrdinalIgnoreCase);
 
     public void Success(string service)
-        => _records[service] = new HealthRecord(DateTimeOffset.UtcNow, null);
+    {
+        var observedAt = DateTimeOffset.UtcNow;
+        _records.AddOrUpdate(
+            service,
+            _ => new HealthRecord(
+                ServiceHealthState.Healthy,
+                observedAt,
+                null,
+                null),
+            (_, previous) => previous with
+            {
+                State = ServiceHealthState.Healthy,
+                LastSuccess = observedAt,
+                Error = null
+            });
+    }
 
     public void Failure(string service, string message)
     {
+        var observedAt = DateTimeOffset.UtcNow;
         _records.AddOrUpdate(
             service,
-            _ => new HealthRecord(null, message),
-            (_, previous) => previous with { Error = message });
+            _ => new HealthRecord(
+                ServiceHealthState.Unhealthy,
+                null,
+                observedAt,
+                message),
+            (_, previous) => previous with
+            {
+                State = ServiceHealthState.Unhealthy,
+                LastFailure = observedAt,
+                Error = message
+            });
     }
 
     public bool IsHealthy(string service)
         => _records.TryGetValue(service, out var record)
-            && record.LastSuccess is { } success
-            && DateTimeOffset.UtcNow - success <= HealthyFor;
+            && record.State == ServiceHealthState.Healthy;
 
     public HealthRecord Get(string service)
-        => _records.GetValueOrDefault(service) ?? new HealthRecord(null, null);
+        => _records.GetValueOrDefault(service)
+            ?? new HealthRecord(ServiceHealthState.Unknown, null, null, null);
 
-    public sealed record HealthRecord(DateTimeOffset? LastSuccess, string? Error);
+    public sealed record HealthRecord(
+        ServiceHealthState State,
+        DateTimeOffset? LastSuccess,
+        DateTimeOffset? LastFailure,
+        string? Error);
+
+    public enum ServiceHealthState
+    {
+        Unknown,
+        Healthy,
+        Unhealthy
+    }
 }

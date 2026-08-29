@@ -9,14 +9,19 @@ pub use controller::MpvController;
 pub use external::ExternalMpv;
 
 use crate::playback::{
-    Capabilities, MPV_CAPABILITIES, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
-    PlayerSnapshot,
+    Capabilities, MPV_CAPABILITIES, NativeWindowHandle, PlaybackContext, PlaybackRequest,
+    PlayerBackend, PlayerCommand, PlayerSnapshot,
 };
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use std::time::Duration;
 
 impl PlayerBackend for MpvController {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior) {
         self.warm(path, fullscreen);
+    }
+
+    fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle> {
+        self.native_window(timeout)
     }
 
     fn load(&self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {

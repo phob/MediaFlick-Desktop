@@ -1,10 +1,12 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
+use std::time::Duration;
 
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 use super::{
-    Capabilities, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot,
+    Capabilities, NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend,
+    PlayerCommand, PlayerSnapshot,
 };
 
 /// Application-facing playback service.
@@ -14,12 +16,14 @@ use super::{
 /// browser-state locks.
 pub struct PlaybackCoordinator {
     backend: Mutex<Box<dyn PlayerBackend>>,
+    player_path: Mutex<Option<String>>,
 }
 
 impl PlaybackCoordinator {
     pub fn new(backend: Box<dyn PlayerBackend>) -> Self {
         Self {
             backend: Mutex::new(backend),
+            player_path: Mutex::new(None),
         }
     }
 
@@ -33,6 +37,10 @@ impl PlaybackCoordinator {
     /// calling thread (usually CEF's UI thread) never waits on player shutdown.
     pub fn replace(&self, backend: Box<dyn PlayerBackend>) {
         let retired = std::mem::replace(&mut *self.backend(), backend);
+        *self
+            .player_path
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
         if let Err(error) = thread::Builder::new()
             .name("playback-retire".to_string())
             .spawn(move || retired.shutdown())
@@ -42,10 +50,27 @@ impl PlaybackCoordinator {
     }
 
     pub fn warm(&self, path: String, fullscreen: FullscreenBehavior) {
+        *self
+            .player_path
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(path.clone());
         self.backend().warm(path, fullscreen);
     }
 
+    pub fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle> {
+        self.backend().native_window(timeout)
+    }
+
     pub fn open(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest) {
+        // The backend and executable are one runtime choice. A settings save
+        // may persist a different window model for the next launch, but the
+        // running coordinator must keep feeding its already-warmed backend.
+        let path = self
+            .player_path
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .unwrap_or(path);
         self.backend().load(path, fullscreen, request);
     }
 
@@ -80,20 +105,30 @@ impl PlaybackCoordinator {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::playback::Capabilities;
 
     struct RecordingBackend {
         binding_refreshes: Arc<AtomicUsize>,
+        loaded_paths: Arc<Mutex<Vec<String>>>,
     }
 
     impl PlayerBackend for RecordingBackend {
         fn warm(&self, _path: String, _fullscreen: FullscreenBehavior) {}
 
-        fn load(&self, _path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {}
+        fn native_window(&self, _timeout: Duration) -> Option<NativeWindowHandle> {
+            None
+        }
+
+        fn load(&self, path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {
+            self.loaded_paths
+                .lock()
+                .expect("record loaded path")
+                .push(path);
+        }
 
         fn control(&self, _command: PlayerCommand) {}
 
@@ -121,10 +156,32 @@ mod tests {
         let refreshes = Arc::new(AtomicUsize::new(0));
         let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
             binding_refreshes: refreshes.clone(),
+            loaded_paths: Arc::new(Mutex::new(Vec::new())),
         }));
 
         coordinator.refresh_input_bindings();
 
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_pending_restart_does_not_reconfigure_the_running_backend() {
+        let loaded_paths = Arc::new(Mutex::new(Vec::new()));
+        let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
+            binding_refreshes: Arc::new(AtomicUsize::new(0)),
+            loaded_paths: loaded_paths.clone(),
+        }));
+        coordinator.warm("startup-player".to_string(), FullscreenBehavior::Windowed);
+
+        coordinator.open(
+            "saved-for-next-launch".to_string(),
+            FullscreenBehavior::Fullscreen,
+            PlaybackRequest::default(),
+        );
+
+        assert_eq!(
+            loaded_paths.lock().expect("read loaded path").as_slice(),
+            ["startup-player"]
+        );
     }
 }

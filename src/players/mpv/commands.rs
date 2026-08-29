@@ -94,6 +94,8 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
                 "request_id": next_request_id(),
             }));
         }
+        PlayerCommand::ToggleSubtitleVisibility => json!(["cycle", "sub-visibility"]),
+        PlayerCommand::ToggleFullscreen => json!(["cycle", "fullscreen"]),
         PlayerCommand::Stop => json!(["stop"]),
     };
 
@@ -367,6 +369,17 @@ mod tests {
             json!(["sub-add", "https://example.test/sub.srt", "select"])
         );
         assert!(external_subtitle.get("async").is_none());
+
+        let subtitle_visibility = control_command(&PlayerCommand::ToggleSubtitleVisibility)
+            .expect("subtitle visibility command");
+        assert_eq!(
+            subtitle_visibility["command"],
+            json!(["cycle", "sub-visibility"])
+        );
+
+        let fullscreen =
+            control_command(&PlayerCommand::ToggleFullscreen).expect("fullscreen command");
+        assert_eq!(fullscreen["command"], json!(["cycle", "fullscreen"]));
 
         assert!(seek.get("async").is_none());
 

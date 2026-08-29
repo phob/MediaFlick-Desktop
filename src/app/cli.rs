@@ -6,7 +6,7 @@ use crate::preferences::normalize_server_url;
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "mediaflick-desktop")]
-#[command(about = "External mpv playback for Jellyfin in a Rust/CEF desktop shell")]
+#[command(about = "Native Jellyfin playback in a Rust/CEF desktop shell")]
 pub struct Cli {
     /// Jellyfin server URL to prefill on the sign-in screen.
     ///

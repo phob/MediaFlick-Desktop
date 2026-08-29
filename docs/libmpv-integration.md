@@ -7,11 +7,48 @@ Windows installations. External mpv and MPC-HC remain supported. Linux and
 macOS keep external mpv as their default until equivalent native library
 bundles exist.
 
-The first implementation deliberately lets libmpv create a separate native
-video window. Rendering into the CEF surface would require mpv's render API,
-graphics-context sharing, resize and DPI coordination, input routing, and
-platform-specific window lifecycle work. That is a separate project, not a
-requirement for zero-setup playback.
+Windows uses the integrated player in the normal build and the normal `just
+run` workflow whenever Built-in player was selected when MediaFlick started.
+External mpv and MPC-HC continue through the CEF Views shell.
+
+## Integrated Windows rendering
+
+The Windows layout follows Jellium Desktop's ownership model. libmpv creates
+and owns the real top-level video window and publishes its HWND through mpv's
+read-only `window-id` property. MediaFlick does not pass `wid` to mpv.
+
+CEF runs windowless with shared textures enabled. Its accelerated paint
+callback supplies D3D textures, which MediaFlick copies into premultiplied DXGI
+swap chains attached to DirectComposition visuals on the mpv window. The main
+view and CEF popup each have a visual. If CEF supplies a software paint frame,
+the same D3D/DirectComposition path uploads it as a fallback; there is no
+layered software window.
+
+A transparent child HWND covers mpv's client area and forwards mouse and
+keyboard events to CEF. MediaFlick tracks the mpv client size, DPI, and screen
+position and updates both the child window and windowless browser. During
+playback the React document exposes the video below it while retaining the
+MediaFlick mark and player controls.
+
+The shell warms libmpv in windowed mode with mpv's native border enabled. The
+saved fullscreen preference is applied when playback starts, not while the
+idle window is acting as the application shell. CEF cursor changes are mapped
+onto the child HWND, and mpv's own cursor input and autohide are disabled so
+the two input owners cannot fight. Alt+F4 and the native title-bar close command
+are routed through CEF's browser shutdown lifecycle. MediaFlick also replaces
+mpv's inherited big and small window icons with the icon embedded in the
+application executable.
+
+While a video is active, the input child retains the familiar built-in-player
+bindings: right-click toggles pause, Q stops the current video without quitting
+MediaFlick, and V cycles mpv's subtitle visibility. Those events go through the
+playback coordinator instead of competing with mpv's native input thread. When
+playback is idle, the same keys and right-click continue to reach React.
+
+The backend choice is startup-bound because it selects the native window and
+CEF composition model. Saving a different backend records the preference and
+asks the user to restart MediaFlick; the running player is not rebuilt into a
+different window model in place.
 
 ## Runtime shape
 

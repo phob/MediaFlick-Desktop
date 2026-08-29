@@ -305,6 +305,45 @@
   }
 }
 
+/* CEF paints with a transparent background in integrated libmpv mode.
+   Clearing every document-level surface exposes mpv's native video surface
+   underneath; individual overlay controls remain normally painted. */
+html[data-libmpv-playback],
+html[data-libmpv-playback] body,
+html[data-libmpv-playback] #root {
+  background: transparent !important;
+}
+
+.libmpv-overlay {
+  background: transparent;
+}
+
+.libmpv-overlay-brand {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 1.25rem;
+  padding: 0.45rem 0.65rem 0.45rem 0.45rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: var(--radius);
+  background: rgb(7 11 9 / 72%);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 28%);
+  color: #e6ede9;
+  font: 650 0.92rem/1 "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -0.02em;
+  backdrop-filter: blur(14px);
+}
+
+.libmpv-overlay-brand img {
+  width: 2rem;
+  height: 2rem;
+}
+
+.libmpv-overlay-brand > span > span {
+  color: var(--primary);
+}
+
 /* ==========================================================================
    Settings
    ========================================================================== */

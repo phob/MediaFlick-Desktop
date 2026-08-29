@@ -6,6 +6,7 @@ use super::*;
 wrap_client! {
     pub(super) struct JellyfinClient {
         state: BrowserState,
+        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
     }
 
     impl Client {
@@ -14,15 +15,21 @@ wrap_client! {
         }
 
         fn display_handler(&self) -> Option<DisplayHandler> {
-            Some(JellyfinDisplayHandler::new(self.state.clone()))
+            Some(JellyfinDisplayHandler::new(
+                self.state.clone(),
+                self.prototype_surface.clone(),
+            ))
         }
 
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
-            Some(JellyfinKeyboardHandler::new())
+            Some(JellyfinKeyboardHandler::new(self.state.clone()))
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(JellyfinLifeSpanHandler::new(self.state.clone()))
+            Some(JellyfinLifeSpanHandler::new(
+                self.state.clone(),
+                self.prototype_surface.clone(),
+            ))
         }
 
         fn load_handler(&self) -> Option<LoadHandler> {
@@ -31,6 +38,12 @@ wrap_client! {
 
         fn request_handler(&self) -> Option<RequestHandler> {
             Some(JellyfinRequestHandler::new(self.state.clone()))
+        }
+
+        fn render_handler(&self) -> Option<RenderHandler> {
+            self.prototype_surface
+                .as_ref()
+                .and_then(|surface| surface.render_handler())
         }
     }
 }
@@ -97,7 +110,7 @@ wrap_context_menu_handler! {
             _event_flags: EventFlags,
         ) -> i32 {
             match command_id {
-                MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser),
+                MENU_ID_FULLSCREEN => toggle_browser_fullscreen(browser, Some(&self.state)),
                 MENU_ID_CLIENT_SETTINGS => open_settings_page(browser, frame),
                 MENU_ID_DASHBOARD => open_server_dashboard(&self.state),
                 MENU_ID_ABOUT => show_about_dialog(browser, frame),
@@ -109,7 +122,9 @@ wrap_context_menu_handler! {
 }
 
 wrap_keyboard_handler! {
-    struct JellyfinKeyboardHandler;
+    struct JellyfinKeyboardHandler {
+        state: BrowserState,
+    }
 
     impl KeyboardHandler {
         #[cfg(target_os = "windows")]
@@ -120,7 +135,7 @@ wrap_keyboard_handler! {
             _os_event: Option<&mut sys::MSG>,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
-            handle_pre_key_event(browser, event)
+            handle_pre_key_event(browser, event, &self.state)
         }
 
         #[cfg(target_os = "linux")]
@@ -131,7 +146,7 @@ wrap_keyboard_handler! {
             _os_event: Option<&mut sys::XEvent>,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
-            handle_pre_key_event(browser, event)
+            handle_pre_key_event(browser, event, &self.state)
         }
 
         #[cfg(target_os = "macos")]
@@ -142,19 +157,23 @@ wrap_keyboard_handler! {
             _os_event: *mut u8,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
-            handle_pre_key_event(browser, event)
+            handle_pre_key_event(browser, event, &self.state)
         }
     }
 }
 
 const VK_F11: i32 = 0x7A;
 
-fn handle_pre_key_event(browser: Option<&mut Browser>, event: Option<&KeyEvent>) -> i32 {
+fn handle_pre_key_event(
+    browser: Option<&mut Browser>,
+    event: Option<&KeyEvent>,
+    state: &BrowserState,
+) -> i32 {
     let Some(event) = event else {
         return 0;
     };
     if event.windows_key_code == VK_F11 && is_key_down_event(event) {
-        toggle_browser_fullscreen(browser);
+        toggle_browser_fullscreen(browser, Some(state));
         return 1;
     }
     0
@@ -169,9 +188,24 @@ fn is_key_down_event(event: &KeyEvent) -> bool {
 wrap_display_handler! {
     struct JellyfinDisplayHandler {
         state: BrowserState,
+        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
     }
 
     impl DisplayHandler {
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cursor: CursorHandle,
+            type_: CursorType,
+            _custom_cursor_info: Option<&CursorInfo>,
+        ) -> std::os::raw::c_int {
+            let Some(surface) = &self.prototype_surface else {
+                return 0;
+            };
+            surface.set_cursor(type_);
+            1
+        }
+
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
             let fallback_title = self
                 .state
@@ -189,6 +223,10 @@ wrap_display_handler! {
                 && let Some(window) = browser_view.window()
             {
                 window.set_title(Some(&title));
+            } else if let Ok(state) = self.state.lock()
+                && let Some(window) = state.main_window.as_ref()
+            {
+                window.set_title(Some(&title));
             }
         }
     }
@@ -197,6 +235,7 @@ wrap_display_handler! {
 wrap_life_span_handler! {
     struct JellyfinLifeSpanHandler {
         state: BrowserState,
+        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
     }
 
     impl LifeSpanHandler {
@@ -260,6 +299,9 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
+                if let Some(surface) = &self.prototype_surface {
+                    surface.destroy();
+                }
                 let playback = self
                     .state
                     .lock()

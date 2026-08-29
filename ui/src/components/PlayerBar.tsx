@@ -17,8 +17,9 @@ function formatClock(ms: number) {
 }
 
 /**
- * The only in-app view of the external player. mpv/MPC-HC own the video; this
- * owns "what is playing, where am I in it, stop it" without leaving the app.
+ * The in-app playback controls. The selected backend owns video rendering;
+ * this owns "what is playing, where am I in it, stop it" without leaving the
+ * app.
  */
 export function PlayerBar() {
   const { data: player } = usePlayerState()

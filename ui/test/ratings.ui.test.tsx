@@ -589,7 +589,15 @@ describe("configurable card ratings", () => {
       info: {
         pluginVersion: "0.2.0",
         apiVersion: 1,
-        capabilities: ["seerr", "ratings-v1", "collection-experience-v1"],
+        capabilities: [
+          "seerr",
+          "ratings-v1",
+          "collection-experience-v1",
+          "franchise-memberships-v1",
+          "seerr-person-discovery",
+          "seerr-discovery-v4",
+          "seerr-request-profiles",
+        ],
         services: { seerr: true, sonarr: true, radarr: false, mdblist: true, tmdb: true },
       },
     })
@@ -615,8 +623,42 @@ describe("configurable card ratings", () => {
     expect(screen.getByRole("heading", { name: "MediaFlick Companion" })).toBeTruthy()
     expect(screen.getByRole("link", { name: "MediaFlick Companion" }).getAttribute("href")).toBe("/settings/integrations/companion")
     expect(screen.getByText(/This account is mapped as Neo/)).toBeTruthy()
+    expect(screen.getByText("Desktop features").closest(".settings-row")?.textContent).toContain("compatible")
     expect(screen.getByText("Radarr").closest(".settings-row")?.textContent).toContain("unavailable")
     expect(screen.getByText("TMDB").closest(".settings-row")?.textContent).toContain("available")
+  })
+
+  test("reports Companion feature mismatches without treating the plugin as disconnected", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    client.setQueryData(queryKeys.status, { authenticated: true })
+    client.setQueryData(queryKeys.companion, {
+      available: true,
+      compatible: true,
+      checked: true,
+      error: null,
+      supportedApi: { min: 1, max: 1 },
+      info: {
+        pluginVersion: "0.2.0",
+        apiVersion: 1,
+        capabilities: ["collection-experience-v1"],
+        services: { seerr: false, sonarr: true, radarr: true, mdblist: true, tmdb: true },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/settings/integrations/companion"]}>
+          <Routes>
+            <Route path="/settings/*" element={<Settings />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    expect(screen.getByText("Connection").closest(".settings-row")?.textContent).toContain("available")
+    expect(screen.getByText("Movie franchises").closest(".settings-row")?.textContent).toContain("missing")
+    expect(screen.getByText(/cannot supply the franchise membership data/)).toBeTruthy()
+    expect(screen.getByText("Sonarr").closest(".settings-row")?.textContent).toContain("available")
   })
 
   test("disables all source choices without a credential/capability", () => {

@@ -101,6 +101,7 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
         "capabilities": {
             "platform": player_setup::platform_id(),
             "libmpv": crate::players::bundled_libmpv_path().is_some(),
+            "integratedLibmpvOverlay": crate::shell::cef::prototype_osr::is_active(),
             "mpchc": cfg!(target_os = "windows"),
             "mpvInstaller": player_setup::supported(),
         },

@@ -535,6 +535,13 @@ impl State {
             PlayerCommand::AddSubtitle(_) => {
                 tracing::debug!(target: "mpchc", "external subtitles are delivered burned-in, not via runtime sub-add");
             }
+            PlayerCommand::ToggleSubtitleVisibility => {
+                tracing::debug!(target: "mpchc", "subtitle visibility toggling is unavailable through the MPC-HC web interface");
+            }
+            PlayerCommand::ToggleFullscreen => {
+                self.send_command_empty(protocol::CMD_TOGGLEFULLSCREEN);
+                self.fullscreen_state = !self.fullscreen_state;
+            }
             PlayerCommand::SetVolume(volume) => self.set_volume(*volume),
             PlayerCommand::SetMute(mute) => self.set_mute(*mute),
             PlayerCommand::Stop => {
