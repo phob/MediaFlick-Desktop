@@ -1,6 +1,17 @@
 #[cfg(target_os = "windows")]
 pub fn set_window_icon(window: &cef::Window) {
     use cef::ImplWindow;
+
+    let hwnd = window.window_handle().0.cast::<core::ffi::c_void>();
+    if hwnd.is_null() {
+        return;
+    }
+    set_native_window_icon(hwnd as usize);
+}
+
+#[cfg(target_os = "windows")]
+pub fn set_native_window_icon(raw_hwnd: usize) {
+    use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON,
@@ -8,11 +19,11 @@ pub fn set_window_icon(window: &cef::Window) {
     };
 
     // build.rs embeds resources/win/app.ico in the executable with
-    // winresource's default numeric ID, so load the same icon from the host
-    // executable instead of from CEF/libcef.
+    // winresource's default numeric ID. Load it from this executable so
+    // libmpv's top-level HWND does not inherit mpv's own icon.
     const APPLICATION_ICON_RESOURCE_ID: u16 = 1;
 
-    let hwnd = window.window_handle().0.cast::<core::ffi::c_void>();
+    let hwnd = raw_hwnd as HWND;
     if hwnd.is_null() {
         return;
     }

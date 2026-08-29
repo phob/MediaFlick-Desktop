@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Fixed Sonarr, Radarr, and Seerr status expiring 30 minutes after a successful request. Companion service health now follows the latest request outcome, and Desktop refreshes the status snapshot every five minutes while the app is active.
+- Fixed Companion settings treating plugin connectivity, upstream service health, and feature support as one status. Desktop now lists missing Companion features by name, keeps unaffected services available, and does not send Movie Franchise refresh requests unless the plugin advertises franchise membership support.
 - Fixed Companion-proxied Seerr posters failing at the `w92`, `w154`, `w185`, and `w300` renditions. Desktop now rejects error bodies before caching them, repairs invalid image-cache entries on access, and uses a new browser-cache URL so previously cached failures do not survive the update.
 
 ### Breaking Changes

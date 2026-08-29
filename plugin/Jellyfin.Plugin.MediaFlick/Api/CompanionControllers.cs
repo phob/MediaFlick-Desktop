@@ -60,10 +60,14 @@ public sealed class InfoController : ControllerBase
         PluginConfiguration configuration,
         bool ratingsAvailable)
     {
-        // This names a versioned contract implemented by this plugin build.
+        // These name versioned contracts implemented by this plugin build.
         // Definitions and service configuration can change while Desktop is
         // signed in, so they must not make the capability itself disappear.
-        var capabilities = new List<string> { "collection-experience-v1" };
+        var capabilities = new List<string>
+        {
+            "collection-experience-v1",
+            "franchise-memberships-v1"
+        };
         if (IsConfigured(configuration.Sonarr) || IsConfigured(configuration.Radarr))
         {
             capabilities.Add("calendar");

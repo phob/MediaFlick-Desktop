@@ -2,17 +2,26 @@ use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::io;
 use std::path::Path;
 use std::process::Child;
+#[cfg(target_os = "windows")]
+use std::thread;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 
 use libloading::Library;
 
+use crate::playback::NativeWindowHandle;
 use crate::preferences::FullscreenBehavior;
 
 use super::ExternalMpv;
 
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
+#[cfg(target_os = "windows")]
+const MPV_FORMAT_INT64: c_int = 4;
 const REQUIRED_CLIENT_API_MAJOR: u32 = 2;
 const WINDOWED_AUTOFIT: &str = "70%";
+#[cfg(target_os = "windows")]
+const NATIVE_WINDOW_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MpvRuntimeKind {
@@ -44,6 +53,13 @@ impl MpvRuntime {
             MpvRuntimeKind::Library => {
                 LibMpvRuntime::start(path, ipc_path, fullscreen).map(Self::Library)
             }
+        }
+    }
+
+    pub(super) fn native_window(&self) -> Option<NativeWindowHandle> {
+        match self {
+            Self::External(_) => None,
+            Self::Library(runtime) => runtime.native_window,
         }
     }
 
@@ -79,6 +95,9 @@ type MpvCreate = unsafe extern "C" fn() -> *mut MpvHandle;
 type MpvSetOptionString =
     unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> c_int;
 type MpvInitialize = unsafe extern "C" fn(*mut MpvHandle) -> c_int;
+#[cfg(target_os = "windows")]
+type MpvGetProperty =
+    unsafe extern "C" fn(*mut MpvHandle, *const c_char, c_int, *mut c_void) -> c_int;
 type MpvWaitEvent = unsafe extern "C" fn(*mut MpvHandle, f64) -> *const RawMpvEvent;
 type MpvTerminateDestroy = unsafe extern "C" fn(*mut MpvHandle);
 type MpvClientApiVersion = unsafe extern "C" fn() -> c_ulong;
@@ -102,11 +121,14 @@ pub(super) struct LibMpvRuntime {
     wait_event: MpvWaitEvent,
     terminate_destroy: MpvTerminateDestroy,
     alive: bool,
+    native_window: Option<NativeWindowHandle>,
     _library: Library,
 }
 
 impl LibMpvRuntime {
     fn start(path: &Path, ipc_path: &str, fullscreen: FullscreenBehavior) -> io::Result<Self> {
+        // SAFETY: the resolved symbols below use libmpv's published C ABI,
+        // and `_library` keeps the DLL loaded for every copied function pointer.
         let library = unsafe { Library::new(path) }.map_err(io::Error::other)?;
         let create: MpvCreate = load_symbol(&library, b"mpv_create\0")?;
         let set_option_string: MpvSetOptionString =
@@ -118,6 +140,8 @@ impl LibMpvRuntime {
         let client_api_version: MpvClientApiVersion =
             load_symbol(&library, b"mpv_client_api_version\0")?;
         let error_string: MpvErrorString = load_symbol(&library, b"mpv_error_string\0")?;
+        #[cfg(target_os = "windows")]
+        let get_property: MpvGetProperty = load_symbol(&library, b"mpv_get_property\0")?;
 
         let version = unsafe { client_api_version() } as u32;
         let major = version >> 16;
@@ -133,17 +157,27 @@ impl LibMpvRuntime {
             return Err(io::Error::other("libmpv could not create a client handle"));
         }
 
+        #[cfg(target_os = "windows")]
+        let force_window = "yes";
+        #[cfg(not(target_os = "windows"))]
+        let force_window = "no";
         let options = [
             ("config", "no"),
             ("load-scripts", "no"),
-            ("force-window", "no"),
+            ("force-window", force_window),
             ("fullscreen", fullscreen.fullscreen_arg()),
             ("autofit", WINDOWED_AUTOFIT),
             ("hwdec", "auto-safe"),
-            ("input-default-bindings", "yes"),
-            ("input-vo-keyboard", "yes"),
+            ("input-default-bindings", "no"),
+            ("input-vo-keyboard", "no"),
+            ("input-cursor", "no"),
+            ("cursor-autohide", "no"),
             ("idle", "yes"),
             ("input-ipc-server", ipc_path),
+            ("title", "MediaFlick Desktop"),
+            ("keepaspect-window", "no"),
+            ("auto-window-resize", "no"),
+            ("border", "yes"),
         ];
         for (name, value) in options {
             if let Err(error) = set_option(handle, set_option_string, error_string, name, value) {
@@ -161,6 +195,17 @@ impl LibMpvRuntime {
             )));
         }
 
+        #[cfg(target_os = "windows")]
+        let native_window = match wait_for_native_window(handle, get_property) {
+            Ok(window) => Some(window),
+            Err(error) => {
+                unsafe { terminate_destroy(handle) };
+                return Err(error);
+            }
+        };
+        #[cfg(not(target_os = "windows"))]
+        let native_window = None;
+
         tracing::info!(
             target: "mpv.library",
             path = %path.display(),
@@ -172,6 +217,7 @@ impl LibMpvRuntime {
             wait_event,
             terminate_destroy,
             alive: true,
+            native_window,
             _library: library,
         })
     }
@@ -181,6 +227,8 @@ impl LibMpvRuntime {
             return false;
         }
         loop {
+            // SAFETY: `handle` remains owned by this runtime, and libmpv keeps
+            // the returned event valid until the next mpv_wait_event call.
             let event = unsafe { (self.wait_event)(self.handle, 0.0) };
             if event.is_null() {
                 self.alive = false;
@@ -209,6 +257,42 @@ impl LibMpvRuntime {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn wait_for_native_window(
+    handle: *mut MpvHandle,
+    get_property: MpvGetProperty,
+) -> io::Result<NativeWindowHandle> {
+    let property = CString::new("window-id").map_err(io::Error::other)?;
+    let deadline = Instant::now() + NATIVE_WINDOW_TIMEOUT;
+    loop {
+        let mut raw = 0_i64;
+        // SAFETY: libmpv writes one MPV_FORMAT_INT64 into `raw`; `handle` and
+        // the property string both remain valid for the duration of the call.
+        let status = unsafe {
+            get_property(
+                handle,
+                property.as_ptr(),
+                MPV_FORMAT_INT64,
+                std::ptr::from_mut(&mut raw).cast(),
+            )
+        };
+        if status >= 0
+            && let Ok(raw) = usize::try_from(raw)
+            && let Some(window) = NativeWindowHandle::new(raw)
+        {
+            tracing::info!(target: "mpv.library", hwnd = raw, "libmpv native window is ready");
+            return Ok(window);
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "libmpv did not publish its native window within 10 seconds",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 impl Drop for LibMpvRuntime {
     fn drop(&mut self) {
         self.terminate();
@@ -219,6 +303,8 @@ fn load_symbol<T>(library: &Library, name: &[u8]) -> io::Result<T>
 where
     T: Copy,
 {
+    // SAFETY: callers request a named libmpv symbol with its exact published
+    // function-pointer type, and the owning Library outlives the result.
     let symbol = unsafe { library.get::<T>(name) }.map_err(io::Error::other)?;
     Ok(*symbol)
 }

@@ -169,18 +169,29 @@ fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-pub(super) fn toggle_browser_fullscreen(browser: Option<&mut Browser>) {
-    let Some(mut browser) = browser.cloned() else {
+pub(super) fn toggle_browser_fullscreen(
+    browser: Option<&mut Browser>,
+    state: Option<&BrowserState>,
+) {
+    let view_window = browser.cloned().and_then(|mut browser| {
+        browser_view_get_for_browser(Some(&mut browser)).and_then(|view| view.window())
+    });
+    let state_window = state.and_then(|state| {
+        state
+            .lock()
+            .ok()
+            .and_then(|state| state.main_window.clone())
+    });
+    if let Some(window) = view_window.or(state_window) {
+        let fullscreen = i32::from(window.is_fullscreen() == 0);
+        window.set_fullscreen(fullscreen);
         return;
-    };
-    let Some(browser_view) = browser_view_get_for_browser(Some(&mut browser)) else {
-        return;
-    };
-    let Some(window) = browser_view.window() else {
-        return;
-    };
-    let fullscreen = i32::from(window.is_fullscreen() == 0);
-    window.set_fullscreen(fullscreen);
+    }
+
+    let playback = state.and_then(|state| state.lock().ok().map(|state| state.playback.clone()));
+    if let Some(playback) = playback {
+        playback.control(crate::playback::PlayerCommand::ToggleFullscreen);
+    }
 }
 
 pub(super) fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {

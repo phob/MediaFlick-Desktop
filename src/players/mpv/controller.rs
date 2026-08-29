@@ -12,7 +12,8 @@ use crate::jellyfin::playback_reporter::PlaybackReporter;
 use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::SkipSegment;
 use crate::playback::{
-    PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot, ReportingState,
+    NativeWindowHandle, PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand,
+    PlayerSnapshot, ReportingState,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{MpvRuntime, MpvRuntimeKind};
@@ -66,6 +67,9 @@ enum ControllerMessage {
     Warm {
         mpv_path: String,
         fullscreen: FullscreenBehavior,
+    },
+    NativeWindow {
+        reply: Sender<Option<NativeWindowHandle>>,
     },
     Load {
         mpv_path: String,
@@ -239,6 +243,14 @@ impl MpvController {
         });
     }
 
+    pub fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle> {
+        let (reply, response) = mpsc::channel();
+        self.tx
+            .send(ControllerMessage::NativeWindow { reply })
+            .ok()?;
+        response.recv_timeout(timeout).ok().flatten()
+    }
+
     pub fn load(
         &self,
         mpv_path: impl Into<String>,
@@ -357,6 +369,10 @@ impl ControllerState {
                 }) => {
                     tracing::debug!(target: "playback", "received mpv warm request");
                     self.warm(&mpv_path, fullscreen);
+                }
+                Ok(ControllerMessage::NativeWindow { reply }) => {
+                    let native_window = self.runtime.as_ref().and_then(MpvRuntime::native_window);
+                    let _ = reply.send(native_window);
                 }
                 Ok(ControllerMessage::Load {
                     mpv_path,

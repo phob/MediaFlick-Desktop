@@ -447,6 +447,7 @@ export interface ClientSettings {
   capabilities: {
     platform: "windows" | "macos" | "linux" | "other"
     libmpv: boolean
+    integratedLibmpvOverlay?: boolean
     mpchc: boolean
     mpvInstaller: boolean
   }

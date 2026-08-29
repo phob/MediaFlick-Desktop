@@ -475,17 +475,24 @@ pub struct SettingsApplyPlan {
 
 impl SettingsApplyPlan {
     pub fn between(previous: &AppSettings, next: &AppSettings) -> Self {
+        let backend_changed = previous.effective_backend() != next.effective_backend();
+        let window_model_changed = backend_changed
+            && (previous.effective_backend() == super::PlayerBackend::Libmpv
+                || next.effective_backend() == super::PlayerBackend::Libmpv);
         Self {
-            rebuild_player: previous.effective_backend() != next.effective_backend()
-                || match next.effective_backend() {
-                    super::PlayerBackend::Libmpv => false,
-                    super::PlayerBackend::Mpv => previous.mpv_path != next.mpv_path,
-                    super::PlayerBackend::Mpchc => previous.mpchc_path != next.mpchc_path,
-                },
+            // The selected backend determines whether startup builds a normal
+            // CEF window or a DirectComposition surface on mpv's window.
+            rebuild_player: !window_model_changed
+                && (backend_changed
+                    || match next.effective_backend() {
+                        super::PlayerBackend::Libmpv => false,
+                        super::PlayerBackend::Mpv => previous.mpv_path != next.mpv_path,
+                        super::PlayerBackend::Mpchc => previous.mpchc_path != next.mpchc_path,
+                    }),
             update_input_bindings: false,
             update_segment_policy: previous.segment_skip_config() != next.segment_skip_config(),
             update_shell_css: previous.show_scrollbars != next.show_scrollbars,
-            restart_required: previous.log_level != next.log_level,
+            restart_required: previous.log_level != next.log_level || window_model_changed,
         }
     }
 }
@@ -645,7 +652,7 @@ mod tests {
         assert_eq!(
             SettingsApplyPlan::between(&previous, &next),
             SettingsApplyPlan {
-                rebuild_player: true,
+                rebuild_player: cfg!(not(windows)),
                 update_input_bindings: false,
                 update_segment_policy: true,
                 update_shell_css: true,
@@ -665,15 +672,15 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn switching_the_effective_backend_rebuilds_the_player() {
+    fn switching_the_effective_backend_requires_a_restart() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
         next.player_backend = Some(crate::preferences::PlayerBackend::Mpchc);
 
         let plan = SettingsApplyPlan::between(&previous, &next);
-        assert!(plan.rebuild_player);
+        assert!(!plan.rebuild_player);
         assert!(!plan.update_segment_policy);
         assert!(!plan.update_shell_css);
-        assert!(!plan.restart_required);
+        assert!(plan.restart_required);
     }
 }

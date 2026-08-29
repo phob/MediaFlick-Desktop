@@ -20,6 +20,8 @@ use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 const MIN_API_VERSION: i64 = 1;
 const MAX_API_VERSION: i64 = 1;
 const FAILED_PROBE_RETRY: Duration = Duration::from_secs(30);
+const SUCCESSFUL_PROBE_REUSE: Duration = Duration::from_secs(5 * 60);
+const FRANCHISE_MEMBERSHIPS_CAPABILITY: &str = "franchise-memberships-v1";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -54,11 +56,16 @@ struct ProbeState {
 
 impl ProbeState {
     fn reusable(&self) -> bool {
-        self.checked
-            && (self.error.is_none()
-                || self
-                    .checked_at
-                    .is_some_and(|checked_at| checked_at.elapsed() < FAILED_PROBE_RETRY))
+        if !self.checked {
+            return false;
+        }
+        let lifetime = if self.error.is_some() {
+            FAILED_PROBE_RETRY
+        } else {
+            SUCCESSFUL_PROBE_REUSE
+        };
+        self.checked_at
+            .is_some_and(|checked_at| checked_at.elapsed() < lifetime)
     }
 }
 
@@ -240,6 +247,10 @@ impl CompanionSession {
         collection_ids: &[u64],
     ) -> Result<Value, ApiError> {
         self.require_collection_experience()?;
+        self.require_capability(
+            FRANCHISE_MEMBERSHIPS_CAPABILITY,
+            "MediaFlick Companion does not provide movie franchise membership refresh",
+        )?;
         if !self.session.scope_is_current(scope) {
             return Err(ApiError::Cancelled);
         }
@@ -666,7 +677,9 @@ fn join_calendar(library: &Library, value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompanionInfo, FAILED_PROBE_RETRY, ProbeState, join_calendar};
+    use super::{
+        CompanionInfo, FAILED_PROBE_RETRY, ProbeState, SUCCESSFUL_PROBE_REUSE, join_calendar,
+    };
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
     use serde_json::json;
@@ -703,6 +716,22 @@ mod tests {
             ..recent_failure
         };
         assert!(!expired_failure.reusable());
+    }
+
+    #[test]
+    fn successful_probe_results_are_refreshed_periodically() {
+        let recent_success = ProbeState {
+            checked: true,
+            checked_at: Some(std::time::Instant::now()),
+            ..ProbeState::default()
+        };
+        assert!(recent_success.reusable());
+
+        let expired_success = ProbeState {
+            checked_at: Some(std::time::Instant::now() - SUCCESSFUL_PROBE_REUSE),
+            ..recent_success
+        };
+        assert!(!expired_success.reusable());
     }
 
     #[test]

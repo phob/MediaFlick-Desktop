@@ -244,6 +244,8 @@ pub enum PlayerCommand {
     SetAudioTrack(i64),
     SetSubtitleTrack(Option<i64>),
     AddSubtitle(String),
+    ToggleSubtitleVisibility,
+    ToggleFullscreen,
     Stop,
 }
 

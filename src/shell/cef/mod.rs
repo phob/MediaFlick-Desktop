@@ -78,6 +78,7 @@ pub fn run(config: &AppConfig) -> i32 {
     let cache_path = paths.cache_dir.to_string_lossy();
     let log_file = paths.log_file.to_string_lossy();
     let product = format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION"));
+    let windowless_rendering_enabled = i32::from(prototype_osr::is_configured(&config.settings));
     let settings = Settings {
         no_sandbox: 1,
         browser_subprocess_path: cef_string_from_path(paths.browser_subprocess_path.as_ref()),
@@ -94,6 +95,7 @@ pub fn run(config: &AppConfig) -> i32 {
         remote_debugging_port: config.remote_debugging_port,
         disable_signal_handlers: 1,
         use_views_default_popup: 1,
+        windowless_rendering_enabled,
         ..Default::default()
     };
 
@@ -209,6 +211,7 @@ mod bridge;
 mod document;
 mod events;
 mod handlers;
+mod prototype_osr;
 mod runtime;
 
 use events::{
@@ -289,6 +292,7 @@ struct BrowserStateInner {
     update_download_started: bool,
     mpv_setup_started: bool,
     force_close_requested: bool,
+    player_warmed: bool,
 }
 
 type BrowserState = Arc<Mutex<BrowserStateInner>>;
@@ -350,7 +354,6 @@ fn new_browser_state(
         &settings,
         playback_event_tx.clone(),
     )));
-    warm_configured_player(&playback, &settings);
     // The app-scheme API starts playback from a background thread, so it needs
     // the coordinator without reaching into this UI-thread state.
     if let Some(services) = services::services() {
@@ -370,10 +373,33 @@ fn new_browser_state(
         update_download_started: false,
         mpv_setup_started: false,
         force_close_requested: false,
+        player_warmed: false,
     }));
     start_playback_event_bridge(&state, playback_event_rx);
     start_preferences_event_bridge(&state);
     start_shell_request_bridge(&state);
     start_update_check_bridge(state.clone());
     state
+}
+
+fn prepare_player_for_window(state: &BrowserState) {
+    let prepared = state.lock().ok().and_then(|mut state| {
+        if state.player_warmed {
+            return None;
+        }
+        state.player_warmed = true;
+        Some((state.playback.clone(), state.settings.clone()))
+    });
+    let Some((playback, settings)) = prepared else {
+        return;
+    };
+    warm_configured_player(&playback, &settings);
+}
+
+fn configured_player_native_window(
+    state: &BrowserState,
+    timeout: Duration,
+) -> Option<crate::playback::NativeWindowHandle> {
+    let playback = state.lock().ok().map(|state| state.playback.clone())?;
+    playback.native_window(timeout)
 }
