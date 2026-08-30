@@ -9,6 +9,8 @@ published `mediaflick-libmpv-sources.tar.zst` archive.
 | --- | --- | --- |
 | mpv (`gpl=false`) | LGPL-2.1-or-later | https://github.com/mpv-player/mpv |
 | FFmpeg (GPL features disabled) | LGPL-2.1-or-later | https://github.com/FFmpeg/FFmpeg |
+| LuaJIT | MIT | https://github.com/openresty/luajit2 |
+| VapourSynth headers | LGPL-2.1-or-later | https://github.com/vapoursynth/vapoursynth |
 | libplacebo | LGPL-2.1-or-later | https://code.videolan.org/videolan/libplacebo |
 | libass | ISC | https://github.com/libass/libass |
 | FriBidi | LGPL-2.1-or-later | https://github.com/fribidi/fribidi |

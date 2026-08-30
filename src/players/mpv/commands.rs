@@ -2,14 +2,29 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde_json::{Map, Value, json};
 
-use crate::playback::{HttpHeader, PlaybackRequest, PlayerCommand};
+use crate::playback::{
+    HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
+};
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 
-pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadFileBehavior {
+    ExternalDelayedSeek,
+    LibraryPausedAtStart,
+}
+
+pub fn loadfile_command_with_behavior(
+    launch: &PlaybackRequest,
+    behavior: LoadFileBehavior,
+) -> Value {
     let mut options = Map::new();
-    // Intentionally do not set mpv's `start` option here. Resume is performed
-    // by a delayed absolute seek after file-loaded; see kick_start_playback.
+    if behavior == LoadFileBehavior::LibraryPausedAtStart {
+        options.insert("pause".to_string(), json!("yes"));
+        if let Some(start) = launch.start_seconds().filter(|start| *start > 0.0) {
+            options.insert("start".to_string(), json!(format!("{start:.3}")));
+        }
+    }
     if let Some(title) = non_empty(launch.title.as_deref()) {
         options.insert(
             "force-media-title".to_string(),
@@ -76,6 +91,54 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
                 return None;
             }
             json!(["set_property", "speed", rate.clamp(0.1, 10.0)])
+        }
+        PlayerCommand::SetAudioDelay(delay) => {
+            if !delay.is_finite() {
+                return None;
+            }
+            json!(["set_property", "audio-delay", delay.clamp(-30.0, 30.0)])
+        }
+        PlayerCommand::SetSubtitleDelay(delay) => {
+            if !delay.is_finite() {
+                return None;
+            }
+            json!(["set_property", "sub-delay", delay.clamp(-30.0, 30.0)])
+        }
+        PlayerCommand::SetSubtitleScale(scale) => {
+            if !scale.is_finite() {
+                return None;
+            }
+            json!(["set_property", "sub-scale", scale.clamp(0.5, 2.0)])
+        }
+        PlayerCommand::SetVideoFit(fit) => {
+            let panscan = match fit {
+                VideoFit::Fit => 0.0,
+                VideoFit::Fill => 1.0,
+            };
+            json!(["set_property", "panscan", panscan])
+        }
+        PlayerCommand::SetVideoAspect(aspect) => {
+            let value = match aspect {
+                VideoAspect::Source => "-1",
+                VideoAspect::Ratio4x3 => "4:3",
+                VideoAspect::Ratio16x9 => "16:9",
+                VideoAspect::Ratio21x9 => "21:9",
+            };
+            json!(["set_property", "video-aspect-override", value])
+        }
+        PlayerCommand::SetDeinterlace(enabled) => {
+            json!(["set_property", "deinterlace", enabled])
+        }
+        PlayerCommand::SetToneMapping(mode) => {
+            let value = match mode {
+                ToneMapping::Auto => "auto",
+                ToneMapping::Clip => "clip",
+                ToneMapping::Mobius => "mobius",
+                ToneMapping::Reinhard => "reinhard",
+                ToneMapping::Hable => "hable",
+                ToneMapping::Bt2390 => "bt.2390",
+            };
+            json!(["set_property", "tone-mapping", value])
         }
         PlayerCommand::SetAudioTrack(id) => {
             if *id <= 0 {
@@ -240,9 +303,17 @@ fn hex_value(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{control_command, loadfile_command, mpv_string_list};
-    use crate::playback::{HttpHeader, PlaybackRequest, PlayerCommand};
-    use serde_json::json;
+    use super::{
+        LoadFileBehavior, control_command, loadfile_command_with_behavior, mpv_string_list,
+    };
+    use crate::playback::{
+        HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
+    };
+    use serde_json::{Value, json};
+
+    fn loadfile_command(launch: &PlaybackRequest) -> Value {
+        loadfile_command_with_behavior(launch, LoadFileBehavior::ExternalDelayedSeek)
+    }
 
     #[test]
     fn loadfile_command_contains_url_replace_options_and_request_id() {
@@ -258,7 +329,20 @@ mod tests {
         assert_eq!(args[3], -1);
         assert!(command["request_id"].as_i64().is_some());
         assert!(args[4].get("start").is_none());
+        assert!(args[4].get("pause").is_none());
         assert_eq!(args[4]["force-media-title"], "A Movie");
+    }
+
+    #[test]
+    fn library_load_starts_paused_at_resume_position() {
+        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
+        launch.start_time_ticks = Some(20_000_000);
+
+        let command =
+            loadfile_command_with_behavior(&launch, LoadFileBehavior::LibraryPausedAtStart);
+        let options = &command["command"][4];
+        assert_eq!(options["pause"], "yes");
+        assert_eq!(options["start"], "2.000");
     }
 
     #[test]
@@ -353,6 +437,52 @@ mod tests {
         let volume = control_command(&PlayerCommand::SetVolume(250.0)).expect("volume command");
         assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
 
+        let audio_delay =
+            control_command(&PlayerCommand::SetAudioDelay(0.5)).expect("audio delay command");
+        assert_eq!(
+            audio_delay["command"],
+            json!(["set_property", "audio-delay", 0.5])
+        );
+
+        let subtitle_delay = control_command(&PlayerCommand::SetSubtitleDelay(-1.0))
+            .expect("subtitle delay command");
+        assert_eq!(
+            subtitle_delay["command"],
+            json!(["set_property", "sub-delay", -1.0])
+        );
+
+        let subtitle_scale = control_command(&PlayerCommand::SetSubtitleScale(1.25))
+            .expect("subtitle scale command");
+        assert_eq!(
+            subtitle_scale["command"],
+            json!(["set_property", "sub-scale", 1.25])
+        );
+
+        let fill = control_command(&PlayerCommand::SetVideoFit(VideoFit::Fill))
+            .expect("video fit command");
+        assert_eq!(fill["command"], json!(["set_property", "panscan", 1.0]));
+
+        let aspect = control_command(&PlayerCommand::SetVideoAspect(VideoAspect::Ratio21x9))
+            .expect("video aspect command");
+        assert_eq!(
+            aspect["command"],
+            json!(["set_property", "video-aspect-override", "21:9"])
+        );
+
+        let deinterlace =
+            control_command(&PlayerCommand::SetDeinterlace(true)).expect("deinterlace command");
+        assert_eq!(
+            deinterlace["command"],
+            json!(["set_property", "deinterlace", true])
+        );
+
+        let tone_mapping = control_command(&PlayerCommand::SetToneMapping(ToneMapping::Bt2390))
+            .expect("tone mapping command");
+        assert_eq!(
+            tone_mapping["command"],
+            json!(["set_property", "tone-mapping", "bt.2390"])
+        );
+
         let audio = control_command(&PlayerCommand::SetAudioTrack(2)).expect("audio command");
         assert_eq!(audio["command"], json!(["set_property", "aid", 2]));
 
@@ -384,5 +514,7 @@ mod tests {
         assert!(seek.get("async").is_none());
 
         assert!(control_command(&PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
+        assert!(control_command(&PlayerCommand::SetAudioDelay(f64::NAN)).is_none());
+        assert!(control_command(&PlayerCommand::SetSubtitleScale(f64::INFINITY)).is_none());
     }
 }

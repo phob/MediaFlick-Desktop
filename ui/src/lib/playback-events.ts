@@ -5,7 +5,9 @@ import { invalidateMediaSurfaces, queryClient, queryKeys } from "./query-client"
 
 declare global {
   interface Window {
-    /** Called by `dispatch_playback_event` in `src/shell/cef/mod.rs`. */
+    /** Called by `dispatch_playback_event` in `src/shell/cef/events.rs`. */
+    __mediaFlickDesktopPlaybackStateChanged?: (payload: PlayerState) => void
+    /** Called by `dispatch_playback_event` in `src/shell/cef/events.rs`. */
     __mediaFlickDesktopPlaybackStopped?: (payload: PlayerState) => void
     /** Called after the shell's post-playback Jellyfin/cache refresh settles. */
     __mediaFlickDesktopPlaybackCacheRefreshed?: (payload: {
@@ -16,13 +18,18 @@ declare global {
 }
 
 /**
- * The push half of the playback loop. Polling alone would leave the bar up for
- * up to a second after the player quits, and — more importantly — the shell
- * only tells us *why* playback stopped here, which is what decides whether the
- * next episode should start.
+ * Applies native player snapshots as they arrive. Stop events also carry the
+ * completion reason used to decide whether the next episode should start.
  */
-export function usePlaybackStoppedBridge() {
+export function usePlaybackEventsBridge() {
   useEffect(() => {
+    window.__mediaFlickDesktopPlaybackStateChanged = (payload) => {
+      queryClient.setQueryData(queryKeys.playerState, (previous?: PlayerState) => ({
+        ...previous,
+        ...payload,
+      }))
+    }
+
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
       queryClient.setQueryData(queryKeys.playerState, { active: false })
 
@@ -52,6 +59,7 @@ export function usePlaybackStoppedBridge() {
     }
 
     return () => {
+      delete window.__mediaFlickDesktopPlaybackStateChanged
       delete window.__mediaFlickDesktopPlaybackStopped
       delete window.__mediaFlickDesktopPlaybackCacheRefreshed
     }

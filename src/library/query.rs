@@ -267,6 +267,28 @@ impl Library {
         })
     }
 
+    /// The episode immediately before `item_id` inside its series.
+    pub fn previous_episode(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {SUMMARY_COLUMNS} FROM items i
+                 LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 JOIN items current ON current.jellyfin_id = ?1
+                 WHERE i.kind = 'Episode'
+                   AND i.series_id = current.series_id
+                   AND (COALESCE(i.parent_index_number, 0), COALESCE(i.index_number, 0))
+                       < (COALESCE(current.parent_index_number, 0), COALESCE(current.index_number, 0))
+                 ORDER BY i.parent_index_number DESC, i.index_number DESC
+                 LIMIT 1"
+            ))?;
+            let mut rows = statement.query(params![item_id])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(summary_row(row)?)),
+                None => Ok(None),
+            }
+        })
+    }
+
     /// The episode that follows `item_id` inside its series.
     pub fn next_episode(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
         self.db.with_connection(|connection| {
@@ -811,6 +833,17 @@ mod tests {
         let next = library.next_episode("e1").expect("next").expect("episode");
         assert_eq!(next["id"], "e2");
         assert!(library.next_episode("e2").expect("next").is_none());
+    }
+
+    #[test]
+    fn previous_episode_reverses_broadcast_order() {
+        let library = seeded();
+        let previous = library
+            .previous_episode("e2")
+            .expect("previous")
+            .expect("episode");
+        assert_eq!(previous["id"], "e1");
+        assert!(library.previous_episode("e1").expect("previous").is_none());
     }
 
     #[test]

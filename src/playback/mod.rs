@@ -9,8 +9,9 @@ pub mod segments;
 
 pub use coordinator::PlaybackCoordinator;
 pub use model::{
-    HttpHeader, PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot,
-    ReportingState, TICKS_PER_SECOND, seconds_to_ticks,
+    HttpHeader, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
+    PlayerChapter, PlayerCommand, PlayerSnapshot, PlayerTrack, PlayerTrackKind, ReportingState,
+    TICKS_PER_SECOND, ToneMapping, VideoAspect, VideoFit, seconds_to_ticks,
 };
 
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
@@ -23,6 +24,8 @@ pub struct Capabilities {
     pub injected_hotkeys: bool,
     pub absolute_volume: bool,
     pub pushes_position: bool,
+    pub fullscreen: bool,
+    pub playback_tuning: bool,
 }
 
 /// Opaque native window identity owned by a playback backend.
@@ -46,6 +49,8 @@ pub const MPV_CAPABILITIES: Capabilities = Capabilities {
     injected_hotkeys: true,
     absolute_volume: true,
     pushes_position: true,
+    fullscreen: true,
+    playback_tuning: true,
 };
 
 #[allow(dead_code)]
@@ -55,6 +60,8 @@ pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
     injected_hotkeys: false,
     absolute_volume: true,
     pushes_position: false,
+    fullscreen: true,
+    playback_tuning: false,
 };
 
 /// Port implemented by each player adapter.

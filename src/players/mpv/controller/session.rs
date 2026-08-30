@@ -1,7 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,7 +8,9 @@ use serde_json::{Value, json};
 
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::flush_playstate_reports;
-use crate::playback::{PlaybackRequest, PlayerCommand, seconds_to_ticks};
+use crate::playback::{
+    PlaybackRequest, PlayerCommand, PlayerTrack, PlayerTrackKind, seconds_to_ticks,
+};
 use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
 use crate::players::mpv::ipc::{
     IpcCommandFailure, IpcWorker, MpvEvent, cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path,
@@ -19,10 +20,10 @@ use crate::preferences::FullscreenBehavior;
 
 use super::super::commands::{next_request_id, non_empty};
 use super::{
-    ConfiguredMpv, ControllerState, DUPLICATE_DEBOUNCE, IPC_COMMAND_TIMEOUT, IPC_CONNECT_TIMEOUT,
-    IPC_SUBTITLE_COMMAND_TIMEOUT, MPV_RAISE_PULSE_DELAY, MPV_SESSION_POLL_INTERVAL,
-    PENDING_FILE_LOADED_TIMEOUT, PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT, PROGRESS_INTERVAL,
-    SHUTDOWN_WAIT, control_command, loadfile_command,
+    ConfiguredMpv, ControllerMessage, ControllerState, DUPLICATE_DEBOUNCE, IPC_COMMAND_TIMEOUT,
+    IPC_CONNECT_TIMEOUT, IPC_SUBTITLE_COMMAND_TIMEOUT, MPV_RAISE_PULSE_DELAY,
+    MPV_SESSION_POLL_INTERVAL, PENDING_FILE_LOADED_TIMEOUT, PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT,
+    PROGRESS_INTERVAL, SHUTDOWN_WAIT, control_command,
 };
 
 impl ControllerState {
@@ -35,7 +36,7 @@ impl ControllerState {
         );
         self.remember_configured_mpv(mpv_path, fullscreen);
         if self.ensure_mpv(mpv_path, fullscreen) {
-            self.apply_default_fullscreen(fullscreen);
+            self.apply_external_default_fullscreen(fullscreen);
         }
     }
 
@@ -50,13 +51,34 @@ impl ControllerState {
         });
     }
 
-    pub(super) fn apply_default_fullscreen(&self, fullscreen: FullscreenBehavior) {
+    pub(super) fn apply_external_default_fullscreen(&self, fullscreen: FullscreenBehavior) {
+        if self.runtime_kind != super::MpvRuntimeKind::External {
+            return;
+        }
+        self.set_fullscreen(fullscreen);
+    }
+
+    pub(super) fn apply_library_default_fullscreen(&self) {
+        if self.runtime_kind != super::MpvRuntimeKind::Library {
+            return;
+        }
+        let Some(fullscreen) = self
+            .configured_mpv
+            .as_ref()
+            .map(|configured| configured.fullscreen)
+        else {
+            return;
+        };
+        self.set_fullscreen(fullscreen);
+    }
+
+    pub(super) fn set_fullscreen(&self, fullscreen: FullscreenBehavior) {
         let command = json!({
             "command": ["set_property", "fullscreen", fullscreen == FullscreenBehavior::Fullscreen],
             "request_id": next_request_id(),
         });
         if let Err(error) = self.send_mpv_command(command) {
-            tracing::warn!(target: "mpv.ipc", "failed to apply default fullscreen behavior: {error}");
+            tracing::warn!(target: "mpv.ipc", "failed to change fullscreen mode: {error}");
         }
     }
 
@@ -66,7 +88,7 @@ impl ControllerState {
         fullscreen: FullscreenBehavior,
         launch: &PlaybackRequest,
     ) -> Result<(), IpcCommandFailure> {
-        match self.send_mpv_command(loadfile_command(launch)) {
+        match self.send_mpv_command(self.loadfile_command(launch)) {
             Ok(()) => Ok(()),
             Err(first_error @ IpcCommandFailure::Rejected(_)) => Err(first_error),
             Err(first_error @ IpcCommandFailure::Transport(_)) => {
@@ -75,8 +97,8 @@ impl ControllerState {
                 if !self.ensure_mpv(mpv_path, fullscreen) {
                     return Err(first_error);
                 }
-                self.apply_default_fullscreen(fullscreen);
-                self.send_mpv_command(loadfile_command(launch))
+                self.apply_external_default_fullscreen(fullscreen);
+                self.send_mpv_command(self.loadfile_command(launch))
                     .map_err(|retry_error| {
                         retry_error
                             .with_context(format!("initial failure: {first_error}; retry failure"))
@@ -122,7 +144,7 @@ impl ControllerState {
         } else {
             self.reset_mpv();
         }
-        let ipc_path = make_mpv_ipc_path();
+        let ipc_path = self.next_ipc_path();
         tracing::info!(
             target: "mpv.ipc",
             runtime = ?self.runtime_kind,
@@ -130,11 +152,16 @@ impl ControllerState {
             ipc_path = %ipc_path,
             "starting idle mpv runtime"
         );
+        let runtime_fullscreen = match self.runtime_kind {
+            super::MpvRuntimeKind::External => fullscreen,
+            super::MpvRuntimeKind::Library => FullscreenBehavior::Windowed,
+        };
         let mut runtime = match crate::players::mpv::runtime::MpvRuntime::start(
             self.runtime_kind,
+            self.libmpv_profile,
             &PathBuf::from(mpv_path),
             &ipc_path,
-            fullscreen,
+            runtime_fullscreen,
         ) {
             Ok(runtime) => runtime,
             Err(error) => {
@@ -171,14 +198,27 @@ impl ControllerState {
             return false;
         }
 
+        let session_id = self.next_ipc_session_id;
+        self.next_ipc_session_id = self.next_ipc_session_id.wrapping_add(1).max(1);
+        self.start_event_relay(session_id, event_rx);
         self.runtime = Some(runtime);
         self.current_mpv_path = Some(mpv_path.to_string());
         self.ipc_path = Some(ipc_path.clone());
         self.ipc_worker = Some(ipc_worker);
-        self.event_rx = Some(event_rx);
-        tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, "mpv IPC connected");
+        self.active_ipc_session_id = Some(session_id);
+        tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, session_id, "mpv IPC connected");
         self.install_input_bindings();
         true
+    }
+
+    fn next_ipc_path(&self) -> String {
+        #[cfg(target_os = "windows")]
+        if self.runtime_kind == super::MpvRuntimeKind::Library
+            && self.libmpv_profile == crate::preferences::LibmpvProfile::Svp
+        {
+            return r"\\.\pipe\mpvpipe".to_string();
+        }
+        make_mpv_ipc_path()
     }
 
     fn current_mpv_path_matches(&self, mpv_path: &str) -> bool {
@@ -209,32 +249,38 @@ impl ControllerState {
         }
     }
 
-    pub(super) fn drain_events(&mut self) {
-        let mut events = Vec::new();
-        let mut disconnected = false;
-        if let Some(rx) = &self.event_rx {
-            loop {
-                match rx.try_recv() {
-                    Ok(event) => events.push(event),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        disconnected = true;
-                        break;
-                    }
+    fn start_event_relay(&self, session_id: u64, event_rx: std::sync::mpsc::Receiver<MpvEvent>) {
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            while let Ok(event) = event_rx.recv() {
+                if tx
+                    .send(ControllerMessage::MpvEvent {
+                        session_id,
+                        event: Box::new(event),
+                    })
+                    .is_err()
+                {
+                    return;
                 }
             }
+            let _ = tx.send(ControllerMessage::MpvEventsDisconnected { session_id });
+        });
+    }
+
+    pub(super) fn handle_session_event(&mut self, session_id: u64, event: &MpvEvent) {
+        if self.active_ipc_session_id != Some(session_id) {
+            tracing::trace!(target: "mpv.ipc", session_id, "ignored event from stale mpv IPC session");
+            return;
         }
-        if !events.is_empty() {
-            tracing::trace!(target: "mpv.ipc", count = events.len(), "drained mpv events");
+        self.handle_event(event);
+    }
+
+    pub(super) fn handle_event_stream_disconnected(&mut self, session_id: u64) {
+        if self.active_ipc_session_id != Some(session_id) {
+            return;
         }
-        let saw_shutdown = events.iter().any(|event| event.name == "shutdown");
-        for event in events {
-            self.handle_event(&event);
-        }
-        if disconnected && !saw_shutdown {
-            tracing::warn!(target: "mpv.ipc", "mpv IPC event stream disconnected");
-            self.handle_mpv_session_lost("mpv IPC event stream disconnected");
-        }
+        tracing::warn!(target: "mpv.ipc", session_id, "mpv IPC event stream disconnected");
+        self.handle_mpv_session_lost("mpv IPC event stream disconnected");
     }
 
     fn handle_event(&mut self, event: &MpvEvent) {
@@ -300,6 +346,26 @@ impl ControllerState {
         }
     }
 
+    pub(super) fn complete_library_startup(&mut self) {
+        if self.runtime_kind != super::MpvRuntimeKind::Library {
+            return;
+        }
+        let pause = self.pending_library_pause.take().unwrap_or(false);
+        self.last_state.pause = pause;
+        if pause {
+            return;
+        }
+        let Some(command) = control_command(&PlayerCommand::SetPause(false)) else {
+            return;
+        };
+        if let Err(error) = self.send_mpv_command(command) {
+            tracing::warn!(target: "mpv.ipc", "failed to resume libmpv after file setup: {error}");
+            if error.is_transport() {
+                self.handle_mpv_session_lost("libmpv startup resume transport failed");
+            }
+        }
+    }
+
     fn apply_property(&mut self, property: Option<&str>, data: Option<&Value>) {
         tracing::trace!(
             target: "mpv.ipc",
@@ -314,6 +380,16 @@ impl ControllerState {
                 self.apply_timeline_property(property, data);
             }
             Some("volume" | "mute") => self.apply_audio_property(property, data),
+            Some("track-list") => {
+                self.playback_tracks = playback_tracks(data);
+                self.publish_snapshot();
+            }
+            Some(
+                "paused-for-cache"
+                | "demuxer-cache-time"
+                | "vo-drop-frame-count"
+                | "estimated-vf-fps",
+            ) => self.apply_diagnostics_property(property, data),
             Some("eof-reached" | "seeking" | "chapter-list" | "playback-abort") => {
                 self.apply_status_property(property, data);
             }
@@ -405,6 +481,37 @@ impl ControllerState {
             }
             _ => {}
         }
+    }
+
+    fn apply_diagnostics_property(&mut self, property: Option<&str>, data: Option<&Value>) {
+        match property {
+            Some("paused-for-cache") => {
+                self.playback_diagnostics.buffering =
+                    data.and_then(Value::as_bool).unwrap_or(false);
+            }
+            Some("demuxer-cache-time") => {
+                self.playback_diagnostics.buffered_until_ms = data
+                    .and_then(Value::as_f64)
+                    .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+                    .map(|seconds| seconds * 1000.0);
+            }
+            Some("vo-drop-frame-count") => {
+                self.playback_diagnostics.dropped_frames = data
+                    .and_then(|value| {
+                        value
+                            .as_i64()
+                            .or_else(|| value.as_f64().map(|count| count.round() as i64))
+                    })
+                    .filter(|count| *count >= 0);
+            }
+            Some("estimated-vf-fps") => {
+                self.playback_diagnostics.frame_rate = data
+                    .and_then(Value::as_f64)
+                    .filter(|rate| rate.is_finite() && *rate > 0.0);
+            }
+            _ => return,
+        }
+        self.publish_snapshot();
     }
 
     fn apply_status_property(&mut self, property: Option<&str>, data: Option<&Value>) {
@@ -512,7 +619,7 @@ impl ControllerState {
             "ensuring configured mpv session is running"
         );
         if self.ensure_mpv(&config.mpv_path, config.fullscreen) {
-            self.apply_default_fullscreen(config.fullscreen);
+            self.apply_external_default_fullscreen(config.fullscreen);
             true
         } else {
             false
@@ -550,11 +657,15 @@ impl ControllerState {
             "restarting idle mpv process"
         );
         if self.ensure_mpv(&config.mpv_path, config.fullscreen) {
-            self.apply_default_fullscreen(config.fullscreen);
+            self.apply_external_default_fullscreen(config.fullscreen);
         }
     }
 
     pub(super) fn schedule_mpv_raise(&mut self, reason: &'static str) {
+        if self.runtime_kind == super::MpvRuntimeKind::Library {
+            tracing::trace!(target: "mpv.focus", reason, "skipped external-player raise for libmpv window");
+            return;
+        }
         if self.begin_mpv_raise(reason) {
             self.pending_raise_pulse_reset_at = Some(Instant::now() + MPV_RAISE_PULSE_DELAY);
         }
@@ -697,8 +808,10 @@ impl ControllerState {
     pub(super) fn reset_mpv(&mut self) {
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
+        self.pending_library_pause = None;
         self.pending_external_subtitle_url = None;
         self.pending_raise_pulse_reset_at = None;
+        self.playback_tracks.clear();
         self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
         if self.active.is_none() && self.pending.is_none() {
@@ -714,7 +827,7 @@ impl ControllerState {
             tracing::trace!(target: "mpv.ipc", ipc_path = %path, "cleaning mpv IPC path");
             cleanup_ipc_path(&path);
         }
-        self.event_rx = None;
+        self.active_ipc_session_id = None;
         if let Some(worker) = self.ipc_worker.take() {
             worker.shutdown();
         }
@@ -780,6 +893,47 @@ fn normalize_mpv_path_for_compare(path: &str) -> String {
     {
         display.into_owned()
     }
+}
+
+fn playback_tracks(data: Option<&Value>) -> Vec<PlayerTrack> {
+    data.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|track| {
+            let kind = match track.get("type").and_then(Value::as_str) {
+                Some("audio") => PlayerTrackKind::Audio,
+                Some("sub") => PlayerTrackKind::Subtitle,
+                _ => return None,
+            };
+            let id = track
+                .get("id")
+                .and_then(Value::as_i64)
+                .filter(|id| *id > 0)?;
+            let text = |field| {
+                track
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            };
+            Some(PlayerTrack {
+                id,
+                kind,
+                language: text("lang"),
+                title: text("title"),
+                codec: text("codec"),
+                selected: track
+                    .get("selected")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                external: track
+                    .get("external")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn normalized_stop_reason(reason: Option<&str>) -> Option<&'static str> {

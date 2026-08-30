@@ -50,6 +50,7 @@ export const queryKeys = {
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,
+  playbackNeighbors: (id: string) => ["player", "neighbors", id] as const,
   playerState: ["player", "state"] as const,
   seerrStatus: ["seerr", "status"] as const,
   seerrSearch: (term: string) => ["seerr", "search", term] as const,

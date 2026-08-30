@@ -9,7 +9,26 @@ use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest};
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
-use super::super::{ControllerState, PendingPlayback, PlaybackIdentity};
+use super::super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
+
+fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
+    loop {
+        match event_rx.try_recv().expect("playback event") {
+            PlaybackEvent::StateChanged(_) => {}
+            event => return event,
+        }
+    }
+}
+
+#[test]
+fn library_playback_never_schedules_external_window_raise() {
+    let mut state = controller_with_pending_load(None);
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
+
+    state.schedule_mpv_raise("test");
+
+    assert!(state.pending_raise_pulse_reset_at.is_none());
+}
 
 #[test]
 fn playback_abort_snapshot_does_not_fail_pending_load() {
@@ -25,6 +44,45 @@ fn playback_abort_snapshot_does_not_fail_pending_load() {
         Some(2000.0)
     );
     assert_eq!(state.last_state.position_ticks, 20_000_000);
+}
+
+#[test]
+fn track_list_keeps_selectable_audio_and_subtitle_tracks() {
+    let mut state = controller_with_pending_load(None);
+
+    state.apply_property(
+        Some("track-list"),
+        Some(&json!([
+            { "id": 1, "type": "video", "selected": true },
+            {
+                "id": 2,
+                "type": "audio",
+                "lang": "jpn",
+                "title": "Surround",
+                "codec": "dts",
+                "selected": true
+            },
+            {
+                "id": 3,
+                "type": "sub",
+                "lang": "eng",
+                "title": "English SDH",
+                "external": true,
+                "selected": false
+            }
+        ])),
+    );
+
+    let snapshot = state.publish_snapshot();
+    assert_eq!(snapshot.tracks.len(), 2);
+    assert_eq!(snapshot.tracks[0].id, 2);
+    assert_eq!(
+        snapshot.tracks[0].kind,
+        crate::playback::PlayerTrackKind::Audio
+    );
+    assert!(snapshot.tracks[0].selected);
+    assert_eq!(snapshot.tracks[1].title.as_deref(), Some("English SDH"));
+    assert!(snapshot.tracks[1].external);
 }
 
 #[test]
@@ -99,6 +157,16 @@ fn finish_without_reporter_marks_mpv_snapshot_inactive() {
     assert!(!snapshot_active(&state));
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn svp_library_uses_the_pipe_name_expected_by_svp() {
+    let mut state = controller_with_pending_load(None);
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
+    state.libmpv_profile = crate::preferences::LibmpvProfile::Svp;
+
+    assert_eq!(state.next_ipc_path(), r"\\.\pipe\mpvpipe");
+}
+
 #[test]
 fn finish_without_reporter_emits_stopped_event() {
     let (tx, rx) = mpsc::channel();
@@ -113,7 +181,10 @@ fn finish_without_reporter_emits_stopped_event() {
         Some(event_tx),
         Arc::new(AtomicBool::new(false)),
         SegmentSkipConfig::default(),
-        crate::players::mpv::runtime::MpvRuntimeKind::External,
+        RuntimeSelection {
+            kind: crate::players::mpv::runtime::MpvRuntimeKind::External,
+            libmpv_profile: crate::preferences::LibmpvProfile::Standard,
+        },
     );
     state.pending = Some(PendingPlayback {
         key: "test-load".to_string(),
@@ -126,7 +197,7 @@ fn finish_without_reporter_emits_stopped_event() {
     state.activate_pending();
     state.finish_active(Some("quit"));
 
-    let event = event_rx.try_recv().expect("stopped event");
+    let event = next_terminal_event(&event_rx);
     assert!(matches!(
         event,
         PlaybackEvent::Stopped(snapshot)
@@ -258,9 +329,10 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
         Some("replacement-session")
     );
 
-    let stopped = match event_rx.try_recv().expect("stopped event before failure") {
+    let stopped = match next_terminal_event(&event_rx) {
         PlaybackEvent::Stopped(stopped) => stopped,
         PlaybackEvent::Failed { .. } => panic!("failure event arrived before stopped event"),
+        PlaybackEvent::StateChanged(_) => unreachable!(),
     };
     assert!(!stopped.active);
     assert_eq!(stopped.stop_reason, Some("error"));
@@ -269,7 +341,7 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
     assert_eq!(stopped.media_source_id, snapshot.media_source_id);
     assert_eq!(stopped.play_session_id, snapshot.play_session_id);
     assert!(matches!(
-        event_rx.try_recv().expect("failure event after stopped"),
+        next_terminal_event(&event_rx),
         PlaybackEvent::Failed { .. }
     ));
     assert!(matches!(

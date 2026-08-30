@@ -188,7 +188,7 @@ diff --git a/packages/mpv.cmake b/packages/mpv.cmake
 index a2954d5..2a7ef98 100644
 --- a/packages/mpv.cmake
 +++ b/packages/mpv.cmake
-@@ -1,33 +1,16 @@
+@@ -1,33 +1,20 @@
  ExternalProject_Add(mpv
      DEPENDS
 -        angle-headers
@@ -202,7 +202,7 @@ index a2954d5..2a7ef98 100644
 -        libiconv
 -        libjpeg
 -        libpng
--        luajit
+         luajit
 -        rubberband
 -        uchardet
 -        openal-soft
@@ -211,7 +211,7 @@ index a2954d5..2a7ef98 100644
 -        shaderc
          libplacebo
 -        spirv-cross
--        vapoursynth
+         vapoursynth
 -        libsdl2
 -        subrandr
 -        libsixel
@@ -223,14 +223,16 @@ index a2954d5..2a7ef98 100644
 +    GIT_REMOTE_NAME origin
 +    GIT_RESET 41f6a645068483470267271e1d09966ca3b9f413 # v0.41.0
      UPDATE_COMMAND ""
++    PATCH_COMMAND ${EXEC} git reset --hard 41f6a645068483470267271e1d09966ca3b9f413
++        COMMAND ${EXEC} git apply ${CMAKE_CURRENT_SOURCE_DIR}/mediaflick-vapoursynth-runtime.patch
      CONFIGURE_COMMAND ${EXEC} CONF=1 meson setup <BINARY_DIR> <SOURCE_DIR>
          --prefix=${MINGW_INSTALL_PREFIX}
-@@ -41,24 +24,28 @@ ExternalProject_Add(mpv
+@@ -41,24 +26,28 @@ ExternalProject_Add(mpv
          -Db_lto=true
          ${mpv_lto_mode}
          -Dlibmpv=true
 -        -Dpdf-build=enabled
--        -Dlua=enabled
+         -Dlua=enabled
 -        -Djavascript=enabled
 -        -Dsdl2-gamepad=enabled
 -        -Dlibarchive=enabled
@@ -241,7 +243,6 @@ index a2954d5..2a7ef98 100644
 +        -Dgpl=false
 +        -Dcplayer=false
 +        -Dpdf-build=disabled
-+        -Dlua=disabled
 +        -Djavascript=disabled
 +        -Dsdl2-gamepad=disabled
 +        -Dlibarchive=disabled
@@ -255,13 +256,12 @@ index a2954d5..2a7ef98 100644
 +        -Dshaderc=enabled
          -Dspirv-cross=enabled
 -        -Dvulkan=enabled
--        -Dvapoursynth=enabled
+         -Dvapoursynth=enabled
 -        -Dsubrandr=enabled
 -        -Dsixel=enabled
 -        ${mpv_gl}
 -        -Dlibcurl=enabled
 +        -Dvulkan=disabled
-+        -Dvapoursynth=disabled
 +        -Dsixel=disabled
 +        -Dgl=enabled
 +        -Dgl-win32=enabled
@@ -270,7 +270,7 @@ index a2954d5..2a7ef98 100644
          -Dc_args='-Wno-error=int-conversion'
      BUILD_COMMAND ${EXEC} LTO_JOB=1 PDB=1 ninja -C <BINARY_DIR>
      INSTALL_COMMAND ""
-@@ -67,47 +54,29 @@ ExternalProject_Add(mpv
+@@ -67,47 +56,29 @@ ExternalProject_Add(mpv
  
  ExternalProject_Add_Step(mpv strip-binary
      DEPENDEES build

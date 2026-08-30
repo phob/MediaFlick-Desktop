@@ -12,6 +12,7 @@ const settings: ClientSettings = {
   client: {
     player: {
       playerBackend: "mpv",
+      libmpvProfile: "standard",
       mpvPath: null,
       mpchcPath: null,
       defaultFullscreen: "fullscreen",

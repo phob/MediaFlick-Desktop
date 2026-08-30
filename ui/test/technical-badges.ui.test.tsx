@@ -10,7 +10,7 @@ import { parseJsonObject } from "./support/fixtures"
 
 const clientSettings: ClientSettings = {
   client: {
-    player: { playerBackend: "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false },
+    player: { playerBackend: "mpv", libmpvProfile: "standard", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false },
     playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },

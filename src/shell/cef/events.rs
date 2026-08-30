@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use super::bridge::*;
 use super::document::*;
 use super::*;
@@ -21,15 +23,63 @@ fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
 }
 
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
+    const STATE_PUSH_INTERVAL: Duration = Duration::from_millis(100);
+
     let state = Arc::downgrade(state);
     thread::spawn(move || {
-        while let Ok(event) = rx.recv() {
+        let post = |event| {
             let Some(state) = state.upgrade() else {
-                break;
+                return false;
             };
             let mut task = PlaybackEventTask::new(state, event);
             if post_task(ThreadId::UI, Some(&mut task)) == 0 {
                 tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
+            }
+            true
+        };
+        let mut pending_state = None;
+        let mut state_deadline: Option<Instant> = None;
+        loop {
+            let received = if let Some(deadline) = state_deadline {
+                rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            } else {
+                match rx.recv() {
+                    Ok(event) => Ok(event),
+                    Err(_) => Err(mpsc::RecvTimeoutError::Disconnected),
+                }
+            };
+            match received {
+                Ok(PlaybackEvent::StateChanged(snapshot)) => {
+                    pending_state = Some(snapshot);
+                    state_deadline.get_or_insert_with(|| Instant::now() + STATE_PUSH_INTERVAL);
+                }
+                Ok(event) => {
+                    if let Some(snapshot) = pending_state.take()
+                        && !post(PlaybackEvent::StateChanged(snapshot))
+                    {
+                        break;
+                    }
+                    state_deadline = None;
+                    if !post(event) {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let Some(snapshot) = pending_state.take() else {
+                        state_deadline = None;
+                        continue;
+                    };
+                    state_deadline = None;
+                    if !post(PlaybackEvent::StateChanged(snapshot)) {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    if let Some(snapshot) = pending_state {
+                        let _ = post(PlaybackEvent::StateChanged(snapshot));
+                    }
+                    break;
+                }
             }
         }
     });
@@ -435,27 +485,37 @@ fn playback_cache_refresh_script(item_id: &str, outcome: PlaybackCacheRefreshOut
 
 fn playback_event_script(event: &PlaybackEvent) -> String {
     match event {
-        PlaybackEvent::Stopped(snapshot) => {
-            let payload = json!({
-                "active": snapshot.active,
-                "playbackId": snapshot.playback_id,
-                "itemId": snapshot.item_id,
-                "mediaSourceId": snapshot.media_source_id,
-                "playSessionId": snapshot.play_session_id,
-                "positionMs": snapshot.position_ms,
-                "durationMs": snapshot.duration_ms,
-                "paused": snapshot.paused,
-                "volume": snapshot.volume,
-                "mute": snapshot.mute,
-                "stopReason": snapshot.stop_reason,
-            });
-            format!(
-                "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({});",
-                js_json(&payload)
-            )
-        }
+        PlaybackEvent::StateChanged(snapshot) => format!(
+            "window.__mediaFlickDesktopPlaybackStateChanged&&window.__mediaFlickDesktopPlaybackStateChanged({});",
+            js_json(&player_snapshot_json(snapshot))
+        ),
+        PlaybackEvent::Stopped(snapshot) => format!(
+            "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({});",
+            js_json(&player_snapshot_json(snapshot))
+        ),
         PlaybackEvent::Failed { .. } => String::new(),
     }
+}
+
+fn player_snapshot_json(snapshot: &crate::playback::PlayerSnapshot) -> serde_json::Value {
+    json!({
+        "active": snapshot.active,
+        "playbackId": snapshot.playback_id,
+        "itemId": snapshot.item_id,
+        "mediaSourceId": snapshot.media_source_id,
+        "playSessionId": snapshot.play_session_id,
+        "playMethod": snapshot.play_method,
+        "positionMs": snapshot.position_ms,
+        "durationMs": snapshot.duration_ms,
+        "paused": snapshot.paused,
+        "volume": snapshot.volume,
+        "mute": snapshot.mute,
+        "tracks": snapshot.tracks,
+        "chapters": snapshot.chapters,
+        "skipSegments": snapshot.skip_segments,
+        "diagnostics": snapshot.diagnostics,
+        "stopReason": snapshot.stop_reason,
+    })
 }
 
 fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
@@ -849,6 +909,7 @@ fn execute_mpv_setup_script(frame: &Frame, script: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::playback::{PlaybackDiagnostics, PlayerChapter, PlayerSnapshot};
     use crate::preferences::{AppSettings, AppearanceTheme, PlayerBackend, WebUiWindowSettings};
 
     #[test]
@@ -857,6 +918,7 @@ mod tests {
             webui_window: WebUiWindowSettings {
                 width: 1536,
                 height: 864,
+                position: None,
                 maximized: false,
             },
             ..AppSettings::default()
@@ -870,6 +932,28 @@ mod tests {
         // unrelated settings change -> close.
         assert_eq!(live.webui_window.size(), (1536, 864));
         assert_eq!(live.appearance.theme, AppearanceTheme::Light);
+    }
+
+    #[test]
+    fn playback_snapshot_script_carries_timeline_and_diagnostics() {
+        let payload = player_snapshot_json(&PlayerSnapshot {
+            chapters: vec![PlayerChapter {
+                title: "Opening".to_string(),
+                start_ms: 30_000.0,
+            }],
+            diagnostics: PlaybackDiagnostics {
+                buffered_until_ms: Some(60_000.0),
+                buffering: true,
+                dropped_frames: Some(2),
+                frame_rate: Some(23.976),
+            },
+            ..PlayerSnapshot::default()
+        });
+
+        assert_eq!(payload["chapters"][0]["title"], "Opening");
+        assert_eq!(payload["diagnostics"]["bufferedUntilMs"], 60_000.0);
+        assert_eq!(payload["diagnostics"]["buffering"], true);
+        assert_eq!(payload["diagnostics"]["droppedFrames"], 2);
     }
 
     #[test]

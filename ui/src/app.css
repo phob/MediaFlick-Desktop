@@ -314,8 +314,31 @@ html[data-libmpv-playback] #root {
   background: transparent !important;
 }
 
+html[data-libmpv-cursor-hidden],
+html[data-libmpv-cursor-hidden] * {
+  cursor: none !important;
+}
+
 .libmpv-overlay {
   background: transparent;
+}
+
+.libmpv-overlay-chrome {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.libmpv-overlay-chrome[data-visible="false"] {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(0.5rem);
+}
+
+.libmpv-overlay-brand.libmpv-overlay-chrome[data-visible="false"] {
+  transform: translateY(-0.5rem);
 }
 
 .libmpv-overlay-brand {

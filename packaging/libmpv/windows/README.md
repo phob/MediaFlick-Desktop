@@ -5,11 +5,16 @@ runtime, so users can still select their own external mpv or MPC-HC and the app
 can report a missing or incompatible bundled library without failing to start.
 
 The build is based on a pinned `mpv-winbuild-cmake` revision plus the adjacent
-patch. It produces libmpv without the mpv command-line player, Lua/JavaScript,
-Vulkan, optical-disc, archive, VapourSynth, Rubber Band, or external encoding libraries.
-It keeps FFmpeg network playback, Windows Schannel TLS, D3D11/D3D11VA,
-OpenGL, libass subtitle rendering, ICC color management, and common software
-decoders. The baseline is x86-64 rather than x86-64-v3.
+patch. It produces libmpv without the mpv command-line player, JavaScript,
+Vulkan, optical-disc, archive, Rubber Band, or external encoding libraries. It
+includes Lua and VapourSynth support for SVP compatibility. VapourSynth itself
+is not bundled, so an installed SVP or VapourSynth runtime must provide
+`VSScript.dll` and its plugin dependencies. MediaFlick's mpv patch loads that
+DLL only when the VapourSynth filter starts, which keeps ordinary libmpv
+playback working when VapourSynth is not installed. The build keeps FFmpeg
+network playback, Windows Schannel TLS, D3D11/D3D11VA, OpenGL, libass subtitle
+rendering, ICC color management, and common software decoders. The baseline is
+x86-64 rather than x86-64-v3.
 
 mpv 0.41.0 and FFmpeg 8.0.1 are pinned in the patch. GPL-only mpv and FFmpeg
 features are disabled. Every build records the exact revisions of transitive
