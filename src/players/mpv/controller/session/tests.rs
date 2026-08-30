@@ -162,7 +162,7 @@ fn finish_without_reporter_marks_mpv_snapshot_inactive() {
 fn svp_library_uses_the_pipe_name_expected_by_svp() {
     let mut state = controller_with_pending_load(None);
     state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
-    state.libmpv_profile = crate::preferences::LibmpvProfile::Svp;
+    state.libmpv_profile = crate::players::mpv::runtime::LibmpvProfile::Svp;
 
     assert_eq!(state.next_ipc_path(), r"\\.\pipe\mpvpipe");
 }
@@ -183,7 +183,7 @@ fn finish_without_reporter_emits_stopped_event() {
         SegmentSkipConfig::default(),
         RuntimeSelection {
             kind: crate::players::mpv::runtime::MpvRuntimeKind::External,
-            libmpv_profile: crate::preferences::LibmpvProfile::Standard,
+            libmpv_profile: crate::players::mpv::runtime::LibmpvProfile::Standard,
         },
     );
     state.pending = Some(PendingPlayback {

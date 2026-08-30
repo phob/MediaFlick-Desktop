@@ -407,7 +407,6 @@ export interface ReleaseCalendar {
 
 export interface PlayerSettings {
   playerBackend: "libmpv" | "mpv" | "mpchc"
-  libmpvProfile: "standard" | "svp"
   mpvPath: string | null
   mpchcPath: string | null
   defaultFullscreen: "fullscreen" | "windowed"
@@ -421,7 +420,6 @@ export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
 export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
   return {
     playerBackend: settings.playerBackend,
-    libmpvProfile: settings.libmpvProfile,
     mpvPath: settings.mpvPath,
     mpchcPath: settings.mpchcPath,
     defaultFullscreen: settings.defaultFullscreen,

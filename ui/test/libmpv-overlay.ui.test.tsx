@@ -10,7 +10,6 @@ const settings = {
   client: {
     player: {
       playerBackend: "libmpv",
-      libmpvProfile: "standard",
       mpvPath: null,
       mpchcPath: null,
       defaultFullscreen: "windowed",

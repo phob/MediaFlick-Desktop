@@ -68,7 +68,6 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
         "client": {
             "player": {
                 "playerBackend": settings.effective_backend().as_str(),
-                "libmpvProfile": settings.libmpv_profile.as_str(),
                 "mpvPath": settings.mpv_path,
                 "mpchcPath": settings.mpchc_path,
                 "defaultFullscreen": settings.default_fullscreen.as_str(),

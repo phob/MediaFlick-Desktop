@@ -23,7 +23,6 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
   client: {
     player: {
       playerBackend: "mpv",
-      libmpvProfile: "standard",
       mpvPath: null,
       mpchcPath: null,
       defaultFullscreen: "windowed",

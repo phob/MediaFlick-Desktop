@@ -7,8 +7,8 @@ use crate::players::mpv::input::MpvInputBindings;
 
 use super::{
     AccountConfigurationService, AccountKey, AppSettings, AppearanceAccent, AppearanceDensity,
-    AppearanceTheme, CloseBehavior, FileSettingsStore, FullscreenBehavior, LibmpvProfile,
-    PlayerBackend, SegmentSkipMode, SettingsStore, StreamingQuality, WebUiWindowSettings,
+    AppearanceTheme, CloseBehavior, FileSettingsStore, FullscreenBehavior, PlayerBackend,
+    SegmentSkipMode, SettingsStore, StreamingQuality, WebUiWindowSettings,
 };
 
 /// Serialized patches accepted by the settings API.  These deliberately name
@@ -40,7 +40,6 @@ where
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayerSettingsPatch {
     pub player_backend: Option<String>,
-    pub libmpv_profile: Option<String>,
     /// An explicit JSON `null` clears a path; an omitted field preserves it.
     #[serde(default)]
     pub mpv_path: NullablePatch<String>,
@@ -215,16 +214,6 @@ impl PreferencesService {
                         ));
                     }
                     next.player_backend = Some(backend);
-                }
-                if let Some(value) = patch.libmpv_profile.as_deref() {
-                    let profile = LibmpvProfile::from_id(value)
-                        .ok_or_else(|| PreferencesError::invalid("libmpv profile"))?;
-                    if profile == LibmpvProfile::Svp && !cfg!(target_os = "windows") {
-                        return Err(PreferencesError(
-                            "SVP compatibility is only available on Windows".to_string(),
-                        ));
-                    }
-                    next.libmpv_profile = profile;
                 }
                 match patch.mpv_path {
                     NullablePatch::Unchanged => {}
@@ -487,9 +476,6 @@ pub struct SettingsApplyPlan {
 impl SettingsApplyPlan {
     pub fn between(previous: &AppSettings, next: &AppSettings) -> Self {
         let backend_changed = previous.effective_backend() != next.effective_backend();
-        let libmpv_profile_changed = previous.libmpv_profile != next.libmpv_profile
-            && (previous.effective_backend() == super::PlayerBackend::Libmpv
-                || next.effective_backend() == super::PlayerBackend::Libmpv);
         let window_model_changed = backend_changed
             && (previous.effective_backend() == super::PlayerBackend::Libmpv
                 || next.effective_backend() == super::PlayerBackend::Libmpv);
@@ -506,9 +492,7 @@ impl SettingsApplyPlan {
             update_input_bindings: false,
             update_segment_policy: previous.segment_skip_config() != next.segment_skip_config(),
             update_shell_css: previous.show_scrollbars != next.show_scrollbars,
-            restart_required: previous.log_level != next.log_level
-                || window_model_changed
-                || libmpv_profile_changed,
+            restart_required: previous.log_level != next.log_level || window_model_changed,
         }
     }
 }
@@ -546,7 +530,6 @@ mod tests {
     fn player_patch_contract_accepts_only_writable_fields() {
         let writable = json!({
             "playerBackend": "mpv",
-            "libmpvProfile": "standard",
             "mpvPath": null,
             "mpchcPath": null,
             "defaultFullscreen": "fullscreen",
@@ -556,7 +539,6 @@ mod tests {
 
         let response_shape = json!({
             "playerBackend": "mpv",
-            "libmpvProfile": "standard",
             "mpvPath": null,
             "mpchcPath": null,
             "defaultFullscreen": "fullscreen",
@@ -677,22 +659,6 @@ mod tests {
                 restart_required: true,
             }
         );
-    }
-
-    #[test]
-    fn changing_the_active_libmpv_profile_requires_a_restart() {
-        let mut previous = AppSettings {
-            player_backend: Some(crate::preferences::PlayerBackend::Libmpv),
-            ..AppSettings::default()
-        };
-        let mut next = previous.clone();
-        next.libmpv_profile = LibmpvProfile::Svp;
-
-        assert!(SettingsApplyPlan::between(&previous, &next).restart_required);
-
-        previous.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
-        next.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
-        assert!(!SettingsApplyPlan::between(&previous, &next).restart_required);
     }
 
     #[test]

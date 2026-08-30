@@ -214,7 +214,7 @@ impl ControllerState {
     fn next_ipc_path(&self) -> String {
         #[cfg(target_os = "windows")]
         if self.runtime_kind == super::MpvRuntimeKind::Library
-            && self.libmpv_profile == crate::preferences::LibmpvProfile::Svp
+            && self.libmpv_profile == crate::players::mpv::runtime::LibmpvProfile::Svp
         {
             return r"\\.\pipe\mpvpipe".to_string();
         }

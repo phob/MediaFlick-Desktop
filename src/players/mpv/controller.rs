@@ -16,8 +16,8 @@ use crate::playback::{
     PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
-use crate::players::mpv::runtime::{MpvRuntime, MpvRuntimeKind};
-use crate::preferences::{FullscreenBehavior, LibmpvProfile, SegmentSkipConfig};
+use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
+use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 pub use super::commands::control_command;
 use super::commands::{LoadFileBehavior, loadfile_command_with_behavior};
@@ -228,11 +228,10 @@ impl MpvController {
     pub fn new_libmpv(
         event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
-        libmpv_profile: LibmpvProfile,
     ) -> Self {
         Self::with_runtime(
             MpvRuntimeKind::Library,
-            libmpv_profile,
+            LibmpvProfile::detected(),
             event_tx,
             segment_skip_config,
         )
