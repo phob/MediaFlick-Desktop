@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 winbuild_commit="cd1edc11dc6887a50f705717619d879f5a93a488"
 patch_file="$repo_root/packaging/libmpv/windows/mpv-winbuild-cmake.patch"
+vapoursynth_runtime_patch="$repo_root/packaging/libmpv/windows/mpv-vapoursynth-runtime.patch"
 work_dir="${MEDIAFLICK_LIBMPV_WORK_DIR:-$repo_root/.cache/libmpv-windows-x64}"
 output_dir="${1:-$repo_root/build/libmpv-windows-x64}"
 winbuild_dir="$work_dir/mpv-winbuild-cmake"
@@ -45,6 +46,11 @@ else
     exit 1
 fi
 
+rm -f "$winbuild_dir/mediaflick-vapoursynth-runtime.patch"
+install -m 0644 \
+    "$vapoursynth_runtime_patch" \
+    "$winbuild_dir/packages/mediaflick-vapoursynth-runtime.patch"
+
 cmake \
     -S "$winbuild_dir" \
     -B "$build_dir" \
@@ -77,7 +83,9 @@ manifest="$output_dir/SOURCE-REVISIONS.txt"
 {
     printf 'MediaFlick Windows libmpv build\n'
     printf 'mpv-winbuild-cmake %s\n' "$winbuild_commit"
-    printf 'MediaFlick patch SHA-256 %s\n\n' "$(sha256sum "$patch_file" | cut -d' ' -f1)"
+    printf 'MediaFlick build patch SHA-256 %s\n' "$(sha256sum "$patch_file" | cut -d' ' -f1)"
+    printf 'MediaFlick VapourSynth runtime patch SHA-256 %s\n\n' \
+        "$(sha256sum "$vapoursynth_runtime_patch" | cut -d' ' -f1)"
     printf 'Source repositories present in this build cache and source archive:\n'
     find "$source_cache" -mindepth 1 -maxdepth 1 -type d -print0 \
         | sort -z \

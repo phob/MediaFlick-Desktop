@@ -65,10 +65,14 @@ preventing MediaFlick from launching when another backend is selected. The
 primary libmpv event queue is drained during supervision because an undrained
 queue can fill even though playback events are consumed through JSON IPC.
 
-Built-in mode starts with `config=no` and `load-scripts=no`. This makes the
-bundled runtime deterministic and keeps it independent of a user's external
-mpv files. Users who need scripts, shaders, SVP, or their existing `mpv.conf`
-should select External mpv.
+The standard built-in profile starts with `config=no` and `load-scripts=no`.
+This keeps the bundled runtime independent of a user's external mpv files. On
+Windows, the optional SVP 4 profile keeps `config=no` but enables Lua scripts,
+uses `hwdec=auto-copy`, enables every hardware-decoded codec, disables framedrop
+during precise seeks, and exposes `\\.\pipe\mpvpipe`. It also registers SVP's
+`mpv64` directory for DLL loading and prepends it to `PYTHONPATH` when SVP is
+installed in Program Files. External mpv remains the backend for arbitrary
+scripts, shaders, and complete `mpv.conf` compatibility.
 
 ## Settings and migration
 

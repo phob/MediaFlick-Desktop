@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use crate::playback::PlaybackRequest;
 use crate::players::mpv::runtime::MpvRuntimeKind;
-use crate::preferences::SegmentSkipConfig;
+use crate::preferences::{LibmpvProfile, SegmentSkipConfig};
 
-use super::{ControllerState, PendingPlayback, PlaybackIdentity};
+use super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
 
 pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
     let (tx, rx) = mpsc::channel();
@@ -21,7 +21,10 @@ pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> Con
         None,
         Arc::new(AtomicBool::new(false)),
         SegmentSkipConfig::default(),
-        MpvRuntimeKind::External,
+        RuntimeSelection {
+            kind: MpvRuntimeKind::External,
+            libmpv_profile: LibmpvProfile::Standard,
+        },
     );
     state.pending = Some(PendingPlayback {
         key: "test-load".to_string(),

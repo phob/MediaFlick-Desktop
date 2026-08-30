@@ -70,6 +70,7 @@ struct Identity {
     item_id: Option<String>,
     media_source_id: Option<String>,
     play_session_id: Option<String>,
+    play_method: Option<String>,
 }
 
 impl Identity {
@@ -79,6 +80,7 @@ impl Identity {
             item_id: launch.item_id.clone(),
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
+            play_method: launch.play_method.clone(),
         }
     }
 }
@@ -122,6 +124,9 @@ fn update_identity_from_context(identity: &mut Identity, context: &PlaybackConte
         identity
             .play_session_id
             .clone_from(&context.play_session_id);
+    }
+    if identity.play_method.is_none() {
+        identity.play_method.clone_from(&context.play_method);
     }
 }
 
@@ -494,15 +499,17 @@ impl State {
     }
 
     fn apply_default_fullscreen(&mut self) {
-        if !self.connected {
+        self.set_fullscreen(self.fullscreen_pref);
+    }
+
+    fn set_fullscreen(&mut self, fullscreen: FullscreenBehavior) {
+        let want_fullscreen = fullscreen == FullscreenBehavior::Fullscreen;
+        if !self.connected || self.fullscreen_state == want_fullscreen {
             return;
         }
-        let want = self.fullscreen_pref == FullscreenBehavior::Fullscreen;
-        if self.fullscreen_state == want {
-            return;
+        if self.send_command_empty(protocol::CMD_TOGGLEFULLSCREEN) {
+            self.fullscreen_state = want_fullscreen;
         }
-        self.send_command_empty(protocol::CMD_TOGGLEFULLSCREEN);
-        self.fullscreen_state = want;
     }
 
     fn control(&mut self, command: &PlayerCommand) {
@@ -520,6 +527,15 @@ impl State {
             }
             PlayerCommand::SetPlaybackRate(rate) => {
                 self.send_command(protocol::CMD_SETSPEED, &format!("{rate}"));
+            }
+            PlayerCommand::SetAudioDelay(_)
+            | PlayerCommand::SetSubtitleDelay(_)
+            | PlayerCommand::SetSubtitleScale(_)
+            | PlayerCommand::SetVideoFit(_)
+            | PlayerCommand::SetVideoAspect(_)
+            | PlayerCommand::SetDeinterlace(_)
+            | PlayerCommand::SetToneMapping(_) => {
+                tracing::debug!(target: "mpchc", "playback tuning is unavailable through the MPC-HC web interface");
             }
             PlayerCommand::SetAudioTrack(index) => {
                 if let Some(track) = mpchc_audio_index(*index) {
@@ -539,12 +555,17 @@ impl State {
                 tracing::debug!(target: "mpchc", "subtitle visibility toggling is unavailable through the MPC-HC web interface");
             }
             PlayerCommand::ToggleFullscreen => {
-                self.send_command_empty(protocol::CMD_TOGGLEFULLSCREEN);
-                self.fullscreen_state = !self.fullscreen_state;
+                let fullscreen = if self.fullscreen_state {
+                    FullscreenBehavior::Windowed
+                } else {
+                    FullscreenBehavior::Fullscreen
+                };
+                self.set_fullscreen(fullscreen);
             }
             PlayerCommand::SetVolume(volume) => self.set_volume(*volume),
             PlayerCommand::SetMute(mute) => self.set_mute(*mute),
             PlayerCommand::Stop => {
+                self.set_fullscreen(FullscreenBehavior::Windowed);
                 self.finish_active("stop", false);
                 self.send_command_empty(protocol::CMD_STOP);
             }
@@ -822,6 +843,7 @@ impl State {
             item_id: identity.and_then(|identity| identity.item_id.clone()),
             media_source_id: identity.and_then(|identity| identity.media_source_id.clone()),
             play_session_id: identity.and_then(|identity| identity.play_session_id.clone()),
+            play_method: identity.and_then(|identity| identity.play_method.clone()),
             position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
             duration_ms: self
                 .last_state
@@ -830,6 +852,10 @@ impl State {
             paused: self.last_state.pause,
             volume: self.last_state.volume,
             mute: self.last_state.mute,
+            tracks: Vec::new(),
+            chapters: Vec::new(),
+            skip_segments: self.skip_segments.clone(),
+            diagnostics: Default::default(),
             stop_reason,
         }
     }
@@ -877,6 +903,7 @@ mod tests {
             item_id: Some("current".to_string()),
             media_source_id: Some("source".to_string()),
             play_session_id: None,
+            play_method: None,
         };
         assert!(identity_matches_context(
             &identity,

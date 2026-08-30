@@ -236,13 +236,19 @@ fn update_webui_window_settings(
     let Some(bounds) = bounds else {
         return;
     };
+    if window.is_some_and(|window| window.is_minimized() != 0 || window.is_fullscreen() != 0) {
+        return;
+    }
     let maximized = window.is_some_and(|window| window.is_maximized() != 0);
     match state.lock() {
         Ok(mut state) => {
-            state
-                .settings
-                .webui_window
-                .record_bounds(bounds.width, bounds.height, maximized);
+            state.settings.webui_window.record_bounds(
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                maximized,
+            );
         }
         Err(error) => {
             tracing::warn!(target: "config", "failed to update WebUI window settings: {error}");

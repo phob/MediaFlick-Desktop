@@ -1,8 +1,11 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
+use serde::Serialize;
+
 use crate::preferences::{SegmentSkipConfig, SegmentSkipMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SegmentType {
     Intro,
     Outro,
@@ -52,7 +55,8 @@ impl SegmentType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkipSegment {
     pub segment_type: SegmentType,
     pub start_ticks: i64,

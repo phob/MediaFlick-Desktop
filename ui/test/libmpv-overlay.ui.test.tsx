@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { AppShell } from "@/components/AppShell"
@@ -10,6 +10,7 @@ const settings = {
   client: {
     player: {
       playerBackend: "libmpv",
+      libmpvProfile: "standard",
       mpvPath: null,
       mpchcPath: null,
       defaultFullscreen: "windowed",
@@ -56,10 +57,13 @@ const settings = {
 describe("integrated libmpv overlay", () => {
   afterEach(() => {
     document.documentElement.removeAttribute("data-libmpv-playback")
+    document.documentElement.removeAttribute("data-libmpv-cursor-hidden")
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   })
 
-  it("replaces library chrome with the brand and player controls during playback", () => {
+  it("replaces library chrome and hides player controls while video keeps playing", () => {
+    vi.useFakeTimers()
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({
@@ -100,7 +104,55 @@ describe("integrated libmpv overlay", () => {
     expect(screen.queryByText("Library chrome")).toBeNull()
     expect(document.documentElement.hasAttribute("data-libmpv-playback")).toBe(true)
 
+    const brand = view.container.querySelector<HTMLElement>(".libmpv-overlay-brand")
+    const playerBar = view.container.querySelector<HTMLElement>(".player-bar")?.parentElement
+    expect(brand?.dataset.visible).toBe("true")
+    expect(playerBar?.dataset.visible).toBe("true")
+
+    fireEvent.mouseMove(window, { clientX: 500, clientY: 300 })
+    act(() => vi.advanceTimersByTime(3000))
+    expect(brand?.dataset.visible).toBe("false")
+    expect(playerBar?.dataset.visible).toBe("false")
+    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(true)
+
+    fireEvent.mouseMove(window, { clientX: 500, clientY: 300 })
+    fireEvent.mouseMove(window, { clientX: 509, clientY: 300 })
+    expect(playerBar?.dataset.visible).toBe("false")
+    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(true)
+
+    fireEvent.mouseMove(window, { clientX: 510, clientY: 300 })
+    expect(playerBar?.dataset.visible).toBe("false")
+    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
+
+    fireEvent.mouseMove(window, {
+      clientX: window.innerWidth / 2,
+      clientY: window.innerHeight - 1,
+    })
+    expect(playerBar?.dataset.visible).toBe("true")
+
+    act(() => {
+      document.dispatchEvent(new Event("fullscreenchange"))
+      vi.advanceTimersByTime(2000)
+      window.dispatchEvent(new Event("resize"))
+      vi.advanceTimersByTime(2999)
+    })
+    expect(playerBar?.dataset.visible).toBe("true")
+
+    act(() => vi.advanceTimersByTime(1))
+    expect(playerBar?.dataset.visible).toBe("false")
+
+    act(() => {
+      client.setQueryData<PlayerState>(queryKeys.playerState, (current) => ({
+        ...current!,
+        paused: true,
+      }))
+      vi.advanceTimersByTime(3000)
+    })
+    expect(playerBar?.dataset.visible).toBe("true")
+    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
+
     view.unmount()
     expect(document.documentElement.hasAttribute("data-libmpv-playback")).toBe(false)
+    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
   })
 })

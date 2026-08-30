@@ -353,10 +353,15 @@ fn write_observe_commands<W: Write>(stream: &mut W) -> io::Result<()> {
         "duration",
         "volume",
         "mute",
+        "track-list",
         "eof-reached",
         "seeking",
         "playback-abort",
         "chapter-list",
+        "paused-for-cache",
+        "demuxer-cache-time",
+        "vo-drop-frame-count",
+        "estimated-vf-fps",
     ] {
         let command = json!({
             "command": ["observe_property", next_request_id(), property],

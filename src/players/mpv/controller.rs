@@ -12,14 +12,15 @@ use crate::jellyfin::playback_reporter::PlaybackReporter;
 use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::SkipSegment;
 use crate::playback::{
-    NativeWindowHandle, PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand,
-    PlayerSnapshot, ReportingState,
+    NativeWindowHandle, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
+    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{MpvRuntime, MpvRuntimeKind};
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, LibmpvProfile, SegmentSkipConfig};
 
-pub use super::commands::{control_command, loadfile_command};
+pub use super::commands::control_command;
+use super::commands::{LoadFileBehavior, loadfile_command_with_behavior};
 use session::{is_completion_reason, normalized_stop_reason};
 
 #[path = "playback_transition.rs"]
@@ -84,6 +85,13 @@ enum ControllerMessage {
         playback_id: i64,
         result: Result<Vec<SkipSegment>, String>,
     },
+    MpvEvent {
+        session_id: u64,
+        event: Box<MpvEvent>,
+    },
+    MpvEventsDisconnected {
+        session_id: u64,
+    },
     Shutdown {
         ack: Sender<()>,
     },
@@ -102,25 +110,36 @@ struct PendingAutoSkip {
     next_countdown_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RuntimeSelection {
+    kind: MpvRuntimeKind,
+    libmpv_profile: LibmpvProfile,
+}
+
 struct ControllerState {
     tx: Sender<ControllerMessage>,
     rx: Receiver<ControllerMessage>,
     snapshot: Arc<Mutex<PlayerSnapshot>>,
     runtime_kind: MpvRuntimeKind,
+    libmpv_profile: LibmpvProfile,
     runtime: Option<MpvRuntime>,
     configured_mpv: Option<ConfiguredMpv>,
     current_mpv_path: Option<String>,
     ipc_path: Option<String>,
     ipc_worker: Option<IpcWorker>,
-    event_rx: Option<Receiver<MpvEvent>>,
+    active_ipc_session_id: Option<u64>,
+    next_ipc_session_id: u64,
     pending_external_subtitle_url: Option<String>,
     active: Option<ActivePlayback>,
     pending: Option<PendingPlayback>,
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
+    pending_library_pause: Option<bool>,
     mpv_playback_active: bool,
     playback_runtime_ticks: Option<i64>,
     last_state: ReportingState,
+    playback_tracks: Vec<PlayerTrack>,
+    playback_diagnostics: PlaybackDiagnostics,
     last_position_log_bucket: Option<i64>,
     skip_segments: Vec<SkipSegment>,
     current_skip_segment: Option<usize>,
@@ -155,6 +174,7 @@ struct PlaybackIdentity {
     item_id: Option<String>,
     media_source_id: Option<String>,
     play_session_id: Option<String>,
+    play_method: Option<String>,
 }
 
 impl PlaybackIdentity {
@@ -164,6 +184,7 @@ impl PlaybackIdentity {
             item_id: launch.item_id.clone(),
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
+            play_method: launch.play_method.clone(),
         }
     }
 }
@@ -196,18 +217,30 @@ impl MpvController {
         event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
     ) -> Self {
-        Self::with_runtime(MpvRuntimeKind::External, event_tx, segment_skip_config)
+        Self::with_runtime(
+            MpvRuntimeKind::External,
+            LibmpvProfile::Standard,
+            event_tx,
+            segment_skip_config,
+        )
     }
 
     pub fn new_libmpv(
         event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
+        libmpv_profile: LibmpvProfile,
     ) -> Self {
-        Self::with_runtime(MpvRuntimeKind::Library, event_tx, segment_skip_config)
+        Self::with_runtime(
+            MpvRuntimeKind::Library,
+            libmpv_profile,
+            event_tx,
+            segment_skip_config,
+        )
     }
 
     fn with_runtime(
         runtime_kind: MpvRuntimeKind,
+        libmpv_profile: LibmpvProfile,
         event_tx: Option<Sender<PlaybackEvent>>,
         segment_skip_config: SegmentSkipConfig,
     ) -> Self {
@@ -225,7 +258,10 @@ impl MpvController {
                 event_tx,
                 controller_shutdown_requested,
                 segment_skip_config,
-                runtime_kind,
+                RuntimeSelection {
+                    kind: runtime_kind,
+                    libmpv_profile,
+                },
             )
             .run()
         });
@@ -312,30 +348,35 @@ impl ControllerState {
         event_tx: Option<Sender<PlaybackEvent>>,
         shutdown_requested: Arc<AtomicBool>,
         segment_skip_config: SegmentSkipConfig,
-        runtime_kind: MpvRuntimeKind,
+        runtime_selection: RuntimeSelection,
     ) -> Self {
         Self {
             tx,
             rx,
             snapshot,
-            runtime_kind,
+            runtime_kind: runtime_selection.kind,
+            libmpv_profile: runtime_selection.libmpv_profile,
             runtime: None,
             configured_mpv: None,
             current_mpv_path: None,
             ipc_path: None,
             ipc_worker: None,
-            event_rx: None,
+            active_ipc_session_id: None,
+            next_ipc_session_id: 1,
             pending_external_subtitle_url: None,
             active: None,
             pending: None,
             playback_identity: None,
             startup_seek: None,
+            pending_library_pause: None,
             mpv_playback_active: false,
             playback_runtime_ticks: None,
             last_state: ReportingState {
                 volume: Some(100),
                 ..Default::default()
             },
+            playback_tracks: Vec::new(),
+            playback_diagnostics: PlaybackDiagnostics::default(),
             last_position_log_bucket: None,
             skip_segments: Vec::new(),
             current_skip_segment: None,
@@ -420,6 +461,12 @@ impl ControllerState {
                     playback_id,
                     result,
                 }) => self.handle_media_segments_fetched(playback_id, result),
+                Ok(ControllerMessage::MpvEvent { session_id, event }) => {
+                    self.handle_session_event(session_id, event.as_ref());
+                }
+                Ok(ControllerMessage::MpvEventsDisconnected { session_id }) => {
+                    self.handle_event_stream_disconnected(session_id);
+                }
                 Ok(ControllerMessage::Shutdown { ack }) => {
                     tracing::debug!(target: "playback", "received playback shutdown request");
                     self.shutdown();
@@ -434,7 +481,6 @@ impl ControllerState {
                 }
             }
 
-            self.drain_events();
             self.maybe_send_startup_seek();
             self.poll_runtime();
             self.maybe_poll_mpv_session();
@@ -447,6 +493,13 @@ impl ControllerState {
     }
 
     fn control(&mut self, command: &PlayerCommand) {
+        if self.runtime_kind == MpvRuntimeKind::Library
+            && self.pending.is_some()
+            && let PlayerCommand::SetPause(pause) = command
+        {
+            self.pending_library_pause = Some(*pause);
+        }
+
         if matches!(command, PlayerCommand::Stop)
             && self.should_suppress_stop_during_next_playback_handoff()
         {
@@ -470,6 +523,9 @@ impl ControllerState {
             tracing::warn!(target: "mpv.ipc", ?command, "cannot send mpv control command because no session is available");
             return;
         }
+        if matches!(command, PlayerCommand::Stop) {
+            self.set_fullscreen(FullscreenBehavior::Windowed);
+        }
         if let Err(error) = self.send_mpv_command(command_json) {
             tracing::warn!(target: "mpv.ipc", ?command, "failed to send mpv control command: {error}");
             if error.is_transport() {
@@ -478,7 +534,20 @@ impl ControllerState {
         }
     }
 
+    fn loadfile_command(&self, launch: &PlaybackRequest) -> Value {
+        let behavior = match self.runtime_kind {
+            MpvRuntimeKind::External => LoadFileBehavior::ExternalDelayedSeek,
+            MpvRuntimeKind::Library => LoadFileBehavior::LibraryPausedAtStart,
+        };
+        loadfile_command_with_behavior(launch, behavior)
+    }
+
     fn kick_start_playback(&mut self, launch: &PlaybackRequest) {
+        if self.runtime_kind == MpvRuntimeKind::Library {
+            self.startup_seek = None;
+            return;
+        }
+
         // Regression guard: resumed Jellyfin streams must not use mpv's
         // load-time `start` option. On Windows external mpv can show a still
         // frame until a later seek when opened directly at the resume offset.
@@ -584,10 +653,11 @@ impl ControllerState {
             );
             return;
         };
-        self.apply_default_fullscreen(fullscreen);
+        self.apply_external_default_fullscreen(fullscreen);
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
+        self.pending_library_pause = None;
         self.reset_chapter_markers();
         let replacing_active_file = self.mpv_playback_active || self.active.is_some();
         if let Some(active) = self.active.take() {

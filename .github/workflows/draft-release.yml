@@ -214,7 +214,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .cache/libmpv-windows-x64
-          key: libmpv-windows-x64-${{ hashFiles('scripts/build-libmpv-windows.sh', 'packaging/libmpv/windows/mpv-winbuild-cmake.patch') }}
+          key: libmpv-windows-x64-${{ hashFiles('scripts/build-libmpv-windows.sh', 'packaging/libmpv/windows/*.patch') }}
 
       - name: Build libmpv and corresponding sources
         run: bash scripts/build-libmpv-windows.sh

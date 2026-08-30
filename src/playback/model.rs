@@ -213,6 +213,65 @@ impl fmt::Display for ReportingState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerTrackKind {
+    Audio,
+    Subtitle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerTrack {
+    pub id: i64,
+    pub kind: PlayerTrackKind,
+    pub language: Option<String>,
+    pub title: Option<String>,
+    pub codec: Option<String>,
+    pub selected: bool,
+    pub external: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerChapter {
+    pub title: String,
+    pub start_ms: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoFit {
+    Fit,
+    Fill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoAspect {
+    Source,
+    Ratio4x3,
+    Ratio16x9,
+    Ratio21x9,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToneMapping {
+    Auto,
+    Clip,
+    Mobius,
+    Reinhard,
+    Hable,
+    Bt2390,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackDiagnostics {
+    pub buffered_until_ms: Option<f64>,
+    pub buffering: bool,
+    pub dropped_frames: Option<i64>,
+    pub frame_rate: Option<f64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PlayerSnapshot {
     pub active: bool,
@@ -220,16 +279,22 @@ pub struct PlayerSnapshot {
     pub item_id: Option<String>,
     pub media_source_id: Option<String>,
     pub play_session_id: Option<String>,
+    pub play_method: Option<String>,
     pub position_ms: f64,
     pub duration_ms: Option<f64>,
     pub paused: bool,
     pub volume: Option<i64>,
     pub mute: Option<bool>,
+    pub tracks: Vec<PlayerTrack>,
+    pub chapters: Vec<PlayerChapter>,
+    pub skip_segments: Vec<crate::playback::segments::SkipSegment>,
+    pub diagnostics: PlaybackDiagnostics,
     pub stop_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
 pub enum PlaybackEvent {
+    StateChanged(PlayerSnapshot),
     Stopped(PlayerSnapshot),
     Failed { message: String },
 }
@@ -241,6 +306,13 @@ pub enum PlayerCommand {
     SetVolume(f64),
     SetMute(bool),
     SetPlaybackRate(f64),
+    SetAudioDelay(f64),
+    SetSubtitleDelay(f64),
+    SetSubtitleScale(f64),
+    SetVideoFit(VideoFit),
+    SetVideoAspect(VideoAspect),
+    SetDeinterlace(bool),
+    SetToneMapping(ToneMapping),
     SetAudioTrack(i64),
     SetSubtitleTrack(Option<i64>),
     AddSubtitle(String),

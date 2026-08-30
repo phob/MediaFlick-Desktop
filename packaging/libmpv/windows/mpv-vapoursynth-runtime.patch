@@ -1,0 +1,72 @@
+diff --git a/video/filter/vf_vapoursynth.c b/video/filter/vf_vapoursynth.c
+index d2ab9162..049ffd96 100644
+--- a/video/filter/vf_vapoursynth.c
++++ b/video/filter/vf_vapoursynth.c
+@@ -22,6 +22,10 @@
+ #include <limits.h>
+ #include <assert.h>
+ 
++#ifdef _WIN32
++#include <windows.h>
++#endif
++
+ #include <VapourSynth4.h>
+ #include <VSScript4.h>
+ 
+@@ -65,6 +69,9 @@ struct priv {
+     // drv_vss
+     const VSSCRIPTAPI *vs_script_api;
+     VSScript *vs_script;
++#ifdef _WIN32
++    HMODULE vs_script_library;
++#endif
+ 
+     struct mp_filter *f;
+     struct mp_pin *in_pin;
+@@ -804,9 +811,34 @@ static const m_option_t vf_opts_fields[] = {
+ 
+ static int drv_vss_init(struct priv *p)
+ {
++#ifdef _WIN32
++    typedef const VSSCRIPTAPI *(VS_CC *get_vsscript_api_fn)(int version);
++
++    p->vs_script_library = LoadLibraryExW(
++        L"VSScript.dll", NULL,
++        LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
++    if (!p->vs_script_library) {
++        MP_FATAL(p, "Could not load VSScript.dll.\n");
++        return -1;
++    }
++    get_vsscript_api_fn get_api =
++        (void *)GetProcAddress(p->vs_script_library, "getVSScriptAPI");
++    if (!get_api) {
++        MP_FATAL(p, "VSScript.dll does not export getVSScriptAPI.\n");
++        FreeLibrary(p->vs_script_library);
++        p->vs_script_library = NULL;
++        return -1;
++    }
++    p->vs_script_api = get_api(VSSCRIPT_API_VERSION);
++#else
+     p->vs_script_api = getVSScriptAPI(VSSCRIPT_API_VERSION);
++#endif
+     if (!p->vs_script_api) {
+         MP_FATAL(p, "Could not initialize VapourSynth scripting.\n");
++#ifdef _WIN32
++        FreeLibrary(p->vs_script_library);
++        p->vs_script_library = NULL;
++#endif
+         return -1;
+     }
+     return 0;
+@@ -815,6 +847,11 @@ static int drv_vss_init(struct priv *p)
+ static void drv_vss_uninit(struct priv *p)
+ {
+     p->vs_script_api = NULL;
++#ifdef _WIN32
++    if (p->vs_script_library)
++        FreeLibrary(p->vs_script_library);
++    p->vs_script_library = NULL;
++#endif
+ }
+ 
+ static int drv_vss_load_core(struct priv *p)

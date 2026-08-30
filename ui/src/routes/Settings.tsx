@@ -285,9 +285,10 @@ function PlayerSettings() {
     mutationFn: api.settingsPatch.player,
     onSuccess: (saved, submitted) => saveSettings(
       saved,
-      submitted.playerBackend !== settings?.client.player.playerBackend &&
-        (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")
-        ? "Player saved. Restart MediaFlick to switch player backends."
+      (submitted.playerBackend !== settings?.client.player.playerBackend &&
+        (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")) ||
+        (submitted.libmpvProfile !== settings?.client.player.libmpvProfile && submitted.playerBackend === "libmpv")
+        ? "Player saved. Restart MediaFlick to apply the built-in player configuration."
         : "Player settings saved",
     ),
     onError: (error: Error) => toast.error(error.message),
@@ -350,11 +351,15 @@ function PlayerSettings() {
   const backendChanged = draft.playerBackend !== settings.client.player.playerBackend
   const backendChangeNeedsRestart = backendChanged &&
     (draft.playerBackend === "libmpv" || settings.client.player.playerBackend === "libmpv")
+  const libmpvProfileNeedsRestart = draft.playerBackend === "libmpv" &&
+    draft.libmpvProfile !== settings.client.player.libmpvProfile
   const restartMessage = backendChangeNeedsRestart
     ? draft.playerBackend === "libmpv"
       ? "Restart MediaFlick to enable the built-in player."
       : "Restart MediaFlick to switch player backends."
-    : undefined
+    : libmpvProfileNeedsRestart
+      ? "Restart MediaFlick to apply the built-in player configuration."
+      : undefined
   const pick = (target: "mpv" | "mpchc") => {
     if (pendingPickers.current[target]) return
     const id = requestId()
@@ -404,6 +409,9 @@ function PlayerSettings() {
         <SettingsRow title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
           <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
         </SettingsRow>
+        {draft.playerBackend === "libmpv" && settings.capabilities.platform === "windows" && <SettingsRow title="Built-in player profile" description="SVP 4 enables VapourSynth, copy-back decoding, the mpvpipe endpoint, and Lua scripts. Only one fixed-pipe SVP player can run at a time.">
+          <SelectField label="Built-in player profile" value={draft.libmpvProfile} onValueChange={(libmpvProfile) => setDraft({ ...draft, libmpvProfile })} options={[{ value: "standard", label: "Standard" }, { value: "svp", label: "SVP 4 compatibility" }]} />
+        </SettingsRow>}
         <SettingsRow title="Start fullscreen" description="Use a full-screen player window by default.">
           <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
@@ -423,7 +431,7 @@ function PlayerSettings() {
           <div className="flex w-full max-w-md gap-2"><Input value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
         </SettingsRow>}
       </Section>}
-      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
+      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", libmpvProfile: "standard", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
     </div>
   )
 }

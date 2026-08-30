@@ -25,6 +25,7 @@ pub fn build_backend(
         PlayerBackendKind::Libmpv => Box::new(MpvController::new_libmpv(
             Some(event_tx),
             settings.segment_skip_config(),
+            settings.libmpv_profile,
         )),
         PlayerBackendKind::Mpv => Box::new(MpvController::new(
             Some(event_tx),

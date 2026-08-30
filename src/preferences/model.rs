@@ -17,6 +17,8 @@ pub struct AppSettings {
     /// other platforms keep using external mpv until they ship a bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_backend: Option<PlayerBackend>,
+    #[serde(default, skip_serializing_if = "LibmpvProfile::is_default")]
+    pub libmpv_profile: LibmpvProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpchc_path: Option<String>,
     #[serde(
@@ -389,6 +391,35 @@ impl PlayerBackend {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum LibmpvProfile {
+    #[default]
+    Standard,
+    Svp,
+}
+
+impl LibmpvProfile {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Svp => "svp",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "standard" => Some(Self::Standard),
+            "svp" | "svp4" | "svp_4" => Some(Self::Svp),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FullscreenBehavior {
     #[default]
     Fullscreen,
@@ -453,11 +484,19 @@ impl CloseBehavior {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebUiWindowPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebUiWindowSettings {
     #[serde(default = "default_webui_window_width")]
     pub width: i32,
     #[serde(default = "default_webui_window_height")]
     pub height: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<WebUiWindowPosition>,
     #[serde(default)]
     pub maximized: bool,
 }
@@ -467,6 +506,7 @@ impl Default for WebUiWindowSettings {
         Self {
             width: DEFAULT_WEBUI_WINDOW_WIDTH,
             height: DEFAULT_WEBUI_WINDOW_HEIGHT,
+            position: None,
             maximized: false,
         }
     }
@@ -477,11 +517,16 @@ impl WebUiWindowSettings {
         (self.width, self.height)
     }
 
-    pub fn record_bounds(&mut self, width: i32, height: i32, maximized: bool) {
+    pub fn position(self) -> Option<(i32, i32)> {
+        self.position.map(|position| (position.x, position.y))
+    }
+
+    pub fn record_bounds(&mut self, x: i32, y: i32, width: i32, height: i32, maximized: bool) {
         self.maximized = maximized;
         if !maximized {
             self.width = width;
             self.height = height;
+            self.position = Some(WebUiWindowPosition { x, y });
             self.sanitize();
         }
     }
@@ -504,6 +549,7 @@ impl Default for AppSettings {
             jellyfin_url: None,
             mpv_path: None,
             player_backend: None,
+            libmpv_profile: LibmpvProfile::default(),
             mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: FullscreenBehavior::default(),
@@ -687,7 +733,8 @@ fn has_explicit_scheme(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, PlayerBackend, StreamingQuality, WebUiWindowSettings, normalize_server_url,
+        AppSettings, PlayerBackend, StreamingQuality, WebUiWindowPosition, WebUiWindowSettings,
+        normalize_server_url,
     };
 
     #[test]
@@ -909,6 +956,7 @@ mod tests {
             webui_window: WebUiWindowSettings {
                 width: 100,
                 height: 100,
+                position: Some(WebUiWindowPosition { x: 40, y: 60 }),
                 maximized: true,
             },
             ..Default::default()
@@ -919,22 +967,43 @@ mod tests {
     }
 
     #[test]
+    fn window_position_round_trips_without_breaking_legacy_settings() {
+        let legacy: WebUiWindowSettings = serde_json::from_value(serde_json::json!({
+            "width": 1360,
+            "height": 768
+        }))
+        .expect("legacy window settings");
+        assert_eq!(legacy.position(), None);
+
+        let mut positioned = legacy;
+        positioned.record_bounds(-1200, 80, 1360, 768, false);
+        let serialized = serde_json::to_value(positioned).expect("serialize window settings");
+        let restored: WebUiWindowSettings =
+            serde_json::from_value(serialized).expect("restore window settings");
+        assert_eq!(restored.position(), Some((-1200, 80)));
+        assert_eq!(restored.size(), (1360, 768));
+    }
+
+    #[test]
     fn recording_maximized_window_keeps_restored_size() {
         let mut window = WebUiWindowSettings {
             width: 1440,
             height: 900,
+            position: Some(WebUiWindowPosition { x: 80, y: 120 }),
             maximized: false,
         };
-        window.record_bounds(3840, 2160, true);
+        window.record_bounds(0, 0, 3840, 2160, true);
         assert_eq!(window.size(), (1440, 900));
+        assert_eq!(window.position(), Some((80, 120)));
         assert!(window.maximized);
     }
 
     #[test]
     fn recording_restored_window_updates_size() {
         let mut window = WebUiWindowSettings::default();
-        window.record_bounds(1600, 900, false);
+        window.record_bounds(240, 160, 1600, 900, false);
         assert_eq!(window.size(), (1600, 900));
+        assert_eq!(window.position(), Some((240, 160)));
         assert!(!window.maximized);
     }
 }

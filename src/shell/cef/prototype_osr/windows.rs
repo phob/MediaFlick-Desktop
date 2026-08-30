@@ -12,31 +12,35 @@ use std::sync::{Arc, OnceLock};
 
 use cef::*;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
+use windows_sys::Win32::Graphics::Gdi::{
+    ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONULL, MONITORINFO, MonitorFromWindow,
+    ScreenToClient,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
-    VK_CAPITAL, VK_CONTROL, VK_F4, VK_MENU, VK_NUMLOCK, VK_SHIFT,
+    VK_CAPITAL, VK_CONTROL, VK_DOWN, VK_F4, VK_LEFT, VK_MENU, VK_NUMLOCK, VK_RIGHT, VK_SHIFT,
+    VK_UP,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CWPRETSTRUCT, CallNextHookEx, CreateWindowExW, DefWindowProcW,
-    DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowThreadProcessId,
-    HHOOK, HTCLIENT, HWND_TOP, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_HELP,
-    IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, IDC_WAIT,
-    IsWindow, LoadCursorW, MSG, PostMessageW, RegisterClassW, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOZORDER, SWP_SHOWWINDOW, SetCursor, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW,
-    ShowWindow, UnhookWindowsHookEx, WH_CALLWNDPROCRET, WH_GETMESSAGE, WM_APP, WM_CHAR, WM_CLOSE,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_CHILD,
-    WS_VISIBLE,
+    DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, HHOOK, HTCLIENT, HWND_TOP, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS,
+    IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
+    IDC_SIZEWE, IDC_WAIT, IsIconic, IsWindow, IsZoomed, LoadCursorW, MSG, PostMessageW,
+    RegisterClassW, SW_MAXIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SetCursor, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx,
+    WH_CALLWNDPROCRET, WH_GETMESSAGE, WM_APP, WM_CHAR, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN,
+    WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
+    WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS,
+    WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_CHILD, WS_VISIBLE,
 };
 use windows_sys::core::PCWSTR;
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
-use crate::preferences::{AppSettings, PlayerBackend};
+use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
 use crate::shell::cef::app_scheme;
 
 use self::compositor::Compositor;
@@ -47,8 +51,16 @@ const DEFAULT_DPI: u32 = 96;
 const SYNC_INTERVAL_MS: i64 = 50;
 const VK_Q: WPARAM = b'Q' as WPARAM;
 const VK_V: WPARAM = b'V' as WPARAM;
+const KEY_LEFT: WPARAM = VK_LEFT as WPARAM;
+const KEY_RIGHT: WPARAM = VK_RIGHT as WPARAM;
+const KEY_UP: WPARAM = VK_UP as WPARAM;
+const KEY_DOWN: WPARAM = VK_DOWN as WPARAM;
 const CAPTURED_Q: u8 = 1;
 const CAPTURED_V: u8 = 1 << 1;
+const CAPTURED_LEFT: u8 = 1 << 2;
+const CAPTURED_RIGHT: u8 = 1 << 3;
+const CAPTURED_UP: u8 = 1 << 4;
+const CAPTURED_DOWN: u8 = 1 << 5;
 const INPUT_CLASS: &[u16] = &[
     77, 101, 100, 105, 97, 70, 108, 105, 99, 107, 67, 101, 102, 73, 110, 112, 117, 116, 0,
 ];
@@ -115,6 +127,7 @@ pub(crate) struct PrototypeOsrSurface {
     input: Cell<HWND>,
     host_close_hooks: Cell<HostCloseHooks>,
     metrics: Cell<ViewMetrics>,
+    window_settings: Cell<WebUiWindowSettings>,
     browser: RefCell<Option<Browser>>,
     compositor: RefCell<Option<Compositor>>,
     popup_rect: RefCell<Rect>,
@@ -140,6 +153,7 @@ impl PrototypeOsrSurface {
             input: Cell::new(null_mut()),
             host_close_hooks: Cell::new(HostCloseHooks::default()),
             metrics: Cell::new(ViewMetrics::from_logical_size(width, height)),
+            window_settings: Cell::new(settings.webui_window),
             browser: RefCell::new(None),
             compositor: RefCell::new(None),
             popup_rect: RefCell::new(Rect::default()),
@@ -176,17 +190,7 @@ impl PrototypeOsrSurface {
         }
 
         let seeded = self.metrics.get();
-        unsafe {
-            SetWindowPos(
-                host,
-                null_mut(),
-                0,
-                0,
-                seeded.physical_width,
-                seeded.physical_height,
-                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
+        apply_saved_window_settings(host, self.window_settings.get());
         let metrics = sample_metrics(host).unwrap_or(seeded);
         crate::windows::set_native_window_icon(parent.raw());
         let compositor = Compositor::new(parent.raw()).map_err(|error| error.to_string())?;
@@ -284,6 +288,7 @@ impl PrototypeOsrSurface {
 
     pub(crate) fn destroy(&self) {
         self.closing.set(true);
+        self.save_window_settings();
         CLOSE_TARGET.store(0, Ordering::Release);
         HOOKED_HOST.store(0, Ordering::Release);
         self.host_close_hooks
@@ -320,6 +325,7 @@ impl PrototypeOsrSurface {
             self.close_browser();
             return false;
         }
+        self.capture_window_settings(host);
         let Some(metrics) = sample_metrics(host) else {
             return true;
         };
@@ -356,6 +362,31 @@ impl PrototypeOsrSurface {
         self.with_browser_host(|browser_host| browser_host.close_browser(1));
     }
 
+    fn capture_window_settings(&self, host: HWND) {
+        if let Some(settings) = sample_window_settings(host, self.window_settings.get()) {
+            self.window_settings.set(settings);
+        }
+    }
+
+    fn save_window_settings(&self) {
+        let host = self.host.get();
+        if host.is_null() {
+            return;
+        }
+        if unsafe { IsWindow(host) } != 0 {
+            self.capture_window_settings(host);
+        }
+        let Some(services) = crate::app::services::services() else {
+            return;
+        };
+        if let Err(error) = services
+            .preferences
+            .record_window(self.window_settings.get())
+        {
+            tracing::warn!(target: "config", "failed to save libmpv window settings: {error}");
+        }
+    }
+
     fn handle_playback_right_button(&self, window: HWND, message: u32) -> bool {
         let snapshot = self.playback.snapshot();
         if !snapshot.active {
@@ -382,12 +413,14 @@ impl PrototypeOsrSurface {
         let captured = self.captured_playback_keys.get();
         match message {
             WM_KEYDOWN => {
-                if !self.playback.snapshot().active {
+                let snapshot = self.playback.snapshot();
+                if !snapshot.active {
                     return false;
                 }
                 self.captured_playback_keys.set(captured | key.mask());
                 if !is_repeated_key(lparam) {
-                    self.playback.control(key.command());
+                    self.playback
+                        .control(key.command(snapshot.position_ms, snapshot.duration_ms));
                 }
                 true
             }
@@ -856,6 +889,73 @@ fn dispatch_window_message(
     }
 }
 
+fn apply_saved_window_settings(host: HWND, settings: WebUiWindowSettings) {
+    let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
+    let (width, height) = settings.size();
+    let width = logical_to_physical(width, dpi).max(1);
+    let height = logical_to_physical(height, dpi).max(1);
+    let (x, y, flags) = settings.position().map_or(
+        (0, 0, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE),
+        |(x, y)| {
+            (
+                logical_to_physical(x, dpi),
+                logical_to_physical(y, dpi),
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        },
+    );
+    unsafe {
+        SetWindowPos(host, null_mut(), x, y, width, height, flags);
+        if settings.maximized {
+            ShowWindow(host, SW_MAXIMIZE);
+        }
+    }
+}
+
+fn sample_window_settings(
+    host: HWND,
+    mut settings: WebUiWindowSettings,
+) -> Option<WebUiWindowSettings> {
+    if unsafe { IsIconic(host) } != 0 {
+        return None;
+    }
+    let mut rect = RECT::default();
+    if unsafe { GetWindowRect(host, &raw mut rect) } == 0 {
+        return None;
+    }
+    let maximized = unsafe { IsZoomed(host) } != 0;
+    if !maximized && window_fills_monitor(host, &rect) {
+        return None;
+    }
+    let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
+    settings.record_bounds(
+        physical_to_logical(rect.left, dpi),
+        physical_to_logical(rect.top, dpi),
+        physical_to_logical(rect.right - rect.left, dpi),
+        physical_to_logical(rect.bottom - rect.top, dpi),
+        maximized,
+    );
+    Some(settings)
+}
+
+fn window_fills_monitor(host: HWND, window_rect: &RECT) -> bool {
+    let monitor = unsafe { MonitorFromWindow(host, MONITOR_DEFAULTTONULL) };
+    if monitor.is_null() {
+        return false;
+    }
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..MONITORINFO::default()
+    };
+    if unsafe { GetMonitorInfoW(monitor, &raw mut info) } == 0 {
+        return false;
+    }
+    window_rect.left == info.rcMonitor.left
+        && window_rect.top == info.rcMonitor.top
+        && window_rect.right == info.rcMonitor.right
+        && window_rect.bottom == info.rcMonitor.bottom
+}
+
 fn sample_metrics(host: HWND) -> Option<ViewMetrics> {
     let mut rect = RECT::default();
     if unsafe { GetClientRect(host, &raw mut rect) } == 0 {
@@ -1049,6 +1149,10 @@ fn key_event(message: u32, wparam: WPARAM, lparam: LPARAM) -> KeyEvent {
 enum PlaybackKey {
     Stop,
     ToggleSubtitles,
+    SeekBackTenSeconds,
+    SeekForwardTenSeconds,
+    SeekBackThirtySeconds,
+    SeekForwardThirtySeconds,
 }
 
 impl PlaybackKey {
@@ -1056,14 +1160,23 @@ impl PlaybackKey {
         match self {
             Self::Stop => CAPTURED_Q,
             Self::ToggleSubtitles => CAPTURED_V,
+            Self::SeekBackTenSeconds => CAPTURED_LEFT,
+            Self::SeekForwardTenSeconds => CAPTURED_RIGHT,
+            Self::SeekBackThirtySeconds => CAPTURED_DOWN,
+            Self::SeekForwardThirtySeconds => CAPTURED_UP,
         }
     }
 
-    fn command(self) -> PlayerCommand {
-        match self {
-            Self::Stop => PlayerCommand::Stop,
-            Self::ToggleSubtitles => PlayerCommand::ToggleSubtitleVisibility,
-        }
+    fn command(self, position_ms: f64, duration_ms: Option<f64>) -> PlayerCommand {
+        let offset_ms = match self {
+            Self::Stop => return PlayerCommand::Stop,
+            Self::ToggleSubtitles => return PlayerCommand::ToggleSubtitleVisibility,
+            Self::SeekBackTenSeconds => -10_000.0,
+            Self::SeekForwardTenSeconds => 10_000.0,
+            Self::SeekBackThirtySeconds => -30_000.0,
+            Self::SeekForwardThirtySeconds => 30_000.0,
+        };
+        PlayerCommand::SeekMilliseconds(seek_target_ms(position_ms, offset_ms, duration_ms))
     }
 }
 
@@ -1074,8 +1187,20 @@ fn playback_key(message: u32, wparam: WPARAM) -> Option<PlaybackKey> {
     match wparam {
         VK_Q | 0x71 => Some(PlaybackKey::Stop),
         VK_V | 0x76 => Some(PlaybackKey::ToggleSubtitles),
+        KEY_LEFT => Some(PlaybackKey::SeekBackTenSeconds),
+        KEY_RIGHT => Some(PlaybackKey::SeekForwardTenSeconds),
+        KEY_DOWN => Some(PlaybackKey::SeekBackThirtySeconds),
+        KEY_UP => Some(PlaybackKey::SeekForwardThirtySeconds),
         _ => None,
     }
+}
+
+fn seek_target_ms(position_ms: f64, offset_ms: f64, duration_ms: Option<f64>) -> f64 {
+    let position_ms = position_ms.max(0.0);
+    let target_ms = (position_ms + offset_ms).max(0.0);
+    duration_ms
+        .filter(|duration_ms| duration_ms.is_finite() && *duration_ms >= 0.0)
+        .map_or(target_ms, |duration_ms| target_ms.min(duration_ms))
 }
 
 fn is_repeated_key(lparam: LPARAM) -> bool {
@@ -1172,7 +1297,48 @@ mod tests {
             playback_key(WM_CHAR, b'q' as WPARAM),
             Some(PlaybackKey::Stop)
         );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, KEY_LEFT),
+            Some(PlaybackKey::SeekBackTenSeconds)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, KEY_RIGHT),
+            Some(PlaybackKey::SeekForwardTenSeconds)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, KEY_DOWN),
+            Some(PlaybackKey::SeekBackThirtySeconds)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, KEY_UP),
+            Some(PlaybackKey::SeekForwardThirtySeconds)
+        );
         assert_eq!(playback_key(WM_SYSKEYDOWN, VK_Q), None);
+    }
+
+    #[test]
+    fn playback_seek_keys_clamp_to_the_media_bounds() {
+        assert_eq!(
+            seek_target_ms(60_000.0, -10_000.0, Some(120_000.0)),
+            50_000.0
+        );
+        assert_eq!(
+            seek_target_ms(60_000.0, 10_000.0, Some(120_000.0)),
+            70_000.0
+        );
+        assert_eq!(
+            seek_target_ms(60_000.0, -30_000.0, Some(120_000.0)),
+            30_000.0
+        );
+        assert_eq!(
+            seek_target_ms(60_000.0, 30_000.0, Some(120_000.0)),
+            90_000.0
+        );
+        assert_eq!(seek_target_ms(5_000.0, -10_000.0, Some(120_000.0)), 0.0);
+        assert_eq!(
+            seek_target_ms(115_000.0, 30_000.0, Some(120_000.0)),
+            120_000.0
+        );
     }
 
     #[test]

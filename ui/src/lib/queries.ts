@@ -300,12 +300,26 @@ export function useOpenExternal() {
   })
 }
 
-/** Polls only while something is actually playing; idle costs one request. */
+export function usePlaybackNeighbors(itemId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.playbackNeighbors(itemId ?? ""),
+    queryFn: () => api.playbackNeighbors(itemId!),
+    enabled: Boolean(itemId) && enabled,
+    staleTime: 30_000,
+    retry: false,
+  })
+}
+
+/** Poll MPC-HC live; mpv pushes state and needs only a missed-event fallback. */
 export function usePlayerState() {
   return useQuery({
     queryKey: queryKeys.playerState,
     queryFn: api.playerState,
-    refetchInterval: (query) => (query.state.data?.active ? 1000 : false),
+    refetchInterval: (query) => {
+      const player = query.state.data
+      if (!player?.active) return false
+      return player.capabilities?.pushesPosition === false ? 1_000 : 10_000
+    },
     staleTime: 0,
   })
 }
@@ -375,6 +389,41 @@ export function usePlay() {
       // The player is a separate window that can take a moment to come up, so
       // say something: otherwise Play looks like it did nothing at all.
       toast.success(started.playMethod ? `Playing (${started.playMethod})` : "Playing")
+      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+    },
+    onError: reportError,
+  })
+}
+
+export function useChangePlaybackQuality() {
+  return useMutation({
+    mutationFn: ({
+      itemId,
+      positionMs,
+      quality,
+    }: {
+      itemId: string
+      positionMs: number
+      quality: StreamingQualityId
+    }) => api.changePlaybackQuality(itemId, Math.round(positionMs * 10_000), quality),
+    onSuccess: (started) => {
+      toast.success(started.playMethod ? `Playback restarted (${started.playMethod})` : "Playback restarted")
+      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+    },
+    onError: reportError,
+  })
+}
+
+export function usePlayNeighbor() {
+  return useMutation({
+    mutationFn: ({ itemId, direction }: { itemId: string; direction: "previous" | "next" }) =>
+      direction === "previous" ? api.playPrevious(itemId) : api.playNext(itemId),
+    onSuccess: (started, { direction }) => {
+      if (!started.started) {
+        toast.info(direction === "previous" ? "No previous episode" : "No next episode")
+        return
+      }
+      toast.success(direction === "previous" ? "Playing the previous episode" : "Playing the next episode")
       void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
     },
     onError: reportError,

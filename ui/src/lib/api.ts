@@ -407,6 +407,7 @@ export interface ReleaseCalendar {
 
 export interface PlayerSettings {
   playerBackend: "libmpv" | "mpv" | "mpchc"
+  libmpvProfile: "standard" | "svp"
   mpvPath: string | null
   mpchcPath: string | null
   defaultFullscreen: "fullscreen" | "windowed"
@@ -420,6 +421,7 @@ export type PlayerSettingsWrite = Omit<PlayerSettings, "playerConfigured">
 export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWrite {
   return {
     playerBackend: settings.playerBackend,
+    libmpvProfile: settings.libmpvProfile,
     mpvPath: settings.mpvPath,
     mpchcPath: settings.mpchcPath,
     defaultFullscreen: settings.defaultFullscreen,
@@ -1106,6 +1108,37 @@ interface PlayerCapabilities {
   injectedHotkeys: boolean
   absoluteVolume: boolean
   pushesPosition: boolean
+  fullscreen: boolean
+  playbackTuning: boolean
+}
+
+export interface PlayerTrack {
+  id: number
+  kind: "audio" | "subtitle"
+  language: string | null
+  title: string | null
+  codec: string | null
+  selected: boolean
+  external: boolean
+}
+
+export interface PlayerChapter {
+  title: string
+  startMs: number
+}
+
+export interface PlayerSkipSegment {
+  segmentType: "intro" | "outro" | "recap" | "commercial"
+  startTicks: number
+  endTicks: number
+  triggered: boolean
+}
+
+export interface PlaybackDiagnostics {
+  bufferedUntilMs: number | null
+  buffering: boolean
+  droppedFrames: number | null
+  frameRate: number | null
 }
 
 export interface PlayerState {
@@ -1114,11 +1147,16 @@ export interface PlayerState {
   itemId?: string | null
   mediaSourceId?: string | null
   playSessionId?: string | null
+  playMethod?: string | null
   positionMs?: number
   durationMs?: number
   paused?: boolean
   volume?: number | null
   mute?: boolean
+  tracks?: PlayerTrack[]
+  chapters?: PlayerChapter[]
+  skipSegments?: PlayerSkipSegment[]
+  diagnostics?: PlaybackDiagnostics
   stopReason?: string | null
   capabilities?: PlayerCapabilities
 }
@@ -1138,6 +1176,19 @@ export type PlayerCommand =
   | { command: "seek"; positionMs: number }
   | { command: "set-volume"; volume: number }
   | { command: "set-mute"; mute: boolean }
+  | { command: "set-audio-delay"; delaySeconds: number }
+  | { command: "set-subtitle-delay"; delaySeconds: number }
+  | { command: "set-subtitle-scale"; scale: number }
+  | { command: "set-video-fit"; fit: "fit" | "fill" }
+  | { command: "set-video-aspect"; aspect: "source" | "4:3" | "16:9" | "21:9" }
+  | { command: "set-deinterlace"; enabled: boolean }
+  | {
+      command: "set-tone-mapping"
+      mode: "auto" | "clip" | "mobius" | "reinhard" | "hable" | "bt.2390"
+    }
+  | { command: "set-audio-track"; audioTrack: number }
+  | { command: "set-subtitle-track"; subtitleTrack: number | null }
+  | { command: "toggle-fullscreen" }
 
 export interface ItemQuery {
   search?: string
@@ -1391,8 +1442,20 @@ export const api = {
   /** `quality` overrides the saved Settings default for this play only. */
   play: (itemId: string, resume: boolean, quality?: StreamingQualityId) =>
     request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } }),
+  changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
+    request<PlayStarted>("/api/play", {
+      method: "POST",
+      body: { itemId, startTicks, quality },
+    }),
   playNext: (itemId: string) =>
     request<PlayStarted>("/api/play/next", { method: "POST", body: { itemId } }),
+  playPrevious: (itemId: string) =>
+    request<PlayStarted>("/api/play/previous", { method: "POST", body: { itemId } }),
+  playbackNeighbors: (itemId: string) =>
+    request<{ previous: ItemSummary | null; next: ItemSummary | null }>("/api/play/neighbors", {
+      method: "POST",
+      body: { itemId },
+    }),
 
   playerState: () => request<PlayerState>("/api/player/state"),
   playerCommand: (command: PlayerCommand) =>

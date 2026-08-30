@@ -7,8 +7,7 @@
 use std::time::Instant;
 
 use crate::app::logger;
-use crate::playback::PlaybackContext;
-use crate::playback::seconds_to_ticks;
+use crate::playback::{PlaybackContext, PlayerChapter, seconds_to_ticks};
 
 use super::{
     ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
@@ -40,7 +39,11 @@ impl ControllerState {
     }
 
     pub(super) fn publish_snapshot(&self) -> PlayerSnapshot {
-        self.publish_snapshot_with_stop_reason(None)
+        let snapshot = self.publish_snapshot_with_stop_reason(None);
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(PlaybackEvent::StateChanged(snapshot.clone()));
+        }
+        snapshot
     }
 
     pub(super) fn publish_snapshot_with_stop_reason(
@@ -61,6 +64,7 @@ impl ControllerState {
             item_id: identity.and_then(|identity| identity.item_id.clone()),
             media_source_id: identity.and_then(|identity| identity.media_source_id.clone()),
             play_session_id: identity.and_then(|identity| identity.play_session_id.clone()),
+            play_method: identity.and_then(|identity| identity.play_method.clone()),
             position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
             duration_ms: self
                 .last_state
@@ -70,12 +74,41 @@ impl ControllerState {
             paused: self.last_state.pause,
             volume: self.last_state.volume,
             mute: self.last_state.mute,
+            tracks: self.playback_tracks.clone(),
+            chapters: self.playback_chapters(),
+            skip_segments: self.skip_segments.clone(),
+            diagnostics: self.playback_diagnostics,
             stop_reason,
         };
         if let Ok(mut target) = self.snapshot.lock() {
             *target = snapshot.clone();
         }
         snapshot
+    }
+
+    fn playback_chapters(&self) -> Vec<PlayerChapter> {
+        self.last_sent_chapter_list
+            .as_deref()
+            .or(self.original_chapters.as_deref())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|chapter| {
+                let start_ms = chapter.get("time")?.as_f64()? * 1000.0;
+                let title = chapter
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("Chapter")
+                    .trim();
+                Some(PlayerChapter {
+                    title: if title.is_empty() {
+                        "Chapter".to_string()
+                    } else {
+                        title.to_string()
+                    },
+                    start_ms,
+                })
+            })
+            .collect()
     }
 
     fn current_identity(&self) -> Option<&PlaybackIdentity> {
@@ -159,6 +192,8 @@ impl ControllerState {
         self.last_state.duration_ticks = pending.launch.runtime_ticks.filter(|ticks| *ticks > 0);
         self.last_state.pause = false;
         self.last_state.eof_reached = false;
+        self.playback_tracks.clear();
+        self.playback_diagnostics = Default::default();
         self.last_position_log_bucket = None;
     }
 
@@ -207,11 +242,13 @@ impl ControllerState {
         self.next_playback_handoff_until = None;
         self.replacement_end_file_pending = false;
         self.schedule_mpv_raise("file-loaded");
+        self.apply_library_default_fullscreen();
         self.stage_external_subtitle(&launch);
         self.kick_start_playback(&launch);
         if self.startup_seek.is_none() {
             self.load_pending_external_subtitle();
         }
+        self.complete_library_startup();
         self.publish_snapshot();
     }
 
@@ -261,6 +298,7 @@ impl ControllerState {
         let had_mpv_playback =
             self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
         self.startup_seek = None;
+        self.pending_library_pause = None;
         let failed = matches!(reason, Some("error"));
         let stop_reason = normalized_stop_reason(reason);
         if self.should_ignore_pending_end_file_during_playback_handoff(reason) {
@@ -397,6 +435,7 @@ fn update_identity_from_context(identity: &mut PlaybackIdentity, context: &Playb
         &mut identity.play_session_id,
         context.play_session_id.as_deref(),
     );
+    fill_string(&mut identity.play_method, context.play_method.as_deref());
 }
 
 fn fill_string(target: &mut Option<String>, value: Option<&str>) {

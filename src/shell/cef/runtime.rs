@@ -161,12 +161,12 @@ wrap_browser_process_handler! {
 
             *self.client.borrow_mut() = Some(JellyfinClient::new(handler_state.clone(), None));
             let mut client = self.default_client();
-            let settings = BrowserSettings::default();
+            let browser_settings = BrowserSettings::default();
             let mut browser_delegate = JellyfinBrowserViewDelegate::new(runtime_style);
             let browser_view = browser_view_create(
                 client.as_mut(),
                 Some(&url),
-                Some(&settings),
+                Some(&browser_settings),
                 None,
                 None,
                 Some(&mut browser_delegate),
@@ -185,7 +185,7 @@ wrap_browser_process_handler! {
                 true,
                 WindowIdentity {
                     title: self.config.title.clone(),
-                    settings: self.config.settings.webui_window,
+                    settings: settings.webui_window,
                 },
                 Some(handler_state),
             );
@@ -282,6 +282,15 @@ wrap_window_delegate! {
             };
             window.set_title(Some(&CefString::from(self.identity.title.as_str())));
             set_window_icon(window);
+            if let Some((x, y)) = self.identity.settings.position() {
+                let (width, height) = self.identity.settings.size();
+                window.set_bounds(Some(&Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                }));
+            }
             if let Some(state) = &self.state {
                 register_main_window(state, window);
             }
