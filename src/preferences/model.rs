@@ -17,8 +17,6 @@ pub struct AppSettings {
     /// other platforms keep using external mpv until they ship a bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_backend: Option<PlayerBackend>,
-    #[serde(default, skip_serializing_if = "LibmpvProfile::is_default")]
-    pub libmpv_profile: LibmpvProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mpchc_path: Option<String>,
     #[serde(
@@ -391,35 +389,6 @@ impl PlayerBackend {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum LibmpvProfile {
-    #[default]
-    Standard,
-    Svp,
-}
-
-impl LibmpvProfile {
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::Svp => "svp",
-        }
-    }
-
-    pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "standard" => Some(Self::Standard),
-            "svp" | "svp4" | "svp_4" => Some(Self::Svp),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum FullscreenBehavior {
     #[default]
     Fullscreen,
@@ -549,7 +518,6 @@ impl Default for AppSettings {
             jellyfin_url: None,
             mpv_path: None,
             player_backend: None,
-            libmpv_profile: LibmpvProfile::default(),
             mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: FullscreenBehavior::default(),
@@ -811,6 +779,15 @@ mod tests {
         assert_eq!(settings.player_backend, None);
         assert_eq!(settings.effective_backend(), PlayerBackend::Mpv);
         assert_eq!(settings.player_path(), Some("C:/mpv/mpv.exe"));
+    }
+
+    #[test]
+    fn obsolete_libmpv_profile_is_ignored() {
+        let settings: AppSettings = serde_json::from_str(r#"{"libmpv_profile":"svp"}"#)
+            .expect("settings with the former manual profile");
+
+        let serialized = serde_json::to_value(settings).expect("serialize migrated settings");
+        assert!(serialized.get("libmpv_profile").is_none());
     }
 
     #[test]

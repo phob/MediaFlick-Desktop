@@ -4,6 +4,8 @@ pub mod external;
 pub mod input;
 pub mod ipc;
 mod runtime;
+#[cfg(target_os = "windows")]
+mod svp;
 
 pub use controller::MpvController;
 pub use external::ExternalMpv;

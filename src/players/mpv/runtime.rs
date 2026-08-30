@@ -1,20 +1,15 @@
+use libloading::Library;
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::io;
 use std::path::Path;
-#[cfg(target_os = "windows")]
-use std::path::PathBuf;
 use std::process::Child;
 #[cfg(target_os = "windows")]
 use std::thread;
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
-#[cfg(target_os = "windows")]
-use std::{env, ffi::OsStr, os::windows::ffi::OsStrExt};
-
-use libloading::Library;
 
 use crate::playback::NativeWindowHandle;
-use crate::preferences::{FullscreenBehavior, LibmpvProfile};
+use crate::preferences::FullscreenBehavior;
 
 use super::ExternalMpv;
 
@@ -31,6 +26,22 @@ const NATIVE_WINDOW_TIMEOUT: Duration = Duration::from_secs(10);
 pub enum MpvRuntimeKind {
     External,
     Library,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LibmpvProfile {
+    Standard,
+    Svp,
+}
+
+impl LibmpvProfile {
+    pub(super) fn detected() -> Self {
+        #[cfg(target_os = "windows")]
+        if super::svp::runtime_directory().is_some() {
+            return Self::Svp;
+        }
+        Self::Standard
+    }
 }
 
 pub(super) enum MpvRuntime {
@@ -121,24 +132,6 @@ struct RawMpvEvent {
     data: *mut c_void,
 }
 
-#[cfg(target_os = "windows")]
-struct SvpRuntimeEnvironment {
-    dll_directory_cookie: *mut c_void,
-}
-
-#[cfg(target_os = "windows")]
-impl Drop for SvpRuntimeEnvironment {
-    fn drop(&mut self) {
-        if !self.dll_directory_cookie.is_null() {
-            unsafe {
-                windows_sys::Win32::System::LibraryLoader::RemoveDllDirectory(
-                    self.dll_directory_cookie,
-                );
-            }
-        }
-    }
-}
-
 pub(super) struct LibMpvRuntime {
     handle: *mut MpvHandle,
     wait_event: MpvWaitEvent,
@@ -147,74 +140,7 @@ pub(super) struct LibMpvRuntime {
     native_window: Option<NativeWindowHandle>,
     _library: Library,
     #[cfg(target_os = "windows")]
-    _svp_environment: Option<SvpRuntimeEnvironment>,
-}
-
-#[cfg(target_os = "windows")]
-fn prepare_svp_runtime_environment() -> io::Result<Option<SvpRuntimeEnvironment>> {
-    let Some(directory) = ["ProgramFiles", "ProgramFiles(x86)"]
-        .into_iter()
-        .filter_map(env::var_os)
-        .map(PathBuf::from)
-        .map(|root| root.join("SVP 4").join("mpv64"))
-        .find(|candidate| candidate.join("VSScript.dll").is_file())
-    else {
-        tracing::warn!(
-            target: "mpv.library",
-            "SVP profile is enabled, but the SVP 4 mpv64 runtime was not found in Program Files"
-        );
-        return Ok(None);
-    };
-
-    prepend_python_path(&directory)?;
-    let wide_directory = wide_null(directory.as_os_str());
-    let cookie = unsafe {
-        windows_sys::Win32::System::LibraryLoader::AddDllDirectory(wide_directory.as_ptr())
-    };
-    if cookie.is_null() {
-        return Err(io::Error::other(format!(
-            "could not add the SVP runtime directory {}: {}",
-            directory.display(),
-            io::Error::last_os_error()
-        )));
-    }
-    tracing::info!(
-        target: "mpv.library",
-        path = %directory.display(),
-        "configured the SVP 4 runtime directory"
-    );
-    Ok(Some(SvpRuntimeEnvironment {
-        dll_directory_cookie: cookie,
-    }))
-}
-
-#[cfg(target_os = "windows")]
-fn prepend_python_path(directory: &Path) -> io::Result<()> {
-    let mut paths = vec![directory.to_path_buf()];
-    if let Some(current) = env::var_os("PYTHONPATH") {
-        paths.extend(env::split_paths(&current).filter(|path| path != directory));
-    }
-    let joined = env::join_paths(paths).map_err(io::Error::other)?;
-    let wide_name = wide_null(OsStr::new("PYTHONPATH"));
-    let wide_value = wide_null(&joined);
-    let updated = unsafe {
-        windows_sys::Win32::System::Environment::SetEnvironmentVariableW(
-            wide_name.as_ptr(),
-            wide_value.as_ptr(),
-        )
-    };
-    if updated == 0 {
-        return Err(io::Error::other(format!(
-            "could not configure PYTHONPATH for SVP: {}",
-            io::Error::last_os_error()
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn wide_null(value: &OsStr) -> Vec<u16> {
-    value.encode_wide().chain(std::iter::once(0)).collect()
+    _svp_environment: Option<super::svp::RuntimeEnvironment>,
 }
 
 fn configure_libmpv_options(
@@ -273,7 +199,7 @@ impl LibMpvRuntime {
     ) -> io::Result<Self> {
         #[cfg(target_os = "windows")]
         let svp_environment = if libmpv_profile == LibmpvProfile::Svp {
-            prepare_svp_runtime_environment()?
+            super::svp::prepare_runtime_environment()?
         } else {
             None
         };

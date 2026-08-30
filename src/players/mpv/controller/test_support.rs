@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::playback::PlaybackRequest;
-use crate::players::mpv::runtime::MpvRuntimeKind;
-use crate::preferences::{LibmpvProfile, SegmentSkipConfig};
+use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntimeKind};
+use crate::preferences::SegmentSkipConfig;
 
 use super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
 
