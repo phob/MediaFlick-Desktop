@@ -18,7 +18,7 @@ use clap::Parser;
 
 use crate::app::cli::Cli;
 use crate::app::logger;
-use crate::preferences::{FileSettingsStore, PlayerBackend, SettingsStore};
+use crate::preferences::{AppSettings, PlayerBackend};
 use crate::shell::cef::AppConfig;
 
 fn main() {
@@ -32,7 +32,7 @@ fn main() {
     // executable with its own internal switches (for example `--type=renderer`).
     if is_cef_subprocess() {
         std::process::exit(crate::shell::cef::run(&AppConfig {
-            settings: FileSettingsStore.load(),
+            settings: AppSettings::load(),
             title: "MediaFlick Desktop".to_string(),
             remote_debugging_port: 0,
             hidden: false,
@@ -40,8 +40,7 @@ fn main() {
     }
 
     let cli = Cli::parse();
-    let settings_store = FileSettingsStore;
-    let mut settings = settings_store.load();
+    let mut settings = AppSettings::load();
     let log_file = cli
         .log_file
         .clone()
@@ -89,7 +88,7 @@ fn main() {
     }
     settings.sanitize();
 
-    if should_save_settings && let Err(error) = settings_store.save(&settings) {
+    if should_save_settings && let Err(error) = settings.save() {
         tracing::warn!(target: "main", "failed to save mediaflick-desktop config: {error}");
     }
 

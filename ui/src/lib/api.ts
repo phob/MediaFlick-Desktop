@@ -452,10 +452,6 @@ export interface ClientSettings {
     mpvInstaller: boolean
   }
   recoveries?: { area: string; restoredBackup: boolean }[]
-  /** Legacy aliases retained by the shell during the API transition. */
-  streamingQuality: StreamingQualityId
-  playerBackend: "libmpv" | "mpv" | "mpchc"
-  playerConfigured: boolean
   serverUrl: string | null
 }
 

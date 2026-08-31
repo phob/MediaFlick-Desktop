@@ -15,7 +15,7 @@ import {
   Tv,
 } from "lucide-react"
 import { useQueryClient } from "@tanstack/react-query"
-import { useCallback, useEffect, useRef, type ComponentProps } from "react"
+import { useCallback, useEffect, type ComponentProps } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -80,10 +80,9 @@ function serverLabel(url: string | null | undefined) {
 }
 
 export function SearchBox() {
-  const { state, setOpen } = useSidebar()
+  const { state } = useSidebar()
   const location = useLocation()
   const navigate = useNavigate()
-  const input = useRef<HTMLInputElement>(null)
   const locationSearch = librarySearchFromLocation(location.pathname, location.search)
   const commitSearch = useCallback(
     (term: string) => {
@@ -102,15 +101,11 @@ export function SearchBox() {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            tooltip="Search"
-            onClick={() => {
-              setOpen(true)
-              requestAnimationFrame(() => input.current?.focus())
-            }}
-          >
-            <Search />
-            <span>Search</span>
+          <SidebarMenuButton asChild tooltip="Search">
+            <Link to="/library">
+              <Search />
+              <span>Search</span>
+            </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -127,7 +122,6 @@ export function SearchBox() {
     >
       <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
       <SidebarInput
-        ref={input}
         value={search}
         onChange={(event) => setSearch(event.target.value)}
         placeholder="Search…"
@@ -340,7 +334,7 @@ export function AppSidebar(props: AppSidebarProps = {}) {
   }, [collectionSettings?.effectiveMode, prefetchCollection, status?.authenticated])
 
   return (
-    <Sidebar collapsible="icon" className="app-sidebar-container" {...props}>
+    <Sidebar className="app-sidebar-container" {...props}>
       <SidebarHeader>
         <div className="flex items-center gap-2">
           <Link

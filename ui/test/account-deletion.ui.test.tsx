@@ -39,9 +39,6 @@ const settings: ClientSettings = {
     ratingSources: [],
   },
   capabilities: { platform: "windows", libmpv: true, mpchc: true, mpvInstaller: true },
-  streamingQuality: "original",
-  playerBackend: "mpv",
-  playerConfigured: false,
   serverUrl: "https://jellyfin.example",
 }
 

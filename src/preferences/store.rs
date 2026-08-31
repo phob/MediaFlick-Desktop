@@ -50,26 +50,6 @@ fn device_settings(settings: &AppSettings) -> AppSettings {
     settings
 }
 
-/// Persistence port for the application's user preferences.
-pub trait SettingsStore {
-    fn load(&self) -> AppSettings;
-    fn save(&self, settings: &AppSettings) -> io::Result<()>;
-}
-
-/// JSON file adapter used by the desktop application.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct FileSettingsStore;
-
-impl SettingsStore for FileSettingsStore {
-    fn load(&self) -> AppSettings {
-        AppSettings::load()
-    }
-
-    fn save(&self, settings: &AppSettings) -> io::Result<()> {
-        settings.save()
-    }
-}
-
 pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path

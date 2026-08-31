@@ -492,6 +492,11 @@ impl ControllerState {
     }
 
     fn control(&mut self, command: &PlayerCommand) {
+        if matches!(command, PlayerCommand::MarkWatchedAndPlayNext) {
+            self.mark_watched_and_play_next();
+            return;
+        }
+
         if self.runtime_kind == MpvRuntimeKind::Library
             && self.pending.is_some()
             && let PlayerCommand::SetPause(pause) = command

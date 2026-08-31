@@ -20,8 +20,9 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ReleaseCapture, SetCapture, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
-    VK_CAPITAL, VK_CONTROL, VK_DOWN, VK_F4, VK_LEFT, VK_MENU, VK_NUMLOCK, VK_RIGHT, VK_SHIFT,
-    VK_UP,
+    VK_BACK, VK_CAPITAL, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F4, VK_HOME,
+    VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_NUMLOCK, VK_PRIOR, VK_RETURN, VK_RIGHT,
+    VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_DBLCLKS, CWPRETSTRUCT, CallNextHookEx, CreateWindowExW, DefWindowProcW,
@@ -40,6 +41,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use windows_sys::core::PCWSTR;
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
+use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
 use crate::shell::cef::app_scheme;
 
@@ -61,6 +63,7 @@ const CAPTURED_LEFT: u8 = 1 << 2;
 const CAPTURED_RIGHT: u8 = 1 << 3;
 const CAPTURED_UP: u8 = 1 << 4;
 const CAPTURED_DOWN: u8 = 1 << 5;
+const CAPTURED_WATCHED_NEXT: u8 = 1 << 6;
 const INPUT_CLASS: &[u16] = &[
     77, 101, 100, 105, 97, 70, 108, 105, 99, 107, 67, 101, 102, 73, 110, 112, 117, 116, 0,
 ];
@@ -407,12 +410,24 @@ impl PrototypeOsrSurface {
     }
 
     fn handle_playback_key(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> bool {
-        let Some(key) = playback_key(message, wparam) else {
+        if !is_playback_key_message(message) {
+            return false;
+        }
+        let captured = self.captured_playback_keys.get();
+        if matches!(message, WM_CHAR | WM_SYSCHAR) && captured & CAPTURED_WATCHED_NEXT != 0 {
+            return true;
+        }
+        let bindings = MpvInputBindings::load();
+        let Some(key) = playback_key(
+            message,
+            wparam,
+            PlaybackModifiers::current(),
+            bindings.mark_watched_next.as_deref(),
+        ) else {
             return false;
         };
-        let captured = self.captured_playback_keys.get();
         match message {
-            WM_KEYDOWN => {
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
                 let snapshot = self.playback.snapshot();
                 if !snapshot.active {
                     return false;
@@ -424,11 +439,11 @@ impl PrototypeOsrSurface {
                 }
                 true
             }
-            WM_KEYUP if captured & key.mask() != 0 => {
+            WM_KEYUP | WM_SYSKEYUP if captured & key.mask() != 0 => {
                 self.captured_playback_keys.set(captured & !key.mask());
                 true
             }
-            WM_CHAR => captured & key.mask() != 0,
+            WM_CHAR | WM_SYSCHAR => captured & key.mask() != 0,
             _ => false,
         }
     }
@@ -877,9 +892,7 @@ fn dispatch_window_message(
             }
             Some(0)
         }
-        WM_KEYDOWN | WM_KEYUP | WM_CHAR if surface.handle_playback_key(message, wparam, lparam) => {
-            Some(0)
-        }
+        _ if surface.handle_playback_key(message, wparam, lparam) => Some(0),
         WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP | WM_CHAR | WM_SYSCHAR => {
             let event = key_event(message, wparam, lparam);
             surface.with_browser_host(|host| host.send_key_event(Some(&event)));
@@ -1153,6 +1166,7 @@ enum PlaybackKey {
     SeekForwardTenSeconds,
     SeekBackThirtySeconds,
     SeekForwardThirtySeconds,
+    MarkWatchedAndPlayNext,
 }
 
 impl PlaybackKey {
@@ -1164,6 +1178,7 @@ impl PlaybackKey {
             Self::SeekForwardTenSeconds => CAPTURED_RIGHT,
             Self::SeekBackThirtySeconds => CAPTURED_DOWN,
             Self::SeekForwardThirtySeconds => CAPTURED_UP,
+            Self::MarkWatchedAndPlayNext => CAPTURED_WATCHED_NEXT,
         }
     }
 
@@ -1171,6 +1186,7 @@ impl PlaybackKey {
         let offset_ms = match self {
             Self::Stop => return PlayerCommand::Stop,
             Self::ToggleSubtitles => return PlayerCommand::ToggleSubtitleVisibility,
+            Self::MarkWatchedAndPlayNext => return PlayerCommand::MarkWatchedAndPlayNext,
             Self::SeekBackTenSeconds => -10_000.0,
             Self::SeekForwardTenSeconds => 10_000.0,
             Self::SeekBackThirtySeconds => -30_000.0,
@@ -1180,7 +1196,41 @@ impl PlaybackKey {
     }
 }
 
-fn playback_key(message: u32, wparam: WPARAM) -> Option<PlaybackKey> {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PlaybackModifiers {
+    shift: bool,
+    control: bool,
+    alt: bool,
+    meta: bool,
+}
+
+impl PlaybackModifiers {
+    fn current() -> Self {
+        Self {
+            shift: key_down(VK_SHIFT),
+            control: key_down(VK_CONTROL),
+            alt: key_down(VK_MENU),
+            meta: key_down(VK_LWIN) || key_down(VK_RWIN),
+        }
+    }
+}
+
+fn is_playback_key_message(message: u32) -> bool {
+    matches!(
+        message,
+        WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP | WM_CHAR | WM_SYSCHAR
+    )
+}
+
+fn playback_key(
+    message: u32,
+    wparam: WPARAM,
+    modifiers: PlaybackModifiers,
+    mark_watched_next: Option<&str>,
+) -> Option<PlaybackKey> {
+    if binding_matches_key_event(mark_watched_next, message, wparam, modifiers) {
+        return Some(PlaybackKey::MarkWatchedAndPlayNext);
+    }
     if !matches!(message, WM_KEYDOWN | WM_KEYUP | WM_CHAR) {
         return None;
     }
@@ -1193,6 +1243,116 @@ fn playback_key(message: u32, wparam: WPARAM) -> Option<PlaybackKey> {
         KEY_UP => Some(PlaybackKey::SeekForwardThirtySeconds),
         _ => None,
     }
+}
+
+fn binding_matches_key_event(
+    binding: Option<&str>,
+    message: u32,
+    wparam: WPARAM,
+    modifiers: PlaybackModifiers,
+) -> bool {
+    let Some((binding_key, binding_modifiers)) = binding.and_then(parse_mpv_key_binding) else {
+        return false;
+    };
+    let event_key = if matches!(message, WM_CHAR | WM_SYSCHAR) {
+        virtual_key_for_character(wparam as u16).map(|(key, _)| key)
+    } else if matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
+        Some(wparam)
+    } else {
+        None
+    };
+    event_key == Some(binding_key)
+        && (!matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_CHAR | WM_SYSCHAR)
+            || modifiers == binding_modifiers)
+}
+
+fn parse_mpv_key_binding(binding: &str) -> Option<(WPARAM, PlaybackModifiers)> {
+    let binding = binding.trim();
+    if binding.is_empty() || binding.chars().any(char::is_control) {
+        return None;
+    }
+    let mut parts = binding.split('+');
+    let key = parts.next_back()?;
+    let mut modifiers = PlaybackModifiers::default();
+    for modifier in parts {
+        if modifier.eq_ignore_ascii_case("shift") {
+            modifiers.shift = true;
+        } else if modifier.eq_ignore_ascii_case("ctrl") {
+            modifiers.control = true;
+        } else if modifier.eq_ignore_ascii_case("alt") {
+            modifiers.alt = true;
+        } else if modifier.eq_ignore_ascii_case("meta") {
+            modifiers.meta = true;
+        } else {
+            return None;
+        }
+    }
+
+    let (key, implied_modifiers) = mpv_key_code(key)?;
+    modifiers.shift |= implied_modifiers.shift;
+    modifiers.control |= implied_modifiers.control;
+    modifiers.alt |= implied_modifiers.alt;
+    Some((key, modifiers))
+}
+
+fn mpv_key_code(key: &str) -> Option<(WPARAM, PlaybackModifiers)> {
+    let named = [
+        ("BS", VK_BACK),
+        ("ENTER", VK_RETURN),
+        ("TAB", VK_TAB),
+        ("ESC", VK_ESCAPE),
+        ("SPACE", VK_SPACE),
+        ("DEL", VK_DELETE),
+        ("INS", VK_INSERT),
+        ("HOME", VK_HOME),
+        ("END", VK_END),
+        ("PGUP", VK_PRIOR),
+        ("PGDWN", VK_NEXT),
+        ("UP", VK_UP),
+        ("DOWN", VK_DOWN),
+        ("LEFT", VK_LEFT),
+        ("RIGHT", VK_RIGHT),
+    ];
+    if let Some((_, code)) = named
+        .into_iter()
+        .find(|(name, _)| key.eq_ignore_ascii_case(name))
+    {
+        return Some((code as WPARAM, PlaybackModifiers::default()));
+    }
+    if let Some(number) = key
+        .strip_prefix(['F', 'f'])
+        .and_then(|number| number.parse::<u16>().ok())
+        .filter(|number| (1..=24).contains(number))
+    {
+        return Some((
+            WPARAM::from(VK_F1 + number - 1),
+            PlaybackModifiers::default(),
+        ));
+    }
+    let mut characters = key.encode_utf16();
+    let character = characters.next()?;
+    characters
+        .next()
+        .is_none()
+        .then(|| virtual_key_for_character(character))?
+}
+
+fn virtual_key_for_character(character: u16) -> Option<(WPARAM, PlaybackModifiers)> {
+    let mapped = unsafe { VkKeyScanW(character) };
+    if mapped == -1 {
+        return None;
+    }
+    let mapped = mapped as u16;
+    let shift_state = mapped >> 8;
+    Some((
+        WPARAM::from(mapped & 0xff),
+        PlaybackModifiers {
+            shift: shift_state & 1 != 0,
+            control: shift_state & 2 != 0,
+            alt: shift_state & 4 != 0,
+            meta: false,
+        },
+    ))
 }
 
 fn seek_target_ms(position_ms: f64, offset_ms: f64, duration_ms: Option<f64>) -> f64 {
@@ -1288,32 +1448,78 @@ mod tests {
 
     #[test]
     fn active_playback_keys_match_mpv_controls() {
-        assert_eq!(playback_key(WM_KEYDOWN, VK_Q), Some(PlaybackKey::Stop));
+        let no_modifiers = PlaybackModifiers::default();
         assert_eq!(
-            playback_key(WM_KEYDOWN, VK_V),
-            Some(PlaybackKey::ToggleSubtitles)
-        );
-        assert_eq!(
-            playback_key(WM_CHAR, b'q' as WPARAM),
+            playback_key(WM_KEYDOWN, VK_Q, no_modifiers, None),
             Some(PlaybackKey::Stop)
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_LEFT),
+            playback_key(WM_KEYDOWN, VK_V, no_modifiers, None),
+            Some(PlaybackKey::ToggleSubtitles)
+        );
+        assert_eq!(
+            playback_key(WM_CHAR, b'q' as WPARAM, no_modifiers, None),
+            Some(PlaybackKey::Stop)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, KEY_LEFT, no_modifiers, None),
             Some(PlaybackKey::SeekBackTenSeconds)
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_RIGHT),
+            playback_key(WM_KEYDOWN, KEY_RIGHT, no_modifiers, None),
             Some(PlaybackKey::SeekForwardTenSeconds)
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_DOWN),
+            playback_key(WM_KEYDOWN, KEY_DOWN, no_modifiers, None),
             Some(PlaybackKey::SeekBackThirtySeconds)
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_UP),
+            playback_key(WM_KEYDOWN, KEY_UP, no_modifiers, None),
             Some(PlaybackKey::SeekForwardThirtySeconds)
         );
-        assert_eq!(playback_key(WM_SYSKEYDOWN, VK_Q), None);
+        assert_eq!(playback_key(WM_SYSKEYDOWN, VK_Q, no_modifiers, None), None);
+    }
+
+    #[test]
+    fn configured_mpv_watched_next_binding_controls_libmpv() {
+        let no_modifiers = PlaybackModifiers::default();
+        assert_eq!(
+            playback_key(WM_KEYDOWN, b'W' as WPARAM, no_modifiers, Some("w")),
+            Some(PlaybackKey::MarkWatchedAndPlayNext)
+        );
+        assert_eq!(
+            playback_key(WM_CHAR, b'w' as WPARAM, no_modifiers, Some("w")),
+            Some(PlaybackKey::MarkWatchedAndPlayNext)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, b'W' as WPARAM, no_modifiers, None),
+            None
+        );
+
+        let control = PlaybackModifiers {
+            control: true,
+            ..PlaybackModifiers::default()
+        };
+        assert_eq!(
+            playback_key(WM_KEYDOWN, b'W' as WPARAM, control, Some("Ctrl+w")),
+            Some(PlaybackKey::MarkWatchedAndPlayNext)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, b'W' as WPARAM, no_modifiers, Some("Ctrl+w")),
+            None
+        );
+        let shift = PlaybackModifiers {
+            shift: true,
+            ..PlaybackModifiers::default()
+        };
+        assert_eq!(
+            playback_key(WM_KEYDOWN, b'W' as WPARAM, shift, Some("W")),
+            Some(PlaybackKey::MarkWatchedAndPlayNext)
+        );
+        assert_eq!(
+            playback_key(WM_KEYDOWN, VK_Q, no_modifiers, Some("q")),
+            Some(PlaybackKey::MarkWatchedAndPlayNext)
+        );
     }
 
     #[test]

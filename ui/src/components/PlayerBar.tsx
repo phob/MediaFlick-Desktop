@@ -526,10 +526,7 @@ function ActivePlayerBar({
     media.data?.sources?.[0]
   const video = source?.video[0]
   const selectedQuality =
-    qualityOverride ??
-    settings.data?.client?.playback?.streamingQuality ??
-    settings.data?.streamingQuality ??
-    "auto"
+    qualityOverride ?? settings.data?.client?.playback?.streamingQuality ?? "auto"
 
   const showAction = (message: string) => {
     setFeedback(message)

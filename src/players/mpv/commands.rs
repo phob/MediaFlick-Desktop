@@ -159,6 +159,7 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
         }
         PlayerCommand::ToggleSubtitleVisibility => json!(["cycle", "sub-visibility"]),
         PlayerCommand::ToggleFullscreen => json!(["cycle", "fullscreen"]),
+        PlayerCommand::MarkWatchedAndPlayNext => return None,
         PlayerCommand::Stop => json!(["stop"]),
     };
 

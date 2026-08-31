@@ -38,7 +38,7 @@ const FROM_SETTINGS = "__settings__"
 function QualityPicker() {
   const override = useQualityOverride()
   const settings = useSettings()
-  const saved = qualityLabel(settings.data?.streamingQuality)
+  const saved = qualityLabel(settings.data?.client?.playback?.streamingQuality)
 
   return (
     <Select

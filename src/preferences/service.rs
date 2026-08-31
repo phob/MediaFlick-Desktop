@@ -7,8 +7,8 @@ use crate::players::mpv::input::MpvInputBindings;
 
 use super::{
     AccountConfigurationService, AccountKey, AppSettings, AppearanceAccent, AppearanceDensity,
-    AppearanceTheme, CloseBehavior, FileSettingsStore, FullscreenBehavior, PlayerBackend,
-    SegmentSkipMode, SettingsStore, StreamingQuality, WebUiWindowSettings,
+    AppearanceTheme, CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode,
+    StreamingQuality, WebUiWindowSettings,
 };
 
 /// Serialized patches accepted by the settings API.  These deliberately name
@@ -421,8 +421,7 @@ impl PreferencesService {
             let mut next = previous.clone();
             mutate(&mut next)?;
             next.sanitize();
-            FileSettingsStore
-                .save(&next)
+            next.save()
                 .map_err(|error| PreferencesError(format!("could not save config: {error}")))?;
             let mut plan = SettingsApplyPlan::between(&previous, &next);
             augment_plan(&mut plan);

@@ -564,6 +564,9 @@ impl State {
             }
             PlayerCommand::SetVolume(volume) => self.set_volume(*volume),
             PlayerCommand::SetMute(mute) => self.set_mute(*mute),
+            PlayerCommand::MarkWatchedAndPlayNext => {
+                tracing::debug!(target: "mpchc", "mark-watched-next is an mpv-only binding");
+            }
             PlayerCommand::Stop => {
                 self.set_fullscreen(FullscreenBehavior::Windowed);
                 self.finish_active("stop", false);
