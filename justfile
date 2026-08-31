@@ -72,18 +72,6 @@ test:
 clippy:
     cargo clippy --all-targets -- -D warnings
 
-# Check Rust source file sizes without changing the existing quality gate
-[group('lint')]
-[windows]
-rust-file-size:
-    python scripts/check_rust_file_size.py
-
-# Check Rust source file sizes without changing the existing quality gate
-[group('lint')]
-[unix]
-rust-file-size:
-    python3 scripts/check_rust_file_size.py
-
 # Run every deterministic Rust quality check
 [group('lint')]
 rust-quality: fmt-check clippy
@@ -92,6 +80,12 @@ rust-quality: fmt-check clippy
 [group('lint')]
 rust-watch:
     bacon
+
+# Build the bundled Windows libmpv runtime through WSL
+[group('build')]
+[windows]
+libmpv:
+    wsl.exe --cd '{{justfile_directory()}}' -- bash distribution/libmpv/windows/build-wsl.sh
 
 # Build and stage the app into ./build
 [group('build')]

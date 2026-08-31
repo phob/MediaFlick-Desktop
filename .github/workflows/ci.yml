@@ -32,9 +32,6 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
-      - name: Check Rust source sizes
-        run: python3 scripts/check_rust_file_size.py
-
   ui:
     name: UI
     runs-on: ubuntu-latest

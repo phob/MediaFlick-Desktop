@@ -40,9 +40,6 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
   },
   appearance: appearance(cardPreviews),
   capabilities: { platform: "windows", libmpv: true, mpchc: false, mpvInstaller: false },
-  streamingQuality: "original",
-  playerBackend: "mpv",
-  playerConfigured: true,
   serverUrl: null,
 })
 

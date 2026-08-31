@@ -206,7 +206,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider
       open={sidebarOpen}
-      onOpenChange={() => undefined}
       data-sidebar-overlay={sidebarShouldOverlayContent(location.pathname) || undefined}
       className="app-experience h-full min-w-0 overflow-hidden"
     >

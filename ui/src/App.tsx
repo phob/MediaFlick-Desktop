@@ -1,9 +1,10 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
-import { AppProviders } from "@/components/AppProviders"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
+import { RatingsProvider } from "@/lib/ratings"
+import { TechnicalProvider } from "@/lib/technical"
 import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
@@ -68,8 +69,9 @@ export default function App() {
         // portal as a sibling of the routed children. Ratings must therefore
         // wrap the shell itself, not only the routes, or that sibling cannot
         // read the selected-source context even though the shelf card can.
-        <AppProviders>
-          <AppShell>
+        <RatingsProvider>
+          <TechnicalProvider>
+            <AppShell>
             <Routes>
               <Route path="/settings/*" element={<Settings />} />
               <Route path="/" element={<Home />} />
@@ -112,8 +114,9 @@ export default function App() {
               />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </AppShell>
-        </AppProviders>
+            </AppShell>
+          </TechnicalProvider>
+        </RatingsProvider>
       )}
       <LoadingScreen
         // A new account waits only for the first committed catalog page. The

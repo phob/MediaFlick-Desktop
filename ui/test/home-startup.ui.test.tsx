@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { useContext } from "react"
 import { describe, expect, test } from "vitest"
-import { AppProviders } from "@/components/AppProviders"
 import { RatingsContext } from "@/lib/rating-context"
+import { RatingsProvider } from "@/lib/ratings"
+import { TechnicalProvider } from "@/lib/technical"
 import { queryKeys } from "@/lib/query-client"
 import { startupScreenReady } from "@/lib/startup"
 
@@ -26,9 +27,11 @@ describe("home startup cover", () => {
 
     const view = render(
       <QueryClientProvider client={client}>
-        <AppProviders>
-          <RatingsProbe />
-        </AppProviders>
+        <RatingsProvider>
+          <TechnicalProvider>
+            <RatingsProbe />
+          </TechnicalProvider>
+        </RatingsProvider>
       </QueryClientProvider>,
     )
 

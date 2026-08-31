@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest};
+use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand};
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
@@ -28,6 +28,32 @@ fn library_playback_never_schedules_external_window_raise() {
     state.schedule_mpv_raise("test");
 
     assert!(state.pending_raise_pulse_reset_at.is_none());
+}
+
+#[test]
+fn libmpv_watched_next_command_uses_the_existing_completion_handoff() {
+    let mut state = controller_with_pending_load(None);
+    state
+        .pending
+        .as_mut()
+        .expect("pending playback")
+        .launch
+        .runtime_ticks = Some(300_000_000);
+    state.mpv_playback_active = true;
+
+    state.control(&PlayerCommand::MarkWatchedAndPlayNext);
+
+    assert!(state.pending.is_none());
+    assert_eq!(state.last_state.position_ticks, 300_000_000);
+    assert!(state.next_playback_handoff_until.is_some());
+    assert_eq!(
+        state
+            .snapshot
+            .lock()
+            .expect("playback snapshot")
+            .stop_reason,
+        Some("watched-next")
+    );
 }
 
 #[test]

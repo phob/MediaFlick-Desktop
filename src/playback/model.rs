@@ -318,6 +318,7 @@ pub enum PlayerCommand {
     AddSubtitle(String),
     ToggleSubtitleVisibility,
     ToggleFullscreen,
+    MarkWatchedAndPlayNext,
     Stop,
 }
 

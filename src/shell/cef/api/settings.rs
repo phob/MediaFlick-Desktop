@@ -106,11 +106,6 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
             "mpvInstaller": player_setup::supported(),
         },
         "recoveries": recoveries,
-        // Retained for small existing consumers while they move to the
-        // sectioned shape above.
-        "streamingQuality": settings.streaming_quality.as_str(),
-        "playerBackend": settings.effective_backend().as_str(),
-        "playerConfigured": crate::players::configured_player_path(settings).is_some(),
         "serverUrl": settings.jellyfin_url,
     }))
 }

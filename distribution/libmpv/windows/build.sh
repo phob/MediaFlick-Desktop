@@ -39,14 +39,9 @@ if [[ "$actual_commit" != "$winbuild_commit" ]]; then
     exit 1
 fi
 
-if git -C "$winbuild_dir" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
-    : # The MediaFlick patch is already applied in this reusable work tree.
-elif git -C "$winbuild_dir" apply --check "$patch_file"; then
-    git -C "$winbuild_dir" apply "$patch_file"
-else
-    echo "The MediaFlick libmpv patch does not apply cleanly." >&2
-    exit 1
-fi
+git -C "$winbuild_dir" reset --hard "$winbuild_commit"
+git -C "$winbuild_dir" clean -fd
+git -C "$winbuild_dir" apply "$patch_file"
 
 rm -f "$winbuild_dir/mediaflick-vapoursynth-runtime.patch"
 install -m 0644 \

@@ -47,9 +47,6 @@ const settings = {
     mpchc: true,
     mpvInstaller: true,
   },
-  streamingQuality: "auto",
-  playerBackend: "libmpv",
-  playerConfigured: true,
   serverUrl: "http://localhost:8096",
 } satisfies ClientSettings
 

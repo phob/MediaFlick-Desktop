@@ -19,12 +19,7 @@ import Discover from "@/routes/Discover"
 
 const sidebar: SidebarContextValue = {
   state: "expanded",
-  open: true,
-  setOpen: vi.fn(),
-  openMobile: false,
-  setOpenMobile: vi.fn(),
   isMobile: false,
-  toggleSidebar: vi.fn(),
 }
 
 function LocationProbe() {
