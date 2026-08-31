@@ -37,6 +37,7 @@ mkdir -p \
     "$appdir/usr/share/applications" \
     "$appdir/usr/share/icons/hicolor/scalable/apps" \
     "$appdir/usr/share/metainfo" \
+    "$appdir/usr/share/doc/mediaflick-desktop" \
     "dist"
 
 install -m 0755 "$binary" "$appdir/usr/bin/mediaflick-desktop"
@@ -60,6 +61,7 @@ required=(
     "$appdir/usr/bin/libcef.so"
     "$appdir/usr/bin/icudtl.dat"
     "$appdir/usr/bin/resources.pak"
+    "$target_dir/CREDITS.html"
 )
 for file in "${required[@]}"; do
     if [[ ! -e "$file" ]]; then
@@ -74,6 +76,8 @@ if [[ ! -d "$target_dir/locales" ]]; then
 fi
 cp -R "$target_dir/locales" "$appdir/usr/bin/locales"
 
+install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$target_dir/CREDITS.html" \
+    "$appdir/usr/share/doc/mediaflick-desktop/"
 cp resources/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/usr/share/applications/io.github.phob.MediaFlickDesktop.desktop"
 cp resources/linux/io.github.phob.MediaFlickDesktop.metainfo.xml "$appdir/usr/share/metainfo/io.github.phob.MediaFlickDesktop.metainfo.xml"
 cp resources/linux/io.github.phob.MediaFlickDesktop.svg "$appdir/usr/share/icons/hicolor/scalable/apps/io.github.phob.MediaFlickDesktop.svg"

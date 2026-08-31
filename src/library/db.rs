@@ -19,6 +19,7 @@ const MAX_IDLE_CONNECTIONS: usize = 4;
 
 pub struct Database {
     path: PathBuf,
+    open_flags: OpenFlags,
     idle: Mutex<Vec<Connection>>,
 }
 
@@ -35,6 +36,7 @@ impl Database {
         }
         let database = Self {
             path: path.to_path_buf(),
+            open_flags: read_write_flags(),
             idle: Mutex::new(Vec::new()),
         };
         let connection = database.new_connection()?;
@@ -46,11 +48,22 @@ impl Database {
     /// An in-memory database for tests.
     #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
-        let connection = Connection::open_in_memory()?;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
+
+        let id = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = PathBuf::from(format!(
+            "file:mediaflick-desktop-test-{}-{id}?mode=memory&cache=shared",
+            std::process::id()
+        ));
+        let open_flags = read_write_flags() | OpenFlags::SQLITE_OPEN_URI;
+        let connection = Connection::open_with_flags(&path, open_flags)?;
         configure(&connection)?;
         migrate(&connection)?;
         Ok(Self {
-            path: PathBuf::from(":memory:"),
+            path,
+            open_flags,
             idle: Mutex::new(vec![connection]),
         })
     }
@@ -60,12 +73,7 @@ impl Database {
     }
 
     fn new_connection(&self) -> rusqlite::Result<Connection> {
-        let connection = Connection::open_with_flags(
-            &self.path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let connection = Connection::open_with_flags(&self.path, self.open_flags)?;
         configure(&connection)?;
         Ok(connection)
     }
@@ -112,6 +120,12 @@ impl Database {
         self.release(connection);
         result
     }
+}
+
+fn read_write_flags() -> OpenFlags {
+    OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
 }
 
 fn configure(connection: &Connection) -> rusqlite::Result<()> {
@@ -698,6 +712,18 @@ mod tests {
             })
             .expect("column lookup");
         assert_eq!(dropped_column, 0, "a rich-metadata column survived");
+    }
+
+    #[test]
+    fn pooled_in_memory_connections_share_the_schema() {
+        let database = Database::open_in_memory().expect("open");
+        database
+            .with_connection(|_| {
+                let version = database.with_connection(user_version)?;
+                assert_eq!(version, SCHEMA_VERSION);
+                Ok(())
+            })
+            .expect("nested connection");
     }
 
     #[test]

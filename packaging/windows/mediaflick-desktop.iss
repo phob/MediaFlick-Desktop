@@ -21,6 +21,7 @@ SetupIconFile=..\..\resources\win\app.ico
 WizardImageFile=..\..\resources\win\installer-sidebar.bmp
 WizardSmallImageFile=..\..\resources\win\installer-small.bmp
 UninstallDisplayIcon={app}\mediaflick-desktop.exe
+LicenseFile=..\..\LICENSE
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

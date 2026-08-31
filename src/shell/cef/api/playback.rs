@@ -237,6 +237,7 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
                 body["subtitleTrack"].as_i64().filter(|track| *track > 0),
             )),
         },
+        "toggle-subtitles" => Some(PlayerCommand::ToggleSubtitleVisibility),
         "toggle-fullscreen" => Some(PlayerCommand::ToggleFullscreen),
         "stop" => Some(PlayerCommand::Stop),
         _ => None,

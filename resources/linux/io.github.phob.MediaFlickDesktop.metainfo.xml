@@ -2,15 +2,15 @@
 <component type="desktop-application">
   <id>io.github.phob.MediaFlickDesktop</id>
   <name>MediaFlick Desktop</name>
-  <summary>External mpv playback for Jellyfin</summary>
+  <summary>Native Jellyfin client with mpv playback</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-2.0-or-later</project_license>
   <description>
     <p>
-      MediaFlick Desktop is a lightweight desktop client for Jellyfin media servers.
-      It embeds Jellyfin Web in a native CEF window and hands direct-play media
-      streams to an external mpv process while reporting playback progress back
-      to Jellyfin.
+      MediaFlick Desktop is a native desktop client for Jellyfin media servers.
+      It keeps a local library cache, plays media through built-in libmpv on
+      Windows or an external mpv installation, and reports playback progress
+      back to Jellyfin.
     </p>
   </description>
   <launchable type="desktop-id">io.github.phob.MediaFlickDesktop.desktop</launchable>

@@ -44,8 +44,6 @@ impl PrototypeOsrSurface {
         None
     }
 
-    pub(super) fn sync(&self) {}
-
     pub(super) fn show(&self) {}
 
     pub(super) fn destroy(&self) {}

@@ -158,6 +158,51 @@ jobs:
             Write-Error "Missing expected zip artifact: $ZipPath"
           }
 
+      - name: Smoke test Windows installer
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $InstallerPath = (Resolve-Path "dist\installer\MediaFlickDesktop-Setup-$env:VERSION.exe").Path
+          $InstallPath = Join-Path $env:RUNNER_TEMP "mediaflick-smoke"
+
+          $Installer = Start-Process -FilePath $InstallerPath -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/DIR=$InstallPath"
+          ) -Wait -PassThru
+          if ($Installer.ExitCode -ne 0) {
+            throw "Installer smoke test failed with exit code $($Installer.ExitCode)"
+          }
+
+          $AppPath = Join-Path $InstallPath "mediaflick-desktop.exe"
+          $App = Start-Process -FilePath $AppPath -ArgumentList "--version" -Wait -PassThru
+          if ($App.ExitCode -ne 0) {
+            throw "Installed application smoke test failed with exit code $($App.ExitCode)"
+          }
+
+          foreach ($RelativePath in @(
+            "licenses\MediaFlick Desktop\LICENSE",
+            "licenses\MediaFlick Desktop\THIRD-PARTY-NOTICES.md",
+            "licenses\cef\CREDITS.html",
+            "licenses\libmpv\THIRD-PARTY-NOTICES.md"
+          )) {
+            if (-not (Test-Path (Join-Path $InstallPath $RelativePath))) {
+              throw "Installed release is missing $RelativePath"
+            }
+          }
+
+          $UninstallerPath = Join-Path $InstallPath "unins000.exe"
+          $Uninstaller = Start-Process -FilePath $UninstallerPath -ArgumentList @(
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART"
+          ) -Wait -PassThru
+          if ($Uninstaller.ExitCode -ne 0) {
+            throw "Uninstaller smoke test failed with exit code $($Uninstaller.ExitCode)"
+          }
+
       - name: Upload Windows release assets
         uses: actions/upload-artifact@v7
         with:
@@ -329,6 +374,16 @@ jobs:
           cargo build --release --bin mediaflick-desktop
           scripts/build-linux-appimage.sh
 
+      - name: Smoke test Linux AppImage
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          appimage="$(realpath "dist/MediaFlickDesktop-${TAG}-linux-x86_64.AppImage")"
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/LICENSE
+          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/THIRD-PARTY-NOTICES.md
+          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/CREDITS.html
+
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v7
         with:
@@ -409,6 +464,30 @@ jobs:
         run: |
           cargo build --release --bin mediaflick-desktop
           scripts/build-macos-dmg.sh
+
+      - name: Smoke test macOS DMG
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          dmg="dist/MediaFlickDesktop-${TAG}-macos-${MACOS_ARTIFACT_ARCH}.dmg"
+          mount_point="$(mktemp -d)"
+          attached=0
+          cleanup() {
+            if [[ "$attached" == 1 ]]; then
+              hdiutil detach "$mount_point"
+            fi
+            rmdir "$mount_point"
+          }
+          trap cleanup EXIT
+
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg"
+          attached=1
+          app="$mount_point/MediaFlick Desktop.app"
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/MacOS/mediaflick-desktop" --version
+          test -f "$app/Contents/Resources/Licenses/LICENSE"
+          test -f "$app/Contents/Resources/Licenses/THIRD-PARTY-NOTICES.md"
+          test -f "$app/Contents/Resources/Licenses/CREDITS.html"
 
       - name: Upload macOS release asset
         uses: actions/upload-artifact@v7

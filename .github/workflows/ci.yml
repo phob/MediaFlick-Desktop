@@ -17,8 +17,8 @@ env:
   CARGO_TARGET_DIR: build/cargo-target
 
 jobs:
-  fmt:
-    name: Format
+  source-quality:
+    name: Source quality
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -29,8 +29,39 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Check formatting
+      - name: Check Rust formatting
         run: cargo fmt --all -- --check
+
+      - name: Check Rust source sizes
+        run: python3 scripts/check_rust_file_size.py
+
+  ui:
+    name: UI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Lint UI
+        run: pnpm --dir ui lint
+
+      - name: Test UI
+        run: pnpm --dir ui test
 
   build-and-test:
     name: Build and test (${{ matrix.os }})
@@ -39,10 +70,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest]
+        os: [ubuntu-24.04, windows-latest, macos-15]
 
     env:
       CEF_PATH: ${{ github.workspace }}/.cache/cef
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     steps:
       - name: Check out repository
@@ -81,9 +113,6 @@ jobs:
       - name: Install UI dependencies
         run: pnpm --dir ui install --frozen-lockfile
 
-      - name: Test UI
-        run: pnpm --dir ui test
-
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -117,14 +146,18 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ninja --yes --no-progress
 
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja
+
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Build
-        run: cargo build --bin mediaflick-desktop
+        run: cargo build --locked --bin mediaflick-desktop
 
   plugin:
     name: Companion plugin
@@ -147,12 +180,12 @@ jobs:
   ci:
     name: CI
     if: ${{ always() }}
-    needs: [fmt, build-and-test, plugin]
+    needs: [source-quality, ui, build-and-test, plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs succeeded
         run: |
-          if [ "${{ needs.fmt.result }}" != "success" ] || [ "${{ needs.build-and-test.result }}" != "success" ] || [ "${{ needs.plugin.result }}" != "success" ]; then
+          if [ "${{ needs.source-quality.result }}" != "success" ] || [ "${{ needs.ui.result }}" != "success" ] || [ "${{ needs.build-and-test.result }}" != "success" ] || [ "${{ needs.plugin.result }}" != "success" ]; then
             echo "One or more required CI jobs failed."
             exit 1
           fi

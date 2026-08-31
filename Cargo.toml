@@ -2,6 +2,7 @@
 name = "mediaflick-desktop"
 version = "0.1.6"
 edition = "2024"
+license = "GPL-2.0-or-later"
 publish = false
 
 [[bin]]

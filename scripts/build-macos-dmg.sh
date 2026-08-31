@@ -59,12 +59,18 @@ contents="$app/Contents"
 macos_dir="$contents/MacOS"
 frameworks_dir="$contents/Frameworks"
 resources_dir="$contents/Resources"
+licenses_dir="$resources_dir/Licenses"
 rm -rf "$app" "dist/dmg"
-mkdir -p "$macos_dir" "$frameworks_dir" "$resources_dir" "dist/dmg"
+mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "dist/dmg"
 
 install -m 0755 "$binary" "$macos_dir/mediaflick-desktop"
 cp -R "$cef_framework" "$frameworks_dir/"
 cp resources/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
+if [[ ! -f "$target_dir/CREDITS.html" ]]; then
+    echo "Missing Chromium credits file: $target_dir/CREDITS.html" >&2
+    exit 1
+fi
+install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$target_dir/CREDITS.html" "$licenses_dir/"
 
 python3 - "$version" <<'PY'
 import sys
