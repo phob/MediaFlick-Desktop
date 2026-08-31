@@ -21,21 +21,18 @@ const accountSettings: CollectionSettings = {
   franchises: { includeUnreleased: false },
   readiness: { tmdb: true, mdblist: true },
   recovery: null,
-  access: { readOnly: false },
 }
 
 function template(patch: Partial<CollectionTemplate> = {}): CollectionTemplate {
   return {
     id: "tmdb.discover.movie.popular",
-    version: 1,
     title: "Popular movies",
     description: "Popular movies from TMDB.",
     category: "popular",
     pictogram: "star",
-    source: { kind: "tmdbDiscover", schemaVersion: 1, parameters: {} },
+    source: { kind: "tmdbDiscover", parameters: {} },
     mediaType: "movie",
     limit: { kind: "all" },
-    ordering: "source",
     cadence: "daily",
     ...patch,
   }
@@ -45,14 +42,13 @@ function profile(id: string, patch: Partial<CollectionProfile> = {}): Collection
   return {
     id,
     revision: "b".repeat(16),
-    template: { id: "tmdb.discover.movie.popular", version: 1 },
+    template: { id: "tmdb.discover.movie.popular" },
     title: "Popular movies",
     description: "Popular movies from TMDB.",
     customPosterId: null,
-    source: { kind: "tmdbDiscover", schemaVersion: 1, parameters: {} },
+    source: { kind: "tmdbDiscover", parameters: {} },
     mediaType: "movie",
     limit: { kind: "all" },
-    ordering: "source",
     cadence: "daily",
     ...patch,
   }
@@ -148,7 +144,7 @@ describe("collection settings wizard", () => {
         template({
           id: "mdblist.public-list",
           title: "MDBList list",
-          source: { kind: "mdbListPublicList", schemaVersion: 1, listId: "42" },
+          source: { kind: "mdbListPublicList", listId: "42" },
           mediaType: "mixed",
         }),
       ),
@@ -285,7 +281,7 @@ describe("collection settings wizard", () => {
     const custom = template({
       id: "tmdb.discover.movie.custom-discover",
       title: "Custom discover",
-      source: { kind: "tmdbDiscover", schemaVersion: 1, parameters: {} },
+      source: { kind: "tmdbDiscover", parameters: {} },
       limit: { kind: "maximum", count: 20 },
     })
     mockPage({ templates: catalog(custom) })
@@ -323,7 +319,6 @@ describe("collection settings wizard", () => {
       title: "The Matrix Collection",
       source: {
         kind: "tmdbCollection",
-        schemaVersion: 1,
         collectionId: 2344,
         includeUnreleased: false,
       },
@@ -345,7 +340,7 @@ describe("collection settings wizard", () => {
     const list = template({
       id: "mdblist.public.custom",
       title: "Public list",
-      source: { kind: "mdbListPublicList", schemaVersion: 1, listId: "42" },
+      source: { kind: "mdbListPublicList", listId: "42" },
       mediaType: "mixed",
     })
     mockPage({ templates: catalog(list) })
@@ -410,33 +405,6 @@ describe("collection settings wizard", () => {
     expect(isDisabled(save)).toBe(false)
     fireEvent.click(save)
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
-  })
-
-  test("read-only configuration disables URL-opened edits and the template catalog", async () => {
-    const current = profile("a".repeat(16))
-    mockPage({
-      settings: {
-        ...accountSettings,
-        access: { readOnly: true, version: 2 },
-      },
-      profiles: [current],
-    })
-    const update = vi.spyOn(api.api.collections, "updateProfile")
-    page(`/settings/collections?edit=${current.id}`)
-
-    await screen.findByRole("heading", { name: "Edit collection" })
-    expect(isDisabled(screen.getByLabelText("Title"))).toBe(true)
-    const save = screen.getByRole("button", { name: "Save" })
-    expect(isDisabled(save)).toBe(true)
-    fireEvent.click(save)
-    expect(update).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit collection" })).toBeNull())
-    const catalogButton = screen.getAllByRole("button").find((button) =>
-      button.textContent?.includes("Popular movies from TMDB."),
-    )
-    if (!catalogButton) throw new Error("Expected the Popular movies template button")
-    expect(isDisabled(catalogButton)).toBe(true)
   })
 
   test("provider availability does not leak from another account's template cache", async () => {

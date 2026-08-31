@@ -112,15 +112,9 @@ fn always_skip_starts_countdown_without_immediate_trigger() {
     state.segment_skip_config.credits = SegmentSkipMode::Always;
     add_prompt_credits_segment(&mut state);
 
-    state.update_skip_segment_state(0, 150_000_000);
+    state.update_skip_segment_state(150_000_000);
 
-    assert_eq!(
-        state
-            .pending_auto_skip
-            .as_ref()
-            .map(|pending| pending.segment_index),
-        Some(0)
-    );
+    assert_eq!(state.segment_skip_state.pending_segment(), Some(0));
     assert!(!state.skip_segments[0].triggered);
 }
 
@@ -130,9 +124,9 @@ fn always_skip_countdown_cancels_after_leaving_segment() {
     state.segment_skip_config.credits = SegmentSkipMode::Always;
     add_prompt_credits_segment(&mut state);
 
-    state.update_skip_segment_state(0, 150_000_000);
-    state.update_skip_segment_state(150_000_000, 250_000_000);
+    state.update_skip_segment_state(150_000_000);
+    state.update_skip_segment_state(250_000_000);
 
-    assert!(state.pending_auto_skip.is_none());
+    assert!(state.segment_skip_state.pending_segment().is_none());
     assert!(!state.skip_segments[0].triggered);
 }

@@ -13,7 +13,6 @@ pub fn result_configuration_changed(
     previous.source != next.source
         || previous.media_type != next.media_type
         || previous.limit != next.limit
-        || previous.ordering != next.ordering
 }
 
 pub fn allocate_profile_id() -> String {

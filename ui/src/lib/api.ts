@@ -821,24 +821,20 @@ export interface CollectionSettings {
   franchises: { includeUnreleased: boolean }
   readiness: ProviderReadiness
   recovery: { damagedPath: string; restoredBackup: boolean } | null
-  access: { readOnly: boolean; version?: number }
 }
 
 export type CollectionSource =
   | {
       kind: "tmdbDiscover"
-      schemaVersion: number
       parameters: JsonObject
     }
   | {
       kind: "tmdbCollection"
-      schemaVersion: number
       collectionId: number
       includeUnreleased: boolean
     }
   | {
       kind: "mdbListPublicList"
-      schemaVersion: number
       listId: string
     }
 
@@ -848,7 +844,6 @@ export type CollectionResultLimit =
 
 export interface CollectionTemplateReference {
   id: string
-  version: number
 }
 
 export interface CollectionProfileDraft {
@@ -859,7 +854,6 @@ export interface CollectionProfileDraft {
   source: CollectionSource
   mediaType: CollectionMediaType
   limit: CollectionResultLimit
-  ordering: "source"
   cadence: RefreshCadence
 }
 
@@ -870,7 +864,6 @@ export interface CollectionProfile extends CollectionProfileDraft {
 
 export interface CollectionTemplate extends Omit<CollectionProfileDraft, "template" | "customPosterId"> {
   id: string
-  version: number
   category: CollectionCategory
   pictogram: CollectionTemplatePictogram
 }

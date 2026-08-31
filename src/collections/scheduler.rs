@@ -309,7 +309,6 @@ fn refresh_profile(
         "source": profile.source,
         "mediaType": profile.media_type,
         "limit": profile.limit,
-        "ordering": profile.ordering,
         "ownedTmdbIds": owned_tmdb_ids,
     })) {
         Ok(result) => result,

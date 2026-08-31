@@ -32,13 +32,6 @@ impl MediaType {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ResultOrdering {
-    #[default]
-    Source,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum RefreshCadence {
     #[default]
     Manual,
@@ -61,156 +54,46 @@ pub enum ResultLimit {
 #[serde(rename_all = "camelCase")]
 pub struct TemplateReference {
     pub id: String,
-    pub version: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum CollectionSource {
-    TmdbDiscover {
-        schema_version: u32,
-        parameters: BTreeMap<String, Value>,
-    },
-    TmdbCollection {
-        schema_version: u32,
-        collection_id: u64,
-        include_unreleased: bool,
-    },
-    MdbListPublicList {
-        schema_version: u32,
-        list_id: String,
-    },
-    /// A source shape written by a newer app or a removed implementation.
-    /// Keep its exact JSON so unrelated profiles remain usable and future
-    /// builds can recover it without a lossy rewrite.
-    Unsupported { raw: Value },
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-enum KnownCollectionSource {
+pub enum CollectionSource {
     TmdbDiscover {
-        #[serde(default = "source_schema_version")]
-        schema_version: u32,
         #[serde(default)]
         parameters: BTreeMap<String, Value>,
     },
     TmdbCollection {
-        #[serde(default = "source_schema_version")]
-        schema_version: u32,
         collection_id: u64,
         #[serde(default)]
         include_unreleased: bool,
     },
     MdbListPublicList {
-        #[serde(default = "source_schema_version")]
-        schema_version: u32,
         list_id: String,
     },
 }
 
-impl Serialize for CollectionSource {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::TmdbDiscover {
-                schema_version,
-                parameters,
-            } => KnownCollectionSource::TmdbDiscover {
-                schema_version: *schema_version,
-                parameters: parameters.clone(),
-            }
-            .serialize(serializer),
-            Self::TmdbCollection {
-                schema_version,
-                collection_id,
-                include_unreleased,
-            } => KnownCollectionSource::TmdbCollection {
-                schema_version: *schema_version,
-                collection_id: *collection_id,
-                include_unreleased: *include_unreleased,
-            }
-            .serialize(serializer),
-            Self::MdbListPublicList {
-                schema_version,
-                list_id,
-            } => KnownCollectionSource::MdbListPublicList {
-                schema_version: *schema_version,
-                list_id: list_id.clone(),
-            }
-            .serialize(serializer),
-            Self::Unsupported { raw } => raw.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CollectionSource {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = Value::deserialize(deserializer)?;
-        let source = match serde_json::from_value::<KnownCollectionSource>(raw.clone()) {
-            Ok(KnownCollectionSource::TmdbDiscover {
-                schema_version,
-                parameters,
-            }) => Self::TmdbDiscover {
-                schema_version,
-                parameters,
-            },
-            Ok(KnownCollectionSource::TmdbCollection {
-                schema_version,
-                collection_id,
-                include_unreleased,
-            }) => Self::TmdbCollection {
-                schema_version,
-                collection_id,
-                include_unreleased,
-            },
-            Ok(KnownCollectionSource::MdbListPublicList {
-                schema_version,
-                list_id,
-            }) => Self::MdbListPublicList {
-                schema_version,
-                list_id,
-            },
-            Err(_) => Self::Unsupported { raw },
-        };
-        Ok(source)
-    }
-}
-
 impl CollectionSource {
-    pub fn provider(&self) -> Option<Provider> {
+    pub fn provider(&self) -> Provider {
         match self {
-            Self::TmdbDiscover { .. } | Self::TmdbCollection { .. } => Some(Provider::Tmdb),
-            Self::MdbListPublicList { .. } => Some(Provider::MdbList),
-            Self::Unsupported { .. } => None,
+            Self::TmdbDiscover { .. } | Self::TmdbCollection { .. } => Provider::Tmdb,
+            Self::MdbListPublicList { .. } => Provider::MdbList,
         }
     }
 
     pub fn validate(&self) -> Result<(), &'static str> {
         match self {
-            Self::TmdbDiscover { schema_version, .. }
-            | Self::TmdbCollection { schema_version, .. }
-            | Self::MdbListPublicList { schema_version, .. }
-                if *schema_version != source_schema_version() =>
-            {
-                Err("this collection source version is not supported")
-            }
-            Self::TmdbDiscover { parameters, .. } => validate_discover_parameters(parameters),
+            Self::TmdbDiscover { parameters } => validate_discover_parameters(parameters),
             Self::TmdbCollection {
                 collection_id: 0, ..
             } => Err("the TMDB collection id must be positive"),
-            Self::MdbListPublicList { list_id, .. } if !valid_mdblist_id(list_id) => {
+            Self::MdbListPublicList { list_id } if !valid_mdblist_id(list_id) => {
                 Err("the MDBList public list id is invalid")
             }
-            Self::Unsupported { .. } => Err("this collection source is not supported"),
             _ => Ok(()),
         }
     }
@@ -220,7 +103,6 @@ impl CollectionSource {
             Self::TmdbDiscover { .. } => matches!(media_type, MediaType::Movie | MediaType::Series),
             Self::TmdbCollection { .. } => media_type == MediaType::Movie,
             Self::MdbListPublicList { .. } => true,
-            Self::Unsupported { .. } => false,
         }
     }
 }
@@ -278,10 +160,6 @@ fn valid_region(value: &str) -> bool {
     value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
-fn source_schema_version() -> u32 {
-    1
-}
-
 fn valid_mdblist_id(value: &str) -> bool {
     let value = value.trim();
     value.len() <= 160
@@ -323,8 +201,6 @@ pub struct CollectionProfile {
     #[serde(default)]
     pub limit: ResultLimit,
     #[serde(default)]
-    pub ordering: ResultOrdering,
-    #[serde(default)]
     pub cadence: RefreshCadence,
 }
 
@@ -333,7 +209,7 @@ impl CollectionProfile {
         if !valid_opaque_id(&self.id) || !valid_opaque_id(&self.revision) {
             return Err("the collection identity is invalid");
         }
-        if self.template.id.trim().is_empty() || self.template.version == 0 {
+        if self.template.id.trim().is_empty() {
             return Err("the originating template is invalid");
         }
         if self.title.trim().is_empty() || self.title.trim().chars().count() > 120 {
@@ -480,7 +356,6 @@ mod tests {
     #[test]
     fn collection_source_is_a_camel_case_tagged_union() {
         let source = CollectionSource::TmdbCollection {
-            schema_version: 1,
             collection_id: 10,
             include_unreleased: false,
         };
@@ -492,7 +367,6 @@ mod tests {
     #[test]
     fn discover_parameters_are_a_bounded_allowlist() {
         let valid = CollectionSource::TmdbDiscover {
-            schema_version: 1,
             parameters: BTreeMap::from([
                 ("language".to_string(), json!("de-DE")),
                 ("region".to_string(), json!("DE")),
@@ -500,7 +374,6 @@ mod tests {
         };
         assert!(valid.validate().is_ok());
         let invalid = CollectionSource::TmdbDiscover {
-            schema_version: 1,
             parameters: BTreeMap::from([("url".to_string(), json!("https://example.com"))]),
         };
         assert!(invalid.validate().is_err());
@@ -509,16 +382,13 @@ mod tests {
     #[test]
     fn every_source_accepts_only_media_types_its_provider_honors() {
         let discover = CollectionSource::TmdbDiscover {
-            schema_version: 1,
             parameters: BTreeMap::new(),
         };
         let exact = CollectionSource::TmdbCollection {
-            schema_version: 1,
             collection_id: 10,
             include_unreleased: false,
         };
         let mdblist = CollectionSource::MdbListPublicList {
-            schema_version: 1,
             list_id: "42".to_string(),
         };
 
@@ -531,18 +401,6 @@ mod tests {
         assert!(mdblist.supports_media_type(MediaType::Movie));
         assert!(mdblist.supports_media_type(MediaType::Series));
         assert!(mdblist.supports_media_type(MediaType::Mixed));
-    }
-
-    #[test]
-    fn an_unknown_source_is_retained_and_disabled_without_losing_its_shape() {
-        let raw = json!({
-            "kind": "futureProvider",
-            "schemaVersion": 7,
-            "selector": { "opaque": true }
-        });
-        let source: CollectionSource = serde_json::from_value(raw.clone()).expect("source");
-        assert!(source.validate().is_err());
-        assert_eq!(serde_json::to_value(source).expect("retained source"), raw);
     }
 
     #[test]

@@ -2,15 +2,13 @@
   "id": "aaaaaaaaaaaaaaaa",
   "revision": "bbbbbbbbbbbbbbbb",
   "template": {
-    "id": "tmdb.discover.movie.popular",
-    "version": 1
+    "id": "tmdb.discover.movie.popular"
   },
   "title": "Popular movies",
   "description": "",
   "customPosterId": null,
   "source": {
     "kind": "tmdbDiscover",
-    "schemaVersion": 1,
     "parameters": {
       "sortBy": "popularity.desc"
     }
@@ -19,6 +17,5 @@
   "limit": {
     "kind": "all"
   },
-  "ordering": "source",
   "cadence": "daily"
 }

@@ -61,16 +61,9 @@ impl Default for CollectionConfigurationFile {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CollectionConfigurationAccess {
-    Writable,
-    ReadOnlyNewerVersion(u32),
-}
-
 #[derive(Debug, Clone)]
 struct State {
     document: CollectionConfigurationFile,
-    access: CollectionConfigurationAccess,
     recovery: Option<RecoveryNotice>,
 }
 
@@ -84,37 +77,13 @@ pub struct CollectionConfigurationService {
 
 impl CollectionConfigurationService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        if let Some((version, document)) = future_document(&path)? {
-            validate_accounts(&document)?;
-            return Ok(Self {
-                path,
-                state: Mutex::new(State {
-                    document,
-                    access: CollectionConfigurationAccess::ReadOnlyNewerVersion(version),
-                    recovery: None,
-                }),
-            });
-        }
+        reject_unsupported_version(&path)?;
         let loaded = load_with_recovery::<CollectionConfigurationFile>(&path)?;
-        let (document, access, recovery) = match loaded {
-            None => (
-                CollectionConfigurationFile::default(),
-                CollectionConfigurationAccess::Writable,
-                None,
-            ),
-            Some(loaded) if loaded.document.version > COLLECTION_CONFIG_VERSION => {
-                let version = loaded.document.version;
-                (
-                    loaded.document,
-                    CollectionConfigurationAccess::ReadOnlyNewerVersion(version),
-                    loaded.recovery,
-                )
+        let (document, recovery) = match loaded {
+            None => (CollectionConfigurationFile::default(), None),
+            Some(loaded) if loaded.document.version == COLLECTION_CONFIG_VERSION => {
+                (loaded.document, loaded.recovery)
             }
-            Some(loaded) if loaded.document.version == COLLECTION_CONFIG_VERSION => (
-                loaded.document,
-                CollectionConfigurationAccess::Writable,
-                loaded.recovery,
-            ),
             Some(loaded) => {
                 return Err(invalid_data(format!(
                     "unsupported collections configuration version {}",
@@ -125,16 +94,8 @@ impl CollectionConfigurationService {
         validate_accounts(&document)?;
         Ok(Self {
             path,
-            state: Mutex::new(State {
-                document,
-                access,
-                recovery,
-            }),
+            state: Mutex::new(State { document, recovery }),
         })
-    }
-
-    pub fn access(&self) -> CollectionConfigurationAccess {
-        self.with_state(|state| state.access.clone())
     }
 
     pub fn take_recovery_notice(&self) -> Option<RecoveryNotice> {
@@ -341,12 +302,6 @@ impl CollectionConfigurationService {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let CollectionConfigurationAccess::ReadOnlyNewerVersion(version) = current.access {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("collections.json version {version} is read-only in this app"),
-            ));
-        }
         let mut next = current.document.clone();
         let result = change(&mut next)?;
         validate_accounts(&next)?;
@@ -357,27 +312,18 @@ impl CollectionConfigurationService {
     }
 }
 
-fn future_document(path: &PathBuf) -> io::Result<Option<(u32, CollectionConfigurationFile)>> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let bytes = std::fs::read(path)?;
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return Ok(None);
-    };
-    let Some(version) = value
-        .get("version")
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|version| u32::try_from(version).ok())
-        .filter(|version| *version > COLLECTION_CONFIG_VERSION)
+fn reject_unsupported_version(path: &Path) -> io::Result<()> {
+    let Some(version) = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64))
+        .filter(|version| *version != u64::from(COLLECTION_CONFIG_VERSION))
     else {
-        return Ok(None);
+        return Ok(());
     };
-    let document = serde_json::from_value(value).unwrap_or(CollectionConfigurationFile {
-        version,
-        accounts: Vec::new(),
-    });
-    Ok(Some((version, document)))
+    Err(invalid_data(format!(
+        "unsupported collections configuration version {version}"
+    )))
 }
 
 pub fn collections_file_path() -> PathBuf {
@@ -437,7 +383,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::collections::{
-        CollectionSource, MediaType, RefreshCadence, ResultLimit, ResultOrdering, TemplateReference,
+        CollectionSource, MediaType, RefreshCadence, ResultLimit, TemplateReference,
     };
 
     use super::*;
@@ -462,18 +408,15 @@ mod tests {
             revision: "b".repeat(16),
             template: TemplateReference {
                 id: "tmdb.discover.popular-movies".to_string(),
-                version: 1,
             },
             title: title.to_string(),
             description: String::new(),
             custom_poster_id: None,
             source: CollectionSource::TmdbDiscover {
-                schema_version: 1,
                 parameters: BTreeMap::new(),
             },
             media_type: MediaType::Movie,
             limit: ResultLimit::All,
-            ordering: ResultOrdering::Source,
             cadence: RefreshCadence::Daily,
         }
     }
@@ -518,80 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_file_stays_byte_for_byte_and_read_only() {
+    fn a_newer_file_is_rejected_without_being_modified() {
         let path = test_path();
         let bytes = br#"{"version":2,"futureTopLevel":true,"accounts":[]}"#;
         std::fs::write(&path, bytes).expect("future file");
-        let service = CollectionConfigurationService::open(path.clone()).expect("open future");
-        assert_eq!(
-            service.access(),
-            CollectionConfigurationAccess::ReadOnlyNewerVersion(2)
-        );
-        assert!(
-            service
-                .set_mode(&key("s", "u"), CollectionMode::Jellyfin)
-                .is_err()
-        );
+
+        assert!(CollectionConfigurationService::open(path.clone()).is_err());
         assert_eq!(std::fs::read(&path).expect("unchanged"), bytes);
         let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn an_unsupported_profile_is_retained_while_other_profiles_stay_usable() {
-        let path = test_path();
-        let unknown_id = "d".repeat(16);
-        let known_id = "e".repeat(16);
-        let unknown_source = serde_json::json!({
-            "kind": "futureProvider",
-            "schemaVersion": 3,
-            "selector": { "opaque": true }
-        });
-        let document = serde_json::json!({
-            "version": 1,
-            "accounts": [{
-                "serverId": "server",
-                "userId": "alice",
-                "profiles": [{
-                    "id": unknown_id,
-                    "revision": "a".repeat(16),
-                    "template": { "id": "future.template", "version": 1 },
-                    "title": "Future source",
-                    "source": unknown_source,
-                    "mediaType": "movie",
-                    "limit": { "kind": "all" },
-                    "ordering": "source",
-                    "cadence": "daily"
-                }, {
-                    "id": known_id,
-                    "revision": "b".repeat(16),
-                    "template": { "id": "tmdb.discover.popular-movies", "version": 1 },
-                    "title": "Known source",
-                    "source": { "kind": "tmdbDiscover", "schemaVersion": 1 },
-                    "mediaType": "movie",
-                    "limit": { "kind": "all" },
-                    "ordering": "source",
-                    "cadence": "daily"
-                }]
-            }]
-        });
-        std::fs::write(&path, serde_json::to_vec(&document).expect("document")).expect("write");
-
-        let service = CollectionConfigurationService::open(path.clone()).expect("open");
-        let account = key("server", "alice");
-        assert_eq!(service.account(&account).profiles.len(), 2);
-        let errors = service.profile_errors(&account);
-        assert!(errors.contains_key(&unknown_id));
-        assert!(!errors.contains_key(&known_id));
-        service
-            .reorder_profiles(&account, &[unknown_id, known_id])
-            .expect("save unrelated order");
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("saved file")).expect("saved json");
-        assert_eq!(
-            saved["accounts"][0]["profiles"][0]["source"],
-            unknown_source
-        );
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(super::super::json_file::backup_path(&path));
     }
 }

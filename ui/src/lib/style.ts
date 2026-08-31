@@ -4,7 +4,3 @@ import type { CSSProperties } from "react"
 export interface CSSVariableProperties extends CSSProperties {
   [name: `--${string}`]: string | number | undefined
 }
-
-export function cssVariables(properties: CSSVariableProperties): CSSVariableProperties {
-  return properties
-}

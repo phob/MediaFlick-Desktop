@@ -66,7 +66,7 @@ import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
 import { useCompanion, useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
-import { cssVariables } from "@/lib/style"
+import type { CSSVariableProperties } from "@/lib/style"
 import CollectionSettingsPage from "@/routes/CollectionSettings"
 
 type SettingsPage = {
@@ -582,10 +582,10 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
       link.setAttribute("inert", "")
     }
   })
-  const style = cssVariables({
+  const style: CSSVariableProperties = {
     "--artwork-intensity": String(appearance.artworkIntensity / 100),
     "--backdrop-intensity": String(appearance.backdropIntensity / 100),
-  })
+  }
   const resume = home.data?.rows.find((row) => row.id === "resume")?.items[0]
   const recent = home.data?.rows.find((row) => row.id === "recent")?.items.slice(0, 4) ?? []
 

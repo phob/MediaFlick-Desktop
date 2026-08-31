@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use serde_json::{Map, Value, json};
 
+use crate::app::urls::percent_decode;
 use crate::playback::{
     HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
 };
@@ -268,38 +269,6 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
             .eq_ignore_ascii_case(key)
             .then(|| percent_decode(raw_value))
     })
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2]))
-        {
-            out.push((hi << 4) | lo);
-            i += 3;
-            continue;
-        }
-        if bytes[i] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[i]);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

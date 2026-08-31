@@ -8,9 +8,8 @@ use crate::collections::profiles::{
 use crate::collections::snapshots::{RefreshState, SnapshotRepository};
 use crate::collections::{
     CollectionMode, CollectionProfile, CollectionSnapshot, CollectionSource, MediaType,
-    RefreshCadence, ResultLimit, ResultOrdering, TemplateReference,
+    RefreshCadence, ResultLimit, TemplateReference,
 };
-use crate::preferences::CollectionConfigurationAccess;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -25,8 +24,6 @@ struct ProfileDraft {
     media_type: MediaType,
     #[serde(default)]
     limit: ResultLimit,
-    #[serde(default)]
-    ordering: ResultOrdering,
     #[serde(default)]
     cadence: RefreshCadence,
 }
@@ -43,7 +40,6 @@ impl ProfileDraft {
             source: self.source,
             media_type: self.media_type,
             limit: self.limit,
-            ordering: self.ordering,
             cadence: self.cadence,
         };
         apply_normalized_mdblist_id(&mut profile.source)?;
@@ -77,11 +73,6 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiRespon
             "restoredBackup": notice.restored_backup,
         })),
         "readiness": readiness,
-        "access": match services.collections.access() {
-            CollectionConfigurationAccess::Writable => json!({ "readOnly": false }),
-            CollectionConfigurationAccess::ReadOnlyNewerVersion(version) =>
-                json!({ "readOnly": true, "version": version }),
-        },
     }))
 }
 
@@ -145,9 +136,8 @@ pub(super) fn templates(services: &Arc<Services>) -> ApiResponse {
         .into_iter()
         .map(|template| {
             let available = match template.source.provider() {
-                Some(crate::collections::Provider::Tmdb) => readiness.tmdb,
-                Some(crate::collections::Provider::MdbList) => readiness.mdblist,
-                None => false,
+                crate::collections::Provider::Tmdb => readiness.tmdb,
+                crate::collections::Provider::MdbList => readiness.mdblist,
             };
             json!({ "template": template, "available": available })
         })
@@ -588,7 +578,6 @@ fn provider_request(services: &Services, profile: &CollectionProfile) -> Value {
         "source": profile.source,
         "mediaType": profile.media_type,
         "limit": profile.limit,
-        "ordering": profile.ordering,
         "ownedTmdbIds": owned_tmdb_ids,
     })
 }

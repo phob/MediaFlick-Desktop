@@ -6,7 +6,6 @@ public sealed record CollectionProviderRequest(
     JsonObject Source,
     string MediaType,
     CollectionResultLimit Limit,
-    string Ordering,
     IReadOnlyList<long>? OwnedTmdbIds = null);
 
 public sealed record CollectionResultLimit(string Kind, int? Count);
