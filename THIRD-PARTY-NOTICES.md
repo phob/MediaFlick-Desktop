@@ -58,7 +58,7 @@ GPL-only mpv and FFmpeg features disabled. The release payload contains:
 Each GitHub release that contains this runtime must also publish the generated
 `mediaflick-libmpv-sources.tar.zst` corresponding-source archive. The pinned
 build and release requirements are documented in
-`packaging/libmpv/windows/README.md`.
+`distribution/libmpv/windows/README.md`.
 
 ## SQLite
 
@@ -72,7 +72,7 @@ source dependencies used to build MediaFlick Desktop:
 
 - `Cargo.toml` and `Cargo.lock`
 - `ui/package.json` and `ui/pnpm-lock.yaml`
-- `plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj`
+- `plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj`
 
 Their source distributions contain their respective copyright and license
 notices. Those licenses apply only to the corresponding third-party

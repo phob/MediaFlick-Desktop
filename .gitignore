@@ -12,14 +12,17 @@
 
 # Companion plugin build and NuGet restore outputs
 /plugin/bin/
-/plugin/*/bin/
-/plugin/*/obj/
+/plugin/**/bin/
+/plugin/**/obj/
 
 # Scratch/vendor checkouts
 /tmp/
 /.cache/
 
 # Logs and diagnostics
+/TestResults/
+__pycache__/
+*.pyc
 *.log
 *.pdb
 *.d

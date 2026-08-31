@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 version="${VERSION:-$(python3 - <<'PY'
@@ -30,7 +30,7 @@ if [[ ! -x "$binary" ]]; then
     exit 1
 fi
 
-appdir="dist/appimage/MediaFlickDesktop.AppDir"
+appdir="dist/linux/MediaFlickDesktop.AppDir"
 rm -rf "$appdir"
 mkdir -p \
     "$appdir/usr/bin" \
@@ -38,7 +38,7 @@ mkdir -p \
     "$appdir/usr/share/icons/hicolor/scalable/apps" \
     "$appdir/usr/share/metainfo" \
     "$appdir/usr/share/doc/mediaflick-desktop" \
-    "dist"
+    "dist/linux"
 
 install -m 0755 "$binary" "$appdir/usr/bin/mediaflick-desktop"
 
@@ -78,11 +78,11 @@ cp -R "$target_dir/locales" "$appdir/usr/bin/locales"
 
 install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$target_dir/CREDITS.html" \
     "$appdir/usr/share/doc/mediaflick-desktop/"
-cp resources/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/usr/share/applications/io.github.phob.MediaFlickDesktop.desktop"
-cp resources/linux/io.github.phob.MediaFlickDesktop.metainfo.xml "$appdir/usr/share/metainfo/io.github.phob.MediaFlickDesktop.metainfo.xml"
-cp resources/linux/io.github.phob.MediaFlickDesktop.svg "$appdir/usr/share/icons/hicolor/scalable/apps/io.github.phob.MediaFlickDesktop.svg"
-cp resources/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/io.github.phob.MediaFlickDesktop.desktop"
-cp resources/linux/io.github.phob.MediaFlickDesktop.svg "$appdir/io.github.phob.MediaFlickDesktop.svg"
+cp distribution/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/usr/share/applications/io.github.phob.MediaFlickDesktop.desktop"
+cp distribution/linux/io.github.phob.MediaFlickDesktop.metainfo.xml "$appdir/usr/share/metainfo/io.github.phob.MediaFlickDesktop.metainfo.xml"
+cp distribution/app-icon.svg "$appdir/usr/share/icons/hicolor/scalable/apps/io.github.phob.MediaFlickDesktop.svg"
+cp distribution/linux/io.github.phob.MediaFlickDesktop.desktop "$appdir/io.github.phob.MediaFlickDesktop.desktop"
+cp distribution/app-icon.svg "$appdir/io.github.phob.MediaFlickDesktop.svg"
 
 cat > "$appdir/AppRun" <<'SH'
 #!/usr/bin/env sh
@@ -118,7 +118,7 @@ if [[ -z "$appimagetool" ]]; then
     fi
 fi
 
-output="dist/MediaFlickDesktop-${tag}-linux-${arch}.AppImage"
+output="dist/linux/MediaFlickDesktop-${tag}-linux-${arch}.AppImage"
 rm -f "$output"
 ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 "$appimagetool" "$appdir" "$output"
 chmod +x "$output"

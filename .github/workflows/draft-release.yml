@@ -72,7 +72,7 @@ jobs:
       - build-libmpv-windows
 
     env:
-      CEF_PATH: ${{ github.workspace }}\.cache\cef
+      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
 
     steps:
       - name: Check out repository
@@ -119,7 +119,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            .cache/cef
+            ${{ runner.tool_cache }}/mediaflick/cef
           key: windows-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             windows-release-
@@ -144,13 +144,13 @@ jobs:
             Copy-Item "$env:CARGO_TARGET_DIR\release\locales" build -Recurse -Force
           }
 
-          .\scripts\stage-windows-release.ps1
-          .\scripts\build-windows-installer.ps1 -Version $env:VERSION
+          .\distribution\windows\stage-release.ps1
+          .\distribution\windows\build-installer.ps1 -Version $env:VERSION
 
-          $ZipPath = "dist\MediaFlickDesktop-$env:TAG-windows-x64.zip"
-          Compress-Archive -Path "dist\MediaFlickDesktop" -DestinationPath $ZipPath -Force
+          $ZipPath = "dist\windows\MediaFlickDesktop-$env:TAG-windows-x64.zip"
+          Compress-Archive -Path "dist\windows\MediaFlickDesktop" -DestinationPath $ZipPath -Force
 
-          $InstallerPath = "dist\installer\MediaFlickDesktop-Setup-$env:VERSION.exe"
+          $InstallerPath = "dist\windows\MediaFlickDesktop-Setup-$env:VERSION.exe"
           if (-not (Test-Path $InstallerPath)) {
             Write-Error "Missing expected installer artifact: $InstallerPath"
           }
@@ -163,7 +163,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          $InstallerPath = (Resolve-Path "dist\installer\MediaFlickDesktop-Setup-$env:VERSION.exe").Path
+          $InstallerPath = (Resolve-Path "dist\windows\MediaFlickDesktop-Setup-$env:VERSION.exe").Path
           $InstallPath = Join-Path $env:RUNNER_TEMP "mediaflick-smoke"
 
           $Installer = Start-Process -FilePath $InstallerPath -ArgumentList @(
@@ -209,12 +209,15 @@ jobs:
           name: release-asset-windows
           if-no-files-found: error
           path: |
-            dist/installer/MediaFlickDesktop-Setup-${{ needs.prepare.outputs.version }}.exe
-            dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-windows-x64.zip
+            dist/windows/MediaFlickDesktop-Setup-${{ needs.prepare.outputs.version }}.exe
+            dist/windows/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-windows-x64.zip
 
   build-libmpv-windows:
     name: Build bundled Windows libmpv
     runs-on: ubuntu-24.04
+
+    env:
+      MEDIAFLICK_LIBMPV_WORK_DIR: ${{ runner.tool_cache }}/mediaflick/libmpv-windows-x64
 
     steps:
       - name: Check out repository
@@ -258,11 +261,11 @@ jobs:
       - name: Cache libmpv toolchain and dependency builds
         uses: actions/cache@v6
         with:
-          path: .cache/libmpv-windows-x64
-          key: libmpv-windows-x64-${{ hashFiles('scripts/build-libmpv-windows.sh', 'packaging/libmpv/windows/*.patch') }}
+          path: ${{ runner.tool_cache }}/mediaflick/libmpv-windows-x64
+          key: libmpv-windows-x64-${{ hashFiles('distribution/libmpv/windows/build.sh', 'distribution/libmpv/windows/*.patch') }}
 
       - name: Build libmpv and corresponding sources
-        run: bash scripts/build-libmpv-windows.sh
+        run: bash distribution/libmpv/windows/build.sh
 
       - name: Upload libmpv runtime
         uses: actions/upload-artifact@v7
@@ -291,7 +294,7 @@ jobs:
     needs: prepare
 
     env:
-      CEF_PATH: ${{ github.workspace }}/.cache/cef
+      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
       APPIMAGE_ARCH: x86_64
 
     steps:
@@ -332,7 +335,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            .cache/cef
+            ${{ runner.tool_cache }}/mediaflick/cef
           key: linux-x86_64-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             linux-x86_64-release-
@@ -372,24 +375,24 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           cargo build --release --bin mediaflick-desktop
-          scripts/build-linux-appimage.sh
+          distribution/linux/build-appimage.sh
 
       - name: Smoke test Linux AppImage
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          appimage="$(realpath "dist/MediaFlickDesktop-${TAG}-linux-x86_64.AppImage")"
+          appimage="$(realpath "dist/linux/MediaFlickDesktop-${TAG}-linux-x86_64.AppImage")"
           APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
-          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/LICENSE
-          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/THIRD-PARTY-NOTICES.md
-          test -f dist/appimage/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/CREDITS.html
+          test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/LICENSE
+          test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/THIRD-PARTY-NOTICES.md
+          test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/CREDITS.html
 
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v7
         with:
           name: release-asset-linux-x86_64
           if-no-files-found: error
-          path: dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-linux-x86_64.AppImage
+          path: dist/linux/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-linux-x86_64.AppImage
 
   build-macos:
     name: Build macOS DMG (${{ matrix.arch }})
@@ -406,7 +409,7 @@ jobs:
             runner: macos-15-intel
 
     env:
-      CEF_PATH: ${{ github.workspace }}/.cache/cef
+      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       MACOS_ARTIFACT_ARCH: ${{ matrix.arch }}
 
@@ -448,7 +451,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            .cache/cef
+            ${{ runner.tool_cache }}/mediaflick/cef
           key: macos-${{ matrix.arch }}-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             macos-${{ matrix.arch }}-release-
@@ -463,13 +466,13 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           cargo build --release --bin mediaflick-desktop
-          scripts/build-macos-dmg.sh
+          distribution/macos/build-dmg.sh
 
       - name: Smoke test macOS DMG
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          dmg="dist/MediaFlickDesktop-${TAG}-macos-${MACOS_ARTIFACT_ARCH}.dmg"
+          dmg="dist/macos/MediaFlickDesktop-${TAG}-macos-${MACOS_ARTIFACT_ARCH}.dmg"
           mount_point="$(mktemp -d)"
           attached=0
           cleanup() {
@@ -494,7 +497,7 @@ jobs:
         with:
           name: release-asset-macos-${{ matrix.arch }}
           if-no-files-found: error
-          path: dist/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-macos-${{ matrix.arch }}.dmg
+          path: dist/macos/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-macos-${{ matrix.arch }}.dmg
 
   publish:
     name: Commit, tag, and create draft release

@@ -28,12 +28,14 @@ the cross-toolchain prerequisites from its README plus CMake, Ninja, Meson,
 Git, Python with Jinja2, NASM, Yasm, Ragel, and zstd. Then run:
 
 ```sh
-bash scripts/build-libmpv-windows.sh
+bash distribution/libmpv/windows/build.sh
 ```
 
 The first build creates its own MinGW-w64/GCC toolchain and can take a while.
-The reusable work tree defaults to `.cache/libmpv-windows-x64`; override it
-with `MEDIAFLICK_LIBMPV_WORK_DIR`. Runtime and source-compliance artifacts are
+The reusable work tree defaults to the user cache at
+`$XDG_CACHE_HOME/mediaflick/libmpv-windows-x64` or
+`~/.cache/mediaflick/libmpv-windows-x64`; override it with
+`MEDIAFLICK_LIBMPV_WORK_DIR`. Runtime and source-compliance artifacts are
 written to `build/libmpv-windows-x64` unless an output directory is passed as
 the first argument.
 
