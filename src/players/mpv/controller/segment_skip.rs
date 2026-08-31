@@ -3,18 +3,15 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::jellyfin::media_segments;
-use crate::playback::segments::{SegmentType, SkipSegment};
-use crate::playback::{PlaybackRequest, PlayerCommand, TICKS_PER_SECOND, seconds_to_ticks};
-use crate::preferences::SegmentSkipMode;
-
 use super::super::commands::next_request_id;
 use super::{
     CHAPTER_MARKER_MAX_ATTEMPTS, CHAPTER_MARKER_RETRY_INTERVAL, ControllerMessage, ControllerState,
-    PendingAutoSkip, SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL,
-    SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS, SEGMENT_AUTO_SKIP_DELAY,
-    SEGMENT_SKIP_OSD_DEBOUNCE, SEGMENT_SKIP_OSD_DURATION_MS, STARTUP_SEEK_POSITION_TOLERANCE,
+    SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS, SEGMENT_SKIP_OSD_DURATION_MS,
+    STARTUP_SEEK_POSITION_TOLERANCE,
 };
+use crate::jellyfin::media_segments;
+use crate::playback::segments::{self, SegmentSkipAction, SkipSegment};
+use crate::playback::{PlaybackRequest, PlayerCommand, TICKS_PER_SECOND, seconds_to_ticks};
 
 impl ControllerState {
     pub(super) fn handle_media_segments_fetched(
@@ -47,12 +44,8 @@ impl ControllerState {
                     "stored Jellyfin media segments"
                 );
                 self.skip_segments = segments;
-                self.current_skip_segment = None;
-                self.last_skip_osd_at = None;
-                self.update_skip_segment_state(
-                    self.last_state.position_ticks,
-                    self.last_state.position_ticks,
-                );
+                self.segment_skip_state.clear();
+                self.update_skip_segment_state(self.last_state.position_ticks);
                 self.refresh_chapter_markers();
             }
             Err(error) => tracing::warn!(
@@ -94,9 +87,7 @@ impl ControllerState {
 
     pub(super) fn clear_skip_segment_state(&mut self) {
         self.skip_segments.clear();
-        self.current_skip_segment = None;
-        self.pending_auto_skip = None;
-        self.last_skip_osd_at = None;
+        self.segment_skip_state.clear();
         self.seek_started_at_ticks = None;
     }
 
@@ -245,7 +236,11 @@ impl ControllerState {
         if requested_ticks <= current_ticks {
             return false;
         }
-        let Some(index) = self.prompt_segment_index_at(current_ticks) else {
+        let Some(index) = segments::prompt_segment_at(
+            &self.skip_segments,
+            &self.segment_skip_config,
+            current_ticks,
+        ) else {
             return false;
         };
         tracing::debug!(
@@ -259,7 +254,13 @@ impl ControllerState {
 
     pub(super) fn handle_seek_event(&mut self) {
         let current_ticks = self.last_state.position_ticks;
-        if self.prompt_segment_index_at(current_ticks).is_some() {
+        if segments::prompt_segment_at(
+            &self.skip_segments,
+            &self.segment_skip_config,
+            current_ticks,
+        )
+        .is_some()
+        {
             self.seek_started_at_ticks = Some(current_ticks);
             tracing::debug!(
                 target: "playback",
@@ -296,7 +297,11 @@ impl ControllerState {
             );
             return false;
         }
-        let Some(index) = self.prompt_segment_index_at(start_ticks) else {
+        let Some(index) = segments::prompt_segment_at(
+            &self.skip_segments,
+            &self.segment_skip_config,
+            start_ticks,
+        ) else {
             return false;
         };
         tracing::debug!(
@@ -308,100 +313,42 @@ impl ControllerState {
         self.skip_segment(index, "native forward seek accepted segment skip prompt")
     }
 
-    pub(super) fn update_skip_segment_state(&mut self, _previous_ticks: i64, current_ticks: i64) {
-        if self.skip_segments.is_empty() || self.segment_skip_config.all_disabled() {
-            self.current_skip_segment = None;
-            self.pending_auto_skip = None;
-            return;
-        }
-
-        let Some(index) = self.current_segment_index_at(current_ticks) else {
-            self.current_skip_segment = None;
-            self.pending_auto_skip = None;
-            return;
-        };
-        let was_current = self.current_skip_segment == Some(index);
-        self.current_skip_segment = Some(index);
-        match self.mode_for_segment(self.skip_segments[index].segment_type) {
-            SegmentSkipMode::Disabled => {
-                self.pending_auto_skip = None;
-            }
-            SegmentSkipMode::Prompt => {
-                self.pending_auto_skip = None;
-                self.maybe_show_skip_prompt(index, !was_current);
-            }
-            SegmentSkipMode::Always => self.start_auto_skip_countdown(index),
-        }
-    }
-
-    fn start_auto_skip_countdown(&mut self, index: usize) {
-        if self
-            .pending_auto_skip
-            .is_some_and(|pending| pending.segment_index == index)
-        {
-            return;
-        }
-        if self
-            .skip_segments
-            .get(index)
-            .is_none_or(|segment| segment.triggered)
-        {
-            return;
-        }
-
-        let now = Instant::now();
-        let due_at = now + SEGMENT_AUTO_SKIP_DELAY;
-        self.pending_auto_skip = Some(PendingAutoSkip {
-            segment_index: index,
-            due_at,
-            next_countdown_at: now + SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL,
-        });
-        self.show_auto_skip_countdown(index, SEGMENT_AUTO_SKIP_DELAY.as_secs().max(1));
+    pub(super) fn update_skip_segment_state(&mut self, current_ticks: i64) {
+        let action = self.segment_skip_state.update(
+            &self.skip_segments,
+            &self.segment_skip_config,
+            current_ticks,
+            Instant::now(),
+        );
+        self.handle_segment_skip_action(action);
     }
 
     pub(super) fn maybe_update_auto_skip_countdown(&mut self) {
-        let Some(pending) = self.pending_auto_skip else {
-            return;
-        };
-        if !self.auto_skip_is_still_valid(pending.segment_index) {
-            self.pending_auto_skip = None;
-            return;
-        }
-
-        let now = Instant::now();
-        if now >= pending.due_at {
-            self.pending_auto_skip = None;
-            self.skip_segment(
-                pending.segment_index,
-                "automatic segment skip after countdown",
-            );
-            return;
-        }
-
-        if now >= pending.next_countdown_at {
-            let remaining = pending
-                .due_at
-                .saturating_duration_since(now)
-                .as_millis()
-                .div_ceil(1000)
-                .max(1) as u64;
-            self.show_auto_skip_countdown(pending.segment_index, remaining);
-            if let Some(current) = &mut self.pending_auto_skip
-                && current.segment_index == pending.segment_index
-            {
-                current.next_countdown_at = now + SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL;
-            }
-        }
+        let action = self.segment_skip_state.tick(
+            &self.skip_segments,
+            &self.segment_skip_config,
+            self.last_state.position_ticks,
+            Instant::now(),
+        );
+        self.handle_segment_skip_action(action);
     }
 
-    fn auto_skip_is_still_valid(&self, index: usize) -> bool {
-        let Some(segment) = self.skip_segments.get(index) else {
-            return false;
-        };
-        !segment.triggered
-            && self.mode_for_segment(segment.segment_type) == SegmentSkipMode::Always
-            && self.last_state.position_ticks >= segment.start_ticks
-            && self.last_state.position_ticks < segment.end_ticks
+    fn handle_segment_skip_action(&mut self, action: Option<SegmentSkipAction>) {
+        match action {
+            Some(SegmentSkipAction::Prompt(index)) => {
+                if self.show_skip_prompt(index) {
+                    self.segment_skip_state.mark_prompt_shown(Instant::now());
+                }
+            }
+            Some(SegmentSkipAction::Countdown {
+                segment_index,
+                remaining_seconds,
+            }) => self.show_auto_skip_countdown(segment_index, remaining_seconds),
+            Some(SegmentSkipAction::Skip(index)) => {
+                self.skip_segment(index, "automatic segment skip after countdown");
+            }
+            None => {}
+        }
     }
 
     fn show_auto_skip_countdown(&self, index: usize, remaining_seconds: u64) {
@@ -423,28 +370,19 @@ impl ControllerState {
         }
     }
 
-    fn maybe_show_skip_prompt(&mut self, index: usize, entered_segment: bool) {
-        let now = Instant::now();
-        if !entered_segment
-            && self.last_skip_osd_at.is_some_and(|shown_at| {
-                now.saturating_duration_since(shown_at) < SEGMENT_SKIP_OSD_DEBOUNCE
-            })
-        {
-            return;
-        }
+    fn show_skip_prompt(&self, index: usize) -> bool {
         let Some(segment) = self.skip_segments.get(index) else {
-            return;
+            return false;
         };
-        let text = segment.segment_type.prompt_text();
         let command = json!({
-            "command": ["show-text", text, SEGMENT_SKIP_OSD_DURATION_MS, 1],
+            "command": ["show-text", segment.segment_type.prompt_text(), SEGMENT_SKIP_OSD_DURATION_MS, 1],
             "request_id": next_request_id(),
         });
         if let Err(error) = self.send_mpv_command(command) {
             tracing::warn!(target: "mpv.ipc", "failed to show segment skip prompt: {error}");
-            return;
+            return false;
         }
-        self.last_skip_osd_at = Some(now);
+        true
     }
 
     fn skip_segment(&mut self, index: usize, reason: &'static str) -> bool {
@@ -458,9 +396,7 @@ impl ControllerState {
         let end_ticks = segment.end_ticks;
         let segment_type = segment.segment_type;
 
-        self.current_skip_segment = None;
-        self.pending_auto_skip = None;
-        self.last_skip_osd_at = Some(Instant::now());
+        self.segment_skip_state.finish_skip(Instant::now());
         if end_ticks <= current_ticks {
             self.mark_segment_triggered(index);
             tracing::debug!(
@@ -511,30 +447,6 @@ impl ControllerState {
     fn mark_segment_triggered(&mut self, index: usize) {
         if let Some(segment) = self.skip_segments.get_mut(index) {
             segment.triggered = true;
-        }
-    }
-
-    fn current_segment_index_at(&self, ticks: i64) -> Option<usize> {
-        self.skip_segments.iter().position(|segment| {
-            !segment.triggered && ticks >= segment.start_ticks && ticks < segment.end_ticks
-        })
-    }
-
-    fn prompt_segment_index_at(&self, ticks: i64) -> Option<usize> {
-        self.skip_segments.iter().position(|segment| {
-            !segment.triggered
-                && self.mode_for_segment(segment.segment_type) == SegmentSkipMode::Prompt
-                && ticks >= segment.start_ticks
-                && ticks < segment.end_ticks
-        })
-    }
-
-    fn mode_for_segment(&self, segment_type: SegmentType) -> SegmentSkipMode {
-        match segment_type {
-            SegmentType::Intro => self.segment_skip_config.intro,
-            SegmentType::Outro => self.segment_skip_config.credits,
-            SegmentType::Recap => self.segment_skip_config.recap,
-            SegmentType::Commercial => self.segment_skip_config.commercial,
         }
     }
 

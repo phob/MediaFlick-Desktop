@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::PlaybackReporter;
 use crate::playback::model::allocate_playback_id;
-use crate::playback::segments::SkipSegment;
+use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
     NativeWindowHandle, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
     PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState,
@@ -49,9 +49,6 @@ const STARTUP_SEEK_DELAY: Duration = Duration::from_millis(500);
 const STARTUP_SEEK_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STARTUP_SEEK_POSITION_TOLERANCE: i64 = 30_000_000;
 const SEGMENT_SKIP_OSD_DURATION_MS: i64 = 3000;
-const SEGMENT_SKIP_OSD_DEBOUNCE: Duration = Duration::from_secs(3);
-const SEGMENT_AUTO_SKIP_DELAY: Duration = Duration::from_secs(3);
-const SEGMENT_AUTO_SKIP_COUNTDOWN_INTERVAL: Duration = Duration::from_secs(1);
 const SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS: i64 = 1200;
 const CHAPTER_MARKER_RETRY_INTERVAL: Duration = Duration::from_millis(1000);
 const CHAPTER_MARKER_MAX_ATTEMPTS: u32 = 15;
@@ -104,13 +101,6 @@ struct RecentLoad {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct PendingAutoSkip {
-    segment_index: usize,
-    due_at: Instant,
-    next_countdown_at: Instant,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct RuntimeSelection {
     kind: MpvRuntimeKind,
     libmpv_profile: LibmpvProfile,
@@ -142,15 +132,13 @@ struct ControllerState {
     playback_diagnostics: PlaybackDiagnostics,
     last_position_log_bucket: Option<i64>,
     skip_segments: Vec<SkipSegment>,
-    current_skip_segment: Option<usize>,
-    pending_auto_skip: Option<PendingAutoSkip>,
+    segment_skip_state: SegmentSkipState,
     original_chapters: Option<Vec<Value>>,
     injected_chapter_markers: Vec<Value>,
     last_sent_chapter_list: Option<Vec<Value>>,
     pending_chapter_markers: Option<Vec<Value>>,
     chapter_marker_attempts: u32,
     chapter_marker_next_attempt_at: Option<Instant>,
-    last_skip_osd_at: Option<Instant>,
     seek_started_at_ticks: Option<i64>,
     segment_skip_config: SegmentSkipConfig,
     recent_loads: VecDeque<RecentLoad>,
@@ -378,15 +366,13 @@ impl ControllerState {
             playback_diagnostics: PlaybackDiagnostics::default(),
             last_position_log_bucket: None,
             skip_segments: Vec::new(),
-            current_skip_segment: None,
-            pending_auto_skip: None,
+            segment_skip_state: SegmentSkipState::default(),
             original_chapters: None,
             injected_chapter_markers: Vec::new(),
             last_sent_chapter_list: None,
             pending_chapter_markers: None,
             chapter_marker_attempts: 0,
             chapter_marker_next_attempt_at: None,
-            last_skip_osd_at: None,
             seek_started_at_ticks: None,
             segment_skip_config,
             recent_loads: VecDeque::new(),
@@ -445,14 +431,11 @@ impl ControllerState {
                 Ok(ControllerMessage::SegmentSkipConfig(config)) => {
                     tracing::debug!(target: "playback", ?config, "updated segment skip settings");
                     self.segment_skip_config = config;
-                    self.pending_auto_skip = None;
+                    self.segment_skip_state.cancel_pending();
                     if config.all_disabled() {
                         self.clear_skip_segment_state();
                     } else {
-                        self.update_skip_segment_state(
-                            self.last_state.position_ticks,
-                            self.last_state.position_ticks,
-                        );
+                        self.update_skip_segment_state(self.last_state.position_ticks);
                     }
                     self.refresh_chapter_markers();
                 }

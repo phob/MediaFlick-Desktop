@@ -441,7 +441,6 @@ public sealed class CollectionProviderTests : IDisposable
                 },
                 "movie",
                 new("all", null),
-                "source",
                 [2]),
             TestContext.Current.CancellationToken);
 
@@ -577,7 +576,7 @@ public sealed class CollectionProviderTests : IDisposable
     private static CollectionProviderRequest Request(
         JsonObject source,
         string mediaType = "movie")
-        => new(source, mediaType, new("all", null), "source");
+        => new(source, mediaType, new("all", null));
 
     private static TmdbResponse Ok(JsonNode body)
         => new(HttpStatusCode.OK, body, null);

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
-use crate::app::logger;
+use crate::app::{logger, urls};
 use crate::playback::{HttpHeader, PlaybackContext, PlaybackRequest, ReportingState};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -88,7 +88,7 @@ impl PlaybackReporter {
     fn queue_playstate(&self, endpoint: &'static str, body: Value, state: &ReportingState) {
         let request = PlaystateRequest {
             endpoint,
-            url: join_api_url(&self.session.base_url, endpoint),
+            url: urls::join_url(&self.session.base_url, endpoint),
             item_id: self.session.item_id.clone(),
             play_session_id: self.session.play_session_id.clone(),
             auth_headers: self.session.auth_headers.clone(),
@@ -603,55 +603,15 @@ fn server_base_url(media_url: &str) -> Option<String> {
     Some(format!("{origin}{base_path}"))
 }
 
-fn join_api_url(base_url: &str, endpoint: &str) -> String {
-    format!(
-        "{}/{}",
-        base_url.trim_end_matches('/'),
-        endpoint.trim_start_matches('/')
-    )
-}
-
 fn query_param_ci(url: &str, key: &str) -> Option<String> {
     let query = url.split_once('?')?.1.split('#').next().unwrap_or_default();
     query.split('&').find_map(|pair| {
         let (raw_key, raw_value) = pair.split_once('=')?;
-        percent_decode(raw_key)
+        urls::percent_decode(raw_key)
             .eq_ignore_ascii_case(key)
-            .then(|| percent_decode(raw_value))
+            .then(|| urls::percent_decode(raw_value))
             .filter(|value| !value.trim().is_empty())
     })
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let (Some(hi), Some(lo)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2]))
-        {
-            out.push((hi << 4) | lo);
-            i += 3;
-            continue;
-        }
-        if bytes[i] == b'+' {
-            out.push(b' ');
-        } else {
-            out.push(bytes[i]);
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 fn fill_string(target: &mut Option<String>, value: Option<&str>) {

@@ -71,10 +71,10 @@ function sourceLabel(profile: Pick<CollectionProfileDraft, "source">) {
 }
 
 function draftFromTemplate(template: CollectionTemplate): CollectionProfileDraft {
-  const { category: _, pictogram: __, id, version, ...draft } = template
+  const { category: _, pictogram: __, id, ...draft } = template
   return structuredClone({
     ...draft,
-    template: { id, version },
+    template: { id },
     customPosterId: null,
   })
 }
@@ -89,7 +89,6 @@ function resultSignature(profile: CollectionProfileDraft) {
     source: profile.source,
     mediaType: profile.mediaType,
     limit: profile.limit,
-    ordering: profile.ordering,
   })
 }
 
@@ -119,7 +118,7 @@ function GeneralSettings() {
   const account = collectionAccountKey(status)
   const query = useCollectionSettings()
   const settings = query.data
-  const disabled = !settings || settings.access.readOnly
+  const disabled = !settings
   const update = (body: Parameters<typeof api.collections.patchSettings>[0]) => {
     void api.collections.patchSettings(body).then(
       (next) => {
@@ -142,11 +141,6 @@ function GeneralSettings() {
       {settings?.recovery && (
         <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
           Damaged collection settings were moved aside{settings.recovery.restoredBackup ? " and the backup was restored." : ". Defaults are in use."}
-        </p>
-      )}
-      {settings?.access.readOnly && (
-        <p className="rounded-md border p-3 text-sm text-muted-foreground" role="status">
-          This configuration was written by a newer MediaFlick version and is read-only here.
         </p>
       )}
       <div className="settings-row">
@@ -191,7 +185,7 @@ function ConfiguredProfiles({ onEdit }: { onEdit: (profile: CollectionProfile) =
   const query = useCollectionProfiles()
   const settings = useCollectionSettings()
   const profiles = query.data?.profiles ?? []
-  const disabled = settings.data?.access.readOnly ?? true
+  const disabled = !settings.data
   const reorder = (from: number, to: number) => {
     if (to < 0 || to >= profiles.length) return
     const next = profiles.map((profile) => profile.id)
@@ -347,7 +341,7 @@ function CollectionWizard({
       : [{ value: "movie" as const, label: "Movie" }]
 
   const requiresPreview = !profileId || resultSignature(draft) !== resultSignature(initial ?? draft)
-  const readOnly = settings.data?.access.readOnly ?? true
+  const readOnly = !settings.data
   const providerAvailable = draft.source.kind === "mdbListPublicList"
     ? Boolean(settings.data?.readiness.mdblist)
     : Boolean(settings.data?.readiness.tmdb)
@@ -510,7 +504,7 @@ function CollectionWizard({
           {draft.source.kind === "mdbListPublicList" && (
             <div className="flex flex-col gap-2 md:col-span-2">
               <Label htmlFor="collection-list">MDBList public list ID or canonical URL</Label>
-              <Input id="collection-list" disabled={readOnly || !providerAvailable} value={draft.source.listId} onChange={(event) => patchSource({ kind: "mdbListPublicList", schemaVersion: draft.source.schemaVersion, listId: event.target.value })} />
+              <Input id="collection-list" disabled={readOnly || !providerAvailable} value={draft.source.listId} onChange={(event) => patchSource({ kind: "mdbListPublicList", listId: event.target.value })} />
               <div className="flex gap-2">
                 <Input
                   value={listQuery}
@@ -537,7 +531,6 @@ function CollectionWizard({
                       className="rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
                       onClick={() => patchSource({
                         kind: "mdbListPublicList",
-                        schemaVersion: draft.source.schemaVersion,
                         listId: list.id,
                       })}
                     >
@@ -554,7 +547,7 @@ function CollectionWizard({
               <div><Label htmlFor="collection-unreleased">Include unreleased titles</Label><p className="mt-1 text-sm text-muted-foreground">Applies only to this exact collection.</p></div>
               <Switch id="collection-unreleased" checked={draft.source.includeUnreleased} onCheckedChange={(includeUnreleased) => {
                 if (draft.source.kind !== "tmdbCollection") return
-                patchSource({ kind: "tmdbCollection", schemaVersion: draft.source.schemaVersion, collectionId: draft.source.collectionId, includeUnreleased })
+                patchSource({ kind: "tmdbCollection", collectionId: draft.source.collectionId, includeUnreleased })
               }} disabled={readOnly || !providerAvailable} />
             </div>
           )}
@@ -689,7 +682,7 @@ export default function CollectionSettingsPage() {
       <div><span className="settings-eyebrow">Account</span><h1 className="text-2xl font-semibold">Collections</h1><p className="mt-1 text-sm text-muted-foreground">Choose the collection experience and build personal, provider-backed collections.</p></div>
       <GeneralSettings />
       <ConfiguredProfiles onEdit={edit} />
-      {templates.data ? <TemplateCatalog catalog={templates.data} disabled={settings.data?.access.readOnly ?? true} onAdd={add} /> : templates.isError ? (
+      {templates.data ? <TemplateCatalog catalog={templates.data} disabled={!settings.data} onAdd={add} /> : templates.isError ? (
         <SettingsSection title="Template catalog" description="Templates are starting points for My Collections.">
           <p className="text-sm text-destructive" role="alert">The template catalog could not be loaded.</p>
           <Button className="self-start" variant="outline" onClick={() => void templates.refetch()}>Try again</Button>

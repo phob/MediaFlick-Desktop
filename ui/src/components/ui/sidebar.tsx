@@ -2,7 +2,7 @@ import * as React from "react"
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
-import { cssVariables } from "@/lib/style"
+import type { CSSVariableProperties } from "@/lib/style"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
@@ -39,11 +39,11 @@ function SidebarProvider({
       <TooltipProvider delayDuration={0}>
         <div
           data-slot="sidebar-wrapper"
-          style={cssVariables({
+          style={{
             "--sidebar-width": SIDEBAR_WIDTH,
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             ...style,
-          })}
+          } as CSSVariableProperties}
           className={cn("group/sidebar-wrapper flex min-h-svh w-full", className)}
           {...props}
         >

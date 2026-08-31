@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app::urls::percent_decode;
+
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
 
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
@@ -364,38 +366,5 @@ fn redact_url_query_value(url: &str, keys: &[&str]) -> String {
     match fragment {
         Some(fragment) => format!("{before_query}?{redacted}#{fragment}"),
         None => format!("{before_query}?{redacted}"),
-    }
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let (Some(high), Some(low)) =
-                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
-        {
-            out.push((high << 4) | low);
-            index += 3;
-            continue;
-        }
-        out.push(if bytes[index] == b'+' {
-            b' '
-        } else {
-            bytes[index]
-        });
-        index += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
     }
 }

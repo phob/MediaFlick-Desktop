@@ -3,9 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{
-    CollectionSource, MediaType, RefreshCadence, ResultLimit, ResultOrdering, TemplateReference,
-};
+use super::{CollectionSource, MediaType, RefreshCadence, ResultLimit, TemplateReference};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +91,6 @@ pub struct CollectionTemplate {
     pub source: CollectionSource,
     pub media_type: MediaType,
     pub limit: ResultLimit,
-    pub ordering: ResultOrdering,
     pub cadence: RefreshCadence,
 }
 
@@ -300,19 +297,14 @@ fn discover_template(
     CollectionTemplate {
         provenance: TemplateReference {
             id: format!("tmdb.discover.{}.{}", media_type.identity_name(), id),
-            version: 1,
         },
         title: title.to_string(),
         description: String::new(),
         category,
         pictogram: discover_pictogram(id),
-        source: CollectionSource::TmdbDiscover {
-            schema_version: 1,
-            parameters,
-        },
+        source: CollectionSource::TmdbDiscover { parameters },
         media_type,
         limit: ResultLimit::All,
-        ordering: ResultOrdering::Source,
         cadence: RefreshCadence::Daily,
     }
 }
@@ -437,20 +429,17 @@ fn franchise_templates() -> Vec<CollectionTemplate> {
     .map(|(id, title, collection_id, pictogram)| CollectionTemplate {
         provenance: TemplateReference {
             id: format!("tmdb.collection.{id}"),
-            version: 1,
         },
         title: title.to_string(),
         description: String::new(),
         category: TemplateCategory::Editorial,
         pictogram,
         source: CollectionSource::TmdbCollection {
-            schema_version: 1,
             collection_id,
             include_unreleased: false,
         },
         media_type: MediaType::Movie,
         limit: ResultLimit::All,
-        ordering: ResultOrdering::Source,
         cadence: RefreshCadence::Weekly,
     })
     .collect()
@@ -529,7 +518,6 @@ fn mdblist_selectors() -> Vec<CollectionTemplate> {
         .map(|index| CollectionTemplate {
             provenance: TemplateReference {
                 id: format!("mdblist.public-list.{index:02}"),
-                version: 1,
             },
             title: format!("MDBList public list {index}"),
             description: "Choose a public MDBList list.".to_string(),
@@ -540,12 +528,10 @@ fn mdblist_selectors() -> Vec<CollectionTemplate> {
             },
             pictogram: TemplatePictogram::ListVideo,
             source: CollectionSource::MdbListPublicList {
-                schema_version: 1,
                 list_id: "configure".to_string(),
             },
             media_type: MediaType::Mixed,
             limit: ResultLimit::All,
-            ordering: ResultOrdering::Source,
             cadence: RefreshCadence::Daily,
         })
         .collect()

@@ -11,14 +11,13 @@ use std::time::{Duration, Instant};
 use crate::app::logger;
 use crate::jellyfin::playback_reporter::{PlaybackReporter, flush_playstate_reports};
 use crate::playback::model::allocate_playback_id;
-use crate::playback::segments::SkipSegment;
+use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
     PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, PlayerSnapshot, ReportingState,
     seconds_to_ticks,
 };
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
-use self::segment_skip::PendingAutoSkip;
 use super::protocol::{self, Inbound};
 use super::request::{
     TrackSelection, audio_index as mpchc_audio_index, media_url as mpchc_media_url,
@@ -179,9 +178,7 @@ impl MpcHcController {
             last_position_poll: Instant::now(),
             skip_segments: Vec::new(),
             segment_skip_config,
-            current_skip_segment: None,
-            pending_auto_skip: None,
-            last_skip_osd_at: None,
+            segment_skip_state: SegmentSkipState::default(),
             recent_loads: VecDeque::new(),
             fullscreen_pref: FullscreenBehavior::default(),
             fullscreen_state: false,
@@ -261,9 +258,7 @@ struct State {
     last_position_poll: Instant,
     skip_segments: Vec<SkipSegment>,
     segment_skip_config: SegmentSkipConfig,
-    current_skip_segment: Option<usize>,
-    pending_auto_skip: Option<PendingAutoSkip>,
-    last_skip_osd_at: Option<Instant>,
+    segment_skip_state: SegmentSkipState,
     recent_loads: VecDeque<RecentLoad>,
     fullscreen_pref: FullscreenBehavior,
     fullscreen_state: bool,
@@ -412,9 +407,7 @@ impl State {
             ..ReportingState::default()
         };
         self.skip_segments.clear();
-        self.current_skip_segment = None;
-        self.pending_auto_skip = None;
-        self.last_skip_osd_at = None;
+        self.segment_skip_state.clear();
         self.seeking_osd = false;
         self.identity = Some(identity.clone());
         self.playback_active = true;
@@ -784,8 +777,7 @@ impl State {
         self.pending = None;
         self.awaiting_open = false;
         self.skip_segments.clear();
-        self.current_skip_segment = None;
-        self.pending_auto_skip = None;
+        self.segment_skip_state.clear();
         self.resume_seconds = None;
         self.seeking_osd = false;
         if !had_session {

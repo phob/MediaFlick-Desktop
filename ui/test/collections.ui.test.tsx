@@ -152,14 +152,13 @@ function profile(id: string, name: string): CollectionProfile {
   return {
     id,
     revision: "b".repeat(16),
-    template: { id: "tmdb.discover.movie.popular", version: 1 },
+    template: { id: "tmdb.discover.movie.popular" },
     title: name,
     description: "",
     customPosterId: null,
-    source: { kind: "tmdbDiscover", schemaVersion: 1, parameters: {} },
+    source: { kind: "tmdbDiscover", parameters: {} },
     mediaType: "movie",
     limit: { kind: "all" },
-    ordering: "source",
     cadence: "daily",
   }
 }
@@ -199,7 +198,6 @@ describe("mode-aware collections", () => {
       franchises: { includeUnreleased: false },
       readiness: { tmdb: true, mdblist: false },
       recovery: null,
-      access: { readOnly: false },
     })
     vi.spyOn(api.api.collections, "profiles").mockResolvedValue({ profiles: [] })
     vi.spyOn(api.api.collections, "templates").mockResolvedValue({
@@ -207,15 +205,13 @@ describe("mode-aware collections", () => {
       templates: [{
         template: {
           id: "tmdb.discover.movie.popular",
-          version: 1,
           title: "Popular movies",
           description: "Popular movies from TMDB.",
           category: "popular",
           pictogram: "star",
-          source: { kind: "tmdbDiscover", schemaVersion: 1, parameters: {} },
+          source: { kind: "tmdbDiscover", parameters: {} },
           mediaType: "movie",
           limit: { kind: "all" },
-          ordering: "source",
           cadence: "daily",
         },
         available: true,

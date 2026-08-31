@@ -1007,10 +1007,6 @@ public sealed class CollectionProviderService
 
     private static void ValidateRequest(CollectionProviderRequest request)
     {
-        if (!request.Ordering.Equals("source", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new GatewayException(StatusCodes.Status400BadRequest, "Unsupported result ordering");
-        }
         _ = NormalizeMediaType(request.MediaType);
         _ = RequestedLimit(request.Limit);
     }

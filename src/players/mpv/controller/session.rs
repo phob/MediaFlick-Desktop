@@ -411,7 +411,7 @@ impl ControllerState {
                     self.last_state.position_ticks = ticks;
                     self.log_position_change(property.unwrap_or("time"), previous, ticks);
                     if !self.maybe_accept_pending_native_seek(ticks) {
-                        self.update_skip_segment_state(previous, ticks);
+                        self.update_skip_segment_state(ticks);
                     }
                     self.publish_snapshot();
                 }

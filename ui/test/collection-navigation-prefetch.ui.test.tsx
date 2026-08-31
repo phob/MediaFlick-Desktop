@@ -47,7 +47,6 @@ describe("collection navigation prefetch", () => {
       franchises: { includeUnreleased: false },
       readiness: { tmdb: true, mdblist: false },
       recovery: null,
-      access: { readOnly: false },
     })
 
     render(
