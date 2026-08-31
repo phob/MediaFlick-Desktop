@@ -1,5 +1,5 @@
 param(
-    [string]$StagingDir = "dist/MediaFlickDesktop",
+    [string]$StagingDir = "dist/windows/MediaFlickDesktop",
     [string]$InnoCompiler = $env:ISCC,
     [string]$Version
 )
@@ -10,9 +10,9 @@ if (-not $IsWindows) {
     throw "The Windows installer script must be run on Windows."
 }
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $StagingPath = Join-Path $RepoRoot $StagingDir
-$InnoScript = Join-Path $RepoRoot "packaging\windows\mediaflick-desktop.iss"
+$InnoScript = Join-Path $RepoRoot "distribution\windows\mediaflick-desktop.iss"
 
 if (-not (Test-Path (Join-Path $StagingPath "mediaflick-desktop.exe"))) {
     throw "Missing staged payload. Run 'just windows-dist' before building the installer."
@@ -56,7 +56,7 @@ if (-not $Compiler) {
     throw "Inno Setup compiler not found. Install Inno Setup 6 or set ISCC to the full path of ISCC.exe."
 }
 
-$OutputDir = Join-Path $RepoRoot "dist\installer"
+$OutputDir = Join-Path $RepoRoot "dist\windows"
 New-Item -ItemType Directory -Force $OutputDir | Out-Null
 
 & $Compiler "/DMyAppVersion=$Version" "/DSourceDir=$StagingPath" $InnoScript

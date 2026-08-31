@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/../../.." && pwd)"
 winbuild_commit="cd1edc11dc6887a50f705717619d879f5a93a488"
-patch_file="$repo_root/packaging/libmpv/windows/mpv-winbuild-cmake.patch"
-vapoursynth_runtime_patch="$repo_root/packaging/libmpv/windows/mpv-vapoursynth-runtime.patch"
-work_dir="${MEDIAFLICK_LIBMPV_WORK_DIR:-$repo_root/.cache/libmpv-windows-x64}"
+patch_file="$script_dir/mpv-winbuild-cmake.patch"
+vapoursynth_runtime_patch="$script_dir/mpv-vapoursynth-runtime.patch"
+cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/mediaflick"
+work_dir="${MEDIAFLICK_LIBMPV_WORK_DIR:-$cache_root/libmpv-windows-x64}"
 output_dir="${1:-$repo_root/build/libmpv-windows-x64}"
 winbuild_dir="$work_dir/mpv-winbuild-cmake"
 source_cache="$work_dir/sources"
@@ -76,7 +78,7 @@ install -m 0644 "$package_dir/LICENSE.GPL" "$output_dir/LICENSE.mpv-GPL"
 install -m 0644 "$package_dir/LICENSE.LGPL" "$output_dir/LICENSE.mpv-LGPL"
 install -m 0644 "$package_dir/Copyright" "$output_dir/Copyright.mpv"
 install -m 0644 \
-    "$repo_root/packaging/libmpv/windows/THIRD-PARTY-NOTICES.md" \
+    "$script_dir/THIRD-PARTY-NOTICES.md" \
     "$output_dir/THIRD-PARTY-NOTICES.md"
 
 manifest="$output_dir/SOURCE-REVISIONS.txt"

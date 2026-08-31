@@ -73,7 +73,7 @@ jobs:
         os: [ubuntu-24.04, windows-latest, macos-15]
 
     env:
-      CEF_PATH: ${{ github.workspace }}/.cache/cef
+      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
       MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     steps:
@@ -105,7 +105,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            .cache/cef
+            ${{ runner.tool_cache }}/mediaflick/cef
           key: ci-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ci-${{ matrix.os }}-
@@ -172,10 +172,10 @@ jobs:
           global-json-file: global.json
 
       - name: Test
-        run: dotnet test --project plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+        run: dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
       - name: Publish
-        run: dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+        run: dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
 
   ci:
     name: CI

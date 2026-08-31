@@ -9,7 +9,7 @@ import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { usePlayerState, useSettings } from "@/lib/queries"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
-import mediaFlickLogo from "../../../resources/app-icon.svg"
+import mediaFlickLogo from "../../../distribution/app-icon.svg"
 
 const routeScrollPositions = new Map<string, number>()
 const PLAYER_CHROME_HIDE_DELAY_MS = 3000

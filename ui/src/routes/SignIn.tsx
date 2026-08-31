@@ -1,5 +1,5 @@
 import { useState } from "react"
-import appIcon from "../../../resources/app-icon.png?inline"
+import appIcon from "../../../distribution/app-icon.png?inline"
 import { Button } from "@/components/ui/button"
 import {
   Card,

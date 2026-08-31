@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="resources/app-icon.png" alt="MediaFlick Desktop logo" width="180" height="180">
+  <img src="distribution/app-icon.png" alt="MediaFlick Desktop logo" width="180" height="180">
   <br>
   MediaFlick Desktop
 </h1>

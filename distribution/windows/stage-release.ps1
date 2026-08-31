@@ -1,5 +1,5 @@
 param(
-    [string]$StagingDir = "dist/MediaFlickDesktop"
+    [string]$StagingDir = "dist/windows/MediaFlickDesktop"
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,7 +8,7 @@ if (-not $IsWindows) {
     throw "The Windows release staging script must be run on Windows."
 }
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $BuildDir = Join-Path $RepoRoot "build"
 $StagingPath = Join-Path $RepoRoot $StagingDir
 $LibmpvDir = Join-Path $BuildDir "libmpv-windows-x64"

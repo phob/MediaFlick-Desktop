@@ -18,7 +18,7 @@ pub fn set_native_window_icon(raw_hwnd: usize) {
         SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
     };
 
-    // build.rs embeds resources/win/app.ico in the executable with
+    // build.rs embeds distribution/windows/app.ico in the executable with
     // winresource's default numeric ID. Load it from this executable so
     // libmpv's top-level HWND does not inherit mpv's own icon.
     const APPLICATION_ICON_RESOURCE_ID: u16 = 1;
@@ -75,9 +75,7 @@ pub fn set_window_icon(window: &cef::Window) {
     };
     if window_icon.add_png(
         1.0,
-        Some(include_bytes!(
-            "../../resources/linux/io.github.phob.MediaFlickDesktop-16.png"
-        )),
+        Some(include_bytes!("../../distribution/linux/app-icon-16.png")),
     ) != 1
     {
         tracing::warn!(target: "cef", "failed to decode Linux title-bar icon");
@@ -90,9 +88,7 @@ pub fn set_window_icon(window: &cef::Window) {
     };
     if app_icon.add_png(
         1.0,
-        Some(include_bytes!(
-            "../../resources/linux/io.github.phob.MediaFlickDesktop-256.png"
-        )),
+        Some(include_bytes!("../../distribution/linux/app-icon-256.png")),
     ) != 1
     {
         tracing::warn!(target: "cef", "failed to decode Linux application icon");

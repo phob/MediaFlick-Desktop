@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import appIcon from "../../../resources/app-icon.png?inline"
+import appIcon from "../../../distribution/app-icon.png?inline"
 import { api } from "@/lib/api"
 
 const READY_SETTLE_MS = 160

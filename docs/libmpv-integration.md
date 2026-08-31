@@ -92,7 +92,7 @@ power-user setup.
 Windows releases put `libmpv-2.dll` beside the application. Developer builds
 also recognize `build/libmpv-windows-x64/libmpv-2.dll`, the build script's
 default output. Details and license requirements are in
-`packaging/libmpv/windows/README.md`. `MEDIAFLICK_DESKTOP_LIBMPV_PATH`
+`distribution/libmpv/windows/README.md`. `MEDIAFLICK_DESKTOP_LIBMPV_PATH`
 overrides discovery for development and smoke tests.
 
 The app uses a baseline x86-64, shared libmpv DLL with its dependencies linked

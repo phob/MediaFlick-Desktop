@@ -4,7 +4,7 @@
     <RootNamespace>Jellyfin.Plugin.MediaFlick</RootNamespace>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <PackageLicenseExpression>GPL-2.0-or-later</PackageLicenseExpression>
-    <PublishDir>$(MSBuildThisFileDirectory)..\bin\Release\publish\</PublishDir>
+    <PublishDir>$(MSBuildThisFileDirectory)..\..\bin\Release\publish\</PublishDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <None Remove="Configuration\configPage.html" />
     <EmbeddedResource Include="Configuration\configPage.html" />
   </ItemGroup>

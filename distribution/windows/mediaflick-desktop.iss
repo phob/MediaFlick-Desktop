@@ -4,7 +4,7 @@
 #define MyAppVersion "0.1.0"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\..\dist\MediaFlickDesktop"
+#define SourceDir "..\..\dist\windows\MediaFlickDesktop"
 #endif
 
 [Setup]
@@ -15,11 +15,11 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\MediaFlick Desktop
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=..\..\dist\installer
+OutputDir=..\..\dist\windows
 OutputBaseFilename=MediaFlickDesktop-Setup-{#MyAppVersion}
-SetupIconFile=..\..\resources\win\app.ico
-WizardImageFile=..\..\resources\win\installer-sidebar.bmp
-WizardSmallImageFile=..\..\resources\win\installer-small.bmp
+SetupIconFile=app.ico
+WizardImageFile=installer-sidebar.bmp
+WizardSmallImageFile=installer-small.bmp
 UninstallDisplayIcon={app}\mediaflick-desktop.exe
 LicenseFile=..\..\LICENSE
 Compression=lzma2/ultra64

@@ -7,7 +7,7 @@ Building is mainly intended for developers and advanced users.
 - Rust toolchain
 - `just`
 - CMake and Ninja, required by `cef-dll-sys`
-- A CEF cache. By default, `just` downloads/caches CEF in this checkout at `.cache/cef`; set `CEF_PATH=...` to override it.
+- A CEF cache. By default, `just` uses `%LOCALAPPDATA%/MediaFlick/cache/cef` on Windows and `$XDG_CACHE_HOME/mediaflick/cef` or `~/.cache/mediaflick/cef` elsewhere; set `CEF_PATH=...` to override it.
 - Node and pnpm for the embedded React UI.
 - .NET 10 SDK for the optional server-side Companion plugin. The plugin still
   targets `net9.0` because Jellyfin 10.11 runs on that host framework.
@@ -53,11 +53,11 @@ just release
 
 Windows packages require the MediaFlick libmpv build. From Linux or WSL, install
 the prerequisites in
-[`packaging/libmpv/windows/README.md`](packaging/libmpv/windows/README.md), then
+[`distribution/libmpv/windows/README.md`](distribution/libmpv/windows/README.md), then
 build the runtime and its corresponding-source archive:
 
 ```sh
-bash scripts/build-libmpv-windows.sh
+bash distribution/libmpv/windows/build.sh
 ```
 
 Then stage a Windows release payload with the app, CEF runtime, locales, and
@@ -70,7 +70,7 @@ just windows-dist
 The staged payload is created in:
 
 ```text
-dist/MediaFlickDesktop/
+dist/windows/MediaFlickDesktop/
 ```
 
 The source archive under `build/libmpv-windows-x64/` must be published beside
@@ -89,7 +89,7 @@ just windows-installer
 The installer is created in:
 
 ```text
-dist/installer/MediaFlickDesktop-Setup-<version>.exe
+dist/windows/MediaFlickDesktop-Setup-<version>.exe
 ```
 
 ## Build Linux and macOS release packages
@@ -106,4 +106,4 @@ macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
 just macos-dmg
 ```
 
-The packages are written to `dist/`.
+Packages are written to `dist/windows/`, `dist/linux/`, or `dist/macos/`.

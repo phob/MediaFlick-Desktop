@@ -1,9 +1,9 @@
 set dotenv-load := true
 set windows-shell := ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command"]
 
-# Cache CEF inside this checkout by default.
-# Override with `CEF_PATH=... just build` to use/download a different CEF cache.
-export CEF_PATH := env_var_or_default("CEF_PATH", justfile_directory() / ".cache" / "cef")
+# Keep the reusable CEF download outside the checkout.
+cache_root := if os() == "windows" { env_var_or_default("LOCALAPPDATA", home_directory()) / "MediaFlick" / "cache" } else { env_var_or_default("XDG_CACHE_HOME", home_directory() / ".cache") / "mediaflick" }
+export CEF_PATH := env_var_or_default("CEF_PATH", cache_root / "cef")
 export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "build/cargo-target")
 
 # List recipes
@@ -33,12 +33,12 @@ ui:
 # Build the server-side MediaFlick Companion plugin
 [group('build')]
 plugin:
-    dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+    dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
 
 # Run the companion plugin unit tests
 [group('test')]
 plugin-test:
-    dotnet test --project plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+    dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
 # Deploy the plugin to the configured Jellyfin development host and restart it
 [group('run')]
@@ -190,26 +190,26 @@ run-mpv *args:
 run-mpv *args:
     "${MEDIAFLICK_DESKTOP_MPV_PATH:-mpv}" {{args}}
 
-# Stage a Windows release payload with CEF under ./dist/MediaFlickDesktop
+# Stage a Windows release payload with CEF under ./dist/windows/MediaFlickDesktop
 [group('package')]
 [windows]
 windows-dist: release
-    & './scripts/stage-windows-release.ps1'
+    & './distribution/windows/stage-release.ps1'
 
 # Build a per-user Windows setup.exe from the staged release payload
 [group('package')]
 [windows]
 windows-installer: windows-dist
-    & './scripts/build-windows-installer.ps1'
+    & './distribution/windows/build-installer.ps1'
 
 # Build a Linux AppImage from the staged release binary and CEF runtime files
 [group('package')]
 [linux]
 linux-appimage: release
-    ./scripts/build-linux-appimage.sh
+    ./distribution/linux/build-appimage.sh
 
 # Build a macOS DMG containing a signed .app bundle and CEF framework
 [group('package')]
 [macos]
 macos-dmg: release
-    ./scripts/build-macos-dmg.sh
+    ./distribution/macos/build-dmg.sh

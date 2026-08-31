@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 version="${VERSION:-$(python3 - <<'PY'
@@ -35,7 +35,7 @@ cef_search_roots=()
 if [[ -n "${CEF_PATH:-}" ]]; then
     cef_search_roots+=("$CEF_PATH")
 fi
-cef_search_roots+=("$target_dir" ".cache/cef")
+cef_search_roots+=("$target_dir")
 
 cef_framework=""
 for root in "${cef_search_roots[@]}"; do
@@ -53,19 +53,21 @@ if [[ -z "$cef_framework" ]]; then
     exit 1
 fi
 
+output_dir="dist/macos"
 app_name="MediaFlick Desktop.app"
-app="dist/macos/$app_name"
+app="$output_dir/$app_name"
 contents="$app/Contents"
 macos_dir="$contents/MacOS"
 frameworks_dir="$contents/Frameworks"
 resources_dir="$contents/Resources"
 licenses_dir="$resources_dir/Licenses"
-rm -rf "$app" "dist/dmg"
-mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "dist/dmg"
+dmg_root="$output_dir/dmg-root"
+rm -rf "$app" "$dmg_root"
+mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "$dmg_root"
 
 install -m 0755 "$binary" "$macos_dir/mediaflick-desktop"
 cp -R "$cef_framework" "$frameworks_dir/"
-cp resources/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
+cp distribution/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
 if [[ ! -f "$target_dir/CREDITS.html" ]]; then
     echo "Missing Chromium credits file: $target_dir/CREDITS.html" >&2
     exit 1
@@ -76,7 +78,7 @@ python3 - "$version" <<'PY'
 import sys
 from pathlib import Path
 version = sys.argv[1]
-src = Path('resources/macos/Info.plist.in')
+src = Path('distribution/macos/Info.plist.in')
 dst = Path('dist/macos/MediaFlick Desktop.app/Contents/Info.plist')
 dst.write_text(src.read_text(encoding='utf-8').replace('@APP_VERSION_FULL@', version), encoding='utf-8')
 PY
@@ -113,13 +115,10 @@ shopt -u nullglob
 # Ad-hoc sign the unsigned bundle so macOS has code signatures for nested CEF content.
 codesign --force --deep --sign - "$app"
 
-dmg_root="dist/dmg/root"
-rm -rf "$dmg_root"
-mkdir -p "$dmg_root"
 cp -R "$app" "$dmg_root/$app_name"
 ln -s /Applications "$dmg_root/Applications"
 
-output="dist/MediaFlickDesktop-${tag}-macos-${arch}.dmg"
+output="$output_dir/MediaFlickDesktop-${tag}-macos-${arch}.dmg"
 rm -f "$output"
 hdiutil create \
     -volname "MediaFlick Desktop ${tag}" \

@@ -21,10 +21,10 @@ jobs:
           global-json-file: global.json
 
       - name: Test plugin
-        run: dotnet test --project plugin/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+        run: dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
       - name: Publish plugin
-        run: dotnet publish plugin/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+        run: dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
 
       - name: Package plugin and repository manifest
         env:
@@ -33,7 +33,7 @@ jobs:
         run: |
           version="${TAG#companion-v}"
           asset="mediaflick-companion_${version}.zip"
-          python scripts/package_plugin.py \
+          python plugin/package.py \
             --version "$version" \
             --publish-dir plugin/bin/Release/publish \
             --output-dir plugin/bin/Release/package \

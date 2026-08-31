@@ -11,7 +11,7 @@ mod tests {
     use super::*;
 
     const LINUX_DESKTOP_ENTRY: &str =
-        include_str!("../../resources/linux/io.github.phob.MediaFlickDesktop.desktop");
+        include_str!("../../distribution/linux/io.github.phob.MediaFlickDesktop.desktop");
 
     #[test]
     fn linux_desktop_entry_matches_app_identity() {

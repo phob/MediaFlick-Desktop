@@ -27,7 +27,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     {
         let mut resource = winresource::WindowsResource::new();
-        resource.set_icon("resources/win/app.ico");
+        resource.set_icon("distribution/windows/app.ico");
         resource.set("CompanyName", "MediaFlick");
         resource.set("FileDescription", "MediaFlick Desktop");
         resource.set("InternalName", "mediaflick-desktop");
@@ -66,7 +66,7 @@ fn build_ui(repo_root: &Path) {
     }
     println!(
         "cargo:rerun-if-changed={}",
-        repo_root.join("resources/app-icon.png").display()
+        repo_root.join("distribution/app-icon.png").display()
     );
     println!("cargo:rerun-if-env-changed=MEDIAFLICK_DESKTOP_SKIP_UI_BUILD");
 

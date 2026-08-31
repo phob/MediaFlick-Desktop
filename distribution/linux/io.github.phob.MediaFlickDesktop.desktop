@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=MediaFlick Desktop
-Comment=External mpv playback for Jellyfin
+Comment=Desktop playback for Jellyfin
 Exec=mediaflick-desktop
 Icon=io.github.phob.MediaFlickDesktop
 Terminal=false
