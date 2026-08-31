@@ -41,8 +41,7 @@ $OptionalFiles = @(
     "libGLESv2.dll",
     "vk_swiftshader.dll",
     "vk_swiftshader_icd.json",
-    "vulkan-1.dll",
-    "CREDITS.html"
+    "vulkan-1.dll"
 )
 
 foreach ($File in $RequiredFiles) {
@@ -59,6 +58,24 @@ foreach ($File in $OptionalFiles) {
         Copy-Item $Source -Destination $StagingPath -Force
     }
 }
+
+$ProjectNotices = Join-Path $StagingPath "licenses/MediaFlick Desktop"
+New-Item -ItemType Directory -Force $ProjectNotices | Out-Null
+foreach ($File in @("LICENSE", "THIRD-PARTY-NOTICES.md")) {
+    $Source = Join-Path $RepoRoot $File
+    if (-not (Test-Path $Source)) {
+        throw "Missing project license file: $File"
+    }
+    Copy-Item $Source -Destination $ProjectNotices -Force
+}
+
+$CefCredits = Join-Path $BuildDir "CREDITS.html"
+if (-not (Test-Path $CefCredits)) {
+    throw "Missing Chromium credits file: build/CREDITS.html"
+}
+$CefNotices = Join-Path $StagingPath "licenses/cef"
+New-Item -ItemType Directory -Force $CefNotices | Out-Null
+Copy-Item $CefCredits -Destination $CefNotices -Force
 
 $LibmpvSource = Join-Path $LibmpvDir "libmpv-2.dll"
 if (-not (Test-Path $LibmpvSource)) {

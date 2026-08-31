@@ -66,7 +66,7 @@ fn visible_franchise(
     let mut owned = Vec::new();
     let mut missing = Vec::new();
     let mut items = snapshot.items.iter().collect::<Vec<_>>();
-    items.sort_by_key(|item| item.source_order);
+    items.sort_by_key(|item| release_order_key(item));
     for item in items {
         if item.adult || !identities.insert(item.identity.clone()) {
             continue;
@@ -91,6 +91,21 @@ fn visible_franchise(
         owned,
         missing,
     })
+}
+
+/// TMDB does not guarantee that collection parts follow release order.
+pub(crate) fn sort_titles_by_release_date(items: &mut [NormalizedTitle]) {
+    items.sort_by_key(release_order_key);
+}
+
+fn release_order_key(item: &NormalizedTitle) -> (bool, i64, u32, u64) {
+    let date = item.release_date.as_deref().and_then(parse_date);
+    (
+        date.is_none(),
+        date.unwrap_or_default(),
+        item.source_order,
+        item.identity.tmdb_id,
+    )
 }
 
 fn released_by(value: Option<&str>, today: Option<i64>) -> bool {
@@ -141,6 +156,46 @@ mod tests {
                 played: false,
             }],
         )])
+    }
+
+    #[test]
+    fn owned_titles_follow_release_date_instead_of_provider_order() {
+        let dark_knight = title(155, Some("2008-07-16"), 0);
+        let rises = title(49_026, Some("2012-07-17"), 1);
+        let begins = title(272, Some("2005-06-10"), 2);
+        let undated = title(99, None, 3);
+        let snapshot = FranchiseSnapshot {
+            collection_id: 263,
+            name: "The Dark Knight Collection".to_string(),
+            poster_path: None,
+            backdrop_path: None,
+            committed_at: 0,
+            items: vec![dark_knight, rises, begins, undated],
+        };
+        let local = snapshot
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.identity.clone(),
+                    vec![LocalItem {
+                        id: format!("owned-{}", item.identity.tmdb_id),
+                        name: item.title.clone(),
+                        kind: "Movie".to_string(),
+                        played: false,
+                    }],
+                )
+            })
+            .collect();
+
+        let views = visible_franchises(&[snapshot], &local, false, "2026-08-30");
+        let ids = views[0]
+            .owned
+            .iter()
+            .map(|item| item.title.identity.tmdb_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec![272, 155, 49_026, 99]);
     }
 
     #[test]

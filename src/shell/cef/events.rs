@@ -910,7 +910,7 @@ fn execute_mpv_setup_script(frame: &Frame, script: &str) {
 mod tests {
     use super::*;
     use crate::playback::{PlaybackDiagnostics, PlayerChapter, PlayerSnapshot};
-    use crate::preferences::{AppSettings, AppearanceTheme, PlayerBackend, WebUiWindowSettings};
+    use crate::preferences::{AppSettings, AppearanceTheme, WebUiWindowSettings};
 
     #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
@@ -972,7 +972,7 @@ mod tests {
     #[test]
     fn integrated_shell_warms_windowed_before_playback() {
         let settings = AppSettings {
-            player_backend: Some(PlayerBackend::Libmpv),
+            player_backend: Some(crate::preferences::PlayerBackend::Libmpv),
             default_fullscreen: FullscreenBehavior::Fullscreen,
             ..AppSettings::default()
         };

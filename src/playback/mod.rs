@@ -38,6 +38,7 @@ impl NativeWindowHandle {
         (raw != 0).then_some(Self(raw))
     }
 
+    #[cfg(target_os = "windows")]
     pub fn raw(self) -> usize {
         self.0
     }

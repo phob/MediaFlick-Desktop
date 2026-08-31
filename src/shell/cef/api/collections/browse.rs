@@ -1,6 +1,6 @@
 use super::*;
 use crate::collections::ClassifiedTitle;
-use crate::collections::franchises::visible_franchises;
+use crate::collections::franchises::{sort_titles_by_release_date, visible_franchises};
 use crate::collections::matching::{OwnershipPolicy, classify, local_item_map};
 use crate::collections::snapshots::SnapshotRepository;
 
@@ -191,7 +191,7 @@ pub(super) fn franchise_detail(
     let ownership_available = crate::library::sync::ownership_available(&services.library);
     if !ownership_available {
         let mut items = snapshot.items;
-        items.sort_by_key(|item| item.source_order);
+        sort_titles_by_release_date(&mut items);
         items.retain(|item| !item.adult);
         if services.session.user_restricted() {
             items.clear();

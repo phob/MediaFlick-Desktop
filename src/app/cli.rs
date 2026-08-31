@@ -7,6 +7,7 @@ use crate::preferences::normalize_server_url;
 #[derive(Debug, Clone, Parser)]
 #[command(name = "mediaflick-desktop")]
 #[command(about = "Native Jellyfin playback in a Rust/CEF desktop shell")]
+#[command(version)]
 pub struct Cli {
     /// Jellyfin server URL to prefill on the sign-in screen.
     ///
@@ -50,5 +51,20 @@ pub struct Cli {
 impl Cli {
     pub fn normalized_url(&self) -> Option<String> {
         self.url.as_deref().and_then(normalize_server_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{Parser, error::ErrorKind};
+
+    use super::Cli;
+
+    #[test]
+    fn version_flag_reports_the_package_version() {
+        let error = Cli::try_parse_from(["mediaflick-desktop", "--version"])
+            .expect_err("version exits after printing");
+        assert_eq!(error.kind(), ErrorKind::DisplayVersion);
+        assert!(error.to_string().contains(env!("CARGO_PKG_VERSION")));
     }
 }
