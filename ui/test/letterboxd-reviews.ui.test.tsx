@@ -70,7 +70,6 @@ describe("Letterboxd detail activity", () => {
     const rail = screen.getByRole("list", {
       name: "Connected Letterboxd profiles with activity for this movie",
     })
-    expect(rail.className).toContain("overflow-x-auto")
     expect(screen.getAllByRole("listitem")).toHaveLength(2)
     const links = screen.getAllByRole("link")
     expect(links[0].getAttribute("href")).toBe(
@@ -92,7 +91,7 @@ describe("Letterboxd detail activity", () => {
     expect(fills[4].style.width).toBe("50%")
   })
 
-  test("keeps review-only activity aligned without inventing a rating", () => {
+  test("does not invent a rating for review-only activity", () => {
     const { container } = render(
       <LetterboxdReviewList reviews={[review({ rating: null })]} />,
     )
@@ -100,7 +99,6 @@ describe("Letterboxd detail activity", () => {
     expect(screen.getByRole("link", { name: /Alice Film Fan.*written review available/i })).not
       .toBeNull()
     expect(container.querySelector("[role=img]")).toBeNull()
-    expect(container.querySelector(".h-4[aria-hidden]")).not.toBeNull()
   })
 
   test("opens the review from the whole tile only after the pointer delay", () => {

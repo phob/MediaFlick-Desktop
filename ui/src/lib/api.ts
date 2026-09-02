@@ -303,18 +303,70 @@ export function discoveryExternalLinksFor(
   return rottenTomatoes ? [...exactLinks, rottenTomatoes] : exactLinks
 }
 
-/**
- * `resume` begins as SQLite-backed Continue Watching. `/api/home/resume`
- * enriches it with live Next Up items independently, half-watched items first,
- * so the server request cannot hold the cached home page behind a skeleton.
- * The latest shelves are release-year ordered, unlike `recent`, which is
- * date-added ordered. `favorites` is assembled by the UI from the regular
- * items endpoint.
- */
+export type HomeBuiltInId =
+  | "watching"
+  | "becauseYouWatched"
+  | "recentlyAdded"
+  | "upcoming"
+  | "latestMovies"
+  | "latestShows"
+  | "myList"
+
+export type HomeElement = {
+  enabled: boolean
+  label: string
+  available: boolean
+  category: "Built-in" | "Genre" | "My Collection"
+} & (
+  | { kind: "builtIn"; id: HomeBuiltInId }
+  | { kind: "genre"; id: string }
+  | { kind: "collection"; id: string }
+)
+
+export interface HomeConfiguration {
+  billboard: boolean
+  watching: {
+    continueWatching: boolean
+    nextUp: boolean
+    combine: boolean
+  }
+  elements: HomeElement[]
+}
+
+export interface HomeSettingsResponse {
+  settings: HomeConfiguration
+  defaults: HomeConfiguration
+  collectionMode: CollectionMode
+}
+
+export type HomeSettingsWrite = Omit<HomeConfiguration, "elements"> & {
+  elements: Array<Pick<HomeElement, "kind" | "id" | "enabled">>
+}
+
+export function homeSettingsWrite(settings: HomeConfiguration): HomeSettingsWrite {
+  return {
+    billboard: settings.billboard,
+    watching: settings.watching,
+    elements: settings.elements.map(({ kind, id, enabled }) => ({ kind, id, enabled })),
+  }
+}
+
 export interface HomeRow {
-  id: "resume" | "recent" | "latest-movies" | "latest-shows" | "favorites"
+  kind: "builtIn" | "genre" | "collection"
+  id: string
   title: string
   items: ItemSummary[]
+}
+
+export interface HomeResponse {
+  configuration: HomeConfiguration
+  continueWatching: ItemSummary[]
+  rows: HomeRow[]
+}
+
+export interface HomeResumeResponse {
+  continueWatching: ItemSummary[]
+  nextUp: ItemSummary[]
 }
 
 interface LibraryStats {
@@ -855,6 +907,7 @@ export interface CollectionProfileDraft {
   mediaType: CollectionMediaType
   limit: CollectionResultLimit
   cadence: RefreshCadence
+  availableOnHome: boolean
 }
 
 export interface CollectionProfile extends CollectionProfileDraft {
@@ -862,7 +915,7 @@ export interface CollectionProfile extends CollectionProfileDraft {
   revision: string
 }
 
-export interface CollectionTemplate extends Omit<CollectionProfileDraft, "template" | "customPosterId"> {
+export interface CollectionTemplate extends Omit<CollectionProfileDraft, "template" | "customPosterId" | "availableOnHome"> {
   id: string
   category: CollectionCategory
   pictogram: CollectionTemplatePictogram
@@ -1296,6 +1349,9 @@ export const api = {
     probe: () => request<CompanionStatus>("/api/companion/probe", { method: "POST" }),
   },
   settings: () => request<ClientSettings>("/api/settings"),
+  homeSettings: () => request<HomeSettingsResponse>("/api/settings/home"),
+  saveHomeSettings: (body: HomeSettingsWrite) =>
+    request<HomeSettingsResponse>("/api/settings/home", { method: "PATCH", body }),
   settingsPatch: {
     player: (body: PlayerSettingsWrite) =>
       request<ClientSettings>("/api/settings/client/player", { method: "PATCH", body }),
@@ -1383,8 +1439,8 @@ export const api = {
     }),
   logout: () => request<Status>("/api/auth/logout", { method: "POST" }),
 
-  home: () => request<{ rows: HomeRow[] }>("/api/home"),
-  homeResume: () => request<{ items: ItemSummary[] }>("/api/home/resume"),
+  home: () => request<HomeResponse>("/api/home"),
+  homeResume: () => request<HomeResumeResponse>("/api/home/resume"),
   billboard: () => request<{ items: ItemSummary[] }>("/api/billboard"),
   genres: () => request<{ genres: string[] }>("/api/genres"),
   resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>

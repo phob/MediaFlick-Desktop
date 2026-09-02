@@ -409,17 +409,12 @@ mod tests {
     use std::sync::mpsc::{Receiver, RecvTimeoutError};
     use std::time::{Duration, Instant};
 
-    #[test]
-    fn runtime_kinds_are_distinct() {
-        assert_ne!(MpvRuntimeKind::External, MpvRuntimeKind::Library);
-    }
-
     #[cfg(target_os = "windows")]
     #[test]
+    #[ignore = "requires MEDIAFLICK_DESKTOP_LIBMPV_PATH"]
     fn configured_svp_library_initializes_the_svp_pipe() {
-        let Some(path) = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH") else {
-            return;
-        };
+        let path = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH")
+            .expect("MEDIAFLICK_DESKTOP_LIBMPV_PATH must point to libmpv");
         let ipc_path = r"\\.\pipe\mpvpipe";
         let mut runtime = MpvRuntime::start(
             MpvRuntimeKind::Library,
@@ -444,10 +439,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires MEDIAFLICK_DESKTOP_LIBMPV_PATH"]
     fn configured_library_initializes_its_ipc_server() {
-        let Some(path) = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH") else {
-            return;
-        };
+        let path = std::env::var_os("MEDIAFLICK_DESKTOP_LIBMPV_PATH")
+            .expect("MEDIAFLICK_DESKTOP_LIBMPV_PATH must point to libmpv");
         let ipc_path = crate::players::mpv::ipc::make_ipc_path();
         let mut runtime = MpvRuntime::start(
             MpvRuntimeKind::Library,

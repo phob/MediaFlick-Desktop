@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test } from "vitest"
 import { queryKeys } from "@/lib/query-client"
 import { itemSummary } from "./support/fixtures"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 import Home from "@/routes/Home"
 
@@ -24,17 +24,26 @@ function dateFromToday(days: number) {
 }
 
 function renderHome(error: Error | null = null) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-  })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.home, {
+    configuration: {
+      billboard: true,
+      watching: { continueWatching: true, nextUp: true, combine: true },
+      elements: [
+        { kind: "builtIn", id: "recentlyAdded", enabled: true, label: "Recently Added", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "upcoming", enabled: true, label: "Upcoming", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "latestMovies", enabled: true, label: "Latest Movies", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "latestShows", enabled: true, label: "Latest Shows", available: true, category: "Built-in" },
+      ],
+    },
+    continueWatching: [],
     rows: [
-      { id: "recent", title: "Recently Added", items: [item("recent", "Recent", "Movie"), item("recent-show", "Recent Series", "Series")] },
-      { id: "latest-movies", title: "Latest Movies", items: [item("movie", "Movie", "Movie")] },
-      { id: "latest-shows", title: "Latest Series", items: [item("show", "Series", "Series")] },
+      { kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [item("recent", "Recent", "Movie"), item("recent-show", "Recent Series", "Series")] },
+      { kind: "builtIn", id: "latestMovies", title: "Latest Movies", items: [item("movie", "Movie", "Movie")] },
+      { kind: "builtIn", id: "latestShows", title: "Latest Series", items: [item("show", "Series", "Series")] },
     ],
   })
-  client.setQueryData(queryKeys.homeResume, { items: [] })
+  client.setQueryData(queryKeys.homeResume, { continueWatching: [], nextUp: [] })
   client.setQueryData(queryKeys.billboard, { items: [] })
   client.setQueryData(queryKeys.items({ favorite: true, sort: "added", limit: 24 }), { items: [] })
   client.setQueryData(queryKeys.genres, { genres: [] })
@@ -152,11 +161,9 @@ function renderHome(error: Error | null = null) {
     query.setState({ ...query.state, error, status: "error" })
   }
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
+    <TestProviders client={client}>
         <Home />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    </TestProviders>,
   )
 }
 

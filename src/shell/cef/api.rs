@@ -26,8 +26,9 @@ use crate::library::{
 use crate::maintenance::player_setup;
 use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
-    AccountKey, AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch,
-    PlaybackSettingsPatch, PlayerSettingsPatch, StreamingQuality,
+    AccountKey, AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch, HomeBuiltIn,
+    HomeElement, HomeElementId, HomeSettings, PlaybackSettingsPatch, PlayerSettingsPatch,
+    StreamingQuality,
 };
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, tmdb_image_path};
 

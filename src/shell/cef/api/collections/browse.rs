@@ -1,8 +1,8 @@
 use super::*;
-use crate::collections::ClassifiedTitle;
 use crate::collections::franchises::{sort_titles_by_release_date, visible_franchises};
 use crate::collections::matching::{OwnershipPolicy, classify, local_item_map};
 use crate::collections::snapshots::SnapshotRepository;
+use crate::collections::{ClassifiedTitle, compare_titles};
 
 pub(super) fn redirect_state(services: &Arc<Services>) -> ApiResponse {
     super::profiles::settings(services, false)
@@ -13,8 +13,10 @@ pub(super) fn mine(services: &Arc<Services>) -> ApiResponse {
         Ok(account) => account,
         Err(response) => return response,
     };
+    let mut profiles = services.collections.account(&account).profiles;
+    profiles.sort_by(|left, right| compare_titles(&left.title, &right.title));
     ApiResponse::ok(json!({
-        "profiles": services.collections.account(&account).profiles,
+        "profiles": profiles,
         "errors": services.collections.profile_errors(&account),
     }))
 }
@@ -53,7 +55,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         }
         Err(error) => return storage_failure(&error),
     };
-    let classified = match classify(
+    let mut classified = match classify(
         &services.library,
         &account,
         &snapshot.items,
@@ -65,6 +67,15 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         Ok(classified) => classified,
         Err(error) => return storage_failure(&error),
     };
+    classified
+        .owned
+        .sort_by(|left, right| compare_titles(&left.title.title, &right.title.title));
+    classified
+        .missing
+        .sort_by(|left, right| compare_titles(&left.title, &right.title));
+    classified
+        .items
+        .sort_by(|left, right| compare_titles(&left.title, &right.title));
     let library_items = match primary_library_items(services, &classified.owned) {
         Ok(items) => items,
         Err(error) => return storage_failure(&error),
@@ -113,6 +124,11 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
         Err(error) => return storage_failure(&error),
     };
     if !ownership_available {
+        let mut snapshots = snapshots;
+        snapshots.sort_by(|left, right| {
+            compare_titles(&left.name, &right.name)
+                .then_with(|| left.collection_id.cmp(&right.collection_id))
+        });
         let franchises = snapshots
             .into_iter()
             .map(|snapshot| {

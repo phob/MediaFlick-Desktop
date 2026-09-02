@@ -1,11 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { AppSidebar } from "../src/components/AppSidebar"
 import { SidebarProvider } from "../src/components/ui/sidebar"
 import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -29,9 +29,7 @@ describe("collection navigation prefetch", () => {
       franchises: [],
     })
     const mine = vi.spyOn(api.api.collections, "mine").mockResolvedValue({ profiles: [] })
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-    })
+    const client = testQueryClient()
     const account = "https://jellyfin.example:user-1"
     client.setQueryData(queryKeys.status, {
       authenticated: true,
@@ -50,13 +48,11 @@ describe("collection navigation prefetch", () => {
     })
 
     render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
+      <TestProviders client={client}>
           <SidebarProvider>
             <AppSidebar />
           </SidebarProvider>
-        </MemoryRouter>
-      </QueryClientProvider>,
+      </TestProviders>,
     )
 
     fireEvent.pointerEnter(screen.getByRole("link", { name: "Movie Franchises" }))

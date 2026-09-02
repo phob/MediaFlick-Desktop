@@ -92,15 +92,14 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
             {
                 return new ArtworkResponse(HttpStatusCode.BadGateway, [], "application/octet-stream");
             }
-            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token)
+            await response.Content.LoadIntoBufferAsync(MaxResponseBytes, timeout.Token)
                 .ConfigureAwait(false);
-            var bytes = await ReadBoundedAsync(stream, timeout.Token).ConfigureAwait(false);
-            return bytes is null
-                ? new ArtworkResponse(HttpStatusCode.BadGateway, [], "application/octet-stream")
-                : new ArtworkResponse(
-                    response.StatusCode,
-                    bytes,
-                    response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream");
+            var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token)
+                .ConfigureAwait(false);
+            return new ArtworkResponse(
+                response.StatusCode,
+                bytes,
+                response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -150,13 +149,10 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
             {
                 return new TmdbResponse(HttpStatusCode.BadGateway, null, retryAt);
             }
-            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token)
+            await response.Content.LoadIntoBufferAsync(MaxResponseBytes, timeout.Token)
                 .ConfigureAwait(false);
-            var bytes = await ReadBoundedAsync(stream, timeout.Token).ConfigureAwait(false);
-            if (bytes is null)
-            {
-                return new TmdbResponse(HttpStatusCode.BadGateway, null, retryAt);
-            }
+            var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token)
+                .ConfigureAwait(false);
             JsonNode? body = null;
             if (bytes.Length > 0)
             {
@@ -203,22 +199,4 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
         return response.Headers.RetryAfter?.Date?.ToUnixTimeSeconds();
     }
 
-    private static async Task<byte[]?> ReadBoundedAsync(Stream stream, CancellationToken cancellationToken)
-    {
-        using var destination = new MemoryStream();
-        var buffer = new byte[16 * 1024];
-        while (true)
-        {
-            var count = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (count == 0)
-            {
-                return destination.ToArray();
-            }
-            if (destination.Length + count > MaxResponseBytes)
-            {
-                return null;
-            }
-            destination.Write(buffer, 0, count);
-        }
-    }
 }

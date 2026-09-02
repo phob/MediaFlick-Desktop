@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { SearchPersonSection } from "../src/routes/Library"
 import type { ItemSummary } from "../src/lib/api"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 function item(overrides: Partial<ItemSummary> & Pick<ItemSummary, "id" | "kind" | "name">): ItemSummary {
   return {
@@ -31,15 +31,11 @@ function item(overrides: Partial<ItemSummary> & Pick<ItemSummary, "id" | "kind" 
 }
 
 function renderSection(term: string) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-  })
+  const client = testQueryClient()
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
+    <TestProviders client={client}>
         <SearchPersonSection term={term} />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    </TestProviders>,
   )
 }
 

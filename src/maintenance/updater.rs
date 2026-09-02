@@ -18,9 +18,6 @@ pub type UpdaterResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRelease {
     pub version: String,
-    pub tag_name: String,
-    pub html_url: String,
-    pub release_page_url: String,
     pub automatic_install: bool,
     pub asset: Option<UpdateAsset>,
 }
@@ -36,10 +33,11 @@ pub struct UpdateAsset {
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
-    html_url: String,
+    #[cfg(target_os = "windows")]
     assets: Vec<GithubAsset>,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Debug, Deserialize)]
 struct GithubAsset {
     name: String,
@@ -60,8 +58,15 @@ pub fn check_for_update() -> UpdaterResult<Option<UpdateRelease>> {
         return Ok(None);
     }
 
-    let asset = select_platform_asset(release.assets);
-    if automatic_install_supported() && asset.is_none() {
+    #[cfg(target_os = "windows")]
+    let asset = select_windows_installer(release.assets).map(|asset| UpdateAsset {
+        name: asset.name,
+        browser_download_url: asset.browser_download_url,
+        size: asset.size,
+    });
+    #[cfg(not(target_os = "windows"))]
+    let asset: Option<UpdateAsset> = None;
+    if cfg!(target_os = "windows") && asset.is_none() {
         tracing::warn!(
             target: "updater",
             version,
@@ -69,19 +74,11 @@ pub fn check_for_update() -> UpdaterResult<Option<UpdateRelease>> {
         );
         return Ok(None);
     }
-    let automatic_install = automatic_install_supported() && asset.is_some();
 
     Ok(Some(UpdateRelease {
         version,
-        tag_name: release.tag_name,
-        html_url: release.html_url,
-        release_page_url: GITHUB_LATEST_RELEASE_PAGE_URL.to_string(),
-        automatic_install,
-        asset: asset.map(|asset| UpdateAsset {
-            name: asset.name,
-            browser_download_url: asset.browser_download_url,
-            size: asset.size,
-        }),
+        automatic_install: asset.is_some(),
+        asset,
     }))
 }
 
@@ -204,10 +201,6 @@ pub fn update_progress_script(state: &str, payload: &serde_json::Value) -> Strin
     )
 }
 
-fn automatic_install_supported() -> bool {
-    cfg!(target_os = "windows")
-}
-
 pub(crate) fn update_agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(HTTP_TIMEOUT))
@@ -216,22 +209,11 @@ pub(crate) fn update_agent() -> ureq::Agent {
         .into()
 }
 
-fn select_platform_asset(assets: Vec<GithubAsset>) -> Option<GithubAsset> {
+#[cfg(target_os = "windows")]
+fn select_windows_installer(assets: Vec<GithubAsset>) -> Option<GithubAsset> {
     assets.into_iter().find(|asset| {
         let name = asset.name.to_ascii_lowercase();
-        if cfg!(target_os = "windows") {
-            name.starts_with("mediaflickdesktop-setup-") && name.ends_with(".exe")
-        } else if cfg!(target_os = "macos") {
-            name.starts_with("mediaflickdesktop-")
-                && name.contains("-macos-")
-                && name.ends_with(".dmg")
-        } else if cfg!(target_os = "linux") {
-            name.starts_with("mediaflickdesktop-")
-                && name.contains("-linux-")
-                && name.ends_with(".appimage")
-        } else {
-            false
-        }
+        name.starts_with("mediaflickdesktop-setup-") && name.ends_with(".exe")
     })
 }
 
@@ -287,20 +269,18 @@ pub(crate) fn unique_download_dir() -> PathBuf {
 }
 
 fn is_trusted_release_url(url: &str) -> bool {
-    let Some(rest) = url.strip_prefix("https://") else {
+    let Ok(uri) = url.parse::<ureq::http::Uri>() else {
         return false;
     };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority.rsplit('@').next().unwrap_or_default();
-    let host = host
-        .split(':')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    host == "github.com"
-        || host == "api.github.com"
-        || host == "githubusercontent.com"
-        || host.ends_with(".githubusercontent.com")
+    let Some(host) = uri.host().filter(|_| uri.scheme_str() == Some("https")) else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("github.com")
+        || host.eq_ignore_ascii_case("api.github.com")
+        || host.eq_ignore_ascii_case("githubusercontent.com")
+        || host
+            .to_ascii_lowercase()
+            .ends_with(".githubusercontent.com")
 }
 
 pub(crate) fn safe_file_name(name: &str) -> String {

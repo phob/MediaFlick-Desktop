@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "../src/components/PreviewCard"
@@ -14,6 +13,8 @@ import type {
 import { RatingsContext } from "../src/lib/rating-context"
 import { TechnicalContext } from "../src/lib/technical-context"
 import { itemDetail, requireElement } from "./support/fixtures"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const mutations = {
   favorite: vi.fn<(input: { id: string; favorite: boolean }) => void>(),
@@ -38,9 +39,7 @@ const dependencies: PreviewDependencies = {
   played: () => ({ isPending: false, mutate: mutations.played }),
 }
 
-const client = new QueryClient({
-  defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-})
+const client = testQueryClient()
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -137,8 +136,7 @@ function ProviderTree({
   previewsEnabled: boolean
 }) {
   return (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/home"]}>
+    <TestProviders client={client} initialEntries={["/home"]}>
         <RatingsContext.Provider value={{
           items: new Map([[movie.id, movieRatings]]),
           selected: [letterboxd.id],
@@ -155,8 +153,7 @@ function ProviderTree({
             <LocationProbe />
           </TechnicalContext.Provider>
         </RatingsContext.Provider>
-      </MemoryRouter>
-    </QueryClientProvider>
+    </TestProviders>
   )
 }
 

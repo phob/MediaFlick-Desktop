@@ -26,6 +26,8 @@ struct ProfileDraft {
     limit: ResultLimit,
     #[serde(default)]
     cadence: RefreshCadence,
+    #[serde(default)]
+    available_on_home: bool,
 }
 
 impl ProfileDraft {
@@ -41,6 +43,7 @@ impl ProfileDraft {
             media_type: self.media_type,
             limit: self.limit,
             cadence: self.cadence,
+            available_on_home: self.available_on_home,
         };
         apply_normalized_mdblist_id(&mut profile.source)?;
         profile
@@ -284,7 +287,8 @@ pub(super) fn edit(
     let staged_artwork = (next.custom_poster_id != previous.custom_poster_id)
         .then(|| next.custom_poster_id.clone())
         .flatten();
-    if result_configuration_changed(&previous, &next) {
+    let forget_home = previous.available_on_home && !next.available_on_home;
+    let response = if result_configuration_changed(&previous, &next) {
         let response = commit_result_profile(
             services,
             &account,
@@ -314,7 +318,16 @@ pub(super) fn edit(
                 })
             })
             .unwrap_or_else(|response| response)
+    };
+    if response.status < 400
+        && forget_home
+        && let Err(error) = services
+            .accounts
+            .forget_home_collection(&account, profile_id)
+    {
+        return configuration_failure(&error);
     }
+    response
 }
 
 fn update_next_due(services: &Services, account: &AccountKey, profile: &CollectionProfile) {
@@ -359,7 +372,10 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> ApiResponse 
                     if let Err(error) = repository.remove_profile(&account, profile_id) {
                         tracing::warn!(target: "collections", "could not remove collection cache: {error}");
                     }
-                    ApiResponse::ok(json!({ "deleted": true }))
+                    match services.accounts.forget_home_collection(&account, profile_id) {
+                        Ok(()) => ApiResponse::ok(json!({ "deleted": true })),
+                        Err(error) => configuration_failure(&error),
+                    }
                 }
                 Ok(None) => ApiResponse::error(404, "that collection does not exist"),
                 Err(error) => configuration_failure(&error),

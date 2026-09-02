@@ -1,19 +1,17 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { PreviewProvider } from "../src/components/PreviewCard"
 import { EpisodeGrid, SeasonBrowser } from "../src/components/detail/SeasonBrowser"
 import { seasonRailOrder } from "../src/lib/seasons"
 import { requireElement, itemSummary } from "./support/fixtures"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 function withProviders(ui: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+  const client = testQueryClient()
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>{ui}</MemoryRouter>
-    </QueryClientProvider>,
+    <TestProviders client={client}>{ui}</TestProviders>,
   )
 }
 

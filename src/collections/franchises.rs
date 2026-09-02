@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{CanonicalIdentity, ClassifiedTitle, NormalizedTitle};
+use super::{CanonicalIdentity, ClassifiedTitle, NormalizedTitle, compare_titles};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,9 +48,7 @@ pub fn visible_franchises(
         .filter_map(|snapshot| visible_franchise(snapshot, local_items, include_unreleased, today))
         .collect::<Vec<_>>();
     views.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
+        compare_titles(&left.name, &right.name)
             .then_with(|| left.collection_id.cmp(&right.collection_id))
     });
     views

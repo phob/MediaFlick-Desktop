@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import {
   FranchiseCollections,
@@ -22,6 +21,8 @@ import type {
 } from "../src/lib/api"
 import * as api from "../src/lib/api"
 import { queryClient, queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 function title(id: number, patch: Partial<NormalizedCollectionTitle> = {}): NormalizedCollectionTitle {
   return {
@@ -160,6 +161,7 @@ function profile(id: string, name: string): CollectionProfile {
     mediaType: "movie",
     limit: { kind: "all" },
     cadence: "daily",
+    availableOnHome: false,
   }
 }
 
@@ -167,7 +169,7 @@ function providers(
   ui: ReactNode,
   initialEntry: string,
   path = "*",
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  client = testQueryClient(),
 ) {
   client.setQueryData(queryKeys.status, {
     authenticated: true,
@@ -176,11 +178,9 @@ function providers(
     userName: "Neo",
   })
   return (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[initialEntry]}>
+    <TestProviders client={client} initialEntries={[initialEntry]}>
         <Routes><Route path={path} element={ui} /></Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
+    </TestProviders>
   )
 }
 

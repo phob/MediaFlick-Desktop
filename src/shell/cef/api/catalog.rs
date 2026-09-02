@@ -7,6 +7,8 @@ pub(super) fn route(
 ) -> Option<ApiResponse> {
     let response = match segments {
         ["calendar"] if request.is("GET") => calendar(services, request),
+        ["settings", "home"] if request.is("GET") => home_settings(services),
+        ["settings", "home"] if request.is("PATCH") => patch_home_settings(services, request),
         ["home", "resume"] if request.is("GET") => home_resume(services),
         ["home"] if request.is("GET") => home(services),
         ["billboard"] if request.is("GET") => billboard(services),
@@ -61,117 +63,512 @@ fn is_iso_date(value: &str) -> bool {
 
 // ------------------------------------------------------------------ browsing
 
-fn home(services: &Arc<Services>) -> ApiResponse {
-    let library = &services.library;
-    let resume = library
-        .continue_watching(HOME_ROW_LIMIT)
-        .unwrap_or_default();
-    let recent = library.recently_added(HOME_ROW_LIMIT).unwrap_or_default();
-    let latest_movies = latest_home_items(library, "Movie");
-    let latest_shows = latest_home_items(library, "Series");
+struct ResolvedHome {
+    account: AccountKey,
+    settings: HomeSettings,
+    defaults: HomeSettings,
+    genres: HashSet<String>,
+    profiles: Vec<crate::collections::CollectionProfile>,
+    mediaflick_collections: bool,
+}
 
-    // This response is the startup snapshot. Keep it entirely SQLite-backed so
-    // a healthy durable cache can paint while the loading screen is still up;
-    // live Next Up enrichment arrives independently from `home_resume`.
+fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
+    let account = services
+        .session
+        .account_key()
+        .ok_or_else(|| ApiResponse::error(401, "sign in to configure Home"))?;
+    let genres = services
+        .library
+        .genres()
+        .map_err(|error| storage_failure(&error))?;
+    let profiles = services.collections.account(&account).profiles;
+    let readiness = services.companion.collection_readiness(false);
+    let has_results = crate::collections::snapshots::SnapshotRepository::new(&services.library)
+        .has_account_results(&account)
+        .unwrap_or(false);
+    let mediaflick_collections =
+        services
+            .collections
+            .effective_mode(&account, &readiness, has_results)
+            == crate::collections::CollectionMode::MediaFlick;
+    let mut settings = services
+        .accounts
+        .home(&account)
+        .unwrap_or_else(|| HomeSettings::fresh(&genres));
+    reconcile_home_elements(&mut settings, &genres, &profiles);
+    let mut defaults = HomeSettings::fresh(&genres);
+    reconcile_home_elements(&mut defaults, &genres, &profiles);
+    let mut default_ids = defaults
+        .elements
+        .iter()
+        .map(|element| element.element.clone())
+        .collect::<HashSet<_>>();
+    for element in &settings.elements {
+        if default_ids.insert(element.element.clone()) {
+            defaults.elements.push(HomeElement {
+                element: element.element.clone(),
+                enabled: false,
+            });
+        }
+    }
+    Ok(ResolvedHome {
+        account,
+        settings,
+        defaults,
+        genres: genres.into_iter().collect(),
+        profiles,
+        mediaflick_collections,
+    })
+}
+
+fn reconcile_home_elements(
+    settings: &mut HomeSettings,
+    genres: &[String],
+    profiles: &[crate::collections::CollectionProfile],
+) {
+    let eligible_collections = profiles
+        .iter()
+        .filter(|profile| profile.available_on_home)
+        .map(|profile| profile.id.as_str())
+        .collect::<HashSet<_>>();
+    settings.elements.retain(|element| match &element.element {
+        HomeElementId::Collection { id } => eligible_collections.contains(id.as_str()),
+        _ => true,
+    });
+    let mut present = settings
+        .elements
+        .iter()
+        .map(|element| element.element.clone())
+        .collect::<HashSet<_>>();
+    for genre in genres {
+        let element = HomeElementId::Genre { id: genre.clone() };
+        if present.insert(element.clone()) {
+            settings.elements.push(HomeElement {
+                element,
+                enabled: false,
+            });
+        }
+    }
+    for profile in profiles.iter().filter(|profile| profile.available_on_home) {
+        let element = HomeElementId::Collection {
+            id: profile.id.clone(),
+        };
+        if present.insert(element.clone()) {
+            settings.elements.push(HomeElement {
+                element,
+                enabled: false,
+            });
+        }
+    }
+}
+
+fn built_in_label(id: HomeBuiltIn) -> &'static str {
+    match id {
+        HomeBuiltIn::Watching => "Watching",
+        HomeBuiltIn::BecauseYouWatched => "Because You Watched",
+        HomeBuiltIn::RecentlyAdded => "Recently Added",
+        HomeBuiltIn::Upcoming => "Upcoming",
+        HomeBuiltIn::LatestMovies => "Latest Movies",
+        HomeBuiltIn::LatestShows => "Latest Shows",
+        HomeBuiltIn::MyList => "My List",
+    }
+}
+
+fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Value {
+    let profiles = home
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.title.as_str()))
+        .collect::<HashMap<_, _>>();
+    let elements = settings
+        .elements
+        .iter()
+        .map(|element| {
+            let (label, available, category) = match &element.element {
+                HomeElementId::BuiltIn { id } => {
+                    (built_in_label(*id).to_string(), true, "Built-in")
+                }
+                HomeElementId::Genre { id } => (id.clone(), home.genres.contains(id), "Genre"),
+                HomeElementId::Collection { id } => (
+                    profiles
+                        .get(id.as_str())
+                        .copied()
+                        .unwrap_or("Collection")
+                        .to_string(),
+                    home.mediaflick_collections && profiles.contains_key(id.as_str()),
+                    "My Collection",
+                ),
+            };
+            let mut value = serde_json::to_value(element).unwrap_or_else(|_| json!({}));
+            if let Some(object) = value.as_object_mut() {
+                object.insert("label".to_string(), json!(label));
+                object.insert("available".to_string(), json!(available));
+                object.insert("category".to_string(), json!(category));
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "billboard": settings.billboard,
+        "watching": settings.watching,
+        "elements": elements,
+    })
+}
+
+fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
     ApiResponse::ok(json!({
-        "rows": [
-            { "id": "resume", "title": "Continue Watching", "items": resume },
-            { "id": "recent", "title": "Recently Added", "items": recent },
-            { "id": "latest-movies", "title": "Latest Movies", "items": latest_movies },
-            { "id": "latest-shows", "title": "Latest Series", "items": latest_shows },
-        ],
+        "settings": settings_view(home, &home.settings),
+        "defaults": settings_view(home, &home.defaults),
+        "collectionMode": if home.mediaflick_collections { "mediaFlick" } else { "jellyfin" },
     }))
 }
 
-/// Enriches the cached Continue Watching shelf with Jellyfin's server-owned
-/// Next Up decisions without holding the rest of the home page behind a
-/// network request.
-fn home_resume(services: &Arc<Services>) -> ApiResponse {
-    let resume = services
-        .library
-        .continue_watching(HOME_ROW_LIMIT)
-        .unwrap_or_default();
-    // Next Up is server-side logic; replicating it locally would drift.
-    let next_up = services
-        .session
-        .client_and_user()
-        .and_then(|(client, user_id)| items::fetch_next_up(&client, &user_id, None, HOME_ROW_LIMIT))
-        .map(|response| {
-            response
-                .items
-                .iter()
-                .map(summary_from_dto)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|error| {
-            services.session.note_error(&error);
-            tracing::debug!(target: "app.api", "Next Up unavailable: {error}");
-            Vec::new()
-        });
+fn home_settings(services: &Arc<Services>) -> ApiResponse {
+    match resolved_home(services) {
+        Ok(home) => home_settings_response(&home),
+        Err(response) => response,
+    }
+}
 
+fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let requested = match serde_json::from_value::<HomeSettings>(request.json()) {
+        Ok(settings) => settings,
+        Err(error) => return ApiResponse::error(400, format!("invalid Home settings: {error}")),
+    };
+    if let Err(error) = requested.validate() {
+        return ApiResponse::error(400, error.to_string());
+    }
+    let current = match resolved_home(services) {
+        Ok(home) => home,
+        Err(response) => return response,
+    };
+    let requested_ids = requested
+        .elements
+        .iter()
+        .map(|element| &element.element)
+        .collect::<HashSet<_>>();
+    let current_ids = current
+        .settings
+        .elements
+        .iter()
+        .map(|element| &element.element)
+        .collect::<HashSet<_>>();
+    if requested_ids != current_ids || requested.elements.len() != current.settings.elements.len() {
+        return ApiResponse::error(409, "Home options changed while the page was open");
+    }
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            services
+                .accounts
+                .save_home(&current.account, &requested)
+                .map_err(|error| {
+                    ApiResponse::error(500, format!("could not save Home settings: {error}"))
+                })
+        })
+        .map_or_else(
+            |response| response,
+            |_| match resolved_home(services) {
+                Ok(home) => home_settings_response(&home),
+                Err(response) => response,
+            },
+        )
+}
+
+fn home(services: &Arc<Services>) -> ApiResponse {
+    let home = match resolved_home(services) {
+        Ok(home) => home,
+        Err(response) => return response,
+    };
+    let watching_enabled = element_enabled(&home.settings, HomeBuiltIn::Watching);
+    let continue_watching = if watching_enabled && home.settings.watching.continue_watching {
+        services
+            .library
+            .continue_watching(HOME_ROW_LIMIT)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut rows = Vec::new();
+    for element in home
+        .settings
+        .elements
+        .iter()
+        .filter(|element| element.enabled)
+    {
+        let row = match &element.element {
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::BecauseYouWatched,
+            } => because_you_watched(services, &home.account),
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::RecentlyAdded,
+            } => Some(home_row(
+                "builtIn",
+                "recentlyAdded",
+                "Recently Added",
+                services
+                    .library
+                    .recently_added(HOME_ROW_LIMIT)
+                    .unwrap_or_default(),
+            )),
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::LatestMovies,
+            } => Some(home_row(
+                "builtIn",
+                "latestMovies",
+                "Latest Movies",
+                latest_home_items(&services.library, "Movie"),
+            )),
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::LatestShows,
+            } => Some(home_row(
+                "builtIn",
+                "latestShows",
+                "Latest Shows",
+                latest_home_items(&services.library, "Series"),
+            )),
+            HomeElementId::BuiltIn {
+                id: HomeBuiltIn::MyList,
+            } => Some(home_row(
+                "builtIn",
+                "myList",
+                "My List",
+                home_query(
+                    &services.library,
+                    ItemQuery {
+                        favorite: Some(true),
+                        sort: ItemSort::DateAdded,
+                        ..Default::default()
+                    },
+                ),
+            )),
+            HomeElementId::Genre { id } if home.genres.contains(id) => Some(home_row(
+                "genre",
+                id,
+                id,
+                home_query(
+                    &services.library,
+                    ItemQuery {
+                        kinds: vec!["Movie".to_string(), "Series".to_string()],
+                        genre: Some(id.clone()),
+                        sort: ItemSort::CommunityRating,
+                        ..Default::default()
+                    },
+                ),
+            )),
+            HomeElementId::Collection { id } if home.mediaflick_collections => {
+                home_collection(services, &home, id)
+            }
+            _ => None,
+        };
+        if let Some(row) = row
+            && row["items"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        {
+            rows.push(row);
+        }
+    }
     ApiResponse::ok(json!({
-        "items": merge_next_up(resume, next_up),
+        "configuration": settings_view(&home, &home.settings),
+        "continueWatching": continue_watching,
+        "rows": rows,
     }))
+}
+
+fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
+    settings
+        .elements
+        .iter()
+        .any(|element| element.enabled && element.element == HomeElementId::BuiltIn { id })
+}
+
+fn home_query(library: &Library, mut query: ItemQuery) -> Vec<Value> {
+    query.limit = HOME_ROW_LIMIT;
+    library
+        .query(&query)
+        .map(|page| page.items)
+        .unwrap_or_default()
+}
+
+fn home_row(kind: &str, id: &str, title: &str, items: Vec<Value>) -> Value {
+    json!({ "kind": kind, "id": id, "title": title, "items": Value::Array(items) })
+}
+
+fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Value> {
+    let seed = {
+        let mut seeds = services
+            .home_watched
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        seeds
+            .entry(account.clone())
+            .or_insert_with(|| {
+                services
+                    .library
+                    .random_played_movie_with_genre()
+                    .unwrap_or_default()
+            })
+            .clone()
+    }?;
+    let genre = seed["genres"].as_array()?.first()?.as_str()?;
+    let items = home_query(
+        &services.library,
+        ItemQuery {
+            kinds: vec!["Movie".to_string(), "Series".to_string()],
+            genre: Some(genre.to_string()),
+            watched: Some(false),
+            sort: ItemSort::CommunityRating,
+            ..Default::default()
+        },
+    );
+    (!items.is_empty()).then(|| {
+        home_row(
+            "builtIn",
+            "becauseYouWatched",
+            &format!(
+                "Because you watched {}",
+                seed["name"].as_str().unwrap_or("a movie")
+            ),
+            items,
+        )
+    })
+}
+
+fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -> Option<Value> {
+    let profile = home
+        .profiles
+        .iter()
+        .find(|profile| profile.id == profile_id && profile.available_on_home)?;
+    let snapshot = crate::collections::snapshots::SnapshotRepository::new(&services.library)
+        .profile(&home.account, &profile.id, &profile.revision)
+        .ok()??;
+    let classified = crate::collections::matching::classify(
+        &services.library,
+        &home.account,
+        &snapshot.items,
+        crate::collections::matching::OwnershipPolicy {
+            complete_sync: crate::library::sync::ownership_available(&services.library),
+            restricted_user: services.session.user_restricted(),
+        },
+    )
+    .ok()?;
+    let ids = classified
+        .owned
+        .iter()
+        .filter_map(|title| title.local_items.first())
+        .map(|item| item.id.clone())
+        .take(HOME_ROW_LIMIT as usize)
+        .collect::<Vec<_>>();
+    let by_id = services
+        .library
+        .items_by_ids(&ids)
+        .ok()?
+        .into_iter()
+        .filter_map(|item| {
+            let id = item["id"].as_str()?.to_string();
+            Some((id, item))
+        })
+        .collect::<HashMap<_, _>>();
+    let items = ids
+        .iter()
+        .filter_map(|id| by_id.get(id).cloned())
+        .collect::<Vec<_>>();
+    Some(home_row("collection", &profile.id, &profile.title, items))
+}
+
+/// Enriches cached Continue Watching with Jellyfin's server-owned Next Up
+/// decisions without holding the rest of Home behind a network request.
+fn home_resume(services: &Arc<Services>) -> ApiResponse {
+    let home = match resolved_home(services) {
+        Ok(home) => home,
+        Err(response) => return response,
+    };
+    if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
+        return ApiResponse::ok(json!({ "continueWatching": [], "nextUp": [] }));
+    }
+    let resume = if home.settings.watching.continue_watching {
+        services
+            .library
+            .continue_watching(HOME_ROW_LIMIT)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let next_up = if home.settings.watching.next_up {
+        services
+            .session
+            .client_and_user()
+            .and_then(|(client, user_id)| {
+                items::fetch_next_up(&client, &user_id, None, HOME_ROW_LIMIT)
+            })
+            .map(|response| {
+                response
+                    .items
+                    .iter()
+                    .map(summary_from_dto)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|error| {
+                services.session.note_error(&error);
+                tracing::debug!(target: "app.api", "Next Up unavailable: {error}");
+                Vec::new()
+            })
+    } else {
+        Vec::new()
+    };
+    ApiResponse::ok(json!({
+        "continueWatching": resume,
+        "nextUp": deduplicate_next_up(&resume, next_up),
+    }))
+}
+
+fn deduplicate_next_up(resume: &[Value], next_up: Vec<Value>) -> Vec<Value> {
+    fn key(item: &Value, field: &str) -> Option<String> {
+        item[field].as_str().map(str::to_string)
+    }
+    let seen = resume
+        .iter()
+        .flat_map(|item| [key(item, "id"), key(item, "seriesId")])
+        .flatten()
+        .collect::<HashSet<_>>();
+    next_up
+        .into_iter()
+        .filter(|item| {
+            [key(item, "id"), key(item, "seriesId")]
+                .into_iter()
+                .flatten()
+                .all(|key| !seen.contains(&key))
+        })
+        .collect()
 }
 
 /// New releases are separate from Recently Added: importing an older title
 /// moves it to the front of the latter, but not to the front of these shelves.
 fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
-    library
-        .query(&ItemQuery {
+    home_query(
+        library,
+        ItemQuery {
             kinds: vec![kind.to_string()],
             sort: ItemSort::Year,
-            limit: HOME_ROW_LIMIT,
             ..Default::default()
-        })
-        .map(|page| page.items)
-        .unwrap_or_default()
+        },
+    )
 }
 
 fn billboard(services: &Arc<Services>) -> ApiResponse {
-    match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
-        Ok(items) => ApiResponse::ok(json!({ "items": items })),
-        Err(error) => storage_failure(&error),
+    match resolved_home(services) {
+        Ok(home) if !home.settings.billboard => ApiResponse::ok(json!({ "items": [] })),
+        Err(response) => response,
+        Ok(_) => match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
+            Ok(items) => ApiResponse::ok(json!({ "items": items })),
+            Err(error) => storage_failure(&error),
+        },
     }
-}
-
-/// Continue Watching and Next Up share one row: half-watched items first, in the
-/// order the cache returned them, then the next unwatched episode of everything
-/// else.
-///
-/// A show can legitimately show up in both lists — Jellyfin counts an
-/// in-progress episode as that series' Next Up — so entries are keyed by series
-/// as well as by id. Without the series key a partly watched episode and its own
-/// Next Up successor would sit next to each other as two cards for one show.
-///
-/// Both sources are already capped at `HOME_ROW_LIMIT`, and the merged row keeps
-/// all of what survives deduplication rather than re-applying that cap to the
-/// total: trimming it back to one row's worth would put a library with a handful
-/// of half-watched items and many unwatched series out of reach entirely.
-fn merge_next_up(resume: Vec<Value>, next_up: Vec<Value>) -> Vec<Value> {
-    fn key(item: &Value, field: &str) -> Option<String> {
-        item[field].as_str().map(str::to_string)
-    }
-
-    let mut seen: HashSet<String> = resume
-        .iter()
-        .flat_map(|item| [key(item, "id"), key(item, "seriesId")])
-        .flatten()
-        .collect();
-
-    let mut merged = resume;
-    for item in next_up {
-        let keys: Vec<String> = [key(&item, "id"), key(&item, "seriesId")]
-            .into_iter()
-            .flatten()
-            .collect();
-        if keys.iter().any(|key| seen.contains(key)) {
-            continue;
-        }
-        seen.extend(keys);
-        merged.push(item);
-    }
-    merged
 }
 
 fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -740,48 +1137,22 @@ mod tests {
         json!({ "id": id, "kind": "Episode", "seriesId": series_id })
     }
 
+    /// The in-progress episode is also its series' Next Up, so the split
+    /// shelves must not show that series twice.
     #[test]
-    fn continue_watching_comes_before_next_up_in_the_merged_row() {
-        let merged = merge_next_up(
-            vec![episode("e1", "sev"), json!({ "id": "m1", "kind": "Movie" })],
-            vec![episode("e9", "silo"), episode("e8", "andor")],
-        );
-        let ids: Vec<&str> = merged
-            .iter()
-            .map(|item| item["id"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, ["e1", "m1", "e9", "e8"]);
-    }
-
-    /// The in-progress episode is also its series' Next Up, so the naive
-    /// concatenation would show the same card twice.
-    #[test]
-    fn a_show_already_being_watched_is_not_repeated_by_next_up() {
-        let merged = merge_next_up(
-            vec![episode("e1", "sev")],
-            // Same episode by id, then the successor within the same series.
+    fn a_show_already_being_watched_is_removed_from_next_up() {
+        let next_up = deduplicate_next_up(
+            &[episode("e1", "sev")],
             vec![
                 episode("e1", "sev"),
                 episode("e2", "sev"),
                 episode("e9", "silo"),
             ],
         );
-        let ids: Vec<&str> = merged
+        let ids = next_up
             .iter()
             .map(|item| item["id"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, ["e1", "e9"]);
-    }
-
-    /// A full Continue Watching list must not squeeze Next Up off the row.
-    #[test]
-    fn next_up_survives_a_continue_watching_list_that_fills_a_row_on_its_own() {
-        let limit = HOME_ROW_LIMIT as usize;
-        let resume: Vec<_> = (0..limit)
-            .map(|index| json!({ "id": format!("r{index}"), "kind": "Movie" }))
-            .collect();
-        let merged = merge_next_up(resume, vec![episode("e9", "silo")]);
-        assert_eq!(merged.len(), limit + 1);
-        assert_eq!(merged.last().expect("last")["id"], "e9");
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["e9"]);
     }
 }

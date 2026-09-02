@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { useLocation } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { SeerrCard } from "../src/components/seerr/SeerrCard"
 import type {
@@ -11,6 +10,8 @@ import type {
 } from "../src/lib/api"
 import { canQuickRequest } from "../src/lib/seerr-request"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const capabilities: SeerrCapabilities = {
   movie: { request: true, autoApprove: false },
@@ -56,18 +57,14 @@ function LocationProbe() {
 }
 
 function Providers({ children }: { children: ReactNode }) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.seerrStatus, status)
 
   return (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/discover?row=movies"]}>
+    <TestProviders client={client} initialEntries={["/discover?row=movies"]}>
         {children}
         <LocationProbe />
-      </MemoryRouter>
-    </QueryClientProvider>
+    </TestProviders>
   )
 }
 
@@ -93,18 +90,16 @@ describe("discovery quick request", () => {
     const card = action.closest("[data-quick-request-card]")!
     const detail = screen.getByRole("link")
 
-    expect(action.className).toContain("opacity-0")
     expect(card.getAttribute("data-quick-request-visible")).toBeNull()
 
     fireEvent.pointerEnter(card)
-    expect(action.className).toContain("opacity-100")
     expect(card.getAttribute("data-quick-request-visible")).toBe("true")
 
     fireEvent.pointerLeave(card)
-    expect(action.className).toContain("opacity-0")
+    expect(card.getAttribute("data-quick-request-visible")).toBeNull()
 
     act(() => detail.focus())
-    expect(action.className).toContain("opacity-100")
+    expect(card.getAttribute("data-quick-request-visible")).toBe("true")
     act(() => action.focus())
     expect(document.activeElement).toBe(action)
   })

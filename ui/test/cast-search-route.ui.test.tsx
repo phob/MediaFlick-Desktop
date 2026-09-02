@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom"
@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest"
 import type { ItemGridProps } from "../src/components/ItemGrid"
 import type { CastDiscoverProps } from "../src/components/seerr/CastDiscover"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
 
@@ -47,7 +48,7 @@ function location() {
 }
 
 function Providers({ children }: { children: ReactNode }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.genres, { genres: [] })
   client.setQueryData(queryKeys.personResolution("jf-keanu", null, "Keanu Reeves"), {
     person: {
