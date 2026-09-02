@@ -151,18 +151,10 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 
             if (response.Content.Headers.ContentLength != 0)
             {
-                await using var stream = await response.Content
-                    .ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
-                var bytes = await ReadBoundedAsync(stream, timeout.Token).ConfigureAwait(false);
-                if (bytes is null)
-                {
-                    return new MdbListResponse(
-                        HttpStatusCode.BadGateway,
-                        null,
-                        quota,
-                        retryAt);
-                }
-
+                await response.Content.LoadIntoBufferAsync(MaxResponseBytes, timeout.Token)
+                    .ConfigureAwait(false);
+                var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token)
+                    .ConfigureAwait(false);
                 if (bytes.Length > 0)
                 {
                     try
@@ -249,26 +241,4 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                 : null;
     }
 
-    private static async Task<byte[]?> ReadBoundedAsync(
-        Stream stream,
-        CancellationToken cancellationToken)
-    {
-        using var destination = new MemoryStream();
-        var buffer = new byte[16 * 1024];
-        while (true)
-        {
-            var count = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            if (count == 0)
-            {
-                return destination.ToArray();
-            }
-
-            if (destination.Length + count > MaxResponseBytes)
-            {
-                return null;
-            }
-
-            destination.Write(buffer, 0, count);
-        }
-    }
 }

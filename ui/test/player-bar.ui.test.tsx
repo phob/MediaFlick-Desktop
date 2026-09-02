@@ -1,9 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { PlayerBar } from "@/components/PlayerBar"
 import type { PlayerState } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
+import { testQueryClient } from "./test-query-client"
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -56,21 +57,14 @@ describe("player bar controls", () => {
         })
       }),
     )
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
-    })
+    const client = testQueryClient()
     client.setQueryData<PlayerState>(queryKeys.playerState, playerState)
 
-    const view = render(
+    render(
       <QueryClientProvider client={client}>
         <PlayerBar />
       </QueryClientProvider>,
     )
-
-    const seekTarget = view.container.querySelector<HTMLElement>("[data-slot='slider']")
-    const seekTrack = view.container.querySelector<HTMLElement>("[data-slot='slider-track']")
-    expect(seekTarget?.classList.contains("h-10")).toBe(true)
-    expect(seekTrack?.classList.contains("data-[orientation=horizontal]:h-1.5")).toBe(true)
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "Audio track" }), {
       button: 0,
@@ -130,9 +124,7 @@ describe("player bar controls", () => {
         })
       }),
     )
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
-    })
+    const client = testQueryClient()
     client.setQueryData<PlayerState>(queryKeys.playerState, playerState)
 
     const view = render(

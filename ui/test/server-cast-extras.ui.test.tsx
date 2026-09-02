@@ -1,11 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import type { QueryClient } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test } from "vitest"
 import { ServerCastExtras } from "../src/components/seerr/ServerCastExtras"
 import type { ItemSummary, SeerrStatusInfo, Status } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
   linked: true,
@@ -57,9 +58,7 @@ function summary(id: string, name: string): ItemSummary {
 function renderExtras(client: QueryClient, ui: ReactNode) {
   function Providers({ children }: { children: ReactNode }) {
     return (
-      <QueryClientProvider client={client}>
-        <MemoryRouter>{children}</MemoryRouter>
-      </QueryClientProvider>
+      <TestProviders client={client}>{children}</TestProviders>
     )
   }
   render(ui, { wrapper: Providers })
@@ -67,7 +66,7 @@ function renderExtras(client: QueryClient, ui: ReactNode) {
 
 describe("proven server cast extras", () => {
   test("renders only backend-proven titles as library cards", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
     client.setQueryData(queryKeys.status, appStatus)
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
@@ -88,7 +87,7 @@ describe("proven server cast extras", () => {
   })
 
   test("stays silent until the backend has proven at least one title", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
     client.setQueryData(queryKeys.status, appStatus)
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
@@ -111,7 +110,7 @@ describe("proven server cast extras", () => {
   })
 
   test("an unlinked Seerr never renders the section", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, { ...linked, linked: false, mapped: false })
     client.setQueryData(queryKeys.status, appStatus)
 

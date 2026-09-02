@@ -193,6 +193,29 @@ impl Library {
         })
     }
 
+    /// One stable recommendation seed can be selected from this process's
+    /// account cache. The detail row carries the leading genre needed by Home.
+    pub fn random_played_movie_with_genre(&self) -> rusqlite::Result<Option<Value>> {
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare(&format!(
+                "SELECT {DETAIL_COLUMNS} FROM items i
+                 JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
+                 WHERE i.kind = 'Movie' AND u.played = 1
+                   AND EXISTS (
+                       SELECT 1 FROM json_each(i.genres) genre
+                       WHERE COALESCE(genre.value, '') <> ''
+                   )
+                 ORDER BY random()
+                 LIMIT 1"
+            ))?;
+            let mut rows = statement.query([])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(detail_row(row)?)),
+                None => Ok(None),
+            }
+        })
+    }
+
     pub fn recently_added(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -806,6 +829,16 @@ mod tests {
         let rows = seeded().recently_added(10).expect("rows");
         assert_eq!(rows[0]["id"], "m2");
         assert_eq!(rows[1]["id"], "s1");
+    }
+
+    #[test]
+    fn recommendation_seed_is_a_played_movie_with_genres() {
+        let seed = seeded()
+            .random_played_movie_with_genre()
+            .expect("query")
+            .expect("seed");
+        assert_eq!(seed["id"], "m2");
+        assert_eq!(seed["genres"][0], "Drama");
     }
 
     #[test]

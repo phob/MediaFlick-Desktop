@@ -30,6 +30,7 @@ export const queryKeys = {
   ratingsStatus: ["ratings", "status"] as const,
   home: ["home"] as const,
   homeResume: ["home", "resume"] as const,
+  homeSettings: ["home", "settings"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
   serverInfo: (server: string) => ["server-info", server] as const,

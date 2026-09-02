@@ -1,11 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
-import { MemoryRouter, useLocation } from "react-router-dom"
+import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { Appearance } from "@/routes/Settings"
 import { itemSummary, requireElement } from "./support/fixtures"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const appearance = (cardPreviews: boolean): ClientSettings["appearance"] => ({
   theme: "light",
@@ -61,16 +62,12 @@ function LocationProbe() {
 }
 
 function renderAppearance(cardPreviews: boolean, authenticated = true) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-  })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
   client.setQueryData(queryKeys.status, { authenticated })
   client.setQueryData(queryKeys.home, {
-    rows: [
-      { id: "resume", title: "Continue Watching", items: [] },
-      { id: "recent", title: "Recently Added", items: [movie] },
-    ],
+    continueWatching: [],
+    rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [movie] }],
   })
   client.setQueryData(queryKeys.ratingsStatus, ratingsStatus)
   const requests: string[] = []
@@ -79,12 +76,10 @@ function renderAppearance(cardPreviews: boolean, authenticated = true) {
     return new Response(JSON.stringify({}), { status: 200 })
   }))
   render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/settings/appearance"]}>
+    <TestProviders client={client} initialEntries={["/settings/appearance"]}>
         <Appearance />
         <LocationProbe />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    </TestProviders>,
   )
   return requests
 }

@@ -13,7 +13,6 @@ pub struct PublicSystemInfo {
     pub server_name: String,
     pub version: String,
     pub id: String,
-    pub startup_wizard_completed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -126,7 +125,6 @@ pub struct BaseItemDto {
     pub media_streams: Vec<MediaStream>,
     pub media_sources: Vec<MediaSourceInfo>,
     pub remote_trailers: Vec<MediaUrl>,
-    pub is_folder: Option<bool>,
 }
 
 impl BaseItemDto {
@@ -216,16 +214,7 @@ pub struct MediaSourceInfo {
     pub run_time_ticks: Option<i64>,
     pub supports_direct_play: bool,
     pub supports_direct_stream: bool,
-    pub supports_transcoding: bool,
-    pub is_remote: bool,
-    pub requires_opening: bool,
-    pub requires_closing: bool,
-    pub open_token: Option<String>,
-    pub live_stream_id: Option<String>,
     pub transcoding_url: Option<String>,
-    pub transcoding_sub_protocol: Option<String>,
-    pub transcoding_container: Option<String>,
-    pub direct_stream_url: Option<String>,
     pub e_tag: Option<String>,
     pub media_streams: Vec<MediaStream>,
     pub default_audio_stream_index: Option<i64>,
@@ -267,7 +256,6 @@ pub struct MediaStream {
     pub is_hearing_impaired: bool,
     pub is_external: bool,
     pub delivery_url: Option<String>,
-    pub delivery_method: Option<String>,
     pub height: Option<i64>,
     pub width: Option<i64>,
     pub channels: Option<i64>,

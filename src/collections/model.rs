@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -202,6 +203,8 @@ pub struct CollectionProfile {
     pub limit: ResultLimit,
     #[serde(default)]
     pub cadence: RefreshCadence,
+    #[serde(default)]
+    pub available_on_home: bool,
 }
 
 impl CollectionProfile {
@@ -243,6 +246,25 @@ impl CollectionProfile {
 
 pub fn valid_opaque_id(value: &str) -> bool {
     matches!(value.len(), 16..=64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub(crate) fn compare_titles(left: &str, right: &str) -> Ordering {
+    title_sort_key(left)
+        .cmp(&title_sort_key(right))
+        .then_with(|| left.to_lowercase().cmp(&right.to_lowercase()))
+        .then_with(|| left.cmp(right))
+}
+
+fn title_sort_key(value: &str) -> String {
+    let value = value
+        .split_once(' ')
+        .filter(|(article, _)| {
+            article.eq_ignore_ascii_case("the")
+                || article.eq_ignore_ascii_case("a")
+                || article.eq_ignore_ascii_case("an")
+        })
+        .map_or(value, |(_, title)| title);
+    value.to_lowercase()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -345,6 +367,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn title_sorting_ignores_leading_english_articles() {
+        let mut titles = ["The Batman", "A Clockwork Orange", "Alien", "An Education"];
+
+        titles.sort_by(|left, right| compare_titles(left, right));
+
+        assert_eq!(
+            titles,
+            ["Alien", "The Batman", "A Clockwork Orange", "An Education"]
+        );
+    }
 
     #[test]
     fn canonical_identity_rejects_mixed_and_zero_ids() {

@@ -1,7 +1,6 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import CollectionSettingsPage from "../src/routes/CollectionSettings"
 import type {
@@ -13,6 +12,8 @@ import type {
 } from "../src/lib/api"
 import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const accountSettings: CollectionSettings = {
   effectiveMode: "mediaFlick",
@@ -50,6 +51,7 @@ function profile(id: string, patch: Partial<CollectionProfile> = {}): Collection
     mediaType: "movie",
     limit: { kind: "all" },
     cadence: "daily",
+    availableOnHome: false,
     ...patch,
   }
 }
@@ -103,7 +105,7 @@ function mockPage(options: {
 
 function page(
   initialEntry = "/settings/collections",
-  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  client = testQueryClient(),
 ) {
   client.setQueryData(queryKeys.status, {
     authenticated: true,
@@ -112,11 +114,9 @@ function page(
     userName: "Neo",
   })
   const providers = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[initialEntry]}>
+    <TestProviders client={client} initialEntries={[initialEntry]}>
         <Routes><Route path="*" element={children} /></Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
+    </TestProviders>
   )
   return { client, ...render(<CollectionSettingsPage />, { wrapper: providers }) }
 }
@@ -127,7 +127,7 @@ async function openTemplate(name = "Popular movies") {
 }
 
 function createButton() {
-  return screen.getByRole("button", { name: "Create" })
+  return screen.getByRole("button", { name: "Save" })
 }
 
 function isDisabled(element: Element) {
@@ -156,12 +156,25 @@ describe("collection settings wizard", () => {
     expect(screen.queryByRole("option", { name: "Mixed" })).toBeNull()
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }))
     await openTemplate("MDBList list")
     fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
     expect(screen.getByRole("option", { name: "Movie" })).toBeTruthy()
     expect(screen.getByRole("option", { name: "Series" })).toBeTruthy()
     expect(screen.getByRole("option", { name: "Mixed" })).toBeTruthy()
+  })
+
+  test("resets and discards an unsaved collection draft", async () => {
+    mockPage()
+    page()
+    await openTemplate()
+
+    const title = screen.getByLabelText("Title")
+    fireEvent.change(title, { target: { value: "Changed title" } })
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+    expect((title as HTMLInputElement).value).toBe("Popular movies")
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }))
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Add collection" })).toBeNull())
   })
 
   test("renders a colored Lucide pictogram instead of the shared template banner", async () => {
@@ -173,7 +186,7 @@ describe("collection settings wizard", () => {
     expect(card.querySelector("img")).toBeNull()
   })
 
-  test("renders provider posters and commits only after a successful Preview", async () => {
+  test("renders provider posters and saves after an optional Preview", async () => {
     mockPage()
     const result = preview()
     const runPreview = vi.spyOn(api.api.collections, "preview").mockResolvedValue(result)
@@ -184,7 +197,7 @@ describe("collection settings wizard", () => {
     page()
     await openTemplate()
 
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
     fireEvent.click(screen.getByRole("button", { name: "Preview" }))
 
     expect(await screen.findByText("1 total · 1 movies · 0 series")).toBeTruthy()
@@ -195,6 +208,27 @@ describe("collection settings wizard", () => {
     fireEvent.click(createButton())
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
     expect(runPreview).toHaveBeenCalledWith(expect.any(Object), expect.any(AbortSignal))
+  })
+
+  test("the first Save previews a new collection and the second Save creates it", async () => {
+    mockPage()
+    const runPreview = vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
+    const create = vi.spyOn(api.api.collections, "createProfile").mockResolvedValue({
+      profile: profile("a".repeat(16)),
+      total: 1,
+    })
+    page()
+    await openTemplate()
+
+    fireEvent.click(createButton())
+
+    expect(await screen.findByText("The Matrix (1999)")).toBeTruthy()
+    expect(runPreview).toHaveBeenCalledTimes(1)
+    expect(create).not.toHaveBeenCalled()
+    expect(isDisabled(createButton())).toBe(false)
+
+    fireEvent.click(createButton())
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
   })
 
   test("shows at most 24 sampled titles while preserving the provider's full counts", async () => {
@@ -256,11 +290,11 @@ describe("collection settings wizard", () => {
       await pending
     })
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
     expect(screen.getByRole("button", { name: "Preview" })).toBeTruthy()
   })
 
-  test("a failed repeat Preview clears the old result and blocks Create", async () => {
+  test("a failed repeat Preview clears the old result and leaves Save ready to retry", async () => {
     mockPage()
     vi.spyOn(api.api.collections, "preview")
       .mockResolvedValueOnce(preview())
@@ -274,7 +308,7 @@ describe("collection settings wizard", () => {
 
     expect((await screen.findByRole("alert")).textContent).toContain("Preview failed: TMDB unavailable")
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
   })
 
   test("source parameters, media type, and result limit each invalidate Preview", async () => {
@@ -289,28 +323,28 @@ describe("collection settings wizard", () => {
     page()
     await openTemplate("Custom discover")
 
-    const previewAndExpectCreate = async () => {
+    const previewAndExpectSave = async () => {
       fireEvent.click(screen.getByRole("button", { name: "Preview" }))
       await screen.findByText("The Matrix (1999)")
       expect(isDisabled(createButton())).toBe(false)
     }
 
-    await previewAndExpectCreate()
+    await previewAndExpectSave()
     fireEvent.change(screen.getByLabelText("Metadata language (optional)"), {
       target: { value: "de-DE" },
     })
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
 
-    await previewAndExpectCreate()
+    await previewAndExpectSave()
     fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum results" }), {
       target: { value: "25" },
     })
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
 
-    await previewAndExpectCreate()
+    await previewAndExpectSave()
     fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
     fireEvent.click(await screen.findByRole("option", { name: "Series" }))
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
   })
 
   test("exact-collection release filtering invalidates Preview", async () => {
@@ -332,7 +366,7 @@ describe("collection settings wizard", () => {
     await screen.findByText("The Matrix (1999)")
     fireEvent.click(document.querySelector("#collection-unreleased")!)
 
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
   })
 
@@ -357,7 +391,7 @@ describe("collection settings wizard", () => {
       target: { value: "alice/favorites" },
     })
 
-    expect(isDisabled(createButton())).toBe(true)
+    expect(isDisabled(createButton())).toBe(false)
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
   })
 
@@ -387,10 +421,10 @@ describe("collection settings wizard", () => {
     ))
   })
 
-  test("result-affecting edits require a fresh Preview", async () => {
+  test("Save updates result-affecting edits without requiring Preview", async () => {
     const current = profile("a".repeat(16), { limit: { kind: "maximum", count: 20 } })
     mockPage({ profiles: [current] })
-    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
+    const runPreview = vi.spyOn(api.api.collections, "preview")
     const update = vi.spyOn(api.api.collections, "updateProfile").mockResolvedValue(current)
     page(`/settings/collections?edit=${current.id}`)
     await screen.findByRole("heading", { name: "Edit collection" })
@@ -399,17 +433,15 @@ describe("collection settings wizard", () => {
       target: { value: "21" },
     })
     const save = screen.getByRole("button", { name: "Save" })
-    expect(isDisabled(save)).toBe(true)
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-    await screen.findByText("The Matrix (1999)")
     expect(isDisabled(save)).toBe(false)
     fireEvent.click(save)
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(runPreview).not.toHaveBeenCalled()
   })
 
   test("provider availability does not leak from another account's template cache", async () => {
     mockPage({ templates: catalog(template({ title: "New account template" })) })
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const client = testQueryClient()
     client.setQueryData(queryKeys.collectionTemplates("https://old.example:user-2"),
       catalog(template({ title: "Old account template" })))
     page("/settings/collections", client)
@@ -439,10 +471,33 @@ describe("collection settings wizard", () => {
 })
 
 describe("collection settings management", () => {
-  test("reorders and deletes configured collections", async () => {
+  test("stages general changes behind Save and supports Discard", async () => {
+    mockPage()
+    const patch = vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue({
+      ...accountSettings,
+      franchises: { includeUnreleased: true },
+    })
+    page()
+
+    const includeUnreleased = await screen.findByRole("switch", { name: "Include unreleased titles" })
+    fireEvent.click(includeUnreleased)
+    expect(patch).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }))
+    expect(includeUnreleased.getAttribute("aria-checked")).toBe("false")
+
+    fireEvent.click(includeUnreleased)
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(patch).toHaveBeenCalledWith({
+      modeSelection: "mediaFlick",
+      includeUnreleased: true,
+    }))
+  })
+
+  test("stages collection ordering until Save while deletes remain explicit actions", async () => {
     const first = profile("a".repeat(16), { title: "First" })
     const second = profile("c".repeat(16), { title: "Second" })
     mockPage({ profiles: [first, second] })
+    vi.spyOn(api.api.collections, "patchSettings").mockResolvedValue(accountSettings)
     const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockResolvedValue({
       profiles: [second, first],
     })
@@ -451,6 +506,8 @@ describe("collection settings management", () => {
     page()
 
     fireEvent.click(await screen.findByRole("button", { name: "Move First down" }))
+    expect(reorder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id]))
     fireEvent.click(screen.getByRole("button", { name: "Delete First" }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith(first.id))

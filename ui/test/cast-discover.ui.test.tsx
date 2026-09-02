@@ -1,12 +1,13 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import type { QueryClient } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { MemoryRouter } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { CastDiscover } from "../src/components/seerr/CastDiscover"
 import type { SeerrResult, SeerrStatusInfo, Status } from "../src/lib/api"
 import { castDiscoverResults } from "../src/lib/cast-search"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
   linked: true,
@@ -48,15 +49,13 @@ function result(patch: Partial<SeerrResult>): SeerrResult {
 function providers(client: QueryClient) {
   return function Providers({ children }: { children: ReactNode }) {
     return (
-      <QueryClientProvider client={client}>
-        <MemoryRouter>{children}</MemoryRouter>
-      </QueryClientProvider>
+      <TestProviders client={client}>{children}</TestProviders>
     )
   }
 }
 
 function clientWithStatus(status: SeerrStatusInfo = linked, app: Status = appStatus) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.seerrStatus, status)
   client.setQueryData(queryKeys.status, app)
   return client

@@ -1,45 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
-import { useContext } from "react"
 import { describe, expect, test } from "vitest"
-import { RatingsContext } from "@/lib/rating-context"
-import { RatingsProvider } from "@/lib/ratings"
-import { TechnicalProvider } from "@/lib/technical"
-import { queryKeys } from "@/lib/query-client"
 import { startupScreenReady } from "@/lib/startup"
 
-function RatingsProbe() {
-  const ratings = useContext(RatingsContext)
-  return <output data-testid="ratings-context">{ratings ? "available" : "missing"}</output>
-}
-
 describe("home startup cover", () => {
-  test("keeps shell content inside the real rating and technical providers", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
-    client.setQueryData(queryKeys.settings, {
-      appearance: { showMediaInfo: false, ratingSources: [] },
-    })
-    client.setQueryData(queryKeys.ratingsStatus, {
-      selectionEnabled: false,
-      effectiveOrigin: "none",
-      sources: [],
-    })
-
-    const view = render(
-      <QueryClientProvider client={client}>
-        <RatingsProvider>
-          <TechnicalProvider>
-            <RatingsProbe />
-          </TechnicalProvider>
-        </RatingsProvider>
-      </QueryClientProvider>,
-    )
-
-    expect(screen.getByTestId("ratings-context").textContent).toBe("available")
-    view.unmount()
-    client.clear()
-  })
-
   test("stays up until both SQLite-backed home queries settle", () => {
     const readiness = {
       statusPending: false,

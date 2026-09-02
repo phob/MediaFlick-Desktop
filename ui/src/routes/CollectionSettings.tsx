@@ -1,10 +1,11 @@
 import { ArrowDown, ArrowUp, Layers, Pencil, Search, Trash2 } from "lucide-react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Navigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import collectionTemplateArt from "@/assets/collection-template.svg"
 import CollectionTemplatePictogram from "@/components/CollectionTemplatePictogram"
+import SaveBar from "@/components/SettingsSaveBar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,7 +13,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -26,11 +26,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { useSourceDraft } from "@/hooks/use-source-draft"
 import {
   api,
   type CollectionCategory,
   type CollectionProfile,
   type CollectionProfileDraft,
+  type CollectionSettings,
   type CollectionTemplate,
   type CollectionTemplates,
   type PublicCollectionList,
@@ -76,6 +78,7 @@ function draftFromTemplate(template: CollectionTemplate): CollectionProfileDraft
     ...draft,
     template: { id },
     customPosterId: null,
+    availableOnHome: false,
   })
 }
 
@@ -112,22 +115,18 @@ function SettingsSection({
   )
 }
 
-function GeneralSettings() {
-  const cache = useQueryClient()
-  const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+type CollectionSettingsDraft = {
+  modeSelection: CollectionSettings["effectiveMode"]
+  includeUnreleased: boolean
+  profileIds: string[]
+}
+
+function GeneralSettings({ draft, onChange }: {
+  draft: CollectionSettingsDraft | null
+  onChange: (draft: CollectionSettingsDraft) => void
+}) {
   const query = useCollectionSettings()
   const settings = query.data
-  const disabled = !settings
-  const update = (body: Parameters<typeof api.collections.patchSettings>[0]) => {
-    void api.collections.patchSettings(body).then(
-      (next) => {
-        cache.setQueryData(queryKeys.collectionSettings(account), next)
-        toast.success("Collection settings saved")
-      },
-      (error: Error) => toast.error(error.message),
-    )
-  }
   if (query.isError && !settings) {
     return (
       <SettingsSection title="General" description="Choose which collection experience this account sees.">
@@ -149,10 +148,10 @@ function GeneralSettings() {
           <p className="mt-1 text-sm text-muted-foreground">MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly.</p>
         </div>
         <Select
-          value={settings?.effectiveMode ?? ""}
-          disabled={disabled}
-          onValueChange={(value) => {
-            if (value === "mediaFlick" || value === "jellyfin") update({ modeSelection: value })
+          value={draft?.modeSelection ?? ""}
+          disabled={!settings || !draft}
+          onValueChange={(modeSelection) => {
+            if (draft && (modeSelection === "mediaFlick" || modeSelection === "jellyfin")) onChange({ ...draft, modeSelection })
           }}
         >
           <SelectTrigger className="w-48" aria-label="Collection mode"><SelectValue placeholder="Loading…" /></SelectTrigger>
@@ -169,37 +168,41 @@ function GeneralSettings() {
         </div>
         <Switch
           aria-label="Include unreleased titles"
-          checked={settings?.franchises.includeUnreleased ?? false}
-          disabled={disabled}
-          onCheckedChange={(includeUnreleased) => update({ includeUnreleased })}
+          checked={draft?.includeUnreleased ?? false}
+          disabled={!settings || !draft}
+          onCheckedChange={(includeUnreleased) => { if (draft) onChange({ ...draft, includeUnreleased }) }}
         />
       </div>
     </SettingsSection>
   )
 }
 
-function ConfiguredProfiles({ onEdit }: { onEdit: (profile: CollectionProfile) => void }) {
+function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
+  profileIds: string[]
+  onProfileIdsChange: (profileIds: string[]) => void
+  onEdit: (profile: CollectionProfile) => void
+}) {
   const cache = useQueryClient()
   const { data: status } = useStatus()
   const account = collectionAccountKey(status)
   const query = useCollectionProfiles()
   const settings = useCollectionSettings()
-  const profiles = query.data?.profiles ?? []
+  const byId = new Map(query.data?.profiles.map((profile) => [profile.id, profile]))
+  const profiles = profileIds.map((id) => byId.get(id)).filter((profile): profile is CollectionProfile => Boolean(profile))
   const disabled = !settings.data
   const reorder = (from: number, to: number) => {
     if (to < 0 || to >= profiles.length) return
-    const next = profiles.map((profile) => profile.id)
+    const next = [...profileIds]
     ;[next[from], next[to]] = [next[to], next[from]]
-    void api.collections.reorderProfiles(next).then(
-      () => void cache.invalidateQueries({ queryKey: ["collections", account] }),
-      (error: Error) => toast.error(error.message),
-    )
+    onProfileIdsChange(next)
   }
   const remove = (profile: CollectionProfile) => {
     if (!window.confirm(`Delete “${profile.title}”? Its saved results will be removed from this device.`)) return
     void api.collections.deleteProfile(profile.id).then(
       () => {
         void cache.invalidateQueries({ queryKey: ["collections", account] })
+        void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+        void cache.invalidateQueries({ queryKey: queryKeys.home })
         toast.success(`${profile.title} deleted`)
       },
       (error: Error) => toast.error(error.message),
@@ -340,7 +343,7 @@ function CollectionWizard({
         ]
       : [{ value: "movie" as const, label: "Movie" }]
 
-  const requiresPreview = !profileId || resultSignature(draft) !== resultSignature(initial ?? draft)
+  const refreshesResults = !profileId || resultSignature(draft) !== resultSignature(initial ?? draft)
   const readOnly = !settings.data
   const providerAvailable = draft.source.kind === "mdbListPublicList"
     ? Boolean(settings.data?.readiness.mdblist)
@@ -385,7 +388,7 @@ function CollectionWizard({
     else delete parameters[key]
     patchSource({ ...draft.source, parameters })
   }
-  const runPreview = () => {
+  const runPreview = async () => {
     const generation = previewRequest.current.generation + 1
     const controller = new AbortController()
     previewRequest.current.controller?.abort()
@@ -394,28 +397,28 @@ function CollectionWizard({
     setPreviewError(null)
     setBusy(true)
     setPreviewing(true)
-    void api.collections.preview(structuredClone(draft), controller.signal).then(
-      (result) => {
-        if (previewRequest.current.generation !== generation) return
-        if (result.sourceIdentity && draft.source.kind === "mdbListPublicList") {
-          setDraft((current) => current?.source.kind === "mdbListPublicList" ? {
-            ...current,
-            source: { ...current.source, listId: result.sourceIdentity! },
-          } : current)
-        }
-        setPreview(result)
-      },
-      (error: Error) => {
-        if (previewRequest.current.generation !== generation || error.name === "AbortError") return
-        setPreviewError(error.message)
-        toast.error(error.message)
-      },
-    ).finally(() => {
-      if (previewRequest.current.generation !== generation) return
-      previewRequest.current.controller = null
-      setBusy(false)
-      setPreviewing(false)
-    })
+    try {
+      const result = await api.collections.preview(structuredClone(draft), controller.signal)
+      if (previewRequest.current.generation !== generation) return null
+      const previewedDraft = result.sourceIdentity && draft.source.kind === "mdbListPublicList"
+        ? { ...draft, source: { ...draft.source, listId: result.sourceIdentity } }
+        : draft
+      if (previewedDraft !== draft) setDraft(previewedDraft)
+      setPreview(result)
+      return previewedDraft
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error("Preview failed")
+      if (previewRequest.current.generation !== generation || failure.name === "AbortError") return null
+      setPreviewError(failure.message)
+      toast.error(failure.message)
+      return null
+    } finally {
+      if (previewRequest.current.generation === generation) {
+        previewRequest.current.controller = null
+        setBusy(false)
+        setPreviewing(false)
+      }
+    }
   }
   const searchLists = () => {
     const query = listQuery.trim()
@@ -426,27 +429,42 @@ function CollectionWizard({
       (error: Error) => toast.error(error.message),
     ).finally(() => setBusy(false))
   }
+  const reset = () => {
+    setDraft(structuredClone(initial))
+    setPreview(null)
+    setPreviewError(null)
+    setListQuery("")
+    setListResults([])
+  }
   const save = () => {
-    if (readOnly || !validDraft || requiresPreview && !preview) return
-    setBusy(true)
-    const operation = profileId
-      ? api.collections.updateProfile(profileId, draft)
-      : api.collections.createProfile(draft)
-    void operation.then(
-      () => {
+    if (readOnly || !validDraft || refreshesResults && !providerAvailable) return
+    if (!profileId && !preview) {
+      void runPreview()
+      return
+    }
+    void (async () => {
+      setBusy(true)
+      try {
+        if (profileId) await api.collections.updateProfile(profileId, draft)
+        else await api.collections.createProfile(draft)
         void cache.invalidateQueries({ queryKey: ["collections", account] })
+        void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+        void cache.invalidateQueries({ queryKey: queryKeys.home })
         toast.success(profileId ? "Collection saved" : "Collection created")
         onOpenChange(false)
-      },
-      (error: Error) => toast.error(error.message),
-    ).finally(() => setBusy(false))
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not save collection")
+      } finally {
+        setBusy(false)
+      }
+    })()
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{profileId ? "Edit collection" : "Add collection"}</DialogTitle>
-          <DialogDescription>Preview the result before saving. Changing a result option clears the preview.</DialogDescription>
+          <DialogDescription>Saving a new collection previews it first. Changing a result option clears the current preview.</DialogDescription>
         </DialogHeader>
         {!providerAvailable && <p className="rounded-md border p-3 text-sm text-muted-foreground">The provider is unavailable. Presentation and cadence changes can still be saved; result options are read-only.</p>}
         <div className="grid gap-4 md:grid-cols-2">
@@ -477,6 +495,10 @@ function CollectionWizard({
             <Label htmlFor="collection-description">Description</Label>
             <textarea id="collection-description" disabled={readOnly} className="min-h-20 rounded-md border bg-transparent px-3 py-2 text-sm" value={draft.description} maxLength={2000} onChange={(event) => patch({ description: event.target.value })} />
           </div>
+          {settings.data?.effectiveMode === "mediaFlick" && <div className="flex items-center justify-between gap-4 md:col-span-2">
+            <div><Label htmlFor="collection-home">Available on Home</Label><p className="mt-1 text-sm text-muted-foreground">Allow this collection to be selected as a Home shelf.</p></div>
+            <Switch id="collection-home" checked={draft.availableOnHome} onCheckedChange={(availableOnHome) => patch({ availableOnHome })} disabled={readOnly} />
+          </div>}
           {draft.source.kind === "tmdbDiscover" && draft.template.id.endsWith(".custom-discover") && (
             <>
               <div className="flex flex-col gap-2">
@@ -588,7 +610,7 @@ function CollectionWizard({
         <div className="rounded-lg border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><strong>Preview</strong>{preview && <p className="text-sm text-muted-foreground">{preview.total} total · {preview.movies} movies · {preview.series} series</p>}</div>
-            <Button variant="outline" disabled={readOnly || !providerAvailable || busy || !validDraft} onClick={runPreview}>{previewing ? "Previewing…" : preview ? "Preview again" : "Preview"}</Button>
+            <Button variant="outline" disabled={readOnly || !providerAvailable || busy || !validDraft} onClick={() => void runPreview()}>{previewing ? "Previewing…" : preview ? "Preview again" : "Preview"}</Button>
           </div>
           {previewError && <p className="mt-3 text-sm text-destructive" role="alert">Preview failed: {previewError}</p>}
           {preview && (
@@ -615,10 +637,14 @@ function CollectionWizard({
             </ol>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={readOnly || !validDraft || (requiresPreview && !preview) || busy} onClick={save}>{profileId ? "Save" : "Create"}</Button>
-        </DialogFooter>
+        <SaveBar
+          dirty={!profileId || JSON.stringify(draft) !== JSON.stringify(initial)}
+          saving={busy}
+          saveDisabled={readOnly || !validDraft || (refreshesResults && !providerAvailable)}
+          onSave={save}
+          onDiscard={() => onOpenChange(false)}
+          onReset={reset}
+        />
       </DialogContent>
     </Dialog>
   )
@@ -636,6 +662,32 @@ export default function CollectionSettingsPage() {
     draft: CollectionProfileDraft
     profileId: string | null
   } | null>(null)
+  const savedDraft = useMemo<CollectionSettingsDraft | null>(() => settings.data && profiles.data ? ({
+    modeSelection: settings.data.modeSelection ?? settings.data.effectiveMode,
+    includeUnreleased: settings.data.franchises.includeUnreleased,
+    profileIds: profiles.data.profiles.map((profile) => profile.id),
+  }) : null, [profiles.data, settings.data])
+  const [draft, setDraft] = useSourceDraft(savedDraft)
+  const save = useMutation({
+    mutationFn: async (value: CollectionSettingsDraft) => {
+      const nextSettings = await api.collections.patchSettings({
+        modeSelection: value.modeSelection,
+        includeUnreleased: value.includeUnreleased,
+      })
+      const nextProfiles = savedDraft && JSON.stringify(value.profileIds) !== JSON.stringify(savedDraft.profileIds)
+        ? await api.collections.reorderProfiles(value.profileIds)
+        : profiles.data
+      return { settings: nextSettings, profiles: nextProfiles }
+    },
+    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }) => {
+      cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
+      if (nextProfiles) cache.setQueryData(queryKeys.collectionProfiles(account), nextProfiles)
+      void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+      void cache.invalidateQueries({ queryKey: queryKeys.home })
+      toast.success("Collection settings saved")
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
 
   useEffect(() => {
     if (!status?.authenticated) return
@@ -680,8 +732,12 @@ export default function CollectionSettingsPage() {
   return (
     <div className="settings-page">
       <div><span className="settings-eyebrow">Account</span><h1 className="text-2xl font-semibold">Collections</h1><p className="mt-1 text-sm text-muted-foreground">Choose the collection experience and build personal, provider-backed collections.</p></div>
-      <GeneralSettings />
-      <ConfiguredProfiles onEdit={edit} />
+      <GeneralSettings draft={draft} onChange={setDraft} />
+      <ConfiguredProfiles
+        profileIds={draft?.profileIds ?? []}
+        onProfileIdsChange={(profileIds) => { if (draft) setDraft({ ...draft, profileIds }) }}
+        onEdit={edit}
+      />
       {templates.data ? <TemplateCatalog catalog={templates.data} disabled={!settings.data} onAdd={add} /> : templates.isError ? (
         <SettingsSection title="Template catalog" description="Templates are starting points for My Collections.">
           <p className="text-sm text-destructive" role="alert">The template catalog could not be loaded.</p>
@@ -690,6 +746,17 @@ export default function CollectionSettingsPage() {
       ) : (
         <SettingsSection title="Template catalog" description="Loading available templates…"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Layers className="size-4" /> Loading templates…</div></SettingsSection>
       )}
+      <SaveBar
+        dirty={Boolean(draft && savedDraft && JSON.stringify(draft) !== JSON.stringify(savedDraft))}
+        saving={save.isPending}
+        onSave={() => { if (draft) save.mutate(draft) }}
+        onDiscard={() => setDraft(savedDraft)}
+        onReset={() => { if (draft && savedDraft && settings.data) setDraft({
+          ...savedDraft,
+          modeSelection: settings.data.mediaFlickAvailable ? "mediaFlick" : "jellyfin",
+          includeUnreleased: false,
+        }) }}
+      />
       {active && (
         <CollectionWizard
           key={active.profileId ?? active.draft.template.id}

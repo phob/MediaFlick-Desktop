@@ -1,11 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   Download,
   ExternalLink,
   Film,
   FolderOpen,
+  GripVertical,
+  House,
   Link,
   Layers,
   Monitor,
@@ -13,10 +17,8 @@ import {
   Play,
   Plug,
   RefreshCw,
-  Save,
   SlidersHorizontal,
   Trash2,
-  Undo2,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -31,10 +33,12 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react"
+import { createPortal } from "react-dom"
 import { Link as RouterLink, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
+import SaveBar from "@/components/SettingsSaveBar"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -53,17 +57,19 @@ import {
 import {
   api,
   ApiError,
+  homeSettingsWrite,
   playerSettingsWrite,
   type AppearanceSettings,
   type ClientSettings,
   type CompanionService,
+  type HomeConfiguration,
   type LetterboxdProfile,
   type RatingSourceDefinition,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
 import { queryClient, queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
-import { useCompanion, useHome, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { useCompanion, useHome, useHomeSettings, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import type { CSSVariableProperties } from "@/lib/style"
@@ -81,6 +87,7 @@ const NAVIGATION: SettingsPage[] = [
   { to: "/settings/client/player", title: "Player", icon: Play, group: "Client" },
   { to: "/settings/client/playback", title: "Playback", icon: SlidersHorizontal, group: "Client" },
   { to: "/settings/client/application", title: "Application", icon: Monitor, group: "Client" },
+  { to: "/settings/home", title: "Home", icon: House, signedIn: true, group: "Account" },
   { to: "/settings/appearance", title: "Appearance", icon: Palette, signedIn: true, group: "Account" },
   { to: "/settings/collections", title: "Collections", icon: Layers, signedIn: true, group: "Account" },
   { to: "/settings/integrations/companion", title: "MediaFlick Companion", icon: Plug, signedIn: true, group: "Integrations" },
@@ -200,30 +207,6 @@ function SelectField<const Value extends string>({
         ))}
       </SelectContent>
     </Select>
-  )
-}
-
-function SaveBar({ dirty, saving, onSave, onDiscard, onReset, restartMessage }: {
-  dirty: boolean
-  saving: boolean
-  onSave: () => void
-  onDiscard: () => void
-  onReset: () => void
-  restartMessage?: string
-}) {
-  if (!dirty) return null
-  return (
-    <div className="settings-save-bar">
-      <div className="flex min-w-0 items-center gap-2 text-sm">
-        {restartMessage && <AlertTriangle className="size-4 shrink-0 text-primary" />}
-        <span>{restartMessage ?? "You have unsaved changes."}</span>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}><Undo2 /> Reset</Button>
-        <Button variant="outline" size="sm" onClick={onDiscard} disabled={saving}>Discard</Button>
-        <Button size="sm" onClick={onSave} disabled={saving}><Save /> {saving ? "Saving…" : "Save"}</Button>
-      </div>
-    </div>
   )
 }
 
@@ -586,8 +569,8 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
     "--artwork-intensity": String(appearance.artworkIntensity / 100),
     "--backdrop-intensity": String(appearance.backdropIntensity / 100),
   }
-  const resume = home.data?.rows.find((row) => row.id === "resume")?.items[0]
-  const recent = home.data?.rows.find((row) => row.id === "recent")?.items.slice(0, 4) ?? []
+  const resume = home.data?.continueWatching[0]
+  const recent = home.data?.rows.find((row) => row.id === "recentlyAdded")?.items.slice(0, 4) ?? []
 
   return (
     <figure
@@ -729,6 +712,223 @@ export function Appearance() {
   </div>
 }
 
+type HomeElement = HomeConfiguration["elements"][number]
+
+type HomeDrag = {
+  key: string
+  pointerId: number
+  x: number
+  y: number
+  offsetX: number
+  offsetY: number
+  width: number
+  height: number
+  dropIndex: number
+}
+
+const homeElementKey = (element: HomeElement) => `${element.kind}:${element.id}`
+
+function dropHomeElement(configuration: HomeConfiguration, key: string, dropIndex: number) {
+  const visible = configuration.elements.filter((element) => element.available)
+  const from = visible.findIndex((element) => homeElementKey(element) === key)
+  if (from < 0) return configuration
+  const [dragged] = visible.splice(from, 1)
+  visible.splice(Math.max(0, Math.min(dropIndex, visible.length)), 0, dragged)
+  let visibleIndex = 0
+  return {
+    ...configuration,
+    elements: configuration.elements.map((element) => element.available ? visible[visibleIndex++] : element),
+  }
+}
+
+function HomeSettingsPage() {
+  const status = useStatus()
+  const query = useHomeSettings(Boolean(status.data?.authenticated))
+  const [draft, setDraft, updateDraft] = useSourceDraft(query.data?.settings)
+  const [dragging, setDragging] = useState<HomeDrag | null>(null)
+  const dragRef = useRef<HomeDrag | null>(null)
+  const visible = useMemo(() => draft?.elements.filter((element) => element.available) ?? [], [draft])
+  useEffect(() => {
+    if (!dragging?.key) return
+    const movePointer = (event: PointerEvent) => {
+      const current = dragRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+      const remainingKeys = visible
+        .map(homeElementKey)
+        .filter((key) => key !== current.key)
+      let dropIndex = remainingKeys.length
+      for (const row of document.querySelectorAll<HTMLElement>("[data-home-element-key]")) {
+        const index = remainingKeys.indexOf(row.dataset.homeElementKey ?? "")
+        if (index < 0) continue
+        const bounds = row.getBoundingClientRect()
+        if (event.clientY < bounds.top + bounds.height / 2) {
+          dropIndex = index
+          break
+        }
+      }
+      const next = { ...current, x: event.clientX, y: event.clientY, dropIndex }
+      dragRef.current = next
+      setDragging(next)
+    }
+    const dropPointer = (event: PointerEvent) => {
+      const current = dragRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+      updateDraft((configuration) => configuration ? dropHomeElement(configuration, current.key, current.dropIndex) : configuration)
+      dragRef.current = null
+      setDragging(null)
+    }
+    const cancelDrag = () => {
+      dragRef.current = null
+      setDragging(null)
+    }
+    const cancelWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelDrag()
+    }
+    window.addEventListener("pointermove", movePointer)
+    window.addEventListener("pointerup", dropPointer)
+    window.addEventListener("pointercancel", cancelDrag)
+    window.addEventListener("keydown", cancelWithEscape)
+    window.addEventListener("blur", cancelDrag)
+    return () => {
+      window.removeEventListener("pointermove", movePointer)
+      window.removeEventListener("pointerup", dropPointer)
+      window.removeEventListener("pointercancel", cancelDrag)
+      window.removeEventListener("keydown", cancelWithEscape)
+      window.removeEventListener("blur", cancelDrag)
+    }
+  }, [dragging?.key, updateDraft, visible])
+  const mutation = useMutation({
+    mutationFn: (value: HomeConfiguration) => api.saveHomeSettings(homeSettingsWrite(value)),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(queryKeys.homeSettings, saved)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.home })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.homeResume })
+      queryClient.removeQueries({ queryKey: queryKeys.billboard })
+      toast.success("Home settings saved")
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  if (status.isPending) return <SettingsLoading />
+  if (!status.data?.authenticated) return <SignInRequired name="Home" />
+  if (query.error && !query.data) return <SettingsError title="Home settings unavailable" error={query.error} onRetry={() => void query.refetch()} />
+  if (!query.data || !draft) return <SettingsLoading />
+
+  const move = (fromKey: string, toKey: string) => {
+    if (fromKey === toKey) return
+    updateDraft((current) => {
+      if (!current) return current
+      const from = current.elements.findIndex((element) => homeElementKey(element) === fromKey)
+      const to = current.elements.findIndex((element) => homeElementKey(element) === toKey)
+      if (from < 0 || to < 0) return current
+      const elements = [...current.elements]
+      const [element] = elements.splice(from, 1)
+      elements.splice(to, 0, element)
+      return { ...current, elements }
+    })
+  }
+  const moveVisible = (index: number, offset: number) => {
+    const target = visible[index + offset]
+    if (target) move(homeElementKey(visible[index]), homeElementKey(target))
+  }
+  const setElementEnabled = (key: string, enabled: boolean) => updateDraft((current) => current ? ({
+    ...current,
+    elements: current.elements.map((element) => homeElementKey(element) === key ? { ...element, enabled } : element),
+  }) : current)
+  const draggedElement = dragging ? visible.find((element) => homeElementKey(element) === dragging.key) : null
+  const remaining = dragging ? visible.filter((element) => homeElementKey(element) !== dragging.key) : visible
+  const slots = remaining.length + (dragging ? 1 : 0)
+
+  return <div className="settings-page">
+    <PageTitle title="Home" detail="Choose and order the shelves shown for this Jellyfin account." />
+    <Section title="Billboard" description="The billboard stays fixed above every shelf.">
+      <SettingsRow title="Show billboard" description="Rotate a small selection of titles with landscape artwork.">
+        <Checkbox checked={draft.billboard} onCheckedChange={(checked) => setDraft({ ...draft, billboard: checked === true })} aria-label="Show billboard" />
+      </SettingsRow>
+    </Section>
+    <Section title="Shelves" description="Disabled shelves keep their positions. Drag a handle or use the arrow buttons to reorder.">
+      <div className="space-y-2">
+        {Array.from({ length: slots }, (_, slot) => {
+          if (dragging && slot === dragging.dropIndex) return <div
+            key="home-drop-placeholder"
+            data-testid="home-drop-placeholder"
+            aria-hidden
+            className="rounded-lg border-2 border-dashed border-primary/60 bg-primary/10 shadow-inner"
+            style={{ height: dragging.height }}
+          />
+          const index = dragging && slot > dragging.dropIndex ? slot - 1 : slot
+          const element = remaining[index]
+          if (!element) return null
+          const key = homeElementKey(element)
+          const visibleIndex = visible.findIndex((candidate) => homeElementKey(candidate) === key)
+          const watching = element.kind === "builtIn" && element.id === "watching"
+          return <div
+            key={key}
+            data-home-element-key={key}
+            className="rounded-lg border bg-card p-3"
+          >
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                aria-label={`Drag ${element.label}`}
+                className="shrink-0 touch-none select-none cursor-grab text-muted-foreground active:cursor-grabbing"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return
+                  const row = event.currentTarget.closest<HTMLElement>("[data-home-element-key]")
+                  if (!row) return
+                  event.preventDefault()
+                  const bounds = row.getBoundingClientRect()
+                  const next = {
+                    key,
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    y: event.clientY,
+                    offsetX: event.clientX - bounds.left,
+                    offsetY: event.clientY - bounds.top,
+                    width: bounds.width,
+                    height: bounds.height,
+                    dropIndex: visibleIndex,
+                  }
+                  dragRef.current = next
+                  setDragging(next)
+                }}
+              ><GripVertical className="size-4" aria-hidden /></button>
+              <Checkbox checked={element.enabled} onCheckedChange={(checked) => setElementEnabled(key, checked === true)} aria-label={`Show ${element.label}`} />
+              <div className="min-w-0 flex-1"><div className="truncate font-medium">{element.label}</div><div className="text-xs text-muted-foreground">{element.category}</div></div>
+              <Button type="button" size="icon-sm" variant="ghost" disabled={visibleIndex === 0} aria-label={`Move ${element.label} up`} onClick={() => moveVisible(visibleIndex, -1)}><ArrowUp /></Button>
+              <Button type="button" size="icon-sm" variant="ghost" disabled={visibleIndex === visible.length - 1} aria-label={`Move ${element.label} down`} onClick={() => moveVisible(visibleIndex, 1)}><ArrowDown /></Button>
+            </div>
+            {watching && <div className="mt-3 ml-7 grid gap-3 border-t pt-3 sm:grid-cols-3">
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.continueWatching} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, continueWatching: checked === true } })} />Continue Watching</label>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.nextUp} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, nextUp: checked === true } })} />Next Up</label>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.combine} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, combine: checked === true } })} />Combine shelves</label>
+            </div>}
+          </div>
+        })}
+      </div>
+      {query.data.collectionMode === "jellyfin" && <p className="text-xs text-muted-foreground">My Collection shelves are hidden while Jellyfin collection mode is active.</p>}
+    </Section>
+    <SaveBar dirty={!same(draft, query.data.settings)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(query.data.settings)} onReset={() => setDraft(query.data.defaults)} />
+    {dragging && draggedElement && createPortal(<div
+      aria-hidden
+      data-testid="home-drag-preview"
+      className="pointer-events-none fixed z-[100] rotate-[0.35deg] scale-[1.015] rounded-lg border border-primary/50 bg-card/95 p-3 opacity-95 shadow-2xl ring-1 ring-primary/30"
+      style={{
+        left: dragging.x - dragging.offsetX,
+        top: dragging.y - dragging.offsetY,
+        width: dragging.width,
+        minHeight: dragging.height,
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <GripVertical className="size-4 shrink-0 text-primary" />
+        <Checkbox checked={draggedElement.enabled} disabled tabIndex={-1} />
+        <div className="min-w-0 flex-1"><div className="truncate font-medium">{draggedElement.label}</div><div className="text-xs text-muted-foreground">{draggedElement.category}</div></div>
+      </div>
+      {draggedElement.kind === "builtIn" && draggedElement.id === "watching" && <div className="mt-3 ml-7 border-t pt-3 text-sm text-muted-foreground">Continue Watching · Next Up · Combine shelves</div>}
+    </div>, document.body)}
+  </div>
+}
+
 function SignInRequired({ name }: { name: string }) {
   return <div className="settings-page"><PageTitle title={name} detail="This configuration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description={`Sign in to your Jellyfin server to view or configure ${name}.`}><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
 }
@@ -738,10 +938,22 @@ function Letterboxd() {
   const { data: status } = statusQuery
   const profiles = useQuery({ queryKey: ["letterboxd", "profiles"], queryFn: api.letterboxd.profiles, enabled: Boolean(status?.authenticated), retry: false })
   const [entry, setEntry] = useState("")
+  const savedEnabled = useMemo<Record<string, boolean> | null>(() => profiles.data ? Object.fromEntries(
+    profiles.data.profiles.map((profile) => [profile.id, profile.enabled]),
+  ) : null, [profiles.data])
+  const [enabledDraft, setEnabledDraft] = useSourceDraft(savedEnabled)
   // Profile writes also change every movie's public-review projection.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["letterboxd"] })
   const add = useMutation({ mutationFn: api.letterboxd.add, onSuccess: () => { setEntry(""); refresh(); toast.success("Letterboxd profile added") }, onError: (error: Error) => toast.error(error.message) })
-  const setEnabled = useMutation({ mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => api.letterboxd.setEnabled(id, enabled), onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
+  const saveEnabled = useMutation({
+    mutationFn: (enabled: Record<string, boolean>) => Promise.all(
+      profiles.data?.profiles
+        .filter((profile) => enabled[profile.id] !== profile.enabled)
+        .map((profile) => api.letterboxd.setEnabled(profile.id, enabled[profile.id] ?? profile.enabled)) ?? [],
+    ),
+    onSuccess: () => { refresh(); toast.success("Letterboxd settings saved") },
+    onError: (error: Error) => { refresh(); toast.error(error.message) },
+  })
   const remove = useMutation({ mutationFn: api.letterboxd.remove, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const verify = useMutation({ mutationFn: api.letterboxd.refresh, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toast.error(error.message) })
@@ -753,8 +965,15 @@ function Letterboxd() {
       <form className="flex max-w-xl gap-2" onSubmit={(event) => { event.preventDefault(); if (entry.trim()) add.mutate(entry) }}><Input value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="letterboxd username or URL" /><Button disabled={add.isPending}>{add.isPending ? "Verifying…" : "Add profile"}</Button></form>
     </Section>
     <Section title="Connected profiles" description="Profiles are visible only to this Jellyfin account on this server.">
-      {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.error && !profiles.data ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm"><span>{profiles.error.message}</span><Button size="sm" variant="outline" onClick={() => void profiles.refetch()}>Try again</Button></div> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => <ProfileCard key={profile.id} profile={profile} onEnabled={(enabled) => setEnabled.mutate({ id: profile.id, enabled })} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => remove.mutate(profile.id)} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
+      {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.error && !profiles.data ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm"><span>{profiles.error.message}</span><Button size="sm" variant="outline" onClick={() => void profiles.refetch()}>Try again</Button></div> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => <ProfileCard key={profile.id} profile={{ ...profile, enabled: enabledDraft?.[profile.id] ?? profile.enabled }} onEnabled={(enabled) => { if (enabledDraft) setEnabledDraft({ ...enabledDraft, [profile.id]: enabled }) }} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => remove.mutate(profile.id)} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
     </Section>
+    <SaveBar
+      dirty={Boolean(enabledDraft && savedEnabled && !same(enabledDraft, savedEnabled))}
+      saving={saveEnabled.isPending}
+      onSave={() => { if (enabledDraft) saveEnabled.mutate(enabledDraft) }}
+      onDiscard={() => setEnabledDraft(savedEnabled)}
+      onReset={() => { if (enabledDraft) setEnabledDraft(Object.fromEntries(Object.keys(enabledDraft).map((id) => [id, true]))) }}
+    />
   </div>
 }
 
@@ -891,5 +1110,5 @@ export function AppearanceSync() {
 }
 
 export default function Settings() {
-  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
+  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
 }

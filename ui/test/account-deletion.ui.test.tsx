@@ -1,12 +1,12 @@
-import { QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, Status } from "@/lib/api"
 import { api } from "@/lib/api"
 import { useStatus } from "@/lib/queries"
 import { queryClient, queryKeys } from "@/lib/query-client"
 import Settings from "@/routes/Settings"
+import { TestProviders } from "./test-utils"
 
 const settings: ClientSettings = {
   client: {
@@ -76,13 +76,11 @@ describe("local account deletion", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true)
 
     render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/settings/client/application"]}>
+      <TestProviders client={queryClient} initialEntries={["/settings/client/application"]}>
           <Routes>
             <Route path="/settings/*" element={<AuthenticatedShell />} />
           </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
+      </TestProviders>,
     )
 
     fireEvent.change(await screen.findByLabelText("Type DELETE to confirm local account deletion"), {

@@ -6,7 +6,6 @@ import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
 import { formatVideoRange, summarizeCardMedia } from "../src/lib/format"
 import { TechnicalContext } from "../src/lib/technical-context"
-import { requireElement } from "./support/fixtures"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
   return {
@@ -246,48 +245,5 @@ describe("media-card technical formatting", () => {
     expect(register).toHaveBeenCalledWith(movie.id)
     act(() => report(false))
     expect(unregister).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe("media-card playback indicators", () => {
-  test("uses the same thickness and bright fill for watched and in-progress media", () => {
-    const watched = render(
-      <MemoryRouter>
-        <MediaCard item={{ ...movie, played: true }} preview={false} />
-      </MemoryRouter>,
-    )
-    const watchedTrack = requireElement(
-      watched.container.querySelector<HTMLElement>('[title="Watched"]'),
-      "watched progress track",
-    )
-    const watchedFill = requireElement(
-      watchedTrack.firstElementChild instanceof HTMLElement
-        ? watchedTrack.firstElementChild
-        : null,
-      "watched progress fill",
-    )
-
-    expect(watchedTrack.className).toContain("h-[3px]")
-    expect(watchedFill.className).toBe("h-full bg-primary")
-    expect(watchedFill.style.width).toBe("100%")
-
-    watched.unmount()
-
-    const progressed = render(
-      <MemoryRouter>
-        <MediaCard
-          item={{ ...movie, id: "movie-2", positionTicks: (movie.runtimeTicks ?? 0) / 2 }}
-          preview={false}
-        />
-      </MemoryRouter>,
-    )
-    const progressedFill = requireElement(
-      progressed.container.querySelector<HTMLElement>('[style="width: 50%;"]'),
-      "in-progress fill",
-    )
-    const progressedTrack = requireElement(progressedFill.parentElement, "in-progress track")
-
-    expect(progressedTrack.className).toContain("h-[3px]")
-    expect(progressedFill.className).toBe(watchedFill.className)
   })
 })

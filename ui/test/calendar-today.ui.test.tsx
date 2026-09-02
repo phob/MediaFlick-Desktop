@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { queryKeys } from "@/lib/query-client"
 import Calendar from "@/routes/Calendar"
+import { testQueryClient } from "./test-query-client"
+import { TestProviders } from "./test-utils"
 
 function isoDate(date: Date) {
   const year = date.getFullYear()
@@ -28,9 +28,7 @@ function currentCalendarWindow() {
 }
 
 function renderCalendar() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
-  })
+  const client = testQueryClient()
   const window = currentCalendarWindow()
   client.setQueryData(queryKeys.calendar(window.start, window.end), {
     entries: [
@@ -67,11 +65,9 @@ function renderCalendar() {
     quota: null,
   })
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
+    <TestProviders client={client}>
         <Calendar />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    </TestProviders>,
   )
 }
 

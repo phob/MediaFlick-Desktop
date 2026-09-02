@@ -1,6 +1,7 @@
 //! Process-wide services the app-scheme API reaches from CEF's background
 //! threads, where the UI-thread browser state is not available.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 
@@ -43,6 +44,7 @@ pub struct Services {
     pub pending_deletions: Arc<PendingDeletionService>,
     pub preferences: Arc<PreferencesService>,
     pub shell: ShellBridge,
+    pub home_watched: Mutex<HashMap<AccountKey, Option<serde_json::Value>>>,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
@@ -229,6 +231,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         pending_deletions,
         preferences,
         shell: ShellBridge::new(),
+        home_watched: Mutex::new(HashMap::new()),
         playback: RwLock::new(None),
     });
     resume_pending_deletions(&services);

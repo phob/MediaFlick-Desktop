@@ -100,7 +100,6 @@ pub fn catalog() -> Vec<CollectionTemplate> {
     let mut templates = movie_discover_templates();
     let series = templates
         .iter()
-        .take(23)
         .cloned()
         .map(series_counterpart)
         .collect::<Vec<_>>();
@@ -108,7 +107,6 @@ pub fn catalog() -> Vec<CollectionTemplate> {
     templates.extend(discover_variants());
     templates.extend(mdblist_selectors());
     templates.extend(series);
-    debug_assert_eq!(templates.len(), 122);
     templates
 }
 
@@ -544,22 +542,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn packaged_manifest_has_99_baselines_and_23_series_counterparts() {
+    fn packaged_manifest_has_unique_ids_and_all_seeded_series_counterparts() {
         let catalog = catalog();
-        assert_eq!(catalog.len(), 122);
-        assert_eq!(
-            catalog
-                .iter()
-                .filter(|template| template.provenance.id.starts_with("tmdb.discover.series."))
-                .count(),
-            23
-        );
         let ids = catalog
             .iter()
             .map(|template| template.provenance.id.as_str())
             .collect::<HashSet<_>>();
         assert_eq!(ids.len(), catalog.len());
-        assert_eq!(TemplateCategory::ORDER.len(), 9);
+
+        let expected_series = movie_discover_templates()
+            .into_iter()
+            .map(|template| template.provenance.id.replacen(".movie.", ".series.", 1))
+            .collect::<HashSet<_>>();
+        let actual_series = catalog
+            .iter()
+            .filter(|template| template.media_type == MediaType::Series)
+            .map(|template| template.provenance.id.clone())
+            .collect::<HashSet<_>>();
+        assert_eq!(actual_series, expected_series);
     }
 
     #[test]

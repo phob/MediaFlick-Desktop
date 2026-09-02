@@ -9,7 +9,10 @@ mod playback;
 pub mod service;
 pub mod store;
 
-pub use accounts::{AccountConfigurationService, AccountKey, accounts_file_path};
+pub use accounts::{
+    AccountConfigurationService, AccountKey, HomeBuiltIn, HomeElement, HomeElementId, HomeSettings,
+    accounts_file_path,
+};
 pub use collections::{CollectionConfigurationService, collections_file_path};
 pub use deletions::{PendingDeletion, PendingDeletionService, pending_deletions_file_path};
 pub use json_file::RecoveryNotice;

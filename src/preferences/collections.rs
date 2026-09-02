@@ -418,6 +418,7 @@ mod tests {
             media_type: MediaType::Movie,
             limit: ResultLimit::All,
             cadence: RefreshCadence::Daily,
+            available_on_home: false,
         }
     }
 

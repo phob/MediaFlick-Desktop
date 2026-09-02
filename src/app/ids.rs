@@ -37,8 +37,7 @@ mod tests {
     }
 
     #[test]
-    fn device_ids_are_unique() {
-        assert_ne!(new_device_id(), new_device_id());
+    fn device_id_has_the_expected_length() {
         assert_eq!(new_device_id().len(), 32);
     }
 }

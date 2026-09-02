@@ -80,6 +80,10 @@ export function useHome(enabled = true) {
   return useQuery({ queryKey: queryKeys.home, queryFn: api.home, enabled })
 }
 
+export function useHomeSettings(enabled = true) {
+  return useQuery({ queryKey: queryKeys.homeSettings, queryFn: api.homeSettings, enabled })
+}
+
 export function useHomeResume(enabled = true) {
   return useQuery({
     queryKey: queryKeys.homeResume,
@@ -98,10 +102,11 @@ export function useCompanion() {
   })
 }
 
-export function useReleaseCalendar(start: string, end: string) {
+export function useReleaseCalendar(start: string, end: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.calendar(start, end),
     queryFn: ({ signal }) => api.calendar(start, end, signal),
+    enabled,
     staleTime: 5 * 60_000,
     retry: false,
   })

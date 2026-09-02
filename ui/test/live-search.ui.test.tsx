@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { type ReactNode } from "react"
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar-context"
 import { queryKeys } from "@/lib/query-client"
 import Discover from "@/routes/Discover"
+import { testQueryClient } from "./test-query-client"
 
 const sidebar: SidebarContextValue = {
   state: "expanded",
@@ -110,9 +111,7 @@ describe("sidebar live search", () => {
 
 describe("Discover live search", () => {
   test("debounces query changes while preserving discovery state", () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { gcTime: Infinity, retry: false } },
-    })
+    const client = testQueryClient()
     client.setQueryData(queryKeys.companion, {
       available: false,
       compatible: false,

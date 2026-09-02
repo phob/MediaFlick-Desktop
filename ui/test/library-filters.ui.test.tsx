@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState, type ReactNode } from "react"
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom"
@@ -10,6 +10,7 @@ import {
   type LibraryFilterState,
 } from "../src/lib/library-filters"
 import { queryKeys } from "../src/lib/query-client"
+import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
 
@@ -43,9 +44,7 @@ function setTouchInput(touch: boolean) {
 }
 
 function Providers({ children }: { children: ReactNode }) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
+  const client = testQueryClient()
   client.setQueryData(queryKeys.genres, { genres: ["Action", "Drama"] })
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
