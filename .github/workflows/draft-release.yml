@@ -72,7 +72,7 @@ jobs:
       - build-libmpv-windows
 
     env:
-      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
+      CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
 
     steps:
       - name: Check out repository
@@ -119,7 +119,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.tool_cache }}/mediaflick/cef
+            ${{ env.CEF_PATH }}
           key: windows-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             windows-release-
@@ -217,7 +217,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
-      MEDIAFLICK_LIBMPV_WORK_DIR: ${{ runner.tool_cache }}/mediaflick/libmpv-windows-x64
+      MEDIAFLICK_LIBMPV_WORK_DIR: ${{ github.workspace }}/../mediaflick-cache/libmpv-windows-x64
 
     steps:
       - name: Check out repository
@@ -261,7 +261,7 @@ jobs:
       - name: Cache libmpv toolchain and dependency builds
         uses: actions/cache@v6
         with:
-          path: ${{ runner.tool_cache }}/mediaflick/libmpv-windows-x64
+          path: ${{ env.MEDIAFLICK_LIBMPV_WORK_DIR }}
           key: libmpv-windows-x64-${{ hashFiles('distribution/libmpv/windows/build.sh', 'distribution/libmpv/windows/*.patch') }}
 
       - name: Build libmpv and corresponding sources
@@ -294,7 +294,7 @@ jobs:
     needs: prepare
 
     env:
-      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
+      CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
       APPIMAGE_ARCH: x86_64
 
     steps:
@@ -335,7 +335,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.tool_cache }}/mediaflick/cef
+            ${{ env.CEF_PATH }}
           key: linux-x86_64-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             linux-x86_64-release-
@@ -409,7 +409,7 @@ jobs:
             runner: macos-15-intel
 
     env:
-      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
+      CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       MACOS_ARTIFACT_ARCH: ${{ matrix.arch }}
 
@@ -451,7 +451,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.tool_cache }}/mediaflick/cef
+            ${{ env.CEF_PATH }}
           key: macos-${{ matrix.arch }}-release-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             macos-${{ matrix.arch }}-release-

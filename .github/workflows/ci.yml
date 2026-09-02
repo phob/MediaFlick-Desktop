@@ -70,7 +70,7 @@ jobs:
         os: [ubuntu-24.04, windows-latest, macos-15]
 
     env:
-      CEF_PATH: ${{ runner.tool_cache }}/mediaflick/cef
+      CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
       MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     steps:
@@ -102,7 +102,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.tool_cache }}/mediaflick/cef
+            ${{ env.CEF_PATH }}
           key: ci-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ci-${{ matrix.os }}-
