@@ -118,6 +118,7 @@
 
 ### Fixed
 
+- Fixed CI and release workflows failing validation while resolving CEF and libmpv cache paths by using workspace-relative cache paths available during job evaluation.
 - Fixed Home shelf drag handles in the windowless app shell by replacing Chromium's unsupported native drag transport with a pointer-following shelf preview and a reserved drop position. The accessible arrow controls remain available.
 - Fixed collection mode, franchise visibility, My Collections ordering, collection editing, and Letterboxd enablement bypassing the shared Save, Reset, and Discard workflow. The first Save for a new collection now previews it, and the second Save creates it.
 - Fixed Sonarr, Radarr, and Seerr status expiring 30 minutes after a successful request. Companion service health now follows the latest request outcome, and Desktop refreshes the status snapshot every five minutes while the app is active.
