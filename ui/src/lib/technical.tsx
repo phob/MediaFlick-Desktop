@@ -137,7 +137,7 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const receive = (event: Event) => {
       const detail = readShellEvent(event)
-      if (detail?.type !== "library-changed") return
+      if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
       const changed = [...new Set([
         ...shellEventIds(detail.payload.itemIds),
         ...shellEventIds(detail.payload.contextIds),

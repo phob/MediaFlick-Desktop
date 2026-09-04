@@ -175,13 +175,17 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
 export function invalidateLibraryChanged(
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
+  scope: "library" | "catalog" | "items" = "library",
 ) {
   const relevant = new Set([...itemIds, ...contextIds])
   void queryClient.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey
-      if (["home", "items", "genres", "status", "collections"].includes(String(root))) return true
+      if (scope !== "items") {
+        if (root === "home") return scope === "library" || query.queryKey.length === 1
+        if (["items", "genres", "status", "collections"].includes(String(root))) return true
+      }
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))

@@ -30,8 +30,6 @@ fn record_change_identity(
             changes.context_ids.push(context.to_string());
         }
     }
-    normalize_ids(&mut changes.item_ids);
-    normalize_ids(&mut changes.context_ids);
 }
 
 impl Library {
@@ -56,6 +54,8 @@ impl Library {
                     record_change(&mut changes, dto);
                 }
             }
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
             Ok(changes)
         })
     }
@@ -102,6 +102,8 @@ impl Library {
                     );
                 }
             }
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
             Ok(changes)
         })
     }
@@ -155,6 +157,8 @@ impl Library {
             }
 
             delete_missing_from_transaction(transaction, &existing, &keep, &mut changes)?;
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
             Ok(changes)
         })
     }
@@ -171,6 +175,8 @@ impl Library {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
             delete_items_from_transaction(transaction, &stale, &mut changes)?;
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
             Ok(changes)
         })
     }
@@ -313,6 +319,8 @@ impl Library {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
             delete_items_from_transaction(transaction, &[item_id.to_string()], &mut changes)?;
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
             Ok(changes)
         })
     }
@@ -426,8 +434,9 @@ fn delete_items_from_transaction(
 }
 
 fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<bool> {
-    let written = connection.execute(
-        "INSERT INTO items (
+    let written = connection
+        .prepare_cached(
+            "INSERT INTO items (
             jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
             runtime_ticks, community_rating, official_rating, parent_id, series_id,
             series_name, season_id, index_number, parent_index_number, child_count,
@@ -491,7 +500,8 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             OR search_genres IS NOT excluded.search_genres
             OR date_created IS NOT excluded.date_created
             OR date_last_saved IS NOT excluded.date_last_saved",
-        params![
+        )?
+        .execute(params![
             record.jellyfin_id,
             record.kind,
             record.name,
@@ -520,14 +530,14 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             record.date_created,
             record.date_last_saved,
             now_unix(),
-        ],
-    )?;
+        ])?;
     Ok(written > 0)
 }
 
 fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlite::Result<bool> {
-    let written = connection.execute(
-        "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
+    let written = connection
+        .prepare_cached(
+            "INSERT INTO user_data (jellyfin_id, played, play_count, playback_position_ticks,
              is_favorite, played_percentage, last_played_date, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(jellyfin_id) DO UPDATE SET
@@ -543,7 +553,8 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
              OR is_favorite IS NOT excluded.is_favorite
              OR played_percentage IS NOT excluded.played_percentage
              OR last_played_date IS NOT excluded.last_played_date",
-        params![
+        )?
+        .execute(params![
             record.jellyfin_id,
             record.played,
             record.play_count,
@@ -552,8 +563,7 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
             record.played_percentage,
             record.last_played_date,
             now_unix(),
-        ],
-    )?;
+        ])?;
     Ok(written > 0)
 }
 

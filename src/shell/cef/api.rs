@@ -233,7 +233,10 @@ fn route_status(
 fn status(services: &Arc<Services>) -> ApiResponse {
     let mut status = services.session.status();
     let stats = services.library.stats();
-    let bootstrap = sync::bootstrap_progress(&services.library);
+    let progress = services
+        .sync
+        .progress(sync::bootstrap_progress(&services.library));
+    let bootstrap = &progress.catalog;
     if let Some(object) = status.as_object_mut() {
         object.insert("library".to_string(), json!(stats));
         object.insert("syncing".to_string(), json!(services.sync.is_running()));
@@ -244,10 +247,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
         object.insert("libraryReady".to_string(), json!(bootstrap.ready));
         object.insert("bootstrap".to_string(), json!(bootstrap));
-        object.insert(
-            "syncProgress".to_string(),
-            json!(services.sync.progress(&services.library)),
-        );
+        object.insert("syncProgress".to_string(), json!(progress));
         object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)

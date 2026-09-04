@@ -148,7 +148,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const receive = (event: Event) => {
       const detail = readShellEvent(event)
-      if (detail?.type !== "library-changed") return
+      if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
       for (const id of shellEventIds(detail.payload.itemIds)) {
         if (active.current.has(id)) {
           omitted.current.delete(id)

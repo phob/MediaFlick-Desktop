@@ -82,7 +82,7 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         .genres()
         .map_err(|error| storage_failure(&error))?;
     let profiles = services.collections.account(&account).profiles;
-    let readiness = services.companion.collection_readiness(false);
+    let readiness = services.companion.cached_collection_readiness();
     let has_results = crate::collections::snapshots::SnapshotRepository::new(&services.library)
         .has_account_results(&account)
         .unwrap_or(false);

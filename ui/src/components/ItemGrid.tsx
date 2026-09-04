@@ -197,7 +197,7 @@ export function ItemGrid({
             {items.map((row) => (
               <div
                 key={row.key}
-                className="absolute top-0 left-0 flex w-full"
+                className="virtual-card-row absolute top-0 left-0 flex w-full"
                 style={{
                   height: cardHeight,
                   gap,

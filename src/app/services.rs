@@ -68,6 +68,11 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
+    /// A bootstrap page changed local catalog projections only.
+    CatalogChanged {
+        item_ids: Vec<String>,
+        context_ids: Vec<String>,
+    },
     /// A committed provider snapshot changed collection projections.
     CollectionsChanged,
     /// Any native Jellyfin call observed an authorization rejection.
@@ -131,7 +136,7 @@ impl Services {
 /// Opens the library database and restores the session. Safe to call twice;
 /// only the first call does the work.
 pub fn init() -> Option<Arc<Services>> {
-    init_with_settings(AppSettings::load())
+    services().or_else(|| init_with_settings(AppSettings::load()))
 }
 
 /// Same initialization path, with the already-normalized launch settings CEF
@@ -403,6 +408,15 @@ pub fn notify_library_changed(changes: LibraryChangeBatch) {
     }
 }
 
+pub fn notify_catalog_changed(changes: LibraryChangeBatch) {
+    if let Some(services) = services() {
+        let _ = services.shell.request(ShellRequest::CatalogChanged {
+            item_ids: changes.item_ids,
+            context_ids: changes.context_ids,
+        });
+    }
+}
+
 pub fn notify_session_expired() {
     if let Some(services) = services() {
         let _ = services.shell.request(ShellRequest::SessionExpired);
@@ -417,6 +431,12 @@ pub fn notify_collections_changed() {
 
 pub fn notify_library_sync_completed() {
     if let Some(services) = services() {
+        // Refresh aggregate watch-state projections once after the full catalog
+        // observation, including user data learned during a daily rebootstrap.
+        let _ = services.shell.request(ShellRequest::LibraryChanged {
+            item_ids: Vec::new(),
+            context_ids: Vec::new(),
+        });
         crate::collections::scheduler::request_after_library_sync(services);
     }
 }

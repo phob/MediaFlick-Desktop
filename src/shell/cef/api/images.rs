@@ -126,6 +126,7 @@ pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     }
     if IMAGE_WRITES
         .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1)
         .is_multiple_of(IMAGE_CACHE_PRUNE_EVERY)
     {
         prune_image_cache(parent);
