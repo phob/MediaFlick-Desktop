@@ -667,7 +667,7 @@ export default function CollectionSettingsPage() {
     includeUnreleased: settings.data.franchises.includeUnreleased,
     profileIds: profiles.data.profiles.map((profile) => profile.id),
   }) : null, [profiles.data, settings.data])
-  const [draft, setDraft] = useSourceDraft(savedDraft)
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account)
   const save = useMutation({
     mutationFn: async (value: CollectionSettingsDraft) => {
       const nextSettings = await api.collections.patchSettings({
@@ -679,7 +679,12 @@ export default function CollectionSettingsPage() {
         : profiles.data
       return { settings: nextSettings, profiles: nextProfiles }
     },
-    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }) => {
+    onSuccess: ({ settings: nextSettings, profiles: nextProfiles }, submitted) => {
+      acceptSaved({
+        modeSelection: nextSettings.modeSelection ?? nextSettings.effectiveMode,
+        includeUnreleased: nextSettings.franchises.includeUnreleased,
+        profileIds: nextProfiles?.profiles.map((profile) => profile.id) ?? submitted.profileIds,
+      }, submitted)
       cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
       if (nextProfiles) cache.setQueryData(queryKeys.collectionProfiles(account), nextProfiles)
       void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })

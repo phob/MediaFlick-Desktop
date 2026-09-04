@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react"
-import { useLocation } from "react-router-dom"
+import { Route, Routes, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
-import { Appearance } from "@/routes/Settings"
+import Settings, { Appearance } from "@/routes/Settings"
 import { itemSummary, requireElement } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
@@ -87,6 +87,32 @@ function renderAppearance(cardPreviews: boolean, authenticated = true) {
 function location() {
   return document.querySelector("[data-location]")?.textContent
 }
+
+test("appearance sliders expose names, descriptions, and percentage values", () => {
+  renderAppearance(false)
+  for (const [name, value] of [["Artwork intensity", "80 percent"], ["Backdrop intensity", "60 percent"]]) {
+    const slider = screen.getByRole("slider", { name })
+    expect(slider.getAttribute("aria-valuetext")).toBe(value)
+    expect(document.getElementById(slider.getAttribute("aria-describedby") ?? "")?.textContent).toContain("%")
+  }
+})
+
+test.each(["mpv", "mpchc"] as const)("%s player fields are associated with visible labels and help", (backend) => {
+  const client = testQueryClient()
+  const configured = settings(false)
+  configured.client.player.playerBackend = backend
+  configured.capabilities.mpchc = true
+  client.setQueryData(queryKeys.settings, configured)
+  client.setQueryData(queryKeys.status, { authenticated: true })
+  render(<TestProviders client={client} initialEntries={["/settings/client/player"]}>
+    <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+  </TestProviders>)
+  const names = backend === "mpv" ? ["Mark watched key", "mpv executable"] : ["MPC-HC executable"]
+  for (const name of names) {
+    const input = screen.getByRole("textbox", { name })
+    expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBeTruthy()
+  }
+})
 
 function hoverWithMouse(element: Element) {
   const event = new MouseEvent("pointerover", { bubbles: true })

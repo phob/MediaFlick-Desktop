@@ -118,6 +118,7 @@
 
 ### Fixed
 
+- Protected unsaved Settings edits when navigating or refreshing data, kept Reset available before editing, staged Letterboxd additions and removals until Save, and labeled settings inputs and slider controls for assistive technology.
 - Fixed CI and release workflows failing validation while resolving CEF and libmpv cache paths by using workspace-relative cache paths available during job evaluation.
 - Fixed Home shelf drag handles in the windowless app shell by replacing Chromium's unsupported native drag transport with a pointer-following shelf preview and a reserved drop position. The accessible arrow controls remain available.
 - Fixed collection mode, franchise visibility, My Collections ordering, collection editing, and Letterboxd enablement bypassing the shared Save, Reset, and Discard workflow. The first Save for a new collection now previews it, and the second Save creates it.
