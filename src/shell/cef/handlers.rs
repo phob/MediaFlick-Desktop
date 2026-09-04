@@ -3,6 +3,9 @@ use super::document::*;
 use super::events::*;
 use super::*;
 
+#[cfg(target_os = "macos")]
+type CursorHandle = *mut u8;
+
 wrap_client! {
     pub(super) struct JellyfinClient {
         state: BrowserState,

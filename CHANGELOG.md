@@ -118,6 +118,8 @@
 
 ### Fixed
 
+- Fixed Linux and macOS CI builds by routing external mpv's watched-next hotkey through the shared player command and matching CEF's macOS cursor handle type.
+
 - Fixed mouse-wheel stutter in populated library and collection grids by compositing virtual rows and removing per-button background blur from inline card actions. Fixed the built-in Windows interface limiting scrolling to 60 fps on faster displays. GPU-backed CEF now follows the window's display refresh rate, rechecks display changes, and caps rendering at 240 fps. Sustained initial-sync pages now keep aggregate refreshes at one per second after the first page. Added per-page fetch and ingestion timings for real-server performance checks.
 
 - Reduced cached startup and initial-sync work: Home reads cached Companion availability, discovery requests are serialized, and the window reveals its usable route without waiting for artwork or invisible animations. Bootstrap bursts coalesce local refreshes without repeatedly fetching live Next Up; incomplete sync retries start at five seconds with bounded backoff and respect server retry delays. API calls reuse initialized settings, catalog writes reuse prepared statements and normalize each batch once, status reuses sync progress without repeated catalog counts, and the first poster write no longer prunes the image cache.
