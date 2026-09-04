@@ -1,6 +1,12 @@
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query"
-import type { ReactNode } from "react"
-import { MemoryRouter, type MemoryRouterProps } from "react-router-dom"
+import { createContext, useContext, useState, type ReactNode } from "react"
+import { createMemoryRouter, RouterProvider, type MemoryRouterProps } from "react-router-dom"
+
+const TestRouteContext = createContext<ReactNode>(null)
+
+function TestRoute() {
+  return useContext(TestRouteContext)
+}
 
 export function TestProviders({
   children,
@@ -11,9 +17,10 @@ export function TestProviders({
   client: QueryClient
   initialEntries?: MemoryRouterProps["initialEntries"]
 }) {
+  const [router] = useState(() => createMemoryRouter([{ path: "*", element: <TestRoute /> }], { initialEntries }))
   return (
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
+      <TestRouteContext.Provider value={children}><RouterProvider router={router} /></TestRouteContext.Provider>
     </QueryClientProvider>
   )
 }

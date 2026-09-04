@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   ArrowDown,
@@ -39,10 +39,12 @@ import { toast } from "sonner"
 import { MediaCard } from "@/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
 import SaveBar from "@/components/SettingsSaveBar"
+import SettingsDraftGuard from "@/components/SettingsDraftGuard"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
@@ -65,11 +67,12 @@ import {
   type HomeConfiguration,
   type LetterboxdProfile,
   type RatingSourceDefinition,
+  type Status,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
 import { queryClient, queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
-import { useCompanion, useHome, useHomeSettings, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { collectionAccountKey, useCompanion, useHome, useHomeSettings, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import type { CSSVariableProperties } from "@/lib/style"
@@ -106,17 +109,19 @@ function saveSettings(saved: ClientSettings, message = "Settings saved") {
 function SettingsRow({
   title,
   description,
+  controlId,
   children,
 }: {
   title: string
   description: string
+  controlId?: string
   children: ReactNode
 }) {
   return (
     <div className="settings-row">
       <div className="min-w-0">
-        <h3 className="font-medium">{title}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        <h3 className="font-medium">{controlId ? <Label htmlFor={controlId}>{title}</Label> : title}</h3>
+        <p id={controlId ? `${controlId}-help` : undefined} className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
       <div className="settings-control">{children}</div>
     </div>
@@ -259,20 +264,23 @@ function requestId() {
 function PlayerSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
-  const [draft, setDraft, updateDraft] = useSourceDraft(settings?.client.player)
+  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(settings?.client.player)
   const [install, setInstall] = useState<{ state: string; message?: string; downloaded?: number; total?: number | null }>({ state: "idle" })
   const pendingPickers = useRef<Partial<Record<"mpv" | "mpchc", string>>>({})
   const pendingInstall = useRef<string | null>(null)
   const [picking, setPicking] = useState<Partial<Record<"mpv" | "mpchc", boolean>>>({})
   const mutation = useMutation({
-    mutationFn: api.settingsPatch.player,
-    onSuccess: (saved, submitted) => saveSettings(
-      saved,
-      submitted.playerBackend !== settings?.client.player.playerBackend &&
-        (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")
-        ? "Player saved. Restart MediaFlick to apply the built-in player configuration."
-        : "Player settings saved",
-    ),
+    mutationFn: (value: ClientSettings["client"]["player"]) => api.settingsPatch.player(playerSettingsWrite(value)),
+    onSuccess: (saved, submitted) => {
+      acceptSaved(saved.client.player, submitted)
+      saveSettings(
+        saved,
+        submitted.playerBackend !== settings?.client.player.playerBackend &&
+          (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")
+          ? "Player saved. Restart MediaFlick to apply the built-in player configuration."
+          : "Player settings saved",
+      )
+    },
     onError: (error: Error) => toast.error(error.message),
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
@@ -390,23 +398,23 @@ function PlayerSettings() {
         <SettingsRow title="Start fullscreen" description="Use a full-screen player window by default.">
           <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
-        {draft.playerBackend !== "mpchc" && <SettingsRow title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
-          <Input className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
+        {draft.playerBackend !== "mpchc" && <SettingsRow controlId="mark-watched-key" title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
+          <Input id="mark-watched-key" aria-describedby="mark-watched-key-help" className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
         </SettingsRow>}
       </Section>
       {draft.playerBackend !== "libmpv" && <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
-        {draft.playerBackend === "mpv" && <SettingsRow title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
-          <div className="flex w-full max-w-md gap-2"><Input value={draft.mpvPath ?? ""} onChange={(event) => setDraft({ ...draft, mpvPath: event.target.value || null })} placeholder="Path to mpv" /><Button variant="outline" size="icon" aria-label="Choose mpv executable" aria-busy={picking.mpv} disabled={picking.mpv} onClick={() => pick("mpv")}><FolderOpen /></Button></div>
+        {draft.playerBackend === "mpv" && <SettingsRow controlId="mpv-path" title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
+          <div className="flex w-full max-w-md gap-2"><Input id="mpv-path" aria-describedby="mpv-path-help" value={draft.mpvPath ?? ""} onChange={(event) => setDraft({ ...draft, mpvPath: event.target.value || null })} placeholder="Path to mpv" /><Button variant="outline" size="icon" aria-label="Choose mpv executable" aria-busy={picking.mpv} disabled={picking.mpv} onClick={() => pick("mpv")}><FolderOpen /></Button></div>
         </SettingsRow>}
         {draft.playerBackend === "mpv" && settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description={installDetail ?? "Download and install the supported mpv build beside MediaFlick."}>
           <div className="flex gap-2"><Button variant="outline" onClick={installMpv} disabled={["queued", "downloading", "extracting"].includes(install.state)}><Download /> {install.state === "idle" || install.state === "failed" ? "Install mpv" : "Installing…"}</Button><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></div>
         </SettingsRow>}
         {draft.playerBackend === "mpv" && !settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description="See mpv’s installation guide for your operating system."><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></SettingsRow>}
-        {draft.playerBackend === "mpchc" && settings.capabilities.mpchc && <SettingsRow title="MPC-HC executable" description="Select the MPC-HC executable used for playback.">
-          <div className="flex w-full max-w-md gap-2"><Input value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
+        {draft.playerBackend === "mpchc" && settings.capabilities.mpchc && <SettingsRow controlId="mpchc-path" title="MPC-HC executable" description="Select the MPC-HC executable used for playback.">
+          <div className="flex w-full max-w-md gap-2"><Input id="mpchc-path" aria-describedby="mpchc-path-help" value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
         </SettingsRow>}
       </Section>}
-      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(playerSettingsWrite(draft))} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
+      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
     </div>
   )
 }
@@ -414,8 +422,8 @@ function PlayerSettings() {
 function PlaybackSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
-  const [draft, setDraft] = useSourceDraft(settings?.client.playback)
-  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.client.playback)
+  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.playback, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
@@ -438,9 +446,9 @@ function ApplicationSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
   const { data: status } = useStatus()
-  const [draft, setDraft] = useSourceDraft(settings?.client.application)
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.client.application)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
-  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.application, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
   const deleteAccount = useMutation({
     mutationFn: api.collections.deleteLocalAccount,
     onSuccess: (anonymousStatus) => {
@@ -662,8 +670,8 @@ export function Appearance() {
   const ratingsQuery = useRatingsStatus(Boolean(status?.authenticated))
   const { data: settings } = settingsQuery
   const { data: ratings } = ratingsQuery
-  const [draft, setDraft] = useSourceDraft(settings?.appearance)
-  const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved) => saveSettings(saved), onError: (error: Error) => toast.error(error.message) })
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.appearance, collectionAccountKey(status))
+  const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved, submitted) => { acceptSaved(saved.appearance, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
   if (statusQuery.error && !status) return <SettingsError title="Appearance unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
   if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Appearance" />
@@ -704,8 +712,8 @@ export function Appearance() {
       </div>
     </Section>
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
-      <SettingsRow title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider aria-label="Artwork intensity" className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
-      <SettingsRow title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider aria-label="Backdrop intensity" className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
+      <SettingsRow controlId="artwork-intensity" title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider id="artwork-intensity" aria-label="Artwork intensity" aria-describedby="artwork-intensity-help" aria-valuetext={`${draft.artworkIntensity} percent`} className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
+      <SettingsRow controlId="backdrop-intensity" title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider id="backdrop-intensity" aria-label="Backdrop intensity" aria-describedby="backdrop-intensity-help" aria-valuetext={`${draft.backdropIntensity} percent`} className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
     <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] })} />
@@ -744,7 +752,7 @@ function dropHomeElement(configuration: HomeConfiguration, key: string, dropInde
 function HomeSettingsPage() {
   const status = useStatus()
   const query = useHomeSettings(Boolean(status.data?.authenticated))
-  const [draft, setDraft, updateDraft] = useSourceDraft(query.data?.settings)
+  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(query.data?.settings, collectionAccountKey(status.data))
   const [dragging, setDragging] = useState<HomeDrag | null>(null)
   const dragRef = useRef<HomeDrag | null>(null)
   const visible = useMemo(() => draft?.elements.filter((element) => element.available) ?? [], [draft])
@@ -799,7 +807,8 @@ function HomeSettingsPage() {
   }, [dragging?.key, updateDraft, visible])
   const mutation = useMutation({
     mutationFn: (value: HomeConfiguration) => api.saveHomeSettings(homeSettingsWrite(value)),
-    onSuccess: (saved) => {
+    onSuccess: (saved, submitted) => {
+      acceptSaved(saved.settings, submitted)
       queryClient.setQueryData(queryKeys.homeSettings, saved)
       void queryClient.invalidateQueries({ queryKey: queryKeys.home })
       void queryClient.invalidateQueries({ queryKey: queryKeys.homeResume })
@@ -934,45 +943,118 @@ function SignInRequired({ name }: { name: string }) {
 }
 
 function Letterboxd() {
+  const cache = useQueryClient()
   const statusQuery = useStatus()
   const { data: status } = statusQuery
   const profiles = useQuery({ queryKey: ["letterboxd", "profiles"], queryFn: api.letterboxd.profiles, enabled: Boolean(status?.authenticated), retry: false })
   const [entry, setEntry] = useState("")
+  const [additions, setAdditions] = useState<string[]>([])
+  const [removals, setRemovals] = useState<string[]>([])
+  const account = collectionAccountKey(status)
   const savedEnabled = useMemo<Record<string, boolean> | null>(() => profiles.data ? Object.fromEntries(
     profiles.data.profiles.map((profile) => [profile.id, profile.enabled]),
   ) : null, [profiles.data])
-  const [enabledDraft, setEnabledDraft] = useSourceDraft(savedEnabled)
+  const [enabledDraft, setEnabledDraft] = useSourceDraft(savedEnabled, account)
+  const isCurrentAccount = () => collectionAccountKey(cache.getQueryData<Status>(queryKeys.status)) === account
+  const checkAccount = () => {
+    if (!isCurrentAccount()) throw new Error("The signed-in account changed. Remaining profile changes were not saved.")
+  }
   // Profile writes also change every movie's public-review projection.
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["letterboxd"] })
-  const add = useMutation({ mutationFn: api.letterboxd.add, onSuccess: () => { setEntry(""); refresh(); toast.success("Letterboxd profile added") }, onError: (error: Error) => toast.error(error.message) })
-  const saveEnabled = useMutation({
-    mutationFn: (enabled: Record<string, boolean>) => Promise.all(
-      profiles.data?.profiles
-        .filter((profile) => enabled[profile.id] !== profile.enabled)
-        .map((profile) => api.letterboxd.setEnabled(profile.id, enabled[profile.id] ?? profile.enabled)) ?? [],
-    ),
-    onSuccess: () => { refresh(); toast.success("Letterboxd settings saved") },
-    onError: (error: Error) => { refresh(); toast.error(error.message) },
+  const refresh = () => { if (isCurrentAccount()) void cache.invalidateQueries({ queryKey: ["letterboxd"] }) }
+  const rememberProfile = (profile: LetterboxdProfile) => {
+    checkAccount()
+    cache.setQueryData<Awaited<ReturnType<typeof api.letterboxd.profiles>>>(["letterboxd", "profiles"], (current) => {
+      const existing = current?.profiles ?? []
+      return { profiles: existing.some((candidate) => candidate.id === profile.id)
+        ? existing.map((candidate) => candidate.id === profile.id ? profile : candidate)
+        : [...existing, profile] }
+    })
+  }
+  const save = useMutation({
+    mutationFn: async (submitted: { enabled: Record<string, boolean>; additions: string[]; removals: string[] }) => {
+      // Acknowledge each completed write so a later failure leaves only unfinished work to retry.
+      for (const profile of profiles.data?.profiles ?? []) {
+        checkAccount()
+        const enabled = submitted.enabled[profile.id] ?? profile.enabled
+        if (enabled !== profile.enabled && !submitted.removals.includes(profile.id)) {
+          const saved = await api.letterboxd.setEnabled(profile.id, enabled)
+          rememberProfile(saved.profile)
+        }
+      }
+      for (const id of submitted.removals) {
+        checkAccount()
+        await api.letterboxd.remove(id)
+        checkAccount()
+        cache.setQueryData<Awaited<ReturnType<typeof api.letterboxd.profiles>>>(["letterboxd", "profiles"], (current) => ({
+          profiles: (current?.profiles ?? []).filter((profile) => profile.id !== id),
+        }))
+        setRemovals((current) => current.filter((removed) => removed !== id))
+      }
+      for (const input of submitted.additions) {
+        checkAccount()
+        const saved = await api.letterboxd.add(input)
+        rememberProfile(saved.profile)
+        setAdditions((current) => current.filter((added) => added !== input))
+      }
+    },
+    onSuccess: () => toast.success("Letterboxd settings saved"),
+    onError: (error: Error) => toast.error(error.message),
+    onSettled: refresh,
   })
-  const remove = useMutation({ mutationFn: api.letterboxd.remove, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const verify = useMutation({ mutationFn: api.letterboxd.refresh, onSuccess: refresh, onError: (error: Error) => toast.error(error.message) })
   const open = useMutation({ mutationFn: api.letterboxd.open, onError: (error: Error) => toast.error(error.message) })
+  const queuedAdditions = () => [...new Set([...additions, ...(entry.trim() ? [entry.trim()] : [])])]
+  const clearPending = () => {
+    setEntry("")
+    setAdditions([])
+    setRemovals([])
+    save.reset()
+  }
   if (statusQuery.error && !status) return <SettingsError title="Letterboxd unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
   if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Letterboxd" />
-  return <div className="settings-page"><PageTitle title="Letterboxd" detail="Connect public profiles using Letterboxd’s public RSS feed—no credentials are stored." />
-    <Section title="Add profile" description="Enter a Letterboxd username or a canonical profile URL.">
-      <form className="flex max-w-xl gap-2" onSubmit={(event) => { event.preventDefault(); if (entry.trim()) add.mutate(entry) }}><Input value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="letterboxd username or URL" /><Button disabled={add.isPending}>{add.isPending ? "Verifying…" : "Add profile"}</Button></form>
-    </Section>
-    <Section title="Connected profiles" description="Profiles are visible only to this Jellyfin account on this server.">
-      {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.error && !profiles.data ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm"><span>{profiles.error.message}</span><Button size="sm" variant="outline" onClick={() => void profiles.refetch()}>Try again</Button></div> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => <ProfileCard key={profile.id} profile={{ ...profile, enabled: enabledDraft?.[profile.id] ?? profile.enabled }} onEnabled={(enabled) => { if (enabledDraft) setEnabledDraft({ ...enabledDraft, [profile.id]: enabled }) }} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => remove.mutate(profile.id)} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
-    </Section>
+  const dirty = Boolean(entry.trim() || additions.length || removals.length || enabledDraft && savedEnabled && !same(enabledDraft, savedEnabled))
+  return <div className="settings-page"><PageTitle title="Letterboxd" detail="Connect public profiles using Letterboxd's public RSS feed. No credentials are stored." />
+    <fieldset disabled={save.isPending} className="min-w-0 space-y-5">
+      <legend className="sr-only">Letterboxd profiles</legend>
+      <Section title="Add profile" description="Profiles are verified and connected when you save.">
+        <form className="max-w-xl space-y-2" onSubmit={(event) => {
+          event.preventDefault()
+          setAdditions(queuedAdditions())
+          setEntry("")
+        }}>
+          <Label htmlFor="letterboxd-profile">Letterboxd username or profile URL</Label>
+          <p id="letterboxd-profile-help" className="text-sm text-muted-foreground">Enter a username or a profile URL such as https://letterboxd.com/username/.</p>
+          <div className="flex gap-2"><Input id="letterboxd-profile" aria-describedby="letterboxd-profile-help" value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="Username or profile URL" /><Button disabled={!entry.trim() || !profiles.data}>Add profile</Button></div>
+        </form>
+        {additions.map((input) => <div key={input} className="flex items-center justify-between gap-3 rounded-md border p-3">
+          <div className="min-w-0"><p className="break-all">{input}</p><p className="text-sm text-muted-foreground">Will be added when you save</p></div>
+          <Button variant="ghost" onClick={() => setAdditions((current) => current.filter((added) => added !== input))} aria-label={`Cancel adding ${input}`}>Cancel</Button>
+        </div>)}
+      </Section>
+      <Section title="Connected profiles" description="Changes apply after Save. Discard restores the saved profiles.">
+        {profiles.isPending ? <p className="text-sm text-muted-foreground">Loading profiles…</p> : profiles.error && !profiles.data ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm"><span>{profiles.error.message}</span><Button size="sm" variant="outline" onClick={() => void profiles.refetch()}>Try again</Button></div> : profiles.data?.profiles.length ? <div className="space-y-3">{profiles.data.profiles.map((profile) => removals.includes(profile.id)
+          ? <div key={profile.id} className="flex items-center justify-between gap-3 rounded-md border p-3"><div><p>{profile.displayName}</p><p className="text-sm text-muted-foreground">Will be removed when you save</p></div><Button variant="outline" aria-label={`Undo removal of ${profile.displayName}`} onClick={() => setRemovals((current) => current.filter((id) => id !== profile.id))}>Undo</Button></div>
+          : <ProfileCard key={profile.id} profile={{ ...profile, enabled: enabledDraft?.[profile.id] ?? profile.enabled }} onEnabled={(enabled) => { if (enabledDraft) setEnabledDraft({ ...enabledDraft, [profile.id]: enabled }) }} onRefresh={() => verify.mutate(profile.id)} onOpen={() => open.mutate(profile.id)} onRemove={() => setRemovals((current) => [...current, profile.id])} />)}</div> : <p className="text-sm text-muted-foreground">No Letterboxd profiles connected yet.</p>}
+      </Section>
+    </fieldset>
+    {save.error && <p role="alert" className="text-sm text-destructive">Could not save all changes. Your remaining edits are kept. {save.error.message}</p>}
     <SaveBar
-      dirty={Boolean(enabledDraft && savedEnabled && !same(enabledDraft, savedEnabled))}
-      saving={saveEnabled.isPending}
-      onSave={() => { if (enabledDraft) saveEnabled.mutate(enabledDraft) }}
-      onDiscard={() => setEnabledDraft(savedEnabled)}
-      onReset={() => { if (enabledDraft) setEnabledDraft(Object.fromEntries(Object.keys(enabledDraft).map((id) => [id, true]))) }}
+      dirty={dirty}
+      saving={save.isPending}
+      saveDisabled={!profiles.data}
+      onSave={() => {
+        if (!enabledDraft) return
+        const pendingAdditions = queuedAdditions()
+        setAdditions(pendingAdditions)
+        setEntry("")
+        save.mutate({ enabled: enabledDraft, additions: pendingAdditions, removals })
+      }}
+      onDiscard={() => { clearPending(); setEnabledDraft(savedEnabled) }}
+      onReset={() => {
+        clearPending()
+        if (savedEnabled) setEnabledDraft(Object.fromEntries(Object.keys(savedEnabled).map((id) => [id, true])))
+      }}
     />
   </div>
 }
@@ -1110,5 +1192,6 @@ export function AppearanceSync() {
 }
 
 export default function Settings() {
-  return <div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div>
+  const { data: status } = useStatus()
+  return <SettingsDraftGuard key={collectionAccountKey(status)}><div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div></SettingsDraftGuard>
 }

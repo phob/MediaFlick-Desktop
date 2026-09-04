@@ -1,32 +1,47 @@
 import { useCallback, useState } from "react"
 
-/**
- * An editable value that follows its source until the user changes it.
- *
- * Source changes are handled while rendering so consumers never commit a stale
- * draft and do not need an effect whose only job is to trigger another render.
- */
-export function useSourceDraft<T>(source: T) {
-  const [state, setState] = useState(() => ({ source, value: source }))
+function mergeDraft<T>(previous: T, draft: T, source: T): T {
+  if (JSON.stringify(previous) === JSON.stringify(draft)) return source
+  if (previous == null || draft == null || source == null) return source
+  if (typeof previous !== "object" || typeof draft !== "object" || typeof source !== "object") return draft
+  if (Array.isArray(draft)) return draft
+  const next = { ...source }
+  for (const key in source) {
+    if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) next[key] = draft[key]
+  }
+  return next
+}
 
-  if (!Object.is(state.source, source)) {
-    setState({ source, value: source })
+/** Refresh untouched fields while retaining edits; account changes start a new draft. */
+export function useSourceDraft<T>(source: T, account?: string) {
+  const [state, setState] = useState(() => ({ source, value: source, account }))
+
+  const value = account !== state.account ? source : Object.is(state.source, source)
+    ? state.value
+    : mergeDraft(state.source, state.value, source)
+  if (!Object.is(state.source, source) || account !== state.account) {
+    setState({ source, value, account })
   }
 
-  const value = Object.is(state.source, source) ? state.value : source
   const setValue = useCallback(
-    (next: T) => setState({ source, value: next }),
-    [source],
+    (next: T) => setState({ source, value: next, account }),
+    [source, account],
   )
   const updateValue = useCallback(
     (update: (current: T) => T) => {
       setState((current) => ({
         source,
-        value: update(Object.is(current.source, source) ? current.value : source),
+        account,
+        value: update(current.account !== account ? source : mergeDraft(current.source, current.value, source)),
       }))
     },
-    [source],
+    [source, account],
   )
+  const acceptSaved = useCallback((saved: T, submitted: T) => {
+    setState((current) => current.account === account
+      ? { ...current, value: mergeDraft(submitted, current.value, saved) }
+      : current)
+  }, [account])
 
-  return [value, setValue, updateValue] as const
+  return [value, setValue, updateValue, acceptSaved] as const
 }
