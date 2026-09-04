@@ -307,7 +307,7 @@ impl ControllerState {
                 self.apply_property(event.property.as_deref(), event.data.as_ref());
             }
             "client-message" if is_mark_watched_next_message(&event.args) => {
-                self.mark_watched_and_play_next();
+                self.control(&PlayerCommand::MarkWatchedAndPlayNext);
             }
             _ => tracing::trace!(target: "mpv.ipc", name = %event.name, "ignored mpv event"),
         }

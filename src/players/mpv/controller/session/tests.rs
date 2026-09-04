@@ -57,6 +57,46 @@ fn libmpv_watched_next_command_uses_the_existing_completion_handoff() {
 }
 
 #[test]
+fn external_watched_next_message_uses_the_completion_handoff() {
+    let mut state = controller_with_pending_load(None);
+    state
+        .pending
+        .as_mut()
+        .expect("pending playback")
+        .launch
+        .runtime_ticks = Some(300_000_000);
+    state.mpv_playback_active = true;
+    state.active_ipc_session_id = Some(1);
+    let event = super::MpvEvent {
+        name: "client-message".to_string(),
+        reason: None,
+        property: None,
+        data: None,
+        args: vec![
+            "mediaflick-desktop".to_string(),
+            "mark-watched-next".to_string(),
+        ],
+        raw: json!({"event": "client-message"}),
+    };
+
+    state.handle_session_event(2, &event);
+    assert!(state.pending.is_some());
+    state.handle_session_event(1, &event);
+
+    assert!(state.pending.is_none());
+    assert_eq!(state.last_state.position_ticks, 300_000_000);
+    assert!(state.next_playback_handoff_until.is_some());
+    assert_eq!(
+        state
+            .snapshot
+            .lock()
+            .expect("playback snapshot")
+            .stop_reason,
+        Some("watched-next")
+    );
+}
+
+#[test]
 fn playback_abort_snapshot_does_not_fail_pending_load() {
     let mut state = controller_with_pending_load(Some(20_000_000));
 
