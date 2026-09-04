@@ -124,7 +124,7 @@ export function CollectionTitleGrid<T>({
             key={row.key}
             ref={virtualizer.measureElement}
             data-index={row.index}
-            className="absolute top-0 left-0 flex w-full items-start"
+            className="virtual-card-row absolute top-0 left-0 flex w-full items-start"
             style={{
               gap: layout.gap,
               minHeight: layout.cardHeight,

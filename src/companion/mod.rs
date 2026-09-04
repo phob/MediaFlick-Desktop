@@ -4,7 +4,7 @@
 //! Jellyfin client and cached for the life of that login; every feature then
 //! selects the plugin backend only when the advertised v1 capability exists.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,8 @@ pub struct CompanionSession {
     session: Arc<Session>,
     library: Arc<Library>,
     state: RwLock<ProbeState>,
+    probe_running: Mutex<bool>,
+    probe_finished: Condvar,
 }
 
 impl CompanionSession {
@@ -81,10 +83,36 @@ impl CompanionSession {
             session,
             library,
             state: RwLock::new(ProbeState::default()),
+            probe_running: Mutex::new(false),
+            probe_finished: Condvar::new(),
         }
     }
 
     pub fn probe(&self, force: bool) -> Result<Option<CompanionInfo>, ApiError> {
+        // Waiters recheck the cache after discovery finishes. No cache or
+        // synchronization lock is held while the authenticated request runs.
+        let mut running = self
+            .probe_running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *running {
+            running = self
+                .probe_finished
+                .wait(running)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *running = true;
+        drop(running);
+        let result = self.probe_inner(force);
+        *self
+            .probe_running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+        self.probe_finished.notify_all();
+        result
+    }
+
+    fn probe_inner(&self, force: bool) -> Result<Option<CompanionInfo>, ApiError> {
         if !force {
             let state = self.read();
             if state.reusable() {
@@ -222,7 +250,14 @@ impl CompanionSession {
     }
 
     pub fn collection_readiness(&self, force: bool) -> ProviderReadiness {
-        let info = self.probe(force).ok().flatten();
+        if self.probe(force).is_err() {
+            return ProviderReadiness::default();
+        }
+        self.cached_collection_readiness()
+    }
+
+    pub fn cached_collection_readiness(&self) -> ProviderReadiness {
+        let info = self.read().info;
         let Some(info) = info.filter(|info| info.supports("collection-experience-v1")) else {
             return ProviderReadiness::default();
         };
@@ -393,7 +428,11 @@ impl CompanionSession {
             scope,
             || ApiError::Cancelled,
             || {
+                let previous = self.cached_collection_readiness();
                 self.replace(state);
+                if previous != self.cached_collection_readiness() {
+                    crate::app::services::notify_collections_changed();
+                }
                 Ok(())
             },
         )
@@ -683,6 +722,107 @@ mod tests {
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::library::Library;
     use serde_json::json;
+
+    #[test]
+    fn concurrent_discovery_reuses_one_authenticated_response() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::time::Duration;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let mut credentials = library.credentials();
+        credentials.server_url = Some(format!(
+            "http://{}",
+            listener.local_addr().expect("address")
+        ));
+        credentials.server_id = Some("server".to_string());
+        credentials.user_id = Some("user".to_string());
+        credentials.token = Some("token".to_string());
+        library.save_credentials(&credentials).expect("credentials");
+        let session = Arc::new(crate::jellyfin::session::Session::restore(library.clone()));
+        let companion = Arc::new(super::CompanionSession::new(session, library));
+        let barrier = Arc::new(Barrier::new(3));
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..2 {
+            let companion = companion.clone();
+            let barrier = barrier.clone();
+            let sender = sender.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                sender.send(companion.probe(false)).expect("probe result");
+            });
+        }
+        barrier.wait();
+        let (mut stream, _) = listener.accept().expect("request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("read timeout");
+        let mut reader = BufReader::new(&mut stream);
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("request headers");
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        drop(reader);
+        // Cached Home reads remain available while the discovery response is pending.
+        assert_eq!(companion.cached_collection_readiness(), Default::default());
+        let body = r#"{"apiVersion":1,"capabilities":["collection-experience-v1"],"services":{"tmdb":true}}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).expect("response");
+        for _ in 0..2 {
+            assert!(
+                receiver
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("completed probe")
+                    .expect("successful probe")
+                    .is_some()
+            );
+        }
+        listener.set_nonblocking(true).expect("nonblocking");
+        assert_eq!(
+            listener.accept().expect_err("one request").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert!(companion.cached_collection_readiness().tmdb);
+    }
+
+    #[test]
+    fn cached_collection_readiness_never_probes_and_clear_drops_capabilities() {
+        use std::sync::Arc;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let mut credentials = library.credentials();
+        credentials.server_url = Some(format!(
+            "http://{}",
+            listener.local_addr().expect("address")
+        ));
+        credentials.server_id = Some("server".to_string());
+        credentials.user_id = Some("user".to_string());
+        credentials.token = Some("token".to_string());
+        library.save_credentials(&credentials).expect("credentials");
+        let session = Arc::new(crate::jellyfin::session::Session::restore(library.clone()));
+        let companion = super::CompanionSession::new(session, library);
+        assert_eq!(companion.cached_collection_readiness(), Default::default());
+        companion.replace(ProbeState {
+            info: Some(CompanionInfo {
+                api_version: 1,
+                capabilities: vec!["collection-experience-v1".to_string()],
+                services: [("tmdb".to_string(), true)].into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert!(companion.cached_collection_readiness().tmdb);
+        companion.clear();
+        assert_eq!(companion.cached_collection_readiness(), Default::default());
+        assert_eq!(
+            listener.accept().expect_err("no network calls").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
 
     #[test]
     fn only_supported_api_versions_enable_capabilities() {

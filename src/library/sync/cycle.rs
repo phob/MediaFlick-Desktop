@@ -165,7 +165,9 @@ fn bootstrap(
         if pages >= MAX_BOOTSTRAP_PAGES {
             break true;
         }
+        let fetch_started = Instant::now();
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")?;
+        let fetch_ms = fetch_started.elapsed().as_millis() as u64;
         // Jellyfin normally reports the total on every page. Preserve the last
         // useful value if a trailing empty page omits it, while still recording
         // a real zero for an empty library.
@@ -182,26 +184,8 @@ fn bootstrap(
         }
         advance_watermark_with_ids(&mut watermark, &mut watermark_ids, &page.items);
         let next_offset = offset + page.items.len() as i64;
-        let page_changes = commit(session, scope, || {
-            let changes = library
-                .ingest_page(&page.items)
-                .map_err(|error| storage_error(&error))?;
-            if page.total_record_count > 0 || offset == 0 {
-                library
-                    .set_meta(
-                        META_BOOTSTRAP_TOTAL,
-                        &page.total_record_count.max(0).to_string(),
-                    )
-                    .map_err(|error| storage_error(&error))?;
-            }
-            library
-                .set_meta(META_CATALOG_READY, "1")
-                .map_err(|error| storage_error(&error))?;
-            library
-                .set_meta(META_BOOTSTRAP_OFFSET, &next_offset.to_string())
-                .map_err(|error| storage_error(&error))?;
-            Ok(changes)
-        })?;
+        let ingest_started = Instant::now();
+        let page_changes = commit_catalog_page(library, session, scope, &page, offset)?;
         written += page.items.len();
         offset = next_offset;
         pages += 1;
@@ -214,15 +198,16 @@ fn bootstrap(
                 "first catalog page committed; library is ready"
             );
         }
-        // One page is one SQLite transaction and one UI invalidation. This is
-        // progressive without degenerating into an event per item.
+        // Bootstrap commits invalidate local projections without refetching live Next Up.
         if !page_changes.is_empty() {
-            crate::app::services::notify_library_changed(page_changes);
+            crate::app::services::notify_catalog_changed(page_changes);
         }
         tracing::debug!(
             target: "library.sync",
             offset,
             total = page.total_record_count,
+            fetch_ms,
+            ingest_ms = ingest_started.elapsed().as_millis() as u64,
             "bootstrapped a library page"
         );
         if page.total_record_count > 0 && offset >= page.total_record_count {
@@ -253,6 +238,38 @@ fn bootstrap(
         return Ok(written);
     }
     finish_bootstrap(library, session, scope, written)
+}
+
+fn commit_catalog_page(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    page: &crate::jellyfin::api::model::ItemsResponse,
+    offset: i64,
+) -> Result<LibraryChangeBatch, ApiError> {
+    commit(session, scope, || {
+        let changes = library
+            .ingest_page(&page.items)
+            .map_err(|error| storage_error(&error))?;
+        if page.total_record_count > 0 || offset == 0 {
+            library
+                .set_meta(
+                    META_BOOTSTRAP_TOTAL,
+                    &page.total_record_count.max(0).to_string(),
+                )
+                .map_err(|error| storage_error(&error))?;
+        }
+        library
+            .set_meta(META_CATALOG_READY, "1")
+            .map_err(|error| storage_error(&error))?;
+        library
+            .set_meta(
+                META_BOOTSTRAP_OFFSET,
+                &(offset + page.items.len() as i64).to_string(),
+            )
+            .map_err(|error| storage_error(&error))?;
+        Ok(changes)
+    })
 }
 
 fn finish_bootstrap(

@@ -34,7 +34,7 @@ pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
 }
 
 fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
-    let mut backoff = SYNC_INTERVAL;
+    let mut backoff = Duration::ZERO;
     let mut normal_deadline = Instant::now();
     let mut trigger = Trigger::Scheduled;
     loop {
@@ -58,7 +58,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
             trigger = Trigger::Scheduled;
             let delay = match outcome {
                 Ok(report) => {
-                    backoff = SYNC_INTERVAL;
+                    backoff = Duration::ZERO;
                     if report.changed() {
                         tracing::info!(
                             target: "library.sync",
@@ -75,15 +75,22 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                 // A sign-out, account deletion, or account switch invalidates
                 // the old generation. It is an expected handoff, not a
                 // failing sync that should poison the next account's backoff.
-                Err(ApiError::Cancelled) => IDLE_INTERVAL,
+                Err(ApiError::Cancelled) => {
+                    backoff = Duration::ZERO;
+                    IDLE_INTERVAL
+                }
                 Err(ApiError::Unauthorized) => {
                     // `mark_expired` itself notifies the UI, exactly once.
+                    backoff = Duration::ZERO;
                     session.mark_expired();
                     IDLE_INTERVAL
                 }
                 Err(error) => {
                     tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
-                    backoff = (backoff * 2).min(Duration::from_secs(30 * 60));
+                    backoff = next_backoff(
+                        backoff,
+                        library.meta(super::META_BOOTSTRAP_DONE).as_deref() != Some("1"),
+                    );
                     let delay = retry_delay(&error, jittered(backoff));
                     handle.set_retry(&error, delay);
                     delay
@@ -100,6 +107,15 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
             Wake::Elapsed => {}
         }
     }
+}
+
+fn next_backoff(previous: Duration, incomplete: bool) -> Duration {
+    let (initial, maximum) = if incomplete {
+        (Duration::from_secs(5), Duration::from_secs(60))
+    } else {
+        (SYNC_INTERVAL * 2, Duration::from_secs(30 * 60))
+    };
+    (previous * 2).max(initial).min(maximum)
 }
 
 fn retry_delay(error: &ApiError, fallback: Duration) -> Duration {
@@ -160,6 +176,26 @@ mod tests {
 
     use super::{Wake, jittered, wait};
     use crate::library::sync::{Flags, SYNC_INTERVAL, Signal, SyncHandle, WorkerState};
+
+    #[test]
+    fn incomplete_catalog_retries_quickly_with_a_bounded_backoff() {
+        let mut delay = Duration::ZERO;
+        for seconds in [5, 10, 20, 40, 60, 60] {
+            delay = super::next_backoff(delay, true);
+            assert_eq!(delay, Duration::from_secs(seconds));
+        }
+        let limited = crate::jellyfin::api::ApiError::RateLimited {
+            retry_after_secs: Some(300),
+        };
+        assert_eq!(
+            super::retry_delay(&limited, delay),
+            Duration::from_secs(300)
+        );
+        assert_eq!(
+            super::next_backoff(Duration::ZERO, false),
+            SYNC_INTERVAL * 2
+        );
+    }
 
     #[test]
     fn jitter_only_ever_delays_the_next_cycle() {

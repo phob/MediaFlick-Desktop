@@ -69,7 +69,7 @@ export function CardInlineActions({
         title={favoriteLabel}
         onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
         className={cn(
-          "preview-action border bg-black/65 backdrop-blur-sm",
+          "preview-action border bg-black/85",
           item.favorite
             ? "border-primary/70 text-primary"
             : "border-white/35 text-white hover:border-primary/70 hover:text-primary",
@@ -87,7 +87,7 @@ export function CardInlineActions({
           setPlayed.mutate({ id: item.id, played: !item.played, context: playedContext })
         }
         className={cn(
-          "preview-action border bg-black/65 backdrop-blur-sm",
+          "preview-action border bg-black/85",
           item.played
             ? "border-primary/70 text-primary"
             : "border-white/35 text-white hover:border-primary/70 hover:text-primary",

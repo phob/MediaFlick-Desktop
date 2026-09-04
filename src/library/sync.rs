@@ -76,26 +76,21 @@ pub struct BootstrapProgress {
 /// The catalog becomes usable after its first successful page commit. Existing
 /// rows are an equally strong readiness signal during a migration or weekly
 /// refresh, even if an older build never wrote the explicit marker.
-pub fn library_ready(library: &Library) -> bool {
-    library.meta(META_CATALOG_READY).as_deref() == Some("1")
-        || library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-        || library.stats().total > 0
-}
-
 pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
-    let stats = library.stats();
+    let has_items = library.has_items();
+    let complete = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1");
     BootstrapProgress {
-        complete: library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1"),
-        ready: library_ready(library),
+        complete,
+        ready: complete || has_items || library.meta(META_CATALOG_READY).as_deref() == Some("1"),
         processed: meta_count(library, META_BOOTSTRAP_OFFSET).unwrap_or(0),
         total: meta_count(library, META_BOOTSTRAP_TOTAL),
         // A migration/backfill over an existing cache is never first-time setup.
-        initial: library.meta(META_LAST_BOOTSTRAP).is_none() && stats.total == 0,
+        initial: library.meta(META_LAST_BOOTSTRAP).is_none() && !has_items,
     }
 }
 
 pub fn ownership_available(library: &Library) -> bool {
-    bootstrap_progress(library).complete
+    library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
         && library.meta(META_LATEST_FAILURE).as_deref() != Some("1")
 }
 
@@ -217,8 +212,7 @@ impl SyncHandle {
         self.running.load(Ordering::Relaxed)
     }
 
-    pub fn progress(&self, library: &Library) -> SyncProgress {
-        let catalog = bootstrap_progress(library);
+    pub fn progress(&self, catalog: BootstrapProgress) -> SyncProgress {
         let state = self
             .state
             .lock()
@@ -298,7 +292,7 @@ mod tests {
     use super::{
         BootstrapProgress, Flags, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
         META_LAST_BOOTSTRAP, Signal, SyncHandle, SyncPhase, SyncReport, WorkerState,
-        bootstrap_progress, library_ready,
+        bootstrap_progress,
     };
     use crate::library::Library;
 
@@ -350,7 +344,7 @@ mod tests {
             .set_meta(META_BOOTSTRAP_DONE, "0")
             .expect("refresh in progress");
 
-        assert!(library_ready(&library));
+        assert!(bootstrap_progress(&library).ready);
         let progress = bootstrap_progress(&library);
         assert!(progress.ready);
         assert!(!progress.complete);
@@ -375,7 +369,7 @@ mod tests {
             state: Arc::new(Mutex::new(WorkerState::default())),
         };
 
-        let filling = handle.progress(&library);
+        let filling = handle.progress(bootstrap_progress(&library));
         assert!(filling.active);
         assert!(filling.catalog.ready);
         assert_eq!(filling.phase, SyncPhase::Catalog);
@@ -384,7 +378,7 @@ mod tests {
             &crate::jellyfin::api::ApiError::Transport("offline".to_string()),
             Duration::from_secs(60),
         );
-        let retrying = handle.progress(&library);
+        let retrying = handle.progress(bootstrap_progress(&library));
         assert_eq!(retrying.phase, SyncPhase::Retrying);
         assert!(
             retrying
