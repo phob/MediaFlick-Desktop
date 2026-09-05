@@ -3,9 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
-import { EpisodeGrid } from "../src/components/detail/SeasonBrowser"
 import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
-import { RatingSourceIcon } from "../src/components/RatingSourceIcon"
 import type {
   ClientSettings,
   ItemRatings,
@@ -90,30 +88,6 @@ function RatingProbe({ id }: { id: string }) {
 }
 
 describe("configurable card ratings", () => {
-  test("provides an icon for every native source and a safe future-source fallback", () => {
-    const sourceIds = [
-      "mdblist_score_average",
-      "imdb",
-      "trakt",
-      "tmdb",
-      "letterboxd",
-      "tomatoes",
-      "popcorn",
-      "metacritic",
-      "metacriticuser",
-      "rogerebert",
-      "myanimelist",
-      "future-source",
-    ]
-    const { container } = render(<>{sourceIds.map((sourceId) => (
-      <RatingSourceIcon key={sourceId} sourceId={sourceId} />
-    ))}</>)
-
-    for (const sourceId of sourceIds) {
-      expect(container.querySelector(`[data-rating-source-icon="${sourceId}"]`)).toBeTruthy()
-    }
-  })
-
   test("formats each native source scale without conflating RT critics and audience", () => {
     expect(display("letterboxd", 4.25).formatted).toBe("★4.3")
     expect(display("imdb", 8.1).accessibleValue).toBe("8.1 out of 10")
@@ -164,42 +138,6 @@ describe("configurable card ratings", () => {
     expect(readout.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
     expect(readout.textContent).not.toContain("LB")
     expect(register).toHaveBeenCalledWith(item.id)
-  })
-
-  test("shows each episode's own Jellyfin community rating", () => {
-    const episode: ItemSummary = {
-      id: "episode-1",
-      kind: "Episode",
-      name: "Good News About Hell",
-      year: 2022,
-      runtimeTicks: 3_000_000_000,
-      communityRating: 8.4,
-      officialRating: null,
-      seriesId: "series-1",
-      seriesName: "Severance",
-      indexNumber: 1,
-      parentIndexNumber: 1,
-      primaryImageTag: null,
-      thumbImageTag: null,
-      logoImageTag: null,
-      backdropImageTag: null,
-      childCount: null,
-      premiereDate: "2022-02-18T00:00:00Z",
-      seasonId: "season-1",
-      played: false,
-      playCount: 0,
-      positionTicks: 0,
-      favorite: false,
-      overview: "Mark is promoted.",
-    }
-    const client = testQueryClient()
-    render(
-      <TestProviders client={client}>
-          <EpisodeGrid episodes={[episode]} parentId="season-1" />
-      </TestProviders>,
-    )
-
-    expect(screen.getByLabelText("Jellyfin community rating 8.4 out of 10")).toBeTruthy()
   })
 
   test("renders no placeholder when selected sources have no value", () => {

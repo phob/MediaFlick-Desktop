@@ -65,6 +65,8 @@
 
 ### Changed
 
+- Removed redundant episode-rating coverage, static UI smoke tests, trivial helper checks, and tests of framework defaults or removed settings; retained request, persistence, playback, and security regression coverage.
+
 - Reworked the subtitle preview with day, dusk, and night scenery, readable thick outlines, and positioning that keeps captions inside the frame.
 
 - Replaced free-form poster width with preset sizes and moved card-preview delay beside the Appearance preview toggle, sharing Save, Reset, Discard, and the live preview.

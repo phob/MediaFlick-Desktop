@@ -607,16 +607,10 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 mod tests {
     use super::{
         CATALOG_FIELDS, CHILD_FIELDS, CHILDREN_PAGE_SIZE, NEXT_UP_FIELDS, PAGE_SIZE,
-        PERSON_ITEM_TYPES, PERSON_PAGE_SIZE, SYNCED_ITEM_TYPES, SYNOPSIS_FIELDS, UPCOMING_FIELDS,
+        PERSON_ITEM_TYPES, PERSON_PAGE_SIZE, SYNOPSIS_FIELDS, UPCOMING_FIELDS,
         box_set_children_query, box_sets_query, children_query, exact_items_query, image_path,
         items_page_query, next_up_query, person_items_query, synopsis_query, upcoming_query,
     };
-
-    #[test]
-    fn synced_types_exclude_music_and_live_tv() {
-        assert_eq!(SYNCED_ITEM_TYPES, "Movie,Series,Season,Episode");
-        assert!(!SYNCED_ITEM_TYPES.contains("Audio"));
-    }
 
     #[test]
     fn purpose_specific_fields_exclude_discarded_rich_metadata() {
@@ -690,7 +684,7 @@ mod tests {
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["userId"], "uid");
         assert_eq!(query["Recursive"], "true");
-        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        assert_eq!(query["IncludeItemTypes"], "Movie,Series,Season,Episode");
         assert_eq!(query["Fields"], CATALOG_FIELDS);
         assert_eq!(query["EnableUserData"], "true");
         assert_eq!(query["StartIndex"], "400");
@@ -733,7 +727,7 @@ mod tests {
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["parentId"], "season1");
         assert!(!query.contains_key("Recursive"));
-        assert_eq!(query["IncludeItemTypes"], SYNCED_ITEM_TYPES);
+        assert_eq!(query["IncludeItemTypes"], "Movie,Series,Season,Episode");
         assert_eq!(query["Fields"], CHILD_FIELDS);
         assert!(query["Fields"].contains("Overview"));
         assert!(!query["Fields"].contains("People"));
