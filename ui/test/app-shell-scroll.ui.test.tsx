@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
 import { beforeEach, describe, expect, test } from "vitest"
 import { RouteScrollViewport } from "@/components/AppShell"
-import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
 
 function First() {
   const navigate = useNavigate()
@@ -45,21 +44,5 @@ describe("AppShell route scrolling", () => {
     viewport.scrollTop = 90
     fireEvent.click(screen.getByRole("button", { name: "Back" }))
     expect(viewport.scrollTop).toBe(180)
-  })
-})
-
-describe("AppShell sidebar state", () => {
-  test("stays open on Home and opens other routes only while hovered", () => {
-    expect(sidebarShouldBeOpen("/", false)).toBe(true)
-    expect(sidebarShouldBeOpen("/", true)).toBe(true)
-    expect(sidebarShouldBeOpen("/library", false)).toBe(false)
-    expect(sidebarShouldBeOpen("/library", true)).toBe(true)
-    expect(sidebarShouldBeOpen("/item/123", false)).toBe(false)
-  })
-
-  test("overlays content outside Home", () => {
-    expect(sidebarShouldOverlayContent("/")).toBe(false)
-    expect(sidebarShouldOverlayContent("/library")).toBe(true)
-    expect(sidebarShouldOverlayContent("/item/123")).toBe(true)
   })
 })

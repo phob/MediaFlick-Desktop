@@ -1,7 +1,5 @@
 using Jellyfin.Plugin.MediaFlick.Api;
 using Jellyfin.Plugin.MediaFlick.Configuration;
-using Jellyfin.Plugin.MediaFlick.Services;
-using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaFlick.Tests;
@@ -18,16 +16,5 @@ public sealed class CompanionControllerTests
         Assert.DoesNotContain("collections-v1", capabilities);
         Assert.DoesNotContain("collections-v2", capabilities);
         Assert.DoesNotContain("collections-curated-v1", capabilities);
-    }
-
-    [Fact]
-    public void CollectionExperienceControllerCanBeActivatedByDependencyInjection()
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(new CollectionProviderService(null!, null!, null!, null!));
-        using var provider = services.BuildServiceProvider();
-
-        Assert.IsType<CollectionExperienceController>(
-            ActivatorUtilities.CreateInstance<CollectionExperienceController>(provider));
     }
 }

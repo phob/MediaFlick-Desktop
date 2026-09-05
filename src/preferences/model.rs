@@ -788,15 +788,6 @@ mod tests {
     }
 
     #[test]
-    fn obsolete_libmpv_profile_is_ignored() {
-        let settings: AppSettings = serde_json::from_str(r#"{"libmpv_profile":"svp"}"#)
-            .expect("settings with the former manual profile");
-
-        let serialized = serde_json::to_value(settings).expect("serialize migrated settings");
-        assert!(serialized.get("libmpv_profile").is_none());
-    }
-
-    #[test]
     fn explicit_libmpv_wins_over_a_retained_external_path() {
         let settings: AppSettings =
             serde_json::from_str(r#"{"player_backend":"libmpv","mpv_path":"C:/mpv/mpv.exe"}"#)

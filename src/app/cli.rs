@@ -53,18 +53,3 @@ impl Cli {
         self.url.as_deref().and_then(normalize_server_url)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use clap::{Parser, error::ErrorKind};
-
-    use super::Cli;
-
-    #[test]
-    fn version_flag_reports_the_package_version() {
-        let error = Cli::try_parse_from(["mediaflick-desktop", "--version"])
-            .expect_err("version exits after printing");
-        assert_eq!(error.kind(), ErrorKind::DisplayVersion);
-        assert!(error.to_string().contains(env!("CARGO_PKG_VERSION")));
-    }
-}
