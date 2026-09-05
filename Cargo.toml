@@ -10,7 +10,7 @@ name = "mediaflick-desktop"
 path = "src/main.rs"
 
 [dependencies]
-cef = { version = "=151.8.0", default-features = false }
+cef = { version = "=151.8.1", default-features = false }
 getrandom = "0.4"
 libloading = "0.9"
 serde = { version = "1", features = ["derive"] }
