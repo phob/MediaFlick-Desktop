@@ -736,7 +736,7 @@ export default function CollectionSettingsPage() {
   }
   return (
     <div className="settings-page">
-      <div><span className="settings-eyebrow">Account</span><h1 className="text-2xl font-semibold">Collections</h1><p className="mt-1 text-sm text-muted-foreground">Choose the collection experience and build personal, provider-backed collections.</p></div>
+      <div><span className="settings-eyebrow">Account</span><h1 className="text-2xl font-semibold">Collections</h1></div>
       <GeneralSettings draft={draft} onChange={setDraft} />
       <ConfiguredProfiles
         profileIds={draft?.profileIds ?? []}

@@ -1,3 +1,4 @@
+import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { Check, Play, Star } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
@@ -98,7 +99,7 @@ function SeasonRail({
 }
 
 function EpisodeCard({
-  episode,
+  episode: originalEpisode,
   parentId,
   nextUp,
 }: {
@@ -106,11 +107,13 @@ function EpisodeCard({
   parentId: string
   nextUp: boolean
 }) {
+  const protectedEpisode = useSpoilerProtection(originalEpisode)
+  const episode = protectedEpisode ? concealEpisode(originalEpisode) : originalEpisode
   const { handlers, expanded, previewsEnabled } = usePreview(episode)
   // Same fallback ladder as every other landscape card: still, Thumb art,
   // backdrop — and a broken image steps down once instead of re-requesting.
   const [imageIndex, setImageIndex] = useState(0)
-  const image = landscapeImageCandidates(episode, THUMBNAIL_WIDTH)[imageIndex]
+  const image = protectedEpisode ? undefined : landscapeImageCandidates(episode, THUMBNAIL_WIDTH)[imageIndex]
   const progress = progressFraction(episode)
   const runtime = formatRuntime(episode.runtimeTicks)
   const rating = formatCommunityRating(episode.communityRating)

@@ -13,10 +13,10 @@ export default function SettingsSaveBar({ dirty, saving, saveDisabled, onSave, o
 }) {
   useSettingsDraftGuard(dirty, saving)
   return (
-    <div className="settings-save-bar">
+    <div className="settings-save-bar" data-dirty={dirty}>
       <div className="flex min-w-0 items-center gap-2 text-sm">
         {restartMessage && <AlertTriangle className="size-4 shrink-0 text-primary" />}
-        <span role="status">{restartMessage ?? (dirty ? "You have unsaved changes." : "No unsaved changes.")}</span>
+        <span role="status">{restartMessage ?? (dirty ? "You have unsaved changes." : "")}</span>
       </div>
       <div className="flex shrink-0 gap-2">
         <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}><Undo2 /> Reset</Button>

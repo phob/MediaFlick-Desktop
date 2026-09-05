@@ -630,9 +630,8 @@ export default function Discover() {
   return (
     <div className="flex min-h-full min-w-0 flex-col">
       <PageHeader
-        eyebrow="Beyond your library"
-        title="Find your next obsession"
-        description="Explore Seerr’s catalogue by what’s trending, what’s next, and the genres you care about—then request it without leaving MediaFlick."
+        eyebrow="Seerr"
+        title="Discover"
       />
       <div className="flex min-w-0 flex-col gap-7 px-6 pb-10 sm:px-10 lg:px-14">
         <form

@@ -197,6 +197,44 @@ impl ControllerState {
         self.last_position_log_bucket = None;
     }
 
+    fn apply_subtitle_appearance(&self) {
+        if self.runtime_kind == crate::players::mpv::runtime::MpvRuntimeKind::Library {
+            let comfort = crate::preferences::AppSettings::load().comfort;
+            for (property, value) in [
+                (
+                    "sub-scale",
+                    serde_json::json!(f64::from(comfort.subtitle_size) / 100.0),
+                ),
+                (
+                    "sub-border-size",
+                    serde_json::json!(comfort.subtitle_outline),
+                ),
+                (
+                    "sub-back-color",
+                    serde_json::json!(format!(
+                        "#{}000000",
+                        format_args!("{:02X}", u16::from(comfort.subtitle_background) * 255 / 100)
+                    )),
+                ),
+                (
+                    "sub-border-style",
+                    serde_json::json!(if comfort.subtitle_background > 0 {
+                        "background-box"
+                    } else {
+                        "outline-and-shadow"
+                    }),
+                ),
+                ("sub-pos", serde_json::json!(comfort.subtitle_position)),
+            ] {
+                if let Err(error) = self.send_mpv_command(
+                    serde_json::json!({"command": ["set_property", property, value]}),
+                ) {
+                    tracing::warn!(target: "playback", ?error, property, "could not apply subtitle appearance");
+                }
+            }
+        }
+    }
+
     pub(super) fn activate_pending(&mut self) {
         let Some(pending) = self.pending.take() else {
             tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
@@ -210,6 +248,7 @@ impl ControllerState {
             state = %self.last_state,
             "activating pending playback"
         );
+        self.apply_subtitle_appearance();
         self.last_state.position_ticks = pending
             .launch
             .start_seconds()

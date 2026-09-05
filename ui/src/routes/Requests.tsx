@@ -134,8 +134,7 @@ export default function Requests() {
     <div className="flex min-h-full min-w-0 flex-col">
       <PageHeader
         eyebrow="Seerr"
-        title="Your requests"
-        description="Track approvals, downloads, and the titles that have landed in your library."
+        title="Requests"
         contentClassName="max-w-6xl"
         actions={
           <Tabs value={filter} onValueChange={setFilter}>

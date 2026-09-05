@@ -8,6 +8,8 @@ const DEFAULT_LOG_LEVEL: &str = "debug";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+    #[serde(default)]
+    pub comfort: super::PlayerComfort,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jellyfin_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -515,6 +517,7 @@ impl WebUiWindowSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            comfort: super::PlayerComfort::default(),
             jellyfin_url: None,
             mpv_path: None,
             player_backend: None,
@@ -597,6 +600,9 @@ impl AppSettings {
         self.log_level = self.log_level.trim().to_string();
         if self.log_level.is_empty() {
             self.log_level = DEFAULT_LOG_LEVEL.to_string();
+        }
+        if self.comfort.validate().is_err() {
+            self.comfort = super::PlayerComfort::default();
         }
         self.webui_window.sanitize();
         self.appearance.sanitize();

@@ -1,3 +1,5 @@
+import { ViewingContext, useViewing } from "@/lib/viewing"
+import { ViewingSync } from "@/components/ViewingSync"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { LoadingScreen } from "@/components/LoadingScreen"
@@ -31,6 +33,7 @@ import Settings, { AppearanceSync } from "@/routes/Settings"
 export default function App() {
   const { data: status, isPending } = useStatus()
   const settings = useSettings()
+  const viewing = useViewing()
   const location = useLocation()
   const waitingForLibrary = Boolean(
     status?.authenticated && !(status.libraryReady ?? status.bootstrapped),
@@ -56,7 +59,7 @@ export default function App() {
   })
 
   return (
-    <>
+    <ViewingContext value={viewing.data ?? null}>
       {isPending || (waitingForLibrary && !showingSettings) ? (
         <div className="h-full bg-background" aria-hidden />
       ) : !showShell ? (
@@ -128,6 +131,7 @@ export default function App() {
       />
       <WindowTitleSync />
       <AppearanceSync />
-    </>
+      <ViewingSync />
+    </ViewingContext>
   )
 }

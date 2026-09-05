@@ -1,3 +1,4 @@
+import { DEFAULT_COMFORT, useSpoilerProtection } from "@/lib/viewing"
 import {
   AudioLines,
   Captions,
@@ -66,8 +67,6 @@ import { patchPlayerState } from "@/lib/query-client"
 const SUBTITLES_OFF = "__off__"
 const TIME_DISPLAY_KEY = "mediaflick.player.time-display"
 const TICKS_PER_MS = 10_000
-const SEEK_BACK_MS = 10_000
-const SEEK_FORWARD_MS = 30_000
 
 function savedTimeDisplay() {
   try {
@@ -478,6 +477,9 @@ function ActivePlayerBar({
   const neighborPlayback = usePlayNeighbor()
   const qualityChange = useChangePlaybackQuality()
   const settings = useSettings()
+  const comfort = settings.data?.client.player.playerBackend === "libmpv" ? settings.data.client.playback.comfort ?? DEFAULT_COMFORT : DEFAULT_COMFORT
+  const seekBackMs = comfort.seekBackSeconds * 1000
+  const seekForwardMs = comfort.seekForwardSeconds * 1000
   const [scrubMs, setScrubMs] = useState<number | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [showRemaining, setShowRemaining] = useState(
@@ -485,12 +487,13 @@ function ActivePlayerBar({
   )
   const [volumeDraft, setVolumeDraft] = useState<number | null>(null)
   const [qualityOverride, setQualityOverride] = useState<StreamingQualityId | null>(null)
-  const [tuning, setTuning] = useState(DEFAULT_TUNING)
+  const [tuning, setTuning] = useState(() => ({...DEFAULT_TUNING, subtitleScale:String(comfort.subtitleSize / 100)}))
   const feedbackTimer = useRef<number | undefined>(undefined)
   const itemId = player.itemId ?? undefined
   const { data: item } = useItem(itemId)
   const media = useMediaInfo(itemId)
   const neighbors = usePlaybackNeighbors(itemId, item?.kind === "Episode")
+  const hideNextTitle = useSpoilerProtection(neighbors.data?.next ?? undefined)
 
   useEffect(
     () => () => {
@@ -604,20 +607,22 @@ function ActivePlayerBar({
       ) {
         return
       }
+      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || target?.closest("[role=dialog], [role=menu], [role=listbox]")) return
       const key = event.key.toLowerCase()
-      if (key === " " || key === "k") {
+      if (key === " " && target?.closest("button, a")) return
+      if (key === " " || key === comfort.pauseKey) {
         event.preventDefault()
         togglePause()
       } else if (key === "arrowleft" || key === "j") {
         event.preventDefault()
-        relativeSeek(-SEEK_BACK_MS)
+        relativeSeek(-seekBackMs)
       } else if (key === "arrowright" || key === "l") {
         event.preventDefault()
-        relativeSeek(SEEK_FORWARD_MS)
-      } else if (key === "m") {
+        relativeSeek(seekForwardMs)
+      } else if (key === comfort.muteKey) {
         event.preventDefault()
         toggleMute()
-      } else if (key === "f" && player.capabilities?.fullscreen !== false) {
+      } else if (key === comfort.fullscreenKey && player.capabilities?.fullscreen !== false) {
         event.preventDefault()
         send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
       }
@@ -681,9 +686,9 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title="Back 10 seconds (Left or J)"
-        aria-label="Back 10 seconds"
-        onClick={() => relativeSeek(-SEEK_BACK_MS)}
+        title={`Back ${comfort.seekBackSeconds} seconds (Left or J)`}
+        aria-label={`Back ${comfort.seekBackSeconds} seconds`}
+        onClick={() => relativeSeek(-seekBackMs)}
         className="hidden sm:inline-flex"
       >
         <Rewind className="size-4" />
@@ -691,7 +696,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title={paused ? "Resume (Space or K)" : "Pause (Space or K)"}
+        title={`${paused ? "Resume" : "Pause"} (Space or ${comfort.pauseKey.toUpperCase()})`}
         aria-label={paused ? "Resume" : "Pause"}
         onClick={togglePause}
       >
@@ -700,9 +705,9 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title="Forward 30 seconds (Right or L)"
-        aria-label="Forward 30 seconds"
-        onClick={() => relativeSeek(SEEK_FORWARD_MS)}
+        title={`Forward ${comfort.seekForwardSeconds} seconds (Right or L)`}
+        aria-label={`Forward ${comfort.seekForwardSeconds} seconds`}
+        onClick={() => relativeSeek(seekForwardMs)}
         className="hidden sm:inline-flex"
       >
         <FastForward className="size-4" />
@@ -710,7 +715,7 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={neighbors.data?.next ? `Next: ${neighbors.data.next.name}` : "No next episode"}
+        title={neighbors.data?.next ? `Next: ${hideNextTitle ? "Unwatched episode" : neighbors.data.next.name}` : "No next episode"}
         aria-label="Next episode"
         disabled={!neighbors.data?.next || neighborPlayback.isPending}
         onClick={() => itemId && neighborPlayback.mutate({ itemId, direction: "next" })}
@@ -920,8 +925,8 @@ function ActivePlayerBar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="end" sideOffset={10} className="w-64">
-          <DropdownMenuItem onSelect={() => relativeSeek(-SEEK_BACK_MS)}>Back 10 seconds</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => relativeSeek(SEEK_FORWARD_MS)}>Forward 30 seconds</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => relativeSeek(-seekBackMs)}>Back {comfort.seekBackSeconds} seconds</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => relativeSeek(seekForwardMs)}>Forward {comfort.seekForwardSeconds} seconds</DropdownMenuItem>
           <DropdownMenuItem disabled={!neighbors.data?.previous} onSelect={() => itemId && neighborPlayback.mutate({ itemId, direction: "previous" })}>
             Previous episode
           </DropdownMenuItem>
@@ -999,5 +1004,5 @@ function ActivePlayerBar({
 export function PlayerBar({ onMenuOpenChange }: { onMenuOpenChange?: (open: boolean) => void }) {
   const { data: player } = usePlayerState()
   if (!player?.active) return null
-  return <ActivePlayerBar player={player} onMenuOpenChange={onMenuOpenChange} />
+  return <ActivePlayerBar key={player.playbackId ?? player.itemId} player={player} onMenuOpenChange={onMenuOpenChange} />
 }

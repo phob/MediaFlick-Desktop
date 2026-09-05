@@ -1,4 +1,6 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { api } from "@/lib/api"
+import { DEFAULT_COMFORT, DEFAULT_VIEWING } from "@/lib/viewing"
+import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react"
 import { Route, Routes, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
@@ -30,7 +32,7 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
       markWatchedNext: null,
       playerConfigured: true,
     },
-    playback: {
+    playback: { comfort: DEFAULT_COMFORT,
       streamingQuality: "original",
       skipIntro: "disabled",
       skipCredits: "disabled",
@@ -64,6 +66,7 @@ function LocationProbe() {
 function renderAppearance(cardPreviews: boolean, authenticated = true) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
+  client.setQueryData(["viewing", "anonymous:anonymous"], DEFAULT_VIEWING)
   client.setQueryData(queryKeys.status, { authenticated })
   client.setQueryData(queryKeys.home, {
     continueWatching: [],
@@ -209,4 +212,30 @@ describe("appearance settings live preview", () => {
     // The quick actions stay on the card instead, revealed by the same hover.
     expect(document.querySelector(".appearance-preview-shelf .card-inline-actions")).not.toBeNull()
   })
+})
+
+
+test("preview delay shares the preview toggle's Save, Reset, and Discard workflow", async () => {
+  vi.useRealTimers()
+  renderAppearance(false)
+  const input = screen.getByRole("spinbutton", {name:"Card preview delay"}) as HTMLInputElement
+  expect(input.disabled).toBe(true)
+  fireEvent.click(screen.getByRole("switch", {name:"Show pop-out previews on cards"}))
+  expect(input.disabled).toBe(false)
+  fireEvent.change(input, {target:{value:"850"}})
+  fireEvent.click(screen.getByRole("button", {name:"Discard"}))
+  expect(input.value).toBe("550")
+  expect(input.disabled).toBe(true)
+  fireEvent.click(screen.getByRole("switch", {name:"Show pop-out previews on cards"}))
+  fireEvent.change(input, {target:{value:"850"}})
+  vi.spyOn(api.settingsPatch, "appearance").mockImplementation(async (appearance) => ({...settings(true), appearance: {...settings(true).appearance, ...appearance}}))
+  vi.spyOn(api, "viewing").mockResolvedValue({...DEFAULT_VIEWING, textScale:125})
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({previewDelayMs:850, textScale:125})))
+  await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
+  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  expect(input.value).toBe("550")
+  fireEvent.click(screen.getByRole("button", {name:"Discard"}))
+  expect(input.value).toBe("850")
 })

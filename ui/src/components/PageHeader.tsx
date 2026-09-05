@@ -5,13 +5,11 @@ import { cn } from "@/lib/utils"
 export function PageHeader({
   eyebrow,
   title,
-  description,
   actions,
   contentClassName,
 }: {
   eyebrow: string
   title: string
-  description?: string
   actions?: ReactNode
   /** Keeps page actions on the same content canvas as a constrained body. */
   contentClassName?: string
@@ -24,16 +22,9 @@ export function PageHeader({
             <span className="size-1.5 rounded-full bg-primary" aria-hidden />
             {eyebrow}
           </p>
-          <div className="space-y-2">
-            <h1 className="text-3xl leading-none font-black tracking-[-0.035em] text-balance sm:text-4xl">
-              {title}
-            </h1>
-            {description && (
-              <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-                {description}
-              </p>
-            )}
-          </div>
+          <h1 className="text-3xl leading-none font-black tracking-[-0.035em] text-balance sm:text-4xl">
+            {title}
+          </h1>
         </div>
         {actions}
       </div>

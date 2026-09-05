@@ -1,3 +1,5 @@
+import { SubtitlePreview } from "@/components/SubtitlePreview"
+import { DEFAULT_VIEWING, DEFAULT_COMFORT, useViewing } from "@/lib/viewing"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
@@ -62,6 +64,7 @@ import {
   homeSettingsWrite,
   playerSettingsWrite,
   type AppearanceSettings,
+  type ViewingSettings,
   type ClientSettings,
   type CompanionService,
   type HomeConfiguration,
@@ -90,6 +93,7 @@ const NAVIGATION: SettingsPage[] = [
   { to: "/settings/client/player", title: "Player", icon: Play, group: "Client" },
   { to: "/settings/client/playback", title: "Playback", icon: SlidersHorizontal, group: "Client" },
   { to: "/settings/client/application", title: "Application", icon: Monitor, group: "Client" },
+  { to: "/settings/viewing", title: "Viewing", icon: SlidersHorizontal, signedIn: true, group: "Account" },
   { to: "/settings/home", title: "Home", icon: House, signedIn: true, group: "Account" },
   { to: "/settings/appearance", title: "Appearance", icon: Palette, signedIn: true, group: "Account" },
   { to: "/settings/collections", title: "Collections", icon: Layers, signedIn: true, group: "Account" },
@@ -113,7 +117,7 @@ function SettingsRow({
   children,
 }: {
   title: string
-  description: string
+  description?: string
   controlId?: string
   children: ReactNode
 }) {
@@ -121,7 +125,7 @@ function SettingsRow({
     <div className="settings-row">
       <div className="min-w-0">
         <h3 className="font-medium">{controlId ? <Label htmlFor={controlId}>{title}</Label> : title}</h3>
-        <p id={controlId ? `${controlId}-help` : undefined} className="mt-1 text-sm text-muted-foreground">{description}</p>
+        {description && <p id={controlId ? `${controlId}-help` : undefined} className="mt-1 text-sm text-muted-foreground">{description}</p>}
       </div>
       <div className="settings-control">{children}</div>
     </div>
@@ -215,7 +219,7 @@ function SelectField<const Value extends string>({
   )
 }
 
-function Section({ title, description, children }: { title: string; description: string; children: ReactNode }) {
+function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
     <Card>
       <CardHeader>
@@ -234,7 +238,7 @@ function SettingsLoading() {
 function SettingsError({ title = "Settings unavailable", error, onRetry }: { title?: string; error: Error; onRetry: () => void }) {
   return (
     <div className="settings-page">
-      <PageTitle title={title} detail="MediaFlick could not load the saved state for this page." />
+      <PageTitle title={title} />
       <Section title="Could not load settings" description={error.message}>
         <Button variant="outline" onClick={onRetry}><RefreshCw /> Try again</Button>
       </Section>
@@ -242,8 +246,8 @@ function SettingsError({ title = "Settings unavailable", error, onRetry }: { tit
   )
 }
 
-function PageTitle({ title, detail }: { title: string; detail: string }) {
-  return <header className="settings-page-title"><h1>{title}</h1><p>{detail}</p></header>
+function PageTitle({ title }: { title: string }) {
+  return <header className="settings-page-title"><h1>{title}</h1></header>
 }
 
 function useShellEvents(listener: (event: ShellEvent) => void) {
@@ -390,7 +394,7 @@ function PlayerSettings() {
     : install.state === "failed" ? install.message : undefined
   return (
     <div className="settings-page">
-      <PageTitle title="Player" detail="Use MediaFlick's built-in player or hand playback to an external app." />
+      <PageTitle title="Player" />
       <Section title="Playback backend" description="The built-in libmpv player works without a separate mpv installation.">
         <SettingsRow title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
           <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
@@ -428,7 +432,7 @@ function PlaybackSettings() {
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
   const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }] as const
-  return <div className="settings-page"><PageTitle title="Playback" detail="Set your default stream quality and handling for detected media segments." />
+  return <div className="settings-page"><PageTitle title="Playback" />
     <Section title="Streaming quality" description="Original sends the source unchanged; lower quality permits transcoding when needed.">
       <SettingsRow title="Default quality" description="You can still override this for an individual play."><SelectField label="Default streaming quality" value={draft.streamingQuality} onValueChange={(value) => update("streamingQuality", value)} options={[{ value: "original", label: "Original" }, { value: "auto", label: "Auto" }, { value: "120_mbps", label: "120 Mbps" }, { value: "80_mbps", label: "80 Mbps" }, { value: "60_mbps", label: "60 Mbps" }, { value: "40_mbps", label: "40 Mbps" }, { value: "20_mbps", label: "20 Mbps" }, { value: "10_mbps", label: "10 Mbps" }, { value: "5_mbps", label: "5 Mbps" }, { value: "3_mbps", label: "3 Mbps" }, { value: "1_5_mbps", label: "1.5 Mbps" }]} /></SettingsRow>
     </Section>
@@ -438,7 +442,16 @@ function PlaybackSettings() {
       <SettingsRow title="Recaps" description="Choose what happens when a recap marker is reached."><SelectField label="Recap skipping" value={draft.skipRecap} onValueChange={(value) => update("skipRecap", value)} options={choices} /></SettingsRow>
       <SettingsRow title="Commercials" description="Choose what happens when a commercial marker is reached."><SelectField label="Commercial skipping" value={draft.skipCommercial} onValueChange={(value) => update("skipCommercial", value)} options={choices} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
+    {settings.client.player.playerBackend === "libmpv" && <Section title="Built-in player comfort" description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance.">
+      <SubtitlePreview comfort={draft.comfort ?? DEFAULT_COMFORT} />
+      {([
+        ["subtitleSize", "Subtitle size (%)", 50, 200], ["subtitleOutline", "Subtitle outline", 0, 8],
+        ["subtitleBackground", "Subtitle background (%)", 0, 100], ["subtitlePosition", "Subtitle vertical position", 0, 100],
+        ["seekBackSeconds", "Seek backward seconds", 1, 120], ["seekForwardSeconds", "Seek forward seconds", 1, 120],
+      ] as const).map(([key, label, min, max]) => <SettingsRow key={key} title={label}><Input aria-label={label} type="number" min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:Number(event.target.value)}})} /></SettingsRow>)}
+      {([ ["pauseKey", "Pause key"], ["muteKey", "Mute key"], ["fullscreenKey", "Fullscreen key"] ] as const).map(([key, label]) => <SettingsRow key={key} title={label} description="One unique letter, except J/L/Q/V and the mark-watched key. Space pauses; arrows and J/L seek."><Input aria-label={label} maxLength={1} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:event.target.value.toLowerCase()}})} /></SettingsRow>)}
+    </Section>}
+    <SaveBar dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ comfort: {...DEFAULT_COMFORT}, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
   </div>
 }
 
@@ -461,7 +474,7 @@ function ApplicationSettings() {
   })
   if (settingsQuery.error && !settings) return <SettingsError title="Application settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
-  return <div className="settings-page"><PageTitle title="Application" detail="Control window behavior and the diagnostics recorded by the desktop client." />
+  return <div className="settings-page"><PageTitle title="Application" />
     {(settings.recoveries?.length ?? 0) > 0 && <Section title="Recovered local settings" description="MediaFlick preserved each damaged file before continuing.">
       {settings.recoveries?.map((recovery) => <p key={recovery.area} className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
         {recovery.area}: {recovery.restoredBackup ? "the last valid backup was restored." : "defaults are in use because no valid backup was available."}
@@ -529,7 +542,7 @@ const PREVIEW_DEPENDENCIES: PreviewDependencies = {
  */
 const PANEL_HOST = document.createElement("div")
 
-function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
+function AppearancePreview({ appearance, previewDelay }: { appearance: AppearanceSettings; previewDelay?: number }) {
   const systemReducedMotion = usePrefersReducedMotion()
   const reducedMotion = systemReducedMotion || appearance.reducedMotion
   const home = useHome()
@@ -602,6 +615,7 @@ function AppearancePreview({ appearance }: { appearance: AppearanceSettings }) {
       </figcaption>
       <PreviewProvider
         enabled={appearance.cardPreviews}
+        delay={previewDelay}
         container={PANEL_HOST}
         dependencies={PREVIEW_DEPENDENCIES}
       >
@@ -667,19 +681,46 @@ export function Appearance() {
   const statusQuery = useStatus()
   const { data: status } = statusQuery
   const settingsQuery = useSettings()
+  const viewing = useViewing()
+  const cache = useQueryClient()
+  const account = collectionAccountKey(status)
+  const [previewDelay, setPreviewDelay, , acceptDelay] = useSourceDraft(viewing.data?.previewDelayMs, account)
   const ratingsQuery = useRatingsStatus(Boolean(status?.authenticated))
   const { data: settings } = settingsQuery
   const { data: ratings } = ratingsQuery
   const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.appearance, collectionAccountKey(status))
-  const mutation = useMutation({ mutationFn: (value: AppearanceSettings) => api.settingsPatch.appearance(value), onSuccess: (saved, submitted) => { acceptSaved(saved.appearance, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
+  const mutation = useMutation({
+    mutationFn: async (submitted: { appearance: AppearanceSettings; previewDelay: number | undefined }) => {
+      const checkAccount = () => {
+        if (collectionAccountKey(cache.getQueryData<Status>(queryKeys.status)) !== account) throw new Error("The signed-in account changed. Save these settings again.")
+      }
+      checkAccount()
+      if (!same(submitted.appearance, settings?.appearance)) {
+        const saved = await api.settingsPatch.appearance(submitted.appearance)
+        checkAccount()
+        cache.setQueryData(queryKeys.settings, saved)
+        acceptSaved(saved.appearance, submitted.appearance)
+      }
+      if (submitted.previewDelay !== undefined && submitted.previewDelay !== viewing.data?.previewDelayMs) {
+        const current = await api.viewing()
+        checkAccount()
+        const saved = await api.saveViewing({ ...current, previewDelayMs: submitted.previewDelay })
+        checkAccount()
+        cache.setQueryData(["viewing", account], saved)
+        acceptDelay(saved.previewDelayMs, submitted.previewDelay)
+      }
+    },
+    onSuccess: () => toast.success("Appearance settings saved"),
+    onError: (error: Error) => toast.error(error.message),
+  })
   if (statusQuery.error && !status) return <SettingsError title="Appearance unavailable" error={statusQuery.error} onRetry={() => void statusQuery.refetch()} />
   if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Appearance" />
   if (settingsQuery.error && !settings) return <SettingsError title="Appearance settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
-  return <div className="settings-page"><PageTitle title="Appearance" detail="Tune MediaFlick for this Jellyfin account without changing library or server settings." />
+  return <div className="settings-page"><PageTitle title="Appearance" />
     <Section title="Live preview" description="Your own shelves with your unsaved choices applied here only; the rest of MediaFlick changes after Save.">
-      <AppearancePreview appearance={draft} />
+      <AppearancePreview appearance={draft} previewDelay={previewDelay} />
     </Section>
     <Section title="Theme" description="System follows the current operating-system color preference.">
       <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
@@ -689,6 +730,10 @@ export function Appearance() {
     <Section title="Cards" description="Choose how library cards behave and what they show.">
       <SettingsRow title="Card previews" description="Open a larger panel after resting the pointer on a card. When off, Play, My List, and watched buttons stay on the card.">
         <Switch aria-label="Show pop-out previews on cards" checked={draft.cardPreviews} onCheckedChange={(cardPreviews) => setDraft({ ...draft, cardPreviews })} />
+      </SettingsRow>
+      <SettingsRow controlId="card-preview-delay" title="Card preview delay" description="Milliseconds before a card preview opens.">
+        <Input id="card-preview-delay" aria-label="Card preview delay" type="number" min={200} max={2000} step={50} disabled={!draft.cardPreviews || previewDelay === undefined} value={previewDelay ?? ""} onChange={(event) => setPreviewDelay(Number(event.target.value))} />
+        {viewing.error && <Button variant="ghost" onClick={() => void viewing.refetch()}>Retry loading delay</Button>}
       </SettingsRow>
       <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
         <Switch aria-label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
@@ -716,7 +761,7 @@ export function Appearance() {
       <SettingsRow controlId="backdrop-intensity" title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider id="backdrop-intensity" aria-label="Backdrop intensity" aria-describedby="backdrop-intensity-help" aria-valuetext={`${draft.backdropIntensity} percent`} className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.appearance)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.appearance)} onReset={() => setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] })} />
+    <SaveBar dirty={!same(draft, settings.appearance) || previewDelay !== viewing.data?.previewDelayMs} saving={mutation.isPending} onSave={() => mutation.mutate({ appearance: draft, previewDelay })} onDiscard={() => { setDraft(settings.appearance); setPreviewDelay(viewing.data?.previewDelayMs) }} onReset={() => { if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs); setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] }) }} />
   </div>
 }
 
@@ -848,7 +893,7 @@ function HomeSettingsPage() {
   const slots = remaining.length + (dragging ? 1 : 0)
 
   return <div className="settings-page">
-    <PageTitle title="Home" detail="Choose and order the shelves shown for this Jellyfin account." />
+    <PageTitle title="Home" />
     <Section title="Billboard" description="The billboard stays fixed above every shelf.">
       <SettingsRow title="Show billboard" description="Rotate a small selection of titles with landscape artwork.">
         <Checkbox checked={draft.billboard} onCheckedChange={(checked) => setDraft({ ...draft, billboard: checked === true })} aria-label="Show billboard" />
@@ -938,8 +983,59 @@ function HomeSettingsPage() {
   </div>
 }
 
+function ViewingPreferences() {
+  const query = useViewing()
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(query.data, account)
+  const [audioText, setAudioText, , acceptAudio] = useSourceDraft(query.data?.audioLanguages.join(", "), account)
+  const [subtitleText, setSubtitleText, , acceptSubtitles] = useSourceDraft(query.data?.subtitleLanguages.join(", "), account)
+  const save = useMutation({
+    mutationFn: api.saveViewing,
+    onSuccess: (saved, submitted) => {
+      queryClient.setQueryData(["viewing", account], saved)
+      acceptSaved(saved, submitted)
+      acceptAudio(saved.audioLanguages.join(", "), submitted.audioLanguages.join(", "))
+      acceptSubtitles(saved.subtitleLanguages.join(", "), submitted.subtitleLanguages.join(", "))
+      toast.success("Viewing settings saved")
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  if (!status?.authenticated) return <SignInRequired name="Viewing" />
+  if (query.error && !draft) return <SettingsError error={query.error} onRetry={() => void query.refetch()} />
+  if (!draft) return <SettingsLoading />
+  const update = <K extends keyof ViewingSettings>(key: K, value: ViewingSettings[K]) => setDraft({ ...draft, [key]: value })
+  return <div className="settings-page">
+    <PageTitle title="Viewing" />
+    <Section title="Episodes">
+      <SettingsRow title="Spoiler protection" description="Hide unwatched episode titles, artwork, and summaries. Reveal them on the episode details page."><Switch aria-label="Spoiler protection" checked={draft.spoilerProtection} onCheckedChange={(value) => update("spoilerProtection", value)} /></SettingsRow>
+      <SettingsRow title="Next episode"><SelectField label="Next episode" value={draft.nextEpisode} onValueChange={(value) => update("nextEpisode", value)} options={[{value:"off",label:"Off"},{value:"ask",label:"Ask with countdown"},{value:"auto",label:"Automatically play"}]} /></SettingsRow>
+      <SettingsRow title="Countdown seconds"><Input aria-label="Countdown seconds" type="number" min={3} max={60} value={draft.countdownSeconds} onChange={(event) => update("countdownSeconds", Number(event.target.value))} /></SettingsRow>
+      <SettingsRow title="Episode limit" description="Stop continuous playback after this many episodes. Zero means unlimited; starting a title manually begins a new session."><Input aria-label="Episode limit" type="number" min={0} max={20} value={draft.episodeLimit} onChange={(event) => update("episodeLimit", Number(event.target.value))} /></SettingsRow>
+      <SettingsRow title="Resume rewind"><SelectField label="Resume rewind" value={String(draft.resumeRewindSeconds)} onValueChange={(value) => update("resumeRewindSeconds", Number(value))} options={[0,5,10,30].map((value) => ({value:String(value),label:`${value} seconds`}))} /></SettingsRow>
+    </Section>
+    <Section title="Languages" description="Use language codes in preference order, separated by commas (for example en, de, ja). Individual title choices take priority.">
+      <SettingsRow title="Audio languages"><Input aria-label="Audio languages" value={audioText ?? ""} onChange={(event) => setAudioText(event.target.value)} /></SettingsRow>
+      <SettingsRow title="Prefer original audio" description="Prefer a track explicitly labeled original when available."><Switch aria-label="Prefer original audio" checked={draft.preferOriginalAudio} onCheckedChange={(value) => update("preferOriginalAudio", value)} /></SettingsRow>
+      <SettingsRow title="Subtitle languages"><Input aria-label="Subtitle languages" value={subtitleText ?? ""} onChange={(event) => setSubtitleText(event.target.value)} /></SettingsRow>
+      <SettingsRow title="Subtitles"><SelectField label="Subtitles" value={draft.subtitleMode} onValueChange={(value) => update("subtitleMode", value)} options={[{value:"server",label:"Jellyfin default"},{value:"off",label:"Off"},{value:"forced",label:"Forced only"},{value:"always",label:"Always"},{value:"foreignAudio",label:"When audio differs from preferred languages"}]} /></SettingsRow>
+    </Section>
+    <Section title="Browsing">
+      <SettingsRow title="Text size"><Input aria-label="Text size percent" type="number" min={80} max={150} value={draft.textScale} onChange={(event) => update("textScale", Number(event.target.value))} /></SettingsRow>
+      <SettingsRow title="Poster width"><SelectField label="Poster width" value={String(draft.posterSize)} onValueChange={(value) => update("posterSize", Number(value))} options={[...([120,144,168,200,240].includes(draft.posterSize) ? [] : [{value:String(draft.posterSize),label:`Current — ${draft.posterSize} px`,disabled:true}]), {value:"120",label:"Small — 120 px"},{value:"144",label:"Medium — 144 px"},{value:"168",label:"Default — 168 px"},{value:"200",label:"Large — 200 px"},{value:"240",label:"Extra large — 240 px"}]} /></SettingsRow>
+      <SettingsRow title="Startup destination"><SelectField label="Startup destination" value={draft.startupDestination} onValueChange={(value) => update("startupDestination", value)} options={[{value:"home",label:"Home"},{value:"movies",label:"Movies"},{value:"series",label:"Series"},{value:"calendar",label:"Calendar"},{value:"last",label:"Last browsing page"}]} /></SettingsRow>
+      <SettingsRow title="Remember library filters" description="Keep separate sort and filters for Movies and Series."><Switch aria-label="Remember library filters" checked={draft.rememberFilters} onCheckedChange={(value) => update("rememberFilters", value)} /></SettingsRow>
+      <SettingsRow title="Hide watched by default"><Switch aria-label="Hide watched by default" checked={draft.hideWatched} onCheckedChange={(value) => update("hideWatched", value)} /></SettingsRow>
+    </Section>
+    <SaveBar dirty={!same(draft, query.data) || audioText !== query.data?.audioLanguages.join(", ") || subtitleText !== query.data?.subtitleLanguages.join(", ")} saving={save.isPending}
+      onSave={() => { const submitted = {...draft, audioLanguages:(audioText ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean), subtitleLanguages:(subtitleText ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)}; setDraft(submitted); setAudioText(submitted.audioLanguages.join(", ")); setSubtitleText(submitted.subtitleLanguages.join(", ")); save.mutate(submitted) }}
+      onDiscard={() => { setDraft(query.data); setAudioText(query.data?.audioLanguages.join(", ")); setSubtitleText(query.data?.subtitleLanguages.join(", ")) }}
+      onReset={() => { setDraft({...DEFAULT_VIEWING, previewDelayMs:query.data?.previewDelayMs ?? DEFAULT_VIEWING.previewDelayMs}); setAudioText(""); setSubtitleText("") }} />
+  </div>
+}
+
 function SignInRequired({ name }: { name: string }) {
-  return <div className="settings-page"><PageTitle title={name} detail="This configuration belongs to the signed-in Jellyfin account." /><Section title="Sign in required" description={`Sign in to your Jellyfin server to view or configure ${name}.`}><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
+  return <div className="settings-page"><PageTitle title={name} /><Section title="Sign in required" description={`Sign in to your Jellyfin server to view or configure ${name}.`}><Button asChild><RouterLink to="/">Go to sign in</RouterLink></Button></Section></div>
 }
 
 function Letterboxd() {
@@ -1014,7 +1110,7 @@ function Letterboxd() {
   if (statusQuery.isPending) return <SettingsLoading />
   if (!status?.authenticated) return <SignInRequired name="Letterboxd" />
   const dirty = Boolean(entry.trim() || additions.length || removals.length || enabledDraft && savedEnabled && !same(enabledDraft, savedEnabled))
-  return <div className="settings-page"><PageTitle title="Letterboxd" detail="Connect public profiles using Letterboxd's public RSS feed. No credentials are stored." />
+  return <div className="settings-page"><PageTitle title="Letterboxd" />
     <fieldset disabled={save.isPending} className="min-w-0 space-y-5">
       <legend className="sr-only">Letterboxd profiles</legend>
       <Section title="Add profile" description="Profiles are verified and connected when you save.">
@@ -1137,7 +1233,7 @@ export function CompanionIntegration() {
     ? COMPANION_FEATURES.filter((feature) => capabilities.includes(feature.requires) && !capabilities.includes(feature.capability))
     : []
 
-  return <div className="settings-page"><PageTitle title="MediaFlick Companion" detail="Server-managed integrations available to this Jellyfin account." />
+  return <div className="settings-page"><PageTitle title="MediaFlick Companion" />
     <Section title="Plugin" description="Administrators configure these services in Jellyfin's MediaFlick Companion dashboard.">
       <SettingsRow title="Connection" description={pluginDescription}><Availability available={companion.available} /></SettingsRow>
     </Section>
@@ -1193,5 +1289,5 @@ export function AppearanceSync() {
 
 export default function Settings() {
   const { data: status } = useStatus()
-  return <SettingsDraftGuard key={collectionAccountKey(status)}><div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div></SettingsDraftGuard>
+  return <SettingsDraftGuard key={collectionAccountKey(status)}><div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="viewing" element={<ViewingPreferences />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div></SettingsDraftGuard>
 }

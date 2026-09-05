@@ -1,3 +1,4 @@
+import { useViewing } from "@/lib/viewing"
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { useLocation, useNavigationType } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
@@ -186,6 +187,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar)
   const settings = useSettings()
   const player = usePlayerState()
+  const viewing = useViewing()
   const cardPreviews = settings.data?.appearance.cardPreviews !== false
   const integratedPlayback = Boolean(
     settings.data?.capabilities.integratedLibmpvOverlay &&
@@ -219,7 +221,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* Wraps the routed content because every card that can expand is in
               it. The panel itself is portalled to the body, so this subtree's
               clipping — `content-viewport` and the rails — does not reach it. */}
-          <PreviewProvider enabled={cardPreviews}>{children}</PreviewProvider>
+          <PreviewProvider enabled={cardPreviews} delay={viewing.data?.previewDelayMs}>{children}</PreviewProvider>
         </RouteScrollViewport>
         <PlayerBar />
       </SidebarInset>

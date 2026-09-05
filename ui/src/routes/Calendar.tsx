@@ -1,3 +1,4 @@
+import { useViewing } from "@/lib/viewing"
 import {
   CalendarDays,
   ChevronLeft,
@@ -132,7 +133,9 @@ function EntryActions({ entry }: { entry: CalendarEntry }) {
   return null
 }
 
-function Entry({ entry, compact = false }: { entry: CalendarEntry; compact?: boolean }) {
+function Entry({ entry: originalEntry, compact = false }: { entry: CalendarEntry; compact?: boolean }) {
+  const viewing = useViewing()
+  const entry = originalEntry.kind === "episode" && viewing.data?.spoilerProtection !== false ? {...originalEntry, title: originalEntry.seriesTitle ?? "Upcoming episode"} : originalEntry
   return (
     <article
       className={cn(
@@ -314,7 +317,6 @@ export default function Calendar() {
       <PageHeader
         eyebrow="Release calendar"
         title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
-        description="Upcoming episodes and movie release dates, joined to what is already in your library."
         contentClassName={view === "agenda" ? "max-w-6xl" : undefined}
         actions={
           <div className="flex items-center gap-2">

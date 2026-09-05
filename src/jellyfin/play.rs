@@ -33,6 +33,7 @@ pub struct PlayOptions {
     pub audio_stream_index: Option<i64>,
     pub subtitle_stream_index: Option<i64>,
     pub quality: Option<StreamingQuality>,
+    pub viewing: crate::preferences::ViewingSettings,
 }
 
 /// The negotiated request plus what the UI needs to describe it.
@@ -70,6 +71,12 @@ pub fn start(
         return Err(StartError::NotReady);
     };
 
+    let mut options = options.clone();
+    options.viewing = services
+        .session
+        .account_key()
+        .map(|key| services.accounts.viewing(&key))
+        .unwrap_or_default();
     let prepared = prepare(
         &services.session,
         &services.library,
@@ -83,7 +90,7 @@ pub fn start(
             })
             .as_ref(),
         settings.streaming_quality,
-        options,
+        &options,
     )
     .map_err(StartError::Api)?;
 
@@ -136,18 +143,11 @@ pub fn prepare(
     let quality = options.quality.unwrap_or(quality);
     let cached = library.item(&options.item_id).ok().flatten();
 
-    let start_ticks = options
-        .start_ticks
-        .or_else(|| {
-            options.resume.then(|| {
-                cached
-                    .as_ref()
-                    .and_then(|item| item["positionTicks"].as_i64())
-                    .unwrap_or(0)
-            })
-        })
-        .unwrap_or(0)
-        .max(0);
+    let position = cached
+        .as_ref()
+        .and_then(|item| item["positionTicks"].as_i64())
+        .unwrap_or(0);
+    let start_ticks = resume_start_ticks(options, position);
 
     let mut effective_options = options.clone();
     let has_explicit_track_options = options.media_source_id.is_some()
@@ -172,6 +172,23 @@ pub fn prepare(
         }
     }
 
+    if !has_explicit_track_options
+        && effective_options.audio_stream_index.is_none()
+        && effective_options.subtitle_stream_index.is_none()
+        && (!options.viewing.audio_languages.is_empty()
+            || options.viewing.prefer_original_audio
+            || options.viewing.subtitle_mode != crate::preferences::SubtitleMode::Server)
+    {
+        match items::fetch_media_sources(&client, &user_id, &options.item_id) {
+            Ok(sources) => {
+                if let Some(source) = sources.first() {
+                    apply_language_defaults(&mut effective_options, source);
+                }
+            }
+            Err(error) => session.note_error(&error),
+        }
+    }
+
     let info_request = PlaybackInfoRequest {
         media_source_id: effective_options.media_source_id.clone(),
         start_time_ticks: Some(start_ticks),
@@ -189,6 +206,100 @@ pub fn prepare(
         start_ticks,
         cached.as_ref(),
     )
+}
+
+fn resume_start_ticks(options: &PlayOptions, position: i64) -> i64 {
+    if let Some(explicit) = options.start_ticks {
+        return explicit.max(0);
+    }
+    if !options.resume {
+        return 0;
+    }
+    position
+        .saturating_sub(i64::from(options.viewing.resume_rewind_seconds) * 10_000_000)
+        .max(0)
+}
+
+fn language_matches(language: Option<&str>, preferred: &str) -> bool {
+    fn canonical(value: &str) -> &str {
+        match value {
+            "eng" => "en",
+            "deu" | "ger" => "de",
+            "fra" | "fre" => "fr",
+            "spa" => "es",
+            "ita" => "it",
+            "jpn" => "ja",
+            "kor" => "ko",
+            "zho" | "chi" => "zh",
+            "por" => "pt",
+            "rus" => "ru",
+            _ => value,
+        }
+    }
+    language.is_some_and(|value| {
+        canonical(&value.to_ascii_lowercase()) == canonical(&preferred.to_ascii_lowercase())
+    })
+}
+
+fn apply_language_defaults(options: &mut PlayOptions, source: &MediaSourceInfo) {
+    use crate::preferences::SubtitleMode;
+    let settings = &options.viewing;
+    let audio = source
+        .media_streams
+        .iter()
+        .filter(|stream| stream.stream_type.as_deref() == Some("Audio"));
+    let original = settings
+        .prefer_original_audio
+        .then(|| {
+            audio.clone().find(|stream| {
+                stream
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| title.to_ascii_lowercase().contains("original"))
+            })
+        })
+        .flatten();
+    let selected_audio = original.or_else(|| {
+        settings.audio_languages.iter().find_map(|language| {
+            audio
+                .clone()
+                .find(|stream| language_matches(stream.language.as_deref(), language))
+        })
+    });
+    options.audio_stream_index = selected_audio.map(|stream| stream.index);
+    let effective_audio = selected_audio.or_else(|| choose_stream(source, "Audio", None));
+    options.media_source_id.clone_from(&source.id);
+    options.media_source_index = Some(0);
+    let enabled = match settings.subtitle_mode {
+        SubtitleMode::Server => return,
+        SubtitleMode::Off => false,
+        SubtitleMode::Forced | SubtitleMode::Always => true,
+        SubtitleMode::ForeignAudio => !settings.audio_languages.iter().any(|language| {
+            language_matches(
+                effective_audio.and_then(|stream| stream.language.as_deref()),
+                language,
+            )
+        }),
+    };
+    let subtitles = source.media_streams.iter().filter(|stream| {
+        stream.stream_type.as_deref() == Some("Subtitle")
+            && (settings.subtitle_mode != SubtitleMode::Forced || stream.is_forced)
+    });
+    let selected = settings
+        .subtitle_languages
+        .iter()
+        .find_map(|language| {
+            subtitles
+                .clone()
+                .find(|stream| language_matches(stream.language.as_deref(), language))
+        })
+        .or_else(|| subtitles.clone().find(|stream| stream.is_default))
+        .or_else(|| subtitles.clone().next());
+    options.subtitle_stream_index = Some(if enabled {
+        selected.map_or(-1, |stream| stream.index)
+    } else {
+        -1
+    });
 }
 
 fn apply_saved_preference(options: &mut PlayOptions, resolved: ResolvedPlaybackPreference) {
@@ -448,6 +559,62 @@ mod tests {
     use crate::library::model::ResolvedPlaybackPreference;
     use crate::preferences::StreamingQuality;
     use serde_json::json;
+
+    #[test]
+    fn resume_rewind_never_changes_explicit_positions_or_seeks_before_zero() {
+        let mut options = PlayOptions {
+            resume: true,
+            ..Default::default()
+        };
+        options.viewing.resume_rewind_seconds = 10;
+        assert_eq!(super::resume_start_ticks(&options, 150_000_000), 50_000_000);
+        assert_eq!(super::resume_start_ticks(&options, 50_000_000), 0);
+        options.start_ticks = Some(150_000_000);
+        assert_eq!(
+            super::resume_start_ticks(&options, 500_000_000),
+            150_000_000
+        );
+        options.start_ticks = None;
+        options.resume = false;
+        assert_eq!(super::resume_start_ticks(&options, 500_000_000), 0);
+    }
+
+    #[test]
+    fn language_defaults_choose_ranked_audio_and_forced_subtitles() {
+        let source = media_source(
+            r#"{"Id":"source", "MediaStreams":[
+            {"Type":"Audio","Index":1,"Language":"eng"},
+            {"Type":"Audio","Index":2,"Language":"jpn","Title":"Original"},
+            {"Type":"Subtitle","Index":3,"Language":"eng"},
+            {"Type":"Subtitle","Index":4,"Language":"eng","IsForced":true}
+        ]}"#,
+        );
+        let mut options = PlayOptions::default();
+        options.viewing.audio_languages = vec!["de".into(), "en".into()];
+        options.viewing.subtitle_languages = vec!["en".into()];
+        options.viewing.subtitle_mode = crate::preferences::SubtitleMode::Forced;
+        super::apply_language_defaults(&mut options, &source);
+        assert_eq!(options.audio_stream_index, Some(1));
+        assert_eq!(options.subtitle_stream_index, Some(4));
+        options.viewing.prefer_original_audio = true;
+        super::apply_language_defaults(&mut options, &source);
+        assert_eq!(options.audio_stream_index, Some(2));
+        options.viewing.prefer_original_audio = false;
+        options.viewing.subtitle_mode = crate::preferences::SubtitleMode::ForeignAudio;
+        super::apply_language_defaults(&mut options, &source);
+        assert_eq!(options.subtitle_stream_index, Some(-1));
+        apply_saved_preference(
+            &mut options,
+            ResolvedPlaybackPreference {
+                media_source_id: Some("source".into()),
+                media_source_index: 0,
+                audio_stream_index: Some(2),
+                subtitle_stream_index: None,
+            },
+        );
+        assert_eq!(options.audio_stream_index, Some(2));
+        assert_eq!(options.subtitle_stream_index, Some(-1));
+    }
 
     fn client() -> JellyfinClient {
         JellyfinClient::new("http://server:8096", "device-1", Some("secret"))

@@ -1,3 +1,4 @@
+import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
@@ -18,7 +19,7 @@ const settings: ClientSettings = {
       markWatchedNext: "w",
       playerConfigured: false,
     },
-    playback: {
+    playback: { comfort: DEFAULT_COMFORT,
       streamingQuality: "original",
       skipIntro: "prompt",
       skipCredits: "prompt",

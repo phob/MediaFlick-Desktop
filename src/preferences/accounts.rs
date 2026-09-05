@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::collections::valid_opaque_id;
 use crate::integrations::letterboxd::{ExternalProfile, MAX_CONNECTED_PROFILES};
 
-use super::AppearanceSettings;
+use super::{AppearanceSettings, ViewingSettings};
 
 const MAX_HOME_ELEMENTS: usize = 512;
 const PREFERRED_HOME_GENRES: [&str; 12] = [
@@ -240,6 +240,10 @@ struct AccountConfiguration {
     key: AccountKey,
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     appearance: AppearanceSettings,
+    #[serde(default)]
+    viewing: ViewingSettings,
+    #[serde(default)]
+    browsing: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     home: Option<HomeSettings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -251,6 +255,8 @@ impl AccountConfiguration {
         Self {
             key,
             appearance: AppearanceSettings::default(),
+            viewing: ViewingSettings::default(),
+            browsing: std::collections::BTreeMap::new(),
             home: None,
             letterboxd_profiles: Vec::new(),
         }
@@ -325,6 +331,46 @@ impl AccountConfigurationService {
     ) -> io::Result<()> {
         self.mutate(|document| {
             account_mut(document, key).appearance = appearance.clone();
+            Ok(())
+        })
+    }
+
+    pub fn viewing(&self, key: &AccountKey) -> ViewingSettings {
+        self.with_document(|document| {
+            document
+                .accounts
+                .iter()
+                .find(|account| account.key == *key)
+                .map(|account| account.viewing.clone())
+                .unwrap_or_default()
+        })
+    }
+
+    pub fn save_viewing(&self, key: &AccountKey, viewing: &ViewingSettings) -> io::Result<()> {
+        viewing.validate()?;
+        self.mutate(|document| {
+            account_mut(document, key).viewing = viewing.clone();
+            Ok(())
+        })
+    }
+
+    pub fn browsing(&self, key: &AccountKey) -> std::collections::BTreeMap<String, String> {
+        self.with_document(|document| {
+            document
+                .accounts
+                .iter()
+                .find(|account| account.key == *key)
+                .map(|account| account.browsing.clone())
+                .unwrap_or_default()
+        })
+    }
+
+    pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
+        validate_browsing_route(page, route)?;
+        self.mutate(|document| {
+            account_mut(document, key)
+                .browsing
+                .insert(page.to_string(), route.to_string());
             Ok(())
         })
     }
@@ -588,6 +634,10 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
             ));
         }
         account.appearance.sanitize();
+        account.viewing.validate()?;
+        for (page, route) in &account.browsing {
+            validate_browsing_route(page, route)?;
+        }
         if let Some(home) = &account.home {
             home.validate()?;
         }
@@ -618,6 +668,26 @@ fn save_document(path: &Path, document: &AccountConfigurationFile) -> io::Result
 
 fn scrub_backup(path: &Path) -> io::Result<()> {
     replace_backup_with_primary(path)
+}
+
+fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
+    let path = route.split('?').next().unwrap_or(route);
+    if !["last", "Movie", "Series"].contains(&page)
+        || route.len() > 2048
+        || !([
+            "/",
+            "/calendar",
+            "/library",
+            "/discover",
+            "/requests",
+            "/collections",
+        ]
+        .contains(&path)
+            || path.starts_with("/collections/"))
+    {
+        return Err(invalid_data("invalid browsing destination"));
+    }
+    Ok(())
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
@@ -685,6 +755,42 @@ mod tests {
             "label": "not persisted"
         });
         assert!(serde_json::from_value::<HomeElement>(value).is_err());
+    }
+
+    #[test]
+    fn viewing_and_browsing_survive_reopen_and_reject_invalid_writes() {
+        let path = test_path("viewing-round-trip");
+        let alice = key("server", "alice");
+        let bob = key("server", "bob");
+        let service = AccountConfigurationService::open(path.clone()).expect("open");
+        let settings = ViewingSettings {
+            spoiler_protection: true,
+            audio_languages: vec!["en".into()],
+            ..Default::default()
+        };
+        service.save_viewing(&alice, &settings).expect("save");
+        service
+            .save_browsing(&alice, "Movie", "/library?kind=Movie&sort=year")
+            .expect("save browsing");
+        assert!(
+            service
+                .save_browsing(&alice, "last", "https://example.com")
+                .is_err()
+        );
+        let invalid = ViewingSettings {
+            text_scale: 0,
+            ..settings.clone()
+        };
+        assert!(service.save_viewing(&alice, &invalid).is_err());
+        drop(service);
+        let reopened = AccountConfigurationService::open(path).expect("reopen");
+        assert_eq!(reopened.viewing(&alice), settings);
+        assert_eq!(reopened.viewing(&bob), ViewingSettings::default());
+        assert!(reopened.browsing(&bob).is_empty());
+        assert_eq!(
+            reopened.browsing(&alice)["Movie"],
+            "/library?kind=Movie&sort=year"
+        );
     }
 
     #[test]
