@@ -200,10 +200,10 @@ windows-installer: windows-dist
 [group('package')]
 [linux]
 linux-appimage: release
-    ./distribution/linux/build-appimage.sh
+    bash ./distribution/linux/build-appimage.sh
 
 # Build a macOS DMG containing a signed .app bundle and CEF framework
 [group('package')]
 [macos]
 macos-dmg: release
-    ./distribution/macos/build-dmg.sh
+    bash ./distribution/macos/build-dmg.sh

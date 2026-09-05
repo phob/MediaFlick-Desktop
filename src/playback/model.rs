@@ -320,6 +320,10 @@ pub enum PlayerCommand {
     AddSubtitle(String),
     ToggleSubtitleVisibility,
     ToggleFullscreen,
+    #[cfg_attr(
+        not(target_os = "windows"),
+        allow(dead_code, reason = "constructed by the Windows playback key handler")
+    )]
     MarkWatchedAndPlayNext,
     Stop,
 }
