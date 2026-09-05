@@ -1,3 +1,4 @@
+import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { memo, useEffect, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { CardInlineActions } from "@/components/CardInlineActions"
@@ -60,7 +61,7 @@ function subtitleFor(item: ItemSummary) {
  * reference stable between renders, so the comparison actually holds.
  */
 export const MediaCard = memo(function MediaCard({
-  item,
+  item: originalItem,
   className,
   landscape = false,
   ribbon,
@@ -74,6 +75,8 @@ export const MediaCard = memo(function MediaCard({
   /** Off for cards the expanded panel would sit badly on, such as a Top 10 rank. */
   preview?: boolean
 }) {
+  const protectedEpisode = useSpoilerProtection(originalItem)
+  const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
   const location = useLocation()
   const { handlers, expanded, previewsEnabled } = usePreview(item, preview)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
@@ -84,7 +87,7 @@ export const MediaCard = memo(function MediaCard({
   // failing <img> re-requests on every re-render — which means a fresh round
   // trip to Jellyfin each time. Fall back to the title placeholder instead.
   const [imageIndex, setImageIndex] = useState(0)
-  const images = landscape
+  const images = protectedEpisode ? [] : landscape
     ? landscapeImageCandidates(item)
     : item.primaryImageTag
       ? [imageUrl(item)]

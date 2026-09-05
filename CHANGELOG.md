@@ -11,6 +11,7 @@
 
 ### Added
 
+- Added account-owned Viewing settings for episode spoiler protection, next-episode mode and countdown, episode limits, preferred audio and subtitle languages, original-track preference, resume rewind, text and poster sizing, card-preview timing, startup destination, and remembered library filters. Built-in playback now has device-owned subtitle appearance with a preview, seek intervals, and shortcut keys. All preference controls use Save, Reset, and Discard; individual track choices retain priority.
 - Added integrated built-in playback on Windows. Bundled libmpv renders video beneath MediaFlick's CEF and DirectComposition controls in one native window, reports live playback, tracks, chapters, segments, and diagnostics, and supports seeking, volume, fullscreen, track selection, tuning, episode navigation, the configured mark-watched-next key, auto-hidden controls, and restored window placement. MediaFlick automatically detects SVP 4 and configures its VapourSynth and Python runtimes when available. Existing installations with an mpv path continue using external mpv, and `--mpv-path` explicitly selects it. Switching between built-in and external backends requires a restart.
 - Added a pinned, source-recording Windows libmpv cross-build. The release workflow produces a lean x86-64 DLL without mpv's command-line player, scripting, Vulkan, or GPL-only codec features, packages its notices and checksum, and publishes the corresponding source archive.
 - Added separate MediaFlick and Jellyfin collection modes. MediaFlick mode derives exact TMDB Movie Franchises, orders franchise titles by release date, and supports account-owned My Collections created from a packaged template catalog. Jellyfin mode reads existing BoxSets without modifying them.
@@ -64,6 +65,12 @@
 
 ### Changed
 
+- Reworked the subtitle preview with day, dusk, and night scenery, readable thick outlines, and positioning that keeps captions inside the frame.
+
+- Replaced free-form poster width with preset sizes and moved card-preview delay beside the Appearance preview toggle, sharing Save, Reset, Discard, and the live preview.
+- Removed page subtitles and promotional headings. Browsing pages now use plain names such as Discover, Requests, and Library.
+
+- Settings save bars now hide the accent outline and idle status text when there are no unsaved changes.
 - Simplified UI test setup, button and badge variants, updater metadata, Jellyfin response models, and Companion response buffering while preserving their behavior.
 - Pruned tautological and implementation-pinned tests, and made libmpv smoke tests explicitly opt-in instead of silently passing without a configured runtime.
 - Consolidated platform assets and packaging tools under `distribution/`, split generated packages between `dist/windows`, `dist/linux`, and `dist/macos`, grouped Companion source and tests under `plugin/src` and `plugin/tests`, and moved reusable CEF and libmpv downloads out of the checkout into user caches.

@@ -1,3 +1,4 @@
+import { useSpoilerProtection } from "@/lib/viewing"
 import { useEffect } from "react"
 import { matchPath, useLocation } from "react-router-dom"
 import { useItem, useStatus } from "@/lib/queries"
@@ -10,12 +11,13 @@ export function WindowTitleSync() {
   const itemMatch = matchPath("/item/:id", location.pathname)
   const { data: item } = useItem(itemMatch?.params.id)
 
+  const hidden = useSpoilerProtection(item)
   useEffect(() => {
     document.title = windowTitle(location.pathname, {
       authenticated: Boolean(status?.authenticated),
-      itemTitle: item?.name,
+      itemTitle: hidden ? "Unwatched episode" : item?.name,
     })
-  }, [location.pathname, status?.authenticated, item?.name])
+  }, [location.pathname, status?.authenticated, item?.name, hidden])
 
   return null
 }

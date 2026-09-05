@@ -54,14 +54,10 @@ const DEFAULT_DPI: u32 = 96;
 const SYNC_INTERVAL_MS: i64 = 50;
 const VK_Q: WPARAM = b'Q' as WPARAM;
 const VK_V: WPARAM = b'V' as WPARAM;
-const KEY_LEFT: WPARAM = VK_LEFT as WPARAM;
-const KEY_RIGHT: WPARAM = VK_RIGHT as WPARAM;
 const KEY_UP: WPARAM = VK_UP as WPARAM;
 const KEY_DOWN: WPARAM = VK_DOWN as WPARAM;
 const CAPTURED_Q: u8 = 1;
 const CAPTURED_V: u8 = 1 << 1;
-const CAPTURED_LEFT: u8 = 1 << 2;
-const CAPTURED_RIGHT: u8 = 1 << 3;
 const CAPTURED_UP: u8 = 1 << 4;
 const CAPTURED_DOWN: u8 = 1 << 5;
 const CAPTURED_WATCHED_NEXT: u8 = 1 << 6;
@@ -1204,8 +1200,6 @@ fn key_event(message: u32, wparam: WPARAM, lparam: LPARAM) -> KeyEvent {
 enum PlaybackKey {
     Stop,
     ToggleSubtitles,
-    SeekBackTenSeconds,
-    SeekForwardTenSeconds,
     SeekBackThirtySeconds,
     SeekForwardThirtySeconds,
     MarkWatchedAndPlayNext,
@@ -1216,8 +1210,6 @@ impl PlaybackKey {
         match self {
             Self::Stop => CAPTURED_Q,
             Self::ToggleSubtitles => CAPTURED_V,
-            Self::SeekBackTenSeconds => CAPTURED_LEFT,
-            Self::SeekForwardTenSeconds => CAPTURED_RIGHT,
             Self::SeekBackThirtySeconds => CAPTURED_DOWN,
             Self::SeekForwardThirtySeconds => CAPTURED_UP,
             Self::MarkWatchedAndPlayNext => CAPTURED_WATCHED_NEXT,
@@ -1229,8 +1221,6 @@ impl PlaybackKey {
             Self::Stop => return PlayerCommand::Stop,
             Self::ToggleSubtitles => return PlayerCommand::ToggleSubtitleVisibility,
             Self::MarkWatchedAndPlayNext => return PlayerCommand::MarkWatchedAndPlayNext,
-            Self::SeekBackTenSeconds => -10_000.0,
-            Self::SeekForwardTenSeconds => 10_000.0,
             Self::SeekBackThirtySeconds => -30_000.0,
             Self::SeekForwardThirtySeconds => 30_000.0,
         };
@@ -1276,11 +1266,11 @@ fn playback_key(
     if !matches!(message, WM_KEYDOWN | WM_KEYUP | WM_CHAR) {
         return None;
     }
+    // Horizontal seeking belongs to the CEF player controls so saved intervals
+    // and focused input fields follow the same path as the toolbar buttons.
     match wparam {
         VK_Q | 0x71 => Some(PlaybackKey::Stop),
         VK_V | 0x76 => Some(PlaybackKey::ToggleSubtitles),
-        KEY_LEFT => Some(PlaybackKey::SeekBackTenSeconds),
-        KEY_RIGHT => Some(PlaybackKey::SeekForwardTenSeconds),
         KEY_DOWN => Some(PlaybackKey::SeekBackThirtySeconds),
         KEY_UP => Some(PlaybackKey::SeekForwardThirtySeconds),
         _ => None,
@@ -1518,12 +1508,12 @@ mod tests {
             Some(PlaybackKey::Stop)
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_LEFT, no_modifiers, None),
-            Some(PlaybackKey::SeekBackTenSeconds)
+            playback_key(WM_KEYDOWN, VK_LEFT as WPARAM, no_modifiers, None),
+            None
         );
         assert_eq!(
-            playback_key(WM_KEYDOWN, KEY_RIGHT, no_modifiers, None),
-            Some(PlaybackKey::SeekForwardTenSeconds)
+            playback_key(WM_KEYDOWN, VK_RIGHT as WPARAM, no_modifiers, None),
+            None
         );
         assert_eq!(
             playback_key(WM_KEYDOWN, KEY_DOWN, no_modifiers, None),

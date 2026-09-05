@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useState, type ComponentType } from "react"
+import { toast } from "sonner"
+import { useQuery } from "@tanstack/react-query"
+import { api } from "@/lib/api"
+import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
+import { collectionAccountKey, useStatus } from "@/lib/queries"
+import { useEffect, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
 import { LibraryFilters } from "@/components/LibraryFilters"
@@ -126,7 +131,23 @@ export default function Library({ components }: LibraryProps = {}) {
   const Grid = components?.ItemGrid ?? ItemGrid
   const CastDiscovery = components?.CastDiscover ?? CastDiscover
   const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
-  const [params, setParams] = useSearchParams()
+  const [routeParams, setParams] = useSearchParams()
+  const viewing = useViewing()
+  const { data: status } = useStatus()
+  const account = collectionAccountKey(status)
+  const history = useQuery({queryKey:["browsing", account], queryFn:api.browsing, enabled:Boolean(status?.authenticated)})
+  const preferences = viewing.data ?? DEFAULT_VIEWING
+  const kindKey = libraryKind(routeParams)
+  const plainLibrary = ["Movie", "Series"].includes(kindKey) && !routeParams.has("search") && !routeParams.has("mode") && !routeParams.has("favorite")
+  const explicitFilters = ["sort", "genre", "decade", "watched", "filters"].some((key) => routeParams.has(key))
+  const params = new URLSearchParams(routeParams)
+  if (plainLibrary && !explicitFilters) {
+    const remembered = preferences.rememberFilters ? history.data?.[kindKey] : undefined
+    if (remembered) {
+      const saved = new URLSearchParams(remembered.split("?")[1])
+      for (const key of ["sort", "genre", "decade", "watched", "filters"]) { const value = saved.get(key); if (value !== null) params.set(key, value) }
+    } else if (preferences.hideWatched) params.set("watched", "false")
+  }
   const [total, setTotal] = useState<number | null>(null)
 
   const castPerson = readCastSearch(params)
@@ -162,17 +183,15 @@ export default function Library({ components }: LibraryProps = {}) {
 
   // The URL is the filter state, so a filtered view is linkable and survives a
   // reload — the app scheme already serves `index.html` for unknown paths.
-  const updateFilters = useCallback(
-    (patch: Partial<LibraryFilterState>) => {
-      setParams(
-        (previous) => writeLibraryFilters(previous, patch),
-        // Each committed choice is navigable. Back/forward therefore restores
-        // both the chips and the server query instead of skipping filter state.
-        { replace: false },
-      )
-    },
-    [setParams],
-  )
+  const updateFilters = (patch: Partial<LibraryFilterState>) => {
+    const next = writeLibraryFilters(params, patch)
+    next.set("filters", "true")
+    setParams(next, {replace:false})
+    if (plainLibrary && preferences.rememberFilters) {
+      const route = `/library?${next}`
+      void api.saveBrowsing(kindKey, route).then(() => { void history.refetch() }).catch((error: Error) => toast.error(`Could not remember library filters: ${error.message}`))
+    }
+  }
 
   const query = castPerson && jellyfinPersonId
     ? { personId: jellyfinPersonId }
@@ -191,19 +210,7 @@ export default function Library({ components }: LibraryProps = {}) {
             ? "Movies"
             : kind === "Movie,Series"
               ? "Movies & Series"
-            : "Your library"
-  const description = castPerson
-    ? `Titles featuring ${personName} on your Jellyfin server, followed by more to discover through Seerr.`
-    : search
-      ? "Everything in your library that matches, with requestable titles from Seerr below."
-      : globalFavoritesView
-        ? "The movies and series you saved for later, all in one place."
-        : kind === "Series"
-          ? "Find your next episode, revisit a favorite, or start something new."
-          : kind === "Movie"
-            ? "Your movie collection, ready to browse and play."
-            : "Your movies and series, ready to browse and play."
-
+            : "Library"
   const castDiscover = castPerson ? (
     <CastDiscovery
       personName={personName}
@@ -217,9 +224,8 @@ export default function Library({ components }: LibraryProps = {}) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        eyebrow={castPerson ? "Cast search" : search ? "Search" : "Your library"}
+        eyebrow={castPerson ? "Cast search" : search ? "Search" : "Library"}
         title={title}
-        description={description}
       />
       {!castPerson && <LibraryFilters value={filters} onChange={updateFilters} total={total} />}
       {castPerson && (

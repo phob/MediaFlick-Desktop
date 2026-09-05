@@ -54,6 +54,7 @@ pub struct PlayerSettingsPatch {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlaybackSettingsPatch {
+    pub comfort: Option<super::PlayerComfort>,
     pub streaming_quality: Option<String>,
     pub skip_intro: Option<String>,
     pub skip_credits: Option<String>,
@@ -242,7 +243,14 @@ impl PreferencesService {
                 match binding {
                     NullablePatch::Unchanged => {}
                     NullablePatch::Clear => save_binding(None)?,
-                    NullablePatch::Set(value) => save_binding(clean_path(&value))?,
+                    NullablePatch::Set(value) => {
+                        if next.effective_backend() == PlayerBackend::Libmpv {
+                            next.comfort
+                                .validate_watched_next(Some(&value))
+                                .map_err(|error| PreferencesError(error.to_string()))?;
+                        }
+                        save_binding(clean_path(&value))?;
+                    }
                 }
                 Ok(())
             },
@@ -255,6 +263,15 @@ impl PreferencesService {
         patch: PlaybackSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
         self.update(move |next| {
+            if let Some(comfort) = patch.comfort {
+                comfort
+                    .validate()
+                    .map_err(|error| PreferencesError(error.to_string()))?;
+                comfort
+                    .validate_watched_next(MpvInputBindings::load().mark_watched_next.as_deref())
+                    .map_err(|error| PreferencesError(error.to_string()))?;
+                next.comfort = comfort;
+            }
             if let Some(value) = patch.streaming_quality.as_deref() {
                 next.streaming_quality = StreamingQuality::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("streaming quality"))?;

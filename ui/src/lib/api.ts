@@ -479,10 +479,41 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   }
 }
 
+export interface ViewingSettings {
+  spoilerProtection: boolean
+  nextEpisode: "off" | "ask" | "auto"
+  countdownSeconds: number
+  episodeLimit: number
+  audioLanguages: string[]
+  subtitleLanguages: string[]
+  preferOriginalAudio: boolean
+  subtitleMode: "server" | "off" | "forced" | "always" | "foreignAudio"
+  resumeRewindSeconds: number
+  textScale: number
+  posterSize: number
+  previewDelayMs: number
+  startupDestination: "home" | "movies" | "series" | "calendar" | "last"
+  rememberFilters: boolean
+  hideWatched: boolean
+}
+
+export interface PlayerComfort {
+  subtitleSize: number
+  subtitleOutline: number
+  subtitleBackground: number
+  subtitlePosition: number
+  seekBackSeconds: number
+  seekForwardSeconds: number
+  pauseKey: string
+  muteKey: string
+  fullscreenKey: string
+}
+
 export interface ClientSettings {
   client: {
     player: PlayerSettings
     playback: {
+      comfort: PlayerComfort
       streamingQuality: StreamingQualityId
       skipIntro: SegmentSkipMode
       skipCredits: SegmentSkipMode
@@ -1343,6 +1374,10 @@ function queryString<T>(params: { [K in keyof T]: QueryParameterValue }) {
 }
 
 export const api = {
+  viewing: () => request<ViewingSettings>("/api/settings/viewing"),
+  saveViewing: (value: ViewingSettings) => request<ViewingSettings>("/api/settings/viewing", { method: "PATCH", body: value }),
+  browsing: () => request<Record<string, string>>("/api/settings/browsing"),
+  saveBrowsing: (page: string, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
   status: () => request<Status>("/api/status"),
   companion: {
     info: () => request<CompanionStatus>("/api/companion/info"),
@@ -1483,8 +1518,10 @@ export const api = {
     }),
 
   /** `quality` overrides the saved Settings default for this play only. */
-  play: (itemId: string, resume: boolean, quality?: StreamingQualityId) =>
-    request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } }),
+  play: (itemId: string, resume: boolean, quality?: StreamingQualityId) => {
+    window.dispatchEvent(new Event("mediaflick-manual-play"))
+    return request<PlayStarted>("/api/play", { method: "POST", body: { itemId, resume, quality } })
+  },
   changePlaybackQuality: (itemId: string, startTicks: number, quality: StreamingQualityId) =>
     request<PlayStarted>("/api/play", {
       method: "POST",

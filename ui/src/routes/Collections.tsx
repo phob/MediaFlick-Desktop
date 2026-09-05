@@ -118,17 +118,15 @@ export function CollectionModeRoute({ mode }: { mode: "mediaFlick" | "jellyfin" 
 function CollectionPage({
   eyebrow,
   title,
-  description,
   children,
 }: {
   eyebrow: string
   title: string
-  description: string
   children: React.ReactNode
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-6 pb-16">
-      <PageHeader eyebrow={eyebrow} title={title} description={description} />
+      <PageHeader eyebrow={eyebrow} title={title} />
       {children}
     </div>
   )
@@ -163,7 +161,6 @@ export function FranchiseCollections() {
     <CollectionPage
       eyebrow="Collections"
       title="Movie Franchises"
-      description="Movie series found from the exact TMDB collection identities in your library."
     >
       {query.error && !rows ? (
         <PageErrorState title="Could not find movie franchises" description={query.error.message} />
@@ -264,7 +261,6 @@ export function MyCollections() {
     <CollectionPage
       eyebrow="Collections"
       title="My Collections"
-      description="Collections chosen and ordered for this account."
     >
       {query.error && !profiles ? (
         <PageErrorState title="Could not load your collections" description={query.error.message} />
@@ -312,7 +308,6 @@ export function JellyfinCollections() {
     <CollectionPage
       eyebrow="Collections"
       title="Jellyfin Collections"
-      description="BoxSets from your Jellyfin server, shown without importing or changing them."
     >
       {query.error && !rows ? (
         <PageErrorState title="Could not load Jellyfin collections" description={query.error.message} />

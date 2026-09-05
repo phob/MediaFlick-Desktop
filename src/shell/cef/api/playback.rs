@@ -39,6 +39,7 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
         audio_stream_index: body["audioStreamIndex"].as_i64(),
         subtitle_stream_index: body["subtitleStreamIndex"].as_i64(),
         quality: body["quality"].as_str().and_then(StreamingQuality::from_id),
+        ..Default::default()
     };
     start_playback(services, &options)
 }

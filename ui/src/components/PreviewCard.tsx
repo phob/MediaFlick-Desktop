@@ -1,3 +1,4 @@
+import { useSpoilerProtection } from "@/lib/viewing"
 import { Check, Play, Plus, ThumbsUp } from "lucide-react"
 import {
   useCallback,
@@ -91,10 +92,12 @@ export function PreviewProvider({
   dependencies = DEFAULT_PREVIEW_DEPENDENCIES,
   enabled = true,
   container = null,
+  delay = OPEN_DELAY,
 }: {
   children: ReactNode
   dependencies?: PreviewDependencies
   enabled?: boolean
+  delay?: number
   /**
    * Where the panel portals. Defaults to `document.body`; the Appearance
    * settings' live preview aims this at its own draft-themed host instead, so
@@ -143,7 +146,7 @@ export function PreviewProvider({
           // may have been scrolled during the delay, and a stale rect would
           // open the panel over whatever slid into that spot.
           setTarget({ item, rect: anchor.getBoundingClientRect() })
-        }, OPEN_DELAY)
+        }, delay)
       },
       cancel: () => window.clearTimeout(openTimer.current),
       release: () => {
@@ -154,7 +157,7 @@ export function PreviewProvider({
       activeId: target?.item.id ?? null,
       enabled,
     }),
-    [enabled, setTarget, target],
+    [enabled, setTarget, target, delay],
   )
 
   useEffect(() => {
@@ -455,7 +458,8 @@ function PreviewArt({
   progress: number
   remaining: string | null
 }) {
-  const images = landscapeImageCandidates(item, LANDSCAPE_WIDTH)
+  const hidden = useSpoilerProtection(item)
+  const images = hidden ? [] : landscapeImageCandidates(item, LANDSCAPE_WIDTH)
   const [imageIndex, setImageIndex] = useState(0)
   const [logoFailed, setLogoFailed] = useState(false)
   const image = images[imageIndex]

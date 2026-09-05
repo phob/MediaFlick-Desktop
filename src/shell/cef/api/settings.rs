@@ -7,6 +7,8 @@ pub(super) fn route(
 ) -> Option<ApiResponse> {
     let response = match segments {
         ["settings"] if request.is("GET") => settings_snapshot(services),
+        ["settings", "viewing"] => viewing_settings(services, request),
+        ["settings", "browsing"] => browsing_settings(services, request),
         ["settings", "client", "player"] if request.is("PATCH") => {
             patch_player_settings(services, request)
         }
@@ -76,6 +78,7 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
             },
             "playback": {
                 "streamingQuality": settings.streaming_quality.as_str(),
+                "comfort": settings.comfort,
                 "skipIntro": settings.skip_intro.as_str(),
                 "skipCredits": settings.skip_credits.as_str(),
                 "skipRecap": settings.skip_recap.as_str(),
@@ -163,6 +166,61 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
         .commit_if_current(&scope, stale_account_response, || {
             Ok(match services.preferences.patch_appearance(patch) {
                 Ok(change) => settings_response(&change.settings, &[]),
+                Err(error) => ApiResponse::error(400, error.to_string()),
+            })
+        })
+        .unwrap_or_else(|response| response)
+}
+
+fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    let key = scope.account();
+    if request.is("GET") {
+        return ApiResponse::ok(json!(services.accounts.viewing(key)));
+    }
+    if !request.is("PATCH") {
+        return ApiResponse::error(405, "method not allowed");
+    }
+    let value = match serde_json::from_value::<crate::preferences::ViewingSettings>(request.json())
+    {
+        Ok(value) => value,
+        Err(error) => return ApiResponse::error(400, error.to_string()),
+    };
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            Ok(match services.accounts.save_viewing(key, &value) {
+                Ok(()) => ApiResponse::ok(json!(value)),
+                Err(error) => ApiResponse::error(400, error.to_string()),
+            })
+        })
+        .unwrap_or_else(|response| response)
+}
+
+fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
+        Err(error) => return ApiResponse::from_api_error(&error),
+    };
+    let key = scope.account();
+    if request.is("GET") {
+        return ApiResponse::ok(json!(services.accounts.browsing(key)));
+    }
+    if !request.is("PATCH") {
+        return ApiResponse::error(405, "method not allowed");
+    }
+    let body = request.json();
+    let (Some(page), Some(route)) = (body["page"].as_str(), body["route"].as_str()) else {
+        return ApiResponse::error(400, "page and route are required");
+    };
+    services
+        .session
+        .commit_if_current(&scope, stale_account_response, || {
+            Ok(match services.accounts.save_browsing(key, page, route) {
+                Ok(()) => ApiResponse::ok(json!({"saved": true})),
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })

@@ -53,7 +53,8 @@ function useGridMetrics(element: HTMLElement | null) {
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(element)
-    return () => observer.disconnect()
+    window.addEventListener("resize", measure)
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure) }
   }, [element])
 
   return metrics

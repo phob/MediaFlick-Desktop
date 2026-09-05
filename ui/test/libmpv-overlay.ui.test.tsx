@@ -1,3 +1,4 @@
+import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { AppShell } from "@/components/AppShell"
@@ -16,7 +17,7 @@ const settings = {
       markWatchedNext: "w",
       playerConfigured: true,
     },
-    playback: {
+    playback: { comfort: DEFAULT_COMFORT,
       streamingQuality: "auto",
       skipIntro: "disabled",
       skipCredits: "disabled",

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Rust Unslop"
-  short_description: "Enforce readable, idiomatic Rust changes"
-  default_prompt: "Use $rust-unslop to implement this Rust change with clear ownership and pass every repository quality gate."

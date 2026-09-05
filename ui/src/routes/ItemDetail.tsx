@@ -1,3 +1,5 @@
+import { useState } from "react"
+import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { Layers } from "lucide-react"
 import { Navigate, useLocation, useParams, useSearchParams, Link } from "react-router-dom"
 import { CastRow } from "@/components/detail/CastRow"
@@ -49,9 +51,10 @@ function CollectionChip({ tmdbId }: { tmdbId: number }) {
  * The button itself only has room for the code.
  */
 function NextUpNote({ episode }: { episode: ItemSummary }) {
+  const hidden = useSpoilerProtection(episode)
   return (
     <p className="text-sm text-muted-foreground">
-      Next up: {[episodeCode(episode), episode.name].filter(Boolean).join(" · ")}
+      Next up: {[episodeCode(episode), hidden ? null : episode.name].filter(Boolean).join(" · ")}
     </p>
   )
 }
@@ -61,7 +64,10 @@ export default function ItemDetail() {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const itemQuery = useItem(id)
-  const { data: item, isPending, error } = itemQuery
+  const { data: originalItem, isPending, error } = itemQuery
+  const [revealedId, setRevealedId] = useState<string | null>(null)
+  const hidden = useSpoilerProtection(originalItem) && revealedId !== id
+  const item = originalItem && hidden ? concealEpisode(originalItem) : originalItem
   // The cached row answers instantly; the synopsis, cast, tags, studios, and
   // critic score arrive from this live fetch and are never persisted.
   const about = useItemAbout(id)
@@ -136,10 +142,11 @@ export default function ItemDetail() {
     // the backdrop reaches the window's bottom edge instead of stopping with
     // the content.
     <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
-      {backdrop && <DetailBackdrop src={backdrop} />}
+      {!hidden && backdrop && <DetailBackdrop src={backdrop} />}
+      {hidden && <Button className="relative z-10" variant="outline" onClick={() => setRevealedId(id ?? null)}>Reveal episode spoilers</Button>}
       <DetailHero
         item={item}
-        about={about.data}
+        about={hidden ? undefined : about.data}
         aboutPending={about.isPending}
         aboutFailed={about.isError}
         episodeCount={episodeCount || null}
@@ -183,10 +190,10 @@ export default function ItemDetail() {
 
       {/* Cast is live-only; the row appears when the fetch lands and simply
           stays absent when the server cannot be reached. */}
-      <CastRow people={about.data?.people ?? []} />
+      <CastRow people={hidden ? [] : about.data?.people ?? []} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
-        <DetailFacts item={item} about={about.data} />
+        <DetailFacts item={item} about={hidden ? undefined : about.data} />
         <MediaInfo
           itemId={item.id}
           sources={media.data?.sources}

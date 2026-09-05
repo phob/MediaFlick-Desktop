@@ -47,6 +47,31 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Automatic in-app updates** from GitHub Releases (Windows).
 - **Cross-platform.** Windows, Linux, and macOS.
 
+## Viewing preferences
+
+**Settings → Viewing** stores preferences for the signed-in account. Choose spoiler protection,
+next-episode playback (off, a cancellable countdown, or automatic), an episode limit, ordered
+language codes, subtitle rules, and a 0/5/10/30-second resume rewind. Valid per-title track choices
+take priority. Original-audio preference uses tracks explicitly labeled original.
+
+The same page controls text size, preset poster widths, the startup page, and separate
+remembered filters for Movies and Series. Explicit filtered links take priority over remembered
+filters. Spoiler protection conceals unwatched episode artwork, names, and summaries; the episode
+details page has a Reveal button. Calendar episode names are concealed conservatively because
+upcoming entries may not have a known watched state.
+
+**Settings → Appearance → Cards** groups the card-preview toggle and hover delay. The delay
+control is disabled while previews are off, and its draft timing applies to the live preview.
+
+**Settings → Client → Playback** adds subtitle size, outline, background, and position with a
+preview when the built-in player is selected. Subtitle appearance applies at the next playback;
+bitmap or authored subtitle styling may limit its effect. Seek intervals and pause, mute, and
+fullscreen letter keys belong to this device. Space and arrow/J/L seek bindings remain available.
+External players retain their own subtitle styling and native keyboard bindings.
+
+Use **Save**, **Reset**, and **Discard** on each settings page. An episode limit counts continuous
+playback; manually starting a title begins a new session, and explicit Next actions remain available.
+
 ## Install
 
 **Windows.** Download the latest `MediaFlickDesktop-Setup-<version>.exe` from [Releases](https://github.com/phob/mediaflick-desktop/releases/latest) and run it. The built-in player is ready immediately; installing external mpv is optional.
