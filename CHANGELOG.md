@@ -4,6 +4,7 @@
 
 ### Breaking Changes
 
+- Updated MediaFlick Companion to require Jellyfin 12.0.0 and .NET 10, with Jellyfin NuGet packages at 12.0.0 and matching build, test, CI, and release metadata.
 - Replaced the embedded Jellyfin Web client with MediaFlick Desktop's own UI. The app now signs in to Jellyfin and loads its login, home, library, and details views from `mediaflick-desktop://app/`. Existing users keep their server URL but must sign in again. The "Open Jellyfin dashboard" context-menu item opens server administration in the system browser.
 - Removed the jellyfin-web injection bridge, including `bridge.js` and stream-URL interception. Native code now negotiates playback through `PlaybackInfo` and sends it directly to mpv or MPC-HC. Scripts and workflows that used the injected `window.__mediaFlickDesktop*` hooks no longer work. The native About and update dialogs still use the shell bridge.
 - Removed the welcome and setup screen. Users now enter the server address on the sign-in screen and configure the media player in Settings.

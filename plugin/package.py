@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
-TARGET_ABI = "10.11.11.0"
+TARGET_ABI = "12.0.0.0"
 PLUGIN_NAME = "MediaFlick Companion"
 DESCRIPTION = (
     "Secure Jellyfin-authenticated calendar and Seerr gateway for MediaFlick clients."

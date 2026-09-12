@@ -9,9 +9,8 @@ Building is mainly intended for developers and advanced users.
 - CMake and Ninja, required by `cef-dll-sys`
 - A CEF cache. By default, `just` uses `%LOCALAPPDATA%/MediaFlick/cache/cef` on Windows and `$XDG_CACHE_HOME/mediaflick/cef` or `~/.cache/mediaflick/cef` elsewhere; set `CEF_PATH=...` to override it.
 - Node and pnpm for the embedded React UI.
-- The .NET SDK selected by `global.json` and the latest .NET 9 SDK for the
-  optional server-side Companion plugin. The plugin still targets and tests on
-  `net9.0` because Jellyfin 10.11 runs on that host framework.
+- The .NET 10 SDK selected by `global.json` for the optional server-side
+  Companion plugin, which targets and tests on `net10.0` for Jellyfin 12.
 
 ## Build a local debug app
 
