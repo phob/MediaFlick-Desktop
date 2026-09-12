@@ -428,7 +428,7 @@ html[data-libmpv-cursor-hidden] * {
 .settings-navigation a span { font-size: 0.9rem; font-weight: 600; }
 
 .settings-main { min-width: 0; padding: clamp(1.25rem, 3vw, 3rem); }
-.settings-page { width: min(100%, 58rem); padding-bottom: 5rem; }
+.settings-page { container: settings-page / inline-size; width: min(100%, 58rem); padding-bottom: 5rem; }
 .settings-page > * + * { margin-top: 1.25rem; }
 .settings-page-title { margin-bottom: 2rem; }
 .settings-page-title h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 650; letter-spacing: -0.035em; }
@@ -436,6 +436,12 @@ html[data-libmpv-cursor-hidden] * {
 
 .settings-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, auto); gap: 1rem; align-items: center; padding-block: 0.1rem; }
 .settings-control { display: flex; justify-content: flex-end; min-width: min(100%, 14rem); }
+
+@container settings-page (max-width: 42rem) {
+  .settings-row { grid-template-columns: 1fr; }
+  .settings-control { justify-content: flex-start; }
+  .settings-save-bar { flex-wrap: wrap; }
+}
 
 .settings-save-bar { position: sticky; bottom: 1rem; z-index: 10; display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-top: 1.5rem; padding: 0.7rem 0.8rem 0.7rem 1rem; border: 1px solid transparent; background: color-mix(in srgb, var(--card) 92%, var(--background)); box-shadow: 0 0.8rem 2.5rem rgb(0 0 0 / 25%); backdrop-filter: blur(14px); }
 .settings-save-bar[data-dirty="true"] { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }

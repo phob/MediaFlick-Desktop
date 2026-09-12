@@ -1,6 +1,6 @@
 import { useId, useState } from "react"
 import type { PlayerComfort } from "@/lib/api"
-import { Button } from "@/components/ui/button"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 const scenes = {
   Day: ["#86c5e4", "#f9ead1", "#899ea1", "#496d76", "#acc7c6"],
@@ -15,9 +15,11 @@ export function SubtitlePreview({ comfort }: { comfort: PlayerComfort }) {
   return <figure className="space-y-3" aria-label="Subtitle preview">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="text-sm font-medium">Subtitle preview</span>
-      <div className="flex gap-1" role="group" aria-label="Preview scene">
-        {(Object.keys(scenes) as (keyof typeof scenes)[]).map((name) => <Button key={name} type="button" size="sm" variant={scene === name ? "secondary" : "ghost"} aria-pressed={scene === name} onClick={() => setScene(name)}>{name}</Button>)}
-      </div>
+      <ToggleGroup type="single" value={scene} aria-label="Preview scene" onValueChange={(value) => {
+        if (value === "Day" || value === "Dusk" || value === "Night") setScene(value)
+      }}>
+        {Object.keys(scenes).map((name) => <ToggleGroupItem key={name} value={name}>{name}</ToggleGroupItem>)}
+      </ToggleGroup>
     </div>
     <div className="relative aspect-video overflow-hidden rounded-lg border" style={{ containerType: "inline-size" }}>
       <svg className="absolute inset-0 size-full" viewBox="0 0 800 450" aria-hidden="true">
