@@ -91,7 +91,6 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
             },
         },
         "appearance": {
-            "theme": settings.appearance.theme.as_str(),
             "accent": settings.appearance.accent.as_str(),
             "density": settings.appearance.density.as_str(),
             "artworkIntensity": settings.appearance.artwork_intensity,

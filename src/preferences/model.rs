@@ -53,8 +53,6 @@ pub struct AppSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppearanceSettings {
-    #[serde(default, skip_serializing_if = "AppearanceTheme::is_default")]
-    pub theme: AppearanceTheme,
     #[serde(default, skip_serializing_if = "AppearanceAccent::is_default")]
     pub accent: AppearanceAccent,
     #[serde(default, skip_serializing_if = "AppearanceDensity::is_default")]
@@ -90,7 +88,6 @@ pub struct AppearanceSettings {
 impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
-            theme: AppearanceTheme::default(),
             accent: AppearanceAccent::default(),
             density: AppearanceDensity::default(),
             artwork_intensity: default_artwork_intensity(),
@@ -123,36 +120,6 @@ impl AppearanceSettings {
             })
             .take(64)
             .collect();
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AppearanceTheme {
-    #[default]
-    System,
-    Dark,
-    Light,
-}
-
-impl AppearanceTheme {
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
-    }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Dark => "dark",
-            Self::Light => "light",
-        }
-    }
-    pub fn from_id(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "system" => Some(Self::System),
-            "dark" => Some(Self::Dark),
-            "light" => Some(Self::Light),
-            _ => None,
-        }
     }
 }
 
@@ -707,8 +674,8 @@ fn has_explicit_scheme(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, PlayerBackend, StreamingQuality, WebUiWindowPosition, WebUiWindowSettings,
-        normalize_server_url,
+        AppSettings, AppearanceAccent, PlayerBackend, StreamingQuality, WebUiWindowPosition,
+        WebUiWindowSettings, normalize_server_url,
     };
 
     #[test]
@@ -841,6 +808,18 @@ mod tests {
         assert_eq!(serialized["streaming_quality"], "10_mbps");
         let restored: AppSettings = serde_json::from_value(serialized).expect("restore settings");
         assert_eq!(restored.streaming_quality, StreamingQuality::Mbps10);
+    }
+
+    #[test]
+    fn legacy_color_theme_is_ignored_and_not_serialized() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "appearance": { "theme": "light", "accent": "violet" }
+        }))
+        .expect("legacy appearance settings");
+
+        assert_eq!(settings.appearance.accent, AppearanceAccent::Violet);
+        let serialized = serde_json::to_value(settings).expect("serialize settings");
+        assert!(serialized["appearance"].get("theme").is_none());
     }
 
     #[test]

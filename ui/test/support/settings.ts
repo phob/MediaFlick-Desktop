@@ -8,7 +8,7 @@ export function clientSettingsFixture(): ClientSettings {
       playback: { comfort: { ...DEFAULT_COMFORT }, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
       application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
     },
-    appearance: { theme: "dark", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] },
+    appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] },
     capabilities: { platform: "windows", libmpv: true, mpchc: true, mpvInstaller: true },
     serverUrl: "https://jellyfin.example",
   }

@@ -559,7 +559,7 @@ const PREVIEW_DEPENDENCIES: PreviewDependencies = {
  * paint containment, which would clip a fixed panel and re-anchor it to the
  * scrolling pane. One host div at the body level gives the panel the same
  * escape the real app's body portal provides, while carrying the draft
- * attributes so the panel is themed by the unsaved choices like the shelf.
+ * appearance attributes used by the shelf.
  * Only one preview exists at a time, so a single module-level host is enough;
  * mounting attaches it to the body and unmounting removes it again.
  */
@@ -593,13 +593,12 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
     return () => PANEL_HOST.remove()
   }, [])
   useEffect(() => {
-    PANEL_HOST.dataset.theme = appearance.theme
     PANEL_HOST.dataset.accent = appearance.accent
     PANEL_HOST.dataset.density = appearance.density
     PANEL_HOST.dataset.reducedMotion = String(reducedMotion)
     PANEL_HOST.style.setProperty("--artwork-intensity", String(appearance.artworkIntensity / 100))
     PANEL_HOST.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))
-  }, [appearance.theme, appearance.accent, appearance.density, appearance.artworkIntensity, appearance.backdropIntensity, reducedMotion])
+  }, [appearance.accent, appearance.density, appearance.artworkIntensity, appearance.backdropIntensity, reducedMotion])
   const shelfRef = useRef<HTMLDivElement>(null)
   // Inert per link keeps it out of tab order, activation, and hit-testing, so
   // a pointer over the artwork targets the card around it and the real hover
@@ -619,7 +618,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
   return (
     <figure
       className="appearance-preview"
-      data-theme={appearance.theme}
       data-accent={appearance.accent}
       data-density={appearance.density}
       data-reduced-motion={reducedMotion}
@@ -745,8 +743,7 @@ export function Appearance() {
     <Section title="Live preview" description="Your own shelves with your unsaved choices applied here only; the rest of MediaFlick changes after Save.">
       <AppearancePreview appearance={{ ...draft, artworkIntensity: isSettingsNumberValid(draft.artworkIntensity, 0, 100) ? draft.artworkIntensity : settings.appearance.artworkIntensity, backdropIntensity: isSettingsNumberValid(draft.backdropIntensity, 0, 100) ? draft.backdropIntensity : settings.appearance.backdropIntensity }} previewDelay={previewDelay !== undefined && isSettingsNumberValid(previewDelay, 200, 2000) ? previewDelay : viewing.data?.previewDelayMs} />
     </Section>
-    <Section title="Theme" description="System follows the current operating-system color preference.">
-      <SettingsRow controlId="settings-color-mode" title="Color mode" description="Choose the overall surface treatment."><SelectField id="settings-color-mode" aria-describedby="settings-color-mode-help" label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
+    <Section title="Style" description="Customize MediaFlick's dark appearance.">
       <SettingsRow controlId="settings-accent" title="Accent" description="The signal color used for active controls and focus rings."><SelectField id="settings-accent" aria-describedby="settings-accent-help" label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
       <SettingsRow controlId="settings-density" title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField id="settings-density" aria-describedby="settings-density-help" label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
@@ -784,7 +781,7 @@ export function Appearance() {
       <SettingsRow controlId="backdrop-intensity" title="Backdrop intensity" description="Percent of the original artwork intensity."><SettingsNumberField id="backdrop-intensity" label="Backdrop intensity" unit="percent" aria-describedby="backdrop-intensity-help" min={0} max={100} value={draft.backdropIntensity} onValueChange={(backdropIntensity) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
       <SettingsRow controlId="settings-reduce-motion" title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch id="settings-reduce-motion" aria-describedby="settings-reduce-motion-help" aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar saveDisabled={!isSettingsNumberValid(draft.artworkIntensity, 0, 100) || !isSettingsNumberValid(draft.backdropIntensity, 0, 100) || previewDelay !== undefined && !isSettingsNumberValid(previewDelay, 200, 2000)} dirty={!same(draft, settings.appearance) || previewDelay !== viewing.data?.previewDelayMs} saving={mutation.isPending} onSave={() => mutation.mutate({ appearance: draft, previewDelay })} onDiscard={() => { setDraft(settings.appearance); setPreviewDelay(viewing.data?.previewDelayMs) }} onReset={() => { if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs); setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] }) }} />
+    <SaveBar saveDisabled={!isSettingsNumberValid(draft.artworkIntensity, 0, 100) || !isSettingsNumberValid(draft.backdropIntensity, 0, 100) || previewDelay !== undefined && !isSettingsNumberValid(previewDelay, 200, 2000)} dirty={!same(draft, settings.appearance) || previewDelay !== viewing.data?.previewDelayMs} saving={mutation.isPending} onSave={() => mutation.mutate({ appearance: draft, previewDelay })} onDiscard={() => { setDraft(settings.appearance); setPreviewDelay(viewing.data?.previewDelayMs) }} onReset={() => { if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs); setDraft({ accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] }) }} />
   </div>
 }
 
@@ -1300,7 +1297,6 @@ export function AppearanceSync() {
     const appearance = settings?.appearance
     if (!appearance) return
     const root = document.documentElement
-    root.dataset.theme = appearance.theme
     root.dataset.accent = appearance.accent
     root.dataset.density = appearance.density
     root.dataset.reducedMotion = String(appearance.reducedMotion)
