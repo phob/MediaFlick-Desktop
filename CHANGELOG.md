@@ -65,6 +65,9 @@
 
 ### Changed
 
+- Standardized the remaining Settings buttons and checkbox labels on shared shadcn/ui controls, added a themed collection-description Textarea, and replaced browser-native account and collection deletion prompts with accessible Alert Dialogs. Existing drafts, Save/Reset/Discard, and Home shelf dragging remain intact.
+- Replaced native numeric spinners in Settings with themed sliders and precise input fields, added inline range validation and connected labels, and improved narrow-window layouts and light-theme slider contrast. Subtitle scenes now use a Toggle Group, MDBList search uses a keyboard-accessible Combobox, and collection poster uploads show progress and errors, block premature saves, and cancel on Reset or Discard.
+
 - Removed redundant episode-rating coverage, static UI smoke tests, trivial helper checks, and tests of framework defaults or removed settings; retained request, persistence, playback, and security regression coverage.
 
 - Reworked the subtitle preview with day, dusk, and night scenery, readable thick outlines, and positioning that keeps captions inside the frame.
@@ -127,6 +130,7 @@
 
 ### Fixed
 
+- Fixed Companion CI and release tests failing after the .NET 10 SDK advanced beyond the .NET 9 apphost pack on the runner by explicitly installing the matching .NET 9 SDK required by the Jellyfin 10.11 plugin target.
 - Fixed Linux and macOS CI builds by routing external mpv's watched-next hotkey through the shared player command and matching CEF's macOS cursor handle type.
 
 - Fixed mouse-wheel stutter in populated library and collection grids by compositing virtual rows and removing per-button background blur from inline card actions. Fixed the built-in Windows interface limiting scrolling to 60 fps on faster displays. GPU-backed CEF now follows the window's display refresh rate, rechecks display changes, and caps rendering at 240 fps. Sustained initial-sync pages now keep aggregate refreshes at one per second after the first page. Added per-page fetch and ingestion timings for real-server performance checks.

@@ -595,6 +595,8 @@ describe("configurable card ratings", () => {
       />,
     )
     expect(screen.getByLabelText("Letterboxd").matches(":disabled")).toBe(true)
+    fireEvent.click(screen.getByText("Rotten Tomatoes Audience"))
+    expect(onChange).not.toHaveBeenCalled()
 
     rerender(
       <RatingSourceSelector

@@ -1,5 +1,5 @@
 import { DEFAULT_COMFORT } from "@/lib/viewing"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, Status } from "@/lib/api"
@@ -73,8 +73,7 @@ describe("local account deletion", () => {
     queryClient.setQueryData(queryKeys.settings, settings)
     queryClient.setQueryData(queryKeys.item("shared-id"), { id: "shared-id", name: "Alice's item" })
     vi.spyOn(api, "settings").mockResolvedValue(settings)
-    vi.spyOn(api.collections, "deleteLocalAccount").mockResolvedValue(anonymous)
-    vi.spyOn(window, "confirm").mockReturnValue(true)
+    const remove = vi.spyOn(api.collections, "deleteLocalAccount").mockResolvedValue(anonymous)
 
     render(
       <TestProviders client={queryClient} initialEntries={["/settings/client/application"]}>
@@ -84,13 +83,26 @@ describe("local account deletion", () => {
       </TestProviders>,
     )
 
-    fireEvent.change(await screen.findByLabelText("Type DELETE to confirm local account deletion"), {
+    const confirmation = await screen.findByLabelText("Type DELETE to confirm local account deletion")
+    const trigger = screen.getByRole("button", { name: "Delete local account data" })
+    expect(trigger.hasAttribute("disabled")).toBe(true)
+    fireEvent.change(confirmation, {
       target: { value: "DELETE" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Delete local account data" }))
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete local account data?" })
+    expect(dialog.textContent).toContain("Alice on https://jellyfin.example")
+    expect(remove).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+    expect(remove).not.toHaveBeenCalled()
+    expect(queryClient.getQueryData<Status>(queryKeys.status)?.authenticated).toBe(true)
+
+    fireEvent.click(trigger)
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete local account data" }))
 
     expect(await screen.findByText("Signed out")).toBeTruthy()
     await waitFor(() => expect(queryClient.getQueryData(queryKeys.item("shared-id"))).toBeUndefined())
     expect(queryClient.getQueryData<Status>(queryKeys.status)?.authenticated).toBe(false)
+    expect(remove).toHaveBeenCalledTimes(1)
   })
 })
