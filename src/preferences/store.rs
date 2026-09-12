@@ -191,13 +191,13 @@ fn roaming_base_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preferences::{AppearanceSettings, AppearanceTheme};
+    use crate::preferences::{AppearanceAccent, AppearanceSettings};
 
     #[test]
     fn the_device_snapshot_excludes_account_owned_appearance() {
         let settings = AppSettings {
             appearance: AppearanceSettings {
-                theme: AppearanceTheme::Dark,
+                accent: AppearanceAccent::Violet,
                 ..AppearanceSettings::default()
             },
             log_level: "debug".to_string(),

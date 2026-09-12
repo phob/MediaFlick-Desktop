@@ -24,7 +24,7 @@
 - Added account-scoped Home configuration with persistent shelf ordering and visibility, configurable Continue Watching and Next Up layout, per-genre shelves, stable Because You Watched recommendations, and opt-in My Collection shelves.
 - Added an in-app `/settings/*` area. Device-owned Client settings are available without an account, while Appearance, Letterboxd, Collections, and Companion status belong to the signed-in account. The sidebar links to Settings, forms keep local drafts, and fields support Save, Discard, and Reset. Typed PATCH endpoints share preferences with CEF, apply player, segment-skipping, and scrollbar changes at runtime, and return normalized settings with platform capabilities.
 - Added a read-only MediaFlick Companion integration page. It reports plugin compatibility, version, Seerr user mapping, and the availability of Seerr, Sonarr, Radarr, MDBList, and TMDB without exposing service addresses or credentials.
-- Added Appearance settings for system, dark, and light modes; signal, cobalt, amber, and violet accents; compact density; artwork and backdrop intensity; and reduced motion.
+- Added Appearance settings for signal, cobalt, amber, and violet accents; compact density; artwork and backdrop intensity; and reduced motion.
 - Added an Appearance setting to disable pop-out card previews. When disabled, Play, My List, and watched buttons appear over Movie, Series, and Episode cards. The buttons reuse the bottom scrim without hiding the progress line or card frame. Only the buttons capture clicks, so the rest of the card still opens details.
 - Added account-specific Letterboxd profile connections in durable account configuration. They accept a username or canonical URL, normalize it to `letterboxd.com`, and verify it with a bounded RSS request. Users can refresh, disable, open, or remove a profile.
 - Added the latest ratings and written reviews from connected Letterboxd members to matching movie details. MediaFlick matches public RSS entries by TMDB movie id, converts review HTML to bounded plain text, and caches feeds for 30 minutes. A stale feed remains available after refresh failure. Slow profile requests do not delay the local detail response.
@@ -135,6 +135,7 @@
 
 ### Fixed
 
+- Made Quick Connect visible on the first sign-in screen, with server-address guidance, availability feedback, and approval instructions. Changing the server immediately clears the previous code, and fresh installations now see “Welcome to MediaFlick”.
 - Fixed Linux and macOS release packaging on checkouts where the package scripts are not executable by invoking them through Bash ([#128](https://github.com/phob/MediaFlick-Desktop/pull/128) by [@Chinna95P](https://github.com/Chinna95P)).
 - Fixed Companion CI and release tests failing after the .NET 10 SDK advanced beyond the .NET 9 apphost pack on the runner by explicitly installing the matching .NET 9 SDK required by the Jellyfin 10.11 plugin target.
 - Fixed Linux and macOS CI builds by routing external mpv's watched-next hotkey through the shared player command and matching CEF's macOS cursor handle type.
@@ -221,6 +222,7 @@
 
 ### Removed
 
+- Removed light and system appearance modes and their color-mode control. MediaFlick now uses its dark interface exclusively and ignores legacy saved theme selections.
 - Removed the background metadata queue and its convergence code, including tables, retry schedules, detail-page priority, and diagnostics in `--library-stats` and `/api/status`. The catalog index and live requests replace them.
 - Removed overview, cast, media streams, tags, studios, critic rating, and cast search text from the cached items table. MediaFlick now fetches them when needed.
 - Removed the native Client Settings dialog and its injected script.

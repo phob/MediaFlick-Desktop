@@ -699,7 +699,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::preferences::{AppearanceAccent, AppearanceTheme};
+    use crate::preferences::AppearanceAccent;
 
     static TEST_PATH_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -800,7 +800,6 @@ mod tests {
         let bob = key("server", "bob");
         let service = AccountConfigurationService::open(path.clone()).expect("open");
         let appearance = AppearanceSettings {
-            theme: AppearanceTheme::Dark,
             accent: AppearanceAccent::Violet,
             ..AppearanceSettings::default()
         };
@@ -835,7 +834,6 @@ mod tests {
     fn signed_out_legacy_appearance_waits_for_the_next_account() {
         let path = test_path("pending-appearance");
         let appearance = AppearanceSettings {
-            theme: AppearanceTheme::Dark,
             accent: AppearanceAccent::Violet,
             ..AppearanceSettings::default()
         };
@@ -867,7 +865,7 @@ mod tests {
         let alice = key("server", "alice");
         let service = AccountConfigurationService::open(path.clone()).expect("open");
         let existing = AppearanceSettings {
-            theme: AppearanceTheme::Dark,
+            accent: AppearanceAccent::Cobalt,
             ..AppearanceSettings::default()
         };
         let legacy = AppearanceSettings {

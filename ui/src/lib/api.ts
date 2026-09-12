@@ -541,7 +541,6 @@ export interface ClientSettings {
 type SegmentSkipMode = "disabled" | "prompt" | "always"
 
 export interface AppearanceSettings {
-  theme: "system" | "dark" | "light"
   accent: "signal" | "cobalt" | "amber" | "violet"
   density: "compact" | "comfortable"
   artworkIntensity: number

@@ -11,7 +11,6 @@ import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
 const appearance = (cardPreviews: boolean): ClientSettings["appearance"] => ({
-  theme: "light",
   accent: "cobalt",
   density: "comfortable",
   artworkIntensity: 80,
@@ -100,6 +99,14 @@ test("appearance sliders expose names, descriptions, and percentage values", () 
   }
 })
 
+test("appearance settings do not offer a color mode control", () => {
+  renderAppearance(false)
+
+  expect(screen.queryByRole("combobox", { name: "Color mode" })).toBeNull()
+  expect(screen.queryByText("Light", { exact: true })).toBeNull()
+  expect(screen.queryByText("System", { exact: true })).toBeNull()
+})
+
 test.each(["mpv", "mpchc"] as const)("%s player fields are associated with visible labels and help", (backend) => {
   const client = testQueryClient()
   const configured = settings(false)
@@ -162,8 +169,7 @@ describe("appearance settings live preview", () => {
       document.querySelector(".preview-panel"),
       "expanded media-card preview",
     )
-    // The panel is themed by the unsaved draft choices, like the shelf itself.
-    expect(panel.closest("[data-theme='light']")).not.toBeNull()
+    // The panel uses the unsaved draft choices, like the shelf itself.
     expect(panel.closest("[data-accent='cobalt']")).not.toBeNull()
     // It portals outside the page's paint containment, exactly where the
     // app's own panel lives.

@@ -7,8 +7,8 @@ use crate::players::mpv::input::MpvInputBindings;
 
 use super::{
     AccountConfigurationService, AccountKey, AppSettings, AppearanceAccent, AppearanceDensity,
-    AppearanceTheme, CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode,
-    StreamingQuality, WebUiWindowSettings,
+    CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode, StreamingQuality,
+    WebUiWindowSettings,
 };
 
 /// Serialized patches accepted by the settings API.  These deliberately name
@@ -73,7 +73,6 @@ pub struct ApplicationSettingsPatch {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppearanceSettingsPatch {
-    pub theme: Option<String>,
     pub accent: Option<String>,
     pub density: Option<String>,
     pub artwork_intensity: Option<u8>,
@@ -340,10 +339,6 @@ impl PreferencesService {
             })?;
             let previous = state.settings.clone();
             let mut next = previous.clone();
-            if let Some(value) = patch.theme.as_deref() {
-                next.appearance.theme = AppearanceTheme::from_id(value)
-                    .ok_or_else(|| PreferencesError::invalid("theme"))?;
-            }
             if let Some(value) = patch.accent.as_deref() {
                 next.appearance.accent = AppearanceAccent::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("accent"))?;
@@ -520,7 +515,7 @@ mod tests {
 
     use super::*;
     use crate::preferences::{
-        AccountConfigurationService, AccountKey, AppearanceSettings, AppearanceTheme,
+        AccountConfigurationService, AccountKey, AppearanceAccent, AppearanceSettings,
         SegmentSkipMode, StreamingQuality,
     };
     use serde_json::json;
@@ -595,6 +590,13 @@ mod tests {
     }
 
     #[test]
+    fn appearance_patch_rejects_removed_color_theme() {
+        assert!(
+            serde_json::from_value::<AppearanceSettingsPatch>(json!({ "theme": "light" })).is_err()
+        );
+    }
+
+    #[test]
     fn appearance_follows_the_active_account_and_survives_logout() {
         let path = account_test_path();
         let accounts = Arc::new(
@@ -607,11 +609,14 @@ mod tests {
 
         service
             .patch_appearance(AppearanceSettingsPatch {
-                theme: Some("dark".to_string()),
+                accent: Some("violet".to_string()),
                 ..AppearanceSettingsPatch::default()
             })
             .expect("save Alice appearance");
-        assert_eq!(service.snapshot().appearance.theme, AppearanceTheme::Dark);
+        assert_eq!(
+            service.snapshot().appearance.accent,
+            AppearanceAccent::Violet
+        );
 
         service.activate_account(None).expect("log out");
         assert_eq!(service.snapshot().appearance, AppearanceSettings::default());
@@ -620,7 +625,10 @@ mod tests {
         service
             .activate_account(Some(alice))
             .expect("activate Alice again");
-        assert_eq!(service.snapshot().appearance.theme, AppearanceTheme::Dark);
+        assert_eq!(
+            service.snapshot().appearance.accent,
+            AppearanceAccent::Violet
+        );
 
         cleanup_account_test(&path);
     }
@@ -635,7 +643,7 @@ mod tests {
 
         let error = service
             .patch_appearance(AppearanceSettingsPatch {
-                theme: Some("dark".to_string()),
+                accent: Some("violet".to_string()),
                 ..AppearanceSettingsPatch::default()
             })
             .expect_err("anonymous appearance write must fail");

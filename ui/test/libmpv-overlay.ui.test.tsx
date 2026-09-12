@@ -31,7 +31,6 @@ const settings = {
     },
   },
   appearance: {
-    theme: "dark",
     accent: "signal",
     density: "comfortable",
     artworkIntensity: 1,

@@ -29,7 +29,6 @@ const settings: ClientSettings = {
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
   appearance: {
-    theme: "system",
     accent: "signal",
     density: "comfortable",
     artworkIntensity: 100,

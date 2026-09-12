@@ -920,7 +920,7 @@ fn execute_mpv_setup_script(frame: &Frame, script: &str) {
 mod tests {
     use super::*;
     use crate::playback::{PlaybackDiagnostics, PlayerChapter, PlayerSnapshot};
-    use crate::preferences::{AppSettings, AppearanceTheme, WebUiWindowSettings};
+    use crate::preferences::{AppSettings, AppearanceAccent, WebUiWindowSettings};
 
     #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
@@ -934,14 +934,14 @@ mod tests {
             ..AppSettings::default()
         };
         let mut stale_preference_snapshot = AppSettings::default();
-        stale_preference_snapshot.appearance.theme = AppearanceTheme::Light;
+        stale_preference_snapshot.appearance.accent = AppearanceAccent::Violet;
 
         apply_settings_snapshot_preserving_live_window(&mut live, stale_preference_snapshot);
 
         // This is the snapshot the close lifecycle persists after resize ->
         // unrelated settings change -> close.
         assert_eq!(live.webui_window.size(), (1536, 864));
-        assert_eq!(live.appearance.theme, AppearanceTheme::Light);
+        assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
     }
 
     #[test]

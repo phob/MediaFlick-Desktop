@@ -23,6 +23,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  color-scheme: dark;
   /* Surfaces. Every neutral is mixed toward the accent hue rather than being a
      pure grey — the reason the shell reads as green-lit rather than as a grey
      app that happens to have a green button in it. */
@@ -83,58 +84,6 @@
   --sidebar-ring: #2bff88;
   --artwork-intensity: 1;
   --backdrop-intensity: 1;
-}
-
-/* Appearance state is carried by data attributes on <html> — and, for the
-   Appearance settings' live preview, on one scoped container. Attribute-only
-   selectors let both restate the same palette: custom properties resolve from
-   the nearest ancestor that defines them, so a preview element carrying draft
-   attributes re-themes exactly the real components inside it without touching
-   the saved root appearance. */
-[data-theme="light"] {
-  --background: #f4f8f5;
-  --foreground: #102017;
-  --card: #ffffff;
-  --card-foreground: #102017;
-  --popover: #ffffff;
-  --popover-foreground: #102017;
-  --secondary: #e7eee9;
-  --secondary-foreground: #102017;
-  --muted: #e7eee9;
-  --muted-foreground: #54705f;
-  --accent: #e7eee9;
-  --accent-foreground: #102017;
-  --border: #cad8cf;
-  --input: #cad8cf;
-  --sidebar: #e9f0eb;
-  --sidebar-foreground: #102017;
-  --sidebar-accent: #dce8df;
-  --sidebar-accent-foreground: #102017;
-  --sidebar-border: #cad8cf;
-}
-
-@media (prefers-color-scheme: light) {
-  [data-theme="system"] {
-    --background: #f4f8f5;
-    --foreground: #102017;
-    --card: #ffffff;
-    --card-foreground: #102017;
-    --popover: #ffffff;
-    --popover-foreground: #102017;
-    --secondary: #e7eee9;
-    --secondary-foreground: #102017;
-    --muted: #e7eee9;
-    --muted-foreground: #54705f;
-    --accent: #e7eee9;
-    --accent-foreground: #102017;
-    --border: #cad8cf;
-    --input: #cad8cf;
-    --sidebar: #e9f0eb;
-    --sidebar-foreground: #102017;
-    --sidebar-accent: #dce8df;
-    --sidebar-accent-foreground: #102017;
-    --sidebar-border: #cad8cf;
-  }
 }
 
 [data-accent="cobalt"] { --primary: #5da8ff; --primary-foreground: #05152a; --ring: #5da8ff; --signal-deep: #2868ba; --sidebar-primary: #5da8ff; --sidebar-primary-foreground: #05152a; --sidebar-ring: #5da8ff; }
@@ -493,8 +442,7 @@ html[data-libmpv-cursor-hidden] * {
 
 /* Ambient wash behind the shelf, faded by the draft backdrop intensity the
    same way the home billboard's establishing art is. Mixed from the accent and
-   surface tokens rather than fixed colors, so it stays a quiet tint in both
-   themes instead of a dark smear on light surfaces. */
+   surface tokens rather than fixed colors, so it stays a quiet tint. */
 .appearance-preview-backdrop {
   position: absolute;
   inset: 0;
