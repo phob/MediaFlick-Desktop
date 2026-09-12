@@ -130,6 +130,7 @@
 
 ### Fixed
 
+- Fixed Companion CI and release tests failing after the .NET 10 SDK advanced beyond the .NET 9 apphost pack on the runner by explicitly installing the matching .NET 9 SDK required by the Jellyfin 10.11 plugin target.
 - Fixed Linux and macOS CI builds by routing external mpv's watched-next hotkey through the shared player command and matching CEF's macOS cursor handle type.
 
 - Fixed mouse-wheel stutter in populated library and collection grids by compositing virtual rows and removing per-button background blur from inline card actions. Fixed the built-in Windows interface limiting scrolling to 60 fps on faster displays. GPU-backed CEF now follows the window's display refresh rate, rechecks display changes, and caps rendering at 240 fps. Sustained initial-sync pages now keep aggregate refreshes at one per second after the first page. Added per-page fetch and ingestion timings for real-server performance checks.
