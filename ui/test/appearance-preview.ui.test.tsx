@@ -94,9 +94,9 @@ function location() {
 test("appearance sliders expose names, descriptions, and percentage values", () => {
   renderAppearance(false)
   for (const [name, value] of [["Artwork intensity", "80 percent"], ["Backdrop intensity", "60 percent"]]) {
-    const slider = screen.getByRole("slider", { name })
+    const slider = screen.getByRole("slider", { name: `${name} slider` })
     expect(slider.getAttribute("aria-valuetext")).toBe(value)
-    expect(document.getElementById(slider.getAttribute("aria-describedby") ?? "")?.textContent).toContain("%")
+    expect(document.getElementById(slider.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Percent")
   }
 })
 

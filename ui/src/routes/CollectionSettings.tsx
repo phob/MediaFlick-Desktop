@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Layers, Pencil, Search, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, ImagePlus, Layers, Pencil, Search, Trash2 } from "lucide-react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Navigate, useSearchParams } from "react-router-dom"
@@ -6,6 +6,9 @@ import { toast } from "sonner"
 import collectionTemplateArt from "@/assets/collection-template.svg"
 import CollectionTemplatePictogram from "@/components/CollectionTemplatePictogram"
 import SaveBar from "@/components/SettingsSaveBar"
+import SettingsNumberField from "@/components/SettingsNumberField"
+import PublicListCombobox from "@/components/PublicListCombobox"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import {
   api,
@@ -35,7 +39,6 @@ import {
   type CollectionSettings,
   type CollectionTemplate,
   type CollectionTemplates,
-  type PublicCollectionList,
 } from "@/lib/api"
 import { jsonString } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
@@ -144,8 +147,8 @@ function GeneralSettings({ draft, onChange }: {
       )}
       <div className="settings-row">
         <div>
-          <h3 className="font-medium">Mode</h3>
-          <p className="mt-1 text-sm text-muted-foreground">MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly.</p>
+          <h3 className="font-medium"><Label htmlFor="collection-mode">Mode</Label></h3>
+          <p id="collection-mode-help" className="mt-1 text-sm text-muted-foreground">MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly.</p>
         </div>
         <Select
           value={draft?.modeSelection ?? ""}
@@ -154,7 +157,7 @@ function GeneralSettings({ draft, onChange }: {
             if (draft && (modeSelection === "mediaFlick" || modeSelection === "jellyfin")) onChange({ ...draft, modeSelection })
           }}
         >
-          <SelectTrigger className="w-48" aria-label="Collection mode"><SelectValue placeholder="Loading…" /></SelectTrigger>
+          <SelectTrigger id="collection-mode" aria-describedby="collection-mode-help" className="w-48" aria-label="Collection mode"><SelectValue placeholder="Loading…" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="mediaFlick" disabled={!settings?.mediaFlickAvailable}>MediaFlick</SelectItem>
             <SelectItem value="jellyfin">Jellyfin</SelectItem>
@@ -163,10 +166,12 @@ function GeneralSettings({ draft, onChange }: {
       </div>
       <div className="settings-row">
         <div>
-          <h3 className="font-medium">Include unreleased titles</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Show future and undated missing movies in Movie Franchises.</p>
+          <h3 className="font-medium"><Label htmlFor="collection-general-unreleased">Include unreleased titles</Label></h3>
+          <p id="collection-general-unreleased-help" className="mt-1 text-sm text-muted-foreground">Show future and undated missing movies in Movie Franchises.</p>
         </div>
         <Switch
+          id="collection-general-unreleased"
+          aria-describedby="collection-general-unreleased-help"
           aria-label="Include unreleased titles"
           checked={draft?.includeUnreleased ?? false}
           disabled={!settings || !draft}
@@ -196,18 +201,16 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
     ;[next[from], next[to]] = [next[to], next[from]]
     onProfileIdsChange(next)
   }
-  const remove = (profile: CollectionProfile) => {
-    if (!window.confirm(`Delete “${profile.title}”? Its saved results will be removed from this device.`)) return
-    void api.collections.deleteProfile(profile.id).then(
-      () => {
-        void cache.invalidateQueries({ queryKey: ["collections", account] })
-        void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
-        void cache.invalidateQueries({ queryKey: queryKeys.home })
-        toast.success(`${profile.title} deleted`)
-      },
-      (error: Error) => toast.error(error.message),
-    )
-  }
+  const remove = useMutation({
+    mutationFn: (profile: CollectionProfile) => api.collections.deleteProfile(profile.id),
+    onSuccess: (_, profile) => {
+      void cache.invalidateQueries({ queryKey: ["collections", account] })
+      void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+      void cache.invalidateQueries({ queryKey: queryKeys.home })
+      toast.success(`${profile.title} deleted`)
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
   return (
     <SettingsSection title="Configured My Collections" description="Order, edit, or remove the collections saved for this account.">
       {query.isError ? (
@@ -232,7 +235,21 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
             <Button size="icon" variant="ghost" disabled={disabled || index === 0} aria-label={`Move ${profile.title} up`} onClick={() => reorder(index, index - 1)}><ArrowUp /></Button>
             <Button size="icon" variant="ghost" disabled={disabled || index === profiles.length - 1} aria-label={`Move ${profile.title} down`} onClick={() => reorder(index, index + 1)}><ArrowDown /></Button>
             <Button size="icon" variant="ghost" disabled={disabled || Boolean(query.data?.errors?.[profile.id])} aria-label={`Edit ${profile.title}`} onClick={() => onEdit(profile)}><Pencil /></Button>
-            <Button size="icon" variant="ghost" disabled={disabled} aria-label={`Delete ${profile.title}`} onClick={() => remove(profile)}><Trash2 /></Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="icon" variant="ghost" disabled={disabled || remove.isPending} aria-label={`Delete ${profile.title}`}><Trash2 /></Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete “{profile.title}”?</AlertDialogTitle>
+                  <AlertDialogDescription>Its saved results will be removed from this device.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction variant="destructive" disabled={disabled || remove.isPending} onClick={() => remove.mutate(profile)}>Delete collection</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       ))}
@@ -269,14 +286,15 @@ function TemplateCatalog({
             <h3 className="font-medium">{CATEGORY_LABELS[category]}</h3>
             <div className="grid gap-2 md:grid-cols-2">
               {rows.map(({ template, available }) => (
-                <button
+                <Button
                   key={template.id}
                   type="button"
+                  variant="outline"
                   disabled={disabled || !available}
                   onClick={() => onAdd(template)}
-                  className="rounded-lg border p-3 text-left transition hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-auto min-w-0 justify-start rounded-lg p-3 text-left font-normal whitespace-normal"
                 >
-                  <div className="flex gap-3">
+                  <div className="flex w-full min-w-0 gap-3">
                     <CollectionTemplatePictogram category={template.category} pictogram={template.pictogram} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
@@ -286,7 +304,7 @@ function TemplateCatalog({
                       {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
                     </div>
                   </div>
-                </button>
+                </Button>
               ))}
             </div>
           </section>
@@ -313,8 +331,11 @@ function CollectionWizard({
   const [draft, setDraft] = useState<CollectionProfileDraft | null>(initial)
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.collections.preview>> | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
-  const [listQuery, setListQuery] = useState("")
-  const [listResults, setListResults] = useState<PublicCollectionList[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [posterError, setPosterError] = useState<string | null>(null)
+  const [posterName, setPosterName] = useState("")
+  const posterInput = useRef<HTMLInputElement>(null)
+  const posterRequest = useRef<AbortController | null>(null)
   const [busy, setBusy] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const previewRequest = useRef<{ controller: AbortController | null; generation: number }>({
@@ -326,6 +347,7 @@ function CollectionWizard({
   useEffect(() => () => {
     previewRequest.current.generation += 1
     previewRequest.current.controller?.abort()
+    posterRequest.current?.abort()
   }, [])
 
   if (!draft) return null
@@ -420,24 +442,47 @@ function CollectionWizard({
       }
     }
   }
-  const searchLists = () => {
-    const query = listQuery.trim()
-    if (query.length < 2) return
-    setBusy(true)
-    void api.collections.searchPublicLists(query).then(
-      ({ lists }) => setListResults(lists),
-      (error: Error) => toast.error(error.message),
-    ).finally(() => setBusy(false))
+  const cancelPoster = () => {
+    posterRequest.current?.abort()
+    posterRequest.current = null
+    setUploading(false)
+    setPosterError(null)
+    setPosterName("")
+    if (posterInput.current) posterInput.current.value = ""
+  }
+  const uploadPoster = async (file: File) => {
+    cancelPoster()
+    setPosterName(file.name)
+    if (file.size === 0 || file.size > 10 * 1024 * 1024) {
+      setPosterError("Choose a PNG, JPEG, or WebP image between 1 byte and 10 MB.")
+      return
+    }
+    const controller = new AbortController()
+    posterRequest.current = controller
+    setUploading(true)
+    try {
+      const bytes = await file.arrayBuffer()
+      if (controller.signal.aborted) return
+      const result = await api.collections.uploadArtwork(bytes, controller.signal)
+      if (!controller.signal.aborted) patch({ customPosterId: result.id })
+    } catch (error) {
+      if (!controller.signal.aborted) setPosterError(error instanceof Error ? error.message : "Could not upload poster.")
+    } finally {
+      if (posterRequest.current === controller) {
+        posterRequest.current = null
+        setUploading(false)
+      }
+    }
   }
   const reset = () => {
+    cancelPoster()
+    invalidatePreview()
     setDraft(structuredClone(initial))
     setPreview(null)
     setPreviewError(null)
-    setListQuery("")
-    setListResults([])
   }
   const save = () => {
-    if (readOnly || !validDraft || refreshesResults && !providerAvailable) return
+    if (uploading || posterError || readOnly || !validDraft || refreshesResults && !providerAvailable) return
     if (!profileId && !preview) {
       void runPreview()
       return
@@ -460,7 +505,7 @@ function CollectionWizard({
     })()
   }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) cancelPoster(); onOpenChange(next) }}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{profileId ? "Edit collection" : "Add collection"}</DialogTitle>
@@ -493,11 +538,11 @@ function CollectionWizard({
           </div>
           <div className="flex flex-col gap-2 md:col-span-2">
             <Label htmlFor="collection-description">Description</Label>
-            <textarea id="collection-description" disabled={readOnly} className="min-h-20 rounded-md border bg-transparent px-3 py-2 text-sm" value={draft.description} maxLength={2000} onChange={(event) => patch({ description: event.target.value })} />
+            <Textarea id="collection-description" disabled={readOnly} className="min-h-20" value={draft.description} maxLength={2000} onChange={(event) => patch({ description: event.target.value })} />
           </div>
           {settings.data?.effectiveMode === "mediaFlick" && <div className="flex items-center justify-between gap-4 md:col-span-2">
-            <div><Label htmlFor="collection-home">Available on Home</Label><p className="mt-1 text-sm text-muted-foreground">Allow this collection to be selected as a Home shelf.</p></div>
-            <Switch id="collection-home" checked={draft.availableOnHome} onCheckedChange={(availableOnHome) => patch({ availableOnHome })} disabled={readOnly} />
+            <div><Label htmlFor="collection-home">Available on Home</Label><p id="collection-home-help" className="mt-1 text-sm text-muted-foreground">Allow this collection to be selected as a Home shelf.</p></div>
+            <Switch id="collection-home" aria-describedby="collection-home-help" checked={draft.availableOnHome} onCheckedChange={(availableOnHome) => patch({ availableOnHome })} disabled={readOnly} />
           </div>}
           {draft.source.kind === "tmdbDiscover" && draft.template.id.endsWith(".custom-discover") && (
             <>
@@ -527,47 +572,13 @@ function CollectionWizard({
             <div className="flex flex-col gap-2 md:col-span-2">
               <Label htmlFor="collection-list">MDBList public list ID or canonical URL</Label>
               <Input id="collection-list" disabled={readOnly || !providerAvailable} value={draft.source.listId} onChange={(event) => patchSource({ kind: "mdbListPublicList", listId: event.target.value })} />
-              <div className="flex gap-2">
-                <Input
-                  value={listQuery}
-                  disabled={readOnly || !providerAvailable}
-                  onChange={(event) => setListQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      searchLists()
-                    }
-                  }}
-                  placeholder="Search public lists"
-                  aria-label="Search MDBList public lists"
-                />
-                <Button type="button" variant="outline" disabled={readOnly || !providerAvailable || busy || listQuery.trim().length < 2} onClick={searchLists}>Search</Button>
-              </div>
-              {listResults.length > 0 && (
-                <div className="grid gap-1 rounded-md border p-2">
-                  {listResults.map((list) => (
-                    <button
-                      key={list.id}
-                      type="button"
-                      disabled={readOnly}
-                      className="rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-                      onClick={() => patchSource({
-                        kind: "mdbListPublicList",
-                        listId: list.id,
-                      })}
-                    >
-                      <span className="font-medium">{list.name}</span>
-                      {list.owner && <span className="ml-2 text-muted-foreground">by {list.owner}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <PublicListCombobox account={account} value={draft.source.listId} disabled={readOnly || !providerAvailable} onValueChange={(listId) => patchSource({ kind: "mdbListPublicList", listId })} />
             </div>
           )}
           {draft.source.kind === "tmdbCollection" && (
             <div className="flex items-center justify-between gap-4 md:col-span-2">
-              <div><Label htmlFor="collection-unreleased">Include unreleased titles</Label><p className="mt-1 text-sm text-muted-foreground">Applies only to this exact collection.</p></div>
-              <Switch id="collection-unreleased" checked={draft.source.includeUnreleased} onCheckedChange={(includeUnreleased) => {
+              <div><Label htmlFor="collection-unreleased">Include unreleased titles</Label><p id="collection-unreleased-help" className="mt-1 text-sm text-muted-foreground">Applies only to this exact collection.</p></div>
+              <Switch id="collection-unreleased" aria-describedby="collection-unreleased-help" checked={draft.source.includeUnreleased} onCheckedChange={(includeUnreleased) => {
                 if (draft.source.kind !== "tmdbCollection") return
                 patchSource({ kind: "tmdbCollection", collectionId: draft.source.collectionId, includeUnreleased })
               }} disabled={readOnly || !providerAvailable} />
@@ -579,7 +590,7 @@ function CollectionWizard({
               <SelectTrigger id="collection-limit"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="maximum">Maximum</SelectItem></SelectContent>
             </Select>
-            {draft.limit.kind === "maximum" && <Input aria-label="Maximum results" disabled={readOnly || !providerAvailable} type="number" min={1} max={500} value={draft.limit.count} onChange={(event) => patch({ limit: { kind: "maximum", count: Number(event.target.value) } }, true)} />}
+            {draft.limit.kind === "maximum" && <div className="space-y-2"><Label htmlFor="collection-maximum">Maximum results</Label><SettingsNumberField id="collection-maximum" label="Maximum results" disabled={readOnly || !providerAvailable} min={1} max={500} value={draft.limit.count} onValueChange={(count) => patch({ limit: { kind: "maximum", count } }, true)} /></div>}
           </div>
           <div className="flex flex-col gap-2">
             <Label htmlFor="collection-cadence">Refresh cadence</Label>
@@ -593,18 +604,20 @@ function CollectionWizard({
             </Select>
           </div>
           <div className="flex flex-col gap-2 md:col-span-2">
-            <Label htmlFor="collection-poster">Custom poster (optional)</Label>
-            <div className="flex items-center gap-2">
-              <Input id="collection-poster" disabled={readOnly} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
+            <Label htmlFor="collection-poster-button">Custom poster (optional)</Label>
+            <p id="collection-poster-help" className="text-sm text-muted-foreground">PNG, JPEG, or WebP, up to 10 MB. The poster is applied when you save.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input ref={posterInput} id="collection-poster" className="hidden" disabled={readOnly || busy} type="file" accept="image/png,image/jpeg,image/webp" aria-label="Custom poster file" onChange={(event) => {
                 const file = event.target.files?.[0]
-                if (!file) return
-                void file.arrayBuffer().then(api.collections.uploadArtwork).then(
-                  ({ id }) => patch({ customPosterId: id }),
-                  (error: Error) => toast.error(error.message),
-                )
+                if (file) void uploadPoster(file)
               }} />
-              {draft.customPosterId && <Button type="button" variant="outline" disabled={readOnly} onClick={() => patch({ customPosterId: null })}>Remove poster</Button>}
+              <Button id="collection-poster-button" type="button" variant="outline" aria-describedby="collection-poster-help collection-poster-status" disabled={readOnly || busy} onClick={() => posterInput.current?.click()}><ImagePlus />{draft.customPosterId ? "Replace poster" : "Choose poster"}</Button>
+              {(uploading || posterError) && <Button type="button" variant="outline" onClick={cancelPoster}>{uploading ? "Cancel upload" : "Discard failed upload"}</Button>}
+              {draft.customPosterId && <Button type="button" variant="outline" disabled={readOnly || busy} onClick={() => { cancelPoster(); patch({ customPosterId: null }) }}>Remove poster</Button>}
             </div>
+            <p id="collection-poster-status" className="text-sm text-muted-foreground" role="status">{uploading ? `Uploading ${posterName}…` : posterError ? "Poster upload failed." : posterName || (draft.customPosterId ? "Custom poster selected" : "No custom poster selected")}</p>
+            {posterError && <p className="text-sm text-destructive" role="alert">{posterError}</p>}
+            {draft.customPosterId && <img className="h-32 w-22 rounded object-cover" src={api.collections.artworkUrl(draft.customPosterId)} alt="Selected collection poster" />}
           </div>
         </div>
         <div className="rounded-lg border p-3">
@@ -638,11 +651,11 @@ function CollectionWizard({
           )}
         </div>
         <SaveBar
-          dirty={!profileId || JSON.stringify(draft) !== JSON.stringify(initial)}
+          dirty={uploading || Boolean(posterError) || !profileId || JSON.stringify(draft) !== JSON.stringify(initial)}
           saving={busy}
-          saveDisabled={readOnly || !validDraft || (refreshesResults && !providerAvailable)}
+          saveDisabled={uploading || Boolean(posterError) || readOnly || !validDraft || (refreshesResults && !providerAvailable)}
           onSave={save}
-          onDiscard={() => onOpenChange(false)}
+          onDiscard={() => { cancelPoster(); onOpenChange(false) }}
           onReset={reset}
         />
       </DialogContent>
