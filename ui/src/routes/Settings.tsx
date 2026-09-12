@@ -42,13 +42,15 @@ import { MediaCard } from "@/components/MediaCard"
 import { PreviewProvider, type PreviewDependencies } from "@/components/PreviewCard"
 import SaveBar from "@/components/SettingsSaveBar"
 import SettingsDraftGuard from "@/components/SettingsDraftGuard"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Slider } from "@/components/ui/slider"
+import SettingsNumberField from "@/components/SettingsNumberField"
+import { isSettingsNumberValid } from "@/lib/settings-numbers"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
 import {
@@ -152,9 +154,10 @@ export function RatingSourceSelector({
       <legend className="sr-only">{legend}</legend>
       <div className="rating-source-options">
         {sources.map((source) => (
-          <label key={source.id} data-selected={chosen.has(source.id)}>
+          <Label key={source.id} data-selected={chosen.has(source.id)} className="leading-normal">
             <Checkbox
               aria-label={source.label}
+              disabled={!enabled}
               checked={chosen.has(source.id)}
               onCheckedChange={(checked) => {
                 const next = checked === true
@@ -170,7 +173,7 @@ export function RatingSourceSelector({
                 {!source.known ? " · newly observed" : ""}
               </small>
             </span>
-          </label>
+          </Label>
         ))}
       </div>
       <p id={helpId} className="mt-3 text-xs text-muted-foreground">
@@ -193,7 +196,11 @@ function SelectField<const Value extends string>({
   onValueChange,
   options,
   label,
+  id,
+  "aria-describedby": descriptionId,
 }: {
+  id?: string
+  "aria-describedby"?: string
   value: Value
   onValueChange: (value: Value) => void
   options: readonly SelectOption<Value>[]
@@ -205,7 +212,7 @@ function SelectField<const Value extends string>({
   }
   return (
     <Select value={value} onValueChange={selectOption}>
-      <SelectTrigger aria-label={label} className="w-52 max-w-full">
+      <SelectTrigger id={id} aria-label={label} aria-describedby={descriptionId} className="w-64 max-w-full h-auto min-h-9 whitespace-normal [&_[data-slot=select-value]]:line-clamp-none">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -396,11 +403,11 @@ function PlayerSettings() {
     <div className="settings-page">
       <PageTitle title="Player" />
       <Section title="Playback backend" description="The built-in libmpv player works without a separate mpv installation.">
-        <SettingsRow title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
-          <SelectField label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
+        <SettingsRow controlId="settings-player" title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
+          <SelectField id="settings-player" aria-describedby="settings-player-help" label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
         </SettingsRow>
-        <SettingsRow title="Start fullscreen" description="Use a full-screen player window by default.">
-          <SelectField label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
+        <SettingsRow controlId="settings-start-fullscreen" title="Start fullscreen" description="Use a full-screen player window by default.">
+          <SelectField id="settings-start-fullscreen" aria-describedby="settings-start-fullscreen-help" label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
         {draft.playerBackend !== "mpchc" && <SettingsRow controlId="mark-watched-key" title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
           <Input id="mark-watched-key" aria-describedby="mark-watched-key-help" className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
@@ -423,6 +430,12 @@ function PlayerSettings() {
   )
 }
 
+const COMFORT_NUMBERS = [
+  ["subtitleSize", "Subtitle size (%)", 50, 200], ["subtitleOutline", "Subtitle outline", 0, 8],
+  ["subtitleBackground", "Subtitle background (%)", 0, 100], ["subtitlePosition", "Subtitle vertical position", 0, 100],
+  ["seekBackSeconds", "Seek backward seconds", 1, 120], ["seekForwardSeconds", "Seek forward seconds", 1, 120],
+] as const
+
 function PlaybackSettings() {
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
@@ -431,27 +444,25 @@ function PlaybackSettings() {
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
+  const comfort = draft.comfort ?? DEFAULT_COMFORT
+  const validNumbers = COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
   const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }] as const
   return <div className="settings-page"><PageTitle title="Playback" />
     <Section title="Streaming quality" description="Original sends the source unchanged; lower quality permits transcoding when needed.">
-      <SettingsRow title="Default quality" description="You can still override this for an individual play."><SelectField label="Default streaming quality" value={draft.streamingQuality} onValueChange={(value) => update("streamingQuality", value)} options={[{ value: "original", label: "Original" }, { value: "auto", label: "Auto" }, { value: "120_mbps", label: "120 Mbps" }, { value: "80_mbps", label: "80 Mbps" }, { value: "60_mbps", label: "60 Mbps" }, { value: "40_mbps", label: "40 Mbps" }, { value: "20_mbps", label: "20 Mbps" }, { value: "10_mbps", label: "10 Mbps" }, { value: "5_mbps", label: "5 Mbps" }, { value: "3_mbps", label: "3 Mbps" }, { value: "1_5_mbps", label: "1.5 Mbps" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-default-quality" title="Default quality" description="You can still override this for an individual play."><SelectField id="settings-default-quality" aria-describedby="settings-default-quality-help" label="Default streaming quality" value={draft.streamingQuality} onValueChange={(value) => update("streamingQuality", value)} options={[{ value: "original", label: "Original" }, { value: "auto", label: "Auto" }, { value: "120_mbps", label: "120 Mbps" }, { value: "80_mbps", label: "80 Mbps" }, { value: "60_mbps", label: "60 Mbps" }, { value: "40_mbps", label: "40 Mbps" }, { value: "20_mbps", label: "20 Mbps" }, { value: "10_mbps", label: "10 Mbps" }, { value: "5_mbps", label: "5 Mbps" }, { value: "3_mbps", label: "3 Mbps" }, { value: "1_5_mbps", label: "1.5 Mbps" }]} /></SettingsRow>
     </Section>
     <Section title="Segment skipping" description="MediaFlick uses Jellyfin segment markers when they are available.">
-      <SettingsRow title="Introductions" description="Choose what happens when an intro marker is reached."><SelectField label="Intro skipping" value={draft.skipIntro} onValueChange={(value) => update("skipIntro", value)} options={choices} /></SettingsRow>
-      <SettingsRow title="Credits" description="Choose what happens when credits begin."><SelectField label="Credits skipping" value={draft.skipCredits} onValueChange={(value) => update("skipCredits", value)} options={choices} /></SettingsRow>
-      <SettingsRow title="Recaps" description="Choose what happens when a recap marker is reached."><SelectField label="Recap skipping" value={draft.skipRecap} onValueChange={(value) => update("skipRecap", value)} options={choices} /></SettingsRow>
-      <SettingsRow title="Commercials" description="Choose what happens when a commercial marker is reached."><SelectField label="Commercial skipping" value={draft.skipCommercial} onValueChange={(value) => update("skipCommercial", value)} options={choices} /></SettingsRow>
+      <SettingsRow controlId="settings-introductions" title="Introductions" description="Choose what happens when an intro marker is reached."><SelectField id="settings-introductions" aria-describedby="settings-introductions-help" label="Intro skipping" value={draft.skipIntro} onValueChange={(value) => update("skipIntro", value)} options={choices} /></SettingsRow>
+      <SettingsRow controlId="settings-credits" title="Credits" description="Choose what happens when credits begin."><SelectField id="settings-credits" aria-describedby="settings-credits-help" label="Credits skipping" value={draft.skipCredits} onValueChange={(value) => update("skipCredits", value)} options={choices} /></SettingsRow>
+      <SettingsRow controlId="settings-recaps" title="Recaps" description="Choose what happens when a recap marker is reached."><SelectField id="settings-recaps" aria-describedby="settings-recaps-help" label="Recap skipping" value={draft.skipRecap} onValueChange={(value) => update("skipRecap", value)} options={choices} /></SettingsRow>
+      <SettingsRow controlId="settings-commercials" title="Commercials" description="Choose what happens when a commercial marker is reached."><SelectField id="settings-commercials" aria-describedby="settings-commercials-help" label="Commercial skipping" value={draft.skipCommercial} onValueChange={(value) => update("skipCommercial", value)} options={choices} /></SettingsRow>
     </Section>
     {settings.client.player.playerBackend === "libmpv" && <Section title="Built-in player comfort" description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance.">
-      <SubtitlePreview comfort={draft.comfort ?? DEFAULT_COMFORT} />
-      {([
-        ["subtitleSize", "Subtitle size (%)", 50, 200], ["subtitleOutline", "Subtitle outline", 0, 8],
-        ["subtitleBackground", "Subtitle background (%)", 0, 100], ["subtitlePosition", "Subtitle vertical position", 0, 100],
-        ["seekBackSeconds", "Seek backward seconds", 1, 120], ["seekForwardSeconds", "Seek forward seconds", 1, 120],
-      ] as const).map(([key, label, min, max]) => <SettingsRow key={key} title={label}><Input aria-label={label} type="number" min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:Number(event.target.value)}})} /></SettingsRow>)}
-      {([ ["pauseKey", "Pause key"], ["muteKey", "Mute key"], ["fullscreenKey", "Fullscreen key"] ] as const).map(([key, label]) => <SettingsRow key={key} title={label} description="One unique letter, except J/L/Q/V and the mark-watched key. Space pauses; arrows and J/L seek."><Input aria-label={label} maxLength={1} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:event.target.value.toLowerCase()}})} /></SettingsRow>)}
+      <SubtitlePreview comfort={{ ...comfort, ...Object.fromEntries(COMFORT_NUMBERS.map(([key, , min, max]) => [key, isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : DEFAULT_COMFORT[key]])) }} />
+      {COMFORT_NUMBERS.map(([key, label, min, max]) => <SettingsRow key={key} controlId={`comfort-${key}`} title={label}><SettingsNumberField id={`comfort-${key}`} label={label} min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onValueChange={(value) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:value}})} /></SettingsRow>)}
+      {([ ["pauseKey", "Pause key"], ["muteKey", "Mute key"], ["fullscreenKey", "Fullscreen key"] ] as const).map(([key, label]) => <SettingsRow key={key} controlId={`shortcut-${key}`} title={label} description="One unique letter, except J/L/Q/V and the mark-watched key. Space pauses; arrows and J/L seek."><Input id={`shortcut-${key}`} aria-describedby={`shortcut-${key}-help`} aria-label={label} maxLength={1} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:event.target.value.toLowerCase()}})} /></SettingsRow>)}
     </Section>}
-    <SaveBar dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ comfort: {...DEFAULT_COMFORT}, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
+    <SaveBar saveDisabled={!validNumbers} dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ comfort: {...DEFAULT_COMFORT}, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
   </div>
 }
 
@@ -481,19 +492,31 @@ function ApplicationSettings() {
       </p>)}
     </Section>}
     <Section title="Window" description="These choices are applied immediately after saving.">
-      <SettingsRow title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
-      <SettingsRow title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Switch aria-label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
+      <SettingsRow controlId="settings-when-the-window-closes" title="When the window closes" description="Minimize keeps MediaFlick and its player ready in the background."><SelectField id="settings-when-the-window-closes" aria-describedby="settings-when-the-window-closes-help" label="Close behavior" value={draft.closeBehavior} onValueChange={(closeBehavior) => setDraft({ ...draft, closeBehavior })} options={[{ value: "exit_app", label: "Exit MediaFlick" }, { value: "minimize_window", label: "Minimize window" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-show-scrollbars" title="Show scrollbars" description="Reveal native scrollbars instead of the immersive hidden treatment."><Switch id="settings-show-scrollbars" aria-describedby="settings-show-scrollbars-help" aria-label="Show scrollbars" checked={draft.showScrollbars} onCheckedChange={(showScrollbars) => setDraft({ ...draft, showScrollbars })} /></SettingsRow>
     </Section>
     <Section title="Diagnostics" description="A log-level change is picked up on the next application launch.">
-      <SettingsRow title="Log level" description="Use Debug only while investigating a problem."><SelectField label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-log-level" title="Log level" description="Use Debug only while investigating a problem."><SelectField id="settings-log-level" aria-describedby="settings-log-level-help" label="Log level" value={draft.logLevel} onValueChange={(logLevel) => setDraft({ ...draft, logLevel })} options={[{ value: "trace", label: "Trace" }, { value: "debug", label: "Debug" }, { value: "info", label: "Info" }, { value: "warn", label: "Warn" }, { value: "error", label: "Error" }]} /></SettingsRow>
     </Section>
     {status?.authenticated && <Section title="Local account data" description={`Remove this device's data for ${status.userName ?? "this account"} on ${status.serverUrl ?? "this server"}. Nothing is deleted from Jellyfin.`}>
       <SettingsRow title="Delete local account data" description="This removes account settings, playback choices, collection snapshots, and custom collection posters, then signs this device out.">
         <div className="flex w-full max-w-md flex-col gap-2">
           <Input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} placeholder="Type DELETE to confirm" aria-label="Type DELETE to confirm local account deletion" />
-          <Button variant="destructive" disabled={deleteConfirmation !== "DELETE" || deleteAccount.isPending} onClick={() => {
-            if (window.confirm(`Delete local data for ${status.userName ?? "this account"} on ${status.serverUrl ?? "this server"}?`)) deleteAccount.mutate()
-          }}><Trash2 />{deleteAccount.isPending ? "Deleting…" : "Delete local account data"}</Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={deleteConfirmation !== "DELETE" || deleteAccount.isPending}><Trash2 />{deleteAccount.isPending ? "Deleting…" : "Delete local account data"}</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete local account data?</AlertDialogTitle>
+                <AlertDialogDescription>Remove local data for {status.userName ?? "this account"} on {status.serverUrl ?? "this server"}? This removes account settings, playback choices, collection snapshots, and custom collection posters, then signs this device out. Nothing is deleted from Jellyfin.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" disabled={deleteConfirmation !== "DELETE" || deleteAccount.isPending} onClick={() => deleteAccount.mutate()}>Delete local account data</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </SettingsRow>
     </Section>}
@@ -720,23 +743,23 @@ export function Appearance() {
   if (!settings || !draft) return <SettingsLoading />
   return <div className="settings-page"><PageTitle title="Appearance" />
     <Section title="Live preview" description="Your own shelves with your unsaved choices applied here only; the rest of MediaFlick changes after Save.">
-      <AppearancePreview appearance={draft} previewDelay={previewDelay} />
+      <AppearancePreview appearance={{ ...draft, artworkIntensity: isSettingsNumberValid(draft.artworkIntensity, 0, 100) ? draft.artworkIntensity : settings.appearance.artworkIntensity, backdropIntensity: isSettingsNumberValid(draft.backdropIntensity, 0, 100) ? draft.backdropIntensity : settings.appearance.backdropIntensity }} previewDelay={previewDelay !== undefined && isSettingsNumberValid(previewDelay, 200, 2000) ? previewDelay : viewing.data?.previewDelayMs} />
     </Section>
     <Section title="Theme" description="System follows the current operating-system color preference.">
-      <SettingsRow title="Color mode" description="Choose the overall surface treatment."><SelectField label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
-      <SettingsRow title="Accent" description="The signal color used for active controls and focus rings."><SelectField label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
-      <SettingsRow title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-color-mode" title="Color mode" description="Choose the overall surface treatment."><SelectField id="settings-color-mode" aria-describedby="settings-color-mode-help" label="Color mode" value={draft.theme} onValueChange={(theme) => setDraft({ ...draft, theme })} options={[{ value: "system", label: "System" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-accent" title="Accent" description="The signal color used for active controls and focus rings."><SelectField id="settings-accent" aria-describedby="settings-accent-help" label="Accent" value={draft.accent} onValueChange={(accent) => setDraft({ ...draft, accent })} options={[{ value: "signal", label: "Signal" }, { value: "cobalt", label: "Cobalt" }, { value: "amber", label: "Amber" }, { value: "violet", label: "Violet" }]} /></SettingsRow>
+      <SettingsRow controlId="settings-density" title="Density" description="Compact reduces the spacing used by browsing and settings surfaces."><SelectField id="settings-density" aria-describedby="settings-density-help" label="Density" value={draft.density} onValueChange={(density) => setDraft({ ...draft, density })} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></SettingsRow>
     </Section>
     <Section title="Cards" description="Choose how library cards behave and what they show.">
-      <SettingsRow title="Card previews" description="Open a larger panel after resting the pointer on a card. When off, Play, My List, and watched buttons stay on the card.">
-        <Switch aria-label="Show pop-out previews on cards" checked={draft.cardPreviews} onCheckedChange={(cardPreviews) => setDraft({ ...draft, cardPreviews })} />
+      <SettingsRow controlId="settings-card-previews" title="Card previews" description="Open a larger panel after resting the pointer on a card. When off, Play, My List, and watched buttons stay on the card.">
+        <Switch id="settings-card-previews" aria-describedby="settings-card-previews-help" aria-label="Show pop-out previews on cards" checked={draft.cardPreviews} onCheckedChange={(cardPreviews) => setDraft({ ...draft, cardPreviews })} />
       </SettingsRow>
       <SettingsRow controlId="card-preview-delay" title="Card preview delay" description="Milliseconds before a card preview opens.">
-        <Input id="card-preview-delay" aria-label="Card preview delay" type="number" min={200} max={2000} step={50} disabled={!draft.cardPreviews || previewDelay === undefined} value={previewDelay ?? ""} onChange={(event) => setPreviewDelay(Number(event.target.value))} />
+        <SettingsNumberField id="card-preview-delay" aria-describedby="card-preview-delay-help" label="Card preview delay" min={200} max={2000} sliderStep={50} disabled={!draft.cardPreviews || previewDelay === undefined} validate={previewDelay !== undefined} value={previewDelay ?? NaN} onValueChange={setPreviewDelay} />
         {viewing.error && <Button variant="ghost" onClick={() => void viewing.refetch()}>Retry loading delay</Button>}
       </SettingsRow>
-      <SettingsRow title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
-        <Switch aria-label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
+      <SettingsRow controlId="settings-media-info" title="Media info" description="Show video resolution, dynamic range, and audio format on library cards.">
+        <Switch id="settings-media-info" aria-describedby="settings-media-info-help" aria-label="Show media info on cards" checked={draft.showMediaInfo} onCheckedChange={(showMediaInfo) => setDraft({ ...draft, showMediaInfo })} />
       </SettingsRow>
       <div className="border-t border-border pt-5">
         <h3 className="font-medium">Rating sources</h3>
@@ -757,11 +780,11 @@ export function Appearance() {
       </div>
     </Section>
     <Section title="Artwork and motion" description="Lower artwork intensity for a quieter browsing surface.">
-      <SettingsRow controlId="artwork-intensity" title="Artwork intensity" description={`${draft.artworkIntensity}%`}><Slider id="artwork-intensity" aria-label="Artwork intensity" aria-describedby="artwork-intensity-help" aria-valuetext={`${draft.artworkIntensity} percent`} className="w-52" value={[draft.artworkIntensity]} onValueChange={([artworkIntensity]) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
-      <SettingsRow controlId="backdrop-intensity" title="Backdrop intensity" description={`${draft.backdropIntensity}%`}><Slider id="backdrop-intensity" aria-label="Backdrop intensity" aria-describedby="backdrop-intensity-help" aria-valuetext={`${draft.backdropIntensity} percent`} className="w-52" value={[draft.backdropIntensity]} onValueChange={([backdropIntensity]) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
-      <SettingsRow title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
+      <SettingsRow controlId="artwork-intensity" title="Artwork intensity" description="Percent of the original artwork intensity."><SettingsNumberField id="artwork-intensity" label="Artwork intensity" unit="percent" aria-describedby="artwork-intensity-help" min={0} max={100} value={draft.artworkIntensity} onValueChange={(artworkIntensity) => setDraft({ ...draft, artworkIntensity })} /></SettingsRow>
+      <SettingsRow controlId="backdrop-intensity" title="Backdrop intensity" description="Percent of the original artwork intensity."><SettingsNumberField id="backdrop-intensity" label="Backdrop intensity" unit="percent" aria-describedby="backdrop-intensity-help" min={0} max={100} value={draft.backdropIntensity} onValueChange={(backdropIntensity) => setDraft({ ...draft, backdropIntensity })} /></SettingsRow>
+      <SettingsRow controlId="settings-reduce-motion" title="Reduce motion" description="Disable decorative transitions and automatic movement."><Switch id="settings-reduce-motion" aria-describedby="settings-reduce-motion-help" aria-label="Reduce motion" checked={draft.reducedMotion} onCheckedChange={(reducedMotion) => setDraft({ ...draft, reducedMotion })} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, settings.appearance) || previewDelay !== viewing.data?.previewDelayMs} saving={mutation.isPending} onSave={() => mutation.mutate({ appearance: draft, previewDelay })} onDiscard={() => { setDraft(settings.appearance); setPreviewDelay(viewing.data?.previewDelayMs) }} onReset={() => { if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs); setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] }) }} />
+    <SaveBar saveDisabled={!isSettingsNumberValid(draft.artworkIntensity, 0, 100) || !isSettingsNumberValid(draft.backdropIntensity, 0, 100) || previewDelay !== undefined && !isSettingsNumberValid(previewDelay, 200, 2000)} dirty={!same(draft, settings.appearance) || previewDelay !== viewing.data?.previewDelayMs} saving={mutation.isPending} onSave={() => mutation.mutate({ appearance: draft, previewDelay })} onDiscard={() => { setDraft(settings.appearance); setPreviewDelay(viewing.data?.previewDelayMs) }} onReset={() => { if (previewDelay !== undefined) setPreviewDelay(DEFAULT_VIEWING.previewDelayMs); setDraft({ theme: "system", accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] }) }} />
   </div>
 }
 
@@ -895,8 +918,8 @@ function HomeSettingsPage() {
   return <div className="settings-page">
     <PageTitle title="Home" />
     <Section title="Billboard" description="The billboard stays fixed above every shelf.">
-      <SettingsRow title="Show billboard" description="Rotate a small selection of titles with landscape artwork.">
-        <Checkbox checked={draft.billboard} onCheckedChange={(checked) => setDraft({ ...draft, billboard: checked === true })} aria-label="Show billboard" />
+      <SettingsRow controlId="settings-show-billboard" title="Show billboard" description="Rotate a small selection of titles with landscape artwork.">
+        <Checkbox id="settings-show-billboard" aria-describedby="settings-show-billboard-help" checked={draft.billboard} onCheckedChange={(checked) => setDraft({ ...draft, billboard: checked === true })} aria-label="Show billboard" />
       </SettingsRow>
     </Section>
     <Section title="Shelves" description="Disabled shelves keep their positions. Drag a handle or use the arrow buttons to reorder.">
@@ -921,8 +944,10 @@ function HomeSettingsPage() {
             className="rounded-lg border bg-card p-3"
           >
             <div className="flex items-center gap-3">
-              <button
+              <Button
                 type="button"
+                size="icon-sm"
+                variant="ghost"
                 aria-label={`Drag ${element.label}`}
                 className="shrink-0 touch-none select-none cursor-grab text-muted-foreground active:cursor-grabbing"
                 onPointerDown={(event) => {
@@ -945,16 +970,16 @@ function HomeSettingsPage() {
                   dragRef.current = next
                   setDragging(next)
                 }}
-              ><GripVertical className="size-4" aria-hidden /></button>
-              <Checkbox checked={element.enabled} onCheckedChange={(checked) => setElementEnabled(key, checked === true)} aria-label={`Show ${element.label}`} />
-              <div className="min-w-0 flex-1"><div className="truncate font-medium">{element.label}</div><div className="text-xs text-muted-foreground">{element.category}</div></div>
+              ><GripVertical className="size-4" aria-hidden /></Button>
+              <Checkbox id={`home-element-${encodeURIComponent(key)}`} checked={element.enabled} onCheckedChange={(checked) => setElementEnabled(key, checked === true)} aria-label={`Show ${element.label}`} />
+              <div className="min-w-0 flex-1"><Label htmlFor={`home-element-${encodeURIComponent(key)}`} className="truncate leading-normal">{element.label}</Label><div className="text-xs text-muted-foreground">{element.category}</div></div>
               <Button type="button" size="icon-sm" variant="ghost" disabled={visibleIndex === 0} aria-label={`Move ${element.label} up`} onClick={() => moveVisible(visibleIndex, -1)}><ArrowUp /></Button>
               <Button type="button" size="icon-sm" variant="ghost" disabled={visibleIndex === visible.length - 1} aria-label={`Move ${element.label} down`} onClick={() => moveVisible(visibleIndex, 1)}><ArrowDown /></Button>
             </div>
             {watching && <div className="mt-3 ml-7 grid gap-3 border-t pt-3 sm:grid-cols-3">
-              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.continueWatching} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, continueWatching: checked === true } })} />Continue Watching</label>
-              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.nextUp} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, nextUp: checked === true } })} />Next Up</label>
-              <label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.watching.combine} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, combine: checked === true } })} />Combine shelves</label>
+              <Label className="font-normal leading-normal"><Checkbox checked={draft.watching.continueWatching} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, continueWatching: checked === true } })} />Continue Watching</Label>
+              <Label className="font-normal leading-normal"><Checkbox checked={draft.watching.nextUp} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, nextUp: checked === true } })} />Next Up</Label>
+              <Label className="font-normal leading-normal"><Checkbox checked={draft.watching.combine} onCheckedChange={(checked) => setDraft({ ...draft, watching: { ...draft.watching, combine: checked === true } })} />Combine shelves</Label>
             </div>}
           </div>
         })}
@@ -974,7 +999,7 @@ function HomeSettingsPage() {
       }}
     >
       <div className="flex items-center gap-3">
-        <GripVertical className="size-4 shrink-0 text-primary" />
+        <span className="flex size-8 shrink-0 items-center justify-center text-primary"><GripVertical className="size-4" /></span>
         <Checkbox checked={draggedElement.enabled} disabled tabIndex={-1} />
         <div className="min-w-0 flex-1"><div className="truncate font-medium">{draggedElement.label}</div><div className="text-xs text-muted-foreground">{draggedElement.category}</div></div>
       </div>
@@ -1008,26 +1033,26 @@ function ViewingPreferences() {
   return <div className="settings-page">
     <PageTitle title="Viewing" />
     <Section title="Episodes">
-      <SettingsRow title="Spoiler protection" description="Hide unwatched episode titles, artwork, and summaries. Reveal them on the episode details page."><Switch aria-label="Spoiler protection" checked={draft.spoilerProtection} onCheckedChange={(value) => update("spoilerProtection", value)} /></SettingsRow>
-      <SettingsRow title="Next episode"><SelectField label="Next episode" value={draft.nextEpisode} onValueChange={(value) => update("nextEpisode", value)} options={[{value:"off",label:"Off"},{value:"ask",label:"Ask with countdown"},{value:"auto",label:"Automatically play"}]} /></SettingsRow>
-      <SettingsRow title="Countdown seconds"><Input aria-label="Countdown seconds" type="number" min={3} max={60} value={draft.countdownSeconds} onChange={(event) => update("countdownSeconds", Number(event.target.value))} /></SettingsRow>
-      <SettingsRow title="Episode limit" description="Stop continuous playback after this many episodes. Zero means unlimited; starting a title manually begins a new session."><Input aria-label="Episode limit" type="number" min={0} max={20} value={draft.episodeLimit} onChange={(event) => update("episodeLimit", Number(event.target.value))} /></SettingsRow>
-      <SettingsRow title="Resume rewind"><SelectField label="Resume rewind" value={String(draft.resumeRewindSeconds)} onValueChange={(value) => update("resumeRewindSeconds", Number(value))} options={[0,5,10,30].map((value) => ({value:String(value),label:`${value} seconds`}))} /></SettingsRow>
+      <SettingsRow controlId="settings-spoiler-protection" title="Spoiler protection" description="Hide unwatched episode titles, artwork, and summaries. Reveal them on the episode details page."><Switch id="settings-spoiler-protection" aria-describedby="settings-spoiler-protection-help" aria-label="Spoiler protection" checked={draft.spoilerProtection} onCheckedChange={(value) => update("spoilerProtection", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-next-episode" title="Next episode"><SelectField id="settings-next-episode" label="Next episode" value={draft.nextEpisode} onValueChange={(value) => update("nextEpisode", value)} options={[{value:"off",label:"Off"},{value:"ask",label:"Ask with countdown"},{value:"auto",label:"Automatically play"}]} /></SettingsRow>
+      <SettingsRow controlId="settings-countdown-seconds" title="Countdown seconds"><SettingsNumberField id="settings-countdown-seconds" label="Countdown seconds" min={3} max={60} value={draft.countdownSeconds} onValueChange={(value) => update("countdownSeconds", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-episode-limit" title="Episode limit" description="Stop continuous playback after this many episodes. Zero means unlimited; starting a title manually begins a new session."><SettingsNumberField id="settings-episode-limit" aria-describedby="settings-episode-limit-help" label="Episode limit" min={0} max={20} value={draft.episodeLimit} onValueChange={(value) => update("episodeLimit", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-resume-rewind" title="Resume rewind"><SelectField id="settings-resume-rewind" label="Resume rewind" value={String(draft.resumeRewindSeconds)} onValueChange={(value) => update("resumeRewindSeconds", Number(value))} options={[0,5,10,30].map((value) => ({value:String(value),label:`${value} seconds`}))} /></SettingsRow>
     </Section>
     <Section title="Languages" description="Use language codes in preference order, separated by commas (for example en, de, ja). Individual title choices take priority.">
-      <SettingsRow title="Audio languages"><Input aria-label="Audio languages" value={audioText ?? ""} onChange={(event) => setAudioText(event.target.value)} /></SettingsRow>
-      <SettingsRow title="Prefer original audio" description="Prefer a track explicitly labeled original when available."><Switch aria-label="Prefer original audio" checked={draft.preferOriginalAudio} onCheckedChange={(value) => update("preferOriginalAudio", value)} /></SettingsRow>
-      <SettingsRow title="Subtitle languages"><Input aria-label="Subtitle languages" value={subtitleText ?? ""} onChange={(event) => setSubtitleText(event.target.value)} /></SettingsRow>
-      <SettingsRow title="Subtitles"><SelectField label="Subtitles" value={draft.subtitleMode} onValueChange={(value) => update("subtitleMode", value)} options={[{value:"server",label:"Jellyfin default"},{value:"off",label:"Off"},{value:"forced",label:"Forced only"},{value:"always",label:"Always"},{value:"foreignAudio",label:"When audio differs from preferred languages"}]} /></SettingsRow>
+      <SettingsRow controlId="settings-audio-languages" title="Audio languages"><Input id="settings-audio-languages" aria-label="Audio languages" value={audioText ?? ""} onChange={(event) => setAudioText(event.target.value)} /></SettingsRow>
+      <SettingsRow controlId="settings-prefer-original-audio" title="Prefer original audio" description="Prefer a track explicitly labeled original when available."><Switch id="settings-prefer-original-audio" aria-describedby="settings-prefer-original-audio-help" aria-label="Prefer original audio" checked={draft.preferOriginalAudio} onCheckedChange={(value) => update("preferOriginalAudio", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-subtitle-languages" title="Subtitle languages"><Input id="settings-subtitle-languages" aria-label="Subtitle languages" value={subtitleText ?? ""} onChange={(event) => setSubtitleText(event.target.value)} /></SettingsRow>
+      <SettingsRow controlId="settings-subtitles" title="Subtitles"><SelectField id="settings-subtitles" label="Subtitles" value={draft.subtitleMode} onValueChange={(value) => update("subtitleMode", value)} options={[{value:"server",label:"Jellyfin default"},{value:"off",label:"Off"},{value:"forced",label:"Forced only"},{value:"always",label:"Always"},{value:"foreignAudio",label:"When audio differs from preferred languages"}]} /></SettingsRow>
     </Section>
     <Section title="Browsing">
-      <SettingsRow title="Text size"><Input aria-label="Text size percent" type="number" min={80} max={150} value={draft.textScale} onChange={(event) => update("textScale", Number(event.target.value))} /></SettingsRow>
-      <SettingsRow title="Poster width"><SelectField label="Poster width" value={String(draft.posterSize)} onValueChange={(value) => update("posterSize", Number(value))} options={[...([120,144,168,200,240].includes(draft.posterSize) ? [] : [{value:String(draft.posterSize),label:`Current — ${draft.posterSize} px`,disabled:true}]), {value:"120",label:"Small — 120 px"},{value:"144",label:"Medium — 144 px"},{value:"168",label:"Default — 168 px"},{value:"200",label:"Large — 200 px"},{value:"240",label:"Extra large — 240 px"}]} /></SettingsRow>
-      <SettingsRow title="Startup destination"><SelectField label="Startup destination" value={draft.startupDestination} onValueChange={(value) => update("startupDestination", value)} options={[{value:"home",label:"Home"},{value:"movies",label:"Movies"},{value:"series",label:"Series"},{value:"calendar",label:"Calendar"},{value:"last",label:"Last browsing page"}]} /></SettingsRow>
-      <SettingsRow title="Remember library filters" description="Keep separate sort and filters for Movies and Series."><Switch aria-label="Remember library filters" checked={draft.rememberFilters} onCheckedChange={(value) => update("rememberFilters", value)} /></SettingsRow>
-      <SettingsRow title="Hide watched by default"><Switch aria-label="Hide watched by default" checked={draft.hideWatched} onCheckedChange={(value) => update("hideWatched", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-text-size" title="Text size"><SettingsNumberField id="settings-text-size" label="Text size percent" min={80} max={150} value={draft.textScale} onValueChange={(value) => update("textScale", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-poster-width" title="Poster width"><SelectField id="settings-poster-width" label="Poster width" value={String(draft.posterSize)} onValueChange={(value) => update("posterSize", Number(value))} options={[...([120,144,168,200,240].includes(draft.posterSize) ? [] : [{value:String(draft.posterSize),label:`Current — ${draft.posterSize} px`,disabled:true}]), {value:"120",label:"Small — 120 px"},{value:"144",label:"Medium — 144 px"},{value:"168",label:"Default — 168 px"},{value:"200",label:"Large — 200 px"},{value:"240",label:"Extra large — 240 px"}]} /></SettingsRow>
+      <SettingsRow controlId="settings-startup-destination" title="Startup destination"><SelectField id="settings-startup-destination" label="Startup destination" value={draft.startupDestination} onValueChange={(value) => update("startupDestination", value)} options={[{value:"home",label:"Home"},{value:"movies",label:"Movies"},{value:"series",label:"Series"},{value:"calendar",label:"Calendar"},{value:"last",label:"Last browsing page"}]} /></SettingsRow>
+      <SettingsRow controlId="settings-remember-library-filters" title="Remember library filters" description="Keep separate sort and filters for Movies and Series."><Switch id="settings-remember-library-filters" aria-describedby="settings-remember-library-filters-help" aria-label="Remember library filters" checked={draft.rememberFilters} onCheckedChange={(value) => update("rememberFilters", value)} /></SettingsRow>
+      <SettingsRow controlId="settings-hide-watched-by-default" title="Hide watched by default"><Switch id="settings-hide-watched-by-default" aria-label="Hide watched by default" checked={draft.hideWatched} onCheckedChange={(value) => update("hideWatched", value)} /></SettingsRow>
     </Section>
-    <SaveBar dirty={!same(draft, query.data) || audioText !== query.data?.audioLanguages.join(", ") || subtitleText !== query.data?.subtitleLanguages.join(", ")} saving={save.isPending}
+    <SaveBar saveDisabled={!isSettingsNumberValid(draft.countdownSeconds, 3, 60) || !isSettingsNumberValid(draft.episodeLimit, 0, 20) || !isSettingsNumberValid(draft.textScale, 80, 150)} dirty={!same(draft, query.data) || audioText !== query.data?.audioLanguages.join(", ") || subtitleText !== query.data?.subtitleLanguages.join(", ")} saving={save.isPending}
       onSave={() => { const submitted = {...draft, audioLanguages:(audioText ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean), subtitleLanguages:(subtitleText ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)}; setDraft(submitted); setAudioText(submitted.audioLanguages.join(", ")); setSubtitleText(submitted.subtitleLanguages.join(", ")); save.mutate(submitted) }}
       onDiscard={() => { setDraft(query.data); setAudioText(query.data?.audioLanguages.join(", ")); setSubtitleText(query.data?.subtitleLanguages.join(", ")) }}
       onReset={() => { setDraft({...DEFAULT_VIEWING, previewDelayMs:query.data?.previewDelayMs ?? DEFAULT_VIEWING.previewDelayMs}); setAudioText(""); setSubtitleText("") }} />
@@ -1156,7 +1181,7 @@ function Letterboxd() {
 }
 
 function ProfileCard({ profile, onEnabled, onRefresh, onOpen, onRemove }: { profile: LetterboxdProfile; onEnabled: (enabled: boolean) => void; onRefresh: () => void; onOpen: () => void; onRemove: () => void }) {
-  return <div className="settings-profile-card"><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="font-medium">{profile.displayName}</h3><span className="settings-status" data-status={profile.verificationStatus}>{profile.verificationStatus === "verified" ? <CheckCircle2 /> : <AlertTriangle />}{profile.verificationStatus}</span></div><p className="mt-1 truncate text-sm text-muted-foreground">{profile.canonicalUrl}</p></div><div className="flex flex-wrap items-center justify-end gap-1"><Switch aria-label={`Enable ${profile.displayName}`} checked={profile.enabled} onCheckedChange={onEnabled} /><Button size="icon-sm" variant="ghost" aria-label="Refresh profile" onClick={onRefresh}><RefreshCw /></Button><Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button><Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button></div></div>
+  return <div className="settings-profile-card"><div className="min-w-0"><div className="flex items-center gap-2"><h3 className="font-medium"><Label htmlFor={`letterboxd-enabled-${profile.id}`}>{profile.displayName}</Label></h3><span className="settings-status" data-status={profile.verificationStatus}>{profile.verificationStatus === "verified" ? <CheckCircle2 /> : <AlertTriangle />}{profile.verificationStatus}</span></div><p className="mt-1 truncate text-sm text-muted-foreground">{profile.canonicalUrl}</p></div><div className="flex flex-wrap items-center justify-end gap-1"><Switch id={`letterboxd-enabled-${profile.id}`} aria-label={`Enable ${profile.displayName}`} checked={profile.enabled} onCheckedChange={onEnabled} /><Button size="icon-sm" variant="ghost" aria-label="Refresh profile" onClick={onRefresh}><RefreshCw /></Button><Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button><Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button></div></div>
 }
 
 const COMPANION_SERVICES: ReadonlyArray<{

@@ -137,6 +137,86 @@ function isDisabled(element: Element) {
 afterEach(() => vi.restoreAllMocks())
 
 describe("collection settings wizard", () => {
+  test("public-list search supports keyboard selection and invalidates the old preview", async () => {
+    mockPage({ templates: catalog(template({ title: "Public list", source: { kind: "mdbListPublicList", listId: "42" } })) })
+    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
+    const search = vi.spyOn(api.api.collections, "searchPublicLists").mockResolvedValue({ lists: [
+      { id: "100", name: "Action favorites", owner: "Alice" },
+      { id: "200", name: "Action classics", owner: "Bob" },
+    ] })
+    page()
+    await openTemplate("Public list")
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
+    await screen.findByText("The Matrix (1999)")
+    fireEvent.click(screen.getByRole("combobox", { name: "Choose MDBList public list" }))
+    const input = screen.getByRole("combobox", { name: "Search MDBList public lists" })
+    fireEvent.change(input, { target: { value: "action" } })
+    await waitFor(() => expect(search).toHaveBeenCalledWith("action", expect.any(AbortSignal)))
+    await screen.findByRole("option", { name: "Action favorites by Alice" })
+    expect(search).toHaveBeenCalledWith("action", expect.any(AbortSignal))
+    fireEvent.keyDown(input, { key: "End" })
+    fireEvent.keyDown(input, { key: "Enter" })
+    expect((screen.getByLabelText("MDBList public list ID or canonical URL") as HTMLInputElement).value).toBe("200")
+    expect(screen.getByRole("combobox", { name: "Choose MDBList public list" }).textContent).toContain("Action classics by Bob")
+    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
+  })
+
+  test("Save waits for poster upload and includes the selected poster", async () => {
+    const current = profile("a".repeat(16))
+    mockPage({ profiles: [current] })
+    let finish!: (value: { id: string }) => void
+    const upload = vi.spyOn(api.api.collections, "uploadArtwork").mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    const update = vi.spyOn(api.api.collections, "updateProfile").mockResolvedValue(current)
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+    const file = new File(["poster"], "poster.png", { type: "image/png" })
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
+    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
+    expect(isDisabled(createButton())).toBe(true)
+    expect(screen.getByText("Uploading poster.png…")).toBeTruthy()
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+    await act(async () => finish({ id: "c".repeat(32) }))
+    expect(isDisabled(createButton())).toBe(false)
+    expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain("c".repeat(32))
+    fireEvent.click(createButton())
+    await waitFor(() => expect(update).toHaveBeenCalledWith(current.id, expect.objectContaining({ customPosterId: "c".repeat(32) })))
+  })
+
+  test("Reset cancels a poster upload and ignores its late response", async () => {
+    const current = profile("a".repeat(16), { customPosterId: "b".repeat(32) })
+    mockPage({ profiles: [current] })
+    let finish!: (value: { id: string }) => void
+    const upload = vi.spyOn(api.api.collections, "uploadArtwork").mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+    const file = new File(["poster"], "replacement.png", { type: "image/png" })
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
+    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+    expect(upload.mock.calls[0][1]?.aborted).toBe(true)
+    await act(async () => finish({ id: "c".repeat(32) }))
+    expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain(current.customPosterId)
+    expect(isDisabled(createButton())).toBe(true)
+  })
+
+  test("a failed poster upload blocks Save until the failed selection is discarded", async () => {
+    const current = profile("a".repeat(16), { customPosterId: "b".repeat(32) })
+    mockPage({ profiles: [current] })
+    vi.spyOn(api.api.collections, "uploadArtwork").mockRejectedValue(new Error("Poster upload failed"))
+    page(`/settings/collections?edit=${current.id}`)
+    await screen.findByRole("heading", { name: "Edit collection" })
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Changed" } })
+    const file = new File(["poster"], "poster.png", { type: "image/png" })
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
+    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
+    expect((await screen.findByRole("alert")).textContent).toBe("Poster upload failed")
+    expect(isDisabled(createButton())).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Discard failed upload" }))
+    expect(isDisabled(createButton())).toBe(false)
+    expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain(current.customPosterId)
+  })
+
   test("offers only media types the selected provider implements", async () => {
     mockPage({
       templates: catalog(
@@ -170,9 +250,12 @@ describe("collection settings wizard", () => {
     await openTemplate()
 
     const title = screen.getByLabelText("Title")
+    const description = screen.getByRole("textbox", { name: "Description" })
+    fireEvent.change(description, { target: { value: "First line\nSecond line" } })
     fireEvent.change(title, { target: { value: "Changed title" } })
     fireEvent.click(screen.getByRole("button", { name: "Reset" }))
     expect((title as HTMLInputElement).value).toBe("Popular movies")
+    expect((description as HTMLTextAreaElement).value).toBe(template().description)
     fireEvent.click(screen.getByRole("button", { name: "Discard" }))
     await waitFor(() => expect(screen.queryByRole("heading", { name: "Add collection" })).toBeNull())
   })
@@ -502,7 +585,6 @@ describe("collection settings management", () => {
       profiles: [second, first],
     })
     const remove = vi.spyOn(api.api.collections, "deleteProfile").mockResolvedValue({ deleted: true })
-    vi.spyOn(window, "confirm").mockReturnValue(true)
     page()
 
     fireEvent.click(await screen.findByRole("button", { name: "Move First down" }))
@@ -510,6 +592,12 @@ describe("collection settings management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id]))
     fireEvent.click(screen.getByRole("button", { name: "Delete First" }))
+    expect(await screen.findByRole("alertdialog", { name: "Delete “First”?" })).toBeTruthy()
+    expect(remove).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(remove).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Delete First" }))
+    fireEvent.click(screen.getByRole("button", { name: "Delete collection" }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith(first.id))
   })
 })

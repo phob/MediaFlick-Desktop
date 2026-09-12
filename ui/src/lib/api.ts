@@ -1340,8 +1340,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload as T
 }
 
-async function upload<T>(path: string, body: ArrayBuffer): Promise<T> {
-  const response = await fetch(path, { method: "POST", body })
+async function upload<T>(path: string, body: ArrayBuffer, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { method: "POST", body, signal })
   let payload: JsonValue = null
   try {
     payload = await response.json()
@@ -1666,8 +1666,8 @@ export const api = {
       request<JellyfinCollectionDetail>(`/api/collections/jellyfin/${encodeURIComponent(id)}`, {
         signal,
       }),
-    uploadArtwork: (body: ArrayBuffer) =>
-      upload<{ id: string }>("/api/collections/artwork", body),
+    uploadArtwork: (body: ArrayBuffer, signal?: AbortSignal) =>
+      upload<{ id: string }>("/api/collections/artwork", body, signal),
     artworkUrl: (id: string) => `/api/collections/artwork/${encodeURIComponent(id)}`,
     providerArtworkUrl: (path: string | null | undefined, size = "w342") =>
       path ? `/api/collections/provider-artwork${queryString({ path, size })}` : null,
