@@ -375,7 +375,7 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           cargo build --release --bin mediaflick-desktop
-          distribution/linux/build-appimage.sh
+          bash distribution/linux/build-appimage.sh
 
       - name: Smoke test Linux AppImage
         env:
@@ -466,7 +466,7 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           cargo build --release --bin mediaflick-desktop
-          distribution/macos/build-dmg.sh
+          bash distribution/macos/build-dmg.sh
 
       - name: Smoke test macOS DMG
         env:
