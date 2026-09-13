@@ -25,7 +25,7 @@ const MPV_EVENT_SHUTDOWN: c_int = 1;
 const MPV_ERROR_OPTION_NOT_FOUND: c_int = -5;
 #[cfg(target_os = "windows")]
 const MPV_FORMAT_INT64: c_int = 4;
-const REQUIRED_CLIENT_API_MAJOR: u32 = 2;
+const REQUIRED_CLIENT_API_MAJOR: c_ulong = 2;
 const WINDOWED_AUTOFIT: &str = "70%";
 #[cfg(target_os = "windows")]
 const NATIVE_WINDOW_TIMEOUT: Duration = Duration::from_secs(10);
@@ -462,9 +462,9 @@ impl Drop for LibMpvRuntime {
     }
 }
 
-fn validate_client_api(version: c_ulong) -> io::Result<(u32, u32)> {
-    let major = (version >> 16) as u32;
-    let minor = (version & 0xffff) as u32;
+fn validate_client_api(version: c_ulong) -> io::Result<(c_ulong, c_ulong)> {
+    let major = version >> 16;
+    let minor = version & 0xffff;
     if major != REQUIRED_CLIENT_API_MAJOR {
         return Err(io::Error::other(format!(
             "unsupported libmpv client API {major}.{minor}; expected major {REQUIRED_CLIENT_API_MAJOR}"
@@ -541,6 +541,29 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::{Receiver, RecvTimeoutError};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn client_api_accepts_supported_major_with_any_minor() {
+        for minor in [0, 1, 0xffff] {
+            let version = (2 << 16) | minor;
+            assert_eq!(
+                validate_client_api(version).expect("supported API"),
+                (2, minor)
+            );
+        }
+    }
+
+    #[test]
+    fn client_api_rejects_incompatible_majors() {
+        for major in [0, 1, 3, 0xffff] {
+            let version = (major << 16) | 42;
+            let error = validate_client_api(version).expect_err("unsupported API");
+            assert_eq!(
+                error.to_string(),
+                format!("unsupported libmpv client API {major}.42; expected major 2")
+            );
+        }
+    }
 
     unsafe extern "C" fn no_scripting_options(
         _handle: *mut MpvHandle,
