@@ -139,9 +139,9 @@ dependencies = [
 
 [[package]]
 name = "cef"
-version = "152.1.0+152.0.6"
+version = "152.2.0+152.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81207e518922dccc7ebc0c4480d0f2a4f23d58e0e682504712e2d9498bbb6212"
+checksum = "a470f9e8977b33395a9320ae349638f625c336fd6e5a93b06b8ff84a557615ca"
 dependencies = [
  "cef-dll-sys",
  "libloading 0.9.0",
@@ -535,9 +535,9 @@ dependencies = [
 
 [[package]]
 name = "glow"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29038e1c483364cc6bb3cf78feee1816002e127c331a1eec55a4d202b9e1adb5"
+checksum = "263218b0ba2b0715c3370fb04674f5f8aa331594b521c94ff0a8e4a8472d1386"
 dependencies = [
  "js-sys",
  "slotmap",

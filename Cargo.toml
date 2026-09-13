@@ -10,7 +10,7 @@ name = "mediaflick-desktop"
 path = "src/main.rs"
 
 [dependencies]
-cef = { version = "=152.1.0", default-features = false }
+cef = { version = "=152.2.0", default-features = false }
 getrandom = "0.4"
 libloading = "0.9"
 serde = { version = "1", features = ["derive"] }
@@ -87,7 +87,7 @@ x11rb = { version = "0.13", features = ["xkb", "resource_manager"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 khronos-egl = { version = "6", features = ["dynamic"] }
-glow = "0.17"
+glow = "0.18"
 
 [profile.release]
 opt-level = 3
