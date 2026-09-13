@@ -37,7 +37,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
     WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
     WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS,
-    WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW, WS_CHILD, WS_VISIBLE,
+    WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    WNDCLASSW, WS_CHILD, WS_VISIBLE, XBUTTON1, XBUTTON2,
 };
 use windows_sys::core::PCWSTR;
 
@@ -458,6 +459,23 @@ impl PrototypeOsrSurface {
         }
     }
 
+    fn handle_navigation_mouse_button(&self, message: u32, wparam: WPARAM) {
+        // CEF's off-screen mouse API only accepts left/middle/right. Handle
+        // navigation once on release; consume down events in the window
+        // procedure so DefWindowProc cannot issue a second browser command.
+        let Some(back) = navigation_mouse_button(message, wparam) else {
+            return;
+        };
+        let browser = self.browser.borrow().clone();
+        if let Some(browser) = browser {
+            if back {
+                browser.go_back();
+            } else {
+                browser.go_forward();
+            }
+        }
+    }
+
     fn with_browser_host(&self, action: impl FnOnce(BrowserHost)) {
         if let Some(browser_host) = self
             .browser
@@ -805,6 +823,17 @@ unsafe extern "system" fn input_wndproc(
     handled.unwrap_or_else(|| unsafe { DefWindowProcW(window, message, wparam, lparam) })
 }
 
+fn navigation_mouse_button(message: u32, wparam: WPARAM) -> Option<bool> {
+    if message != WM_XBUTTONUP {
+        return None;
+    }
+    match ((wparam >> 16) & 0xffff) as u16 {
+        XBUTTON1 => Some(true),
+        XBUTTON2 => Some(false),
+        _ => None,
+    }
+}
+
 fn dispatch_window_message(
     surface: &PrototypeOsrSurface,
     window: HWND,
@@ -840,6 +869,10 @@ fn dispatch_window_message(
             };
             surface.with_browser_host(|host| host.send_mouse_move_event(Some(&event), 1));
             Some(0)
+        }
+        WM_XBUTTONDOWN | WM_XBUTTONUP | WM_XBUTTONDBLCLK => {
+            surface.handle_navigation_mouse_button(message, wparam);
+            Some(1)
         }
         WM_RBUTTONDOWN | WM_RBUTTONUP | WM_RBUTTONDBLCLK
             if surface.handle_playback_right_button(window, message) =>
@@ -886,13 +919,11 @@ fn dispatch_window_message(
             });
             Some(0)
         }
-        WM_SETFOCUS => {
-            surface.with_browser_host(|host| host.set_focus(1));
-            Some(0)
-        }
-        WM_KILLFOCUS => {
-            surface.captured_playback_keys.set(0);
-            surface.with_browser_host(|host| host.set_focus(0));
+        WM_SETFOCUS | WM_KILLFOCUS => {
+            if message == WM_KILLFOCUS {
+                surface.captured_playback_keys.set(0);
+            }
+            surface.with_browser_host(|host| host.set_focus(i32::from(message == WM_SETFOCUS)));
             Some(0)
         }
         WM_SYSKEYDOWN if is_alt_f4(wparam) => {
@@ -1445,6 +1476,18 @@ fn signed_high_word(value: isize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn navigation_mouse_buttons_act_only_on_release() {
+        let back = (XBUTTON1 as WPARAM) << 16;
+        let forward = (XBUTTON2 as WPARAM) << 16;
+        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, back), Some(true));
+        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, forward), Some(false));
+        assert_eq!(navigation_mouse_button(WM_XBUTTONDOWN, back), None);
+        assert_eq!(navigation_mouse_button(WM_XBUTTONDBLCLK, back), None);
+        assert_eq!(navigation_mouse_button(WM_LBUTTONUP, back), None);
+        assert_eq!(navigation_mouse_button(WM_XBUTTONUP, 0), None);
+    }
 
     #[test]
     fn windowless_rendering_follows_display_refresh_with_a_bounded_fallback() {

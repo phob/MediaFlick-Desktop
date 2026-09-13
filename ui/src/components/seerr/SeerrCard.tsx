@@ -1,3 +1,4 @@
+import { detailNavigationState } from "@/lib/navigation"
 import { ArrowUpRight, Plus, Star } from "lucide-react"
 import { memo, type MouseEvent, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
@@ -132,6 +133,7 @@ export const SeerrCard = memo(function SeerrCard({
       >
         <Link
           to={destination}
+          state={detailNavigationState(location)}
           className="flex flex-col gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Poster result={result} />
