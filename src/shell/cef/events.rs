@@ -23,6 +23,8 @@ fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
     }
 }
 
+/// Coalesces rapid playback state updates before forwarding them to the WebUI,
+/// while tracking which meaningful state changes should be logged.
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
     const STATE_PUSH_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -359,6 +361,8 @@ wrap_task! {
     }
 }
 
+/// Delivers a playback event to every registered WebUI browser and emits
+/// dispatch diagnostics when `log_event` is true.
 fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_event: bool) {
     if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
