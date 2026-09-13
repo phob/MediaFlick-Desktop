@@ -1,11 +1,11 @@
-import { ArrowLeft, Layers } from "lucide-react"
+import { Layers } from "lucide-react"
 import { useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useLocation, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import { CollectionTitleGrid } from "@/components/CollectionTitleGrid"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState } from "@/components/PageHeader"
-import { DetailBackdrop } from "@/components/detail/DetailPrimitives"
+import { DetailBackdrop, DetailBackLink } from "@/components/detail/DetailPrimitives"
 import { SeerrCard } from "@/components/seerr/SeerrCard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,7 @@ import {
   useSeerrMedia,
   useSeerrStatus,
 } from "@/lib/queries"
+import { detailNavigationState } from "@/lib/navigation"
 import { useLocalDate } from "@/lib/local-date"
 
 function CollectionShell({
@@ -66,12 +67,7 @@ function CollectionShell({
             )}
           </div>
           <div className="min-w-0 flex-1 pb-1">
-            <Link
-              to={backHref}
-              className="inline-flex items-center gap-1 text-sm text-muted-foreground transition hover:text-foreground"
-            >
-              <ArrowLeft className="size-3.5" /> {backTo}
-            </Link>
+            <DetailBackLink to={backHref} label={backTo} />
             <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">{name}</h1>
             {countLine && <p className="data-value mt-1 text-muted-foreground">{countLine}</p>}
             {status && <div className="mt-2 flex items-center gap-2 text-sm text-amber-300" role="status"><span>{status}</span>{onRetry && <Button size="sm" variant="outline" onClick={onRetry}>Retry</Button>}</div>}
@@ -113,6 +109,7 @@ function OwnedCard({
   title: ClassifiedCollectionTitle
   item: ItemSummary | undefined
 }) {
+  const navigationState = detailNavigationState(useLocation())
   const primary = title.localItems[0]
   return (
     <div className="flex w-poster-w flex-col" data-collection-owned-card>
@@ -121,7 +118,7 @@ function OwnedCard({
       ) : (
         <article className="catalog-card flex w-poster-w flex-col">
           {primary ? (
-            <Link to={`/item/${encodeURIComponent(primary.id)}`}>
+            <Link to={`/item/${encodeURIComponent(primary.id)}`} state={navigationState}>
               <TitleArtwork title={title} />
             </Link>
           ) : (
@@ -144,6 +141,7 @@ function OwnedCard({
                 key={edition.id}
                 className="hover:underline"
                 to={`/item/${encodeURIComponent(edition.id)}`}
+                state={navigationState}
               >
                 {edition.name}
               </Link>

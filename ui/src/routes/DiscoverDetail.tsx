@@ -15,6 +15,7 @@ import { ExternalLinksMenu } from "@/components/detail/ExternalLinksMenu"
 import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import {
   DetailBackdrop,
+  DetailBackLink,
   DetailCastRail,
   DetailFact,
   DetailFactPanel,
@@ -34,10 +35,12 @@ import {
 } from "@/lib/api"
 import { castSearchPath } from "@/lib/cast-search"
 import { formatDate, formatLanguage } from "@/lib/format"
-import { detailNavigationState } from "@/lib/navigation"
+import { detailNavigationState, readDetailNavigationState } from "@/lib/navigation"
 import { useCollectionTitle, useSeerrMedia, useSeerrStatus } from "@/lib/queries"
 
 function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle }) {
+  const location = useLocation()
+  const back = readDetailNavigationState(location.state) ?? { from: "/collections", label: "Back to Collections" }
   const poster = api.collections.providerArtworkUrl(item.posterPath, "w500")
   const backdrop = api.collections.providerArtworkUrl(item.backdropPath, "w1280")
   return (
@@ -48,7 +51,7 @@ function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle })
           {poster ? <img src={poster} alt="" className="media-artwork-image h-full w-full object-cover" /> : <div className="h-full bg-gradient-to-br from-slate-700 to-slate-950" />}
         </div>
         <div className="max-w-3xl self-end pb-2">
-          <Button asChild variant="ghost" className="-ml-3 mb-2"><Link to="/collections">Back to Collections</Link></Button>
+          <DetailBackLink to={back.from} label={back.label} />
           <h1 className="text-3xl font-semibold tracking-tight">{item.title}</h1>
           <div className="mt-2 flex gap-2"><Badge variant="secondary">{item.mediaType === "series" ? "Series" : "Movie"}</Badge>{item.year && <Badge variant="outline">{item.year}</Badge>}</div>
           {item.overview && <p className="mt-5 text-sm leading-relaxed text-foreground/85">{item.overview}</p>}
@@ -190,6 +193,7 @@ function requestable(detail: SeerrMediaDetail, capabilities: SeerrCapabilities |
 
 export default function DiscoverDetail() {
   const location = useLocation()
+  const back = readDetailNavigationState(location.state) ?? { from: `/discover${location.search}`, label: "Back to discovery" }
   const { mediaType, tmdbId } = useParams<{ mediaType: string; tmdbId: string }>()
   const validMediaType = mediaType === "movie" || mediaType === "tv" ? mediaType : undefined
   const parsedId = Number(tmdbId)
@@ -295,8 +299,8 @@ export default function DiscoverDetail() {
       {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHeroLayout
         back={{
-          to: { pathname: "/discover", search: location.search },
-          label: "Back to discovery",
+          to: back.from,
+          label: back.label,
         }}
         poster={poster ? { src: poster, aspect: "poster" } : null}
         title={item.title}
