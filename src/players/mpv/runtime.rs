@@ -14,11 +14,11 @@ use crate::preferences::FullscreenBehavior;
 use super::ExternalMpv;
 
 #[cfg(target_os = "linux")]
+#[path = "gpu_next.rs"]
+mod gpu_next;
+#[cfg(target_os = "linux")]
 #[path = "linux_window.rs"]
 mod linux_window;
-#[cfg(target_os = "linux")]
-#[path = "render_gl.rs"]
-mod render_gl;
 
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
@@ -95,12 +95,17 @@ impl MpvRuntime {
         frame.validate()?;
         match self {
             Self::Library(runtime) => {
-                runtime.ui_exposes_video = frame.exposes_video();
                 runtime
                     .renderer
                     .as_ref()
                     .ok_or("native renderer is unavailable")?
-                    .submit(frame)
+                    .submit(
+                        runtime.handle,
+                        &frame,
+                        runtime.window.content_size().map_err(|e| e.to_string())?,
+                    )?;
+                runtime.ui_exposes_video = frame.exposes_video();
+                Ok(frame)
             }
             Self::External(_) => Err("UI composition requires built-in libmpv".into()),
         }
@@ -200,7 +205,7 @@ pub(super) struct LibMpvRuntime {
     #[cfg(target_os = "linux")]
     window: linux_window::HostWindow,
     #[cfg(target_os = "linux")]
-    renderer: Option<render_gl::RenderWorker>,
+    renderer: Option<gpu_next::Compositor>,
     _library: Library,
     #[cfg(target_os = "windows")]
     _svp_environment: Option<super::svp::RuntimeEnvironment>,
@@ -242,9 +247,13 @@ fn configure_libmpv_options(
     ];
     #[cfg(target_os = "linux")]
     options.extend([
-        // The app renders through the OpenGL API at native monitor density,
-        // then presents the completed frame in its own X11 window.
-        ("vo", "libmpv"),
+        // gpu-next owns a child surface inside the app's X11 container and
+        // composites CEF bitmaps itself. No mpv_render_context is created.
+        ("vo", "gpu-next"),
+        ("gpu-api", "vulkan,opengl"),
+        ("gpu-context", "x11vk,x11egl"),
+        ("gpu-sw", "yes"),
+        ("osd-level", "0"),
         ("x11-name", "io.github.phob.MediaFlickDesktop"),
         ("osc", "no"),
     ]);
@@ -291,32 +300,31 @@ impl LibMpvRuntime {
         #[cfg(target_os = "windows")]
         let get_property: MpvGetProperty = load_symbol(&library, b"mpv_get_property\0")?;
 
-        let version = unsafe { client_api_version() } as u32;
-        let major = version >> 16;
-        let minor = version & 0xffff;
-        if major != REQUIRED_CLIENT_API_MAJOR {
-            return Err(io::Error::other(format!(
-                "unsupported libmpv client API {major}.{minor}; expected major {REQUIRED_CLIENT_API_MAJOR}"
-            )));
-        }
+        let (major, minor) = validate_client_api(unsafe { client_api_version() })?;
 
         #[cfg(target_os = "linux")]
         let window = linux_window::HostWindow::new()?;
         #[cfg(target_os = "linux")]
         let host_handle = window.handle()?;
+        #[cfg(target_os = "linux")]
+        let window_id = host_handle.content().to_string();
         let handle = unsafe { create() };
         if handle.is_null() {
             return Err(io::Error::other("libmpv could not create a client handle"));
         }
 
-        if let Err(error) = configure_libmpv_options(
+        let configured = configure_libmpv_options(
             handle,
             set_option_string,
             error_string,
             ipc_path,
             fullscreen,
             libmpv_profile,
-        ) {
+        );
+        #[cfg(target_os = "linux")]
+        let configured = configured
+            .and_then(|()| set_option(handle, set_option_string, error_string, "wid", &window_id));
+        if let Err(error) = configured {
             unsafe { terminate_destroy(handle) };
             return Err(error);
         }
@@ -331,14 +339,13 @@ impl LibMpvRuntime {
         }
 
         #[cfg(target_os = "linux")]
-        let renderer =
-            match render_gl::RenderWorker::start(&library, handle, host_handle.content() as u32) {
-                Ok(renderer) => Some(renderer),
-                Err(error) => {
-                    unsafe { terminate_destroy(handle) };
-                    return Err(error);
-                }
-            };
+        let renderer = match gpu_next::Compositor::new(&library, handle) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                unsafe { terminate_destroy(handle) };
+                return Err(error);
+            }
+        };
         #[cfg(target_os = "linux")]
         let native_window = Some(host_handle);
         #[cfg(target_os = "windows")]
@@ -377,14 +384,6 @@ impl LibMpvRuntime {
     }
 
     fn is_alive(&mut self) -> bool {
-        #[cfg(target_os = "linux")]
-        if self
-            .renderer
-            .as_ref()
-            .is_some_and(render_gl::RenderWorker::failed)
-        {
-            return false;
-        }
         if !self.alive || self.handle.is_null() {
             return false;
         }
@@ -461,6 +460,17 @@ impl Drop for LibMpvRuntime {
     fn drop(&mut self) {
         self.terminate();
     }
+}
+
+fn validate_client_api(version: c_ulong) -> io::Result<(u32, u32)> {
+    let major = (version >> 16) as u32;
+    let minor = (version & 0xffff) as u32;
+    if major != REQUIRED_CLIENT_API_MAJOR {
+        return Err(io::Error::other(format!(
+            "unsupported libmpv client API {major}.{minor}; expected major {REQUIRED_CLIENT_API_MAJOR}"
+        )));
+    }
+    Ok((major, minor))
 }
 
 fn load_symbol<T>(library: &Library, name: &[u8]) -> io::Result<T>
