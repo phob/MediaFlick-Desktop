@@ -4,6 +4,8 @@
 
 pub mod build_info;
 pub mod cli;
+#[cfg(target_os = "linux")]
+pub mod desktop;
 pub mod ids;
 pub mod instance;
 pub mod logger;
