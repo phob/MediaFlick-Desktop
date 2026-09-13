@@ -86,8 +86,6 @@ winresource = "0.1"
 x11rb = { version = "0.13", features = ["xkb", "resource_manager"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
-khronos-egl = { version = "6", features = ["dynamic"] }
-glow = "0.18"
 
 [profile.release]
 opt-level = 3

@@ -24,10 +24,10 @@ build because upstream gates X11 support on GPL; this differs from the Windows
 LGPL build. Linux has no SVP profile or Windows graphics/TLS dependencies.
 The adjacent libplacebo patch fixes its Vulkan XML generator for Python 3.14;
 its checksum and patched source are included in the build records/archive.
-libplacebo 7.351.0 retains both OpenGL and Vulkan backends. MediaFlick's current
-embedded player still explicitly uses `vo=libmpv` and the OpenGL render API;
-retaining Vulkan does not switch the app to `gpu-next`. That switch needs a
-separate rendering-integration change. FFmpeg's Vulkan Video decoding and
+libplacebo 7.351.0 retains both OpenGL and Vulkan backends. MediaFlick's
+embedded player uses `vo=gpu-next`, preferring the X11 Vulkan context and falling
+back to X11/EGL. CEF bitmaps are composited by mpv through `overlay-add`.
+FFmpeg's Vulkan Video decoding and
 NVENC encoding are not enabled; NVIDIA video decoding uses NVDEC.
 
 ## Build
@@ -97,7 +97,7 @@ private audio plugins. NVIDIA's `libcuda.so.1` and `libnvcuvid.so.1` are loaded
 on demand from the host driver, so they are not needed just to load libmpv on
 an AMD/Intel system. Fontconfig uses the host's font configuration/fonts;
 GnuTLS uses the host's certificate trust store. A working X11/XWayland desktop
-and EGL/OpenGL 3.3 driver are still required. Select **Built-in player**, save,
+and Vulkan or EGL/OpenGL driver are still required. Select **Built-in player**, save,
 and restart; Linux's existing backend preference/default is unchanged.
 
 ```sh
@@ -115,7 +115,8 @@ The smoke test checks client API major 2, render API symbols, the compiled
 feature profile, and NVDEC/VA-API configurations for H.264, HEVC, and AV1, then
 loads and advances a generated WAV. The optional `--gpu-api` modes instead
 render generated video through `gpu-next`, allowing Mesa software drivers for
-headless validation. They do not change MediaFlick's embedded renderer.
+headless validation. The native composition test in `BUILDING.md` additionally
+exercises MediaFlick's own gpu-next integration and browser bitmap composition.
 These checks do not establish physical GPU hardware decoding, audio-device
 output, or Jellyfin playback. Use the opt-in native runtime test described in
 [`BUILDING.md`](../../../BUILDING.md) and a real desktop session for those.
