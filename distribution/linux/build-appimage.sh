@@ -25,7 +25,7 @@ esac
 libmpv_dir="${MEDIAFLICK_LIBMPV_DIR:-build/libmpv-linux-$arch}"
 libmpv_sources="mediaflick-libmpv-linux-$arch-sources.tar.zst"
 for file in lib/libmpv.so.2 SHA256SUMS SOURCE-REVISIONS.txt SYSTEM-PACKAGES.txt \
-    HOST-LIBRARIES.txt MPV-CONFIG.h FFMPEG-CONFIG.h FFMPEG-CONFIG.mak \
+    HOST-LIBRARIES.txt MPV-CONFIG.h LIBPLACEBO-CONFIG.h FFMPEG-CONFIG.h FFMPEG-CONFIG.mak \
     licenses/THIRD-PARTY-NOTICES.md "$libmpv_sources"; do
     if [[ ! -s "$libmpv_dir/$file" ]]; then
         echo "Missing required Linux libmpv artifact: $libmpv_dir/$file" >&2
@@ -79,7 +79,8 @@ libmpv_docs="$appdir/usr/share/doc/mediaflick-desktop/libmpv"
 mkdir -p "$libmpv_docs"
 cp -R "$libmpv_dir/licenses" "$libmpv_docs/"
 cp "$libmpv_dir/"*.txt "$libmpv_dir/"*CONFIG* "$libmpv_dir/SHA256SUMS" "$libmpv_docs/"
-python3 distribution/libmpv/linux/smoke-test.py "$appdir/usr/bin/libmpv/libmpv.so.2"
+python3 distribution/libmpv/linux/smoke-test.py "$appdir/usr/bin/libmpv/libmpv.so.2" \
+    "$libmpv_docs/LIBPLACEBO-CONFIG.h"
 # Publish corresponding sources alongside the AppImage, not inside its runtime.
 cp "$libmpv_dir/$libmpv_sources" "dist/linux/$libmpv_sources"
 

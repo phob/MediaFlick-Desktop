@@ -7,20 +7,28 @@ and FFmpeg 8.0.1 revisions as Windows. The Linux profile keeps:
   dav1d, AAC, AC-3, DTS, and FLAC; normal containers and network protocols.
 - HTTPS through GnuTLS, libass subtitles and Fontconfig font discovery,
   Little CMS color management, and mpv's OpenGL render API.
-- X11/EGL rendering (including XWayland), VA-API decoding/interoperation, and
+- OpenGL and Vulkan rendering backends, including libplacebo's `gpu-next`
+  backends and its glslang shader compiler.
+- X11/EGL rendering (including XWayland), VA-API for AMD/Intel and NVDEC with
+  CUDA interoperability for NVIDIA decoding, and
   ALSA/PulseAudio output. PipeWire desktops use their PulseAudio compatibility
-  service. GPUs without usable VA-API can use software decoding.
+  service. Hardware decoding requires a compatible GPU, codec, and host driver;
+  software decoding remains available.
 
-It disables DVD, Blu-ray, CD audio, Lua, JavaScript, VapourSynth/SVP, Vulkan,
+It disables DVD, Blu-ray, CD audio, Lua, JavaScript, VapourSynth/SVP,
 archive support, Rubber Band, capture devices, and the standalone mpv/FFmpeg
 programs. FFmpeg external codec libraries are limited to dav1d; encoders are
 limited to AC-3 (audio conversion/passthrough) and PNG/MJPEG (screenshots).
 FFmpeg's GPL-only features are disabled. mpv itself uses its GPL-2.0-or-later
 build because upstream gates X11 support on GPL; this differs from the Windows
 LGPL build. Linux has no SVP profile or Windows graphics/TLS dependencies.
-libplacebo 7.351.0 supplies required helper
-functions without its separate GPU backends; MediaFlick renders through mpv's
-traditional OpenGL path, not `gpu-next`.
+The adjacent libplacebo patch fixes its Vulkan XML generator for Python 3.14;
+its checksum and patched source are included in the build records/archive.
+libplacebo 7.351.0 retains both OpenGL and Vulkan backends. MediaFlick's current
+embedded player still explicitly uses `vo=libmpv` and the OpenGL render API;
+retaining Vulkan does not switch the app to `gpu-next`. That switch needs a
+separate rendering-integration change. FFmpeg's Vulkan Video decoding and
+NVENC encoding are not enabled; NVIDIA video decoding uses NVDEC.
 
 ## Build
 
@@ -38,7 +46,8 @@ sudo apt-get update
 sudo apt-get install -y build-essential git meson ninja-build nasm pkg-config \
   python3 python3-jinja2 patchelf zstd libass-dev liblcms2-dev libdav1d-dev \
   libgnutls28-dev zlib1g-dev libasound2-dev libpulse-dev libegl1-mesa-dev \
-  libgl-dev libva-dev libdrm-dev libx11-dev libxext-dev libxpresent-dev libxrandr-dev libxss-dev
+  libgl-dev libva-dev libdrm-dev libx11-dev libxext-dev libxpresent-dev libxrandr-dev libxss-dev \
+  libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev
 just libmpv
 ```
 
@@ -61,7 +70,9 @@ Output defaults to `build/libmpv-linux-<arch>`; an optional first argument to
 checksums, build configurations, upstream revisions, distribution package
 versions, license notices, and `mediaflick-libmpv-linux-<arch>-sources.tar.zst`.
 The archive includes pinned upstream sources, exact Debian/Ubuntu source
-packages and patches, and the build scripts/configuration. Publish it beside
+packages and patches, and the build scripts/configuration. Static shader
+compiler libraries and Vulkan/NVIDIA headers are recorded explicitly because
+they do not appear in the shared-library dependency scan. Publish it beside
 every AppImage that includes the runtime.
 
 ## AppImage integration and validation
@@ -79,21 +90,32 @@ global CEF search path. Notices and manifests live under
 `usr/share/doc/mediaflick-desktop/libmpv`. The source archive is copied beside
 the AppImage in `dist/linux` and uploaded by the existing draft-release job.
 
-libc, C/C++ runtime support, X11, EGL/OpenGL, VA-API and GPU drivers, and ALSA/
+libc, C/C++ runtime support, X11, EGL/OpenGL, the Vulkan loader, VA-API and GPU drivers, and ALSA/
 PulseAudio interfaces remain host dependencies, listed in `HOST-LIBRARIES.txt`.
 The bundler stops at those interfaces instead of copying vendor drivers or
-private audio plugins. Fontconfig uses the host's font configuration/fonts;
+private audio plugins. NVIDIA's `libcuda.so.1` and `libnvcuvid.so.1` are loaded
+on demand from the host driver, so they are not needed just to load libmpv on
+an AMD/Intel system. Fontconfig uses the host's font configuration/fonts;
 GnuTLS uses the host's certificate trust store. A working X11/XWayland desktop
 and EGL/OpenGL 3.3 driver are still required. Select **Built-in player**, save,
 and restart; Linux's existing backend preference/default is unchanged.
 
 ```sh
 python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'
-python3 distribution/libmpv/linux/smoke-test.py build/libmpv-linux-x86_64/lib/libmpv.so.2
+python3 distribution/libmpv/linux/smoke-test.py \
+  build/libmpv-linux-x86_64/lib/libmpv.so.2 build/libmpv-linux-x86_64/LIBPLACEBO-CONFIG.h
+# Optional: exercise each retained gpu-next backend on an isolated X11 display.
+xvfb-run -a python3 distribution/libmpv/linux/smoke-test.py \
+  build/libmpv-linux-x86_64/lib/libmpv.so.2 build/libmpv-linux-x86_64/LIBPLACEBO-CONFIG.h --gpu-api opengl
+xvfb-run -a python3 distribution/libmpv/linux/smoke-test.py \
+  build/libmpv-linux-x86_64/lib/libmpv.so.2 build/libmpv-linux-x86_64/LIBPLACEBO-CONFIG.h --gpu-api vulkan
 ```
 
 The smoke test checks client API major 2, render API symbols, the compiled
-feature profile and common decoders, then loads and advances a generated WAV.
-It does not establish real GPU rendering, hardware decoding, audio-device
+feature profile, and NVDEC/VA-API configurations for H.264, HEVC, and AV1, then
+loads and advances a generated WAV. The optional `--gpu-api` modes instead
+render generated video through `gpu-next`, allowing Mesa software drivers for
+headless validation. They do not change MediaFlick's embedded renderer.
+These checks do not establish physical GPU hardware decoding, audio-device
 output, or Jellyfin playback. Use the opt-in native runtime test described in
 [`BUILDING.md`](../../../BUILDING.md) and a real desktop session for those.

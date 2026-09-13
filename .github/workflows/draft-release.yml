@@ -373,7 +373,9 @@ jobs:
             ninja-build \
             git meson nasm pkg-config python3-jinja2 patchelf zstd \
             libass-dev liblcms2-dev libdav1d-dev libgnutls28-dev zlib1g-dev \
-            libpulse-dev libegl1-mesa-dev libgl-dev libva-dev libdrm-dev libxpresent-dev libxss-dev
+            libpulse-dev libegl1-mesa-dev libgl-dev libva-dev libdrm-dev libxpresent-dev libxss-dev \
+            libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev \
+            xvfb xauth mesa-vulkan-drivers
 
       - name: Cache Linux libmpv sources and builds
         uses: actions/cache@v6
@@ -403,7 +405,14 @@ jobs:
           test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/THIRD-PARTY-NOTICES.md
           test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/CREDITS.html
           python3 distribution/libmpv/linux/smoke-test.py \
-            dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2
+            dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2 \
+            dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/LIBPLACEBO-CONFIG.h
+          for gpu_api in opengl vulkan; do
+            xvfb-run -a python3 distribution/libmpv/linux/smoke-test.py \
+              dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2 \
+              dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/LIBPLACEBO-CONFIG.h \
+              --gpu-api "$gpu_api"
+          done
           test -s dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/licenses/THIRD-PARTY-NOTICES.md
 
       - name: Upload Linux release asset

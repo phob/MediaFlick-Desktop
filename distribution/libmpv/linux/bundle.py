@@ -12,7 +12,7 @@ import sys
 # plugins, desktop, and libc. Do not traverse or copy their private dependencies.
 HOST_LIBRARIES = re.compile(
     r"^(?:ld-linux[^/]*|lib(?:c|m|pthread|dl|rt|resolv|util|gcc_s|stdc\+\+)\.so.*"
-    r"|lib(?:EGL|GL|GLX|OpenGL|GLdispatch|glapi|drm[^/]*|va[^/]*|vdpau)\.so.*"
+    r"|lib(?:EGL|GL|GLX|OpenGL|GLdispatch|glapi|drm[^/]*|va[^/]*|vdpau|vulkan|cuda|nvcuvid|nvidia-[^/]*)\.so.*"
     r"|lib(?:X[^/]*|xcb[^/]*|wayland[^/]*)\.so.*"
     r"|lib(?:asound|pulse|pulse-simple|pulsecommon-[^/]*)\.so.*)$"
 )
@@ -56,7 +56,7 @@ def package_for(library):
     raise RuntimeError(f"Cannot identify package/source for bundled library: {library}")
 
 
-def bundle(prefix, output, source_dir):
+def bundle(prefix, output, source_dir, build_packages=()):
     lib_dir = output / "lib"
     licenses = output / "licenses"
     for directory in (lib_dir, licenses):
@@ -67,7 +67,7 @@ def bundle(prefix, output, source_dir):
 
     pending = [("libmpv.so.2", prefix / "lib/libmpv.so.2")]
     seen = set()
-    packages = set()
+    packages = set(build_packages)
     host = set()
     while pending:
         soname, library = pending.pop()
@@ -109,4 +109,4 @@ def bundle(prefix, output, source_dir):
 
 
 if __name__ == "__main__":
-    bundle(*(Path(arg).resolve() for arg in sys.argv[1:]))
+    bundle(*(Path(arg).resolve() for arg in sys.argv[1:4]), build_packages=sys.argv[4:])
