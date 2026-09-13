@@ -17,8 +17,11 @@ env:
   CARGO_TARGET_DIR: build/cargo-target
 
 jobs:
+  # Only phob-authored PRs skip CI. Check the author, not the actor who
+  # pushes or reruns a workflow; all other PRs and main pushes run in full.
   source-quality:
     name: Source quality
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -41,6 +44,7 @@ jobs:
 
   ui:
     name: UI
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -69,6 +73,7 @@ jobs:
 
   build-and-test:
     name: Build and test (${{ matrix.os }})
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -165,6 +170,7 @@ jobs:
 
   plugin:
     name: Companion plugin
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -183,7 +189,9 @@ jobs:
 
   ci:
     name: CI
-    if: ${{ always() }}
+    # A skipped job satisfies the required CI check without allocating a runner.
+    # Other runs must still report failed, cancelled, or unexpectedly skipped jobs.
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob') }}
     needs: [source-quality, ui, build-and-test, plugin]
     runs-on: ubuntu-latest
     steps:
