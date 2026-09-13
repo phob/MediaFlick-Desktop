@@ -70,6 +70,11 @@ fn main() {
         }
     };
 
+    #[cfg(target_os = "linux")]
+    if let Err(error) = app::desktop::register() {
+        tracing::warn!(target: "main", "failed to register Linux desktop identity: {error}");
+    }
+
     let mut should_save_settings = false;
 
     if let Some(url) = cli.normalized_url() {
