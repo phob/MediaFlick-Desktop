@@ -22,6 +22,7 @@ mod render_gl;
 
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
+const MPV_ERROR_OPTION_NOT_FOUND: c_int = -5;
 #[cfg(target_os = "windows")]
 const MPV_FORMAT_INT64: c_int = 4;
 const REQUIRED_CLIENT_API_MAJOR: u32 = 2;
@@ -479,13 +480,20 @@ fn set_option(
     name: &str,
     value: &str,
 ) -> io::Result<()> {
-    let name = CString::new(name).map_err(io::Error::other)?;
-    let value = CString::new(value).map_err(io::Error::other)?;
-    let status = unsafe { set_option_string(handle, name.as_ptr(), value.as_ptr()) };
+    let c_name = CString::new(name).map_err(io::Error::other)?;
+    let c_value = CString::new(value).map_err(io::Error::other)?;
+    let status = unsafe { set_option_string(handle, c_name.as_ptr(), c_value.as_ptr()) };
+    // Lean builds omit these options together with their scripting engines.
+    // Disabling an absent engine is already satisfied; enabling it (SVP), or
+    // any other failure, must still reach the normal startup error boundary.
+    if status == MPV_ERROR_OPTION_NOT_FOUND
+        && matches!((name, value), ("load-scripts" | "osc", "no"))
+    {
+        return Ok(());
+    }
     if status < 0 {
         return Err(io::Error::other(format!(
-            "libmpv rejected option {}: {}",
-            name.to_string_lossy(),
+            "libmpv rejected option {name}: {}",
             mpv_error(error_string, status)
         )));
     }
@@ -523,6 +531,79 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::{Receiver, RecvTimeoutError};
     use std::time::{Duration, Instant};
+
+    unsafe extern "C" fn no_scripting_options(
+        _handle: *mut MpvHandle,
+        name: *const c_char,
+        _value: *const c_char,
+    ) -> c_int {
+        // SAFETY: configure_libmpv_options passes a live, terminated CString.
+        match unsafe { CStr::from_ptr(name) }.to_bytes() {
+            b"load-scripts" | b"osc" => MPV_ERROR_OPTION_NOT_FOUND,
+            _ => 0,
+        }
+    }
+
+    unsafe extern "C" fn missing_option(
+        _handle: *mut MpvHandle,
+        _name: *const c_char,
+        _value: *const c_char,
+    ) -> c_int {
+        MPV_ERROR_OPTION_NOT_FOUND
+    }
+
+    unsafe extern "C" fn invalid_option(
+        _handle: *mut MpvHandle,
+        _name: *const c_char,
+        _value: *const c_char,
+    ) -> c_int {
+        -7 // MPV_ERROR_OPTION_ERROR
+    }
+
+    unsafe extern "C" fn test_error(_status: c_int) -> *const c_char {
+        c"test option error".as_ptr()
+    }
+
+    #[test]
+    fn standard_profile_initializes_without_scripting_but_svp_requires_it() {
+        let configure = |profile| {
+            configure_libmpv_options(
+                std::ptr::null_mut(),
+                no_scripting_options,
+                test_error,
+                "test-ipc",
+                FullscreenBehavior::Windowed,
+                profile,
+            )
+        };
+        assert!(configure(LibmpvProfile::Standard).is_ok());
+        assert!(configure(LibmpvProfile::Svp).is_err());
+    }
+
+    #[test]
+    fn missing_required_options_and_invalid_script_options_still_fail() {
+        assert!(
+            configure_libmpv_options(
+                std::ptr::null_mut(),
+                missing_option,
+                test_error,
+                "test-ipc",
+                FullscreenBehavior::Windowed,
+                LibmpvProfile::Standard,
+            )
+            .is_err()
+        );
+        assert!(
+            set_option(
+                std::ptr::null_mut(),
+                invalid_option,
+                test_error,
+                "load-scripts",
+                "no",
+            )
+            .is_err()
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]

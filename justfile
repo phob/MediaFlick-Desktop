@@ -87,6 +87,12 @@ rust-watch:
 libmpv:
     wsl.exe --cd '{{justfile_directory()}}' -- bash distribution/libmpv/windows/build-wsl.sh
 
+# Build the bundled Linux libmpv runtime and corresponding sources
+[group('build')]
+[linux]
+libmpv:
+    bash distribution/libmpv/linux/build.sh
+
 # Build and stage the app into ./build
 [group('build')]
 [windows]
@@ -196,10 +202,10 @@ windows-dist: release
 windows-installer: windows-dist
     & './distribution/windows/build-installer.ps1'
 
-# Build a Linux AppImage from the staged release binary and CEF runtime files
+# Build a Linux AppImage with CEF and the dedicated Linux libmpv runtime
 [group('package')]
 [linux]
-linux-appimage: release
+linux-appimage: libmpv release
     bash ./distribution/linux/build-appimage.sh
 
 # Build a macOS DMG containing a signed .app bundle and CEF framework

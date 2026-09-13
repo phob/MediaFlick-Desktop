@@ -35,6 +35,13 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      - name: Check Linux libmpv packaging
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf shellcheck
+          shellcheck distribution/libmpv/linux/build.sh distribution/linux/build-appimage.sh
+          python3 -m unittest discover -s distribution/libmpv/linux -p 'test_*.py'
+
   ui:
     name: UI
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.user.login != 'phob' }}
