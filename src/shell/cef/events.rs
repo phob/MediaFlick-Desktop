@@ -3,6 +3,7 @@ use std::time::Instant;
 use super::bridge::*;
 use super::document::*;
 use super::*;
+use crate::playback::PlayerSnapshot;
 use crate::preferences::FullscreenBehavior;
 
 pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings) {
@@ -27,11 +28,13 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
 
     let state = Arc::downgrade(state);
     thread::spawn(move || {
-        let post = |event| {
+        let mut last_logged_snapshot = None;
+        let mut post = |event| {
             let Some(state) = state.upgrade() else {
                 return false;
             };
-            let mut task = PlaybackEventTask::new(state, event);
+            let log_event = playback_event_needs_log(&mut last_logged_snapshot, &event);
+            let mut task = PlaybackEventTask::new(state, event, log_event);
             if post_task(ThreadId::UI, Some(&mut task)) == 0 {
                 tracing::warn!(target: "bridge", "failed to post playback event to CEF UI thread");
             }
@@ -83,6 +86,39 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
             }
         }
     });
+}
+
+/// Timeline movement and diagnostic counters still reach the UI, but should
+/// not repeat the full snapshot in the log on every progress update.
+fn playback_event_needs_log(
+    last_logged_snapshot: &mut Option<PlayerSnapshot>,
+    event: &PlaybackEvent,
+) -> bool {
+    let PlaybackEvent::StateChanged(snapshot) = event else {
+        *last_logged_snapshot = None;
+        return true;
+    };
+    if last_logged_snapshot.as_ref().is_some_and(|previous| {
+        previous.active == snapshot.active
+            && previous.playback_id == snapshot.playback_id
+            && previous.item_id == snapshot.item_id
+            && previous.media_source_id == snapshot.media_source_id
+            && previous.play_session_id == snapshot.play_session_id
+            && previous.play_method == snapshot.play_method
+            && previous.duration_ms == snapshot.duration_ms
+            && previous.paused == snapshot.paused
+            && previous.volume == snapshot.volume
+            && previous.mute == snapshot.mute
+            && previous.tracks == snapshot.tracks
+            && previous.chapters == snapshot.chapters
+            && previous.skip_segments == snapshot.skip_segments
+            && previous.diagnostics.buffering == snapshot.diagnostics.buffering
+            && previous.stop_reason == snapshot.stop_reason
+    }) {
+        return false;
+    }
+    *last_logged_snapshot = Some(snapshot.clone());
+    true
 }
 
 /// Settings are persisted from an app-scheme background thread.  CEF's player
@@ -195,11 +231,12 @@ wrap_task! {
     struct PlaybackEventTask {
         state: BrowserState,
         event: PlaybackEvent,
+        log_event: bool,
     }
 
     impl Task {
         fn execute(&self) {
-            dispatch_playback_event(&self.state, &self.event);
+            dispatch_playback_event(&self.state, &self.event, self.log_event);
         }
     }
 }
@@ -322,7 +359,7 @@ wrap_task! {
     }
 }
 
-fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent) {
+fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_event: bool) {
     if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
         dispatch_error_toast(state, "Playback error", message);
@@ -338,11 +375,13 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent) {
         .map(|state| state.browsers.clone())
         .unwrap_or_default();
     if browsers.is_empty() {
-        tracing::debug!(
-            target: "bridge",
-            ?event,
-            "skipped playback event dispatch because no WebUI browsers are registered"
-        );
+        if log_event {
+            tracing::debug!(
+                target: "bridge",
+                ?event,
+                "skipped playback event dispatch because no WebUI browsers are registered"
+            );
+        }
         return;
     }
 
@@ -359,13 +398,15 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent) {
             );
         }
     }
-    tracing::debug!(
-        target: "bridge",
-        ?event,
-        browser_count,
-        frame_count,
-        "dispatched playback event to WebUI"
-    );
+    if log_event {
+        tracing::debug!(
+            target: "bridge",
+            ?event,
+            browser_count,
+            frame_count,
+            "dispatched playback event to WebUI"
+        );
+    }
 }
 
 /// Refreshes the stopped item from Jellyfin after its final playstate report.
@@ -921,6 +962,76 @@ mod tests {
     use super::*;
     use crate::playback::{PlaybackDiagnostics, PlayerChapter, PlayerSnapshot};
     use crate::preferences::{AppSettings, AppearanceAccent, WebUiWindowSettings};
+
+    #[test]
+    fn playback_dispatch_logging_ignores_progress_and_diagnostic_counters() {
+        let mut last_logged = None;
+        let mut snapshot = PlayerSnapshot {
+            active: true,
+            playback_id: Some(1),
+            ..PlayerSnapshot::default()
+        };
+        assert!(playback_event_needs_log(
+            &mut last_logged,
+            &PlaybackEvent::StateChanged(snapshot.clone())
+        ));
+        for tick in 0..100 {
+            snapshot.position_ms = f64::from(tick) * 100.0;
+            snapshot.diagnostics.buffered_until_ms = Some(snapshot.position_ms + 10_000.0);
+            snapshot.diagnostics.dropped_frames = Some(i64::from(tick));
+            snapshot.diagnostics.frame_rate = Some(24.0 + f64::from(tick) / 1000.0);
+            let event = PlaybackEvent::StateChanged(snapshot.clone());
+            assert!(!playback_event_needs_log(&mut last_logged, &event));
+        }
+    }
+
+    #[test]
+    fn playback_dispatch_logs_control_changes_once_and_resets_after_stop_or_failure() {
+        let changes: &[fn(&mut PlayerSnapshot)] = &[
+            |snapshot| snapshot.paused = true,
+            |snapshot| snapshot.paused = false,
+            |snapshot| snapshot.volume = Some(60),
+            |snapshot| snapshot.mute = Some(true),
+            |snapshot| {
+                snapshot.tracks.push(crate::playback::PlayerTrack {
+                    id: 1,
+                    kind: crate::playback::PlayerTrackKind::Audio,
+                    language: Some("eng".to_string()),
+                    title: None,
+                    codec: None,
+                    selected: true,
+                    external: false,
+                });
+            },
+            |snapshot| snapshot.diagnostics.buffering = true,
+            |snapshot| snapshot.diagnostics.buffering = false,
+            |snapshot| snapshot.playback_id = Some(2),
+        ];
+        let mut snapshot = PlayerSnapshot {
+            active: true,
+            playback_id: Some(1),
+            ..PlayerSnapshot::default()
+        };
+        let mut last_logged = Some(snapshot.clone());
+        for change in changes {
+            change(&mut snapshot);
+            let event = PlaybackEvent::StateChanged(snapshot.clone());
+            assert!(playback_event_needs_log(&mut last_logged, &event));
+            assert!(!playback_event_needs_log(&mut last_logged, &event));
+        }
+        for event in [
+            PlaybackEvent::Stopped(snapshot.clone()),
+            PlaybackEvent::Failed {
+                message: "player disconnected".to_string(),
+            },
+        ] {
+            assert!(playback_event_needs_log(&mut last_logged, &event));
+            assert!(playback_event_needs_log(
+                &mut last_logged,
+                &PlaybackEvent::StateChanged(snapshot.clone())
+            ));
+        }
+    }
 
     #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
