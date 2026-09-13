@@ -96,9 +96,8 @@ pub fn set_window_icon(window: &cef::Window) {
     }
 
     // CEF otherwise supplies Chromium's built-in images. The app icon is the
-    // fallback used by X11 window managers and by compositors that cannot
-    // resolve our desktop id (for example, an AppImage launched without desktop
-    // integration); identity hints alone cannot replace those native images.
+    // fallback used by X11 window managers. Wayland desktop shells resolve
+    // the app id through the desktop entry registered by app::desktop.
     window.set_window_icon(Some(&mut window_icon));
     window.set_window_app_icon(Some(&mut app_icon));
 }

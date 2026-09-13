@@ -30,6 +30,12 @@ Run it with:
 just run --url http://localhost:8096
 ```
 
+On Linux, the app registers a fallback desktop entry and icon in the user data
+directory (`$XDG_DATA_HOME`, or `~/.local/share`) before opening its window.
+This gives direct launches and `just run` the MediaFlick name and icon in the
+dock. The fallback does not appear in the application menu and preserves
+user-installed or system-installed entries with the same desktop ID.
+
 ## Build and test the Companion plugin
 
 The plugin has a separate toolchain and is not part of `cargo build`:
@@ -95,9 +101,10 @@ dist/windows/MediaFlickDesktop-Setup-<version>.exe
 ## Build Linux and macOS release packages
 
 Linux AppImages include a dedicated libmpv runtime without DVD, Lua, or
-VapourSynth support. For unpackaged Linux developer builds, install libmpv with client API major 2 and the
-OpenGL render API (the runtime SONAME is `libmpv.so.2`), plus working X11 and
-EGL/OpenGL 3.3 drivers, using your distribution's package manager. MediaFlick
+VapourSynth support. For unpackaged Linux developer builds, install mpv 0.41 or
+newer with client API major 2, gpu-next, and X11 Vulkan/EGL backends (the runtime
+SONAME is `libmpv.so.2`), plus working X11 and Vulkan or EGL/OpenGL drivers, using
+your distribution's package manager. MediaFlick
 loads it dynamically, so headers and link-time libmpv configuration are not required. Select Built-in player in Settings → Player,
 save, and restart. Wayland sessions need XWayland and a
 valid `DISPLAY`. External mpv remains the Linux default. See
@@ -111,6 +118,30 @@ CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
 MEDIAFLICK_DESKTOP_LIBMPV_PATH=/path/to/libmpv.so.2 \
 MEDIAFLICK_DESKTOP_LIBMPV_MEDIA_PATH=/path/to/test-video.mkv \
 cargo test configured_library_initializes_its_ipc_server -- --ignored
+```
+
+The desktop-registration integration test checks icon/name lookup and launcher
+execution through GIO in an isolated user data directory. It needs
+`desktop-file-validate` and `/usr/bin/python3` with PyGObject, but no display:
+The native gpu-next test checks actual displayed pixels while idle and paused,
+including transparency, frame ownership, and resizing from browser raster pixels
+to X11 coordinates. Test Vulkan under Xvfb, then force a missing Vulkan driver
+to verify the OpenGL fallback:
+
+```sh
+CEF_PATH="$(just --evaluate CEF_PATH)" \
+CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
+cargo test desktop_shell_resolves_and_launches_registered_identity -- --ignored
+MEDIAFLICK_DESKTOP_LIBMPV_PATH="$PWD/build/libmpv-linux-x86_64/lib/libmpv.so.2" \
+MEDIAFLICK_DESKTOP_EXPECT_GPU_CONTEXT=x11vk \
+xvfb-run -a cargo test configured_gpu_next_composes -- --ignored --nocapture
+
+CEF_PATH="$(just --evaluate CEF_PATH)" \
+CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
+MEDIAFLICK_DESKTOP_LIBMPV_PATH="$PWD/build/libmpv-linux-x86_64/lib/libmpv.so.2" \
+MEDIAFLICK_DESKTOP_EXPECT_GPU_CONTEXT=x11egl \
+VK_DRIVER_FILES=/nonexistent VK_ICD_FILENAMES=/nonexistent \
+xvfb-run -a cargo test configured_gpu_next_composes -- --ignored --nocapture
 ```
 
 The Linux browser-focus regression test uses an isolated X11 display and does

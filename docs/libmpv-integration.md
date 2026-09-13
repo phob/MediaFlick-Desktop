@@ -54,31 +54,31 @@ different window model in place.
 ## Integrated Linux rendering
 
 Select **Built-in player** in Settings → Player, save, and restart. AppImages
-include libmpv; unpackaged builds need a system libmpv with client API major 2
-and the OpenGL render API. An X11 desktop
-and working EGL/OpenGL 3.3 driver are required; Wayland sessions use XWayland
+include libmpv; unpackaged builds need mpv 0.41 or newer with client API major 2,
+gpu-next, and the X11 Vulkan/EGL backends. An X11 desktop
+and working Vulkan or EGL/OpenGL driver are required; Wayland sessions use XWayland
 and must provide `DISPLAY`. Native Wayland composition is not implemented.
 
-MediaFlick owns the top-level window and video container. A dedicated render
-thread owns an EGL context and calls libmpv's OpenGL render API, with hardware
-decoding on `auto-safe` and the X11 display supplied for VA-API interoperation.
-Video renders into a framebuffer at the monitor's native pixel density. A final
-GPU blit scales that completed frame to X11 drawable coordinates before browser
-controls are composited over it. Expensive video passes therefore do not inherit
-XWayland's fractional-scaling oversampling. Presentation fences bound pending GPU frames to two; replacing a render target
-first completes outstanding GPU work. This permits a small rendering pipeline
-while keeping allocation lifetimes bounded.
+MediaFlick owns the top-level window and video container. libmpv uses
+`vo=gpu-next` and creates a video child inside that container through `wid`.
+The ordered contexts `x11vk,x11egl` prefer Vulkan and fall back to OpenGL if
+Vulkan initialization fails. Software GPU drivers remain usable in virtual
+desktops. Hardware decoding stays on `auto-safe`, with interoperation owned by
+mpv/libplacebo. mpv owns rendering, synchronization, and presentation; the app
+does not create an `mpv_render_context` or a second EGL compositor.
 
 CEF runs windowless on X11 with GPU compositing disabled because this adapter
 consumes software frames. The shell sends one owned premultiplied BGRA bitmap
-at a time to the render thread. The thread uploads it into a reusable texture,
-blits the finished video framebuffer, then alpha-blends browser controls over
-it. Transparent rows are excluded from UI drawing, and UI updates reuse the
-video framebuffer instead of forcing video to render again. The input-only X11 child forwards events without allocating a second
-composited drawable. DMA-BUF texture import is not implemented.
+at a time to the playback controller. A synchronous, named `overlay-add`
+command copies those pixels into mpv before returning the buffer to CEF.
+gpu-next blends the bitmap over video, including while idle or paused. The
+bitmap's display dimensions match the video container, keeping browser raster
+pixels separate from X11 coordinates. An input-only sibling above the container
+forwards events without allocating another composited drawable. Focus transfers
+through mpv's video child remain inside the browser's focus scope.
 
 Popup pixels are composed into the browser frame before submission. The owned
-buffer returns after presentation; old retained browser frames are released
+buffer returns after mpv copies it; old retained browser frames are released
 on resize. Linux waits for a transparent playback frame and the video restart
 following the delayed resume seek before applying automatic fullscreen. This
 avoids overlapping catalog, decoder, and fullscreen buffer replacements. The
@@ -92,11 +92,14 @@ when the desktop DPI changes. Under GNOME fractional scaling, XWayland can expos
 a drawable larger than the actual monitor: a 4K output at 125% can report
 6144 × 3456 X11 pixels with a 2× UI scale. The adapter queries Wayland output
 metadata to cap browser rasterization at the selected monitor's physical density:
-this example uses a 3072 × 1728 logical view and a 3840 × 2160 browser bitmap
-and video render target. The compositor maps the completed frame into X11
-coordinates. Layout, pointer input, and popup raster coordinates remain separate.
-If Wayland output metadata is unavailable, the adapter uses X11 DPI for rasterization too. The oversized
-X11 dimensions must not be treated as the RDP output resolution.
+this example uses a 3072 × 1728 logical view and a 3840 × 2160 browser bitmap.
+gpu-next scales that bitmap into X11 coordinates. Layout, pointer input,
+and popup raster coordinates remain separate. If Wayland output metadata is
+unavailable, the adapter uses X11 DPI for rasterization too. gpu-next's video
+swapchain follows the X11 drawable size; unlike the previous OpenGL render-API
+path, video rendering is not capped to physical monitor density. Fractional
+scaling can therefore increase video rendering cost. The oversized X11 dimensions
+must not be treated as the physical monitor or RDP output resolution.
 
 The shell forwards pointer, keyboard, focus, and popup events to the existing
 React interface, and native close requests use CEF's shutdown lifecycle.
@@ -162,8 +165,7 @@ search paths, notices, checksums, and a separate corresponding-source archive.
 The Linux build omits DVD, Lua, JavaScript, and VapourSynth while keeping
 VA-API, NVDEC/CUDA interoperability, OpenGL and Vulkan (including libplacebo's
 `gpu-next` backends), ALSA/PulseAudio, GnuTLS HTTPS, libass, and color management.
-The app still uses the OpenGL libmpv render API described above; Vulkan build
-support alone does not switch its embedded video output to `gpu-next`.
+The app uses the gpu-next composition path described above, preferring Vulkan.
 Host graphics/audio interfaces and drivers remain required. See
 [`distribution/libmpv/linux/README.md`](../distribution/libmpv/linux/README.md).
 

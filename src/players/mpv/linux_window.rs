@@ -91,6 +91,16 @@ impl HostWindow {
             .ok_or_else(|| io::Error::other("invalid native video container"))
     }
 
+    pub fn content_size(&self) -> io::Result<(u16, u16)> {
+        let geometry = self
+            .conn
+            .get_geometry(self.content)
+            .map_err(io::Error::other)?
+            .reply()
+            .map_err(io::Error::other)?;
+        Ok((geometry.width, geometry.height))
+    }
+
     fn atom(&self, name: &[u8]) -> io::Result<u32> {
         Ok(self
             .conn
