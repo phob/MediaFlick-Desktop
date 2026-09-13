@@ -60,6 +60,19 @@ Each GitHub release that contains this runtime must also publish the generated
 build and release requirements are documented in
 `distribution/libmpv/windows/README.md`.
 
+## Bundled Linux libmpv runtime
+
+Linux AppImages include a dedicated `libmpv.so.2`, lean FFmpeg and libplacebo
+builds, and their codec/subtitle dependencies. mpv uses GPL-2.0-or-later for its
+X11 support; FFmpeg's GPL-only features are disabled. The AppImage contains upstream and distribution license notices,
+source/package revisions, build configurations, and library SHA-256 digests
+under `usr/share/doc/mediaflick-desktop/libmpv`.
+
+Each release must also publish `mediaflick-libmpv-linux-<arch>-sources.tar.zst`,
+containing corresponding upstream and distribution sources plus the build
+recipe. See `distribution/libmpv/linux/README.md` for the feature profile,
+host interfaces, and build/release requirements.
+
 ## SQLite
 
 MediaFlick Desktop links a bundled SQLite build through `rusqlite`. SQLite is

@@ -4,7 +4,7 @@
 
 MediaFlick uses dynamically loaded libmpv as the default player on fresh
 Windows installations. Linux supports the same React playback overlay using
-a system libmpv runtime on X11 or XWayland. Linux and macOS retain external mpv
+a bundled AppImage runtime or system libmpv on X11 or XWayland. Linux and macOS retain external mpv
 as their default; existing explicit backend choices and mpv paths are preserved.
 External mpv and Windows MPC-HC remain supported.
 
@@ -53,8 +53,9 @@ different window model in place.
 
 ## Integrated Linux rendering
 
-Select **Built-in player** in Settings → Player, save, and restart. Install a
-system libmpv with client API major 2 and the OpenGL render API. An X11 desktop
+Select **Built-in player** in Settings → Player, save, and restart. AppImages
+include libmpv; unpackaged builds need a system libmpv with client API major 2
+and the OpenGL render API. An X11 desktop
 and working EGL/OpenGL 3.3 driver are required; Wayland sessions use XWayland
 and must provide `DISPLAY`. Native Wayland composition is not implemented.
 
@@ -155,10 +156,15 @@ overrides discovery for development and smoke tests.
 Linux checks beside the executable first, then probes `libmpv.so.2` through the
 system dynamic loader, respecting its cache, multiarch directories, and
 `LD_LIBRARY_PATH`. A missing or incompatible system runtime leaves Built-in
-player unavailable in Settings. Linux AppImages continue to depend on the
-host's libmpv; they do not bundle a Linux runtime or its codec dependencies.
+player unavailable in Settings. Linux AppImages bundle their own runtime and
+codec/subtitle dependencies in `usr/bin/libmpv`, with origin-relative library
+search paths, notices, checksums, and a separate corresponding-source archive.
+The Linux build omits DVD, Lua, JavaScript, VapourSynth, and Vulkan while keeping
+VA-API, X11/EGL/OpenGL, ALSA/PulseAudio, GnuTLS HTTPS, libass, and color management.
+Host graphics/audio interfaces and drivers remain required. See
+[`distribution/libmpv/linux/README.md`](../distribution/libmpv/linux/README.md).
 
-The app uses a baseline x86-64, shared libmpv DLL with its dependencies linked
+The Windows app uses a baseline x86-64, shared libmpv DLL with its dependencies linked
 into that DLL. Built-in mode requests mpv's safe automatic hardware decoding.
 The tailored build keeps D3D11/D3D11VA, OpenGL, libass, color management,
 FFmpeg network protocols, Schannel TLS, and common codecs while
