@@ -3,6 +3,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import App from "./App"
+import { NavigationHistory } from "./components/NavigationHistory"
 import "./app.css"
 import { Toaster } from "./components/ui/sonner"
 import { installAppSurfaceGuard } from "./lib/app-surface"
@@ -13,7 +14,7 @@ import { queryClient } from "./lib/query-client"
 // pushState has proper origin semantics, and `handle()` in
 // src/shell/cef/api.rs already serves the shell for unknown non-API paths.
 installAppSurfaceGuard()
-const router = createBrowserRouter([{ path: "*", element: <App /> }])
+const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

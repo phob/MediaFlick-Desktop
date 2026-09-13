@@ -1,6 +1,6 @@
 import { useViewing } from "@/lib/viewing"
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
-import { useLocation, useNavigationType } from "react-router-dom"
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react"
+import { useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/AppSidebar"
 import { PlayerBar } from "@/components/PlayerBar"
 import { PreviewProvider } from "@/components/PreviewCard"
@@ -10,9 +10,9 @@ import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { usePlayerState, useSettings } from "@/lib/queries"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
+import { useScrollRestoration } from "@/lib/scroll-restoration"
 import mediaFlickLogo from "../../../distribution/app-icon.svg"
 
-const routeScrollPositions = new Map<string, number>()
 const PLAYER_CHROME_HIDE_DELAY_MS = 3000
 const CURSOR_REVEAL_DISTANCE_PX = 10
 const PLAYER_BAR_REVEAL_HEIGHT_PX = 112
@@ -40,22 +40,11 @@ function pointerMovedFarEnough(event: MouseEvent, origin: PointerPosition) {
 
 /** The route-owned scroll container, separated from sidebar/player chrome for focused testing. */
 export function RouteScrollViewport({ children }: { children: ReactNode }) {
-  const viewport = useRef<HTMLDivElement>(null)
-  const location = useLocation()
-  const navigationType = useNavigationType()
-
-  useLayoutEffect(() => {
-    const element = viewport.current
-    if (!element) return
-    const top = navigationType === "POP" ? routeScrollPositions.get(location.key) ?? 0 : 0
-    element.scrollTo({ top })
-    return () => {
-      routeScrollPositions.set(location.key, element.scrollTop)
-    }
-  }, [location.key, navigationType])
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
+  useScrollRestoration(viewport, "route")
 
   return (
-    <div ref={viewport} className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
+    <div ref={setViewport} className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
       {children}
     </div>
   )

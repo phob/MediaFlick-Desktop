@@ -37,11 +37,13 @@ describe("AppShell route scrolling", () => {
     const viewport = view.container.querySelector<HTMLElement>(".content-viewport")
     if (!viewport) throw new Error("Expected the route scroll viewport")
     viewport.scrollTop = 180
+    fireEvent.scroll(viewport)
 
     fireEvent.click(screen.getByRole("button", { name: "Second" }))
     expect(viewport.scrollTop).toBe(0)
 
     viewport.scrollTop = 90
+    fireEvent.scroll(viewport)
     fireEvent.click(screen.getByRole("button", { name: "Back" }))
     expect(viewport.scrollTop).toBe(180)
   })
