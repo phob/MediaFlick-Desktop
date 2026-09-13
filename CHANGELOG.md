@@ -137,6 +137,8 @@
 
 ### Fixed
 
+- Stopped logging full playback snapshots for routine WebUI progress and diagnostic updates, while retaining dispatch logs for playback state, settings, tracks, and buffering changes.
+
 - Fixed always-visible card actions and menus or dropdowns closing on click with the built-in Linux player. The windowless browser now reports the mouse capabilities supplied by its X11 host, and focus transfers within the native window no longer blur the UI.
 
 - Fixed HiDPI browser, pointer, and popup scaling in the built-in Linux player. Video passes now render at native monitor density through the OpenGL render API, followed by GPU composition of browser controls in the same X11 window. UI-only updates reuse the finished video frame and skip drawing transparent rows. Bounded UI submissions, GPU presentation fences, and coalesced window resizes reduce transient memory use; automatic fullscreen waits for the playback overlay and resumed video output.
