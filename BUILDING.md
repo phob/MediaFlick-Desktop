@@ -74,7 +74,7 @@ dist/windows/MediaFlickDesktop/
 ```
 
 The source archive under `build/libmpv-windows-x64/` must be published beside
-the installer and zip. Linux can use a system libmpv runtime as described below;
+the installer and zip. Linux AppImages bundle their own Linux libmpv runtime;
 macOS continues to use external system mpv.
 
 ## Build the Windows installer
@@ -94,13 +94,13 @@ dist/windows/MediaFlickDesktop-Setup-<version>.exe
 
 ## Build Linux and macOS release packages
 
-For Linux built-in playback, install libmpv with client API major 2 and the
+Linux AppImages include a dedicated libmpv runtime without DVD, Lua, or
+VapourSynth support. For unpackaged Linux developer builds, install libmpv with client API major 2 and the
 OpenGL render API (the runtime SONAME is `libmpv.so.2`), plus working X11 and
 EGL/OpenGL 3.3 drivers, using your distribution's package manager. MediaFlick
 loads it dynamically, so headers and link-time libmpv configuration are not required. Select Built-in player in Settings → Player,
 save, and restart. Wayland sessions need XWayland and a
-valid `DISPLAY`. External mpv remains the Linux default. AppImages use the
-host's libmpv instead of bundling it. See
+valid `DISPLAY`. External mpv remains the Linux default. See
 [the Linux integration notes](docs/libmpv-integration.md#integrated-linux-rendering).
 
 An opt-in runtime test can load a local video through libmpv and its IPC server:
@@ -122,11 +122,18 @@ CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
 xvfb-run -a cargo test internal_focus_transfers_and_grabs_keep_browser_focus -- --ignored
 ```
 
-Linux AppImage packaging requires `appimagetool` or network access so the script can download it:
+Linux AppImage packaging builds the dedicated Linux libmpv runtime first.
+Install its build dependencies and enable source repositories as described in
+[`distribution/libmpv/linux/README.md`](distribution/libmpv/linux/README.md).
+Packaging also requires `appimagetool` or network access so the script can download it:
 
 ```sh
 just linux-appimage
 ```
+
+Publish `dist/linux/mediaflick-libmpv-linux-<arch>-sources.tar.zst` beside the
+AppImage. To rebuild only libmpv, use `just libmpv`. To package an existing
+release binary and runtime, run `bash distribution/linux/build-appimage.sh`.
 
 macOS DMG packaging creates an unsigned/ad-hoc signed `.app` bundle:
 

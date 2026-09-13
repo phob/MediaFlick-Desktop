@@ -30,7 +30,7 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 
 ## Features
 
-- **Built-in playback on Windows and Linux.** Windows bundles libmpv; Linux can use system libmpv on X11 or XWayland. Both show the React playback controls over native video in one window. See [Linux setup](docs/libmpv-integration.md#integrated-linux-rendering).
+- **Built-in playback on Windows and Linux.** Windows releases and Linux AppImages bundle a focused libmpv runtime. Linux uses X11 or XWayland; unpackaged builds can use system libmpv. Both show the React playback controls over native video in one window. See [Linux setup](docs/libmpv-integration.md#integrated-linux-rendering).
 - **Full external mpv mode.** Hand streams to your own `mpv` process when you want `mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, or personal input bindings.
 - **Selectable streaming quality.** Keep original quality, use Jellyfin's automatic connection limit, or cap playback from 1.5 to 120 Mbps with server-transcoding fallback.
 - **Playstate synced to Jellyfin.** Playback start, progress, watched state, and resume positions report back to your server.
