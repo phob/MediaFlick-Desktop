@@ -500,11 +500,6 @@ pub(super) fn open_settings_file_dialog(
     let mut filters = CefStringList::new();
     #[cfg(target_os = "windows")]
     filters.append(".exe");
-    let filters = if cfg!(target_os = "windows") {
-        Some(&mut filters)
-    } else {
-        None
-    };
     let Some(frame) = browser.main_frame() else {
         dispatch_shell_event(
             state,
@@ -524,7 +519,9 @@ pub(super) fn open_settings_file_dialog(
         FileDialogMode::OPEN,
         Some(&CefString::from(title)),
         default_path.as_ref(),
-        filters,
+        // CEF's C API reads the list even when no filters are requested.
+        // Passing None here dereferences a null list on Linux/macOS.
+        Some(&mut filters),
         Some(&mut callback),
     );
 }
