@@ -1,3 +1,4 @@
+import { useScrollRestoration } from "@/lib/scroll-restoration"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
@@ -128,6 +129,8 @@ function CastCandidates({
 }
 
 export default function Library({ components }: LibraryProps = {}) {
+  const [castScroller, setCastScroller] = useState<HTMLDivElement | null>(null)
+  useScrollRestoration(castScroller, "cast-search")
   const Grid = components?.ItemGrid ?? ItemGrid
   const CastDiscovery = components?.CastDiscover ?? CastDiscover
   const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
@@ -233,7 +236,7 @@ export default function Library({ components }: LibraryProps = {}) {
       )}
       <div className="min-h-0 flex-1">
         {castPerson && !jellyfinPersonId ? (
-          <div className="h-full overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14">
+          <div ref={setCastScroller} className="h-full overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14">
             {resolution.isPending ? (
               <div
                 className="flex flex-wrap gap-[var(--card-gap)]"

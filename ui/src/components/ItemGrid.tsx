@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { LibraryBig } from "lucide-react"
 import type React from "react"
 import { useEffect, useLayoutEffect, useMemo, useState } from "react"
-import { useLocation, useNavigationType } from "react-router-dom"
+import { useScrollRestoration } from "@/lib/scroll-restoration"
 import { MediaCard } from "@/components/MediaCard"
 import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,6 @@ import { useItemPages } from "@/lib/queries"
 
 /** Fallbacks for the geometry tokens in `app.css`, used before first measure. */
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
-const gridScrollPositions = new Map<string, number>()
 
 function readGeometry(element: HTMLElement) {
   const styles = getComputedStyle(element)
@@ -31,6 +30,7 @@ function readGeometry(element: HTMLElement) {
  */
 function useGridMetrics(element: HTMLElement | null) {
   const [metrics, setMetrics] = useState({
+    measured: false,
     columns: 1,
     rowHeight: FALLBACK.card + FALLBACK.gap,
     cardHeight: FALLBACK.card,
@@ -44,9 +44,9 @@ function useGridMetrics(element: HTMLElement | null) {
       const width = element.clientWidth
       const columns = Math.max(1, Math.floor((width + gap) / (poster + gap)))
       setMetrics((previous) =>
-        previous.columns === columns && previous.cardHeight === card && previous.gap === gap
+        previous.measured && previous.columns === columns && previous.cardHeight === card && previous.gap === gap
           ? previous
-          : { columns, rowHeight: card + gap, cardHeight: card, gap },
+          : { measured: true, columns, rowHeight: card + gap, cardHeight: card, gap },
       )
     }
 
@@ -93,24 +93,8 @@ export function ItemGrid({
   // Measured on the content box, not the scroller: the scroller carries the
   // horizontal padding, which would otherwise be counted as usable width.
   const [content, setContent] = useState<HTMLDivElement | null>(null)
-  const { columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
+  const { measured, columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
-  const location = useLocation()
-  const navigationType = useNavigationType()
-
-  // A changed filter is a different list; the old scroll offset means nothing
-  // in it, and keeping it would land the user mid-way through the new results.
-  const queryKey = JSON.stringify(query)
-  useLayoutEffect(() => {
-    if (!scroller) return
-    const top = navigationType === "POP" ? gridScrollPositions.get(location.key) ?? 0 : 0
-    scroller.scrollTo({ top })
-    setVisibleRows({ first: 0, last: 0 })
-    return () => {
-      gridScrollPositions.set(location.key, scroller.scrollTop)
-    }
-  }, [location.key, navigationType, queryKey, scroller])
-
   // Page 0 is always requested: it is what `total` is read from, so keeping it
   // resident stops the grid collapsing to zero rows when the user scrolls into
   // a region that has not been fetched yet.
@@ -158,6 +142,8 @@ export function ItemGrid({
     estimateSize: () => rowHeight,
     overscan: 2,
   })
+
+  useScrollRestoration(scroller, `grid:${JSON.stringify(query)}`, total !== null && measured)
 
   // Feeding the range back through state is what drives page selection; doing
   // it in render would fetch for a range the virtualizer has not committed.

@@ -53,7 +53,7 @@ const status: SeerrStatusInfo = {
 
 function LocationProbe() {
   const location = useLocation()
-  return <output data-location>{location.pathname + location.search}</output>
+  return <output data-location data-navigation={JSON.stringify(location.state)}>{location.pathname + location.search}</output>
 }
 
 function Providers({ children }: { children: ReactNode }) {
@@ -131,6 +131,16 @@ describe("discovery quick request", () => {
 
     expect(location()).toBe("/discover/movie/603?row=movies")
     expect(screen.queryByRole("dialog")).toBeNull()
+  })
+
+  test("a discovery card remembers the collection that opened it", () => {
+    render(<TestProviders client={testQueryClient()} initialEntries={["/collections/mine/watchlist"]}>
+      <SeerrCard result={movie} capabilities={null} />
+      <LocationProbe />
+    </TestProviders>)
+    fireEvent.click(screen.getByRole("link"))
+    expect(document.querySelector("[data-location]")?.getAttribute("data-navigation"))
+      .toBe(JSON.stringify({ from: "/collections/mine/watchlist", label: "Back" }))
   })
 
   test("closing and submitting never activate the detail route", async () => {

@@ -1,6 +1,7 @@
 import { ArrowLeft, UserRound } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { Link, type To } from "react-router-dom"
+import { BackLink } from "@/components/NavigationHistory"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -48,10 +49,10 @@ export function DetailBackdrop({ src }: { src: string }) {
 export function DetailBackLink({ to, label }: { to: To; label: string }) {
   return (
     <Button variant="ghost" size="sm" className="w-fit px-0 text-muted-foreground" asChild>
-      <Link to={to}>
+      <BackLink to={to}>
         <ArrowLeft aria-hidden />
         {label}
-      </Link>
+      </BackLink>
     </Button>
   )
 }
