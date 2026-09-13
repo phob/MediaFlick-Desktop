@@ -84,6 +84,9 @@ After changes to deployable Companion code or assets, run `just plugin-deploy` a
 
 ## Changelog and releases
 
-- Every code, behavior, packaging, build, release-automation, or user-facing documentation change needs one entry under the matching subsection of `CHANGELOG.md` `[Unreleased]`. Pure changelog edits and release housekeeping are exempt.
-- Read the full `[Unreleased]` section before editing it. Reuse existing subsection headings and never modify released sections unless the user requests a release-note correction.
+- Every code, behavior, packaging, build, release-automation, or user-facing documentation change needs an entry in a Markdown fragment under `changelog.d/`, committed with the change. Pure changelog edits and release housekeeping are exempt.
+- Create fragments during implementation, before a PR exists if needed. Use a descriptive filename with a random suffix, such as `fix-playback-resume-a7c92e.md`; no PR number or later renaming is required. Update the change's existing fragment as its implementation evolves. Do not maintain a shared fragment index.
+- Write concise, user-facing entries under the matching existing subsection headings: `Breaking Changes`, `Added`, `Changed`, `Fixed`, or `Removed` (using `###` Markdown headings).
+- Keep the existing `CHANGELOG.md` `[Unreleased]` section as the baseline for the upcoming 1.0 release. Regular implementation work must use fragments instead of editing `CHANGELOG.md`; edit that file only for release consolidation or an explicitly requested correction.
+- Before releasing, consolidate all merged fragments into `[Unreleased]` in a release-notes PR. Read the full section, preserve the existing baseline's relevant changes, combine overlapping entries, and remove notes superseded by later work. Delete consumed fragments in the same PR and merge it before running the release workflow. Never modify released sections unless the user requests a release-note correction.
 - Release behavior is defined by `.github/workflows/draft-release.yml`; plugin release behavior is defined by `.github/workflows/plugin-release.yml`. Do not duplicate or bypass those workflows without a concrete reason.
