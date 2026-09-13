@@ -69,6 +69,11 @@ enum ControllerMessage {
     NativeWindow {
         reply: Sender<Option<NativeWindowHandle>>,
     },
+    #[cfg(target_os = "linux")]
+    PresentOverlay {
+        frame: crate::playback::NativeOverlayFrame,
+        reply: Sender<Result<crate::playback::NativeOverlayFrame, String>>,
+    },
     Load {
         mpv_path: String,
         fullscreen: FullscreenBehavior,
@@ -125,6 +130,12 @@ struct ControllerState {
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
     pending_library_pause: Option<bool>,
+    #[cfg(target_os = "linux")]
+    pending_library_fullscreen: bool,
+    #[cfg(target_os = "linux")]
+    library_video_ready: bool,
+    #[cfg(target_os = "linux")]
+    library_waiting_seek_event: bool,
     mpv_playback_active: bool,
     playback_runtime_ticks: Option<i64>,
     last_state: ReportingState,
@@ -274,6 +285,18 @@ impl MpvController {
         response.recv_timeout(timeout).ok().flatten()
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn submit_overlay(
+        &self,
+        frame: crate::playback::NativeOverlayFrame,
+    ) -> Result<crate::playback::NativeOverlayReply, String> {
+        let (reply, response) = mpsc::channel();
+        self.tx
+            .send(ControllerMessage::PresentOverlay { frame, reply })
+            .map_err(|_| "native UI renderer has stopped".to_string())?;
+        Ok(response)
+    }
+
     pub fn load(
         &self,
         mpv_path: impl Into<String>,
@@ -356,6 +379,12 @@ impl ControllerState {
             playback_identity: None,
             startup_seek: None,
             pending_library_pause: None,
+            #[cfg(target_os = "linux")]
+            pending_library_fullscreen: false,
+            #[cfg(target_os = "linux")]
+            library_video_ready: false,
+            #[cfg(target_os = "linux")]
+            library_waiting_seek_event: false,
             mpv_playback_active: false,
             playback_runtime_ticks: None,
             last_state: ReportingState {
@@ -399,6 +428,10 @@ impl ControllerState {
                 Ok(ControllerMessage::NativeWindow { reply }) => {
                     let native_window = self.runtime.as_ref().and_then(MpvRuntime::native_window);
                     let _ = reply.send(native_window);
+                }
+                #[cfg(target_os = "linux")]
+                Ok(ControllerMessage::PresentOverlay { frame, reply }) => {
+                    let _ = reply.send(self.present_overlay(frame));
                 }
                 Ok(ControllerMessage::Load {
                     mpv_path,
@@ -464,6 +497,13 @@ impl ControllerState {
             }
 
             self.maybe_send_startup_seek();
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(runtime) = &self.runtime {
+                    runtime.poll_window_events();
+                }
+                self.maybe_finish_library_fullscreen();
+            }
             self.poll_runtime();
             self.maybe_poll_mpv_session();
             self.maybe_finish_mpv_raise();
@@ -475,12 +515,23 @@ impl ControllerState {
     }
 
     fn control(&mut self, command: &PlayerCommand) {
+        #[cfg(target_os = "linux")]
+        if matches!(
+            command,
+            PlayerCommand::Stop | PlayerCommand::ToggleFullscreen
+        ) {
+            self.pending_library_fullscreen = false;
+        }
         if matches!(command, PlayerCommand::MarkWatchedAndPlayNext) {
             self.mark_watched_and_play_next();
             return;
         }
+        #[cfg(target_os = "linux")]
+        if matches!(command, PlayerCommand::ToggleFullscreen) && self.toggle_library_fullscreen() {
+            return;
+        }
 
-        if self.runtime_kind == MpvRuntimeKind::Library
+        if self.uses_paused_library_start()
             && self.pending.is_some()
             && let PlayerCommand::SetPause(pause) = command
         {
@@ -522,15 +573,20 @@ impl ControllerState {
     }
 
     fn loadfile_command(&self, launch: &PlaybackRequest) -> Value {
-        let behavior = match self.runtime_kind {
-            MpvRuntimeKind::External => LoadFileBehavior::ExternalDelayedSeek,
-            MpvRuntimeKind::Library => LoadFileBehavior::LibraryPausedAtStart,
+        let behavior = if self.uses_paused_library_start() {
+            LoadFileBehavior::LibraryPausedAtStart
+        } else {
+            LoadFileBehavior::ExternalDelayedSeek
         };
         loadfile_command_with_behavior(launch, behavior)
     }
 
+    fn uses_paused_library_start(&self) -> bool {
+        self.runtime_kind == MpvRuntimeKind::Library && !cfg!(target_os = "linux")
+    }
+
     fn kick_start_playback(&mut self, launch: &PlaybackRequest) {
-        if self.runtime_kind == MpvRuntimeKind::Library {
+        if self.uses_paused_library_start() {
             self.startup_seek = None;
             return;
         }
@@ -581,6 +637,11 @@ impl ControllerState {
         {
             match self.send_mpv_command(command) {
                 Ok(()) => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        self.library_video_ready = false;
+                        self.library_waiting_seek_event = true;
+                    }
                     if let Some(startup_seek) = &mut self.startup_seek {
                         startup_seek.sent_at = Some(now);
                         startup_seek.due_at = now + STARTUP_SEEK_RETRY_DELAY;

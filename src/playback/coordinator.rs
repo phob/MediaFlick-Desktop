@@ -61,6 +61,17 @@ impl PlaybackCoordinator {
         self.backend().native_window(timeout)
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn present_overlay(
+        &self,
+        frame: super::NativeOverlayFrame,
+    ) -> Result<super::NativeOverlayFrame, String> {
+        let response = self.backend().submit_overlay(frame)?;
+        response
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("native UI presentation did not complete: {error}"))?
+    }
+
     pub fn open(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest) {
         // The backend and executable are one runtime choice. A settings save
         // may persist a different window model for the next launch, but the

@@ -56,6 +56,25 @@ wrap_app! {
                 Some(&CefString::from("OverscrollHistoryNavigation")),
             );
 
+            #[cfg(target_os = "linux")]
+            if prototype_osr::is_configured(&self.config.settings) {
+                command_line.append_switch_with_value(Some(&CefString::from("ozone-platform")),
+                    Some(&CefString::from("x11")));
+                // This adapter consumes software OnPaint frames, not DMA-BUF
+                // textures. GPU compositing otherwise retains large offscreen
+                // render targets just to read them back into those CPU frames.
+                command_line.append_switch(Some(&CefString::from("disable-gpu-compositing")));
+                // The X11 adapter forwards mouse input to a windowless browser.
+                // Without a Chromium-owned window, device discovery reports no
+                // pointer and incorrectly activates the UI's touch fallbacks.
+                command_line.append_switch_with_value(
+                    Some(&CefString::from("blink-settings")),
+                    Some(&CefString::from(
+                        "primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2",
+                    )),
+                );
+            }
+
             #[cfg(target_os = "windows")]
             {
                 // CEF's separate Windows GPU process can loop through

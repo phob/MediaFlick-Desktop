@@ -331,6 +331,13 @@ fn reveal_main_window(state: &BrowserState) {
         if state.main_window_revealed || state.initial_show_state == ShowState::HIDDEN {
             return;
         }
+        #[cfg(target_os = "linux")]
+        if prototype_osr::is_active() {
+            state.main_window_revealed = true;
+            drop(state);
+            prototype_osr::reveal();
+            return;
+        }
         let Some(window) = state.main_window.clone() else {
             return;
         };

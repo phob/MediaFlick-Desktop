@@ -58,7 +58,7 @@ impl ControllerState {
         self.set_fullscreen(fullscreen);
     }
 
-    pub(super) fn apply_library_default_fullscreen(&self) {
+    pub(super) fn apply_library_default_fullscreen(&mut self) {
         if self.runtime_kind != super::MpvRuntimeKind::Library {
             return;
         }
@@ -69,10 +69,65 @@ impl ControllerState {
         else {
             return;
         };
+        #[cfg(target_os = "linux")]
+        if fullscreen == FullscreenBehavior::Fullscreen {
+            // Retire the opaque catalog and finish the delayed resume seek
+            // before growing video render targets. Seeking can replace the
+            // decoder's buffers; don't overlap that with fullscreen resizing.
+            self.pending_library_fullscreen = true;
+            return;
+        }
         self.set_fullscreen(fullscreen);
     }
 
+    #[cfg(target_os = "linux")]
+    pub(super) fn present_overlay(
+        &mut self,
+        frame: crate::playback::NativeOverlayFrame,
+    ) -> Result<crate::playback::NativeOverlayFrame, String> {
+        let background_exposed = frame.exposes_video();
+        let frame = self
+            .runtime
+            .as_mut()
+            .ok_or_else(|| "native video renderer is unavailable".to_string())?
+            .present_overlay(frame)?;
+        self.finish_library_fullscreen(background_exposed);
+        Ok(frame)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn finish_library_fullscreen(&mut self, background_exposed: bool) {
+        if !self.mpv_playback_active {
+            self.pending_library_fullscreen = false;
+        }
+        if background_exposed
+            && self.pending_library_fullscreen
+            && self.startup_seek.is_none()
+            && self.library_video_ready
+            && !self.library_waiting_seek_event
+        {
+            self.pending_library_fullscreen = false;
+            self.set_fullscreen(FullscreenBehavior::Fullscreen);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn maybe_finish_library_fullscreen(&mut self) {
+        let background_exposed = self
+            .runtime
+            .as_ref()
+            .is_some_and(super::MpvRuntime::ui_exposes_video);
+        self.finish_library_fullscreen(background_exposed);
+    }
+
     pub(super) fn set_fullscreen(&self, fullscreen: FullscreenBehavior) {
+        #[cfg(target_os = "linux")]
+        if let Some(runtime) = &self.runtime
+            && let Err(error) = runtime.set_fullscreen(fullscreen)
+        {
+            tracing::warn!(target: "mpv.window", "could not change native fullscreen state: {error}");
+            return;
+        }
         let command = json!({
             "command": ["set_property", "fullscreen", fullscreen == FullscreenBehavior::Fullscreen],
             "request_id": next_request_id(),
@@ -80,6 +135,26 @@ impl ControllerState {
         if let Err(error) = self.send_mpv_command(command) {
             tracing::warn!(target: "mpv.ipc", "failed to change fullscreen mode: {error}");
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn toggle_library_fullscreen(&self) -> bool {
+        if self.runtime_kind != super::MpvRuntimeKind::Library {
+            return false;
+        }
+        if let Some(runtime) = &self.runtime {
+            match runtime.fullscreen() {
+                Ok(fullscreen) => self.set_fullscreen(if fullscreen {
+                    FullscreenBehavior::Windowed
+                } else {
+                    FullscreenBehavior::Fullscreen
+                }),
+                Err(error) => {
+                    tracing::warn!(target: "mpv.window", "could not read native fullscreen state: {error}")
+                }
+            }
+        }
+        true
     }
 
     pub(super) fn send_loadfile_with_reconnect(
@@ -230,6 +305,12 @@ impl ControllerState {
     pub(super) fn install_input_bindings(&self) {
         let bindings = MpvInputBindings::load();
         let section_contents = bindings.section_contents();
+        #[cfg(target_os = "linux")]
+        let section_contents = if self.runtime_kind == super::MpvRuntimeKind::Library {
+            format!("{section_contents}\nCLOSE_WIN script-message mediaflick-close-window")
+        } else {
+            section_contents
+        };
 
         let define = json!({
             "command": ["define-section", INPUT_SECTION_NAME, section_contents, "force"],
@@ -302,9 +383,28 @@ impl ControllerState {
                 self.reset_mpv();
                 self.restart_configured_mpv("mpv emitted shutdown");
             }
-            "seek" => self.handle_seek_event(),
+            "seek" => {
+                #[cfg(target_os = "linux")]
+                {
+                    self.library_video_ready = false;
+                    self.library_waiting_seek_event = false;
+                }
+                self.handle_seek_event();
+            }
+            #[cfg(target_os = "linux")]
+            "playback-restart" => self.library_video_ready = true,
             "property-change" => {
                 self.apply_property(event.property.as_deref(), event.data.as_ref());
+            }
+            #[cfg(target_os = "linux")]
+            "client-message"
+                if self.runtime_kind == super::MpvRuntimeKind::Library
+                    && event
+                        .args
+                        .first()
+                        .is_some_and(|arg| arg == "mediaflick-close-window") =>
+            {
+                crate::players::mpv::runtime::request_window_close();
             }
             "client-message" if is_mark_watched_next_message(&event.args) => {
                 self.control(&PlayerCommand::MarkWatchedAndPlayNext);
@@ -347,7 +447,7 @@ impl ControllerState {
     }
 
     pub(super) fn complete_library_startup(&mut self) {
-        if self.runtime_kind != super::MpvRuntimeKind::Library {
+        if !self.uses_paused_library_start() {
             return;
         }
         let pause = self.pending_library_pause.take().unwrap_or(false);
@@ -806,6 +906,12 @@ impl ControllerState {
     }
 
     pub(super) fn reset_mpv(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            self.pending_library_fullscreen = false;
+            self.library_video_ready = false;
+            self.library_waiting_seek_event = false;
+        }
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
         self.pending_library_pause = None;
