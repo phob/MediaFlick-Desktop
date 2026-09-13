@@ -68,6 +68,7 @@
 
 ### Changed
 
+- PRs authored by `phob` now skip CI jobs, including the required aggregate check, so small maintainer changes can merge without waiting for the full suite. All other PRs, including dependency bots, and pushes to `main` still run full CI.
 - Standardized the remaining Settings buttons and checkbox labels on shared shadcn/ui controls, added a themed collection-description Textarea, and replaced browser-native account and collection deletion prompts with accessible Alert Dialogs. Existing drafts, Save/Reset/Discard, and Home shelf dragging remain intact.
 - Replaced native numeric spinners in Settings with themed sliders and precise input fields, added inline range validation and connected labels, and improved narrow-window layouts and light-theme slider contrast. Subtitle scenes now use a Toggle Group, MDBList search uses a keyboard-accessible Combobox, and collection poster uploads show progress and errors, block premature saves, and cancel on Reset or Discard.
 
