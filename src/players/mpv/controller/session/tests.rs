@@ -30,6 +30,60 @@ fn library_playback_never_schedules_external_window_raise() {
     assert!(state.pending_raise_pulse_reset_at.is_none());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_fullscreen_waits_for_the_composed_playback_frame_after_file_loaded() {
+    let mut state = controller_with_pending_load(Some(20_000_000));
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
+    state.remember_configured_mpv("libmpv.so.2", FullscreenBehavior::Fullscreen);
+    state.activate_pending();
+    assert!(state.pending_library_fullscreen);
+    assert_eq!(state.last_state.position_ticks, 20_000_000);
+    state.finish_library_fullscreen(false);
+    assert!(state.pending_library_fullscreen);
+    state.finish_library_fullscreen(true);
+    assert!(state.pending_library_fullscreen);
+    state.startup_seek = None;
+    state.finish_library_fullscreen(true);
+    assert!(state.pending_library_fullscreen);
+    state.library_video_ready = true;
+    state.library_waiting_seek_event = true;
+    state.finish_library_fullscreen(true);
+    assert!(state.pending_library_fullscreen);
+    state.library_waiting_seek_event = false;
+    state.finish_library_fullscreen(true);
+    assert!(!state.pending_library_fullscreen);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_fullscreen_wait_does_not_survive_stop_or_runtime_reset() {
+    let mut state = controller_with_pending_load(None);
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
+    state.remember_configured_mpv("libmpv.so.2", FullscreenBehavior::Fullscreen);
+    state.activate_pending();
+    state.control(&PlayerCommand::Stop);
+    assert!(!state.pending_library_fullscreen);
+    state.pending_library_fullscreen = true;
+    state.reset_mpv();
+    assert!(!state.pending_library_fullscreen);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn windowed_library_and_external_startup_do_not_wait_for_a_browser_frame() {
+    for kind in [
+        crate::players::mpv::runtime::MpvRuntimeKind::Library,
+        crate::players::mpv::runtime::MpvRuntimeKind::External,
+    ] {
+        let mut state = controller_with_pending_load(None);
+        state.runtime_kind = kind;
+        state.remember_configured_mpv("test-player", FullscreenBehavior::Windowed);
+        state.activate_pending();
+        assert!(!state.pending_library_fullscreen);
+    }
+}
+
 #[test]
 fn libmpv_watched_next_command_uses_the_existing_completion_handoff() {
     let mut state = controller_with_pending_load(None);
@@ -501,4 +555,28 @@ fn eof_uses_runtime_when_mpv_duration_is_missing() {
 
     assert_eq!(state.last_state.duration_ticks, Some(240_000_000));
     assert_eq!(state.last_state.position_ticks, 240_000_000);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_library_resume_waits_for_file_loaded_and_holds_reported_position() {
+    let mut state = controller_with_pending_load(Some(200_000_000));
+    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
+    let launch = state
+        .pending
+        .as_ref()
+        .expect("pending playback")
+        .launch
+        .clone();
+    let command = state.loadfile_command(&launch);
+    assert!(command["command"][4].get("start").is_none());
+    assert!(command["command"][4].get("pause").is_none());
+    assert!(state.startup_seek.is_none());
+    state.activate_pending();
+    assert_eq!(
+        state.startup_seek.as_ref().map(|seek| seek.position_ms),
+        Some(20_000.0)
+    );
+    state.apply_property(Some("time-pos"), Some(&json!(0.5)));
+    assert_eq!(state.last_state.position_ticks, 200_000_000);
 }

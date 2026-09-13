@@ -180,6 +180,12 @@ impl ControllerState {
     }
 
     pub(super) fn prepare_pending_playback_state(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            self.pending_library_fullscreen = false;
+            self.library_video_ready = false;
+            self.library_waiting_seek_event = false;
+        }
         let Some(pending) = self.pending.as_ref() else {
             tracing::debug!(target: "playback", "no pending playback state to prepare");
             return;

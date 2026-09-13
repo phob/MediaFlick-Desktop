@@ -75,6 +75,36 @@ pub fn bundled_libmpv_path() -> Option<PathBuf> {
     libmpv_candidates(&app_dir)
         .into_iter()
         .find(|path| path.is_file())
+        .or_else(system_libmpv_path)
+}
+
+#[cfg(target_os = "linux")]
+fn system_libmpv_path() -> Option<PathBuf> {
+    // Let the dynamic loader honor the distribution's multiarch directories,
+    // ld.so cache and LD_LIBRARY_PATH instead of guessing installation paths.
+    // Cache the probe: settings capabilities are requested repeatedly by CEF.
+    static SYSTEM_LIBRARY: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    SYSTEM_LIBRARY
+        .get_or_init(|| {
+            let path = PathBuf::from("libmpv.so.2");
+            // SAFETY: this loads the same trusted system runtime used by the
+            // player adapter. No handle is created during discovery.
+            let library = unsafe { libloading::Library::new(&path) }.ok()?;
+            type ClientApiVersion = unsafe extern "C" fn() -> std::ffi::c_ulong;
+            // SAFETY: mpv_client_api_version has this signature in the client ABI.
+            let version = unsafe {
+                library
+                    .get::<ClientApiVersion>(b"mpv_client_api_version\0")
+                    .ok()?()
+            };
+            ((version >> 16) == 2).then_some(path)
+        })
+        .clone()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn system_libmpv_path() -> Option<PathBuf> {
+    None
 }
 
 #[cfg(target_os = "windows")]

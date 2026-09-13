@@ -219,6 +219,8 @@ wrap_display_handler! {
                 .map(CefString::to_string)
                 .filter(|value| !value.is_empty())
                 .unwrap_or(fallback_title);
+            #[cfg(target_os = "linux")]
+            if let Some(surface) = &self.prototype_surface { surface.set_title(&title_string); }
             let title = CefString::from(title_string.as_str());
 
             let mut browser = browser.cloned();

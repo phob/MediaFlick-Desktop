@@ -13,6 +13,13 @@ use crate::preferences::FullscreenBehavior;
 
 use super::ExternalMpv;
 
+#[cfg(target_os = "linux")]
+#[path = "linux_window.rs"]
+mod linux_window;
+#[cfg(target_os = "linux")]
+#[path = "render_gl.rs"]
+mod render_gl;
+
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
 #[cfg(target_os = "windows")]
@@ -46,10 +53,57 @@ impl LibmpvProfile {
 
 pub(super) enum MpvRuntime {
     External(Child),
-    Library(LibMpvRuntime),
+    Library(Box<LibMpvRuntime>),
 }
 
 impl MpvRuntime {
+    #[cfg(target_os = "linux")]
+    pub(super) fn poll_window_events(&self) {
+        if let Self::Library(runtime) = self {
+            runtime.window.poll_events();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn set_fullscreen(&self, mode: FullscreenBehavior) -> io::Result<()> {
+        match self {
+            Self::Library(runtime) => runtime.window.set_fullscreen(mode),
+            Self::External(_) => Ok(()),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn fullscreen(&self) -> io::Result<bool> {
+        match self {
+            Self::Library(runtime) => runtime.window.fullscreen(),
+            Self::External(_) => Ok(false),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub(super) fn ui_exposes_video(&self) -> bool {
+        match self {
+            Self::Library(runtime) => runtime.ui_exposes_video,
+            Self::External(_) => false,
+        }
+    }
+    #[cfg(target_os = "linux")]
+    pub(super) fn present_overlay(
+        &mut self,
+        frame: crate::playback::NativeOverlayFrame,
+    ) -> Result<crate::playback::NativeOverlayFrame, String> {
+        frame.validate()?;
+        match self {
+            Self::Library(runtime) => {
+                runtime.ui_exposes_video = frame.exposes_video();
+                runtime
+                    .renderer
+                    .as_ref()
+                    .ok_or("native renderer is unavailable")?
+                    .submit(frame)
+            }
+            Self::External(_) => Err("UI composition requires built-in libmpv".into()),
+        }
+    }
     pub(super) fn start(
         kind: MpvRuntimeKind,
         libmpv_profile: LibmpvProfile,
@@ -67,7 +121,9 @@ impl MpvRuntime {
                 Ok(Self::External(child))
             }
             MpvRuntimeKind::Library => {
-                LibMpvRuntime::start(path, ipc_path, fullscreen, libmpv_profile).map(Self::Library)
+                LibMpvRuntime::start(path, ipc_path, fullscreen, libmpv_profile)
+                    .map(Box::new)
+                    .map(Self::Library)
             }
         }
     }
@@ -138,6 +194,12 @@ pub(super) struct LibMpvRuntime {
     terminate_destroy: MpvTerminateDestroy,
     alive: bool,
     native_window: Option<NativeWindowHandle>,
+    #[cfg(target_os = "linux")]
+    ui_exposes_video: bool,
+    #[cfg(target_os = "linux")]
+    window: linux_window::HostWindow,
+    #[cfg(target_os = "linux")]
+    renderer: Option<render_gl::RenderWorker>,
     _library: Library,
     #[cfg(target_os = "windows")]
     _svp_environment: Option<super::svp::RuntimeEnvironment>,
@@ -151,9 +213,9 @@ fn configure_libmpv_options(
     fullscreen: FullscreenBehavior,
     libmpv_profile: LibmpvProfile,
 ) -> io::Result<()> {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     let force_window = "yes";
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     let force_window = "no";
     let (load_scripts, hwdec) = match libmpv_profile {
         LibmpvProfile::Standard => ("no", "auto-safe"),
@@ -177,6 +239,14 @@ fn configure_libmpv_options(
         ("auto-window-resize", "no"),
         ("border", "yes"),
     ];
+    #[cfg(target_os = "linux")]
+    options.extend([
+        // The app renders through the OpenGL API at native monitor density,
+        // then presents the completed frame in its own X11 window.
+        ("vo", "libmpv"),
+        ("x11-name", "io.github.phob.MediaFlickDesktop"),
+        ("osc", "no"),
+    ]);
     if libmpv_profile == LibmpvProfile::Svp {
         options.extend([
             ("hwdec-codecs", "all"),
@@ -229,6 +299,10 @@ impl LibMpvRuntime {
             )));
         }
 
+        #[cfg(target_os = "linux")]
+        let window = linux_window::HostWindow::new()?;
+        #[cfg(target_os = "linux")]
+        let host_handle = window.handle()?;
         let handle = unsafe { create() };
         if handle.is_null() {
             return Err(io::Error::other("libmpv could not create a client handle"));
@@ -255,22 +329,33 @@ impl LibMpvRuntime {
             )));
         }
 
+        #[cfg(target_os = "linux")]
+        let renderer =
+            match render_gl::RenderWorker::start(&library, handle, host_handle.content() as u32) {
+                Ok(renderer) => Some(renderer),
+                Err(error) => {
+                    unsafe { terminate_destroy(handle) };
+                    return Err(error);
+                }
+            };
+        #[cfg(target_os = "linux")]
+        let native_window = Some(host_handle);
         #[cfg(target_os = "windows")]
         let native_window = match wait_for_native_window(handle, get_property) {
-            Ok(window) => Some(window),
+            Ok(player_window) => Some(player_window),
             Err(error) => {
                 unsafe { terminate_destroy(handle) };
                 return Err(error);
             }
         };
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         let native_window = None;
 
         tracing::info!(
             target: "mpv.library",
             path = %path.display(),
             client_api = %format_args!("{major}.{minor}"),
-            "initialized bundled libmpv"
+            "initialized libmpv"
         );
         Ok(Self {
             handle,
@@ -278,6 +363,12 @@ impl LibMpvRuntime {
             terminate_destroy,
             alive: true,
             native_window,
+            #[cfg(target_os = "linux")]
+            ui_exposes_video: false,
+            #[cfg(target_os = "linux")]
+            window,
+            #[cfg(target_os = "linux")]
+            renderer,
             _library: library,
             #[cfg(target_os = "windows")]
             _svp_environment: svp_environment,
@@ -285,6 +376,14 @@ impl LibMpvRuntime {
     }
 
     fn is_alive(&mut self) -> bool {
+        #[cfg(target_os = "linux")]
+        if self
+            .renderer
+            .as_ref()
+            .is_some_and(render_gl::RenderWorker::failed)
+        {
+            return false;
+        }
         if !self.alive || self.handle.is_null() {
             return false;
         }
@@ -313,6 +412,8 @@ impl LibMpvRuntime {
         if self.handle.is_null() {
             return;
         }
+        #[cfg(target_os = "linux")]
+        self.renderer.take();
         let handle = std::mem::replace(&mut self.handle, std::ptr::null_mut());
         self.alive = false;
         unsafe { (self.terminate_destroy)(handle) };
@@ -342,7 +443,7 @@ fn wait_for_native_window(
             && let Ok(raw) = usize::try_from(raw)
             && let Some(window) = NativeWindowHandle::new(raw)
         {
-            tracing::info!(target: "mpv.library", hwnd = raw, "libmpv native window is ready");
+            tracing::info!(target: "mpv.library", window_id = raw, "libmpv native window is ready");
             return Ok(window);
         }
         if Instant::now() >= deadline {
@@ -399,6 +500,20 @@ fn mpv_error(error_string: MpvErrorString, status: c_int) -> String {
     unsafe { CStr::from_ptr(message) }
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(target_os = "linux")]
+static WINDOW_CLOSE_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+pub(super) fn request_window_close() {
+    WINDOW_CLOSE_REQUESTED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn take_window_close_request() -> bool {
+    WINDOW_CLOSE_REQUESTED.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
 
 #[cfg(test)]

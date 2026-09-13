@@ -12,6 +12,8 @@
 
 ### Added
 
+- Added Linux built-in libmpv playback with the existing React controls over video on compositing X11 desktops and Wayland through XWayland. System libmpv discovery, native input and close handling, fullscreen, popup composition, window placement, and delayed resume use the shared playback controller. Linux retains external mpv as its default, and AppImages use the host's libmpv runtime.
+
 - Added account-owned Viewing settings for episode spoiler protection, next-episode mode and countdown, episode limits, preferred audio and subtitle languages, original-track preference, resume rewind, text and poster sizing, card-preview timing, startup destination, and remembered library filters. Built-in playback now has device-owned subtitle appearance with a preview, seek intervals, and shortcut keys. All preference controls use Save, Reset, and Discard; individual track choices retain priority.
 - Added integrated built-in playback on Windows. Bundled libmpv renders video beneath MediaFlick's CEF and DirectComposition controls in one native window, reports live playback, tracks, chapters, segments, and diagnostics, and supports seeking, volume, fullscreen, track selection, tuning, episode navigation, the configured mark-watched-next key, auto-hidden controls, and restored window placement. MediaFlick automatically detects SVP 4 and configures its VapourSynth and Python runtimes when available. Existing installations with an mpv path continue using external mpv, and `--mpv-path` explicitly selects it. Switching between built-in and external backends requires a restart.
 - Added a pinned, source-recording Windows libmpv cross-build. The release workflow produces a lean x86-64 DLL without mpv's command-line player, scripting, Vulkan, or GPL-only codec features, packages its notices and checksum, and publishes the corresponding source archive.
@@ -134,6 +136,10 @@
 - The Appearance live preview renders the app's own components — real MediaCards over the cached Continue Watching and Recently Added rows — inside one scoped container that carries the unsaved draft as data attributes and intensity variables. The shared token rules re-skin that subtree exactly as they re-skin the root, so color mode, accent, density, artwork and backdrop intensity, media info, card previews, and the rating-source selection are judged against your own artwork before saving. Resting on a card opens the same expanded preview panel as the live shelves, also themed by the unsaved choices; only that panel's Play, My List, and watched actions stay inert.
 
 ### Fixed
+
+- Fixed always-visible card actions and menus or dropdowns closing on click with the built-in Linux player. The windowless browser now reports the mouse capabilities supplied by its X11 host, and focus transfers within the native window no longer blur the UI.
+
+- Fixed HiDPI browser, pointer, and popup scaling in the built-in Linux player. Video passes now render at native monitor density through the OpenGL render API, followed by GPU composition of browser controls in the same X11 window. UI-only updates reuse the finished video frame and skip drawing transparent rows. Bounded UI submissions, GPU presentation fences, and coalesced window resizes reduce transient memory use; automatic fullscreen waits for the playback overlay and resumed video output.
 
 - Made Quick Connect visible on the first sign-in screen, with server-address guidance, availability feedback, and approval instructions. Changing the server immediately clears the previous code, and fresh installations now see “Welcome to MediaFlick”.
 - Fixed Linux and macOS release packaging on checkouts where the package scripts are not executable by invoking them through Bash ([#128](https://github.com/phob/MediaFlick-Desktop/pull/128) by [@Chinna95P](https://github.com/Chinna95P)).

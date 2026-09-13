@@ -1,27 +1,31 @@
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use std::rc::Rc;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use std::sync::Arc;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use cef::{Browser, Client, CursorType, RenderHandler};
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator};
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use crate::preferences::AppSettings;
 
 #[cfg(target_os = "windows")]
 #[path = "prototype_osr/windows.rs"]
 mod platform;
 
-#[cfg(target_os = "windows")]
+#[cfg(target_os = "linux")]
+#[path = "prototype_osr/linux.rs"]
+mod platform;
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(super) use platform::{PrototypeOsrSurface, is_active, is_configured};
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub(super) struct PrototypeOsrSurface;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 impl PrototypeOsrSurface {
     pub(super) fn select(
         _settings: &AppSettings,
@@ -49,12 +53,15 @@ impl PrototypeOsrSurface {
     pub(super) fn destroy(&self) {}
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub(super) fn is_configured(_settings: &AppSettings) -> bool {
     false
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub(super) fn is_active() -> bool {
     false
 }
+
+#[cfg(target_os = "linux")]
+pub(super) use platform::reveal;

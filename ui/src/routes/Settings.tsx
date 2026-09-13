@@ -402,7 +402,7 @@ function PlayerSettings() {
   return (
     <div className="settings-page">
       <PageTitle title="Player" />
-      <Section title="Playback backend" description="The built-in libmpv player works without a separate mpv installation.">
+      <Section title="Playback backend" description="The built-in player uses bundled libmpv on Windows and system libmpv on Linux.">
         <SettingsRow controlId="settings-player" title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
           <SelectField id="settings-player" aria-describedby="settings-player-help" label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
         </SettingsRow>

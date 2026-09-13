@@ -26,6 +26,14 @@ impl PlayerBackend for MpvController {
         self.native_window(timeout)
     }
 
+    #[cfg(target_os = "linux")]
+    fn submit_overlay(
+        &self,
+        frame: crate::playback::NativeOverlayFrame,
+    ) -> Result<crate::playback::NativeOverlayReply, String> {
+        self.submit_overlay(frame)
+    }
+
     fn load(&self, path: String, fullscreen: FullscreenBehavior, launch: PlaybackRequest) {
         self.load(path, fullscreen, launch);
     }
@@ -58,3 +66,6 @@ impl PlayerBackend for MpvController {
         self.shutdown();
     }
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) use runtime::take_window_close_request;

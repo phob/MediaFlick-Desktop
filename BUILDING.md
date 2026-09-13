@@ -74,8 +74,8 @@ dist/windows/MediaFlickDesktop/
 ```
 
 The source archive under `build/libmpv-windows-x64/` must be published beside
-the installer and zip. Linux and macOS packages continue to use an external
-system mpv until equivalent native libmpv bundles are added.
+the installer and zip. Linux can use a system libmpv runtime as described below;
+macOS continues to use external system mpv.
 
 ## Build the Windows installer
 
@@ -93,6 +93,34 @@ dist/windows/MediaFlickDesktop-Setup-<version>.exe
 ```
 
 ## Build Linux and macOS release packages
+
+For Linux built-in playback, install libmpv with client API major 2 and the
+OpenGL render API (the runtime SONAME is `libmpv.so.2`), plus working X11 and
+EGL/OpenGL 3.3 drivers, using your distribution's package manager. MediaFlick
+loads it dynamically, so headers and link-time libmpv configuration are not required. Select Built-in player in Settings → Player,
+save, and restart. Wayland sessions need XWayland and a
+valid `DISPLAY`. External mpv remains the Linux default. AppImages use the
+host's libmpv instead of bundling it. See
+[the Linux integration notes](docs/libmpv-integration.md#integrated-linux-rendering).
+
+An opt-in runtime test can load a local video through libmpv and its IPC server:
+
+```sh
+CEF_PATH="$(just --evaluate CEF_PATH)" \
+CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
+MEDIAFLICK_DESKTOP_LIBMPV_PATH=/path/to/libmpv.so.2 \
+MEDIAFLICK_DESKTOP_LIBMPV_MEDIA_PATH=/path/to/test-video.mkv \
+cargo test configured_library_initializes_its_ipc_server -- --ignored
+```
+
+The Linux browser-focus regression test uses an isolated X11 display and does
+not require a Jellyfin account or media file. With Xvfb installed:
+
+```sh
+CEF_PATH="$(just --evaluate CEF_PATH)" \
+CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
+xvfb-run -a cargo test internal_focus_transfers_and_grabs_keep_browser_focus -- --ignored
+```
 
 Linux AppImage packaging requires `appimagetool` or network access so the script can download it:
 

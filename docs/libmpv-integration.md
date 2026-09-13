@@ -3,9 +3,10 @@
 ## Decision
 
 MediaFlick uses dynamically loaded libmpv as the default player on fresh
-Windows installations. External mpv and MPC-HC remain supported. Linux and
-macOS keep external mpv as their default until equivalent native library
-bundles exist.
+Windows installations. Linux supports the same React playback overlay using
+a system libmpv runtime on X11 or XWayland. Linux and macOS retain external mpv
+as their default; existing explicit backend choices and mpv paths are preserved.
+External mpv and Windows MPC-HC remain supported.
 
 Windows uses the integrated player in the normal build and the normal `just
 run` workflow whenever Built-in player was selected when MediaFlick started.
@@ -49,6 +50,62 @@ The backend choice is startup-bound because it selects the native window and
 CEF composition model. Saving a different backend records the preference and
 asks the user to restart MediaFlick; the running player is not rebuilt into a
 different window model in place.
+
+## Integrated Linux rendering
+
+Select **Built-in player** in Settings → Player, save, and restart. Install a
+system libmpv with client API major 2 and the OpenGL render API. An X11 desktop
+and working EGL/OpenGL 3.3 driver are required; Wayland sessions use XWayland
+and must provide `DISPLAY`. Native Wayland composition is not implemented.
+
+MediaFlick owns the top-level window and video container. A dedicated render
+thread owns an EGL context and calls libmpv's OpenGL render API, with hardware
+decoding on `auto-safe` and the X11 display supplied for VA-API interoperation.
+Video renders into a framebuffer at the monitor's native pixel density. A final
+GPU blit scales that completed frame to X11 drawable coordinates before browser
+controls are composited over it. Expensive video passes therefore do not inherit
+XWayland's fractional-scaling oversampling. Presentation fences bound pending GPU frames to two; replacing a render target
+first completes outstanding GPU work. This permits a small rendering pipeline
+while keeping allocation lifetimes bounded.
+
+CEF runs windowless on X11 with GPU compositing disabled because this adapter
+consumes software frames. The shell sends one owned premultiplied BGRA bitmap
+at a time to the render thread. The thread uploads it into a reusable texture,
+blits the finished video framebuffer, then alpha-blends browser controls over
+it. Transparent rows are excluded from UI drawing, and UI updates reuse the
+video framebuffer instead of forcing video to render again. The input-only X11 child forwards events without allocating a second
+composited drawable. DMA-BUF texture import is not implemented.
+
+Popup pixels are composed into the browser frame before submission. The owned
+buffer returns after presentation; old retained browser frames are released
+on resize. Linux waits for a transparent playback frame and the video restart
+following the delayed resume seek before applying automatic fullscreen. This
+avoids overlapping catalog, decoder, and fullscreen buffer replacements. The
+shell combines intermediate window-manager sizes and resizes the video
+container after 250 ms without another size change; manual fullscreen requests
+change the outer window immediately.
+
+The overlay reads X11's `Xft.dpi` and keeps browser layout coordinates separate
+from drawable pixels, including mouse input and popup placement. It updates CEF
+when the desktop DPI changes. Under GNOME fractional scaling, XWayland can expose
+a drawable larger than the actual monitor: a 4K output at 125% can report
+6144 × 3456 X11 pixels with a 2× UI scale. The adapter queries Wayland output
+metadata to cap browser rasterization at the selected monitor's physical density:
+this example uses a 3072 × 1728 logical view and a 3840 × 2160 browser bitmap
+and video render target. The compositor maps the completed frame into X11
+coordinates. Layout, pointer input, and popup raster coordinates remain separate.
+If Wayland output metadata is unavailable, the adapter uses X11 DPI for rasterization too. The oversized
+X11 dimensions must not be treated as the RDP output resolution.
+
+The shell forwards pointer, keyboard, focus, and popup events to the existing
+React interface, and native close requests use CEF's shutdown lifecycle.
+Window bounds, maximized state, application identity, and the startup-ready
+reveal remain app-owned. `--hidden` suppresses the initial reveal.
+
+Linux keeps the persistent IPC writer and applies resume as a delayed seek
+after `file-loaded`, holding the reported Jellyfin position until that seek
+settles. It does not use load-time `start` or send a timing-related startup
+`pause=false` command.
 
 ## Runtime shape
 
@@ -94,6 +151,12 @@ also recognize `build/libmpv-windows-x64/libmpv-2.dll`, the build script's
 default output. Details and license requirements are in
 `distribution/libmpv/windows/README.md`. `MEDIAFLICK_DESKTOP_LIBMPV_PATH`
 overrides discovery for development and smoke tests.
+
+Linux checks beside the executable first, then probes `libmpv.so.2` through the
+system dynamic loader, respecting its cache, multiarch directories, and
+`LD_LIBRARY_PATH`. A missing or incompatible system runtime leaves Built-in
+player unavailable in Settings. Linux AppImages continue to depend on the
+host's libmpv; they do not bundle a Linux runtime or its codec dependencies.
 
 The app uses a baseline x86-64, shared libmpv DLL with its dependencies linked
 into that DLL. Built-in mode requests mpv's safe automatic hardware decoding.
