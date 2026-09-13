@@ -83,8 +83,8 @@ cd "$work_dir/ffmpeg-build"
 make -j "$jobs"
 make install
 
-# Preserve both gpu-next renderers even though the current embedded player
-# uses mpv's OpenGL render API. glslang supplies Vulkan's SPIR-V compilation.
+# Preserve the embedded player's Vulkan renderer and OpenGL fallback.
+# glslang supplies Vulkan's SPIR-V compilation.
 meson setup --wipe "$work_dir/placebo-build" "$sources/libplacebo" \
     --prefix="$prefix" --libdir=lib --buildtype=release --default-library=shared \
     --wrap-mode=nodownload -Dauto_features=disabled -Ddemos=false \
