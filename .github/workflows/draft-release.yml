@@ -296,6 +296,7 @@ jobs:
     env:
       CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
       APPIMAGE_ARCH: x86_64
+      MEDIAFLICK_LIBMPV_WORK_DIR: ${{ github.workspace }}/../mediaflick-cache/libmpv-linux-x86_64
 
     steps:
       - name: Check out repository
@@ -342,6 +343,9 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
+          # Corresponding sources for bundled distribution libraries are part
+          # of the release, so enable source indexes before installing packages.
+          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
@@ -366,7 +370,21 @@ jobs:
             libxrandr-dev \
             libxrender-dev \
             libxtst-dev \
-            ninja-build
+            ninja-build \
+            git meson nasm pkg-config python3-jinja2 patchelf zstd \
+            libass-dev liblcms2-dev libdav1d-dev libgnutls28-dev zlib1g-dev \
+            libpulse-dev libegl1-mesa-dev libgl-dev libva-dev libdrm-dev libxpresent-dev libxss-dev \
+            libvulkan-dev glslang-dev spirv-tools libffmpeg-nvenc-dev \
+            xvfb xauth mesa-vulkan-drivers
+
+      - name: Cache Linux libmpv sources and builds
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.MEDIAFLICK_LIBMPV_WORK_DIR }}
+          key: libmpv-linux-x86_64-ubuntu-24.04-${{ hashFiles('distribution/libmpv/linux/**') }}
+
+      - name: Build Linux libmpv and corresponding sources
+        run: bash distribution/libmpv/linux/build.sh
 
       - name: Build Linux AppImage
         env:
@@ -386,13 +404,25 @@ jobs:
           test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/LICENSE
           test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/THIRD-PARTY-NOTICES.md
           test -f dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/CREDITS.html
+          python3 distribution/libmpv/linux/smoke-test.py \
+            dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2 \
+            dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/LIBPLACEBO-CONFIG.h
+          for gpu_api in opengl vulkan; do
+            xvfb-run -a python3 distribution/libmpv/linux/smoke-test.py \
+              dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2 \
+              dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/LIBPLACEBO-CONFIG.h \
+              --gpu-api "$gpu_api"
+          done
+          test -s dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/licenses/THIRD-PARTY-NOTICES.md
 
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v7
         with:
           name: release-asset-linux-x86_64
           if-no-files-found: error
-          path: dist/linux/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-linux-x86_64.AppImage
+          path: |
+            dist/linux/MediaFlickDesktop-${{ needs.prepare.outputs.tag }}-linux-x86_64.AppImage
+            dist/linux/mediaflick-libmpv-linux-x86_64-sources.tar.zst
 
   build-macos:
     name: Build macOS DMG (${{ matrix.arch }})
