@@ -415,6 +415,17 @@ jobs:
           done
           test -s dist/linux/MediaFlickDesktop.AppDir/usr/share/doc/mediaflick-desktop/libmpv/licenses/THIRD-PARTY-NOTICES.md
 
+      - name: Test embedded Linux gpu-next composition
+        env:
+          MEDIAFLICK_DESKTOP_LIBMPV_PATH: ${{ github.workspace }}/dist/linux/MediaFlickDesktop.AppDir/usr/bin/libmpv/libmpv.so.2
+        run: |
+          MEDIAFLICK_DESKTOP_EXPECT_GPU_CONTEXT=x11vk xvfb-run -a \
+            cargo test --locked configured_gpu_next_composes -- --ignored --nocapture
+          MEDIAFLICK_DESKTOP_EXPECT_GPU_CONTEXT=x11egl \
+            VK_DRIVER_FILES=/nonexistent VK_ICD_FILENAMES=/nonexistent xvfb-run -a \
+            cargo test --locked configured_gpu_next_composes -- --ignored --nocapture
+          xvfb-run -a cargo test --locked internal_focus_transfers_and_grabs_keep_browser_focus -- --ignored
+
       - name: Upload Linux release asset
         uses: actions/upload-artifact@v7
         with:

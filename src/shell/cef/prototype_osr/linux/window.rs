@@ -1,4 +1,4 @@
-//! An input-only child above the embedded video. Browser pixels are composed by
+//! An input-only sibling above the embedded video container. Browser pixels are composed by
 //! libmpv itself, so this window never allocates a second video-sized surface.
 use cef::{ImplBinaryValue, ImplImage};
 use std::cell::Cell;
@@ -40,7 +40,7 @@ impl OverlayWindow {
         conn.create_window(
             0,
             window,
-            content,
+            parent,
             0,
             0,
             1280,
@@ -177,7 +177,8 @@ impl OverlayWindow {
                     .x(0)
                     .y(0)
                     .width(u32::from(width))
-                    .height(u32::from(height)),
+                    .height(u32::from(height))
+                    .stack_mode(StackMode::ABOVE),
             )
             .map_err(io::Error::other)?;
         if visible {
@@ -224,7 +225,7 @@ impl OverlayWindow {
         if focus == self.window {
             return Ok(true);
         }
-        if focus != self.parent && focus != self.content {
+        if !self.owns_focus(focus)? {
             return Ok(false);
         }
         self.conn
@@ -233,6 +234,27 @@ impl OverlayWindow {
             .check()
             .map_err(io::Error::other)?;
         Ok(true)
+    }
+
+    fn owns_focus(&self, mut focus: u32) -> io::Result<bool> {
+        // gpu-next creates its own child inside content. Treat that subtree as
+        // the same focus scope, including after the VO recreates its surface.
+        for _ in 0..32 {
+            if focus == self.parent || focus == self.content {
+                return Ok(true);
+            }
+            if focus == self.root || focus <= 1 {
+                return Ok(false);
+            }
+            focus = self
+                .conn
+                .query_tree(focus)
+                .map_err(io::Error::other)?
+                .reply()
+                .map_err(io::Error::other)?
+                .parent;
+        }
+        Ok(false)
     }
 
     pub fn restore(&self, settings: crate::preferences::WebUiWindowSettings) -> io::Result<()> {
@@ -465,7 +487,13 @@ mod focus_tests {
         let parent = conn.generate_id()?;
         let content = conn.generate_id()?;
         let outside = conn.generate_id()?;
-        for (window, owner) in [(parent, root), (content, parent), (outside, root)] {
+        let video = conn.generate_id()?;
+        for (window, owner) in [
+            (parent, root),
+            (content, parent),
+            (video, content),
+            (outside, root),
+        ] {
             conn.create_window(
                 x11rb::COPY_DEPTH_FROM_PARENT,
                 window,
@@ -488,7 +516,7 @@ mod focus_tests {
 
         // A window-manager click focuses the frame; the adapter redirects to
         // its input child. Both transfers emit FocusOut, but neither is a blur.
-        for target in [parent, content, overlay.window, parent] {
+        for target in [parent, content, video, overlay.window, parent] {
             conn.set_input_focus(InputFocus::PARENT, target, x11rb::CURRENT_TIME)?
                 .check()?;
             assert!(overlay.focus_browser()?);

@@ -8,13 +8,13 @@ interoperability. The user explicitly rejected removing Vulkan to match the
 Windows profile. Removing scripting/disc extras must not remove normal GPU
 playback capabilities.
 
-The latest request was to preserve those capabilities and provide this handoff.
-Switching MediaFlick's embedded renderer to `gpu-next`/Vulkan is a separate
-follow-up; it has not been implemented by these build changes.
+The packaging work is merged. The follow-up also switches MediaFlick's embedded
+Linux renderer to `gpu-next`, preferring Vulkan with an OpenGL fallback.
 
 The initial Linux packaging implementation is commit `909a6bd` (`feat(linux):
-bundle slim libmpv runtime in AppImages`). This follow-up restores GPU build
-capabilities. Check `git status` and `git diff` for its current commit status.
+bundle slim libmpv runtime in AppImages`). GPU build capabilities were restored
+in `2003359` and merged through PR #149. Check `git status` and `git diff` for
+the renderer follow-up's current commit status.
 
 ## Current implementation
 
@@ -53,36 +53,48 @@ capabilities. Check `git status` and `git diff` for its current commit status.
   missing `load-scripts=no` and `osc=no` options when scripting was compiled
   out. Other errors remain strict, including SVP requesting scripts enabled.
 
-## Critical rendering distinction for the next context
+## Embedded gpu-next rendering
 
-MediaFlick's Linux built-in player currently sets `vo=libmpv` in
-`src/players/mpv/runtime.rs`. `src/players/mpv/render_gl.rs` creates an
-`mpv_render_context` with API type `opengl`, renders video into an OpenGL FBO,
-and composites CEF's software BGRA UI frames over it. The app owns the X11
-window and EGL context. VA-API and NVDEC decoding can feed this OpenGL path.
+`src/players/mpv/runtime.rs` sets `vo=gpu-next`, `gpu-api=vulkan,opengl`, and
+`gpu-context=x11vk,x11egl`. The app still owns the X11 top-level window and
+video container; `wid` lets mpv create its video surface inside the container.
+The previous OpenGL render-context worker and its EGL/glow dependencies are
+removed. VA-API/NVDEC selection remains mpv's responsibility through `auto-safe`.
 
-Compiling Vulkan support does **not** make this renderer automatically choose
-Vulkan. The pinned mpv render API exposes OpenGL and software backends, not a
-Vulkan or `gpu-next` render-context backend:
+`src/players/mpv/gpu_next.rs` sends owned, validated CEF BGRA frames through
+synchronous, named `overlay-add` commands. mpv copies the pixels before the
+buffer returns to CEF and composites them on the selected GPU, including while
+idle or paused. Browser raster size and overlay display size remain separate.
+The input-only window is a sibling above the video container, so newly created
+mpv child windows cannot cover it. Focus handling includes mpv's child subtree.
+
+The pinned render API itself still exposes only OpenGL and software backends:
 
 - [mpv 0.41 render API](https://github.com/mpv-player/mpv/blob/v0.41.0/include/mpv/render.h)
 - [mpv 0.41 render backend registration](https://github.com/mpv-player/mpv/blob/v0.41.0/video/out/vo_libmpv.c)
 
-A future `gpu-next`/Vulkan integration needs an explicit design for video
-ownership and UI composition. Do not just set `vo=gpu-next` or
-`gpu-api=vulkan` while continuing to drive the existing OpenGL render API.
-The standalone `gpu-next` smoke tests described below exercise the library's
-retained backends; they do not demonstrate that MediaFlick's UI uses Vulkan.
+No OpenGL render context is driven alongside gpu-next. The standalone smoke
+tests exercise the retained backends; the native composition regression in
+`src/players/mpv/gpu_next/tests.rs` verifies the app's actual context and displayed
+pixels, including scaling, transparency, paused video, and frame ownership.
+The release workflow runs it on Vulkan and again with Vulkan drivers unavailable
+to establish the OpenGL fallback, then runs the native focus regression.
+
+CEF retains native-density rasterization, popup placement, and input scaling.
+gpu-next's video swapchain follows the X11 drawable size. This can increase
+video rendering cost under fractional XWayland scaling compared with the old
+OpenGL render-API path's cap to physical monitor density. See
+`docs/libmpv-integration.md` for the complete ownership and scaling model.
 
 Before changing rendering, read `AGENTS.md`, `docs/libmpv-integration.md`,
-`src/players/mpv/runtime.rs`, `render_gl.rs`, `linux_window.rs`, and the Linux
+`src/players/mpv/runtime.rs`, `gpu_next.rs`, `linux_window.rs`, and the Linux
 implementation under `src/shell/cef/prototype_osr/`. Preserve the working
 overlay, HiDPI scaling, popups, pointer/keyboard/focus handling, fullscreen,
 window placement, and delayed startup seek. Preserve persistent IPC writes
 and resume/playstate invariants; do not replace them with loadfile start
 offsets, URL fragments, or an unconditional startup unpause.
 
-## Verification from this follow-up
+## Verification from the merged packaging work
 
 - ShellCheck and all four packaging regression tests passed, including host
   Vulkan/NVIDIA library exclusion and source collection for build dependencies.
@@ -109,6 +121,30 @@ Useful local logs are `/tmp/mediaflick-preserve-gpu-build.log`,
 `/tmp/mediaflick-gpu-next-opengl.log`, `/tmp/mediaflick-gpu-next-vulkan.log`,
 `/tmp/mediaflick-preserve-gpu-native.log`, and
 `/tmp/mediaflick-preserve-gpu-appimage.log`.
+
+## Renderer follow-up verification
+
+- `just rust-quality` and `just test` passed (397 passed, three opt-in tests).
+- The native pixel regression passed with `current-gpu-context=x11vk`, and
+  again with `x11egl` after disabling Vulkan driver discovery. Idle and paused
+  composition, alpha blending, transparency, buffer reuse, and resizing passed.
+- The native X11 focus regression passed with mpv's video child included.
+- The native IPC/media test passed through the new renderer with H.264 video.
+- The full CEF sign-in window rendered through `x11vk` under Xvfb; native
+  mouse clicks and keyboard input reached the expected input field.
+- The final AppImage and corresponding-source archive were rebuilt. Relocated
+  profile tests and native composition passed on Vulkan and OpenGL. The actual
+  AppImage reported `0.1.6`, loaded its bundled libmpv with `x11vk`, accepted
+  native mouse/keyboard input, and exited successfully through `WM_DELETE_WINDOW`.
+- ShellCheck, all four packaging regressions, workflow YAML parsing, archive
+  checks, and `git diff --check` passed. The release workflow now includes the
+  native composition/fallback and focus tests; it has not been run on GitHub.
+- Physical AMD/NVIDIA decoding, a real Jellyfin playback session, window-manager
+  fullscreen behavior, and the Ubuntu 24.04 GitHub release job still require
+  verification in their respective environments.
+
+New logs use `/tmp/mediaflick-handoff-*`. The pixel-test commands and the forced
+OpenGL fallback invocation are documented in `BUILDING.md`.
 
 ## Build and validation commands
 
