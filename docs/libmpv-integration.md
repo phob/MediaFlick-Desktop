@@ -159,8 +159,11 @@ system dynamic loader, respecting its cache, multiarch directories, and
 player unavailable in Settings. Linux AppImages bundle their own runtime and
 codec/subtitle dependencies in `usr/bin/libmpv`, with origin-relative library
 search paths, notices, checksums, and a separate corresponding-source archive.
-The Linux build omits DVD, Lua, JavaScript, VapourSynth, and Vulkan while keeping
-VA-API, X11/EGL/OpenGL, ALSA/PulseAudio, GnuTLS HTTPS, libass, and color management.
+The Linux build omits DVD, Lua, JavaScript, and VapourSynth while keeping
+VA-API, NVDEC/CUDA interoperability, OpenGL and Vulkan (including libplacebo's
+`gpu-next` backends), ALSA/PulseAudio, GnuTLS HTTPS, libass, and color management.
+The app still uses the OpenGL libmpv render API described above; Vulkan build
+support alone does not switch its embedded video output to `gpu-next`.
 Host graphics/audio interfaces and drivers remain required. See
 [`distribution/libmpv/linux/README.md`](../distribution/libmpv/linux/README.md).
 

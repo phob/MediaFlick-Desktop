@@ -68,7 +68,7 @@
 
 ### Changed
 
-- Linux AppImages now build and bundle a focused Linux libmpv runtime with VA-API, OpenGL, subtitles, HTTPS, and ALSA/PulseAudio playback, without DVD, Lua, JavaScript, VapourSynth, or Vulkan. Packaging verifies the relocated runtime and includes dependency notices/checksums, with corresponding sources published beside the AppImage. Built-in startup accepts absent script-disable options on builds without scripting.
+- Linux AppImages now build and bundle a focused Linux libmpv runtime with VA-API, NVDEC/CUDA interoperability, OpenGL and Vulkan rendering backends, subtitles, HTTPS, and ALSA/PulseAudio playback, without DVD, Lua, JavaScript, or VapourSynth. The embedded player continues using the OpenGL render API. Packaging verifies the relocated runtime and includes dependency notices/checksums, with corresponding sources published beside the AppImage, including shader compiler and header-only dependencies. Built-in startup accepts absent script-disable options on builds without scripting.
 
 - Standardized the remaining Settings buttons and checkbox labels on shared shadcn/ui controls, added a themed collection-description Textarea, and replaced browser-native account and collection deletion prompts with accessible Alert Dialogs. Existing drafts, Save/Reset/Discard, and Home shelf dragging remain intact.
 - Replaced native numeric spinners in Settings with themed sliders and precise input fields, added inline range validation and connected labels, and improved narrow-window layouts and light-theme slider contrast. Subtitle scenes now use a Toggle Group, MDBList search uses a keyboard-accessible Combobox, and collection poster uploads show progress and errors, block premature saves, and cancel on Reset or Discard.

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import bundle
 
@@ -59,19 +60,42 @@ class BundleTests(unittest.TestCase):
     def test_host_driver_is_not_copied_or_traversed(self):
         # Its deliberately missing private dependency belongs to the host's
         # driver stack; bundling must stop at the stable libva interface.
-        self.compile("libfixture-driver.so.1", "int driver(void) { return 1; }")
-        self.compile(
-            "libva.so.2", "extern int driver(void); int va(void) { return driver(); }",
-            f"-L{self.prefix / 'lib'}", "-l:libfixture-driver.so.1",
-        )
-        self.compile(
-            "libmpv.so.2", "extern int va(void); int playback(void) { return va(); }",
-            f"-L{self.prefix / 'lib'}", "-l:libva.so.2",
-        )
-        (self.prefix / "lib/libfixture-driver.so.1").unlink()
-        bundle.bundle(self.prefix, self.output, self.sources)
-        self.assertEqual([p.name for p in (self.output / "lib").iterdir()], ["libmpv.so.2"])
-        self.assertEqual((self.output / "HOST-LIBRARIES.txt").read_text(), "libva.so.2\n")
+        for interface in ("libva.so.2", "libvulkan.so.1", "libcuda.so.1", "libnvcuvid.so.1"):
+            with self.subTest(interface=interface):
+                self.compile("libfixture-driver.so.1", "int driver(void) { return 1; }")
+                self.compile(
+                    interface, "extern int driver(void); int gpu(void) { return driver(); }",
+                    f"-L{self.prefix / 'lib'}", "-l:libfixture-driver.so.1",
+                )
+                self.compile(
+                    "libmpv.so.2", "extern int gpu(void); int playback(void) { return gpu(); }",
+                    f"-L{self.prefix / 'lib'}", f"-l:{interface}",
+                )
+                (self.prefix / "lib/libfixture-driver.so.1").unlink()
+                bundle.bundle(self.prefix, self.output, self.sources)
+                self.assertEqual([p.name for p in (self.output / "lib").iterdir()], ["libmpv.so.2"])
+                self.assertEqual((self.output / "HOST-LIBRARIES.txt").read_text(), interface + "\n")
+
+    def test_build_dependency_sources_are_recorded_without_a_shared_library(self):
+        self.playback_libraries()
+        subprocess_run = subprocess.run
+        downloads = []
+
+        def run(args, **kwargs):
+            if args[0] == "apt-get":
+                downloads.append(args)
+                return subprocess.CompletedProcess(args, 0)
+            return subprocess_run(args, **kwargs)
+
+        # libc6-dev is present with the compiler; use its real package metadata
+        # and notice, but intercept network downloads for this regression test.
+        with patch.object(bundle.subprocess, "run", side_effect=run):
+            bundle.bundle(self.prefix, self.output, self.sources, build_packages=["libc6-dev"])
+        record = (self.output / "SYSTEM-PACKAGES.txt").read_text().strip().split("\t")
+        binary, _, source, version = record
+        self.assertTrue(binary.startswith("libc6-dev"))
+        self.assertTrue((self.output / "licenses" / f"{binary.replace(':', '-')}.copyright").is_file())
+        self.assertEqual(downloads, [["apt-get", "source", "--download-only", "--only-source", f"{source}={version}"]])
 
 
 if __name__ == "__main__":
