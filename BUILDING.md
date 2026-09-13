@@ -30,6 +30,12 @@ Run it with:
 just run --url http://localhost:8096
 ```
 
+On Linux, the app registers a fallback desktop entry and icon in the user data
+directory (`$XDG_DATA_HOME`, or `~/.local/share`) before opening its window.
+This gives direct launches and `just run` the MediaFlick name and icon in the
+dock. The fallback does not appear in the application menu and preserves
+user-installed or system-installed entries with the same desktop ID.
+
 ## Build and test the Companion plugin
 
 The plugin has a separate toolchain and is not part of `cargo build`:
@@ -111,6 +117,16 @@ CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
 MEDIAFLICK_DESKTOP_LIBMPV_PATH=/path/to/libmpv.so.2 \
 MEDIAFLICK_DESKTOP_LIBMPV_MEDIA_PATH=/path/to/test-video.mkv \
 cargo test configured_library_initializes_its_ipc_server -- --ignored
+```
+
+The desktop-registration integration test checks icon/name lookup and launcher
+execution through GIO in an isolated user data directory. It needs
+`desktop-file-validate` and `/usr/bin/python3` with PyGObject, but no display:
+
+```sh
+CEF_PATH="$(just --evaluate CEF_PATH)" \
+CARGO_TARGET_DIR="$(just --evaluate CARGO_TARGET_DIR)" \
+cargo test desktop_shell_resolves_and_launches_registered_identity -- --ignored
 ```
 
 The Linux browser-focus regression test uses an isolated X11 display and does
