@@ -3,11 +3,14 @@ import type { ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { SeerrCard } from "../src/components/seerr/SeerrCard"
+import ratingIdentities from "../../fixtures/ratings/discovery-identities.json"
+import { discoveryRatingId } from "../src/lib/api"
 import type {
   SeerrCapabilities,
   SeerrResult,
   SeerrStatusInfo,
 } from "../src/lib/api"
+import { RatingsContext } from "../src/lib/rating-context"
 import { canQuickRequest } from "../src/lib/seerr-request"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
@@ -82,6 +85,52 @@ function location() {
 }
 
 afterEach(() => vi.restoreAllMocks())
+
+describe("discovery card ratings", () => {
+  test.each(ratingIdentities)("reuses selected ratings for $ratingId", (identity) => {
+    const result: SeerrResult = {
+      ...movie,
+      mediaType: identity.mediaType === "tv" ? "tv" : "movie",
+      tmdbId: identity.tmdbId,
+      libraryItemId: identity.libraryItemId,
+    }
+    expect(discoveryRatingId(result)).toBe(identity.ratingId)
+    const register = vi.fn(() => vi.fn())
+    const { rerender } = render(
+      <RatingsContext.Provider value={{
+        items: new Map([[identity.ratingId, {
+          id: identity.ratingId,
+          ratings: [
+            { sourceId: "imdb", rawSource: "imdb", value: 8.7, score: 87, votes: 100, scaleMax: 10 },
+            { sourceId: "tmdb", rawSource: "tmdb", value: 8.2, score: 82, votes: 100, scaleMax: 10 },
+          ],
+          origin: "plugin", fetchedAt: 1, sourceUpdatedAt: null, stale: false, schemaVersion: 1,
+        }]]),
+        selected: ["imdb"],
+        definitions: new Map([
+          ["imdb", { id: "imdb", label: "IMDb", shortLabel: "IMDb", scaleMax: 10, format: "decimal", known: true }],
+          ["tmdb", { id: "tmdb", label: "TMDB", shortLabel: "TMDB", scaleMax: 10, format: "decimal", known: true }],
+        ]),
+        register,
+      }}>
+        <SeerrCard result={result} capabilities={capabilities} />
+      </RatingsContext.Provider>,
+      { wrapper: Providers },
+    )
+    const readout = screen.getByLabelText("Ratings for The Matrix")
+    expect(readout.className).toBe("card-rating-readout")
+    expect(screen.getByLabelText("IMDb rating 8.7 out of 10")).toBeTruthy()
+    expect(readout.querySelectorAll("[data-rating-source-icon]")).toHaveLength(1)
+    expect(register).toHaveBeenCalledWith(identity.ratingId)
+    if (identity.libraryItemId) expect(screen.getByText("In your library")).toBeTruthy()
+
+    rerender(<SeerrCard result={result} capabilities={capabilities} />)
+    expect(screen.queryByLabelText("Ratings for The Matrix")).toBeNull()
+    expect(screen.getByTitle("TMDB rating: 8.2/10")).toBeTruthy()
+    expect(screen.getByRole("link").getAttribute("href"))
+      .toBe(`/discover/${result.mediaType}/${result.tmdbId}?row=movies`)
+  })
+})
 
 describe("discovery quick request", () => {
   test("reveals the overlay on pointer hover and keyboard focus", () => {
