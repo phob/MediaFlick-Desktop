@@ -24,10 +24,7 @@ impl RatingsService {
             return Ok(unavailable_ratings());
         }
 
-        let targets = self
-            .library
-            .rating_targets(&item_ids)
-            .map_err(storage_error)?;
+        let targets = rating_targets(&self.library, &item_ids).map_err(storage_error)?;
         let now = now_unix();
         let mut cache = self
             .library
@@ -155,6 +152,42 @@ impl RatingsService {
     }
 }
 
+/// Discovery cards share the library cache and refresh path without requiring
+/// a catalog row. Only typed, positive TMDB identities can bypass catalog lookup.
+fn rating_targets(
+    library: &crate::library::Library,
+    item_ids: &[String],
+) -> rusqlite::Result<Vec<RatingTarget>> {
+    let (discovery_ids, library_ids): (Vec<_>, Vec<_>) = item_ids
+        .iter()
+        .cloned()
+        .partition(|id| id.starts_with("tmdb:"));
+    let mut targets = library.rating_targets(&library_ids)?;
+    targets.extend(discovery_ids.iter().filter_map(|id| discovery_target(id)));
+    Ok(targets)
+}
+
+fn discovery_target(item_id: &str) -> Option<RatingTarget> {
+    let (media_type, provider_id) = item_id.strip_prefix("tmdb:")?.split_once(':')?;
+    let (kind, media_type) = match media_type {
+        "movie" => ("Movie", "movie"),
+        "tv" => ("Series", "show"),
+        _ => return None,
+    };
+    // Canonical decimal IDs keep equivalent lookups on the same cache key.
+    let id = provider_id.parse::<i64>().ok().filter(|id| *id > 0)?;
+    if id.to_string() != provider_id {
+        return None;
+    }
+    Some(RatingTarget {
+        item_id: item_id.to_string(),
+        kind: kind.to_string(),
+        media_type: media_type.to_string(),
+        provider: "tmdb".to_string(),
+        provider_id: provider_id.to_string(),
+    })
+}
+
 fn bounded_item_ids(item_ids: &[String]) -> Vec<String> {
     let mut item_ids = item_ids
         .iter()
@@ -252,8 +285,78 @@ fn normalize_plugin_batch(
 #[cfg(test)]
 mod tests {
     use crate::library::Library;
+    use crate::library::test_support::dto;
 
     use super::*;
+
+    #[test]
+    fn discovery_and_library_cards_share_cache_without_mixing_movies_and_series() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/ratings/discovery-identities.json"
+        ))
+        .expect("discovery identities");
+        let entries = fixture.as_array().expect("identities");
+        let library = Library::open_in_memory().expect("library");
+        library.upsert_page(&[
+            dto(r#"{"Id":"local-movie","Name":"Movie","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#),
+            dto(r#"{"Id":"local-series","Name":"Series","Type":"Series","ProviderIds":{"Tmdb":"603"}}"#),
+        ]).expect("seed");
+        let ids = entries
+            .iter()
+            .map(|entry| entry["ratingId"].as_str().expect("id").to_string())
+            .collect::<Vec<_>>();
+        let targets = rating_targets(&library, &bounded_item_ids(&ids)).expect("targets");
+        assert_eq!(targets.len(), entries.len());
+        for entry in entries {
+            let target = targets
+                .iter()
+                .find(|target| target.item_id == entry["ratingId"])
+                .expect("target");
+            assert_eq!(target.kind, entry["kind"]);
+            assert_eq!(target.media_type, entry["providerMediaType"]);
+            assert_eq!(target.provider, "tmdb");
+            assert_eq!(target.provider_id, "603");
+        }
+        let response = json!({
+            "boundaryVersion": 1,
+            "items": [
+                { "itemId": "tmdb:movie:603", "ratings": [{ "source": "imdb", "value": 8.7 }] },
+                { "itemId": "tmdb:tv:603", "ratings": [{ "source": "imdb", "value": 7.2 }] }
+            ]
+        });
+        library
+            .save_rating_cache(&normalize_plugin_batch(&targets, &response, now_unix()))
+            .expect("cache");
+        let cache = library.cached_ratings(&targets).expect("read cache");
+        assert_eq!(cache["tmdb:movie:603"], cache["local-movie"]);
+        assert_eq!(cache["tmdb:tv:603"], cache["local-series"]);
+        assert_eq!(cache["local-movie"].ratings[0]["value"], 8.7);
+        assert_eq!(cache["local-series"].ratings[0]["value"], 7.2);
+    }
+
+    #[test]
+    fn discovery_identities_reject_invalid_or_noncanonical_targets() {
+        for id in [
+            "tmdb:person:603",
+            "tmdb:show:603",
+            "tmdb:movie:0",
+            "tmdb:tv:-1",
+            "tmdb:movie:0603",
+            "tmdb:movie:+603",
+            "tmdb:movie:603/credits",
+            "tmdb:movie:9223372036854775808",
+            "tmdb:movie:",
+            "tmdb:movie: 603",
+        ] {
+            assert!(discovery_target(id).is_none(), "accepted {id}");
+        }
+        let ids = vec!["tmdb:movie:603".to_string(); 600];
+        assert_eq!(bounded_item_ids(&ids), ["tmdb:movie:603"]);
+        let ids = (1..=600)
+            .map(|id| format!("tmdb:movie:{id}"))
+            .collect::<Vec<_>>();
+        assert_eq!(bounded_item_ids(&ids).len(), MAX_REQUEST_IDS);
+    }
 
     #[test]
     fn credential_shaped_plugin_data_never_reaches_desktop_or_cache() {

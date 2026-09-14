@@ -676,6 +676,11 @@ export interface SeerrResult {
   played?: boolean
 }
 
+/** Ratings batch keys accept library IDs or a namespaced discovery TMDB identity. */
+export function discoveryRatingId(result: Pick<SeerrResult, "libraryItemId" | "mediaType" | "tmdbId">): string {
+  return result.libraryItemId ?? `tmdb:${result.mediaType}:${result.tmdbId}`
+}
+
 export interface SeerrSeason {
   seasonNumber: number
   name: string | null
