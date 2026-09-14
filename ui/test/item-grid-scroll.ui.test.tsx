@@ -20,6 +20,10 @@ test.each(["Movie", "Series"])("%s grid restores a deep item after its catalog c
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(900)
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(900)
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(700)
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(700)
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return Number.parseFloat(this.querySelector<HTMLElement>(".relative.w-full")?.style.height ?? "0")
+  })
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value({ top }: ScrollToOptions) {

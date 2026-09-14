@@ -431,6 +431,7 @@ function DiscoverRow({
         resultSetKey={resultSetKey}
       />
       <PaginationTail
+        active={!results.isFetching}
         hasNextPage={Boolean(results.hasNextPage)}
         isFetchingNextPage={results.isFetchingNextPage}
         fetchNextPage={() => results.fetchNextPage().then(() => undefined)}
@@ -499,6 +500,7 @@ function SearchResults({
         placeholders={12}
       />
       <PaginationTail
+        active={!search.isFetching}
         hasNextPage={Boolean(search.hasNextPage)}
         isFetchingNextPage={search.isFetchingNextPage}
         fetchNextPage={() => search.fetchNextPage().then(() => undefined)}
