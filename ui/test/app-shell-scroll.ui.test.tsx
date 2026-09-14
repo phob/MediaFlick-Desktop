@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
-import { beforeEach, describe, expect, test } from "vitest"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { RouteScrollViewport } from "@/components/AppShell"
 
 function First() {
@@ -14,7 +14,9 @@ function Second() {
 }
 
 describe("AppShell route scrolling", () => {
+  afterEach(() => vi.restoreAllMocks())
   beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(10000)
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       value({ top }: ScrollToOptions) {
