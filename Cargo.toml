@@ -83,7 +83,7 @@ windows-sys = { version = "0.61", features = [
 winresource = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", features = ["xkb", "resource_manager"] }
+x11rb = { version = "0.14", features = ["xkb", "resource_manager"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 
