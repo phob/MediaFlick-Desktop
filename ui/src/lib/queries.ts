@@ -560,8 +560,15 @@ export function useSeerrPersonCredits(
   })
 }
 
+// Keep a browsing snapshot for Back navigation. Refetching a stale infinite
+// query walks every loaded page again; only explicit invalidation should do
+// that during this visit. Inactive snapshots expire after ten minutes, and
+// account changes remove them through the existing Seerr query root.
+const seerrBrowseCache = { staleTime: Infinity, gcTime: 10 * 60_000 }
+
 export function useInfiniteSeerrSearch(term: string, enabled = true) {
   return useInfiniteQuery({
+    ...seerrBrowseCache,
     queryKey: queryKeys.seerrSearchInfinite(term),
     queryFn: ({ pageParam, signal }) => api.seerr.search(term, pageParam, signal),
     initialPageParam: 1,
@@ -580,6 +587,7 @@ export function useSeerrDiscover(
 ) {
   const resultSetKey = discoveryResultSetKey(row, filters, availability)
   return useInfiniteQuery({
+    ...seerrBrowseCache,
     queryKey: queryKeys.seerrDiscover(row, resultSetKey),
     queryFn: async ({ pageParam, signal }) => ({
       ...(await api.seerr.discover(row, filters, pageParam, signal)),
@@ -590,12 +598,9 @@ export function useSeerrDiscover(
       lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled,
     retry: false,
-    // A filter transition is a replacement, not a place to resurrect an
-    // inactive infinite query. Once its observer goes away, abort its fetch
-    // through `signal` and discard every page together.
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnMount: "always",
+    // Filters still replace the complete result-set identity. In-flight work
+    // is cancelled through `signal` when its observer goes away, while already
+    // loaded pages remain available for a return to that exact result set.
   })
 }
 

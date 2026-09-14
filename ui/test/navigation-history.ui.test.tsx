@@ -8,6 +8,9 @@ import { DetailBackLink } from "@/components/detail/DetailPrimitives"
 
 afterEach(() => vi.restoreAllMocks())
 beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return Number(this.querySelector("[data-height]")?.getAttribute("data-height") ?? 10000)
+  })
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value({ top }: ScrollToOptions) {
@@ -96,14 +99,18 @@ test("restoration waits for late content and stops when the user scrolls", async
   fireEvent.click(screen.getByRole("link", { name: "Star Trek" }))
   setHeight(100)
   await act(() => router.navigate(-1))
-  expect(viewport.scrollTop).toBe(100)
-  // A clamped scroll event must not overwrite the original target.
+  expect(viewport.scrollTop).toBe(0)
+  // Waiting at the top must not overwrite the original target or chase the
+  // growing bottom (which would trigger an infinite list's pagination).
   fireEvent.scroll(viewport)
+  viewport.querySelector("[data-height]")!.setAttribute("data-height", "3000")
+  await act(async () => {})
+  expect(viewport.scrollTop).toBe(0)
   viewport.querySelector("[data-height]")!.setAttribute("data-height", "10000")
   await waitFor(() => expect(viewport.scrollTop).toBe(6000))
   fireEvent.click(screen.getByRole("link", { name: "Star Trek" }))
   await act(() => router.navigate(-1))
-  expect(viewport.scrollTop).toBe(100)
+  expect(viewport.scrollTop).toBe(0)
   fireEvent.wheel(viewport)
   viewport.scrollTop = 40
   fireEvent.scroll(viewport)

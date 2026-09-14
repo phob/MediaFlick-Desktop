@@ -13,9 +13,16 @@ export function useScrollRestoration(element: HTMLElement | null, scope: string,
     if (!element || !ready) return
     const top = navigationType === "POP" ? positions.get(key) ?? 0 : 0
     let restoring = top > 0
+    const targetFits = () => top <= Math.max(0, element.scrollHeight - element.clientHeight) + 1
     const restore = () => {
+      // Never chase a missing offset by scrolling to the current bottom: an
+      // infinite list would interpret each attempt as a request for more data.
+      if (!targetFits()) return
       element.scrollTo({ top, behavior: "instant" })
       restoring = Math.abs(element.scrollTop - top) > 1
+    }
+    if (restoring && !targetFits()) {
+      element.scrollTo({ top: 0, behavior: "instant" })
     }
     restore()
     // Async queries and virtual grids can initially be shorter than the saved
