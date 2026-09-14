@@ -22,26 +22,28 @@ export function DetailPageSkeleton() {
 }
 
 /**
- * Full-page backdrop behind a detail route. The artwork spans the entire page
- * instead of stopping at the header, so every section scrolls over one
- * continuous image, cropped to fill. A light even veil keeps content readable
- * over the art, and a soft fade protects the header text at the top. The art
- * stays visible to the page's end — no scrim band cuts it off.
+ * Viewport-sized artwork behind every section of a detail route. The outer
+ * layer spans the page; the sticky artwork uses the content viewport's height
+ * so season lengths and asynchronously loaded sections cannot change its crop.
+ * Overflow must clip without creating another scroll container, otherwise the
+ * artwork would stop sticking to the route viewport.
  */
 export function DetailBackdrop({ src }: { src: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return null
   return (
-    <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-      <img
-        src={src}
-        alt=""
-        decoding="async"
-        onError={() => setFailed(true)}
-        className="media-backdrop-image h-full w-full object-cover"
-      />
-      <div className="absolute inset-0 bg-background/30" />
-      <div className="absolute inset-x-0 top-0 h-80 bg-linear-to-b from-background/90 via-background/40 to-transparent" />
+    <div className="pointer-events-none absolute inset-0 -z-10 overflow-clip" aria-hidden>
+      <div className="sticky top-0 h-[100cqh] overflow-hidden">
+        <img
+          src={src}
+          alt=""
+          decoding="async"
+          onError={() => setFailed(true)}
+          className="media-backdrop-image h-full w-full object-cover"
+        />
+        <div className="absolute inset-0 bg-background/30" />
+        <div className="absolute inset-x-0 top-0 h-80 bg-linear-to-b from-background/90 via-background/40 to-transparent" />
+      </div>
     </div>
   )
 }
