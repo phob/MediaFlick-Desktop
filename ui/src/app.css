@@ -1356,6 +1356,10 @@ html[data-libmpv-cursor-hidden] * {
 
 .content-viewport {
   contain: paint;
+  /* Detail artwork follows the visible pane, not the route's content height.
+     Reserve the scrollbar width even when a shorter season fits in the pane. */
+  container-type: size;
+  scrollbar-gutter: stable;
 }
 
 .app-experience [data-slot="sidebar-inner"] {
