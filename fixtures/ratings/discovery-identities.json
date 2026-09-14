@@ -1,0 +1,6 @@
+[
+  { "mediaType": "movie", "tmdbId": 603, "libraryItemId": null, "ratingId": "tmdb:movie:603", "kind": "Movie", "providerMediaType": "movie" },
+  { "mediaType": "tv", "tmdbId": 603, "libraryItemId": null, "ratingId": "tmdb:tv:603", "kind": "Series", "providerMediaType": "show" },
+  { "mediaType": "movie", "tmdbId": 603, "libraryItemId": "local-movie", "ratingId": "local-movie", "kind": "Movie", "providerMediaType": "movie" },
+  { "mediaType": "tv", "tmdbId": 603, "libraryItemId": "local-series", "ratingId": "local-series", "kind": "Series", "providerMediaType": "show" }
+]

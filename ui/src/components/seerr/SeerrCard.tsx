@@ -2,10 +2,12 @@ import { detailNavigationState } from "@/lib/navigation"
 import { ArrowUpRight, Plus, Star } from "lucide-react"
 import { memo, type MouseEvent, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
+import { RatingOverlay } from "@/components/RatingOverlay"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Badge } from "@/components/ui/badge"
 import {
+  discoveryRatingId,
   seerrImageUrl,
   type SeerrCapabilities,
   type SeerrResult,
@@ -33,7 +35,8 @@ function Poster({ result }: { result: SeerrResult }) {
           {result.title}
         </div>
       )}
-      <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+      <RatingOverlay item={{ id: discoveryRatingId(result), name: result.title }} />
+      <div className="absolute bottom-14 right-2 flex flex-col items-end gap-1">
         {result.libraryItemId ? (
           <Badge>In your library</Badge>
         ) : (
