@@ -23,6 +23,7 @@ function Poster({ result }: { result: SeerrResult }) {
         <img
           src={src}
           alt=""
+          loading="lazy"
           decoding="async"
           onError={() => setFailed(true)}
           className="media-artwork-image h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
