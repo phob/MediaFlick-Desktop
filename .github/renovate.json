@@ -7,7 +7,7 @@
   "minimumReleaseAge": "1 day",
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true
+    "automerge": false
   },
   "packageRules": [
     {
@@ -18,7 +18,7 @@
         "pin",
         "digest"
       ],
-      "automerge": true
+      "automerge": false
     }
   ]
 }
