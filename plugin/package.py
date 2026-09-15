@@ -16,7 +16,7 @@ GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
 TARGET_ABI = "12.0.0.0"
 PLUGIN_NAME = "MediaFlick Companion"
 DESCRIPTION = (
-    "Secure Jellyfin-authenticated calendar and Seerr gateway for MediaFlick clients."
+    "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server."
 )
 
 
@@ -26,21 +26,25 @@ def main() -> int:
     parser.add_argument("--publish-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--source-url", required=True)
+    parser.add_argument("--changelog", default="MediaFlick Companion calendar, requests, ratings, and collections.")
     args = parser.parse_args()
 
     version = args.version.removeprefix("v")
-    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
-        parser.error("version must be a semantic version")
+    if not re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*))?", version):
+        parser.error("version must have three or four numeric components for Jellyfin")
 
     assembly = args.publish_dir / "Jellyfin.Plugin.MediaFlick.dll"
     if not assembly.is_file():
         parser.error(f"published assembly not found: {assembly}")
+    license_path = args.publish_dir / "LICENSE"
+    if not license_path.is_file():
+        parser.error(f"published license not found: {license_path}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     meta = {
         "category": "General",
-        "changelog": "Initial companion API, calendar, and Seerr mediation.",
+        "changelog": args.changelog,
         "description": DESCRIPTION,
         "guid": GUID,
         "name": PLUGIN_NAME,
@@ -57,6 +61,7 @@ def main() -> int:
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(assembly, assembly.name)
         archive.write(meta_path, meta_path.name)
+        archive.write(license_path, license_path.name)
 
     checksum = hashlib.md5(zip_path.read_bytes()).hexdigest()
     manifest = [

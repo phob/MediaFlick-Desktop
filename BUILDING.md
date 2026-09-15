@@ -51,6 +51,17 @@ Jellyfin with `just plugin-deploy`.
 
 ## Build a release app
 
+For a disposable packaged test build, run **Draft Release** in GitHub Actions
+on the desired branch with a prerelease version such as `0.2.0-test.1` and
+`test_draft` enabled. This uses the normal platform builds and smoke tests,
+then creates a draft marked as a prerelease. It does not commit a release,
+push a version tag, or consume `CHANGELOG.md` or `changelog.d/`. The temporary
+version patch is applied only to the build jobs. Keep this test release as a
+draft; its downloads are accessible to repository maintainers after signing in.
+
+Use the separate **Draft Companion Release** workflow for server packages;
+see [Companion test repository](plugin/README.md#test-repository).
+
 ```sh
 just release
 ```
