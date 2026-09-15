@@ -194,6 +194,11 @@ jobs:
             throw "Installed application smoke test failed with exit code $($App.ExitCode)"
           }
 
+          python distribution/libmpv/windows/smoke-test.py (Join-Path $InstallPath "libmpv-2.dll") --warp
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed playback runtime failed its rendering smoke test"
+          }
+
           foreach ($RelativePath in @(
             "licenses\MediaFlick Desktop\LICENSE",
             "licenses\MediaFlick Desktop\THIRD-PARTY-NOTICES.md",
