@@ -13,6 +13,8 @@ export const DEFAULT_VIEWING: ViewingSettings = {
 export const DEFAULT_COMFORT: PlayerComfort = {
   subtitleSize: 100, subtitleOutline: 3, subtitleBackground: 0, subtitlePosition: 100,
   seekBackSeconds: 10, seekForwardSeconds: 30, pauseKey: "k", muteKey: "m", fullscreenKey: "f",
+  seekBackKey: "j", seekForwardKey: "l", stopKey: "q", subtitlesKey: "v",
+  seekBackThirtyKey: "DOWN", seekForwardThirtyKey: "UP",
 }
 
 export function useViewing() {

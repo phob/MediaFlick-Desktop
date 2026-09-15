@@ -63,10 +63,16 @@ upcoming entries may not have a known watched state.
 **Settings → Appearance → Cards** groups the card-preview toggle and hover delay. The delay
 control is disabled while previews are off, and its draft timing applies to the live preview.
 
-**Settings → Client → Playback** adds subtitle size, outline, background, and position with a
+**Settings → Client → Player** groups subtitle size, outline, background, and position with a
 preview when the built-in player is selected. Subtitle appearance applies at the next playback;
-bitmap or authored subtitle styling may limit its effect. Seek intervals and pause, mute, and
-fullscreen letter keys belong to this device. Space and arrow/J/L seek bindings remain available.
+bitmap or authored subtitle styling may limit its effect. Seek intervals and keyboard shortcuts
+belong to this device. Use the shortcut recorder to press a key or modifier combination for
+pause, mute, fullscreen, seeking, stop, or subtitle visibility. Clear disables a binding.
+Space always pauses; Left and Right always use the saved seek intervals.
+The **Keyboard shortcuts** section includes W alongside all built-in controls. With external
+mpv selected, it shows only the mark-watched-and-play-next binding. It marks a movie watched, or marks an episode watched and plays the next
+available item. Conflicting assignments are rejected. Streaming quality and automatic segment
+skipping remain on **Settings → Client → Playback**.
 External players retain their own subtitle styling and native keyboard bindings.
 
 Use **Save**, **Reset**, and **Discard** on each settings page. An episode limit counts continuous

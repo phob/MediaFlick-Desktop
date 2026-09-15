@@ -1,0 +1,15 @@
+[
+  { "input": "w", "normalized": "w" },
+  { "input": "W", "normalized": "Shift+w" },
+  { "input": "shift+control+p", "normalized": "Ctrl+Shift+p" },
+  { "input": "Ctrl+P", "normalized": "Ctrl+Shift+p" },
+  { "input": "super+w", "normalized": "Meta+w" },
+  { "input": "Meta+Shift+w", "normalized": "Shift+Meta+w" },
+  { "input": "alt+down", "normalized": "Alt+DOWN" },
+  { "input": "Ctrl+F12", "normalized": "Ctrl+F12" },
+  { "input": "", "normalized": "" },
+  { "input": "F01", "normalized": null },
+  { "input": "Ctrl+", "normalized": null },
+  { "input": "Hyper+w", "normalized": null },
+  { "input": "w\nstop", "normalized": null }
+]

@@ -15,9 +15,9 @@ const settings = {
       mpchcPath: null,
       defaultFullscreen: "windowed",
       markWatchedNext: "w",
-      playerConfigured: true,
+      playerConfigured: true, comfort: DEFAULT_COMFORT,
     },
-    playback: { comfort: DEFAULT_COMFORT,
+    playback: {
       streamingQuality: "auto",
       skipIntro: "disabled",
       skipCredits: "disabled",

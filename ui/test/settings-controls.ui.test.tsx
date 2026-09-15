@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { api } from "@/lib/api"
@@ -10,8 +10,10 @@ import { TestProviders } from "./test-utils"
 
 afterEach(() => { vi.restoreAllMocks(); queryClient.clear() })
 
-function page(route: string) {
+function page(route: string, platform: "windows" | "macos" = "windows") {
   const settings = clientSettingsFixture()
+  settings.capabilities.platform = platform
+  if (platform === "macos") { settings.capabilities.libmpv = false; settings.client.player.playerBackend = "mpv" }
   queryClient.setQueryData(queryKeys.status, { authenticated: true, serverUrl: "https://jellyfin.example", userId: "user", libraryReady: true })
   queryClient.setQueryData(queryKeys.settings, settings)
   queryClient.setQueryData(["viewing", "https://jellyfin.example:user"], { ...DEFAULT_VIEWING })
@@ -28,8 +30,8 @@ test.each([
   ["Subtitle background (%)", 0, 100], ["Subtitle vertical position", 0, 100],
   ["Seek backward seconds", 1, 120], ["Seek forward seconds", 1, 120],
 ])("%s keeps an empty draft, blocks invalid saves, and supports Discard", (label, min, max) => {
-  page("/settings/client/playback")
-  const save = vi.spyOn(api.settingsPatch, "playback")
+  page("/settings/client/player")
+  const save = vi.spyOn(api.settingsPatch, "player")
   const input = screen.getByRole("spinbutton", { name: label }) as HTMLInputElement
   const original = input.value
   for (const value of ["", String(min - 1), String(max + 1), "1.5"]) {
@@ -45,8 +47,8 @@ test.each([
 })
 
 test("subtitle slider keyboard edits are reflected in exact entry and saved", async () => {
-  const settings = page("/settings/client/playback")
-  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({ ...settings, client: { ...settings.client, playback } }))
+  const settings = page("/settings/client/player")
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({ ...settings, client: { ...settings.client, player: {...settings.client.player, ...player} } }))
   fireEvent.keyDown(screen.getByRole("slider", { name: "Subtitle size (%) slider" }), { key: "ArrowRight" })
   expect((screen.getByRole("spinbutton", { name: "Subtitle size (%)" }) as HTMLInputElement).value).toBe("101")
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
@@ -91,7 +93,7 @@ test("visible labels operate switches and help text is associated with controls"
 })
 
 test("preview scenes support arrow navigation and keep one selected scene", async () => {
-  page("/settings/client/playback")
+  page("/settings/client/player")
   const day = screen.getByRole("radio", { name: "Day" })
   fireEvent.focus(day)
   fireEvent.keyDown(day, { key: "ArrowRight" })
@@ -101,4 +103,103 @@ test("preview scenes support arrow navigation and keep one selected scene", asyn
   expect(dusk.getAttribute("aria-checked")).toBe("true")
   fireEvent.click(dusk)
   expect(dusk.getAttribute("aria-checked")).toBe("true")
+})
+
+
+test("shortcut drafts reject conflicts, Discard restores, and Save and Reset use the shelf workflow", async () => {
+  const settings = page("/settings/client/player")
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const recorder = screen.getByRole("button", {name:"Stop playback key"})
+  fireEvent.click(recorder)
+  fireEvent.keyDown(recorder, {key:"w"})
+  expect(screen.getByRole("alert").textContent).toContain("conflicts")
+  expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true)
+  fireEvent.click(screen.getByRole("button", {name:"Discard"}))
+  expect(recorder.textContent).toBe("Q")
+  fireEvent.click(recorder)
+  fireEvent.keyDown(recorder, {key:"x", ctrlKey:true})
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({comfort:expect.objectContaining({stopKey:"Ctrl+x"})})))
+  await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
+  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  expect(recorder.textContent).toBe("Q")
+  expect(save).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole("button", {name:"Discard"}))
+  expect(recorder.textContent).toBe("Ctrl + X")
+})
+
+test.each(["windows", "macos"] as const)("the watched-next recorder saves and clears combinations on %s", async (platform) => {
+  const settings = page("/settings/client/player", platform)
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const recorder = screen.getByRole("button", {name:"Mark watched key"})
+  fireEvent.click(recorder)
+  fireEvent.keyDown(recorder, {key:"w", metaKey:platform === "macos", ctrlKey:platform === "windows"})
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({markWatchedNext:platform === "macos" ? "Meta+w" : "Ctrl+w"})))
+  await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
+  fireEvent.click(screen.getByRole("button", {name:"Clear mark watched key"}))
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({markWatchedNext:null})))
+})
+
+test("Player groups all shortcuts and saves a W/stop swap in one request", async () => {
+  const settings = page("/settings/client/player")
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...settings.client.player, ...player}}}))
+  const playbackSave = vi.spyOn(api.settingsPatch, "playback")
+  const section = screen.getByText("Keyboard shortcuts").closest("[data-slot=card]")
+  expect(section).not.toBeNull()
+  const shortcuts = within(section as HTMLElement)
+  const watched = shortcuts.getByRole("button", {name:"Mark watched key"})
+  const stop = shortcuts.getByRole("button", {name:"Stop playback key"})
+  fireEvent.click(watched)
+  fireEvent.keyDown(watched, {key:"q"})
+  expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true)
+  fireEvent.click(stop)
+  fireEvent.keyDown(stop, {key:"w"})
+  expect(screen.queryByRole("alert")).toBeNull()
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({markWatchedNext:"q", comfort:expect.objectContaining({stopKey:"w"})})))
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(playbackSave).not.toHaveBeenCalled()
+})
+
+test("backend selection changes the visible controls immediately and retains the built-in draft", async () => {
+  page("/settings/client/player")
+  const stop = screen.getByRole("button", {name:"Stop playback key"})
+  fireEvent.click(stop)
+  fireEvent.keyDown(stop, {key:"x"})
+  const selectBackend = async (name: string) => {
+    fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
+    fireEvent.click(await screen.findByRole("option", {name}))
+  }
+  await selectBackend("External mpv")
+  expect(screen.queryByRole("button", {name:"Stop playback key"})).toBeNull()
+  expect(screen.queryByRole("spinbutton", {name:"Subtitle size (%)"})).toBeNull()
+  expect(document.querySelectorAll("[data-shortcut-recorder]")).toHaveLength(1)
+  await selectBackend("MPC-HC")
+  expect(screen.queryByText("Keyboard shortcuts")).toBeNull()
+  await selectBackend("Built-in player")
+  expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("X")
+  fireEvent.click(screen.getByRole("button", {name:"Discard"}))
+  expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("Q")
+})
+
+test("Playback saves quality and skipping without resetting Player settings", async () => {
+  const settings = page("/settings/client/playback")
+  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({...settings, client:{...settings.client, playback}}))
+  const playerSave = vi.spyOn(api.settingsPatch, "player")
+  expect(screen.queryByText("Keyboard shortcuts")).toBeNull()
+  expect(screen.queryByRole("spinbutton", {name:"Subtitle size (%)"})).toBeNull()
+  const quality = screen.getByRole("combobox", {name:"Default streaming quality"})
+  fireEvent.click(quality)
+  fireEvent.click(await screen.findByRole("option", {name:"Auto"}))
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledWith({...settings.client.playback, streamingQuality:"auto"}))
+  await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
+  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(settings.client.playback))
+  expect(playerSave).not.toHaveBeenCalled()
 })
