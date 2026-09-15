@@ -58,7 +58,7 @@ checkout() {
 checkout mpv https://github.com/mpv-player/mpv.git 41f6a645068483470267271e1d09966ca3b9f413
 checkout ffmpeg https://github.com/FFmpeg/FFmpeg.git 894da5ca7d742e4429ffb2af534fcda0103ef593
 checkout libplacebo https://github.com/haasn/libplacebo.git 3188549fba13bbdf3a5a98de2a38c2e71f04e21e \
-    "$script_dir/libplacebo-python314.patch"
+    "$script_dir/libplacebo-compat.patch"
 git -C "$sources/libplacebo" submodule update --init --depth=1 \
     3rdparty/fast_float 3rdparty/glad 3rdparty/jinja 3rdparty/markupsafe
 

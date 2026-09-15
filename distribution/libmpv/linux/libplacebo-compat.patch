@@ -1,0 +1,31 @@
+diff --git a/src/vulkan/utils_gen.py b/src/vulkan/utils_gen.py
+--- a/src/vulkan/utils_gen.py
++++ b/src/vulkan/utils_gen.py
+@@ -202,7 +202,7 @@ if __name__ == '__main__':
+     if not xmlfile or xmlfile == '':
+         xmlfile = find_registry_xml(datadir)
+ 
+-    registry = VkXML(ET.parse(xmlfile))
++    registry = VkXML(ET.parse(xmlfile).getroot())
+     with open(outfile, 'w') as f:
+         f.write(TEMPLATE.render(
+             vkresults = get_vkenum(registry, 'VkResult'),
+diff --git a/src/vulkan/gpu.c b/src/vulkan/gpu.c
+--- a/src/vulkan/gpu.c
++++ b/src/vulkan/gpu.c
+@@ -386,6 +386,7 @@ static const VkFilter filters[PL_TEX_SAMPLE_MODE_COUNT] = {
+ 
+ static inline struct pl_spirv_version get_spirv_version(const struct vk_ctx *vk)
+ {
++#ifdef VK_API_VERSION_1_4
+     if (vk->api_ver >= VK_API_VERSION_1_4) {
+         return (struct pl_spirv_version) {
+             .env_version = VK_API_VERSION_1_4,
+@@ -393,6 +394,7 @@ static inline struct pl_spirv_version get_spirv_version(const struct vk_ctx *vk)
+             .spv_version = PL_SPV_VERSION(1, 6),
+         };
+     }
++#endif
+ 
+     if (vk->api_ver >= VK_API_VERSION_1_3) {
+         const VkPhysicalDeviceMaintenance4Features *device_maintenance4;
