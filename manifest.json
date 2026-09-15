@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f",
+    "name": "MediaFlick Companion",
+    "description": "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server.",
+    "overview": "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server.",
+    "owner": "phob",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.2.1",
+        "changelog": "Test build 0.2.1. For manual testing with Jellyfin 12; not a stable release.",
+        "targetAbi": "12.0.0.0",
+        "sourceUrl": "https://raw.githubusercontent.com/phob/MediaFlick-Desktop/companion-test-repository/packages/0.2.1/mediaflick-companion_0.2.1.zip",
+        "checksum": "a710546ff59e40b69c6f1338d08dd161",
+        "timestamp": "2026-09-15T00:28:40+00:00"
+      }
+    ]
+  }
+]
