@@ -1,3 +1,5 @@
+import { ShortcutRecorder } from "@/components/ShortcutRecorder"
+import { PLAYER_SHORTCUTS, shortcutError } from "@/lib/player-shortcuts"
 import { SubtitlePreview } from "@/components/SubtitlePreview"
 import { DEFAULT_VIEWING, DEFAULT_COMFORT, useViewing } from "@/lib/viewing"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -349,6 +351,9 @@ function PlayerSettings() {
   if (settingsQuery.error && !settings) return <SettingsError title="Player settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const dirty = !same(draft, settings.client.player)
+  const comfort = draft.comfort ?? DEFAULT_COMFORT
+  const keysError = draft.playerBackend === "libmpv" ? shortcutError(comfort, draft.markWatchedNext) : null
+  const validNumbers = COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
   const backendChanged = draft.playerBackend !== settings.client.player.playerBackend
   const backendChangeNeedsRestart = backendChanged &&
     (draft.playerBackend === "libmpv" || settings.client.player.playerBackend === "libmpv")
@@ -409,9 +414,6 @@ function PlayerSettings() {
         <SettingsRow controlId="settings-start-fullscreen" title="Start fullscreen" description="Use a full-screen player window by default.">
           <SelectField id="settings-start-fullscreen" aria-describedby="settings-start-fullscreen-help" label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
-        {draft.playerBackend !== "mpchc" && <SettingsRow controlId="mark-watched-key" title="Mark watched key" description="The mpv key that marks the current title watched and plays the next item. Leave blank to disable it.">
-          <Input id="mark-watched-key" aria-describedby="mark-watched-key-help" className="w-52" value={draft.markWatchedNext ?? ""} onChange={(event) => setDraft({ ...draft, markWatchedNext: event.target.value || null })} placeholder="w" />
-        </SettingsRow>}
       </Section>
       {draft.playerBackend !== "libmpv" && <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
         {draft.playerBackend === "mpv" && <SettingsRow controlId="mpv-path" title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
@@ -425,7 +427,20 @@ function PlayerSettings() {
           <div className="flex w-full max-w-md gap-2"><Input id="mpchc-path" aria-describedby="mpchc-path-help" value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
         </SettingsRow>}
       </Section>}
-      <SaveBar dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w" })} restartMessage={restartMessage} />
+      {draft.playerBackend === "libmpv" && <Section title="Built-in player comfort" description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance.">
+        <SubtitlePreview comfort={{ ...comfort, ...Object.fromEntries(COMFORT_NUMBERS.map(([key, , min, max]) => [key, isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : DEFAULT_COMFORT[key]])) }} />
+        {COMFORT_NUMBERS.map(([key, label, min, max]) => <SettingsRow key={key} controlId={`comfort-${key}`} title={label}><SettingsNumberField id={`comfort-${key}`} label={label} min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onValueChange={(value) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:value}})} /></SettingsRow>)}
+      </Section>}
+      {draft.playerBackend !== "mpchc" && <Section title="Keyboard shortcuts" description={draft.playerBackend === "libmpv" ? "Record a key combination, or clear it to disable the binding. Space always pauses; Left and Right use the seek intervals above." : "MediaFlick provides the watched/next shortcut. Configure other shortcuts in mpv. Command and Option combinations work on macOS."}>
+          <SettingsRow controlId="mark-watched-key" title="Mark watched key" description="Marks a movie watched, or marks an episode watched and plays the next available item. Works in the built-in player and external mpv. Record a key combination, or clear it to disable.">
+            <ShortcutRecorder id="mark-watched-key" label="Mark watched key" value={draft.markWatchedNext ?? ""} onChange={(value) => setDraft({ ...draft, markWatchedNext: value || null })} />
+          </SettingsRow>
+        {draft.playerBackend === "libmpv" && PLAYER_SHORTCUTS.map(([key, label]) => <SettingsRow key={key} controlId={`shortcut-${key}`} title={label}>
+          <ShortcutRecorder id={`shortcut-${key}`} label={label} value={comfort[key]} onChange={(value) => setDraft({...draft, comfort:{...comfort, [key]:value}})} />
+        </SettingsRow>)}
+      </Section>}
+      {keysError && <p role="alert" className="text-sm text-destructive">{keysError}</p>}
+      <SaveBar saveDisabled={!validNumbers || Boolean(keysError)} dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", comfort: {...DEFAULT_COMFORT} })} restartMessage={restartMessage} />
     </div>
   )
 }
@@ -444,8 +459,6 @@ function PlaybackSettings() {
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
-  const comfort = draft.comfort ?? DEFAULT_COMFORT
-  const validNumbers = COMFORT_NUMBERS.every(([key, , min, max]) => isSettingsNumberValid(comfort[key], min, max))
   const choices = [{ value: "disabled", label: "Never" }, { value: "prompt", label: "Ask me" }, { value: "always", label: "Always skip" }] as const
   return <div className="settings-page"><PageTitle title="Playback" />
     <Section title="Streaming quality" description="Original sends the source unchanged; lower quality permits transcoding when needed.">
@@ -457,12 +470,7 @@ function PlaybackSettings() {
       <SettingsRow controlId="settings-recaps" title="Recaps" description="Choose what happens when a recap marker is reached."><SelectField id="settings-recaps" aria-describedby="settings-recaps-help" label="Recap skipping" value={draft.skipRecap} onValueChange={(value) => update("skipRecap", value)} options={choices} /></SettingsRow>
       <SettingsRow controlId="settings-commercials" title="Commercials" description="Choose what happens when a commercial marker is reached."><SelectField id="settings-commercials" aria-describedby="settings-commercials-help" label="Commercial skipping" value={draft.skipCommercial} onValueChange={(value) => update("skipCommercial", value)} options={choices} /></SettingsRow>
     </Section>
-    {settings.client.player.playerBackend === "libmpv" && <Section title="Built-in player comfort" description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance.">
-      <SubtitlePreview comfort={{ ...comfort, ...Object.fromEntries(COMFORT_NUMBERS.map(([key, , min, max]) => [key, isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : DEFAULT_COMFORT[key]])) }} />
-      {COMFORT_NUMBERS.map(([key, label, min, max]) => <SettingsRow key={key} controlId={`comfort-${key}`} title={label}><SettingsNumberField id={`comfort-${key}`} label={label} min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onValueChange={(value) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:value}})} /></SettingsRow>)}
-      {([ ["pauseKey", "Pause key"], ["muteKey", "Mute key"], ["fullscreenKey", "Fullscreen key"] ] as const).map(([key, label]) => <SettingsRow key={key} controlId={`shortcut-${key}`} title={label} description="One unique letter, except J/L/Q/V and the mark-watched key. Space pauses; arrows and J/L seek."><Input id={`shortcut-${key}`} aria-describedby={`shortcut-${key}-help`} aria-label={label} maxLength={1} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onChange={(event) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:event.target.value.toLowerCase()}})} /></SettingsRow>)}
-    </Section>}
-    <SaveBar saveDisabled={!validNumbers} dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ comfort: {...DEFAULT_COMFORT}, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
+    <SaveBar dirty={!same(draft, settings.client.playback)} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.playback)} onReset={() => setDraft({ streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" })} />
   </div>
 }
 

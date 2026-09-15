@@ -80,7 +80,13 @@ pub(super) fn keysym(conn: &RustConnection, event: &KeyPressEvent) -> Option<(u3
     Some((base, symbol))
 }
 
-pub(super) fn send_key(host: &BrowserHost, event: &KeyPressEvent, symbols: (u32, u32), up: bool) {
+pub(super) fn send_key(
+    host: &BrowserHost,
+    event: &KeyPressEvent,
+    symbols: (u32, u32),
+    up: bool,
+    repeated: bool,
+) {
     let (base, symbol) = symbols;
     let character = unicode(symbol);
     let mut key = KeyEvent {
@@ -89,7 +95,12 @@ pub(super) fn send_key(host: &BrowserHost, event: &KeyPressEvent, symbols: (u32,
         } else {
             KeyEventType::RAWKEYDOWN
         },
-        modifiers: modifiers(event.state),
+        modifiers: modifiers(event.state)
+            | if repeated {
+                cef_event_flags_t::EVENTFLAG_IS_REPEAT.0
+            } else {
+                0
+            },
         windows_key_code: virtual_key(base),
         native_key_code: i32::from(event.detail),
         character: character as u16,
@@ -163,75 +174,9 @@ pub(super) fn virtual_key(symbol: u32) -> i32 {
     }
 }
 
-pub(super) fn binding_matches(binding: &str, symbols: (u32, u32), state: KeyButMask) -> bool {
-    let mut parts = binding.rsplitn(2, '+');
-    let key = parts.next().unwrap_or_default();
-    let prefix = parts.next().unwrap_or_default();
-    let mut required = KeyButMask::default();
-    for modifier in prefix.split('+').filter(|part| !part.is_empty()) {
-        required |= match modifier.to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => KeyButMask::CONTROL,
-            "alt" => KeyButMask::MOD1,
-            "shift" => KeyButMask::SHIFT,
-            "meta" | "super" => KeyButMask::MOD4,
-            _ => return false,
-        };
-    }
-    let actual = state & (KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4);
-    if actual != required & (KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4) {
-        return false;
-    }
-    if required.contains(KeyButMask::SHIFT) && !state.contains(KeyButMask::SHIFT) {
-        return false;
-    }
-    let named = match key.to_ascii_uppercase().as_str() {
-        "SPACE" => Some(0x20),
-        "ENTER" => Some(0xff0d),
-        "TAB" => Some(0xff09),
-        "UP" => Some(0xff52),
-        "DOWN" => Some(0xff54),
-        "LEFT" => Some(0xff51),
-        "RIGHT" => Some(0xff53),
-        name => name
-            .strip_prefix('F')
-            .and_then(|number| number.parse::<u32>().ok())
-            .filter(|n| (1..=24).contains(n))
-            .map(|n| 0xffbe + n - 1),
-    };
-    if let Some(symbol) = named {
-        return symbols.0 == symbol
-            && state.contains(KeyButMask::SHIFT) == required.contains(KeyButMask::SHIFT);
-    }
-    let mut chars = key.chars();
-    let Some(ch) = chars.next() else {
-        return false;
-    };
-    let symbol = if required.contains(KeyButMask::SHIFT) {
-        symbols.0
-    } else {
-        symbols.1
-    };
-    chars.next().is_none() && unicode(symbol) == u32::from(ch)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn watched_next_bindings_preserve_modifiers_and_letter_case() {
-        assert!(binding_matches("w", (0x77, 0x77), KeyButMask::default()));
-        assert!(!binding_matches("w", (0x77, 0x77), KeyButMask::CONTROL));
-        assert!(binding_matches("Ctrl+w", (0x77, 0x77), KeyButMask::CONTROL));
-        assert!(binding_matches("Shift+w", (0x77, 0x57), KeyButMask::SHIFT));
-        assert!(!binding_matches("w", (0x77, 0x57), KeyButMask::SHIFT));
-        assert!(!binding_matches("F1", (0xffbe, 0xffbe), KeyButMask::SHIFT));
-        assert!(!binding_matches(
-            "unknown+w",
-            (0x77, 0x77),
-            KeyButMask::default()
-        ));
-    }
-
     #[test]
     fn navigation_and_text_use_cef_key_codes() {
         assert_eq!(virtual_key(0xffc8), 122); // F11

@@ -124,6 +124,12 @@ pub struct PlayerComfort {
     pub pause_key: String,
     pub mute_key: String,
     pub fullscreen_key: String,
+    pub seek_back_key: String,
+    pub seek_forward_key: String,
+    pub stop_key: String,
+    pub subtitles_key: String,
+    pub seek_back_thirty_key: String,
+    pub seek_forward_thirty_key: String,
 }
 
 impl Default for PlayerComfort {
@@ -138,17 +144,43 @@ impl Default for PlayerComfort {
             pause_key: "k".into(),
             mute_key: "m".into(),
             fullscreen_key: "f".into(),
+            seek_back_key: "j".into(),
+            seek_forward_key: "l".into(),
+            stop_key: "q".into(),
+            subtitles_key: "v".into(),
+            seek_back_thirty_key: "DOWN".into(),
+            seek_forward_thirty_key: "UP".into(),
         }
     }
 }
 
 impl PlayerComfort {
+    fn shortcut_keys(&self) -> [&str; 9] {
+        [
+            &self.pause_key,
+            &self.mute_key,
+            &self.fullscreen_key,
+            &self.seek_back_key,
+            &self.seek_forward_key,
+            &self.stop_key,
+            &self.subtitles_key,
+            &self.seek_back_thirty_key,
+            &self.seek_forward_thirty_key,
+        ]
+    }
+
     pub fn validate_watched_next(&self, binding: Option<&str>) -> io::Result<()> {
-        if binding.is_some_and(|binding| {
-            [&self.pause_key, &self.mute_key, &self.fullscreen_key]
+        let Some(binding) = binding.filter(|binding| !binding.trim().is_empty()) else {
+            return Ok(());
+        };
+        let normalized = super::shortcuts::normalize(binding)
+            .ok_or_else(|| io::Error::other("unsupported built-in player shortcut"))?;
+        if super::shortcuts::reserved(&normalized)
+            || self
+                .shortcut_keys()
                 .iter()
-                .any(|key| key.as_str() == binding.trim())
-        }) {
+                .any(|key| super::shortcuts::normalize(key).as_ref() == Some(&normalized))
+        {
             return Err(io::Error::other(
                 "player shortcut conflicts with the mark-watched-next key",
             ));
@@ -157,21 +189,20 @@ impl PlayerComfort {
     }
 
     pub fn validate(&self) -> io::Result<()> {
-        let keys = [&self.pause_key, &self.mute_key, &self.fullscreen_key];
+        let keys = self.shortcut_keys().map(super::shortcuts::normalize);
         if !(50..=200).contains(&self.subtitle_size)
             || self.subtitle_outline > 8
             || self.subtitle_background > 100
             || self.subtitle_position > 100
             || !(1..=120).contains(&self.seek_back_seconds)
             || !(1..=120).contains(&self.seek_forward_seconds)
-            || keys.iter().any(|key| {
-                key.len() != 1
-                    || !key.bytes().all(|b| b.is_ascii_lowercase())
-                    || ["j", "l", "q", "v"].contains(&key.as_str())
-            })
-            || keys[0] == keys[1]
-            || keys[0] == keys[2]
-            || keys[1] == keys[2]
+            || keys
+                .iter()
+                .any(|key| key.as_deref().is_none_or(super::shortcuts::reserved))
+            || keys
+                .iter()
+                .enumerate()
+                .any(|(index, key)| key.as_deref() != Some("") && keys[..index].contains(key))
         {
             return Err(io::Error::other(
                 "invalid player comfort settings or conflicting shortcut keys",
@@ -198,5 +229,38 @@ mod tests {
         assert!(comfort.validate().is_ok());
         assert!(comfort.validate_watched_next(Some("p")).is_err());
         assert!(comfort.validate_watched_next(Some("Ctrl+p")).is_ok());
+    }
+
+    #[test]
+    fn combinations_allow_disabling_and_reject_equivalent_conflicts() {
+        let mut comfort = PlayerComfort {
+            pause_key: "Ctrl+Shift+p".into(),
+            mute_key: String::new(),
+            stop_key: String::new(),
+            ..Default::default()
+        };
+        assert!(comfort.validate().is_ok());
+        assert!(
+            comfort
+                .validate_watched_next(Some("shift+control+p"))
+                .is_err()
+        );
+        assert!(comfort.validate_watched_next(Some("Meta+p")).is_ok());
+        comfort.stop_key = "Ctrl+P".into();
+        assert!(comfort.validate().is_err());
+        comfort.stop_key = "SPACE".into();
+        assert!(comfort.validate().is_err());
+    }
+
+    #[test]
+    fn older_settings_keep_their_bindings_and_gain_defaults() -> Result<(), serde_json::Error> {
+        let comfort: PlayerComfort = serde_json::from_value(serde_json::json!({"pauseKey":"p"}))?;
+        assert_eq!(comfort.pause_key, "p");
+        assert_eq!(comfort.stop_key, "q");
+        assert_eq!(comfort.seek_back_key, "j");
+        assert_eq!(comfort.seek_forward_thirty_key, "UP");
+        let saved = serde_json::to_value(&comfort)?;
+        assert_eq!(serde_json::from_value::<PlayerComfort>(saved)?, comfort);
+        Ok(())
     }
 }

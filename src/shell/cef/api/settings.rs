@@ -74,11 +74,11 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
                 "mpchcPath": settings.mpchc_path,
                 "defaultFullscreen": settings.default_fullscreen.as_str(),
                 "markWatchedNext": bindings.mark_watched_next,
+                "comfort": settings.comfort,
                 "playerConfigured": crate::players::configured_player_path(settings).is_some(),
             },
             "playback": {
                 "streamingQuality": settings.streaming_quality.as_str(),
-                "comfort": settings.comfort,
                 "skipIntro": settings.skip_intro.as_str(),
                 "skipCredits": settings.skip_credits.as_str(),
                 "skipRecap": settings.skip_recap.as_str(),
@@ -224,4 +224,20 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
             })
         })
         .unwrap_or_else(|response| response)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn player_snapshot_owns_comfort_settings() -> Result<(), serde_json::Error> {
+        let settings = crate::preferences::AppSettings::default();
+        let response = super::settings_response(&settings, &[]);
+        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
+        assert_eq!(
+            body["client"]["player"]["comfort"],
+            serde_json::to_value(settings.comfort)?
+        );
+        assert!(body["client"]["playback"].get("comfort").is_none());
+        Ok(())
+    }
 }

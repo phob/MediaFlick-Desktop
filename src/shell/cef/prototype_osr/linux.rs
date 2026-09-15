@@ -71,7 +71,6 @@ pub(crate) struct PrototypeOsrSurface {
     painted: Cell<bool>,
     window_settings: Cell<WebUiWindowSettings>,
     pressed: RefCell<HashSet<u8>>,
-    captured: RefCell<HashSet<u8>>,
     last_click: Cell<(u8, u32, i16, i16, i32)>,
     placement_invalidated: Cell<bool>,
 }
@@ -105,7 +104,6 @@ impl PrototypeOsrSurface {
             painted: Cell::new(false),
             window_settings: Cell::new(settings.webui_window),
             pressed: RefCell::new(HashSet::new()),
-            captured: RefCell::new(HashSet::new()),
             last_click: Cell::new((0, 0, 0, 0, 0)),
             placement_invalidated: Cell::new(true),
         }))
@@ -431,7 +429,6 @@ impl PrototypeOsrSurface {
             Some(Ok(focused)) => {
                 if !focused {
                     self.pressed.borrow_mut().clear();
-                    self.captured.borrow_mut().clear();
                 }
                 host.set_focus(i32::from(focused));
             }
@@ -509,12 +506,6 @@ impl PrototypeOsrSurface {
         } else {
             !self.pressed.borrow_mut().insert(e.detail)
         };
-        if up && self.captured.borrow_mut().remove(&e.detail) {
-            return;
-        }
-        if repeated && self.captured.borrow().contains(&e.detail) {
-            return;
-        }
         let symbols = self
             .window
             .borrow()
@@ -529,50 +520,7 @@ impl PrototypeOsrSurface {
             }
             return;
         }
-        let active = self.playback.snapshot().active;
-        if active
-            && crate::players::mpv::input::MpvInputBindings::load()
-                .mark_watched_next
-                .as_deref()
-                .is_some_and(|binding| input::binding_matches(binding, symbols, e.state))
-        {
-            if !up {
-                self.captured.borrow_mut().insert(e.detail);
-                self.playback.control(PlayerCommand::MarkWatchedAndPlayNext);
-            }
-            return;
-        }
-        if active
-            && !e
-                .state
-                .intersects(KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4)
-        {
-            let command = match symbols.0 {
-                0x71 => Some(PlayerCommand::Stop),
-                0x76 => Some(PlayerCommand::ToggleSubtitleVisibility),
-                0xff52 | 0xff54 => {
-                    let snapshot = self.playback.snapshot();
-                    let offset = if symbols.0 == 0xff52 {
-                        30_000.0
-                    } else {
-                        -30_000.0
-                    };
-                    let target = (snapshot.position_ms + offset).max(0.0);
-                    Some(PlayerCommand::SeekMilliseconds(
-                        snapshot.duration_ms.map_or(target, |end| target.min(end)),
-                    ))
-                }
-                _ => None,
-            };
-            if let Some(command) = command {
-                if !up {
-                    self.captured.borrow_mut().insert(e.detail);
-                    self.playback.control(command);
-                }
-                return;
-            }
-        }
-        input::send_key(host, e, symbols, up);
+        input::send_key(host, e, symbols, up, repeated);
     }
 
     fn paint(
