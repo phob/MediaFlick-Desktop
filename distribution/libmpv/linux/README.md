@@ -22,8 +22,11 @@ limited to AC-3 (audio conversion/passthrough) and PNG/MJPEG (screenshots).
 FFmpeg's GPL-only features are disabled. mpv itself uses its GPL-2.0-or-later
 build because upstream gates X11 support on GPL; this differs from the Windows
 LGPL build. Linux has no SVP profile or Windows graphics/TLS dependencies.
-The adjacent libplacebo patch fixes its Vulkan XML generator for Python 3.14;
-its checksum and patched source are included in the build records/archive.
+The adjacent libplacebo compatibility patch fixes its Vulkan XML generator for
+Python 3.14 and guards Vulkan 1.4 shader-environment selection when building
+against Ubuntu 24.04's older Vulkan headers. Older headers retain the existing
+Vulkan 1.3 and earlier selection paths. The patch checksum and patched source
+are included in the build records/archive.
 libplacebo 7.351.0 retains both OpenGL and Vulkan backends. MediaFlick's
 embedded player uses `vo=gpu-next`, preferring the X11 Vulkan context and falling
 back to X11/EGL. CEF bitmaps are composited by mpv through `overlay-add`.

@@ -5,3 +5,4 @@
 ### Fixed
 
 - Companion release builds now use the package version in the compiled plugin and include its license. Companion drafts cannot replace the latest Desktop release.
+- Linux release builds support Ubuntu 24.04's Vulkan headers, and macOS packages include Chromium's credits from the bundled framework's cache.

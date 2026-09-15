@@ -68,11 +68,22 @@ mkdir -p "$macos_dir" "$frameworks_dir" "$licenses_dir" "$dmg_root"
 install -m 0755 "$binary" "$macos_dir/mediaflick-desktop"
 cp -R "$cef_framework" "$frameworks_dir/"
 cp distribution/macos/AppIcon.icns "$resources_dir/AppIcon.icns"
-if [[ ! -f "$target_dir/CREDITS.html" ]]; then
-    echo "Missing Chromium credits file: $target_dir/CREDITS.html" >&2
+cef_credits=""
+# Unlike Windows/Linux, cef-dll-sys leaves macOS assets in its framework cache.
+# Keep attribution tied to the selected framework, including unflattened CEF archives.
+for candidate in "$target_dir/CREDITS.html" \
+    "$(dirname "$cef_framework")/CREDITS.html" \
+    "$(dirname "$(dirname "$cef_framework")")/CREDITS.html"; do
+    if [[ -s "$candidate" ]]; then
+        cef_credits="$candidate"
+        break
+    fi
+done
+if [[ -z "$cef_credits" ]]; then
+    echo "Missing Chromium credits file for $cef_framework" >&2
     exit 1
 fi
-install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$target_dir/CREDITS.html" "$licenses_dir/"
+install -m 0644 LICENSE THIRD-PARTY-NOTICES.md "$cef_credits" "$licenses_dir/"
 
 python3 - "$version" <<'PY'
 import sys
