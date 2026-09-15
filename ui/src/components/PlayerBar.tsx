@@ -1,3 +1,4 @@
+import { normalizeShortcut, shortcutFromEvent, shortcutLabel } from "@/lib/player-shortcuts"
 import { DEFAULT_COMFORT, useSpoilerProtection } from "@/lib/viewing"
 import {
   AudioLines,
@@ -477,7 +478,8 @@ function ActivePlayerBar({
   const neighborPlayback = usePlayNeighbor()
   const qualityChange = useChangePlaybackQuality()
   const settings = useSettings()
-  const comfort = settings.data?.client.player.playerBackend === "libmpv" ? settings.data.client.playback.comfort ?? DEFAULT_COMFORT : DEFAULT_COMFORT
+  const builtIn = settings.data?.client.player.playerBackend === "libmpv"
+  const comfort = builtIn ? settings.data?.client.player.comfort ?? DEFAULT_COMFORT : DEFAULT_COMFORT
   const seekBackMs = comfort.seekBackSeconds * 1000
   const seekForwardMs = comfort.seekForwardSeconds * 1000
   const [scrubMs, setScrubMs] = useState<number | null>(null)
@@ -552,7 +554,7 @@ function ActivePlayerBar({
   const relativeSeek = (deltaMs: number) => {
     const target = Math.max(0, Math.min(duration || position + deltaMs, position + deltaMs))
     seek(target)
-    showAction(deltaMs < 0 ? "Back 10 seconds" : "Forward 30 seconds")
+    showAction(`${deltaMs < 0 ? "Back" : "Forward"} ${Math.abs(deltaMs) / 1000} seconds`)
   }
 
   const togglePause = () => {
@@ -607,24 +609,41 @@ function ActivePlayerBar({
       ) {
         return
       }
-      if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || target?.closest("[role=dialog], [role=menu], [role=listbox]")) return
-      const key = event.key.toLowerCase()
-      if (key === " " && target?.closest("button, a")) return
-      if (key === " " || key === comfort.pauseKey) {
+      if (event.repeat || event.isComposing || target?.closest("[role=dialog], [role=menu], [role=listbox], [data-shortcut-recorder]")) return
+      const binding = shortcutFromEvent(event)
+      if (!binding) return
+      const matches = (key: string | null | undefined) => Boolean(key) && normalizeShortcut(key ?? "") === binding
+      if (binding === "SPACE" && target?.closest("button, a")) return
+      if (builtIn && matches(settings.data?.client.player.markWatchedNext)) {
+        event.preventDefault()
+        send({ command: "mark-watched-next" }, "Marked watched")
+      } else if (binding === "SPACE" || matches(comfort.pauseKey)) {
         event.preventDefault()
         togglePause()
-      } else if (key === "arrowleft" || key === "j") {
+      } else if (binding === "LEFT" || matches(comfort.seekBackKey)) {
         event.preventDefault()
         relativeSeek(-seekBackMs)
-      } else if (key === "arrowright" || key === "l") {
+      } else if (binding === "RIGHT" || matches(comfort.seekForwardKey)) {
         event.preventDefault()
         relativeSeek(seekForwardMs)
-      } else if (key === comfort.muteKey) {
+      } else if (matches(comfort.muteKey)) {
         event.preventDefault()
         toggleMute()
-      } else if (key === comfort.fullscreenKey && player.capabilities?.fullscreen !== false) {
+      } else if (matches(comfort.fullscreenKey) && player.capabilities?.fullscreen !== false) {
         event.preventDefault()
         send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
+      } else if (builtIn && matches(comfort.stopKey)) {
+        event.preventDefault()
+        send({ command: "stop" }, "Playback stopped")
+      } else if (builtIn && matches(comfort.subtitlesKey)) {
+        event.preventDefault()
+        send({ command: "toggle-subtitles" }, "Subtitles toggled")
+      } else if (builtIn && matches(comfort.seekBackThirtyKey)) {
+        event.preventDefault()
+        relativeSeek(-30_000)
+      } else if (builtIn && matches(comfort.seekForwardThirtyKey)) {
+        event.preventDefault()
+        relativeSeek(30_000)
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -696,7 +715,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title={`${paused ? "Resume" : "Pause"} (Space or ${comfort.pauseKey.toUpperCase()})`}
+        title={`${paused ? "Resume" : "Pause"} (Space${comfort.pauseKey ? ` or ${shortcutLabel(comfort.pauseKey)}` : ""})`}
         aria-label={paused ? "Resume" : "Pause"}
         onClick={togglePause}
       >

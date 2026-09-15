@@ -12,8 +12,8 @@ import { testQueryClient } from "./test-query-client"
 
 const clientSettings: ClientSettings = {
   client: {
-    player: { playerBackend: "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false },
-    playback: { comfort: DEFAULT_COMFORT, streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
+    player: { playerBackend: "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false, comfort: DEFAULT_COMFORT },
+    playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
   appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] },

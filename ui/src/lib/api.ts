@@ -458,6 +458,7 @@ export interface ReleaseCalendar {
 }
 
 export interface PlayerSettings {
+  comfort: PlayerComfort
   playerBackend: "libmpv" | "mpv" | "mpchc"
   mpvPath: string | null
   mpchcPath: string | null
@@ -476,6 +477,7 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
     mpchcPath: settings.mpchcPath,
     defaultFullscreen: settings.defaultFullscreen,
     markWatchedNext: settings.markWatchedNext,
+    comfort: settings.comfort,
   }
 }
 
@@ -507,13 +509,18 @@ export interface PlayerComfort {
   pauseKey: string
   muteKey: string
   fullscreenKey: string
+  seekBackKey: string
+  seekForwardKey: string
+  stopKey: string
+  subtitlesKey: string
+  seekBackThirtyKey: string
+  seekForwardThirtyKey: string
 }
 
 export interface ClientSettings {
   client: {
     player: PlayerSettings
     playback: {
-      comfort: PlayerComfort
       streamingQuality: StreamingQualityId
       skipIntro: SegmentSkipMode
       skipCredits: SegmentSkipMode
@@ -1247,6 +1254,7 @@ export interface PlayStarted {
 
 /** Mirrors the command arm in `player_command` (`src/shell/cef/api.rs`). */
 export type PlayerCommand =
+  | { command: "mark-watched-next" | "toggle-subtitles" }
   | { command: "pause" | "resume" | "stop" }
   | { command: "seek"; positionMs: number }
   | { command: "set-volume"; volume: number }

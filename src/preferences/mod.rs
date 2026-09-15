@@ -6,6 +6,7 @@ mod deletions;
 mod json_file;
 pub mod model;
 mod playback;
+mod shortcuts;
 mod viewing;
 pub use viewing::{PlayerComfort, SubtitleMode, ViewingSettings};
 pub mod service;

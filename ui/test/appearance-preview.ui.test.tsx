@@ -29,9 +29,9 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
       mpchcPath: null,
       defaultFullscreen: "windowed",
       markWatchedNext: null,
-      playerConfigured: true,
+      playerConfigured: true, comfort: DEFAULT_COMFORT,
     },
-    playback: { comfort: DEFAULT_COMFORT,
+    playback: {
       streamingQuality: "original",
       skipIntro: "disabled",
       skipCredits: "disabled",
@@ -119,7 +119,7 @@ test.each(["mpv", "mpchc"] as const)("%s player fields are associated with visib
   </TestProviders>)
   const names = backend === "mpv" ? ["Mark watched key", "mpv executable"] : ["MPC-HC executable"]
   for (const name of names) {
-    const input = screen.getByRole("textbox", { name })
+    const input = screen.getByRole(name === "Mark watched key" ? "button" : "textbox", { name })
     expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBeTruthy()
   }
 })

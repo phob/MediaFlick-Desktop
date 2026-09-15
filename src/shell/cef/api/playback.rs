@@ -241,6 +241,7 @@ fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
         "toggle-subtitles" => Some(PlayerCommand::ToggleSubtitleVisibility),
         "toggle-fullscreen" => Some(PlayerCommand::ToggleFullscreen),
         "stop" => Some(PlayerCommand::Stop),
+        "mark-watched-next" => Some(PlayerCommand::MarkWatchedAndPlayNext),
         _ => None,
     };
     let Some(command) = command else {

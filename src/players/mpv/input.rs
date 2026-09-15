@@ -192,4 +192,16 @@ mod tests {
         assert!(!bindings.section_contents().contains("mark-watched-next"));
         assert!(bindings.section_contents().contains("q stop"));
     }
+
+    #[test]
+    fn command_combinations_are_preserved_for_external_mpv_on_macos() {
+        let bindings = MpvInputBindings::from_json(&json!({
+            "bindings": { "mark_watched_next": "Shift+Meta+w" }
+        }));
+        assert!(
+            bindings
+                .section_contents()
+                .contains("Shift+Meta+w script-message mediaflick-desktop mark-watched-next")
+        );
+    }
 }

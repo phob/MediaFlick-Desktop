@@ -59,7 +59,7 @@ describe("player bar controls", () => {
       }),
     )
     const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, {client: {player: {playerBackend: "libmpv"}, playback: {comfort: DEFAULT_COMFORT}}})
+    client.setQueryData(queryKeys.settings, {client: {player: {playerBackend: "libmpv", comfort: DEFAULT_COMFORT}}})
     client.setQueryData<PlayerState>(queryKeys.playerState, playerState)
 
     render(
@@ -127,7 +127,7 @@ describe("player bar controls", () => {
       }),
     )
     const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, {client: {player: {playerBackend: "libmpv"}, playback: {comfort: DEFAULT_COMFORT}}})
+    client.setQueryData(queryKeys.settings, {client: {player: {playerBackend: "libmpv", comfort: DEFAULT_COMFORT}}})
     client.setQueryData<PlayerState>(queryKeys.playerState, playerState)
 
     const view = render(
@@ -166,7 +166,7 @@ it("uses saved built-in seek intervals and letter shortcuts", async () => {
   }))
   const client = testQueryClient()
   client.setQueryData(queryKeys.playerState, player)
-  client.setQueryData(queryKeys.settings, {client:{player:{playerBackend:"libmpv"}, playback:{comfort:{...DEFAULT_COMFORT, seekBackSeconds:5, seekForwardSeconds:7, pauseKey:"p"}}}})
+  client.setQueryData(queryKeys.settings, {client:{player:{playerBackend:"libmpv", comfort:{...DEFAULT_COMFORT, seekBackSeconds:5, seekForwardSeconds:7, pauseKey:"p"}}}})
   render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
   fireEvent.keyDown(window, {key:"ArrowRight"})
   fireEvent.keyDown(window, {key:"p"})
