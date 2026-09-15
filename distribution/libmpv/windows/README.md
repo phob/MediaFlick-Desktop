@@ -16,6 +16,10 @@ network playback, Windows Schannel TLS, D3D11/D3D11VA, OpenGL, libass subtitle
 rendering, ICC color management, and common software decoders. The baseline is
 x86-64 rather than x86-64-v3.
 
+The Direct3D 11 renderer requires libplacebo's own shader compiler even with
+Vulkan disabled. The build orders shaderc before libplacebo and explicitly
+enables it, so a clean build cannot silently omit shader compilation.
+
 mpv 0.41.0 and FFmpeg 8.0.1 are pinned in the patch. GPL-only mpv and FFmpeg
 features are disabled. Every build records the exact revisions of transitive
 source repositories, license notices, a DLL checksum, and a corresponding
@@ -42,3 +46,15 @@ the first argument.
 Do not publish the DLL without its license notices, `SOURCE-REVISIONS.txt`, and
 the generated corresponding-source archive. This is a release-engineering
 requirement, not legal advice.
+
+## Verify the packaged renderer on Windows
+
+```powershell
+python distribution/libmpv/windows/smoke-test.py dist/windows/MediaFlickDesktop/libmpv-2.dll
+```
+
+This initializes the default `gpu-next` renderer, renders generated local video,
+and shuts it down in a separate process with a timeout. It uses no user config,
+scripts, server, or media. Add `--warp` to exercise Direct3D's software device,
+as the Windows installer workflow does on machines without a hardware GPU.
+Checking the app's `--version` alone does not initialize the playback runtime.

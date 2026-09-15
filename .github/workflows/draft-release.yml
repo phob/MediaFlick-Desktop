@@ -7,6 +7,10 @@ on:
         description: "Version number to release (for example, 0.1.0 or v0.1.0)"
         required: true
         type: string
+      test_draft:
+        description: "Disposable test draft: preserve the changelog and do not commit or tag a release"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -34,8 +38,11 @@ jobs:
         id: release
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          TEST_DRAFT: ${{ inputs.test_draft }}
         run: |
           set -euo pipefail
+          python3 -m unittest discover -s scripts -p 'test_prepare_release.py'
+          python3 -m unittest discover -s distribution/macos -p 'test_*.py'
           version="${INPUT_VERSION#v}"
           tag="v${version}"
 
@@ -45,9 +52,14 @@ jobs:
             exit 1
           fi
 
+          extra_args=()
+          if [[ "$TEST_DRAFT" == true ]]; then
+            extra_args+=(--test-draft)
+          fi
           python3 scripts/prepare-release.py \
             --version "$version" \
-            --notes-out "$RUNNER_TEMP/release-notes.md"
+            --notes-out "$RUNNER_TEMP/release-notes.md" \
+            "${extra_args[@]}"
 
           git diff --binary -- Cargo.toml Cargo.lock CHANGELOG.md > "$RUNNER_TEMP/release.patch"
           test -s "$RUNNER_TEMP/release.patch"
@@ -180,6 +192,11 @@ jobs:
           $App = Start-Process -FilePath $AppPath -ArgumentList "--version" -Wait -PassThru
           if ($App.ExitCode -ne 0) {
             throw "Installed application smoke test failed with exit code $($App.ExitCode)"
+          }
+
+          python distribution/libmpv/windows/smoke-test.py (Join-Path $InstallPath "libmpv-2.dll") --warp
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installed playback runtime failed its rendering smoke test"
           }
 
           foreach ($RelativePath in @(
@@ -572,6 +589,7 @@ jobs:
           merge-multiple: true
 
       - name: Commit release and push tag
+        if: ${{ !inputs.test_draft }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
@@ -596,6 +614,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          TEST_DRAFT: ${{ inputs.test_draft }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           mapfile -t assets < <(find release-assets -type f | sort)
@@ -607,9 +627,22 @@ jobs:
           printf 'Release assets:\n'
           printf '  %s\n' "${assets[@]}"
 
+          extra_args=(--verify-tag)
+          if [[ "$TEST_DRAFT" == true ]]; then
+            extra_args=(--target "$SOURCE_SHA" --prerelease --latest=false)
+            # A maintainer may have attached already successful platform builds
+            # while fixing another platform. Complete only that disposable draft.
+            if gh release view "$TAG" --json isDraft,isPrerelease > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+              jq -e '.isDraft and .isPrerelease' "$RUNNER_TEMP/existing-release.json"
+              gh release upload "$TAG" --clobber "${assets[@]}"
+              gh release edit "$TAG" --draft --prerelease --latest=false \
+                --target "$SOURCE_SHA" --notes-file release-prep/release-notes.md
+              exit 0
+            fi
+          fi
           gh release create "${TAG}" \
             --draft \
-            --verify-tag \
+            "${extra_args[@]}" \
             --title "MediaFlick Desktop ${TAG}" \
             --notes-file release-prep/release-notes.md \
             "${assets[@]}"
