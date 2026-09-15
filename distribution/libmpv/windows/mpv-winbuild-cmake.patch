@@ -178,23 +178,24 @@ diff --git a/packages/libplacebo.cmake b/packages/libplacebo.cmake
 index b5797dc..c8da7c0 100644
 --- a/packages/libplacebo.cmake
 +++ b/packages/libplacebo.cmake
-@@ -2,9 +2,8 @@ get_property(src_glad TARGET glad PROPERTY _EP_SOURCE_DIR)
+@@ -2,9 +2,9 @@ get_property(src_glad TARGET glad PROPERTY _EP_SOURCE_DIR)
  get_property(src_fast_float TARGET fast_float PROPERTY _EP_SOURCE_DIR)
  ExternalProject_Add(libplacebo
      DEPENDS
 -        vulkan
--        shaderc
+         shaderc
          spirv-cross
 +        vulkan-header
          lcms2
          glad
          fast_float
-@@ -28,7 +27,7 @@ ExternalProject_Add(libplacebo
+@@ -28,7 +28,8 @@ ExternalProject_Add(libplacebo
          -Ddebug=true
          -Db_ndebug=true
          -Doptimization=3
 -        -Dvulkan-registry='${MINGW_INSTALL_PREFIX}/share/vulkan/registry/vk.xml'
 +        -Dvulkan=disabled
++        -Dshaderc=enabled
          -Ddemos=false
      BUILD_COMMAND ${EXEC} ninja -C <BINARY_DIR>
      INSTALL_COMMAND ${EXEC} ninja -C <BINARY_DIR> install
