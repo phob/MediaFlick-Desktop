@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version", required=True, help="Version to release, with or without a leading v.")
     parser.add_argument("--date", default=dt.date.today().isoformat(), help="Release date, defaulting to today.")
     parser.add_argument("--notes-out", required=True, help="Path where extracted release notes should be written.")
+    parser.add_argument("--test-draft", action="store_true", help="Prepare a disposable prerelease without consuming the changelog.")
     return parser.parse_args()
 
 
@@ -135,7 +136,29 @@ def update_cargo_files(version: str) -> None:
 def main() -> None:
     args = parse_args()
     version = normalize_version(args.version)
-    release_notes = promote_changelog(version, args.date)
+    if args.test_draft:
+        if "-" not in version.split("+", 1)[0]:
+            raise SystemExit("A test draft requires a prerelease version such as 0.2.0-test.1.")
+        release_notes = (
+            f"# MediaFlick Desktop {version} — test draft\n\n"
+            "Disposable build for manual testing. Keep this release as a draft; "
+            "it is not a stable release or a 1.0 release candidate.\n\n"
+            "The normal release changelog and source-branch version are unchanged. "
+            "The bundled application reports the test version.\n\n"
+            "## Manual checks\n\n"
+            "- Fresh installation, launch, sign-in, and Quick Connect.\n"
+            "- Upgrade an existing installation and verify settings, accounts, collections, and posters.\n"
+            "- Movies and Series: browsing, search, details, and account switching.\n"
+            "- Built-in libmpv, external mpv, and Windows MPC-HC: start, pause, seek, resume, subtitles, "
+            "segment skipping, next episode, and Jellyfin progress/watched state.\n"
+            "- Settings Save, Reset, and Discard; restart and verify persistence.\n"
+            "- Companion absent/present: discovery, calendar, requests, ratings, and collections.\n"
+            "- Install and update Companion through its separate test repository, then restart Jellyfin.\n\n"
+            "macOS requires external mpv and uses an ad-hoc signed app. "
+            "Linux built-in playback requires X11 or XWayland.\n"
+        )
+    else:
+        release_notes = promote_changelog(version, args.date)
     update_cargo_files(version)
     Path(args.notes_out).write_text(release_notes, encoding="utf-8")
     print(f"Prepared release v{version}")

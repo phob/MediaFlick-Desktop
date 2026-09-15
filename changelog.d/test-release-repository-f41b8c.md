@@ -1,0 +1,9 @@
+### Added
+
+- Disposable Desktop test drafts and a separate Jellyfin Companion test repository for trying builds before release.
+
+### Fixed
+
+- Companion release builds now use the package version in the compiled plugin and include its license. Companion drafts cannot replace the latest Desktop release.
+- Linux release builds support Ubuntu 24.04's Vulkan headers, and macOS packages include Chromium's credits from the bundled framework's cache.
+- Windows playback-runtime builds can apply dependency patches on clean build machines without a configured Git identity.

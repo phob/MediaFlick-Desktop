@@ -14,6 +14,11 @@ source_cache="$work_dir/sources"
 rustup_cache="$work_dir/rustup"
 build_dir="$work_dir/build"
 
+# Upstream dependencies use git am, including on clean CI runners. Supply a
+# process-local committer identity without changing the developer's Git config.
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-MediaFlick build}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-build@mediaflick.invalid}"
+
 for command_name in git cmake ninja sha256sum tar zstd; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required build command: $command_name" >&2

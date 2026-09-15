@@ -4,9 +4,23 @@ on:
   push:
     tags:
       - "companion-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Companion version (three or four numeric components)"
+        required: true
+        type: string
+      test_repository:
+        description: "Also host the package on the public companion-test-repository branch for Jellyfin testing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: companion-release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -15,40 +29,113 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Prepare version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-${GITHUB_REF_NAME#companion-v}}"
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "Jellyfin requires three or four numeric version components." >&2
+            exit 1
+          fi
+          assembly_version="$version"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            assembly_version="${version}.0"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "assembly_version=$assembly_version" >> "$GITHUB_OUTPUT"
+          echo "tag=companion-v$version" >> "$GITHUB_OUTPUT"
+
       - name: Install .NET
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
-      - name: Test plugin
-        run: dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+      - name: Test plugin and package tooling
+        run: |
+          dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
+          python3 -m unittest discover -s plugin -p 'test_*.py'
 
-      - name: Publish plugin
-        run: dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj --configuration Release --output plugin/bin/Release/publish
+      - name: Publish versioned plugin
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSEMBLY_VERSION: ${{ steps.version.outputs.assembly_version }}
+        run: |
+          dotnet publish plugin/src/Jellyfin.Plugin.MediaFlick/Jellyfin.Plugin.MediaFlick.csproj \
+            --configuration Release --output plugin/bin/Release/publish \
+            -p:Version="$VERSION" -p:AssemblyVersion="$ASSEMBLY_VERSION" -p:FileVersion="$ASSEMBLY_VERSION"
+
+      - name: Verify compiled version
+        shell: pwsh
+        env:
+          ASSEMBLY_VERSION: ${{ steps.version.outputs.assembly_version }}
+        run: |
+          $assembly = [System.Reflection.AssemblyName]::GetAssemblyName("$PWD/plugin/bin/Release/publish/Jellyfin.Plugin.MediaFlick.dll")
+          if ($assembly.Version.ToString() -ne $env:ASSEMBLY_VERSION) {
+            throw "Compiled plugin version does not match release version."
+          }
 
       - name: Package plugin and repository manifest
         env:
-          TAG: ${{ github.ref_name }}
-          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TEST_REPOSITORY: ${{ inputs.test_repository }}
         run: |
-          version="${TAG#companion-v}"
-          asset="mediaflick-companion_${version}.zip"
-          python plugin/package.py \
-            --version "$version" \
+          asset="mediaflick-companion_${VERSION}.zip"
+          source_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${asset}"
+          changelog="MediaFlick Companion ${VERSION}: calendar, requests, ratings, and collections."
+          if [[ "$TEST_REPOSITORY" == true ]]; then
+            source_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/companion-test-repository/packages/${VERSION}/${asset}"
+            changelog="Test build ${VERSION}. For manual testing with Jellyfin 12; not a stable release."
+          fi
+          python3 plugin/package.py \
+            --version "$VERSION" \
             --publish-dir plugin/bin/Release/publish \
             --output-dir plugin/bin/Release/package \
-            --source-url "https://github.com/${REPOSITORY}/releases/download/${TAG}/${asset}"
+            --source-url "$source_url" \
+            --changelog "$changelog"
 
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TEST_REPOSITORY: ${{ inputs.test_repository }}
         run: |
-          version="${TAG#companion-v}"
+          extra_args=()
+          notes="MediaFlick Companion ${VERSION}. Requires Jellyfin 12. Keep this release as a draft until tested."
+          if [[ "$TEST_REPOSITORY" == true ]]; then
+            extra_args+=(--prerelease)
+            notes+=" Test repository: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/companion-test-repository/manifest.json"
+          fi
           gh release create "$TAG" \
-            --draft \
-            --title "MediaFlick Companion v${version}" \
-            --notes "MediaFlick Companion v${version}" \
-            plugin/bin/Release/package/mediaflick-companion_${version}.zip \
+            --draft --latest=false --target "$GITHUB_SHA" "${extra_args[@]}" \
+            --title "MediaFlick Companion v${VERSION}" \
+            --notes "$notes" \
+            plugin/bin/Release/package/mediaflick-companion_${VERSION}.zip \
             plugin/bin/Release/package/meta.json \
             plugin/bin/Release/package/manifest.json
+
+      - name: Publish isolated Jellyfin test repository
+        if: ${{ inputs.test_repository }}
+        run: |
+          set -euo pipefail
+          catalog="$RUNNER_TEMP/companion-catalog"
+          branch=companion-test-repository
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            git fetch origin "$branch"
+            git worktree add --detach "$catalog" FETCH_HEAD
+          else
+            git worktree add --detach "$catalog" HEAD
+            git -C "$catalog" switch --orphan "$branch"
+          fi
+          python3 plugin/stage-test-repository.py \
+            --package-dir plugin/bin/Release/package --repository-dir "$catalog" --source-sha "$GITHUB_SHA"
+          git -C "$catalog" config user.name "github-actions[bot]"
+          git -C "$catalog" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$catalog" add README.md manifest.json packages
+          git -C "$catalog" commit -m "Add Companion test package"
+          git -C "$catalog" push origin "HEAD:$branch"

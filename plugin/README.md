@@ -10,6 +10,39 @@ pinned in the repository's `global.json`. Build it with `just plugin`, test it
 with `just plugin-test`, and deploy the release publish output to the configured
 development server with `just plugin-deploy`.
 
+## Test repository
+
+The opt-in Jellyfin test repository URL is:
+
+```text
+https://raw.githubusercontent.com/phob/MediaFlick-Desktop/companion-test-repository/manifest.json
+```
+
+In Jellyfin 12, open **Dashboard → Plugins → Repositories**, add this URL with
+the name **MediaFlick Companion — Test**, and install **MediaFlick Companion**
+from the catalog. Restart Jellyfin, then open Desktop's **Settings → MediaFlick
+Companion** to check discovery. Configure provider services in Jellyfin's plugin
+dashboard. Test packages use the normal plugin identity and update an existing
+installation. Remove the test repository when finished to stop test updates.
+
+Maintainers create packages through **Draft Companion Release** in GitHub
+Actions, choosing a numeric version such as `0.2.1` and enabling
+`test_repository`. The workflow stamps and verifies the compiled DLL version,
+tests and packages the plugin, creates a GitHub draft, and hosts the ZIP and
+manifest on the separate `companion-test-repository` branch. Jellyfin can fetch
+these files without GitHub authentication; draft release assets alone would
+not work. Existing package versions cannot be overwritten, and the catalog
+retains earlier entries for update testing. Use a new numeric version for each
+new package. Test status belongs to this opt-in repository because Jellyfin
+plugin versions cannot contain a suffix such as `-test.1`.
+
+Companion versions are independent of Desktop versions. Compatibility uses
+the advertised API version and capabilities, plus the package's Jellyfin ABI.
+Companion drafts are explicitly excluded from GitHub's latest release so they
+cannot interrupt Desktop update discovery. A production repository can later
+host the same manifest format on the website with published GitHub Release
+asset URLs; it must never point to private draft downloads.
+
 ## MDBList and TMDB administrator setup
 
 Open **Dashboard → Plugins → MediaFlick Companion**. MDBList and TMDB keys are
