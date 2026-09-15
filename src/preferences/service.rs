@@ -39,6 +39,7 @@ where
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlayerSettingsPatch {
+    pub comfort: Option<super::PlayerComfort>,
     pub player_backend: Option<String>,
     /// An explicit JSON `null` clears a path; an omitted field preserves it.
     #[serde(default)]
@@ -54,7 +55,6 @@ pub struct PlayerSettingsPatch {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlaybackSettingsPatch {
-    pub comfort: Option<super::PlayerComfort>,
     pub streaming_quality: Option<String>,
     pub skip_intro: Option<String>,
     pub skip_credits: Option<String>,
@@ -229,6 +229,12 @@ impl PreferencesService {
                     next.default_fullscreen = FullscreenBehavior::from_id(value)
                         .ok_or_else(|| PreferencesError::invalid("fullscreen behavior"))?;
                 }
+                if let Some(comfort) = patch.comfort {
+                    comfort
+                        .validate()
+                        .map_err(|error| PreferencesError(error.to_string()))?;
+                    next.comfort = comfort;
+                }
                 // An unconfigured player is a valid saved state: it lets users reset
                 // the section to defaults and finish choosing a backend later. Playback
                 // still performs the concrete executable check before it starts.
@@ -239,17 +245,20 @@ impl PreferencesService {
                             PreferencesError(format!("could not save input bindings: {error}"))
                         })
                 };
+                if next.effective_backend() == PlayerBackend::Libmpv {
+                    let watched_next = match &binding {
+                        NullablePatch::Unchanged => MpvInputBindings::load().mark_watched_next,
+                        NullablePatch::Clear => None,
+                        NullablePatch::Set(value) => clean_path(value),
+                    };
+                    next.comfort
+                        .validate_watched_next(watched_next.as_deref())
+                        .map_err(|error| PreferencesError(error.to_string()))?;
+                }
                 match binding {
                     NullablePatch::Unchanged => {}
                     NullablePatch::Clear => save_binding(None)?,
-                    NullablePatch::Set(value) => {
-                        if next.effective_backend() == PlayerBackend::Libmpv {
-                            next.comfort
-                                .validate_watched_next(Some(&value))
-                                .map_err(|error| PreferencesError(error.to_string()))?;
-                        }
-                        save_binding(clean_path(&value))?;
-                    }
+                    NullablePatch::Set(value) => save_binding(clean_path(&value))?,
                 }
                 Ok(())
             },
@@ -262,15 +271,6 @@ impl PreferencesService {
         patch: PlaybackSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
         self.update(move |next| {
-            if let Some(comfort) = patch.comfort {
-                comfort
-                    .validate()
-                    .map_err(|error| PreferencesError(error.to_string()))?;
-                comfort
-                    .validate_watched_next(MpvInputBindings::load().mark_watched_next.as_deref())
-                    .map_err(|error| PreferencesError(error.to_string()))?;
-                next.comfort = comfort;
-            }
             if let Some(value) = patch.streaming_quality.as_deref() {
                 next.streaming_quality = StreamingQuality::from_id(value)
                     .ok_or_else(|| PreferencesError::invalid("streaming quality"))?;
@@ -557,6 +557,29 @@ mod tests {
             "playerConfigured": true,
         });
         assert!(serde_json::from_value::<PlayerSettingsPatch>(response_shape).is_err());
+    }
+
+    #[test]
+    fn player_patch_contract_groups_comfort_and_watched_next()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload: serde_json::Value =
+            serde_json::from_str(include_str!("../../ui/test/fixtures/player-settings.json"))?;
+        let patch: PlayerSettingsPatch = serde_json::from_value(payload.clone())?;
+        let comfort = patch.comfort.ok_or("missing player comfort")?;
+        comfort.validate()?;
+        let NullablePatch::Set(watched_next) = patch.mark_watched_next else {
+            return Err("missing watched-next shortcut".into());
+        };
+        comfort.validate_watched_next(Some(&watched_next))?;
+        assert_eq!(comfort.stop_key, "w");
+        assert_eq!(watched_next, "q");
+        assert!(
+            serde_json::from_value::<PlaybackSettingsPatch>(json!({
+                "comfort": payload["comfort"]
+            }))
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]

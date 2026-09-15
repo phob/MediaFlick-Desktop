@@ -17,9 +17,9 @@ const settings: ClientSettings = {
       mpchcPath: null,
       defaultFullscreen: "fullscreen",
       markWatchedNext: "w",
-      playerConfigured: false,
+      playerConfigured: false, comfort: DEFAULT_COMFORT,
     },
-    playback: { comfort: DEFAULT_COMFORT,
+    playback: {
       streamingQuality: "original",
       skipIntro: "prompt",
       skipCredits: "prompt",
