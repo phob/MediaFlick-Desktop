@@ -113,7 +113,9 @@ published free tier is 1,000 requests/day), so the plugin maintains one
 server-wide, stable-ID cache—not a cache per client or card. Entries are fresh
 for seven days (negative results for one day), remain
 stale-servable for 30 days, and are persisted atomically in the plugin data
-directory. Stale entries return immediately while one deduplicated background
+directory. Changes are batched into one write about two seconds later and
+written on shutdown; expired entries are dropped and the file holds at most
+100,000 titles. Stale entries return immediately while one deduplicated background
 refresh runs. Concurrent cache misses re-check behind the shared gate, and
 MDBList receives media-info batches rather than one request per item or source.
 

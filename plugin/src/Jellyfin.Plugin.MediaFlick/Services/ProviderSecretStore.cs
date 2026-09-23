@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-internal static class RatingProviders
+internal static class CredentialProviders
 {
     public const string MdbList = "mdblist";
     public const string Tmdb = "tmdb";
@@ -20,7 +20,7 @@ internal static class RatingProviders
         };
 }
 
-internal interface IRatingSecretStore
+internal interface IProviderSecretStore
 {
     bool IsConfigured(string provider);
 
@@ -35,7 +35,7 @@ internal interface IRatingSecretStore
 /// Stores only purpose-bound ASP.NET Data Protection ciphertext in Jellyfin's
 /// established plugin configuration persistence. No controller exposes Get().
 /// </summary>
-internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
+internal sealed class DataProtectedProviderSecretStore : IProviderSecretStore
 {
     private const string ProtectionPurpose =
         "Jellyfin.Plugin.MediaFlick.RatingProviderSecrets.v1";
@@ -43,14 +43,14 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
     private readonly string _keyRingPath;
     private readonly Func<PluginConfiguration> _readConfiguration;
     private readonly Action<string, string> _writeProtectedValue;
-    private readonly ILogger<DataProtectedRatingSecretStore> _logger;
+    private readonly ILogger<DataProtectedProviderSecretStore> _logger;
     private readonly ConcurrentDictionary<string, byte> _reportedUnreadable =
         new(StringComparer.Ordinal);
 
-    public DataProtectedRatingSecretStore(
+    public DataProtectedProviderSecretStore(
         IDataProtectionProvider provider,
         string keyRingPath,
-        ILogger<DataProtectedRatingSecretStore> logger)
+        ILogger<DataProtectedProviderSecretStore> logger)
         : this(
             provider,
             keyRingPath,
@@ -60,12 +60,12 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
     {
     }
 
-    internal DataProtectedRatingSecretStore(
+    internal DataProtectedProviderSecretStore(
         IDataProtectionProvider provider,
         string keyRingPath,
         Func<PluginConfiguration> readConfiguration,
         Action<string, string> writeProtectedValue,
-        ILogger<DataProtectedRatingSecretStore> logger)
+        ILogger<DataProtectedProviderSecretStore> logger)
     {
         _protector = provider.CreateProtector(ProtectionPurpose);
         _keyRingPath = keyRingPath;
@@ -78,11 +78,11 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
     public bool IsConfigured(string provider)
         => !string.IsNullOrWhiteSpace(ProtectedValue(
             _readConfiguration(),
-            RatingProviders.Normalize(provider)));
+            CredentialProviders.Normalize(provider)));
 
     public string? Get(string provider)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         var protectedValue = ProtectedValue(_readConfiguration(), normalized);
         if (string.IsNullOrWhiteSpace(protectedValue))
         {
@@ -112,7 +112,7 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
 
     public void Set(string provider, string secret)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         var protectedValue = _protector.Protect(secret);
         _writeProtectedValue(normalized, protectedValue);
         _reportedUnreadable.TryRemove(normalized, out _);
@@ -121,7 +121,7 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
 
     public void Remove(string provider)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         _writeProtectedValue(normalized, string.Empty);
         _reportedUnreadable.TryRemove(normalized, out _);
     }
@@ -143,16 +143,16 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
             Radarr = previous.Radarr,
             Seerr = previous.Seerr,
             AutoImportSeerrUsers = previous.AutoImportSeerrUsers,
-            ProtectedMdbListApiKey = provider == RatingProviders.MdbList
+            ProtectedMdbListApiKey = provider == CredentialProviders.MdbList
                 ? protectedValue
                 : previous.ProtectedMdbListApiKey,
-            ProtectedTmdbApiKey = provider == RatingProviders.Tmdb
+            ProtectedTmdbApiKey = provider == CredentialProviders.Tmdb
                 ? protectedValue
                 : previous.ProtectedTmdbApiKey
         };
 
     private static string ProtectedValue(PluginConfiguration configuration, string provider)
-        => provider == RatingProviders.MdbList
+        => provider == CredentialProviders.MdbList
             ? configuration.ProtectedMdbListApiKey
             : configuration.ProtectedTmdbApiKey;
 
