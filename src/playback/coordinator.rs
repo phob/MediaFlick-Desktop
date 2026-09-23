@@ -2,7 +2,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 
 use super::{
     NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
@@ -89,12 +89,8 @@ impl PlaybackCoordinator {
         self.backend().control(command);
     }
 
-    pub fn refresh_input_bindings(&self) {
-        self.backend().refresh_input_bindings();
-    }
-
-    pub fn configure_segments(&self, config: SegmentSkipConfig) {
-        self.backend().set_segment_skip_config(config);
+    pub fn configure(&self, preferences: PlayerPreferences) {
+        self.backend().set_preferences(preferences);
     }
 
     pub fn update_context(&self, context: PlaybackContext) {
@@ -118,7 +114,7 @@ mod tests {
     use super::*;
 
     struct RecordingBackend {
-        binding_refreshes: Arc<AtomicUsize>,
+        configured: Arc<AtomicUsize>,
         loaded_paths: Arc<Mutex<Vec<String>>>,
     }
 
@@ -138,11 +134,9 @@ mod tests {
 
         fn control(&self, _command: PlayerCommand) {}
 
-        fn refresh_input_bindings(&self) {
-            self.binding_refreshes.fetch_add(1, Ordering::SeqCst);
+        fn set_preferences(&self, _preferences: PlayerPreferences) {
+            self.configured.fetch_add(1, Ordering::SeqCst);
         }
-
-        fn set_segment_skip_config(&self, _config: SegmentSkipConfig) {}
 
         fn update_playback_context(&self, _context: PlaybackContext) {}
 
@@ -154,23 +148,23 @@ mod tests {
     }
 
     #[test]
-    fn input_binding_refresh_reaches_the_running_backend() {
-        let refreshes = Arc::new(AtomicUsize::new(0));
+    fn preference_changes_reach_the_running_backend() {
+        let configured = Arc::new(AtomicUsize::new(0));
         let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
-            binding_refreshes: refreshes.clone(),
+            configured: configured.clone(),
             loaded_paths: Arc::new(Mutex::new(Vec::new())),
         }));
 
-        coordinator.refresh_input_bindings();
+        coordinator.configure(crate::preferences::AppSettings::default().player_preferences());
 
-        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(configured.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn a_pending_restart_does_not_reconfigure_the_running_backend() {
         let loaded_paths = Arc::new(Mutex::new(Vec::new()));
         let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
-            binding_refreshes: Arc::new(AtomicUsize::new(0)),
+            configured: Arc::new(AtomicUsize::new(0)),
             loaded_paths: loaded_paths.clone(),
         }));
         coordinator.warm("startup-player".to_string(), FullscreenBehavior::Windowed);

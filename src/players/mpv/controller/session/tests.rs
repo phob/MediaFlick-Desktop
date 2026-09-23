@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand};
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::FullscreenBehavior;
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
 use super::super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
@@ -301,7 +301,7 @@ fn finish_without_reporter_emits_stopped_event() {
         Arc::new(Mutex::new(Default::default())),
         Some(event_tx),
         Arc::new(AtomicBool::new(false)),
-        SegmentSkipConfig::default(),
+        crate::preferences::AppSettings::default().player_preferences(),
         RuntimeSelection {
             kind: crate::players::mpv::runtime::MpvRuntimeKind::External,
             libmpv_profile: crate::players::mpv::runtime::LibmpvProfile::Standard,

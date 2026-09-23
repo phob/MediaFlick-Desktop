@@ -17,7 +17,9 @@ use crate::playback::{
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{
+    FullscreenBehavior, PlayerPreferences, SegmentSkipConfig, SubtitleAppearance,
+};
 
 pub use super::commands::control_command;
 use session::{is_completion_reason, normalized_stop_reason};
@@ -80,8 +82,7 @@ enum ControllerMessage {
     },
     PlaybackContext(Box<PlaybackContext>),
     Control(PlayerCommand),
-    RefreshInputBindings,
-    SegmentSkipConfig(SegmentSkipConfig),
+    Preferences(PlayerPreferences),
     MediaSegmentsFetched {
         playback_id: i64,
         result: Result<Vec<SkipSegment>, String>,
@@ -150,6 +151,10 @@ struct ControllerState {
     chapter_marker_next_attempt_at: Option<Instant>,
     seek_started_at_ticks: Option<i64>,
     segment_skip_config: SegmentSkipConfig,
+    /// The mark-watched-and-play-next key the input section binds.
+    mark_watched_next: Option<String>,
+    /// Built-in player subtitle styling, applied as each file loads.
+    subtitle_appearance: SubtitleAppearance,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
     replacement_end_file_pending: bool,
@@ -210,27 +215,24 @@ struct StartupSeek {
 }
 
 impl MpvController {
-    pub fn new(
-        event_tx: Option<Sender<PlaybackEvent>>,
-        segment_skip_config: SegmentSkipConfig,
-    ) -> Self {
+    pub fn new(event_tx: Option<Sender<PlaybackEvent>>, preferences: PlayerPreferences) -> Self {
         Self::with_runtime(
             MpvRuntimeKind::External,
             LibmpvProfile::Standard,
             event_tx,
-            segment_skip_config,
+            preferences,
         )
     }
 
     pub fn new_libmpv(
         event_tx: Option<Sender<PlaybackEvent>>,
-        segment_skip_config: SegmentSkipConfig,
+        preferences: PlayerPreferences,
     ) -> Self {
         Self::with_runtime(
             MpvRuntimeKind::Library,
             LibmpvProfile::detected(),
             event_tx,
-            segment_skip_config,
+            preferences,
         )
     }
 
@@ -238,7 +240,7 @@ impl MpvController {
         runtime_kind: MpvRuntimeKind,
         libmpv_profile: LibmpvProfile,
         event_tx: Option<Sender<PlaybackEvent>>,
-        segment_skip_config: SegmentSkipConfig,
+        preferences: PlayerPreferences,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(PlayerSnapshot::default()));
@@ -253,7 +255,7 @@ impl MpvController {
                 controller_snapshot,
                 event_tx,
                 controller_shutdown_requested,
-                segment_skip_config,
+                preferences,
                 RuntimeSelection {
                     kind: runtime_kind,
                     libmpv_profile,
@@ -312,12 +314,8 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Control(command));
     }
 
-    pub fn refresh_input_bindings(&self) {
-        let _ = self.tx.send(ControllerMessage::RefreshInputBindings);
-    }
-
-    pub fn set_segment_skip_config(&self, config: SegmentSkipConfig) {
-        let _ = self.tx.send(ControllerMessage::SegmentSkipConfig(config));
+    pub fn set_preferences(&self, preferences: PlayerPreferences) {
+        let _ = self.tx.send(ControllerMessage::Preferences(preferences));
     }
 
     pub fn update_playback_context(&self, context: PlaybackContext) {
@@ -355,7 +353,7 @@ impl ControllerState {
         snapshot: Arc<Mutex<PlayerSnapshot>>,
         event_tx: Option<Sender<PlaybackEvent>>,
         shutdown_requested: Arc<AtomicBool>,
-        segment_skip_config: SegmentSkipConfig,
+        preferences: PlayerPreferences,
         runtime_selection: RuntimeSelection,
     ) -> Self {
         Self {
@@ -400,7 +398,9 @@ impl ControllerState {
             chapter_marker_attempts: 0,
             chapter_marker_next_attempt_at: None,
             seek_started_at_ticks: None,
-            segment_skip_config,
+            segment_skip_config: preferences.segment_skip,
+            mark_watched_next: preferences.mark_watched_next,
+            subtitle_appearance: preferences.subtitles,
             recent_loads: VecDeque::new(),
             next_playback_handoff_until: None,
             replacement_end_file_pending: false,
@@ -408,6 +408,35 @@ impl ControllerState {
             last_session_poll: Instant::now(),
             event_tx,
             shutdown_requested,
+        }
+    }
+
+    fn apply_preferences(&mut self, preferences: PlayerPreferences) {
+        if preferences.segment_skip != self.segment_skip_config {
+            let config = preferences.segment_skip;
+            tracing::debug!(target: "playback", ?config, "updated segment skip settings");
+            self.segment_skip_config = config;
+            self.segment_skip_state.cancel_pending();
+            if config.all_disabled() {
+                self.clear_skip_segment_state();
+            } else {
+                self.update_skip_segment_state(self.last_state.position_ticks);
+            }
+            self.refresh_chapter_markers();
+        }
+        self.subtitle_appearance = preferences.subtitles;
+        if preferences.mark_watched_next != self.mark_watched_next {
+            self.mark_watched_next = preferences.mark_watched_next;
+            if self
+                .ipc_worker
+                .as_ref()
+                .is_some_and(IpcWorker::is_writer_alive)
+            {
+                tracing::debug!(target: "mpv.ipc", "refreshing live mpv input bindings");
+                self.install_input_bindings();
+            } else {
+                tracing::debug!(target: "mpv.ipc", "kept mpv input bindings for the next player start");
+            }
         }
     }
 
@@ -446,28 +475,8 @@ impl ControllerState {
                     tracing::debug!(target: "playback", ?command, "received playback control request");
                     self.control(&command);
                 }
-                Ok(ControllerMessage::RefreshInputBindings) => {
-                    if self
-                        .ipc_worker
-                        .as_ref()
-                        .is_some_and(IpcWorker::is_writer_alive)
-                    {
-                        tracing::debug!(target: "mpv.ipc", "refreshing live mpv input bindings");
-                        self.install_input_bindings();
-                    } else {
-                        tracing::debug!(target: "mpv.ipc", "saved mpv input bindings for the next player start");
-                    }
-                }
-                Ok(ControllerMessage::SegmentSkipConfig(config)) => {
-                    tracing::debug!(target: "playback", ?config, "updated segment skip settings");
-                    self.segment_skip_config = config;
-                    self.segment_skip_state.cancel_pending();
-                    if config.all_disabled() {
-                        self.clear_skip_segment_state();
-                    } else {
-                        self.update_skip_segment_state(self.last_state.position_ticks);
-                    }
-                    self.refresh_chapter_markers();
+                Ok(ControllerMessage::Preferences(preferences)) => {
+                    self.apply_preferences(preferences);
                 }
                 Ok(ControllerMessage::MediaSegmentsFetched {
                     playback_id,

@@ -14,7 +14,7 @@ pub use model::{
     TICKS_PER_SECOND, ToneMapping, VideoAspect, VideoFit, seconds_to_ticks,
 };
 
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 use std::time::Duration;
 
 /// Opaque native window identity owned by a playback backend.
@@ -93,9 +93,9 @@ pub trait PlayerBackend: Send {
     }
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
-    /// Re-read backend-specific hotkeys without restarting a running player.
-    fn refresh_input_bindings(&self);
-    fn set_segment_skip_config(&self, config: SegmentSkipConfig);
+    /// Replaces the player preferences the adapter applies itself, including on
+    /// a running player where the backend supports it.
+    fn set_preferences(&self, preferences: PlayerPreferences);
     fn update_playback_context(&self, context: PlaybackContext);
     fn snapshot(&self) -> PlayerSnapshot;
     fn shutdown(&self);

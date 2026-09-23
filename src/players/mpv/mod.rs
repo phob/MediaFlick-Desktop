@@ -14,7 +14,7 @@ use crate::playback::{
     NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
     PlayerSnapshot,
 };
-use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
+use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 use std::time::Duration;
 
 impl PlayerBackend for MpvController {
@@ -42,12 +42,8 @@ impl PlayerBackend for MpvController {
         self.control(command);
     }
 
-    fn refresh_input_bindings(&self) {
-        self.refresh_input_bindings();
-    }
-
-    fn set_segment_skip_config(&self, config: SegmentSkipConfig) {
-        self.set_segment_skip_config(config);
+    fn set_preferences(&self, preferences: PlayerPreferences) {
+        self.set_preferences(preferences);
     }
 
     fn update_playback_context(&self, context: PlaybackContext) {

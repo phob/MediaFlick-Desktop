@@ -26,7 +26,6 @@ use crate::library::{
     ItemPlaybackPreference, ItemQuery, ItemSort, Library, resolve_playback_preference, sync,
 };
 use crate::maintenance::player_setup;
-use crate::players::mpv::input::MpvInputBindings;
 use crate::preferences::{
     AccountKey, AppSettings, AppearanceSettingsPatch, ApplicationSettingsPatch, HomeBuiltIn,
     HomeElement, HomeElementId, HomeSettings, PlaybackSettingsPatch, PlayerSettingsPatch,
