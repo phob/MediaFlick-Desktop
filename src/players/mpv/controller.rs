@@ -12,7 +12,7 @@ use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
     NativeWindowHandle, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
-    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState,
+    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
@@ -21,7 +21,6 @@ use crate::preferences::{
 };
 
 pub use super::commands::control_command;
-use session::{is_completion_reason, normalized_stop_reason};
 
 mod playback_transition;
 mod segment_skip;
@@ -754,7 +753,7 @@ impl ControllerState {
             );
             self.playback_identity = Some(identity);
             self.reset_mpv();
-            let snapshot = self.publish_snapshot_with_stop_reason(Some("error"));
+            let snapshot = self.publish_snapshot_with_stop_reason(Some(StopReason::Error));
             self.notify_playback_stopped(snapshot);
         }
         self.report_playback_failure("mpv did not accept the video. Try playing again.");

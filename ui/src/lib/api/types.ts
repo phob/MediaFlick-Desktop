@@ -1088,6 +1088,17 @@ export interface PlaybackDiagnostics {
   frameRate: number | null
 }
 
+/** Mirrors `StopReason` (`src/playback/model.rs`). */
+export type StopReason =
+  | "eof"
+  | "watched-next"
+  | "stop"
+  | "quit"
+  | "error"
+  | "redirect"
+  | "shutdown"
+  | "unknown"
+
 /** Mirrors `PlayerSnapshot` (`src/playback/model.rs`); every field is always sent. */
 export interface PlayerState {
   active: boolean
@@ -1105,7 +1116,7 @@ export interface PlayerState {
   chapters: PlayerChapter[]
   skipSegments: PlayerSkipSegment[]
   diagnostics: PlaybackDiagnostics
-  stopReason: string | null
+  stopReason: StopReason | null
 }
 
 /** The `started: false` shape comes back when there is no next episode. */
