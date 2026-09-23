@@ -28,7 +28,8 @@ import Library from "@/routes/Library"
 import Requests from "@/routes/Requests"
 import Calendar from "@/routes/Calendar"
 import SignIn from "@/routes/SignIn"
-import Settings, { AppearanceSync } from "@/routes/Settings"
+import { AppearanceSync } from "@/components/AppearanceSync"
+import Settings from "@/routes/Settings"
 
 export default function App() {
   const { data: status, isPending } = useStatusPulse()
