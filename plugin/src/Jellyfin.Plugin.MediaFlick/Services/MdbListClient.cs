@@ -195,16 +195,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                 && values.Any(value => value.Equals("true", StringComparison.OrdinalIgnoreCase));
             if (!hasMore && parsed is JsonObject detail)
             {
-                hasMore = detail["has_more"]?.GetValue<bool>() == true
-                    || detail["pagination"]?["has_more"]?.GetValue<bool>() == true;
-                if (!hasMore
-                    && detail["pagination"] is JsonObject pagination
-                    && Integer(pagination["total"]) is { } total
-                    && Integer(pagination["offset"]) is { } offset
-                    && Integer(pagination["limit"]) is { } limit)
-                {
-                    hasMore = offset + limit < total;
-                }
+                hasMore = BodyHasMore(detail);
             }
             ReportStatus(response.StatusCode, retryAt, authenticatesKey);
             return new MdbListResponse(response.StatusCode, parsed, quota, retryAt, hasMore);
@@ -279,6 +270,26 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             && long.TryParse(values.FirstOrDefault(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
                 ? parsed
                 : null;
+
+    /// <summary>
+    /// Reads MDBList's body pagination markers. Wrongly typed markers are
+    /// treated as absent rather than failing the list request.
+    /// </summary>
+    internal static bool BodyHasMore(JsonObject detail)
+    {
+        var pagination = detail["pagination"] as JsonObject;
+        if (JsonRead.Flag(detail["has_more"]) == true
+            || JsonRead.Flag(pagination?["has_more"]) == true)
+        {
+            return true;
+        }
+
+        return pagination is not null
+            && Integer(pagination["total"]) is { } total
+            && Integer(pagination["offset"]) is { } offset
+            && Integer(pagination["limit"]) is { } limit
+            && offset + limit < total;
+    }
 
     private static long? Integer(JsonNode? node)
         => node is JsonValue value && value.TryGetValue<long>(out var number)
