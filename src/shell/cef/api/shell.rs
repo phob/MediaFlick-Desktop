@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["shell", "window", "ready"] if request.is("POST") => shell_window_ready(services),
         ["shell", "file-picker"] if request.is("POST") => shell_file_picker(services, request),
@@ -15,49 +15,47 @@ pub(super) fn route(
     Some(response)
 }
 
-fn shell_window_ready(services: &Arc<Services>) -> ApiResponse {
+fn shell_window_ready(services: &Arc<Services>) -> Handled {
     services.sync.release_startup_hold();
     match services.shell.request(ShellRequest::MainWindowReady) {
-        Ok(()) => ApiResponse::ok(json!({ "queued": true })),
-        Err(error) => ApiResponse::error(503, error),
+        Ok(()) => Ok(ApiResponse::ok(json!({ "queued": true }))),
+        Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let request_id = match shell_request_id(request) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
+fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let request_id = shell_request_id(request)?;
     match services.shell.request(ShellRequest::FilePicker {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => ApiResponse::ok(json!({ "requestId": request_id, "queued": true })),
-        Err(error) => ApiResponse::error(503, error),
+        Ok(()) => Ok(ApiResponse::ok(
+            json!({ "requestId": request_id, "queued": true }),
+        )),
+        Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     if !player_setup::supported() {
-        return ApiResponse::error(
+        return Err(ApiResponse::error(
             409,
             "automatic mpv installation is not available on this platform",
-        );
+        ));
     }
-    let request_id = match shell_request_id(request) {
-        Ok(id) => id,
-        Err(response) => return response,
-    };
+    let request_id = shell_request_id(request)?;
     match services.shell.request(ShellRequest::InstallMpv {
         request_id: request_id.clone(),
     }) {
-        Ok(()) => ApiResponse::ok(json!({ "requestId": request_id, "queued": true })),
-        Err(error) => ApiResponse::error(503, error),
+        Ok(()) => Ok(ApiResponse::ok(
+            json!({ "requestId": request_id, "queued": true }),
+        )),
+        Err(error) => Err(ApiResponse::error(503, error)),
     }
 }
 
-fn shell_mpv_help() -> ApiResponse {
+fn shell_mpv_help() -> Handled {
     super::super::bridge::open_external_link(player_setup::MPV_HELP_URL);
-    ApiResponse::ok(json!({ "opened": true }))
+    Ok(ApiResponse::ok(json!({ "opened": true })))
 }
 
 #[derive(Deserialize)]

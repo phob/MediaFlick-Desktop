@@ -53,11 +53,8 @@ impl ProfileDraft {
     }
 }
 
-pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> Handled {
+    let account = active_account(services)?;
     let readiness = services.companion.collection_readiness(force_probe);
     let repository = SnapshotRepository::new(&services.library);
     let has_results = repository.has_account_results(&account).unwrap_or(false);
@@ -66,7 +63,7 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiRespon
         .effective_mode(&account, &readiness, has_results);
     let settings = services.collections.account(&account);
     let recovery = services.collections.take_recovery_notice();
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "effectiveMode": effective_mode,
         "mediaFlickAvailable": readiness.tmdb || !settings.profiles.is_empty() || has_results,
         "modeSelection": settings.mode_selection,
@@ -76,7 +73,7 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiRespon
             "restoredBackup": notice.restored_backup,
         })),
         "readiness": readiness,
-    }))
+    })))
 }
 
 #[derive(Deserialize)]
@@ -92,15 +89,9 @@ struct ReorderBody {
     profile_ids: Vec<String>,
 }
 
-pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match request.body::<SettingsPatch>() {
-        Ok(patch) => patch,
-        Err(response) => return response,
-    };
-    let scope = match active_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let patch = request.body::<SettingsPatch>()?;
+    let scope = active_scope(services)?;
     let account = scope.account().clone();
     let updates_mode = patch.mode_selection.is_some();
     let mode = patch.mode_selection.unwrap_or_default();
@@ -111,7 +102,10 @@ pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> 
             .unwrap_or(false);
         let has_configuration = !services.collections.account(&account).profiles.is_empty();
         if !readiness.tmdb && !has_configuration && !has_results {
-            return ApiResponse::error(409, "MediaFlick collections are unavailable");
+            return Err(ApiResponse::error(
+                409,
+                "MediaFlick collections are unavailable",
+            ));
         }
     }
     let include_unreleased = patch.include_unreleased;
@@ -135,13 +129,13 @@ pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> 
             }
             Ok(None)
         });
-    match mutation {
-        Err(response) | Ok(Some(response)) => response,
-        Ok(None) => settings(services, false),
+    match mutation? {
+        Some(failure) => Err(failure),
+        None => settings(services, false),
     }
 }
 
-pub(super) fn templates(services: &Arc<Services>) -> ApiResponse {
+pub(super) fn templates(services: &Arc<Services>) -> Handled {
     let readiness = services.companion.collection_readiness(false);
     let templates = crate::collections::templates::catalog()
         .into_iter()
@@ -153,37 +147,34 @@ pub(super) fn templates(services: &Arc<Services>) -> ApiResponse {
             json!({ "template": template, "available": available })
         })
         .collect::<Vec<_>>();
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "categories": crate::collections::templates::TemplateCategory::ORDER,
         "templates": templates,
         "readiness": readiness,
-    }))
+    })))
 }
 
-pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
-    let draft = match request.body::<ProfileDraft>() {
-        Ok(draft) => draft,
-        Err(response) => return response,
-    };
+pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let account = active_account(services)?;
+    let draft = request.body::<ProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
-        Err(error) => return configuration_failure(&error),
+        Err(error) => return Err(configuration_failure(&error)),
     };
     crate::collections::scheduler::hydrate_identity_map(services);
     if services.session.user_restricted() {
         if !crate::library::sync::ownership_available(&services.library) {
-            return ApiResponse::error(409, "Preview is unavailable until the library is ready");
+            return Err(ApiResponse::error(
+                409,
+                "Preview is unavailable until the library is ready",
+            ));
         }
         let result = match services
             .companion
             .refresh_collection(&provider_request(services, &profile))
         {
             Ok(result) => result,
-            Err(error) => return ApiResponse::from_api_error(&error),
+            Err(error) => return Err(ApiResponse::from_api_error(&error)),
         };
         let classified = match crate::collections::matching::classify(
             &services.library,
@@ -195,7 +186,7 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
             },
         ) {
             Ok(classified) => classified,
-            Err(error) => return storage_failure(&error),
+            Err(error) => return Err(storage_failure(&error)),
         };
         let mut items = classified
             .owned
@@ -212,85 +203,65 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
         .unwrap_or(u32::MAX);
         let series = total.saturating_sub(movies);
         items.truncate(24);
-        return ApiResponse::ok(json!(crate::collections::ProviderResult {
+        return Ok(ApiResponse::ok(json!(crate::collections::ProviderResult {
             items,
             total,
             movies,
             series,
             source_identity: result.source_identity,
-        }));
+        })));
     }
     match services
         .companion
         .preview_collection(&provider_request(services, &profile))
     {
-        Ok(result) => ApiResponse::ok(json!(result)),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(result) => Ok(ApiResponse::ok(json!(result))),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-pub(super) fn list(services: &Arc<Services>) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn list(services: &Arc<Services>) -> Handled {
+    let account = active_account(services)?;
     let settings = services.collections.account(&account);
     let errors = services.collections.profile_errors(&account);
-    ApiResponse::ok(json!({ "profiles": settings.profiles, "errors": errors }))
+    Ok(ApiResponse::ok(
+        json!({ "profiles": settings.profiles, "errors": errors }),
+    ))
 }
 
-pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn read(services: &Arc<Services>, profile_id: &str) -> Handled {
+    let account = active_account(services)?;
     match profile(services, &account, profile_id) {
-        Some(profile) => ApiResponse::ok(json!(profile)),
-        None => ApiResponse::error(404, "that collection does not exist"),
+        Some(profile) => Ok(ApiResponse::ok(json!(profile))),
+        None => Err(ApiResponse::error(404, "that collection does not exist")),
     }
 }
 
-pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
-    let draft = match request.body::<ProfileDraft>() {
-        Ok(draft) => draft,
-        Err(response) => return response,
-    };
+pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let account = active_account(services)?;
+    let draft = request.body::<ProfileDraft>()?;
     let profile = match draft.into_profile(allocate_profile_id(), allocate_revision_id()) {
         Ok(profile) => profile,
-        Err(error) => return configuration_failure(&error),
+        Err(error) => return Err(configuration_failure(&error)),
     };
     let staged_artwork = profile.custom_poster_id.clone();
     let response = commit_result_profile(services, &account, profile, true);
     if response.status >= 400 {
         remove_unreferenced_artwork(services, &account, staged_artwork.as_deref());
     }
-    response
+    Ok(response)
 }
 
-pub(super) fn edit(
-    services: &Arc<Services>,
-    profile_id: &str,
-    request: &ApiRequest,
-) -> ApiResponse {
-    let scope = match active_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+pub(super) fn edit(services: &Arc<Services>, profile_id: &str, request: &ApiRequest) -> Handled {
+    let scope = active_scope(services)?;
     let account = scope.account().clone();
     let Some(previous) = profile(services, &account, profile_id) else {
-        return ApiResponse::error(404, "that collection does not exist");
+        return Err(ApiResponse::error(404, "that collection does not exist"));
     };
-    let draft = match request.body::<ProfileDraft>() {
-        Ok(draft) => draft,
-        Err(response) => return response,
-    };
+    let draft = request.body::<ProfileDraft>()?;
     let next = match draft.into_profile(previous.id.clone(), previous.revision.clone()) {
         Ok(profile) => profile,
-        Err(error) => return configuration_failure(&error),
+        Err(error) => return Err(configuration_failure(&error)),
     };
     let staged_artwork = (next.custom_poster_id != previous.custom_poster_id)
         .then(|| next.custom_poster_id.clone())
@@ -333,9 +304,9 @@ pub(super) fn edit(
             .accounts
             .forget_home_collection(&account, profile_id)
     {
-        return configuration_failure(&error);
+        return Err(configuration_failure(&error));
     }
-    response
+    Ok(response)
 }
 
 fn update_next_due(services: &Services, account: &AccountKey, profile: &CollectionProfile) {
@@ -351,25 +322,19 @@ fn update_next_due(services: &Services, account: &AccountKey, profile: &Collecti
     }
 }
 
-pub(super) fn refresh(services: &Arc<Services>, profile_id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn refresh(services: &Arc<Services>, profile_id: &str) -> Handled {
+    let account = active_account(services)?;
     let Some(profile) = profile(services, &account, profile_id) else {
-        return ApiResponse::error(404, "that collection does not exist");
+        return Err(ApiResponse::error(404, "that collection does not exist"));
     };
     if let Err(error) = profile.validate() {
-        return ApiResponse::error(409, error);
+        return Err(ApiResponse::error(409, error));
     }
-    commit_result_profile(services, &account, profile, false)
+    Ok(commit_result_profile(services, &account, profile, false))
 }
 
-pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> ApiResponse {
-    let scope = match active_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> Handled {
+    let scope = active_scope(services)?;
     let account = scope.account().clone();
     services
         .session
@@ -389,18 +354,11 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> ApiResponse 
                 Err(error) => configuration_failure(&error),
             })
         })
-        .unwrap_or_else(|response| response)
 }
 
-pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let ids = match request.body::<ReorderBody>() {
-        Ok(body) => body.profile_ids,
-        Err(response) => return response,
-    };
-    let scope = match active_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let ids = request.body::<ReorderBody>()?.profile_ids;
+    let scope = active_scope(services)?;
     let account = scope.account().clone();
     services
         .session
@@ -419,7 +377,6 @@ pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
                 },
             )
         })
-        .unwrap_or_else(|response| response)
 }
 
 fn commit_result_profile(
@@ -525,13 +482,6 @@ fn commit_result_profile(
             ))
         })
         .unwrap_or_else(|response| response)
-}
-
-fn stale_account_response() -> ApiResponse {
-    ApiResponse::error(
-        409,
-        "the Jellyfin account changed while the request was running",
-    )
 }
 
 fn save_failed_refresh(
