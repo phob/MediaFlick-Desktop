@@ -72,3 +72,17 @@ test("the configured watched-next command uses Command and ignores the old W bin
   fireEvent.keyDown(window, {key:"w", metaKey:true})
   await waitFor(() => expect(send).toHaveBeenCalledWith({command:"mark-watched-next"}))
 })
+
+test("control tooltips name the saved bindings and drop cleared ones", () => {
+  const settings = clientSettingsFixture()
+  settings.client.player.comfort = {...DEFAULT_COMFORT, seekBackKey:"h", pauseKey:"", muteKey:"Ctrl+Shift+m", fullscreenKey:""}
+  const player: PlayerState = playerSnapshot({active:true, positionMs:10000, durationMs:120000})
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.settings, settings)
+  client.setQueryData(queryKeys.playerState, player)
+  render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
+  expect(screen.getByRole("button", {name:"Back 10 seconds"}).getAttribute("title")).toBe("Back 10 seconds (← or H)")
+  expect(screen.getByRole("button", {name:"Pause"}).getAttribute("title")).toBe("Pause (Space)")
+  expect(screen.getByRole("button", {name:"Mute"}).getAttribute("title")).toBe("Mute (Ctrl + Shift + M)")
+  expect(screen.getByRole("button", {name:"Toggle fullscreen"}).getAttribute("title")).toBe("Toggle fullscreen")
+})
