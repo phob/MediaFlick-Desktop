@@ -69,9 +69,9 @@ public sealed class SeerrGateway
             null,
             seerrUserId,
             cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-        var permissions = ULongValue(user, "permissions") ?? 0;
-        var movie4k = BoolValue(settings, "movie4kEnabled");
-        var tv4k = BoolValue(settings, "series4kEnabled");
+        var permissions = JsonRead.UInt64(user, "permissions") ?? 0;
+        var movie4k = JsonRead.Bool(settings, "movie4kEnabled") == true;
+        var tv4k = JsonRead.Bool(settings, "series4kEnabled") == true;
 
         return new JsonObject
         {
@@ -84,7 +84,7 @@ public sealed class SeerrGateway
             {
                 ["movie4kEnabled"] = movie4k,
                 ["series4kEnabled"] = tv4k,
-                ["partialRequestsEnabled"] = BoolValue(settings, "partialRequestsEnabled")
+                ["partialRequestsEnabled"] = JsonRead.Bool(settings, "partialRequestsEnabled") == true
             },
             ["user"] = new JsonObject
             {
@@ -136,7 +136,7 @@ public sealed class SeerrGateway
             user,
             cancellationToken).ConfigureAwait(false);
         var credits = response as JsonObject ?? new JsonObject();
-        var responseId = IntValue(credits, "id");
+        var responseId = JsonRead.Int32(credits, "id");
         if (responseId is > 0 && responseId != tmdbId)
         {
             throw new GatewayException(
@@ -355,11 +355,11 @@ public sealed class SeerrGateway
         var destinations = new List<JsonNode>();
         foreach (var server in servers
             .OfType<JsonObject>()
-            .Where(server => BoolValue(server, "is4k") == is4k)
-            .OrderByDescending(server => BoolValue(server, "isDefault"))
-            .ThenBy(server => StringValue(server, "name"), StringComparer.OrdinalIgnoreCase))
+            .Where(server => (JsonRead.Bool(server, "is4k") ?? false) == is4k)
+            .OrderByDescending(server => JsonRead.Bool(server, "isDefault") == true)
+            .ThenBy(server => JsonRead.String(server, "name"), StringComparer.OrdinalIgnoreCase))
         {
-            var serverId = IntValue(server, "id");
+            var serverId = JsonRead.Int32(server, "id");
             if (serverId is null or < 0)
             {
                 continue;
@@ -462,9 +462,9 @@ public sealed class SeerrGateway
                 .ToArray());
         return new JsonObject
         {
-            ["page"] = IntValue(pageInfo, "page") ?? 1,
-            ["totalPages"] = IntValue(pageInfo, "pages") ?? 1,
-            ["totalResults"] = IntValue(pageInfo, "results") ?? results.Count,
+            ["page"] = JsonRead.Int32(pageInfo, "page") ?? 1,
+            ["totalPages"] = JsonRead.Int32(pageInfo, "pages") ?? 1,
+            ["totalResults"] = JsonRead.Int32(pageInfo, "results") ?? results.Count,
             ["results"] = results
         };
     }
@@ -539,9 +539,9 @@ public sealed class SeerrGateway
             var users = response["results"] as JsonArray ?? new JsonArray();
             foreach (var user in users.OfType<JsonObject>())
             {
-                if (Guid.TryParse(StringValue(user, "jellyfinUserId"), out var candidate)
+                if (Guid.TryParse(JsonRead.String(user, "jellyfinUserId"), out var candidate)
                     && candidate == jellyfinUserId
-                    && IntValue(user, "id") is { } id)
+                    && JsonRead.Int32(user, "id") is { } id)
                 {
                     return id;
                 }
@@ -581,7 +581,7 @@ public sealed class SeerrGateway
             null,
             seerrUserId,
             cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-        var permissions = ULongValue(user, "permissions") ?? 0;
+        var permissions = JsonRead.UInt64(user, "permissions") ?? 0;
         if (!HasPermission(permissions, RequestAdvanced))
         {
             throw new GatewayException(
@@ -602,14 +602,14 @@ public sealed class SeerrGateway
         var results = new JsonArray(
             (page["results"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
-                .Where(static result => StringValue(result, "mediaType") is "movie" or "tv")
+                .Where(static result => JsonRead.String(result, "mediaType") is "movie" or "tv")
                 .Select(ShapeSearchResult)
                 .ToArray());
         return new JsonObject
         {
-            ["page"] = IntValue(page, "page") ?? 1,
-            ["totalPages"] = IntValue(page, "totalPages") ?? 1,
-            ["totalResults"] = IntValue(page, "totalResults") ?? results.Count,
+            ["page"] = JsonRead.Int32(page, "page") ?? 1,
+            ["totalPages"] = JsonRead.Int32(page, "totalPages") ?? 1,
+            ["totalResults"] = JsonRead.Int32(page, "totalResults") ?? results.Count,
             ["results"] = results
         };
     }
@@ -621,15 +621,15 @@ public sealed class SeerrGateway
             (credits["cast"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
                 .Where(static credit =>
-                    StringValue(credit, "mediaType") is "movie" or "tv"
-                    && (IntValue(credit, "id") ?? 0) > 0
-                    && !BoolValue(credit, "adult")
+                    JsonRead.String(credit, "mediaType") is "movie" or "tv"
+                    && (JsonRead.Int32(credit, "id") ?? 0) > 0
+                    && JsonRead.Flag(credit["adult"]) != true
                     && !string.Equals(
-                        StringValue(credit, "character")?.Trim(),
+                        JsonRead.String(credit, "character")?.Trim(),
                         "Thanks",
                         StringComparison.OrdinalIgnoreCase))
                 .GroupBy(
-                    static credit => $"{StringValue(credit, "mediaType")}:{IntValue(credit, "id")}",
+                    static credit => $"{JsonRead.String(credit, "mediaType")}:{JsonRead.Int32(credit, "id")}",
                     StringComparer.Ordinal)
                 // Preserve request state when only a duplicate character row
                 // happens to carry Seerr's mediaInfo object.
@@ -651,12 +651,12 @@ public sealed class SeerrGateway
             (node as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
                 .Where(static genre =>
-                    (IntValue(genre, "id") ?? 0) > 0
-                    && !string.IsNullOrWhiteSpace(StringValue(genre, "name")))
+                    (JsonRead.Int32(genre, "id") ?? 0) > 0
+                    && !string.IsNullOrWhiteSpace(JsonRead.String(genre, "name")))
                 .Select(genre => (JsonNode)new JsonObject
                 {
-                    ["id"] = IntValue(genre, "id"),
-                    ["name"] = StringValue(genre, "name"),
+                    ["id"] = JsonRead.Int32(genre, "id"),
+                    ["name"] = JsonRead.String(genre, "name"),
                     ["backdrops"] = new JsonArray(
                         (genre["backdrops"] as JsonArray ?? new JsonArray())
                             .Select(Clone)
@@ -668,47 +668,47 @@ public sealed class SeerrGateway
     private static JsonNode ShapeSearchResult(JsonObject result)
     {
         var mediaInfo = result["mediaInfo"] as JsonObject;
-        var mediaType = StringValue(result, "mediaType") ?? string.Empty;
+        var mediaType = JsonRead.String(result, "mediaType") ?? string.Empty;
         return new JsonObject
         {
             ["mediaType"] = mediaType,
-            ["tmdbId"] = IntValue(result, "id"),
-            ["title"] = StringValue(result, mediaType == "movie" ? "title" : "name") ?? "Untitled",
-            ["year"] = YearOf(StringValue(
+            ["tmdbId"] = JsonRead.Int32(result, "id"),
+            ["title"] = JsonRead.String(result, mediaType == "movie" ? "title" : "name") ?? "Untitled",
+            ["year"] = JsonRead.Year(JsonRead.String(
                 result,
                 mediaType == "movie" ? "releaseDate" : "firstAirDate")),
             ["overview"] = Clone(result["overview"]),
             ["posterPath"] = Clone(result["posterPath"]),
             ["backdropPath"] = Clone(result["backdropPath"]),
             ["voteAverage"] = Clone(result["voteAverage"]),
-            ["status"] = StatusName(IntValue(mediaInfo, "status") ?? 1),
-            ["status4k"] = StatusName(IntValue(mediaInfo, "status4k") ?? 1),
+            ["status"] = StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
+            ["status4k"] = StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
             ["libraryItemId"] = null
         };
     }
 
     internal static JsonNode ShapeRequestDestination(JsonObject server, JsonObject detail)
     {
-        var activeProfile = IntValue(server, "activeProfileId") ?? 0;
+        var activeProfile = JsonRead.Int32(server, "activeProfileId") ?? 0;
         var profiles = new JsonArray(
             (detail["profiles"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
                 .Where(static profile =>
-                    (IntValue(profile, "id") ?? 0) > 0
-                    && !string.IsNullOrWhiteSpace(StringValue(profile, "name")))
-                .OrderBy(profile => StringValue(profile, "name"), StringComparer.OrdinalIgnoreCase)
+                    (JsonRead.Int32(profile, "id") ?? 0) > 0
+                    && !string.IsNullOrWhiteSpace(JsonRead.String(profile, "name")))
+                .OrderBy(profile => JsonRead.String(profile, "name"), StringComparer.OrdinalIgnoreCase)
                 .Select(profile => (JsonNode)new JsonObject
                 {
-                    ["id"] = IntValue(profile, "id"),
-                    ["name"] = StringValue(profile, "name"),
-                    ["isDefault"] = IntValue(profile, "id") == activeProfile
+                    ["id"] = JsonRead.Int32(profile, "id"),
+                    ["name"] = JsonRead.String(profile, "name"),
+                    ["isDefault"] = JsonRead.Int32(profile, "id") == activeProfile
                 })
                 .ToArray());
         return new JsonObject
         {
-            ["id"] = IntValue(server, "id"),
-            ["name"] = StringValue(server, "name") ?? "Download service",
-            ["isDefault"] = BoolValue(server, "isDefault"),
+            ["id"] = JsonRead.Int32(server, "id"),
+            ["name"] = JsonRead.String(server, "name") ?? "Download service",
+            ["isDefault"] = JsonRead.Bool(server, "isDefault") == true,
             ["profiles"] = profiles
         };
     }
@@ -719,30 +719,30 @@ public sealed class SeerrGateway
         var genres = new JsonArray(
             (detail["genres"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
-                .Select(genre => JsonValue.Create(StringValue(genre, "name") ?? string.Empty))
+                .Select(genre => JsonValue.Create(JsonRead.String(genre, "name") ?? string.Empty))
                 .ToArray());
         var seasons = new JsonArray(
             (detail["seasons"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
-                .Where(static season => (IntValue(season, "seasonNumber") ?? 0) > 0)
+                .Where(static season => (JsonRead.Int32(season, "seasonNumber") ?? 0) > 0)
                 .Select(season =>
                 {
-                    var number = IntValue(season, "seasonNumber") ?? 0;
+                    var number = JsonRead.Int32(season, "seasonNumber") ?? 0;
                     var known = (mediaInfo?["seasons"] as JsonArray ?? new JsonArray())
                         .OfType<JsonObject>()
-                        .FirstOrDefault(item => IntValue(item, "seasonNumber") == number);
+                        .FirstOrDefault(item => JsonRead.Int32(item, "seasonNumber") == number);
                     return (JsonNode)new JsonObject
                     {
                         ["seasonNumber"] = number,
                         ["name"] = Clone(season["name"]),
-                        ["episodeCount"] = IntValue(season, "episodeCount") ?? 0,
+                        ["episodeCount"] = JsonRead.Int32(season, "episodeCount") ?? 0,
                         ["airDate"] = Clone(season["airDate"]),
-                        ["status"] = StatusName(IntValue(known, "status") ?? 1),
-                        ["status4k"] = StatusName(IntValue(known, "status4k") ?? 1)
+                        ["status"] = StatusName(JsonRead.Int32(known, "status") ?? 1),
+                        ["status4k"] = StatusName(JsonRead.Int32(known, "status4k") ?? 1)
                     };
                 })
                 .ToArray());
-        var runtime = IntValue(detail, "runtime")
+        var runtime = JsonRead.Int32(detail, "runtime")
             ?? (detail["episodeRunTime"] as JsonArray)?
                 .Select(static item => item is JsonValue value && value.TryGetValue<int>(out var minutes)
                     ? minutes
@@ -753,11 +753,11 @@ public sealed class SeerrGateway
         return new JsonObject
         {
             ["mediaType"] = mediaType,
-            ["tmdbId"] = IntValue(detail, "id"),
-            ["title"] = StringValue(detail, mediaType == "movie" ? "title" : "name") ?? "Untitled",
+            ["tmdbId"] = JsonRead.Int32(detail, "id"),
+            ["title"] = JsonRead.String(detail, mediaType == "movie" ? "title" : "name") ?? "Untitled",
             ["originalTitle"] = Clone(
                 detail[mediaType == "movie" ? "originalTitle" : "originalName"]),
-            ["year"] = YearOf(StringValue(
+            ["year"] = JsonRead.Year(JsonRead.String(
                 detail,
                 mediaType == "movie" ? "releaseDate" : "firstAirDate")),
             ["overview"] = Clone(detail["overview"]),
@@ -766,8 +766,8 @@ public sealed class SeerrGateway
             ["backdropPath"] = Clone(detail["backdropPath"]),
             ["voteAverage"] = Clone(detail["voteAverage"]),
             ["voteCount"] = Clone(detail["voteCount"]),
-            ["status"] = StatusName(IntValue(mediaInfo, "status") ?? 1),
-            ["status4k"] = StatusName(IntValue(mediaInfo, "status4k") ?? 1),
+            ["status"] = StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
+            ["status4k"] = StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
             ["libraryItemId"] = null,
             ["runtimeMinutes"] = runtime,
             ["genres"] = genres,
@@ -810,50 +810,18 @@ public sealed class SeerrGateway
 
     private static JsonNode? PositiveInt(JsonObject? value, string name)
     {
-        var number = IntValue(value, name);
+        var number = JsonRead.Int32(value, name);
         return number is > 0 ? JsonValue.Create(number.Value) : null;
     }
 
     private static string? ImdbTitleId(JsonObject detail, JsonObject? externalIds)
-    {
-        foreach (var candidate in new[]
-        {
-            StringValue(externalIds, "imdbId"),
-            StringValue(detail, "imdbId")
-        })
-        {
-            if (IsImdbTitleId(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static bool IsImdbTitleId(string? value)
-    {
-        if (value is not { Length: > 2 and <= 32 }
-            || !value.StartsWith("tt", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        for (var index = 2; index < value.Length; index++)
-        {
-            if (value[index] is < '0' or > '9')
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+        => ImdbIds.Normalize(JsonRead.String(externalIds, "imdbId"))
+            ?? ImdbIds.Normalize(JsonRead.String(detail, "imdbId"));
 
     private static IEnumerable<string> Names(JsonNode? node)
         => (node as JsonArray ?? new JsonArray())
             .OfType<JsonObject>()
-            .Select(value => StringValue(value, "name")?.Trim())
+            .Select(value => JsonRead.String(value, "name")?.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
 
@@ -866,9 +834,9 @@ public sealed class SeerrGateway
         return (credits?["crew"] as JsonArray ?? new JsonArray())
             .OfType<JsonObject>()
             .Where(person =>
-                (job is null || StringValue(person, "job") == job)
-                && (department is null || StringValue(person, "department") == department))
-            .Select(person => StringValue(person, "name")?.Trim())
+                (job is null || JsonRead.String(person, "job") == job)
+                && (department is null || JsonRead.String(person, "department") == department))
+            .Select(person => JsonRead.String(person, "name")?.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
     }
@@ -886,12 +854,12 @@ public sealed class SeerrGateway
             (node as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
                 .Where(value =>
-                    !string.IsNullOrWhiteSpace(StringValue(value, codeName))
-                    || !string.IsNullOrWhiteSpace(StringValue(value, "name")))
+                    !string.IsNullOrWhiteSpace(JsonRead.String(value, codeName))
+                    || !string.IsNullOrWhiteSpace(JsonRead.String(value, "name")))
                 .Select(value => (JsonNode)new JsonObject
                 {
-                    ["code"] = StringValue(value, codeName),
-                    ["name"] = StringValue(value, "name")
+                    ["code"] = JsonRead.String(value, codeName),
+                    ["name"] = JsonRead.String(value, "name")
                 })
                 .ToArray());
 
@@ -900,13 +868,13 @@ public sealed class SeerrGateway
             (node as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
                 .Where(value =>
-                    !string.IsNullOrWhiteSpace(StringValue(value, "iso_639_1"))
-                    || !string.IsNullOrWhiteSpace(StringValue(value, "name")))
+                    !string.IsNullOrWhiteSpace(JsonRead.String(value, "iso_639_1"))
+                    || !string.IsNullOrWhiteSpace(JsonRead.String(value, "name")))
                 .Select(value => (JsonNode)new JsonObject
                 {
-                    ["code"] = StringValue(value, "iso_639_1"),
-                    ["name"] = StringValue(value, "englishName")
-                        ?? StringValue(value, "name")
+                    ["code"] = JsonRead.String(value, "iso_639_1"),
+                    ["name"] = JsonRead.String(value, "englishName")
+                        ?? JsonRead.String(value, "name")
                 })
                 .ToArray());
 
@@ -916,13 +884,13 @@ public sealed class SeerrGateway
         return new JsonArray(
             (credits?["cast"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>()
-                .Where(static person => !string.IsNullOrWhiteSpace(StringValue(person, "name")))
+                .Where(static person => !string.IsNullOrWhiteSpace(JsonRead.String(person, "name")))
                 .Take(20)
                 .Select(person => (JsonNode)new JsonObject
                 {
-                    ["id"] = IntValue(person, "id"),
-                    ["name"] = StringValue(person, "name"),
-                    ["character"] = StringValue(person, "character"),
+                    ["id"] = JsonRead.Int32(person, "id"),
+                    ["name"] = JsonRead.String(person, "name"),
+                    ["character"] = JsonRead.String(person, "character"),
                     ["profilePath"] = Clone(person["profilePath"])
                 })
                 .ToArray());
@@ -933,17 +901,17 @@ public sealed class SeerrGateway
         var trailer = (detail["relatedVideos"] as JsonArray ?? new JsonArray())
             .OfType<JsonObject>()
             .Where(static video =>
-                StringValue(video, "site") == "YouTube"
-                && StringValue(video, "type") == "Trailer"
-                && IsYoutubeKey(StringValue(video, "key")))
-            .OrderByDescending(static video => IntValue(video, "size") ?? 0)
+                JsonRead.String(video, "site") == "YouTube"
+                && JsonRead.String(video, "type") == "Trailer"
+                && IsYoutubeKey(JsonRead.String(video, "key")))
+            .OrderByDescending(static video => JsonRead.Int32(video, "size") ?? 0)
             .FirstOrDefault();
         return trailer is null
             ? null
             : new JsonObject
             {
-                ["name"] = StringValue(trailer, "name") ?? "Trailer",
-                ["key"] = StringValue(trailer, "key")
+                ["name"] = JsonRead.String(trailer, "name") ?? "Trailer",
+                ["key"] = JsonRead.String(trailer, "key")
             };
     }
 
@@ -959,7 +927,7 @@ public sealed class SeerrGateway
         var releases = new List<JsonNode>();
         foreach (var country in results.OfType<JsonObject>())
         {
-            var region = StringValue(country, "iso_3166_1");
+            var region = JsonRead.String(country, "iso_3166_1");
             if (string.IsNullOrWhiteSpace(region))
             {
                 continue;
@@ -967,7 +935,7 @@ public sealed class SeerrGateway
             foreach (var release in (country["release_dates"] as JsonArray ?? new JsonArray())
                 .OfType<JsonObject>())
             {
-                var type = (IntValue(release, "type") ?? 0) switch
+                var type = (JsonRead.Int32(release, "type") ?? 0) switch
                 {
                     1 => "premiere",
                     2 => "limited-cinema",
@@ -977,7 +945,7 @@ public sealed class SeerrGateway
                     6 => "tv",
                     _ => null
                 };
-                var date = StringValue(release, "release_date");
+                var date = JsonRead.String(release, "release_date");
                 if (type is null || string.IsNullOrWhiteSpace(date))
                 {
                     continue;
@@ -987,7 +955,7 @@ public sealed class SeerrGateway
                     ["region"] = region,
                     ["type"] = type,
                     ["date"] = date,
-                    ["certification"] = StringValue(release, "certification")
+                    ["certification"] = JsonRead.String(release, "certification")
                 });
             }
         }
@@ -1002,12 +970,12 @@ public sealed class SeerrGateway
             results
                 .OfType<JsonObject>()
                 .Where(static rating =>
-                    !string.IsNullOrWhiteSpace(StringValue(rating, "iso_3166_1"))
-                    && !string.IsNullOrWhiteSpace(StringValue(rating, "rating")))
+                    !string.IsNullOrWhiteSpace(JsonRead.String(rating, "iso_3166_1"))
+                    && !string.IsNullOrWhiteSpace(JsonRead.String(rating, "rating")))
                 .Select(rating => (JsonNode)new JsonObject
                 {
-                    ["region"] = StringValue(rating, "iso_3166_1"),
-                    ["rating"] = StringValue(rating, "rating")
+                    ["region"] = JsonRead.String(rating, "iso_3166_1"),
+                    ["rating"] = JsonRead.String(rating, "rating")
                 })
                 .ToArray());
     }
@@ -1019,35 +987,35 @@ public sealed class SeerrGateway
             ? null
             : new JsonObject
             {
-                ["name"] = StringValue(episode, "name"),
+                ["name"] = JsonRead.String(episode, "name"),
                 ["airDate"] = Clone(episode["airDate"]),
-                ["seasonNumber"] = IntValue(episode, "seasonNumber"),
-                ["episodeNumber"] = IntValue(episode, "episodeNumber")
+                ["seasonNumber"] = JsonRead.Int32(episode, "seasonNumber"),
+                ["episodeNumber"] = JsonRead.Int32(episode, "episodeNumber")
             };
     }
 
     private static JsonNode ShapeRequest(JsonObject request)
     {
         var media = request["media"] as JsonObject ?? new JsonObject();
-        var is4k = BoolValue(request, "is4k");
-        var mediaType = StringValue(request, "type")
-            ?? StringValue(media, "mediaType")
+        var is4k = JsonRead.Bool(request, "is4k") == true;
+        var mediaType = JsonRead.String(request, "type")
+            ?? JsonRead.String(media, "mediaType")
             ?? string.Empty;
         return new JsonObject
         {
-            ["id"] = IntValue(request, "id"),
-            ["status"] = RequestStatusName(IntValue(request, "status") ?? 0),
+            ["id"] = JsonRead.Int32(request, "id"),
+            ["status"] = RequestStatusName(JsonRead.Int32(request, "status") ?? 0),
             ["mediaType"] = mediaType,
-            ["tmdbId"] = IntValue(media, "tmdbId"),
+            ["tmdbId"] = JsonRead.Int32(media, "tmdbId"),
             ["is4k"] = is4k,
             ["createdAt"] = Clone(request["createdAt"]),
             ["updatedAt"] = Clone(request["updatedAt"]),
             ["mediaStatus"] = StatusName(
-                IntValue(media, is4k ? "status4k" : "status") ?? 1),
+                JsonRead.Int32(media, is4k ? "status4k" : "status") ?? 1),
             ["seasons"] = new JsonArray(
                 (request["seasons"] as JsonArray ?? new JsonArray())
                     .OfType<JsonObject>()
-                    .Select(season => JsonValue.Create(IntValue(season, "seasonNumber") ?? 0))
+                    .Select(season => JsonValue.Create(JsonRead.Int32(season, "seasonNumber") ?? 0))
                     .ToArray()),
             ["libraryItemId"] = null
         };
@@ -1087,10 +1055,10 @@ public sealed class SeerrGateway
     private static string PreferredUserName(JsonObject user)
         => new[]
         {
-            StringValue(user, "displayName"),
-            StringValue(user, "username"),
-            StringValue(user, "jellyfinUsername"),
-            StringValue(user, "email")
+            JsonRead.String(user, "displayName"),
+            JsonRead.String(user, "username"),
+            JsonRead.String(user, "jellyfinUsername"),
+            JsonRead.String(user, "email")
         }.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value)) ?? "Seerr user";
 
     private static string ValidateMediaType(string mediaType)
@@ -1129,30 +1097,6 @@ public sealed class SeerrGateway
             4 => "failed",
             _ => "unknown"
         };
-
-    private static int? YearOf(string? date)
-        => date is { Length: >= 4 }
-            && int.TryParse(date.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var year)
-                ? year
-                : null;
-
-    private static string? StringValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<string>(out var parsed)
-            ? parsed
-            : null;
-
-    private static int? IntValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<int>(out var parsed)
-            ? parsed
-            : null;
-
-    private static ulong? ULongValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<ulong>(out var parsed)
-            ? parsed
-            : null;
-
-    private static bool BoolValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<bool>(out var parsed) && parsed;
 
     private static JsonNode? Clone(JsonNode? node) => node?.DeepClone();
 

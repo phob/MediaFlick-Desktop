@@ -80,7 +80,7 @@ public sealed class RatingsService : IDisposable
         {
             if (normalized == RatingProviders.Tmdb)
             {
-                await ValidateTmdbAsync(secret, cancellationToken).ConfigureAwait(false);
+                await ValidateTmdbAsync(secret, false, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -106,7 +106,7 @@ public sealed class RatingsService : IDisposable
             ?? throw new RatingRequestException("no credential is saved");
         if (normalized == RatingProviders.Tmdb)
         {
-            await ValidateTmdbAsync(secret, cancellationToken).ConfigureAwait(false);
+            await ValidateTmdbAsync(secret, true, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -264,7 +264,15 @@ public sealed class RatingsService : IDisposable
             StateFromResponse(response, previous, now, preserveValidOnTransientFailure));
     }
 
-    private async Task ValidateTmdbAsync(string key, CancellationToken cancellationToken)
+    /// <summary>
+    /// Only a 401/403 rejects the key. Rate limits, timeouts, and outages
+    /// leave a saved key's validity unchanged, but a new key that could not
+    /// be verified is not saved.
+    /// </summary>
+    private async Task ValidateTmdbAsync(
+        string key,
+        bool preserveValidOnTransientFailure,
+        CancellationToken cancellationToken)
     {
         if (_tmdbTransport is null)
         {
@@ -274,30 +282,32 @@ public sealed class RatingsService : IDisposable
                 {
                     Validation = "unchecked",
                     Valid = false,
-                    Detail = "TMDB validation is unavailable.",
                     LastCheckedAt = Now()
                 });
             return;
         }
+        var previous = _cache.Health(RatingProviders.Tmdb);
         var response = await _tmdbTransport.GetAsync(
             key,
             "3/configuration",
             new Dictionary<string, string>(),
             cancellationToken).ConfigureAwait(false);
-        var valid = response.StatusCode.IsSuccess();
         _cache.SetHealth(
             RatingProviders.Tmdb,
-            new ProviderHealthState
-            {
-                Validation = valid ? "valid" : "invalid",
-                Valid = valid,
-                Detail = valid ? null : "TMDB rejected the saved credential.",
-                RetryAt = response.RetryAt,
-                LastCheckedAt = Now()
-            });
-        if (!valid)
+            ProviderHealthPolicy.AfterValidation(
+                previous,
+                ProviderOutcome.Of(response),
+                Now(),
+                preserveValidOnTransientFailure,
+                rateLimitProvesCredential: false));
+        if (ProviderHealthPolicy.IsRejection(response.StatusCode))
         {
             throw new RatingRequestException("TMDB rejected the supplied credential");
+        }
+        if (!response.StatusCode.IsSuccess() && !preserveValidOnTransientFailure)
+        {
+            throw new RatingRequestException(
+                "TMDB could not be reached to verify the credential; try again later");
         }
     }
 
@@ -458,90 +468,32 @@ public sealed class RatingsService : IDisposable
         }));
     }
 
-    private ProviderHealthState StateFromResponse(
+    private static ProviderHealthState StateFromResponse(
         MdbListResponse response,
         ProviderHealthState previous,
         long now,
         bool preserveValidOnTransientFailure)
     {
-        var quota = MergeQuota(response.Quota, previous.Quota);
+        var outcome = ProviderOutcome.Of(response);
         if (response.StatusCode.IsSuccess())
         {
-            quota = MergeBodyQuota(response.Body, quota);
-            return new ProviderHealthState
+            outcome = outcome with
             {
-                Validation = "valid",
-                Valid = true,
-                Detail = "Valid MDBList credential.",
-                QuotaLimit = quota.Limit,
-                QuotaRemaining = quota.Remaining,
-                QuotaResetAt = quota.ResetAt,
-                RetryAt = response.RetryAt
-                    ?? (quota.Remaining == 0
-                        ? quota.ResetAt ?? NextUtcMidnight(now)
-                        : null),
-                FailureCount = 0,
-                LastCheckedAt = now
+                Quota = MergeBodyQuota(
+                    response.Body,
+                    ProviderHealthPolicy.MergeQuota(response.Quota, previous.Quota))
             };
         }
 
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-        {
-            return new ProviderHealthState
-            {
-                Validation = "invalid",
-                Valid = false,
-                Detail = "MDBList rejected the saved API key.",
-                QuotaLimit = quota.Limit,
-                QuotaRemaining = quota.Remaining,
-                QuotaResetAt = quota.ResetAt,
-                FailureCount = 0,
-                LastCheckedAt = now
-            };
-        }
-
-        if ((int)response.StatusCode == StatusCodes.Status429TooManyRequests)
-        {
-            return previous with
-            {
-                Validation = "rate_limited",
-                // A quota response is authenticated and therefore validates
-                // even a newly saved key; it does not grant extra requests.
-                Valid = true,
-                Detail = "MDBList quota is exhausted; cached ratings remain available.",
-                QuotaLimit = quota.Limit,
-                QuotaRemaining = quota.Remaining,
-                QuotaResetAt = quota.ResetAt,
-                RetryAt = response.RetryAt ?? quota.ResetAt ?? now + 60,
-                LastCheckedAt = now
-            };
-        }
-
-        var failures = Math.Min(previous.FailureCount + 1, 10);
-        var delay = Math.Min(30L * (1L << Math.Min(failures, 8)), 6 * 60 * 60);
-        return previous with
-        {
-            Validation = response.StatusCode == HttpStatusCode.GatewayTimeout
-                ? "offline"
-                : "unavailable",
-            Valid = preserveValidOnTransientFailure && previous.Valid,
-            Detail = "MDBList is temporarily unavailable; cached ratings remain available.",
-            QuotaLimit = quota.Limit,
-            QuotaRemaining = quota.Remaining,
-            QuotaResetAt = quota.ResetAt,
-            RetryAt = response.RetryAt ?? now + delay,
-            FailureCount = failures,
-            LastCheckedAt = now
-        };
+        // MDBList authenticates before rate limiting, so a quota answer still
+        // validates even a newly saved key; it does not grant extra requests.
+        return ProviderHealthPolicy.AfterValidation(
+            previous,
+            outcome,
+            now,
+            preserveValidOnTransientFailure,
+            rateLimitProvesCredential: true);
     }
-
-    private static RatingQuotaResponse MergeQuota(
-        RatingQuotaResponse current,
-        RatingQuotaResponse previous)
-        => RatingsContract.NormalizeQuota(new(
-            current.Limit ?? previous.Limit,
-            current.Remaining ?? previous.Remaining,
-            current.ResetAt ?? previous.ResetAt));
 
     private static RatingQuotaResponse MergeBodyQuota(JsonNode? body, RatingQuotaResponse quota)
     {
@@ -550,15 +502,15 @@ public sealed class RatingsService : IDisposable
             return quota;
         }
 
-        var limit = NodeLong(value["rate_limit"])
-            ?? NodeLong(value["api_requests"])
+        var limit = JsonRead.Integer(value["rate_limit"])
+            ?? JsonRead.Integer(value["api_requests"])
             ?? quota.Limit;
-        var remaining = NodeLong(value["rate_limit_remaining"])
-            ?? NodeLong(value["api_requests_remaining"])
+        var remaining = JsonRead.Integer(value["rate_limit_remaining"])
+            ?? JsonRead.Integer(value["api_requests_remaining"])
             ?? quota.Remaining;
         if (remaining is null
             && limit is { } maximum
-            && NodeLong(value["api_requests_count"]) is { } used)
+            && JsonRead.Integer(value["api_requests_count"]) is { } used)
         {
             remaining = Math.Max(0, maximum - used);
         }
@@ -566,7 +518,7 @@ public sealed class RatingsService : IDisposable
         return RatingsContract.NormalizeQuota(new(
             limit,
             remaining,
-            NodeLong(value["rate_limit_reset"]) ?? quota.ResetAt));
+            JsonRead.Integer(value["rate_limit_reset"]) ?? quota.ResetAt));
     }
 
     private static void ValidateSecret(string provider, string secret)
@@ -598,51 +550,10 @@ public sealed class RatingsService : IDisposable
     private long Now() => _timeProvider.GetUtcNow().ToUnixTimeSeconds();
 
     private static bool IsBackedOff(ProviderHealthState status, long now)
-        => status.RetryAt is { } retryAt && retryAt > now;
-
-    private static long NextUtcMidnight(long now)
-    {
-        var next = DateTimeOffset.FromUnixTimeSeconds(now).UtcDateTime.Date.AddDays(1);
-        return new DateTimeOffset(next, TimeSpan.Zero).ToUnixTimeSeconds();
-    }
+        => ProviderHealthPolicy.IsBackedOff(status, now);
 
     private static string? NodeId(JsonNode? node)
-        => NodeString(node) ?? NodeLong(node)?.ToString(CultureInfo.InvariantCulture);
-
-    private static string? NodeString(JsonNode? node)
-    {
-        try
-        {
-            return node?.GetValue<string>();
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
-    private static long? NodeLong(JsonNode? node)
-    {
-        try
-        {
-            if (node is JsonValue value && value.TryGetValue<long>(out var number))
-            {
-                return number;
-            }
-
-            return long.TryParse(
-                node?.GetValue<string>(),
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out number)
-                    ? number
-                    : null;
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
+        => JsonRead.String(node) ?? JsonRead.Integer(node)?.ToString(CultureInfo.InvariantCulture);
 }
 
 internal sealed class RatingsUnavailableException(string message) : Exception(message);
