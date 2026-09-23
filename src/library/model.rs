@@ -347,8 +347,7 @@ impl ItemRecord {
             // Jellyfin normally supplies ProductionYear for both films and
             // series (for a series it is the first-air year). Older servers
             // and some metadata providers only supply PremiereDate, so keep a
-            // small fallback here. The v5 database migration applies the same
-            // fallback to rows that were cached before this code existed.
+            // small fallback here.
             year: dto.production_year.or_else(|| {
                 dto.premiere_date
                     .as_deref()
