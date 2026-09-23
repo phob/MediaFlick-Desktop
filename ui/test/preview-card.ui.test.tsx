@@ -291,6 +291,15 @@ describe("expanded media-card details target", () => {
     expect(document.querySelector(".preview-panel")).toBeNull()
   })
 
+  test("the expanded preview's toggles are labelled and report their state", () => {
+    const panel = renderOpenPreview()
+    const favorite = within(panel).getByRole("button", { name: "Add to My List" })
+    const played = within(panel).getByRole("button", { name: "Mark as watched" })
+    expect(favorite.getAttribute("aria-pressed")).toBe("false")
+    expect(played.getAttribute("aria-pressed")).toBe("false")
+    expect(within(panel).getByRole("button", { name: "Play" })).toBeTruthy()
+  })
+
   test("keeps the three actions on the card when expanded previews are disabled", () => {
     render(<MediaCard item={movie} />, { wrapper: InlineProviders })
     const details = screen.getByRole("link", { name: "Open details for The Matrix" })
