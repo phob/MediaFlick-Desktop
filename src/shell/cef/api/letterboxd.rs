@@ -67,15 +67,27 @@ fn letterboxd_profiles(services: &Arc<Services>) -> ApiResponse {
     ApiResponse::ok(json!({ "profiles": profiles }))
 }
 
+#[derive(Deserialize)]
+struct AddProfileBody {
+    profile: String,
+}
+
+#[derive(Deserialize)]
+struct EnabledBody {
+    enabled: bool,
+}
+
 fn letterboxd_add_profile(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = match request.body::<AddProfileBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
     let account = scope.account().clone();
-    let profile = match letterboxd_integration::normalize_profile(
-        request.json()["profile"].as_str().unwrap_or_default(),
-    ) {
+    let profile = match letterboxd_integration::normalize_profile(&body.profile) {
         Ok(profile) => profile,
         Err(error) => return ApiResponse::error(400, error),
     };
@@ -129,14 +141,15 @@ fn letterboxd_set_enabled(services: &Arc<Services>, id: &str, request: &ApiReque
     if !valid_profile_id(id) {
         return ApiResponse::error(404, "profile not found");
     }
+    let enabled = match request.body::<EnabledBody>() {
+        Ok(body) => body.enabled,
+        Err(response) => return response,
+    };
     let scope = match letterboxd_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
     let account = scope.account().clone();
-    let Some(enabled) = request.json()["enabled"].as_bool() else {
-        return ApiResponse::error(400, "enabled must be true or false");
-    };
     services
         .session
         .commit_if_current(&scope, stale_account, || {

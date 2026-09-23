@@ -111,9 +111,9 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
 }
 
 fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match serde_json::from_value::<PlayerSettingsPatch>(request.json()) {
+    let patch = match request.body::<PlayerSettingsPatch>() {
         Ok(patch) => patch,
-        Err(error) => return ApiResponse::error(400, format!("invalid player settings: {error}")),
+        Err(response) => return response,
     };
     match services.preferences.patch_player(patch) {
         Ok(change) => settings_response(&change.settings, &[]),
@@ -122,11 +122,9 @@ fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiR
 }
 
 fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match serde_json::from_value::<PlaybackSettingsPatch>(request.json()) {
+    let patch = match request.body::<PlaybackSettingsPatch>() {
         Ok(patch) => patch,
-        Err(error) => {
-            return ApiResponse::error(400, format!("invalid playback settings: {error}"));
-        }
+        Err(response) => return response,
     };
     match services.preferences.patch_playback(patch) {
         Ok(change) => settings_response(&change.settings, &[]),
@@ -135,11 +133,9 @@ fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Ap
 }
 
 fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match serde_json::from_value::<ApplicationSettingsPatch>(request.json()) {
+    let patch = match request.body::<ApplicationSettingsPatch>() {
         Ok(patch) => patch,
-        Err(error) => {
-            return ApiResponse::error(400, format!("invalid application settings: {error}"));
-        }
+        Err(response) => return response,
     };
     match services.preferences.patch_application(patch) {
         Ok(change) => settings_response(&change.settings, &[]),
@@ -148,11 +144,9 @@ fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) ->
 }
 
 fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match serde_json::from_value::<AppearanceSettingsPatch>(request.json()) {
+    let patch = match request.body::<AppearanceSettingsPatch>() {
         Ok(patch) => patch,
-        Err(error) => {
-            return ApiResponse::error(400, format!("invalid appearance settings: {error}"));
-        }
+        Err(response) => return response,
     };
     let scope = match services.session.scope() {
         Ok(scope) => scope,
@@ -181,10 +175,9 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespon
     if !request.is("PATCH") {
         return ApiResponse::error(405, "method not allowed");
     }
-    let value = match serde_json::from_value::<crate::preferences::ViewingSettings>(request.json())
-    {
+    let value = match request.body::<crate::preferences::ViewingSettings>() {
         Ok(value) => value,
-        Err(error) => return ApiResponse::error(400, error.to_string()),
+        Err(response) => return response,
     };
     services
         .session
@@ -195,6 +188,12 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespon
             })
         })
         .unwrap_or_else(|response| response)
+}
+
+#[derive(Deserialize)]
+struct BrowsingBody {
+    page: String,
+    route: String,
 }
 
 fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -209,10 +208,11 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
     if !request.is("PATCH") {
         return ApiResponse::error(405, "method not allowed");
     }
-    let body = request.json();
-    let (Some(page), Some(route)) = (body["page"].as_str(), body["route"].as_str()) else {
-        return ApiResponse::error(400, "page and route are required");
+    let body = match request.body::<BrowsingBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
     };
+    let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {

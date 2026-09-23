@@ -79,21 +79,31 @@ pub(super) fn settings(services: &Arc<Services>, force_probe: bool) -> ApiRespon
     }))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SettingsPatch {
+    mode_selection: Option<CollectionMode>,
+    include_unreleased: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReorderBody {
+    profile_ids: Vec<String>,
+}
+
 pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let patch = match request.body::<SettingsPatch>() {
+        Ok(patch) => patch,
+        Err(response) => return response,
+    };
     let scope = match active_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
     let account = scope.account().clone();
-    let body = request.json();
-    let mode = match body.get("modeSelection") {
-        Some(mode) => match serde_json::from_value::<CollectionMode>(mode.clone()) {
-            Ok(mode) => mode,
-            Err(_) => return ApiResponse::error(400, "modeSelection is invalid"),
-        },
-        None => CollectionMode::default(),
-    };
-    let updates_mode = body.get("modeSelection").is_some();
+    let updates_mode = patch.mode_selection.is_some();
+    let mode = patch.mode_selection.unwrap_or_default();
     if updates_mode && mode == CollectionMode::MediaFlick {
         let readiness = services.companion.collection_readiness(false);
         let has_results = SnapshotRepository::new(&services.library)
@@ -104,9 +114,7 @@ pub(super) fn patch_settings(services: &Arc<Services>, request: &ApiRequest) -> 
             return ApiResponse::error(409, "MediaFlick collections are unavailable");
         }
     }
-    let include_unreleased = body
-        .get("includeUnreleased")
-        .and_then(serde_json::Value::as_bool);
+    let include_unreleased = patch.include_unreleased;
     let mutation = services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -157,7 +165,7 @@ pub(super) fn preview(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
         Ok(account) => account,
         Err(response) => return response,
     };
-    let draft = match parse_draft(request) {
+    let draft = match request.body::<ProfileDraft>() {
         Ok(draft) => draft,
         Err(response) => return response,
     };
@@ -247,7 +255,7 @@ pub(super) fn create(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
         Ok(account) => account,
         Err(response) => return response,
     };
-    let draft = match parse_draft(request) {
+    let draft = match request.body::<ProfileDraft>() {
         Ok(draft) => draft,
         Err(response) => return response,
     };
@@ -276,7 +284,7 @@ pub(super) fn edit(
     let Some(previous) = profile(services, &account, profile_id) else {
         return ApiResponse::error(404, "that collection does not exist");
     };
-    let draft = match parse_draft(request) {
+    let draft = match request.body::<ProfileDraft>() {
         Ok(draft) => draft,
         Err(response) => return response,
     };
@@ -385,23 +393,15 @@ pub(super) fn delete(services: &Arc<Services>, profile_id: &str) -> ApiResponse 
 }
 
 pub(super) fn reorder(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let ids = match request.body::<ReorderBody>() {
+        Ok(body) => body.profile_ids,
+        Err(response) => return response,
+    };
     let scope = match active_scope(services) {
         Ok(scope) => scope,
         Err(response) => return response,
     };
     let account = scope.account().clone();
-    let ids = request
-        .json()
-        .get("profileIds")
-        .and_then(serde_json::Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -596,9 +596,4 @@ fn provider_request(services: &Services, profile: &CollectionProfile) -> Value {
         "limit": profile.limit,
         "ownedTmdbIds": owned_tmdb_ids,
     })
-}
-
-fn parse_draft(request: &ApiRequest) -> Result<ProfileDraft, ApiResponse> {
-    serde_json::from_value(request.json())
-        .map_err(|error| ApiResponse::error(400, format!("invalid collection profile: {error}")))
 }
