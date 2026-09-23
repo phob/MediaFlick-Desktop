@@ -5,6 +5,7 @@ import { api } from "@/lib/api"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import Settings from "@/routes/Settings"
+import { DEFAULT_APPLICATION_SETTINGS, DEFAULT_PLAYBACK_SETTINGS } from "@/routes/settings/defaults"
 import { clientSettingsFixture } from "./support/settings"
 import { TestProviders } from "./test-utils"
 
@@ -226,4 +227,26 @@ test("Playback saves quality and skipping without resetting Player settings", as
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(settings.client.playback))
   expect(playerSave).not.toHaveBeenCalled()
+})
+
+test("Playback and Application Reset restore the shelf defaults and save them", async () => {
+  const settings = clientSettingsFixture()
+  settings.client.playback = { streamingQuality: "20_mbps", skipIntro: "always", skipCredits: "disabled", skipRecap: "always", skipCommercial: "disabled" }
+  settings.client.application = { closeBehavior: "minimize_window", showScrollbars: true, logLevel: "warn" }
+  const playback = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (value) => ({ ...settings, client: { ...settings.client, playback: value } }))
+  const application = vi.spyOn(api.settingsPatch, "application").mockImplementation(async (value) => ({ ...settings, client: { ...settings.client, application: value } }))
+  for (const [route, save, defaults] of [
+    ["/settings/client/playback", playback, DEFAULT_PLAYBACK_SETTINGS],
+    ["/settings/client/application", application, DEFAULT_APPLICATION_SETTINGS],
+  ] as const) {
+    queryClient.setQueryData(queryKeys.status, { authenticated: false })
+    queryClient.setQueryData(queryKeys.settings, settings)
+    const view = render(<TestProviders client={queryClient} initialEntries={[route]}>
+      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
+    </TestProviders>)
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(save).toHaveBeenCalledWith(defaults))
+    view.unmount()
+  }
 })
