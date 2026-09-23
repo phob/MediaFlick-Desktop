@@ -223,6 +223,7 @@ fn route_status(
 ) -> Option<ApiResponse> {
     let response = match segments {
         ["status"] => status(services),
+        ["startup"] if request.is("GET") => startup(services, request),
         ["companion", "info"] if request.is("GET") => companion_info(services, false),
         ["companion", "probe"] if request.is("POST") => companion_info(services, true),
         _ => return None,
@@ -251,6 +252,54 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         object.insert("companion".to_string(), services.companion.status());
     }
     ApiResponse::ok(status)
+}
+
+/// Everything the first frame reads, in one request. Without it the UI asks
+/// for status, then waits for the answer before it can ask for the account's
+/// preferences and Home. Each part is answered by its own route; a part that
+/// does not succeed is `null`, so the UI requests it separately and surfaces
+/// its error there. `home` adds the local Home and billboard once the catalog
+/// is ready, for a launch that opens on Home.
+fn startup(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let part = |path: &str| {
+        let response = route(
+            services,
+            path,
+            &ApiRequest {
+                method: "GET".to_string(),
+                path: format!("/api/{path}"),
+                query: String::new(),
+                body: Vec::new(),
+                range: None,
+                cancelled: request.cancelled.clone(),
+            },
+        );
+        if response.status != 200 {
+            return Value::Null;
+        }
+        serde_json::from_slice(&response.body).unwrap_or(Value::Null)
+    };
+    let status = part("status");
+    let authenticated = status["authenticated"].as_bool() == Some(true);
+    let home = authenticated
+        && status["libraryReady"].as_bool() == Some(true)
+        && request.param("home").as_deref() == Some("1");
+    let account_part = |path: &str| {
+        if authenticated {
+            part(path)
+        } else {
+            Value::Null
+        }
+    };
+    let home_part = |path: &str| if home { part(path) } else { Value::Null };
+    ApiResponse::ok(json!({
+        "settings": part("settings"),
+        "viewing": account_part("settings/viewing"),
+        "browsing": account_part("settings/browsing"),
+        "home": home_part("home"),
+        "billboard": home_part("billboard"),
+        "status": status,
+    }))
 }
 
 fn companion_info(services: &Arc<Services>, force: bool) -> ApiResponse {

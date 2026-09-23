@@ -2,7 +2,7 @@
 // it so that file exports components and nothing else — which is what lets Vite
 // hot-replace the panel without dropping the provider's state.
 
-import { createContext, useContext } from "react"
+import { createContext, useContext, useSyncExternalStore } from "react"
 import type React from "react"
 import type { ItemSummary } from "./api"
 
@@ -20,10 +20,40 @@ export interface PreviewApi {
   release: () => void
   hold: () => void
   /** The id currently expanded, so the card underneath can suppress its hover. */
-  activeId: string | null
+  expanded: ExpandedStore
   /** The saved Appearance choice shared by every card under this provider. */
   enabled: boolean
 }
+
+/**
+ * The expanded id lives outside the context value. A context update would
+ * re-render every card under the provider on each open and close; a store lets
+ * each card subscribe to whether it alone is the expanded one.
+ */
+export interface ExpandedStore {
+  current: () => string | null
+  set: (id: string | null) => void
+  subscribe: (listener: () => void) => () => void
+}
+
+export function createExpandedStore(): ExpandedStore {
+  let current: string | null = null
+  const listeners = new Set<() => void>()
+  return {
+    current: () => current,
+    set: (id) => {
+      if (id === current) return
+      current = id
+      for (const listener of listeners) listener()
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+}
+
+const DETACHED_STORE = createExpandedStore()
 
 export const PreviewContext = createContext<PreviewApi | null>(null)
 
@@ -50,13 +80,15 @@ export function usePreview(
   enabled = true,
 ): PreviewState {
   const preview = useContext(PreviewContext)
+  const store = preview?.expanded ?? DETACHED_STORE
+  const expanded = useSyncExternalStore(store.subscribe, () => store.current() === item.id)
   if (!preview) return { handlers: {}, expanded: false, previewsEnabled: true }
   if (!preview.enabled || !enabled) {
     return { handlers: {}, expanded: false, previewsEnabled: preview.enabled }
   }
 
   return {
-    expanded: preview.activeId === item.id,
+    expanded,
     previewsEnabled: preview.enabled,
     handlers: {
       // Pointer, not mouse: a touch drag across a rail would otherwise arm the

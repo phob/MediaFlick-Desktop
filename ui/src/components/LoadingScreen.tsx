@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react"
 import appIcon from "../../../distribution/app-icon.png?inline"
 import { api } from "@/lib/api"
+import { markWindowRevealed, windowRevealed } from "@/lib/startup"
 
 const HIDDEN_PAINT_FALLBACK_MS = 100
 
 function nextPaint() {
+  // Until the first ready report shows the native window, no frame reaches the
+  // screen, so there is nothing to wait for.
+  if (!windowRevealed() || document.visibilityState === "hidden") return Promise.resolve()
   return new Promise<void>((resolve) => {
     let settled = false
     const finish = () => {
@@ -13,9 +17,9 @@ function nextPaint() {
       window.clearTimeout(fallback)
       resolve()
     }
-    // Chromium may pause animation frames while the native window is hidden.
-    // Keep the normal two-paint path, but do not deadlock startup before the
-    // shell has had its first opportunity to reveal the completed document.
+    // Chromium may pause animation frames while the native window is hidden
+    // (for example after a `--hidden` start). Keep the normal two-paint path
+    // without letting a stalled frame hold the cover.
     const fallback = window.setTimeout(finish, HIDDEN_PAINT_FALLBACK_MS)
     requestAnimationFrame(() => requestAnimationFrame(finish))
   })
@@ -35,6 +39,7 @@ export function LoadingScreen({ ready }: { ready: boolean }) {
 
   useEffect(() => {
     if (mounted) return
+    markWindowRevealed()
 
     // Effects run after React commits the cover's removal. The native request
     // is therefore the final startup step, making the finished route—not the

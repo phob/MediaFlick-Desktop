@@ -85,12 +85,12 @@ export default function ItemDetail() {
   // Which season the episode grid shows: the URL wins, then the season Next Up
   // lives in, then the first regular season. While Next Up is still loading
   // there is no honest default, so the grid holds its skeleton instead of
-  // painting season one and jumping.
+  // painting season one and jumping. A single season has nowhere to jump to.
   const selectedSeason = !isSeries
     ? null
     : (seasons.find((season) => season.id === searchParams.get("season")) ??
       (nextUp.isPending
-        ? null
+        ? (seasons.length === 1 ? seasons[0] : null)
         : (seasons.find((season) => season.id === nextUpItem?.seasonId) ?? seasons[0] ?? null)))
   const seasonChildren = useChildren(selectedSeason?.id)
   const seasonEpisodes = (seasonChildren.data?.items ?? []).filter(

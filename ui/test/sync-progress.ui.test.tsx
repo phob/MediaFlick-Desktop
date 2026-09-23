@@ -1,8 +1,9 @@
 import { QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, test } from "vitest"
+import { act, render, screen } from "@testing-library/react"
+import { afterEach, describe, expect, test, vi } from "vitest"
 import { LibrarySyncProgress } from "../src/components/AppSidebar"
 import type { Status, SyncProgress } from "../src/lib/api"
+import { useStatus } from "../src/lib/queries"
 import { queryClient, queryKeys } from "../src/lib/query-client"
 
 const catalog = {
@@ -75,5 +76,42 @@ describe("sidebar synchronization progress", () => {
       </QueryClientProvider>,
     )
     expect(screen.queryByRole("status")).toBeNull()
+  })
+
+  test("advances the indicator without re-rendering session observers", async () => {
+    const sessionRenders = vi.fn()
+    function SessionObserver() {
+      const { data } = useStatus()
+      sessionRenders(data?.authenticated)
+      return null
+    }
+    const running = (processed: number): SyncProgress => ({
+      active: true,
+      phase: "catalog",
+      catalog: { ...catalog, complete: false, processed },
+      error: null,
+      retryAt: null,
+    })
+    queryClient.setQueryData(queryKeys.status, {
+      ...status(running(10)),
+      library: { movies: 1, series: 0, seasons: 0, episodes: 0, total: 1 },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SessionObserver />
+        <LibrarySyncProgress />
+      </QueryClientProvider>,
+    )
+    sessionRenders.mockClear()
+
+    act(() => {
+      queryClient.setQueryData(queryKeys.status, {
+        ...status(running(80)),
+        library: { movies: 8, series: 0, seasons: 0, episodes: 0, total: 8 },
+      })
+    })
+
+    expect(await screen.findByText("80 of 120")).toBeTruthy()
+    expect(sessionRenders).not.toHaveBeenCalled()
   })
 })

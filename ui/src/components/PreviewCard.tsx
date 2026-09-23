@@ -23,7 +23,7 @@ import {
 } from "@/lib/api"
 import { formatRemaining, formatRuntime } from "@/lib/format"
 import { detailNavigationState } from "@/lib/navigation"
-import { PreviewContext, type PreviewApi, type PreviewTarget } from "@/lib/preview"
+import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -112,6 +112,7 @@ export function PreviewProvider({
     route,
     target: null,
   }))
+  const [expanded] = useState(createExpandedStore)
   const openTimer = useRef<number | undefined>(undefined)
   const closeTimer = useRef<number | undefined>(undefined)
 
@@ -154,11 +155,17 @@ export function PreviewProvider({
         closeTimer.current = window.setTimeout(() => setTarget(null), CLOSE_DELAY)
       },
       hold: () => window.clearTimeout(closeTimer.current),
-      activeId: target?.item.id ?? null,
+      expanded,
       enabled,
     }),
-    [enabled, setTarget, target, delay],
+    [enabled, expanded, setTarget, delay],
   )
+
+  // Before paint, so the card under a fresh panel never flashes its own hover.
+  const activeId = target?.item.id ?? null
+  useLayoutEffect(() => {
+    expanded.set(activeId)
+  }, [activeId, expanded])
 
   useEffect(() => {
     clearTimers()

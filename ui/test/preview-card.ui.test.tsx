@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import type { ReactNode } from "react"
+import { Profiler, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
@@ -217,6 +217,36 @@ describe("expanded media-card details target", () => {
     expect(technical?.textContent).toContain("DV")
     expect(technical?.textContent).toContain("TrueHD")
     expect(technical?.textContent).toContain("Atmos")
+  })
+
+  test("re-renders only the hovered card when its preview opens and closes", () => {
+    const neighbour: ItemSummary = { ...movie, id: "movie-2", name: "The Matrix Reloaded" }
+    const commits = vi.fn()
+    render(
+      <>
+        <MediaCard item={movie} />
+        <Profiler id="neighbour" onRender={commits}>
+          <MediaCard item={neighbour} />
+        </Profiler>
+      </>,
+      { wrapper: Providers },
+    )
+    const card = requireElement(screen.getAllByRole("link")[0] ?? null, "hovered media card")
+    commits.mockClear()
+
+    act(() => {
+      hoverWithMouse(card)
+      vi.advanceTimersByTime(550)
+    })
+    expect(document.querySelector(".preview-panel")).toBeTruthy()
+    expect(card.closest("[data-expanded]")?.getAttribute("data-expanded")).toBe("true")
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "Escape" })
+    })
+    expect(document.querySelector(".preview-panel")).toBeNull()
+    expect(card.closest("[data-expanded]")).toBeNull()
+    expect(commits).not.toHaveBeenCalled()
   })
 
   test("opens item details when the panel background is clicked", () => {

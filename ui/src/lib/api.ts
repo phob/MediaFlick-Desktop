@@ -364,6 +364,19 @@ export interface HomeResponse {
   rows: HomeRow[]
 }
 
+/**
+ * `/api/startup`: what the first frame reads, in one request. A part that its
+ * own route could not answer is `null`, and its query then asks for it.
+ */
+export interface StartupResponse {
+  status: Status | null
+  settings: ClientSettings | null
+  viewing: ViewingSettings | null
+  browsing: Record<string, string> | null
+  home: HomeResponse | null
+  billboard: { items: ItemSummary[] } | null
+}
+
 export interface HomeResumeResponse {
   continueWatching: ItemSummary[]
   nextUp: ItemSummary[]
@@ -1391,6 +1404,7 @@ export const api = {
   browsing: () => request<Record<string, string>>("/api/settings/browsing"),
   saveBrowsing: (page: string, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
   status: () => request<Status>("/api/status"),
+  startup: (home: boolean) => request<StartupResponse>(`/api/startup${home ? "?home=1" : ""}`),
   companion: {
     info: () => request<CompanionStatus>("/api/companion/info"),
     probe: () => request<CompanionStatus>("/api/companion/probe", { method: "POST" }),

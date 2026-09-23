@@ -15,6 +15,7 @@ import {
   type SeerrDiscoverRow,
   type SeerrDiscoverFilters,
   type SeerrMediaType,
+  type Status,
   type StreamingQualityId,
 } from "./api"
 import {
@@ -42,19 +43,74 @@ function reportError(error: Error) {
   }
 }
 
+/**
+ * The session view of `/api/status`. Catalog counts and sync progress change
+ * with every committed page, so they are left out here: a poll during a sync
+ * then keeps the same `data` reference and does not re-render the observers.
+ */
+export type SessionStatus = Omit<Status, "library" | "lastSync" | "bootstrap" | "syncProgress"> & {
+  catalogComplete: boolean
+}
+
+export function sessionStatus(status: Status): SessionStatus {
+  const { library: _library, lastSync: _lastSync, bootstrap, syncProgress: _syncProgress, ...session } = status
+  return { ...session, catalogComplete: Boolean(bootstrap?.complete ?? status.bootstrapped) }
+}
+
+function selectSyncProgress(status: Status) {
+  return status.authenticated && status.syncProgress?.active ? status.syncProgress : null
+}
+
 export function useStatus() {
+  return useQuery({ queryKey: queryKeys.status, queryFn: api.status, select: sessionStatus })
+}
+
+/**
+ * The status pulse. Every observer with an interval runs its own timer, so
+ * only the root mounts this one. A new account is gated only until its first
+ * catalog page commits. Keep a slower status pulse while background phases are
+ * active so the compact sidebar indicator advances without invalidating media
+ * queries per item.
+ */
+export function useStatusPulse() {
   return useQuery({
     queryKey: queryKeys.status,
     queryFn: api.status,
-    // A new account is gated only until its first catalog page commits. Keep a
-    // slower status pulse while background phases are active so the compact
-    // sidebar indicator advances without invalidating media queries per item.
+    select: sessionStatus,
     refetchInterval: (query) => {
       const status = query.state.data
       if (status?.authenticated && !(status.libraryReady ?? status.bootstrapped)) return 500
       return status?.authenticated && status.syncProgress?.active ? 2_000 : false
     },
   })
+}
+
+/** Active sync progress, for the one indicator that renders it. */
+export function useSyncProgress() {
+  return useQuery({ queryKey: queryKeys.status, queryFn: api.status, select: selectSyncProgress })
+}
+
+/**
+ * Seeds the queries the first frame reads from one `/api/startup` request, so
+ * they need not wait on status one round trip at a time. Anything missing or
+ * failed is left to its own query.
+ */
+export async function primeStartupQueries(pathname: string) {
+  let startup
+  try {
+    startup = await api.startup(pathname === "/")
+  } catch {
+    return
+  }
+  const { status } = startup
+  if (!status) return
+  queryClient.setQueryData(queryKeys.status, status)
+  if (startup.settings) queryClient.setQueryData(queryKeys.settings, startup.settings)
+  const account = collectionAccountKey(status)
+  if (startup.viewing) queryClient.setQueryData(["viewing", account], startup.viewing)
+  if (startup.browsing) queryClient.setQueryData(["browsing", account], startup.browsing)
+  if (startup.home) queryClient.setQueryData(queryKeys.home, startup.home)
+  if (startup.billboard) queryClient.setQueryData(queryKeys.billboard, startup.billboard)
 }
 
 export function useSettings() {
@@ -694,7 +750,7 @@ export function useSeerrCancelRequest() {
 
 // ------------------------------------------------------------- collections
 
-export function collectionAccountKey(status: ReturnType<typeof useStatus>["data"]) {
+export function collectionAccountKey(status: Pick<Status, "serverUrl" | "userId"> | undefined) {
   return `${status?.serverUrl ?? "anonymous"}:${status?.userId ?? "anonymous"}`
 }
 
