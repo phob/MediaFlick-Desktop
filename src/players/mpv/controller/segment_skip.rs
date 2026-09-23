@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use super::super::commands::next_request_id;
+use super::super::commands::{next_request_id, osd_text_command};
 use super::{
     CHAPTER_MARKER_MAX_ATTEMPTS, CHAPTER_MARKER_RETRY_INTERVAL, ChapterMarkers, ControllerMessage,
     ControllerState, SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS, SEGMENT_SKIP_OSD_DURATION_MS,
@@ -352,15 +352,10 @@ impl ControllerState {
             return;
         };
         let label = segment.segment_type.countdown_label();
-        let command = json!({
-            "command": [
-                "show-text",
-                format!("Skipping {label} in {remaining_seconds}..."),
-                SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS,
-                1
-            ],
-            "request_id": next_request_id(),
-        });
+        let command = osd_text_command(
+            &format!("Skipping {label} in {remaining_seconds}..."),
+            SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS,
+        );
         if let Err(error) = self.send_mpv_command(command) {
             tracing::warn!(target: "mpv.ipc", "failed to show automatic segment skip countdown: {error}");
         }
@@ -370,10 +365,10 @@ impl ControllerState {
         let Some(segment) = self.skip_segments.get(index) else {
             return false;
         };
-        let command = json!({
-            "command": ["show-text", segment.segment_type.prompt_text(), SEGMENT_SKIP_OSD_DURATION_MS, 1],
-            "request_id": next_request_id(),
-        });
+        let command = osd_text_command(
+            segment.segment_type.prompt_text(),
+            SEGMENT_SKIP_OSD_DURATION_MS,
+        );
         if let Err(error) = self.send_mpv_command(command) {
             tracing::warn!(target: "mpv.ipc", "failed to show segment skip prompt: {error}");
             return false;
@@ -421,10 +416,7 @@ impl ControllerState {
                     "skipped Jellyfin media segment"
                 );
                 let text = segment_type.skipped_text();
-                let command = json!({
-                    "command": ["show-text", text, SEGMENT_SKIP_OSD_DURATION_MS, 1],
-                    "request_id": next_request_id(),
-                });
+                let command = osd_text_command(text, SEGMENT_SKIP_OSD_DURATION_MS);
                 if let Err(error) = self.send_mpv_command(command) {
                     tracing::warn!(target: "mpv.ipc", "failed to show segment skipped OSD: {error}");
                 }
