@@ -97,7 +97,9 @@ wrap_app! {
                 | SchemeOptions::SECURE.get_raw()
                 | SchemeOptions::CORS_ENABLED.get_raw()
                 | SchemeOptions::FETCH_ENABLED.get_raw();
-            registrar.add_custom_scheme(Some(&scheme), cef_i32(scheme_options));
+            if let Some(options) = cef_i32(scheme_options) {
+                registrar.add_custom_scheme(Some(&scheme), options);
+            }
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

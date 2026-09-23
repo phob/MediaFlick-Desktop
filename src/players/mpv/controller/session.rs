@@ -331,7 +331,7 @@ impl ControllerState {
 
     fn start_event_relay(&self, session_id: u64, event_rx: std::sync::mpsc::Receiver<MpvEvent>) {
         let tx = self.tx.clone();
-        thread::spawn(move || {
+        crate::app::threads::spawn_named("mpv-event-relay", move || {
             while let Ok(event) = event_rx.recv() {
                 if tx
                     .send(ControllerMessage::MpvEvent {
