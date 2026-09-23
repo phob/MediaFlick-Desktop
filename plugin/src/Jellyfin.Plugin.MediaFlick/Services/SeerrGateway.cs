@@ -6,6 +6,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
+/// <summary>
+/// Runs Seerr calls as the Seerr user mapped to the signed-in Jellyfin user
+/// and reshapes every answer into the typed Desktop contract.
+/// </summary>
 public sealed class SeerrGateway
 {
     private const ulong Admin = 2;
@@ -22,20 +26,38 @@ public sealed class SeerrGateway
     private const ulong AutoApprove4kTv = 131072;
     private const ulong RequestMovie = 262144;
     private const ulong RequestTv = 524288;
-    private static readonly TimeSpan MappingLifetime = TimeSpan.FromMinutes(10);
-    private readonly CompanionHttpClient _http;
-    private readonly ILogger<SeerrGateway> _logger;
-    private readonly ConcurrentDictionary<Guid, MappingRecord> _mappings = new();
+    private const int UserPageSize = 50;
+    private const int MaxUserScan = 10_000;
+    internal static readonly TimeSpan MappingLifetime = TimeSpan.FromMinutes(10);
 
-    public SeerrGateway(CompanionHttpClient http, ILogger<SeerrGateway> logger)
+    /// <summary>
+    /// How long an unmapped Jellyfin user is remembered, so repeated requests
+    /// do not rescan every Seerr user. Short enough that an administrator's
+    /// import is picked up quickly.
+    /// </summary>
+    internal static readonly TimeSpan MissingUserLifetime = TimeSpan.FromMinutes(2);
+
+    private readonly ISeerrTransport _seerr;
+    private readonly ILogger<SeerrGateway> _logger;
+    private readonly TimeProvider _time;
+    private readonly ConcurrentDictionary<Guid, MappingRecord> _mappings = new();
+    private readonly ConcurrentDictionary<Guid, DateTimeOffset> _missing = new();
+    private readonly SemaphoreSlim _lookupGate = new(1, 1);
+
+    internal SeerrGateway(
+        ISeerrTransport seerr,
+        ILogger<SeerrGateway> logger,
+        TimeProvider? timeProvider = null)
     {
-        _http = http;
+        _seerr = seerr;
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task<JsonNode> StatusAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
+    public async Task<SeerrStatusResponse> StatusAsync(
+        Guid jellyfinUserId,
+        CancellationToken cancellationToken)
     {
-        var configuration = Configuration();
         var seerrUserId = await ResolveUserAsync(jellyfinUserId, cancellationToken)
             .ConfigureAwait(false);
         var user = await SendMappedAsync(
@@ -43,7 +65,7 @@ public sealed class SeerrGateway
             "api/v1/auth/me",
             null,
             seerrUserId,
-            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+            cancellationToken).ConfigureAwait(false) as JsonObject;
         JsonNode? quota;
         try
         {
@@ -68,37 +90,37 @@ public sealed class SeerrGateway
             "api/v1/settings/public",
             null,
             seerrUserId,
-            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-        var permissions = JsonRead.UInt64(user, "permissions") ?? 0;
-        var movie4k = JsonRead.Bool(settings, "movie4kEnabled") == true;
-        var tv4k = JsonRead.Bool(settings, "series4kEnabled") == true;
-
-        return new JsonObject
-        {
-            ["configured"] = configuration.Enabled,
-            ["linked"] = true,
-            ["expired"] = false,
-            ["serverUrl"] = null,
-            ["mapped"] = true,
-            ["instance"] = new JsonObject
-            {
-                ["movie4kEnabled"] = movie4k,
-                ["series4kEnabled"] = tv4k,
-                ["partialRequestsEnabled"] = JsonRead.Bool(settings, "partialRequestsEnabled") == true
-            },
-            ["user"] = new JsonObject
-            {
-                ["id"] = seerrUserId,
-                ["name"] = PreferredUserName(user),
-                ["avatar"] = Clone(user["avatar"]),
-                ["jellyfinUserId"] = jellyfinUserId.ToString("N")
-            },
-            ["capabilities"] = Capabilities(permissions, movie4k, tv4k),
-            ["quota"] = Clone(quota)
-        };
+            cancellationToken).ConfigureAwait(false) as JsonObject;
+        return ShapeStatus(jellyfinUserId, seerrUserId, user, settings, quota);
     }
 
-    public async Task<JsonNode> SearchAsync(
+    internal static SeerrStatusResponse ShapeStatus(
+        Guid jellyfinUserId,
+        int seerrUserId,
+        JsonObject? user,
+        JsonObject? settings,
+        JsonNode? quota)
+    {
+        var permissions = JsonRead.UInt64(user, "permissions") ?? 0;
+        var movie4k = IsTrue(settings, "movie4kEnabled");
+        var tv4k = IsTrue(settings, "series4kEnabled");
+        return new SeerrStatusResponse(
+            true,
+            true,
+            new SeerrInstanceResponse(
+                movie4k,
+                tv4k,
+                IsTrue(settings, "partialRequestsEnabled")),
+            new SeerrUserResponse(
+                seerrUserId,
+                PreferredUserName(user),
+                JsonRead.String(user, "avatar"),
+                jellyfinUserId.ToString("N")),
+            Capabilities(permissions, movie4k, tv4k),
+            ShapeQuota(quota));
+    }
+
+    public async Task<SeerrPageResponse<SeerrResultResponse>> SearchAsync(
         Guid jellyfinUserId,
         string query,
         int page,
@@ -122,20 +144,19 @@ public sealed class SeerrGateway
         return ShapeSearchPage(response);
     }
 
-    public async Task<JsonNode> PersonCreditsAsync(
+    public async Task<SeerrPageResponse<SeerrResultResponse>> PersonCreditsAsync(
         Guid jellyfinUserId,
         int tmdbId,
         CancellationToken cancellationToken)
     {
         ValidatePositive(tmdbId, "TMDB person id");
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
-        var response = await SendMappedAsync(
+        var credits = await SendMappedAsync(
             HttpMethod.Get,
             $"api/v1/person/{tmdbId}/combined_credits",
             null,
             user,
-            cancellationToken).ConfigureAwait(false);
-        var credits = response as JsonObject ?? new JsonObject();
+            cancellationToken).ConfigureAwait(false) as JsonObject;
         var responseId = JsonRead.Int32(credits, "id");
         if (responseId is > 0 && responseId != tmdbId)
         {
@@ -146,7 +167,7 @@ public sealed class SeerrGateway
         return ShapePersonCredits(credits);
     }
 
-    public async Task<JsonNode> DiscoverAsync(
+    public async Task<SeerrPageResponse<SeerrResultResponse>> DiscoverAsync(
         Guid jellyfinUserId,
         string kind,
         int page,
@@ -166,7 +187,8 @@ public sealed class SeerrGateway
             voteAverageGte,
             releaseDecade,
             mediaType,
-            timeWindow);
+            timeWindow,
+            DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime));
         var user = await ResolveUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
         var response = await SendMappedAsync(
             HttpMethod.Get,
@@ -186,9 +208,8 @@ public sealed class SeerrGateway
         int? releaseDecade,
         string? mediaType,
         string? timeWindow,
-        DateOnly? currentDate = null)
+        DateOnly today)
     {
-        var today = currentDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var currentDecade = (today.Year / 10) * 10;
         var endpoint = kind.ToLowerInvariant() switch
         {
@@ -301,7 +322,7 @@ public sealed class SeerrGateway
         return $"api/v1/discover/{endpoint}?{string.Join('&', query)}";
     }
 
-    public async Task<JsonNode> GenresAsync(
+    public async Task<IReadOnlyList<SeerrGenreResponse>> GenresAsync(
         Guid jellyfinUserId,
         string mediaType,
         CancellationToken cancellationToken)
@@ -317,7 +338,7 @@ public sealed class SeerrGateway
         return ShapeGenres(response);
     }
 
-    public async Task<JsonNode> MediaAsync(
+    public async Task<SeerrMediaDetailResponse> MediaAsync(
         Guid jellyfinUserId,
         string mediaType,
         int tmdbId,
@@ -335,7 +356,7 @@ public sealed class SeerrGateway
         return ShapeMedia(response, type);
     }
 
-    public async Task<JsonNode> RequestOptionsAsync(
+    public async Task<SeerrRequestOptionsResponse> RequestOptionsAsync(
         Guid jellyfinUserId,
         string mediaType,
         bool is4k,
@@ -352,35 +373,31 @@ public sealed class SeerrGateway
             user,
             cancellationToken).ConfigureAwait(false) as JsonArray ?? new JsonArray();
 
-        var destinations = new List<JsonNode>();
+        var destinations = new List<SeerrRequestDestinationResponse>();
         foreach (var server in servers
             .OfType<JsonObject>()
-            .Where(server => (JsonRead.Bool(server, "is4k") ?? false) == is4k)
-            .OrderByDescending(server => JsonRead.Bool(server, "isDefault") == true)
+            .Where(server => IsTrue(server, "is4k") == is4k)
+            .OrderByDescending(server => IsTrue(server, "isDefault"))
             .ThenBy(server => JsonRead.String(server, "name"), StringComparer.OrdinalIgnoreCase))
         {
-            var serverId = JsonRead.Int32(server, "id");
-            if (serverId is null or < 0)
+            if (JsonRead.Int32(server, "id") is not { } serverId || serverId < 0)
             {
                 continue;
             }
 
             var detail = await SendMappedAsync(
                 HttpMethod.Get,
-                $"api/v1/service/{service}/{serverId.Value}",
+                $"api/v1/service/{service}/{serverId}",
                 null,
                 user,
                 cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
             destinations.Add(ShapeRequestDestination(server, detail));
         }
 
-        return new JsonObject
-        {
-            ["destinations"] = new JsonArray(destinations.ToArray())
-        };
+        return new SeerrRequestOptionsResponse(destinations);
     }
 
-    public async Task<JsonNode> RequestAsync(
+    public async Task<SeerrRequestResponse> RequestAsync(
         Guid jellyfinUserId,
         SeerrRequestBody body,
         CancellationToken cancellationToken)
@@ -431,7 +448,7 @@ public sealed class SeerrGateway
         return ShapeRequest(response as JsonObject ?? new JsonObject());
     }
 
-    public async Task<JsonNode> RequestsAsync(
+    public async Task<SeerrPageResponse<SeerrRequestResponse>> RequestsAsync(
         Guid jellyfinUserId,
         int take,
         int skip,
@@ -453,23 +470,17 @@ public sealed class SeerrGateway
             path,
             null,
             user,
-            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-        var pageInfo = response["pageInfo"] as JsonObject;
-        var results = new JsonArray(
-            (response["results"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Select(ShapeRequest)
-                .ToArray());
-        return new JsonObject
-        {
-            ["page"] = JsonRead.Int32(pageInfo, "page") ?? 1,
-            ["totalPages"] = JsonRead.Int32(pageInfo, "pages") ?? 1,
-            ["totalResults"] = JsonRead.Int32(pageInfo, "results") ?? results.Count,
-            ["results"] = results
-        };
+            cancellationToken).ConfigureAwait(false) as JsonObject;
+        var pageInfo = response?["pageInfo"] as JsonObject;
+        var results = Objects(response?["results"]).Select(ShapeRequest).ToArray();
+        return new SeerrPageResponse<SeerrRequestResponse>(
+            JsonRead.Int32(pageInfo, "page") ?? 1,
+            JsonRead.Int32(pageInfo, "pages") ?? 1,
+            JsonRead.Int32(pageInfo, "results") ?? results.Length,
+            results);
     }
 
-    public async Task<JsonNode> CancelAsync(
+    public async Task<SeerrCancelResponse> CancelAsync(
         Guid jellyfinUserId,
         int requestId,
         CancellationToken cancellationToken)
@@ -482,62 +493,104 @@ public sealed class SeerrGateway
             null,
             user,
             cancellationToken).ConfigureAwait(false);
-        return new JsonObject { ["cancelled"] = true, ["id"] = requestId };
+        return new SeerrCancelResponse(true, requestId);
     }
 
     private async Task<int> ResolveUserAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
     {
-        if (_mappings.TryGetValue(jellyfinUserId, out var cached)
-            && DateTimeOffset.UtcNow - cached.CachedAt < MappingLifetime)
+        if (CachedMapping(jellyfinUserId) is { } cached)
         {
-            return cached.SeerrUserId;
+            return cached;
         }
 
-        var mapped = await FindUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
-        if (mapped is null && Plugin.Instance?.Configuration.AutoImportSeerrUsers == true)
+        // One lookup at a time: concurrent first requests from the same user
+        // share a single user scan instead of each paging through Seerr.
+        await _lookupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await _http.SendAsync(
-                "seerr",
-                Configuration(),
-                HttpMethod.Post,
-                "api/v1/user/import-from-jellyfin",
-                new JsonObject
-                {
-                    // Seerr matches these against the ids Jellyfin's API
-                    // serializes, which are dashless ("N" format).
-                    ["jellyfinUserIds"] = new JsonArray(JsonValue.Create(jellyfinUserId.ToString("N")))
-                },
-                null,
-                cancellationToken).ConfigureAwait(false);
-            mapped = await FindUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
-        }
+            if (CachedMapping(jellyfinUserId) is { } resolved)
+            {
+                return resolved;
+            }
 
-        if (mapped is null)
+            var now = _time.GetUtcNow();
+            if (_missing.TryGetValue(jellyfinUserId, out var missingSince)
+                && now - missingSince < MissingUserLifetime)
+            {
+                throw NotImported();
+            }
+
+            var mapped = await FindUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+            if (mapped is null && _seerr.AutoImportUsers)
+            {
+                await _seerr.SendAsync(
+                    HttpMethod.Post,
+                    "api/v1/user/import-from-jellyfin",
+                    new JsonObject
+                    {
+                        // Seerr matches these against the ids Jellyfin's API
+                        // serializes, which are dashless ("N" format).
+                        ["jellyfinUserIds"] = new JsonArray(JsonValue.Create(jellyfinUserId.ToString("N")))
+                    },
+                    null,
+                    cancellationToken).ConfigureAwait(false);
+                mapped = await FindUserAsync(jellyfinUserId, cancellationToken).ConfigureAwait(false);
+            }
+
+            now = _time.GetUtcNow();
+            if (mapped is null)
+            {
+                ForgetExpiredMisses(now);
+                _missing[jellyfinUserId] = now;
+                throw NotImported();
+            }
+
+            _missing.TryRemove(jellyfinUserId, out _);
+            _mappings[jellyfinUserId] = new MappingRecord(mapped.Value, now);
+            return mapped.Value;
+        }
+        finally
         {
-            throw new GatewayException(
-                StatusCodes.Status409Conflict,
-                "your Jellyfin account has not been imported into Seerr; ask your administrator to import it");
+            _lookupGate.Release();
         }
-
-        _mappings[jellyfinUserId] = new MappingRecord(mapped.Value, DateTimeOffset.UtcNow);
-        return mapped.Value;
     }
+
+    private int? CachedMapping(Guid jellyfinUserId)
+        => _mappings.TryGetValue(jellyfinUserId, out var cached)
+            && _time.GetUtcNow() - cached.CachedAt < MappingLifetime
+                ? cached.SeerrUserId
+                : null;
+
+    private void ForgetExpiredMisses(DateTimeOffset now)
+    {
+        foreach (var (userId, since) in _missing)
+        {
+            if (now - since >= MissingUserLifetime)
+            {
+                _missing.TryRemove(userId, out _);
+            }
+        }
+    }
+
+    private static GatewayException NotImported()
+        => new(
+            StatusCodes.Status409Conflict,
+            "your Jellyfin account has not been imported into Seerr; ask your administrator to import it");
 
     private async Task<int?> FindUserAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
     {
-        const int take = 50;
-        for (var skip = 0; skip < 10_000; skip += take)
+        for (var skip = 0; skip < MaxUserScan; skip += UserPageSize)
         {
-            var response = await _http.SendAsync(
-                "seerr",
-                Configuration(),
+            var response = await _seerr.SendAsync(
                 HttpMethod.Get,
-                $"api/v1/user?take={take}&skip={skip}&sort=created",
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"api/v1/user?take={UserPageSize}&skip={skip}&sort=created"),
                 null,
                 null,
-                cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-            var users = response["results"] as JsonArray ?? new JsonArray();
-            foreach (var user in users.OfType<JsonObject>())
+                cancellationToken).ConfigureAwait(false) as JsonObject;
+            var users = response?["results"] as JsonArray;
+            foreach (var user in Objects(users))
             {
                 if (Guid.TryParse(JsonRead.String(user, "jellyfinUserId"), out var candidate)
                     && candidate == jellyfinUserId
@@ -547,7 +600,7 @@ public sealed class SeerrGateway
                 }
             }
 
-            if (users.Count < take)
+            if (users is null || users.Count < UserPageSize)
             {
                 break;
             }
@@ -562,14 +615,7 @@ public sealed class SeerrGateway
         JsonNode? body,
         int seerrUserId,
         CancellationToken cancellationToken)
-        => _http.SendAsync(
-            "seerr",
-            Configuration(),
-            method,
-            path,
-            body,
-            seerrUserId,
-            cancellationToken);
+        => _seerr.SendAsync(method, path, body, seerrUserId, cancellationToken);
 
     private async Task RequireAdvancedRequestAsync(
         int seerrUserId,
@@ -580,7 +626,7 @@ public sealed class SeerrGateway
             "api/v1/auth/me",
             null,
             seerrUserId,
-            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+            cancellationToken).ConfigureAwait(false) as JsonObject;
         var permissions = JsonRead.UInt64(user, "permissions") ?? 0;
         if (!HasPermission(permissions, RequestAdvanced))
         {
@@ -590,238 +636,207 @@ public sealed class SeerrGateway
         }
     }
 
-    private static Configuration.ServiceConfiguration Configuration()
-        => Plugin.Instance?.Configuration.Seerr
-            ?? throw new GatewayException(
-                StatusCodes.Status503ServiceUnavailable,
-                "the plugin is not initialized");
-
-    internal static JsonNode ShapeSearchPage(JsonNode? node)
+    internal static SeerrPageResponse<SeerrResultResponse> ShapeSearchPage(JsonNode? node)
     {
-        var page = node as JsonObject ?? new JsonObject();
-        var results = new JsonArray(
-            (page["results"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static result => JsonRead.String(result, "mediaType") is "movie" or "tv")
-                .Select(ShapeSearchResult)
-                .ToArray());
-        return new JsonObject
-        {
-            ["page"] = JsonRead.Int32(page, "page") ?? 1,
-            ["totalPages"] = JsonRead.Int32(page, "totalPages") ?? 1,
-            ["totalResults"] = JsonRead.Int32(page, "totalResults") ?? results.Count,
-            ["results"] = results
-        };
+        var page = node as JsonObject;
+        var results = Objects(page?["results"])
+            .Where(static result => JsonRead.String(result, "mediaType") is "movie" or "tv")
+            .Select(ShapeSearchResult)
+            .ToArray();
+        return new SeerrPageResponse<SeerrResultResponse>(
+            JsonRead.Int32(page, "page") ?? 1,
+            JsonRead.Int32(page, "totalPages") ?? 1,
+            JsonRead.Int32(page, "totalResults") ?? results.Length,
+            results);
     }
 
-    internal static JsonNode ShapePersonCredits(JsonNode? node)
+    internal static SeerrPageResponse<SeerrResultResponse> ShapePersonCredits(JsonNode? node)
     {
-        var credits = node as JsonObject ?? new JsonObject();
-        var results = new JsonArray(
-            (credits["cast"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static credit =>
-                    JsonRead.String(credit, "mediaType") is "movie" or "tv"
-                    && (JsonRead.Int32(credit, "id") ?? 0) > 0
-                    && JsonRead.Flag(credit["adult"]) != true
-                    && !string.Equals(
-                        JsonRead.String(credit, "character")?.Trim(),
-                        "Thanks",
-                        StringComparison.OrdinalIgnoreCase))
-                .GroupBy(
-                    static credit => $"{JsonRead.String(credit, "mediaType")}:{JsonRead.Int32(credit, "id")}",
-                    StringComparer.Ordinal)
-                // Preserve request state when only a duplicate character row
-                // happens to carry Seerr's mediaInfo object.
-                .Select(static group => ShapeSearchResult(
-                    group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
-                    ?? group.First()))
-                .ToArray());
-        return new JsonObject
-        {
-            ["page"] = 1,
-            ["totalPages"] = results.Count > 0 ? 1 : 0,
-            ["totalResults"] = results.Count,
-            ["results"] = results
-        };
+        var results = Objects((node as JsonObject)?["cast"])
+            .Where(static credit =>
+                JsonRead.String(credit, "mediaType") is "movie" or "tv"
+                && (JsonRead.Int32(credit, "id") ?? 0) > 0
+                && JsonRead.Flag(credit["adult"]) != true
+                && !string.Equals(
+                    JsonRead.String(credit, "character")?.Trim(),
+                    "Thanks",
+                    StringComparison.OrdinalIgnoreCase))
+            .GroupBy(
+                static credit => $"{JsonRead.String(credit, "mediaType")}:{JsonRead.Int32(credit, "id")}",
+                StringComparer.Ordinal)
+            // Preserve request state when only a duplicate character row
+            // happens to carry Seerr's mediaInfo object.
+            .Select(static group => ShapeSearchResult(
+                group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
+                ?? group.First()))
+            .ToArray();
+        return new SeerrPageResponse<SeerrResultResponse>(
+            1,
+            results.Length > 0 ? 1 : 0,
+            results.Length,
+            results);
     }
 
-    internal static JsonNode ShapeGenres(JsonNode? node)
-        => new JsonArray(
-            (node as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static genre =>
-                    (JsonRead.Int32(genre, "id") ?? 0) > 0
-                    && !string.IsNullOrWhiteSpace(JsonRead.String(genre, "name")))
-                .Select(genre => (JsonNode)new JsonObject
-                {
-                    ["id"] = JsonRead.Int32(genre, "id"),
-                    ["name"] = JsonRead.String(genre, "name"),
-                    ["backdrops"] = new JsonArray(
-                        (genre["backdrops"] as JsonArray ?? new JsonArray())
-                            .Select(Clone)
-                            .Where(static backdrop => backdrop is not null)
-                            .ToArray())
-                })
-                .ToArray());
+    internal static IReadOnlyList<SeerrGenreResponse> ShapeGenres(JsonNode? node)
+        => Objects(node)
+            .Select(static genre => (
+                Id: JsonRead.Int32(genre, "id") ?? 0,
+                Name: JsonRead.String(genre, "name"),
+                Genre: genre))
+            .Where(static genre => genre.Id > 0 && !string.IsNullOrWhiteSpace(genre.Name))
+            .Select(static genre => new SeerrGenreResponse(
+                genre.Id,
+                genre.Name!,
+                Strings(genre.Genre["backdrops"]).ToArray()))
+            .ToArray();
 
-    private static JsonNode ShapeSearchResult(JsonObject result)
+    private static SeerrResultResponse ShapeSearchResult(JsonObject result)
     {
         var mediaInfo = result["mediaInfo"] as JsonObject;
         var mediaType = JsonRead.String(result, "mediaType") ?? string.Empty;
-        return new JsonObject
-        {
-            ["mediaType"] = mediaType,
-            ["tmdbId"] = JsonRead.Int32(result, "id"),
-            ["title"] = JsonRead.String(result, mediaType == "movie" ? "title" : "name") ?? "Untitled",
-            ["year"] = JsonRead.Year(JsonRead.String(
+        return new SeerrResultResponse(
+            mediaType,
+            JsonRead.Int32(result, "id"),
+            JsonRead.String(result, mediaType == "movie" ? "title" : "name") ?? "Untitled",
+            JsonRead.Year(JsonRead.String(
                 result,
                 mediaType == "movie" ? "releaseDate" : "firstAirDate")),
-            ["overview"] = Clone(result["overview"]),
-            ["posterPath"] = Clone(result["posterPath"]),
-            ["backdropPath"] = Clone(result["backdropPath"]),
-            ["voteAverage"] = Clone(result["voteAverage"]),
-            ["status"] = StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
-            ["status4k"] = StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
-            ["libraryItemId"] = null
-        };
+            JsonRead.String(result, "overview"),
+            JsonRead.String(result, "posterPath"),
+            JsonRead.String(result, "backdropPath"),
+            JsonRead.Number(result["voteAverage"]),
+            StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
+            StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1));
     }
 
-    internal static JsonNode ShapeRequestDestination(JsonObject server, JsonObject detail)
+    internal static SeerrRequestDestinationResponse ShapeRequestDestination(
+        JsonObject server,
+        JsonObject detail)
     {
         var activeProfile = JsonRead.Int32(server, "activeProfileId") ?? 0;
-        var profiles = new JsonArray(
-            (detail["profiles"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static profile =>
-                    (JsonRead.Int32(profile, "id") ?? 0) > 0
-                    && !string.IsNullOrWhiteSpace(JsonRead.String(profile, "name")))
-                .OrderBy(profile => JsonRead.String(profile, "name"), StringComparer.OrdinalIgnoreCase)
-                .Select(profile => (JsonNode)new JsonObject
-                {
-                    ["id"] = JsonRead.Int32(profile, "id"),
-                    ["name"] = JsonRead.String(profile, "name"),
-                    ["isDefault"] = JsonRead.Int32(profile, "id") == activeProfile
-                })
-                .ToArray());
-        return new JsonObject
-        {
-            ["id"] = JsonRead.Int32(server, "id"),
-            ["name"] = JsonRead.String(server, "name") ?? "Download service",
-            ["isDefault"] = JsonRead.Bool(server, "isDefault") == true,
-            ["profiles"] = profiles
-        };
+        var profiles = Objects(detail["profiles"])
+            .Select(static profile => (
+                Id: JsonRead.Int32(profile, "id") ?? 0,
+                Name: JsonRead.String(profile, "name")))
+            .Where(static profile => profile.Id > 0 && !string.IsNullOrWhiteSpace(profile.Name))
+            .OrderBy(static profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(profile => new SeerrQualityProfileResponse(
+                profile.Id,
+                profile.Name!,
+                profile.Id == activeProfile))
+            .ToArray();
+        return new SeerrRequestDestinationResponse(
+            JsonRead.Int32(server, "id") ?? 0,
+            JsonRead.String(server, "name") ?? "Download service",
+            IsTrue(server, "isDefault"),
+            profiles);
     }
 
-    internal static JsonNode ShapeMedia(JsonObject detail, string mediaType)
+    internal static SeerrMediaDetailResponse ShapeMedia(JsonObject detail, string mediaType)
     {
+        var movie = mediaType == "movie";
         var mediaInfo = detail["mediaInfo"] as JsonObject;
-        var genres = new JsonArray(
-            (detail["genres"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Select(genre => JsonValue.Create(JsonRead.String(genre, "name") ?? string.Empty))
-                .ToArray());
-        var seasons = new JsonArray(
-            (detail["seasons"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static season => (JsonRead.Int32(season, "seasonNumber") ?? 0) > 0)
-                .Select(season =>
-                {
-                    var number = JsonRead.Int32(season, "seasonNumber") ?? 0;
-                    var known = (mediaInfo?["seasons"] as JsonArray ?? new JsonArray())
-                        .OfType<JsonObject>()
-                        .FirstOrDefault(item => JsonRead.Int32(item, "seasonNumber") == number);
-                    return (JsonNode)new JsonObject
-                    {
-                        ["seasonNumber"] = number,
-                        ["name"] = Clone(season["name"]),
-                        ["episodeCount"] = JsonRead.Int32(season, "episodeCount") ?? 0,
-                        ["airDate"] = Clone(season["airDate"]),
-                        ["status"] = StatusName(JsonRead.Int32(known, "status") ?? 1),
-                        ["status4k"] = StatusName(JsonRead.Int32(known, "status4k") ?? 1)
-                    };
-                })
-                .ToArray());
+        var knownSeasons = Objects(mediaInfo?["seasons"]).ToArray();
+        var seasons = Objects(detail["seasons"])
+            .Where(static season => (JsonRead.Int32(season, "seasonNumber") ?? 0) > 0)
+            .Select(season =>
+            {
+                var number = JsonRead.Int32(season, "seasonNumber") ?? 0;
+                var known = knownSeasons.FirstOrDefault(
+                    item => JsonRead.Int32(item, "seasonNumber") == number);
+                return new SeerrSeasonResponse(
+                    number,
+                    JsonRead.String(season, "name"),
+                    JsonRead.Int32(season, "episodeCount") ?? 0,
+                    JsonRead.String(season, "airDate"),
+                    StatusName(JsonRead.Int32(known, "status") ?? 1),
+                    StatusName(JsonRead.Int32(known, "status4k") ?? 1));
+            })
+            .ToArray();
         var runtime = JsonRead.Int32(detail, "runtime")
             ?? (detail["episodeRunTime"] as JsonArray)?
-                .Select(static item => item is JsonValue value && value.TryGetValue<int>(out var minutes)
-                    ? minutes
-                    : (int?)null)
+                .Select(JsonRead.Int32)
                 .FirstOrDefault(static value => value is > 0);
         var externalIds = detail["externalIds"] as JsonObject;
+        var tvdb = JsonRead.Int32(externalIds, "tvdbId");
 
-        return new JsonObject
-        {
-            ["mediaType"] = mediaType,
-            ["tmdbId"] = JsonRead.Int32(detail, "id"),
-            ["title"] = JsonRead.String(detail, mediaType == "movie" ? "title" : "name") ?? "Untitled",
-            ["originalTitle"] = Clone(
-                detail[mediaType == "movie" ? "originalTitle" : "originalName"]),
-            ["year"] = JsonRead.Year(JsonRead.String(
-                detail,
-                mediaType == "movie" ? "releaseDate" : "firstAirDate")),
-            ["overview"] = Clone(detail["overview"]),
-            ["tagline"] = Clone(detail["tagline"]),
-            ["posterPath"] = Clone(detail["posterPath"]),
-            ["backdropPath"] = Clone(detail["backdropPath"]),
-            ["voteAverage"] = Clone(detail["voteAverage"]),
-            ["voteCount"] = Clone(detail["voteCount"]),
-            ["status"] = StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
-            ["status4k"] = StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
-            ["libraryItemId"] = null,
-            ["runtimeMinutes"] = runtime,
-            ["genres"] = genres,
-            ["seasons"] = seasons,
-            ["releaseDate"] = Clone(
-                detail[mediaType == "movie" ? "releaseDate" : "firstAirDate"]),
-            ["firstAirDate"] = Clone(detail["firstAirDate"]),
-            ["lastAirDate"] = Clone(detail["lastAirDate"]),
-            ["productionStatus"] = Clone(detail["status"]),
-            ["inProduction"] = Clone(detail["inProduction"]),
-            ["seriesType"] = Clone(detail["type"]),
-            ["numberOfSeasons"] = Clone(detail["numberOfSeasons"]),
-            ["numberOfEpisodes"] = Clone(detail["numberOfEpisodes"]),
-            ["originalLanguage"] = Clone(detail["originalLanguage"]),
-            ["homepage"] = Clone(detail["homepage"]),
-            ["externalIds"] = new JsonObject
-            {
-                ["imdb"] = ImdbTitleId(detail, externalIds),
-                ["tvdb"] = PositiveInt(externalIds, "tvdbId")
-            },
-            ["budget"] = PositiveInt(detail, "budget"),
-            ["revenue"] = PositiveInt(detail, "revenue"),
-            ["studios"] = StringArray(Names(detail["productionCompanies"])),
-            ["networks"] = StringArray(Names(detail["networks"])),
-            ["creators"] = StringArray(UniqueStrings(
-                Names(detail["createdBy"]).Concat(CrewNames(detail, "Creator", null)))),
-            ["directors"] = StringArray(UniqueStrings(CrewNames(detail, "Director", null))),
-            ["writers"] = StringArray(UniqueStrings(CrewNames(detail, null, "Writing"))),
-            ["productionCountries"] = ShapeNamedCodes(
-                detail["productionCountries"],
-                "iso_3166_1"),
-            ["spokenLanguages"] = ShapeLanguages(detail["spokenLanguages"]),
-            ["cast"] = ShapeCast(detail),
-            ["trailer"] = ShapeTrailer(detail),
-            ["releaseDates"] = ShapeReleaseDates(detail),
-            ["contentRatings"] = ShapeContentRatings(detail),
-            ["nextEpisode"] = ShapeNextEpisode(detail)
-        };
+        return new SeerrMediaDetailResponse(
+            mediaType,
+            JsonRead.Int32(detail, "id"),
+            JsonRead.String(detail, movie ? "title" : "name") ?? "Untitled",
+            JsonRead.String(detail, movie ? "originalTitle" : "originalName"),
+            JsonRead.Year(JsonRead.String(detail, movie ? "releaseDate" : "firstAirDate")),
+            JsonRead.String(detail, "overview"),
+            JsonRead.String(detail, "tagline"),
+            JsonRead.String(detail, "posterPath"),
+            JsonRead.String(detail, "backdropPath"),
+            JsonRead.Number(detail["voteAverage"]),
+            JsonRead.Integer(detail["voteCount"]),
+            StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
+            StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
+            null,
+            runtime,
+            Objects(detail["genres"])
+                .Select(static genre => JsonRead.String(genre, "name") ?? string.Empty)
+                .ToArray(),
+            seasons,
+            JsonRead.String(detail, movie ? "releaseDate" : "firstAirDate"),
+            JsonRead.String(detail, "firstAirDate"),
+            JsonRead.String(detail, "lastAirDate"),
+            JsonRead.String(detail, "status"),
+            JsonRead.Bool(detail, "inProduction"),
+            JsonRead.String(detail, "type"),
+            JsonRead.Int32(detail, "numberOfSeasons"),
+            JsonRead.Int32(detail, "numberOfEpisodes"),
+            JsonRead.String(detail, "originalLanguage"),
+            JsonRead.String(detail, "homepage"),
+            new SeerrExternalIdsResponse(
+                ImdbIds.Normalize(JsonRead.String(externalIds, "imdbId"))
+                    ?? ImdbIds.Normalize(JsonRead.String(detail, "imdbId")),
+                tvdb is > 0 ? tvdb : null),
+            JsonRead.Positive(detail["budget"]),
+            JsonRead.Positive(detail["revenue"]),
+            Names(detail["productionCompanies"]).ToArray(),
+            Names(detail["networks"]).ToArray(),
+            UniqueStrings(Names(detail["createdBy"]).Concat(CrewNames(detail, "Creator", null))),
+            UniqueStrings(CrewNames(detail, "Director", null)),
+            UniqueStrings(CrewNames(detail, null, "Writing")),
+            ShapeCodeNames(detail["productionCountries"], "iso_3166_1", "name"),
+            ShapeCodeNames(detail["spokenLanguages"], "iso_639_1", "englishName"),
+            ShapeCast(detail),
+            ShapeTrailer(detail),
+            ShapeReleaseDates(detail),
+            ShapeContentRatings(detail),
+            ShapeNextEpisode(detail));
     }
 
-    private static JsonNode? PositiveInt(JsonObject? value, string name)
+    internal static SeerrQuotaResponse? ShapeQuota(JsonNode? node)
     {
-        var number = JsonRead.Int32(value, name);
-        return number is > 0 ? JsonValue.Create(number.Value) : null;
+        var quota = node as JsonObject;
+        return quota?["movie"] is JsonObject movie && quota["tv"] is JsonObject tv
+            ? new SeerrQuotaResponse(ShapeQuotaLimit(movie), ShapeQuotaLimit(tv))
+            : null;
     }
 
-    private static string? ImdbTitleId(JsonObject detail, JsonObject? externalIds)
-        => ImdbIds.Normalize(JsonRead.String(externalIds, "imdbId"))
-            ?? ImdbIds.Normalize(JsonRead.String(detail, "imdbId"));
+    private static SeerrQuotaLimitResponse ShapeQuotaLimit(JsonObject limit)
+        => new(
+            JsonRead.Int32(limit, "days"),
+            JsonRead.Int32(limit, "limit"),
+            JsonRead.Int32(limit, "used") ?? 0,
+            JsonRead.Int32(limit, "remaining"),
+            IsTrue(limit, "restricted"));
+
+    private static IEnumerable<JsonObject> Objects(JsonNode? node)
+        => (node as JsonArray)?.OfType<JsonObject>() ?? [];
+
+    private static IEnumerable<string> Strings(JsonNode? node)
+        => (node as JsonArray)?.Select(JsonRead.String).OfType<string>() ?? [];
+
+    private static bool IsTrue(JsonObject? value, string name) => JsonRead.Bool(value, name) == true;
 
     private static IEnumerable<string> Names(JsonNode? node)
-        => (node as JsonArray ?? new JsonArray())
-            .OfType<JsonObject>()
-            .Select(value => JsonRead.String(value, "name")?.Trim())
+        => Objects(node)
+            .Select(static value => JsonRead.String(value, "name")?.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
 
@@ -829,77 +844,47 @@ public sealed class SeerrGateway
         JsonObject detail,
         string? job,
         string? department)
-    {
-        var credits = detail["credits"] as JsonObject;
-        return (credits?["crew"] as JsonArray ?? new JsonArray())
-            .OfType<JsonObject>()
+        => Objects((detail["credits"] as JsonObject)?["crew"])
             .Where(person =>
                 (job is null || JsonRead.String(person, "job") == job)
                 && (department is null || JsonRead.String(person, "department") == department))
-            .Select(person => JsonRead.String(person, "name")?.Trim())
+            .Select(static person => JsonRead.String(person, "name")?.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
-    }
 
-    private static IEnumerable<string> UniqueStrings(IEnumerable<string> values)
+    private static string[] UniqueStrings(IEnumerable<string> values)
         => values
             .Where(static value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase);
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
-    private static JsonArray StringArray(IEnumerable<string> values)
-        => new(values.Select(static value => (JsonNode?)JsonValue.Create(value)).ToArray());
+    private static SeerrCodeNameResponse[] ShapeCodeNames(
+        JsonNode? node,
+        string codeName,
+        string preferredName)
+        => Objects(node)
+            .Where(value =>
+                !string.IsNullOrWhiteSpace(JsonRead.String(value, codeName))
+                || !string.IsNullOrWhiteSpace(JsonRead.String(value, "name")))
+            .Select(value => new SeerrCodeNameResponse(
+                JsonRead.String(value, codeName),
+                JsonRead.String(value, preferredName) ?? JsonRead.String(value, "name")))
+            .ToArray();
 
-    private static JsonNode ShapeNamedCodes(JsonNode? node, string codeName)
-        => new JsonArray(
-            (node as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(value =>
-                    !string.IsNullOrWhiteSpace(JsonRead.String(value, codeName))
-                    || !string.IsNullOrWhiteSpace(JsonRead.String(value, "name")))
-                .Select(value => (JsonNode)new JsonObject
-                {
-                    ["code"] = JsonRead.String(value, codeName),
-                    ["name"] = JsonRead.String(value, "name")
-                })
-                .ToArray());
+    private static SeerrCastMemberResponse[] ShapeCast(JsonObject detail)
+        => Objects((detail["credits"] as JsonObject)?["cast"])
+            .Where(static person => !string.IsNullOrWhiteSpace(JsonRead.String(person, "name")))
+            .Take(20)
+            .Select(static person => new SeerrCastMemberResponse(
+                JsonRead.Int32(person, "id"),
+                JsonRead.String(person, "name"),
+                JsonRead.String(person, "character"),
+                JsonRead.String(person, "profilePath")))
+            .ToArray();
 
-    private static JsonNode ShapeLanguages(JsonNode? node)
-        => new JsonArray(
-            (node as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(value =>
-                    !string.IsNullOrWhiteSpace(JsonRead.String(value, "iso_639_1"))
-                    || !string.IsNullOrWhiteSpace(JsonRead.String(value, "name")))
-                .Select(value => (JsonNode)new JsonObject
-                {
-                    ["code"] = JsonRead.String(value, "iso_639_1"),
-                    ["name"] = JsonRead.String(value, "englishName")
-                        ?? JsonRead.String(value, "name")
-                })
-                .ToArray());
-
-    private static JsonNode ShapeCast(JsonObject detail)
+    private static SeerrTrailerResponse? ShapeTrailer(JsonObject detail)
     {
-        var credits = detail["credits"] as JsonObject;
-        return new JsonArray(
-            (credits?["cast"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>()
-                .Where(static person => !string.IsNullOrWhiteSpace(JsonRead.String(person, "name")))
-                .Take(20)
-                .Select(person => (JsonNode)new JsonObject
-                {
-                    ["id"] = JsonRead.Int32(person, "id"),
-                    ["name"] = JsonRead.String(person, "name"),
-                    ["character"] = JsonRead.String(person, "character"),
-                    ["profilePath"] = Clone(person["profilePath"])
-                })
-                .ToArray());
-    }
-
-    private static JsonNode? ShapeTrailer(JsonObject detail)
-    {
-        var trailer = (detail["relatedVideos"] as JsonArray ?? new JsonArray())
-            .OfType<JsonObject>()
+        var trailer = Objects(detail["relatedVideos"])
             .Where(static video =>
                 JsonRead.String(video, "site") == "YouTube"
                 && JsonRead.String(video, "type") == "Trailer"
@@ -908,11 +893,9 @@ public sealed class SeerrGateway
             .FirstOrDefault();
         return trailer is null
             ? null
-            : new JsonObject
-            {
-                ["name"] = JsonRead.String(trailer, "name") ?? "Trailer",
-                ["key"] = JsonRead.String(trailer, "key")
-            };
+            : new SeerrTrailerResponse(
+                JsonRead.String(trailer, "name") ?? "Trailer",
+                JsonRead.String(trailer, "key"));
     }
 
     private static bool IsYoutubeKey(string? value)
@@ -920,20 +903,17 @@ public sealed class SeerrGateway
             && value.All(static character => char.IsAsciiLetterOrDigit(character)
                 || character is '-' or '_');
 
-    private static JsonNode ShapeReleaseDates(JsonObject detail)
+    private static SeerrReleaseDateResponse[] ShapeReleaseDates(JsonObject detail)
     {
-        var results = (detail["releases"] as JsonObject)?["results"] as JsonArray
-            ?? new JsonArray();
-        var releases = new List<JsonNode>();
-        foreach (var country in results.OfType<JsonObject>())
+        var releases = new List<SeerrReleaseDateResponse>();
+        foreach (var country in Objects((detail["releases"] as JsonObject)?["results"]))
         {
             var region = JsonRead.String(country, "iso_3166_1");
             if (string.IsNullOrWhiteSpace(region))
             {
                 continue;
             }
-            foreach (var release in (country["release_dates"] as JsonArray ?? new JsonArray())
-                .OfType<JsonObject>())
+            foreach (var release in Objects(country["release_dates"]))
             {
                 var type = (JsonRead.Int32(release, "type") ?? 0) switch
                 {
@@ -950,109 +930,74 @@ public sealed class SeerrGateway
                 {
                     continue;
                 }
-                releases.Add(new JsonObject
-                {
-                    ["region"] = region,
-                    ["type"] = type,
-                    ["date"] = date,
-                    ["certification"] = JsonRead.String(release, "certification")
-                });
+                releases.Add(new SeerrReleaseDateResponse(
+                    region,
+                    type,
+                    date,
+                    JsonRead.String(release, "certification")));
             }
         }
-        return new JsonArray(releases.ToArray());
+        return releases.ToArray();
     }
 
-    private static JsonNode ShapeContentRatings(JsonObject detail)
+    private static SeerrContentRatingResponse[] ShapeContentRatings(JsonObject detail)
+        => Objects((detail["contentRatings"] as JsonObject)?["results"])
+            .Where(static rating =>
+                !string.IsNullOrWhiteSpace(JsonRead.String(rating, "iso_3166_1"))
+                && !string.IsNullOrWhiteSpace(JsonRead.String(rating, "rating")))
+            .Select(static rating => new SeerrContentRatingResponse(
+                JsonRead.String(rating, "iso_3166_1"),
+                JsonRead.String(rating, "rating")))
+            .ToArray();
+
+    private static SeerrNextEpisodeResponse? ShapeNextEpisode(JsonObject detail)
+        => detail["nextEpisodeToAir"] is JsonObject episode
+            ? new SeerrNextEpisodeResponse(
+                JsonRead.String(episode, "name"),
+                JsonRead.String(episode, "airDate"),
+                JsonRead.Int32(episode, "seasonNumber"),
+                JsonRead.Int32(episode, "episodeNumber"))
+            : null;
+
+    internal static SeerrRequestResponse ShapeRequest(JsonObject request)
     {
-        var results = (detail["contentRatings"] as JsonObject)?["results"] as JsonArray
-            ?? new JsonArray();
-        return new JsonArray(
-            results
-                .OfType<JsonObject>()
-                .Where(static rating =>
-                    !string.IsNullOrWhiteSpace(JsonRead.String(rating, "iso_3166_1"))
-                    && !string.IsNullOrWhiteSpace(JsonRead.String(rating, "rating")))
-                .Select(rating => (JsonNode)new JsonObject
-                {
-                    ["region"] = JsonRead.String(rating, "iso_3166_1"),
-                    ["rating"] = JsonRead.String(rating, "rating")
-                })
+        var media = request["media"] as JsonObject;
+        var is4k = IsTrue(request, "is4k");
+        return new SeerrRequestResponse(
+            JsonRead.Int32(request, "id"),
+            RequestStatusName(JsonRead.Int32(request, "status") ?? 0),
+            JsonRead.String(request, "type")
+                ?? JsonRead.String(media, "mediaType")
+                ?? string.Empty,
+            JsonRead.Int32(media, "tmdbId"),
+            is4k,
+            JsonRead.String(request, "createdAt"),
+            JsonRead.String(request, "updatedAt"),
+            StatusName(JsonRead.Int32(media, is4k ? "status4k" : "status") ?? 1),
+            Objects(request["seasons"])
+                .Select(static season => JsonRead.Int32(season, "seasonNumber") ?? 0)
                 .ToArray());
     }
 
-    private static JsonNode? ShapeNextEpisode(JsonObject detail)
+    private static SeerrCapabilitiesResponse Capabilities(ulong permissions, bool movie4k, bool tv4k)
     {
-        var episode = detail["nextEpisodeToAir"] as JsonObject;
-        return episode is null
-            ? null
-            : new JsonObject
-            {
-                ["name"] = JsonRead.String(episode, "name"),
-                ["airDate"] = Clone(episode["airDate"]),
-                ["seasonNumber"] = JsonRead.Int32(episode, "seasonNumber"),
-                ["episodeNumber"] = JsonRead.Int32(episode, "episodeNumber")
-            };
-    }
-
-    private static JsonNode ShapeRequest(JsonObject request)
-    {
-        var media = request["media"] as JsonObject ?? new JsonObject();
-        var is4k = JsonRead.Bool(request, "is4k") == true;
-        var mediaType = JsonRead.String(request, "type")
-            ?? JsonRead.String(media, "mediaType")
-            ?? string.Empty;
-        return new JsonObject
-        {
-            ["id"] = JsonRead.Int32(request, "id"),
-            ["status"] = RequestStatusName(JsonRead.Int32(request, "status") ?? 0),
-            ["mediaType"] = mediaType,
-            ["tmdbId"] = JsonRead.Int32(media, "tmdbId"),
-            ["is4k"] = is4k,
-            ["createdAt"] = Clone(request["createdAt"]),
-            ["updatedAt"] = Clone(request["updatedAt"]),
-            ["mediaStatus"] = StatusName(
-                JsonRead.Int32(media, is4k ? "status4k" : "status") ?? 1),
-            ["seasons"] = new JsonArray(
-                (request["seasons"] as JsonArray ?? new JsonArray())
-                    .OfType<JsonObject>()
-                    .Select(season => JsonValue.Create(JsonRead.Int32(season, "seasonNumber") ?? 0))
-                    .ToArray()),
-            ["libraryItemId"] = null
-        };
-    }
-
-    private static JsonNode Capabilities(ulong permissions, bool movie4k, bool tv4k)
-    {
-        var admin = (permissions & Admin) != 0;
-        bool Has(ulong mask) => admin || (permissions & mask) != 0;
-        JsonNode Capability(bool request, bool approve) => new JsonObject
-        {
-            ["request"] = request,
-            ["autoApprove"] = approve
-        };
-
-        return new JsonObject
-        {
-            ["movie"] = Capability(
-                Has(Request | RequestMovie),
-                Has(AutoApprove | AutoApproveMovie)),
-            ["tv"] = Capability(
-                Has(Request | RequestTv),
-                Has(AutoApprove | AutoApproveTv)),
-            ["movie4k"] = Capability(
+        bool Has(ulong mask) => HasPermission(permissions, mask);
+        return new SeerrCapabilitiesResponse(
+            new(Has(Request | RequestMovie), Has(AutoApprove | AutoApproveMovie)),
+            new(Has(Request | RequestTv), Has(AutoApprove | AutoApproveTv)),
+            new(
                 movie4k && Has(Request4k | Request4kMovie),
                 movie4k && Has(AutoApprove4k | AutoApprove4kMovie)),
-            ["tv4k"] = Capability(
+            new(
                 tv4k && Has(Request4k | Request4kTv),
                 tv4k && Has(AutoApprove4k | AutoApprove4kTv)),
-            ["advancedRequest"] = Has(RequestAdvanced)
-        };
+            Has(RequestAdvanced));
     }
 
     private static bool HasPermission(ulong permissions, ulong permission)
         => (permissions & Admin) != 0 || (permissions & permission) != 0;
 
-    private static string PreferredUserName(JsonObject user)
+    private static string PreferredUserName(JsonObject? user)
         => new[]
         {
             JsonRead.String(user, "displayName"),
@@ -1097,8 +1042,6 @@ public sealed class SeerrGateway
             4 => "failed",
             _ => "unknown"
         };
-
-    private static JsonNode? Clone(JsonNode? node) => node?.DeepClone();
 
     private sealed record MappingRecord(int SeerrUserId, DateTimeOffset CachedAt);
 }

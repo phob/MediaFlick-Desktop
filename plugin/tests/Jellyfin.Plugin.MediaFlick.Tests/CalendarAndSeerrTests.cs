@@ -161,12 +161,13 @@ public sealed class CalendarAndSeerrTests
             """);
 
         var page = SeerrGateway.ShapeSearchPage(source);
-        var results = Assert.IsType<JsonArray>(page["results"]);
-        var movie = Assert.IsType<JsonObject>(Assert.Single(results));
-        Assert.Equal("movie", movie["mediaType"]?.GetValue<string>());
-        Assert.Equal(603, movie["tmdbId"]?.GetValue<int>());
-        Assert.Equal("available", movie["status"]?.GetValue<string>());
-        Assert.Null(movie["libraryItemId"]);
+        var movie = Assert.Single(page.Results);
+        Assert.Equal("movie", movie.MediaType);
+        Assert.Equal(603, movie.TmdbId);
+        Assert.Equal(1999, movie.Year);
+        Assert.Equal("available", movie.Status);
+        Assert.Null(movie.LibraryItemId);
+        Assert.Equal(2, page.TotalPages);
     }
 
     [Fact]
@@ -190,12 +191,11 @@ public sealed class CalendarAndSeerrTests
             """);
 
         var page = SeerrGateway.ShapePersonCredits(source);
-        var results = Assert.IsType<JsonArray>(page["results"]);
-        Assert.Equal(2, results.Count);
-        Assert.Equal("movie", results[0]?["mediaType"]?.GetValue<string>());
-        Assert.Equal("available", results[0]?["status"]?.GetValue<string>());
-        Assert.Equal("tv", results[1]?["mediaType"]?.GetValue<string>());
-        Assert.Equal(2, page["totalResults"]?.GetValue<int>());
+        Assert.Equal(2, page.Results.Count);
+        Assert.Equal("movie", page.Results[0].MediaType);
+        Assert.Equal("available", page.Results[0].Status);
+        Assert.Equal("tv", page.Results[1].MediaType);
+        Assert.Equal(2, page.TotalResults);
     }
 
     [Fact]
@@ -210,11 +210,10 @@ public sealed class CalendarAndSeerrTests
             ]
             """);
 
-        var genres = Assert.IsType<JsonArray>(SeerrGateway.ShapeGenres(source));
-        var drama = Assert.IsType<JsonObject>(Assert.Single(genres));
-        Assert.Equal(18, drama["id"]?.GetValue<int>());
-        Assert.Equal("Drama", drama["name"]?.GetValue<string>());
-        Assert.Equal(2, Assert.IsType<JsonArray>(drama["backdrops"]).Count);
+        var drama = Assert.Single(SeerrGateway.ShapeGenres(source));
+        Assert.Equal(18, drama.Id);
+        Assert.Equal("Drama", drama.Name);
+        Assert.Equal(["/one.jpg", "/two.jpg"], drama.Backdrops);
     }
 
     [Fact]
@@ -279,22 +278,24 @@ public sealed class CalendarAndSeerrTests
             }
             """));
 
-        var detail = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(source, "movie"));
-        Assert.Equal("A hacker discovers the truth.", detail["overview"]?.GetValue<string>());
-        Assert.Equal("Released", detail["productionStatus"]?.GetValue<string>());
-        Assert.Equal("Lana Wachowski", detail["directors"]?[0]?.GetValue<string>());
-        Assert.Equal("Neo", detail["cast"]?[0]?["character"]?.GetValue<string>());
-        Assert.Equal("tt0133093", detail["externalIds"]?["imdb"]?.GetValue<string>());
-        Assert.Null(detail["externalIds"]?["tvdb"]);
-        Assert.Equal("abcdefghijk", detail["trailer"]?["key"]?.GetValue<string>());
-        Assert.Equal("digital", detail["releaseDates"]?[0]?["type"]?.GetValue<string>());
-        Assert.Equal("R", detail["releaseDates"]?[0]?["certification"]?.GetValue<string>());
+        var detail = SeerrGateway.ShapeMedia(source, "movie");
+        Assert.Equal("A hacker discovers the truth.", detail.Overview);
+        Assert.Equal("Released", detail.ProductionStatus);
+        Assert.Equal("Lana Wachowski", detail.Directors[0]);
+        Assert.Equal("Neo", detail.Cast[0].Character);
+        Assert.Equal("tt0133093", detail.ExternalIds.Imdb);
+        Assert.Null(detail.ExternalIds.Tvdb);
+        Assert.Equal("abcdefghijk", detail.Trailer?.Key);
+        Assert.Equal("digital", detail.ReleaseDates[0].Type);
+        Assert.Equal("R", detail.ReleaseDates[0].Certification);
+        Assert.Equal(8.2, detail.VoteAverage);
+        Assert.Equal(26000, detail.VoteCount);
 
         var seriesSource = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"id":95396,"name":"Severance","externalIds":{"imdbId":"tt11280740","tvdbId":371980}}"""));
-        var series = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(seriesSource, "tv"));
-        Assert.Equal("tt11280740", series["externalIds"]?["imdb"]?.GetValue<string>());
-        Assert.Equal(371980, series["externalIds"]?["tvdb"]?.GetValue<int>());
+        var series = SeerrGateway.ShapeMedia(seriesSource, "tv");
+        Assert.Equal("tt11280740", series.ExternalIds.Imdb);
+        Assert.Equal(371980, series.ExternalIds.Tvdb);
     }
 
     [Fact]
@@ -305,11 +306,10 @@ public sealed class CalendarAndSeerrTests
         var detail = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"""));
 
-        var destination = Assert.IsType<JsonObject>(
-            SeerrGateway.ShapeRequestDestination(server, detail));
-        Assert.Equal(0, destination["id"]?.GetValue<int>());
-        Assert.Equal("Movies", destination["name"]?.GetValue<string>());
-        Assert.Equal("Any", destination["profiles"]?[0]?["name"]?.GetValue<string>());
-        Assert.True(destination["profiles"]?[1]?["isDefault"]?.GetValue<bool>());
+        var destination = SeerrGateway.ShapeRequestDestination(server, detail);
+        Assert.Equal(0, destination.Id);
+        Assert.Equal("Movies", destination.Name);
+        Assert.Equal("Any", destination.Profiles[0].Name);
+        Assert.True(destination.Profiles[1].IsDefault);
     }
 }

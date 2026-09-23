@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Security.Claims;
-using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
@@ -233,7 +232,7 @@ public sealed class SeerrController : ControllerBase
     public Task<IActionResult> Cancel(int requestId, CancellationToken cancellationToken)
         => RunAsync(userId => _gateway.CancelAsync(userId, requestId, cancellationToken));
 
-    private async Task<IActionResult> RunAsync(Func<Guid, Task<JsonNode>> action)
+    private async Task<IActionResult> RunAsync<T>(Func<Guid, Task<T>> action)
     {
         var userId = CurrentUserId(User);
         if (userId == Guid.Empty)
@@ -243,7 +242,9 @@ public sealed class SeerrController : ControllerBase
 
         try
         {
-            return new JsonResult(await action(userId).ConfigureAwait(false));
+            return new JsonResult(
+                await action(userId).ConfigureAwait(false),
+                CompanionJson.CamelCase);
         }
         catch (GatewayException exception)
         {
