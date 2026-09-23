@@ -47,6 +47,25 @@ impl CompanionInfo {
     }
 }
 
+/// What `/api/status` and `/api/companion/info` report about the Companion.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionStatus {
+    pub available: bool,
+    pub compatible: bool,
+    pub checked: bool,
+    pub info: Option<CompanionInfo>,
+    pub error: Option<String>,
+    pub supported_api: SupportedApi,
+}
+
+/// The Companion API versions this build speaks.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct SupportedApi {
+    pub min: i64,
+    pub max: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 struct ProbeState {
     checked: bool,
@@ -209,20 +228,22 @@ impl CompanionSession {
             .is_some_and(|info| info.supports(capability))
     }
 
-    pub fn status(&self) -> Value {
+    pub fn status(&self) -> CompanionStatus {
         let state = self.read();
-        let compatible = state
-            .info
-            .as_ref()
-            .is_some_and(CompanionInfo::is_compatible);
-        json!({
-            "available": state.info.is_some(),
-            "compatible": compatible,
-            "checked": state.checked,
-            "info": state.info,
-            "error": state.error,
-            "supportedApi": { "min": MIN_API_VERSION, "max": MAX_API_VERSION },
-        })
+        CompanionStatus {
+            available: state.info.is_some(),
+            compatible: state
+                .info
+                .as_ref()
+                .is_some_and(CompanionInfo::is_compatible),
+            checked: state.checked,
+            info: state.info,
+            error: state.error,
+            supported_api: SupportedApi {
+                min: MIN_API_VERSION,
+                max: MAX_API_VERSION,
+            },
+        }
     }
 
     /// Versioned ratings boundary. The plugin keeps any administrator-owned
