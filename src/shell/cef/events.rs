@@ -7,7 +7,7 @@ use crate::playback::PlayerSnapshot;
 use crate::preferences::FullscreenBehavior;
 
 pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &AppSettings) {
-    playback.configure_segments(settings.segment_skip_config());
+    playback.configure(settings.player_preferences());
     let Some(path) = crate::players::configured_player_path(settings) else {
         tracing::debug!(target: "mpv.ipc", "skipped player warmup because the selected runtime is unavailable");
         return;
@@ -786,13 +786,8 @@ fn apply_preference_change(state: &BrowserState, change: &SettingsChange) {
         );
         playback.replace(build_backend(&change.settings, event_tx));
         warm_configured_player(&playback, &change.settings);
-    } else {
-        if change.plan.update_input_bindings {
-            playback.refresh_input_bindings();
-        }
-        if change.plan.update_segment_policy {
-            playback.configure_segments(change.settings.segment_skip_config());
-        }
+    } else if change.plan.update_player_preferences {
+        playback.configure(change.settings.player_preferences());
     }
     if change.plan.update_shell_css {
         for browser in browsers {

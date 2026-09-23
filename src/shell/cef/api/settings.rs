@@ -65,14 +65,13 @@ fn push_recovery(
 }
 
 fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiResponse {
-    let bindings = MpvInputBindings::load();
     ApiResponse::ok(json!({
         "client": {
             "player": {
                 "playerBackend": settings.effective_backend().as_str(),
                 "mpvPath": settings.mpv_path,
                 "defaultFullscreen": settings.default_fullscreen.as_str(),
-                "markWatchedNext": bindings.mark_watched_next,
+                "markWatchedNext": settings.mark_watched_next,
                 "comfort": settings.comfort,
                 "playerConfigured": crate::players::configured_player_path(settings).is_some(),
             },
@@ -236,6 +235,7 @@ mod tests {
             serde_json::to_value(settings.comfort)?
         );
         assert!(body["client"]["playback"].get("comfort").is_none());
+        assert_eq!(body["client"]["player"]["markWatchedNext"], "w");
         Ok(())
     }
 }

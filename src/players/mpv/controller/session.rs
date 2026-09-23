@@ -11,7 +11,7 @@ use crate::jellyfin::playback_reporter::flush_playstate_reports;
 use crate::playback::{
     PlaybackRequest, PlayerCommand, PlayerTrack, PlayerTrackKind, seconds_to_ticks,
 };
-use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
+use crate::players::mpv::input::{INPUT_SECTION_NAME, MARK_WATCHED_NEXT_COMMAND, section_contents};
 use crate::players::mpv::ipc::{
     IpcCommandFailure, IpcWorker, MpvEvent, cleanup_ipc_path, make_ipc_path as make_mpv_ipc_path,
     start_ipc_worker,
@@ -303,8 +303,7 @@ impl ControllerState {
     }
 
     pub(super) fn install_input_bindings(&self) {
-        let bindings = MpvInputBindings::load();
-        let section_contents = bindings.section_contents();
+        let section_contents = section_contents(self.mark_watched_next.as_deref());
         #[cfg(target_os = "linux")]
         let section_contents = if self.runtime_kind == super::MpvRuntimeKind::Library {
             format!("{section_contents}\nCLOSE_WIN script-message mediaflick-close-window")

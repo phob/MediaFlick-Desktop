@@ -5,6 +5,7 @@ const DEFAULT_WEBUI_WINDOW_HEIGHT: i32 = 800;
 const MIN_WEBUI_WINDOW_WIDTH: i32 = 640;
 const MIN_WEBUI_WINDOW_HEIGHT: i32 = 360;
 const DEFAULT_LOG_LEVEL: &str = "debug";
+pub const DEFAULT_MARK_WATCHED_NEXT: &str = "w";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -46,6 +47,15 @@ pub struct AppSettings {
     pub skip_recap: SegmentSkipMode,
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
+    /// The mark-watched-and-play-next key, or `None` when disabled (stored as
+    /// an empty string). A settings file written before this field existed
+    /// takes the value the legacy `input.json` held.
+    #[serde(
+        default = "super::store::legacy_mark_watched_next",
+        serialize_with = "serialize_binding",
+        deserialize_with = "deserialize_binding"
+    )]
+    pub mark_watched_next: Option<String>,
     /// Visual preferences intentionally live with the otherwise flat legacy
     /// configuration. The API exposes them as a coherent section without
     /// forcing existing installations through a risky file migration.
@@ -302,6 +312,29 @@ impl SegmentSkipMode {
     }
 }
 
+/// Player settings the adapter applies itself. They are pushed when the
+/// backend is built and whenever they change, so adapters never read settings
+/// files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerPreferences {
+    pub segment_skip: SegmentSkipConfig,
+    pub subtitles: SubtitleAppearance,
+    /// The mark-watched-and-play-next key, or `None` when disabled.
+    pub mark_watched_next: Option<String>,
+}
+
+/// Built-in player subtitle styling, from the Player settings comfort section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubtitleAppearance {
+    /// Percent of mpv's default size.
+    pub size: u16,
+    pub outline: u8,
+    /// Percent opacity of the box behind the text; 0 keeps outlined text.
+    pub background: u8,
+    /// Vertical position, 0 (top) to 100 (bottom).
+    pub position: u8,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SegmentSkipConfig {
     pub intro: SegmentSkipMode,
@@ -530,6 +563,7 @@ impl Default for AppSettings {
             skip_credits: SegmentSkipMode::default(),
             skip_recap: SegmentSkipMode::default(),
             skip_commercial: SegmentSkipMode::default(),
+            mark_watched_next: Some(DEFAULT_MARK_WATCHED_NEXT.to_string()),
             appearance: AppearanceSettings::default(),
         }
     }
@@ -563,6 +597,20 @@ impl AppSettings {
         }
     }
 
+    /// What the player adapter applies itself, pushed to it on every change.
+    pub fn player_preferences(&self) -> PlayerPreferences {
+        PlayerPreferences {
+            segment_skip: self.segment_skip_config(),
+            subtitles: SubtitleAppearance {
+                size: self.comfort.subtitle_size,
+                outline: self.comfort.subtitle_outline,
+                background: self.comfort.subtitle_background,
+                position: self.comfort.subtitle_position,
+            },
+            mark_watched_next: self.mark_watched_next.clone(),
+        }
+    }
+
     pub fn sanitize(&mut self) {
         self.jellyfin_url = self.jellyfin_url.as_deref().and_then(normalize_server_url);
         self.mpv_path = self
@@ -578,9 +626,34 @@ impl AppSettings {
         if self.comfort.validate().is_err() {
             self.comfort = super::PlayerComfort::default();
         }
+        self.mark_watched_next = clean_binding(self.mark_watched_next.as_deref());
         self.webui_window.sanitize();
         self.appearance.sanitize();
     }
+}
+
+/// A trimmed binding; blank means disabled.
+pub fn clean_binding(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn serialize_binding<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(value.as_deref().unwrap_or(""))
+}
+
+fn deserialize_binding<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(clean_binding(
+        Option::<String>::deserialize(deserializer)?.as_deref(),
+    ))
 }
 
 fn default_log_level_string() -> String {
@@ -684,6 +757,38 @@ mod tests {
         AppSettings, AppearanceAccent, PlayerBackend, StreamingQuality, WebUiWindowPosition,
         WebUiWindowSettings, normalize_server_url,
     };
+
+    #[test]
+    fn the_watched_binding_is_stored_with_blank_meaning_disabled() {
+        let disabled = AppSettings {
+            mark_watched_next: None,
+            ..AppSettings::default()
+        };
+        let stored = serde_json::to_value(&disabled).expect("serialize");
+        assert_eq!(stored["mark_watched_next"], "");
+        let restored: AppSettings = serde_json::from_value(stored).expect("deserialize");
+        assert_eq!(restored.mark_watched_next, None);
+
+        let custom: AppSettings =
+            serde_json::from_value(serde_json::json!({ "mark_watched_next": " Ctrl+w " }))
+                .expect("deserialize");
+        assert_eq!(custom.mark_watched_next.as_deref(), Some("Ctrl+w"));
+        assert_eq!(
+            AppSettings::default().mark_watched_next.as_deref(),
+            Some("w")
+        );
+    }
+
+    #[test]
+    fn player_preferences_carry_segments_subtitles_and_the_binding() {
+        let mut settings = AppSettings::default();
+        settings.comfort.subtitle_size = 140;
+        settings.mark_watched_next = Some("Ctrl+w".to_string());
+        let preferences = settings.player_preferences();
+        assert_eq!(preferences.subtitles.size, 140);
+        assert_eq!(preferences.mark_watched_next.as_deref(), Some("Ctrl+w"));
+        assert_eq!(preferences.segment_skip, settings.segment_skip_config());
+    }
 
     #[test]
     fn leaves_absolute_urls_alone() {

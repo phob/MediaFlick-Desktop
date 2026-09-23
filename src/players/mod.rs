@@ -20,11 +20,11 @@ pub fn build_backend(
     match settings.effective_backend() {
         PlayerBackendKind::Libmpv => Box::new(MpvController::new_libmpv(
             Some(event_tx),
-            settings.segment_skip_config(),
+            settings.player_preferences(),
         )),
         PlayerBackendKind::Mpv => Box::new(MpvController::new(
             Some(event_tx),
-            settings.segment_skip_config(),
+            settings.player_preferences(),
         )),
     }
 }
