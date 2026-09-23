@@ -234,6 +234,123 @@ mod seerr;
 mod settings;
 mod shell;
 
+/// Every endpoint the modules below serve, by method and path shape (`*` is
+/// one segment). The modules own the handlers; this table answers what they
+/// cannot: which methods a known path accepts, for a 405 and its `Allow`
+/// header. Tests check that each entry reaches a handler and that no two
+/// entries for one method overlap, so module order never decides a route.
+const ENDPOINTS: &[(&str, &str)] = &[
+    ("GET", "status"),
+    ("GET", "startup"),
+    ("GET", "companion/info"),
+    ("POST", "companion/probe"),
+    ("GET", "settings"),
+    ("PATCH", "settings/client/player"),
+    ("PATCH", "settings/client/playback"),
+    ("PATCH", "settings/client/application"),
+    ("PATCH", "settings/appearance"),
+    ("GET", "settings/viewing"),
+    ("PATCH", "settings/viewing"),
+    ("GET", "settings/browsing"),
+    ("PATCH", "settings/browsing"),
+    ("GET", "settings/home"),
+    ("PATCH", "settings/home"),
+    ("GET", "integrations/ratings"),
+    ("POST", "ratings/batch"),
+    ("GET", "collections"),
+    ("GET", "collections/mine"),
+    ("GET", "collections/mine/*"),
+    ("GET", "collections/franchises"),
+    ("GET", "collections/franchises/*"),
+    ("GET", "collections/jellyfin"),
+    ("GET", "collections/jellyfin/*"),
+    ("DELETE", "collections/local-account"),
+    ("GET", "collections/movie/*"),
+    ("GET", "collections/title/*/*"),
+    ("GET", "collections/settings"),
+    ("PATCH", "collections/settings"),
+    ("POST", "collections/settings/reprobe"),
+    ("GET", "collections/templates"),
+    ("POST", "collections/mdblist/search"),
+    ("POST", "collections/mdblist/validate"),
+    ("GET", "collections/provider-artwork"),
+    ("POST", "collections/artwork"),
+    ("GET", "collections/artwork/*"),
+    ("POST", "collections/preview"),
+    ("GET", "collections/profiles"),
+    ("POST", "collections/profiles"),
+    ("PUT", "collections/profiles/order"),
+    ("GET", "collections/profiles/*"),
+    ("PATCH", "collections/profiles/*"),
+    ("DELETE", "collections/profiles/*"),
+    ("POST", "collections/profiles/*/refresh"),
+    ("POST", "shell/window/ready"),
+    ("POST", "shell/file-picker"),
+    ("POST", "shell/mpv/install"),
+    ("POST", "shell/mpv/help"),
+    ("GET", "integrations/letterboxd"),
+    ("POST", "integrations/letterboxd"),
+    ("PATCH", "integrations/letterboxd/*"),
+    ("DELETE", "integrations/letterboxd/*"),
+    ("POST", "integrations/letterboxd/*/refresh"),
+    ("POST", "integrations/letterboxd/*/open"),
+    ("GET", "letterboxd/movie/*"),
+    ("GET", "item/*/letterboxd"),
+    ("POST", "auth/connect"),
+    ("POST", "auth/login"),
+    ("POST", "auth/quickconnect/start"),
+    ("POST", "auth/quickconnect/poll"),
+    ("POST", "auth/logout"),
+    ("GET", "seerr/status"),
+    ("GET", "seerr/search"),
+    ("GET", "seerr/person/*/credits"),
+    ("GET", "seerr/discover/*"),
+    ("GET", "seerr/genres/*"),
+    ("GET", "seerr/media/*/*"),
+    ("GET", "seerr/request-options/*"),
+    ("POST", "seerr/request"),
+    ("GET", "seerr/requests"),
+    ("DELETE", "seerr/request/*"),
+    ("GET", "seerr/image/*/*"),
+    ("GET", "calendar"),
+    ("GET", "home"),
+    ("GET", "home/resume"),
+    ("GET", "billboard"),
+    ("GET", "items"),
+    ("GET", "genres"),
+    ("GET", "person/resolve"),
+    ("GET", "item/*"),
+    ("GET", "item/*/synopsis"),
+    ("GET", "item/*/about"),
+    ("GET", "item/*/children"),
+    ("POST", "technical/batch"),
+    ("GET", "item/*/media"),
+    ("PATCH", "item/*/playback-preference"),
+    ("GET", "item/*/trailer"),
+    ("GET", "item/*/nextup"),
+    ("POST", "item/*/external"),
+    ("POST", "item/*/played"),
+    ("POST", "item/*/favorite"),
+    ("GET", "trailer/*/stream"),
+    ("GET", "image/*/*"),
+    ("POST", "play"),
+    ("POST", "play/next"),
+    ("POST", "play/previous"),
+    ("POST", "play/neighbors"),
+    ("GET", "player/state"),
+    ("POST", "player/command"),
+    ("POST", "sync"),
+];
+
+fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
+    let parts = pattern.split('/').collect::<Vec<_>>();
+    parts.len() == segments.len()
+        && parts
+            .iter()
+            .zip(segments)
+            .all(|(part, segment)| *part == "*" || part == segment)
+}
+
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
     let segments = path.split('/').collect::<Vec<_>>();
     route_status(services, &segments, request)
@@ -248,7 +365,23 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         .or_else(|| media::route(services, &segments, request))
         .or_else(|| images::route(services, &segments, request))
         .or_else(|| playback::route(services, &segments, request))
-        .unwrap_or_else(|| ApiResponse::error(404, format!("unknown endpoint /api/{path}")))
+        .unwrap_or_else(|| unrouted(path, &segments))
+}
+
+fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
+    let allowed = ENDPOINTS
+        .iter()
+        .filter(|(_, pattern)| endpoint_matches(pattern, segments))
+        .map(|(method, _)| *method)
+        .collect::<Vec<_>>();
+    if allowed.is_empty() {
+        return ApiResponse::error(404, format!("unknown endpoint /api/{path}"));
+    }
+    let mut response = ApiResponse::error(405, format!("/api/{path} does not accept this method"));
+    response
+        .headers
+        .push(("Allow".to_string(), allowed.join(", ")));
+    response
 }
 
 fn route_status(
@@ -257,7 +390,7 @@ fn route_status(
     request: &ApiRequest,
 ) -> Option<ApiResponse> {
     let response = match segments {
-        ["status"] => status(services),
+        ["status"] if request.is("GET") => status(services),
         ["startup"] if request.is("GET") => startup(services, request),
         ["companion", "info"] if request.is("GET") => companion_info(services, false),
         ["companion", "probe"] if request.is("POST") => companion_info(services, true),
@@ -735,6 +868,85 @@ mod tests {
         assert!(session.is_authenticated());
         assert_eq!(session.user_id().as_deref(), Some("bob"));
         assert_eq!(session.status()["expired"], false);
+    }
+
+    fn request(method: &str, path: &str) -> ApiRequest {
+        ApiRequest {
+            method: method.to_string(),
+            // A body no endpoint accepts: writes stop at decoding, so this
+            // walk through the router never changes the fixture or the user's
+            // settings files.
+            ..post(path, b"not json")
+        }
+    }
+
+    #[test]
+    fn every_listed_endpoint_reaches_a_handler() {
+        let fixture = TestServices::signed_out();
+        for (method, pattern) in ENDPOINTS {
+            // Opens the mpv installation guide in the system browser.
+            if *pattern == "shell/mpv/help" {
+                continue;
+            }
+            let path = format!("/api/{}", pattern.replace('*', "1"));
+            let response = send(&fixture, &request(method, &path));
+            let error = if response.status >= 400 {
+                error_of(&response)
+            } else {
+                String::new()
+            };
+            assert!(
+                !error.starts_with("unknown endpoint") && response.status != 405,
+                "{method} {path} was not routed: {} {error}",
+                response.status
+            );
+        }
+    }
+
+    #[test]
+    fn endpoints_never_overlap_so_module_order_cannot_pick_a_route() {
+        let overlaps = |left: &str, right: &str| {
+            let (left, right) = (
+                left.split('/').collect::<Vec<_>>(),
+                right.split('/').collect::<Vec<_>>(),
+            );
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(&right)
+                    .all(|(a, b)| a == b || *a == "*" || *b == "*")
+        };
+        for (index, (method, pattern)) in ENDPOINTS.iter().enumerate() {
+            for (other_method, other) in &ENDPOINTS[index + 1..] {
+                assert!(
+                    method != other_method || !overlaps(pattern, other),
+                    "{method} {pattern} overlaps {other}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_known_path_with_another_method_is_405_with_its_allowed_methods() {
+        let fixture = TestServices::signed_out();
+        for (method, path, allow) in [
+            ("GET", "/api/item/m1/played", "POST"),
+            ("POST", "/api/status", "GET"),
+            ("PUT", "/api/collections/profiles/p1", "GET, PATCH, DELETE"),
+            ("DELETE", "/api/settings/viewing", "GET, PATCH"),
+        ] {
+            let response = send(&fixture, &request(method, path));
+            assert_eq!(response.status, 405, "{method} {path}");
+            let header = response
+                .headers
+                .iter()
+                .find(|(name, _)| name == "Allow")
+                .map(|(_, value)| value.as_str());
+            assert_eq!(header, Some(allow), "{method} {path}");
+        }
+        let response = send(&fixture, &request("GET", "/api/no/such/endpoint"));
+        assert_eq!(response.status, 404);
+        assert!(error_of(&response).starts_with("unknown endpoint"));
     }
 
     #[test]
