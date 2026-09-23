@@ -36,7 +36,7 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Playstate synced to Jellyfin.** Playback start, progress, watched state, and resume positions report back to your server.
 - **Media-segment skipping.** Skip intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings.
 - **Skip markers on the seek bar.** The mpv timeline shows exactly where segments are skipped, merged with the file's own chapters.
-- **Its own native UI.** Sign-in (password or Quick Connect), home rows for Continue Watching / Next Up, Recently Added, Latest Movies, and Latest Shows, a virtualized poster grid, and a details view with cast, seasons, and episodes.
+- **Its own native UI.** Sign-in (password or Quick Connect), home rows for Continue Watching / Next Up, Recently Added Movies, Recently Added Shows (the newest episodes), Latest Movies, and Latest Shows, a virtualized poster grid, and a details view with cast, seasons, and episodes.
 - **Local metadata cache.** Your library is mirrored into SQLite with full-text search over titles, overviews, genres, and cast, kept current by a background sync.
 - **Release calendar.** Agenda and month views of upcoming episodes and film releases. It works from Jellyfin metadata alone and gains monitored/file truth from the optional Companion plugin.
 - **Server-mediated requests and ratings.** The optional MediaFlick Companion keeps Sonarr, Radarr, Seerr, MDBList, and TMDB credentials on the Jellyfin server. It serves MDBList ratings through a quota-aware shared cache without exposing the administrator key to Desktop.

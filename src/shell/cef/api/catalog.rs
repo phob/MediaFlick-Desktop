@@ -169,7 +169,8 @@ fn built_in_label(id: HomeBuiltIn) -> &'static str {
     match id {
         HomeBuiltIn::Watching => "Watching",
         HomeBuiltIn::BecauseYouWatched => "Because You Watched",
-        HomeBuiltIn::RecentlyAdded => "Recently Added",
+        HomeBuiltIn::RecentlyAdded => "Recently Added Movies",
+        HomeBuiltIn::RecentlyAddedShows => "Recently Added Shows",
         HomeBuiltIn::Upcoming => "Upcoming",
         HomeBuiltIn::LatestMovies => "Latest Movies",
         HomeBuiltIn::LatestShows => "Latest Shows",
@@ -304,51 +305,7 @@ fn home(services: &Arc<Services>) -> ApiResponse {
         .filter(|element| element.enabled)
     {
         let row = match &element.element {
-            HomeElementId::BuiltIn {
-                id: HomeBuiltIn::BecauseYouWatched,
-            } => because_you_watched(services, &home.account),
-            HomeElementId::BuiltIn {
-                id: HomeBuiltIn::RecentlyAdded,
-            } => Some(home_row(
-                "builtIn",
-                "recentlyAdded",
-                "Recently Added",
-                services
-                    .library
-                    .recently_added(HOME_ROW_LIMIT)
-                    .unwrap_or_default(),
-            )),
-            HomeElementId::BuiltIn {
-                id: HomeBuiltIn::LatestMovies,
-            } => Some(home_row(
-                "builtIn",
-                "latestMovies",
-                "Latest Movies",
-                latest_home_items(&services.library, "Movie"),
-            )),
-            HomeElementId::BuiltIn {
-                id: HomeBuiltIn::LatestShows,
-            } => Some(home_row(
-                "builtIn",
-                "latestShows",
-                "Latest Shows",
-                latest_home_items(&services.library, "Series"),
-            )),
-            HomeElementId::BuiltIn {
-                id: HomeBuiltIn::MyList,
-            } => Some(home_row(
-                "builtIn",
-                "myList",
-                "My List",
-                home_query(
-                    &services.library,
-                    ItemQuery {
-                        favorite: Some(true),
-                        sort: ItemSort::DateAdded,
-                        ..Default::default()
-                    },
-                ),
-            )),
+            HomeElementId::BuiltIn { id } => built_in_home_row(services, &home.account, *id),
             HomeElementId::Genre { id } if home.genres.contains(id) => Some(home_row(
                 "genre",
                 id,
@@ -381,6 +338,57 @@ fn home(services: &Arc<Services>) -> ApiResponse {
         "continueWatching": continue_watching,
         "rows": rows,
     }))
+}
+
+/// Watching and Upcoming are not generic shelves; Home assembles them separately.
+fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn) -> Option<Value> {
+    let (row_id, title, items) = match id {
+        HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return None,
+        HomeBuiltIn::BecauseYouWatched => return because_you_watched(services, account),
+        HomeBuiltIn::RecentlyAdded => (
+            "recentlyAdded",
+            "Recently Added Movies",
+            home_query(
+                &services.library,
+                ItemQuery {
+                    kinds: vec!["Movie".to_string()],
+                    sort: ItemSort::DateAdded,
+                    ..Default::default()
+                },
+            ),
+        ),
+        HomeBuiltIn::RecentlyAddedShows => (
+            "recentlyAddedShows",
+            "Recently Added Shows",
+            services
+                .library
+                .recently_added_episodes(HOME_ROW_LIMIT as usize)
+                .unwrap_or_default(),
+        ),
+        HomeBuiltIn::LatestMovies => (
+            "latestMovies",
+            "Latest Movies",
+            latest_home_items(&services.library, "Movie"),
+        ),
+        HomeBuiltIn::LatestShows => (
+            "latestShows",
+            "Latest Shows",
+            latest_home_items(&services.library, "Series"),
+        ),
+        HomeBuiltIn::MyList => (
+            "myList",
+            "My List",
+            home_query(
+                &services.library,
+                ItemQuery {
+                    favorite: Some(true),
+                    sort: ItemSort::DateAdded,
+                    ..Default::default()
+                },
+            ),
+        ),
+    };
+    Some(home_row("builtIn", row_id, title, items))
 }
 
 fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
@@ -547,8 +555,9 @@ fn deduplicate_next_up(resume: &[Value], next_up: Vec<Value>) -> Vec<Value> {
         .collect()
 }
 
-/// New releases are separate from Recently Added: importing an older title
-/// moves it to the front of the latter, but not to the front of these shelves.
+/// New releases are separate from Recently Added Movies: importing an older
+/// title moves it to the front of the latter, but not to the front of these
+/// shelves.
 fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
     home_query(
         library,

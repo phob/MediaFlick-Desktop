@@ -30,7 +30,8 @@ function renderHome(error: Error | null = null) {
       billboard: true,
       watching: { continueWatching: true, nextUp: true, combine: true },
       elements: [
-        { kind: "builtIn", id: "recentlyAdded", enabled: true, label: "Recently Added", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "recentlyAdded", enabled: true, label: "Recently Added Movies", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "recentlyAddedShows", enabled: true, label: "Recently Added Shows", available: true, category: "Built-in" },
         { kind: "builtIn", id: "upcoming", enabled: true, label: "Upcoming", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestMovies", enabled: true, label: "Latest Movies", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestShows", enabled: true, label: "Latest Shows", available: true, category: "Built-in" },
@@ -38,7 +39,13 @@ function renderHome(error: Error | null = null) {
     },
     continueWatching: [],
     rows: [
-      { kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [item("recent", "Recent", "Movie"), item("recent-show", "Recent Series", "Series")] },
+      { kind: "builtIn", id: "recentlyAdded", title: "Recently Added Movies", items: [item("recent", "Recent", "Movie")] },
+      {
+        kind: "builtIn",
+        id: "recentlyAddedShows",
+        title: "Recently Added Shows",
+        items: [itemSummary({ id: "new-episode", name: "Half Loop", kind: "Episode", seriesId: "sev", seriesName: "Severance", parentIndexNumber: 1, indexNumber: 2 })],
+      },
       { kind: "builtIn", id: "latestMovies", title: "Latest Movies", items: [item("movie", "Movie", "Movie")] },
       { kind: "builtIn", id: "latestShows", title: "Latest Series", items: [item("show", "Series", "Series")] },
     ],
@@ -172,15 +179,16 @@ describe("home latest shelves", () => {
     renderHome()
 
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
-      "Recently Added",
+      "Recently Added Movies",
+      "Recently Added Shows",
       "Upcoming",
       "Latest Movies",
       "Latest Series",
     ])
     expect(
-      screen.getByRole("heading", { name: "Recently Added" }).closest("section")?.querySelector("a")
+      screen.getByRole("heading", { name: "Recently Added Movies" }).closest("section")?.querySelector("a")
         ?.getAttribute("href"),
-    ).toBe("/library?kind=Movie,Series&sort=added")
+    ).toBe("/library?kind=Movie&sort=added")
     expect(
       screen.getByRole("heading", { name: "Latest Movies" }).closest("section")?.querySelector("a")
         ?.getAttribute("href"),
@@ -189,6 +197,16 @@ describe("home latest shelves", () => {
       screen.getByRole("heading", { name: "Latest Series" }).closest("section")?.querySelector("a")
         ?.getAttribute("href"),
     ).toBe("/library?kind=Series&sort=year")
+  })
+
+  test("lists newly added episodes as landscape cards under the recently added movies", () => {
+    renderHome()
+
+    const shows = screen.getByRole("heading", { name: "Recently Added Shows" }).closest("section")
+    const episode = shows?.querySelector("article")
+    expect(episode?.className).toContain("w-landscape-w")
+    expect(episode?.textContent).toContain("Severance · S1E2")
+    expect(episode?.querySelector("a")?.getAttribute("href")).toBe("/item/new-episode")
   })
 
   test("shows season starts, later episodes, and every movie release channel in one upcoming shelf", () => {
@@ -210,7 +228,7 @@ describe("home latest shelves", () => {
   test("keeps valid cached shelves visible when a background refresh fails", () => {
     renderHome(new Error("offline"))
 
-    expect(screen.getByRole("heading", { name: "Recently Added" })).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "Recently Added Movies" })).toBeTruthy()
     expect(screen.queryByText("offline")).toBeNull()
   })
 })
