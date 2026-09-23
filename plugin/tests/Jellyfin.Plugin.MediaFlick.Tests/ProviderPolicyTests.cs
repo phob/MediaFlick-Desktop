@@ -145,9 +145,9 @@ public sealed class ProviderPolicyTests
         var source = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"id":1,"title":"Short","externalIds":{"imdbId":"tt123"},"imdbId":"TT0133093"}"""));
 
-        var detail = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(source, "movie"));
+        var detail = SeerrGateway.ShapeMedia(source, "movie");
 
-        Assert.Equal("tt0133093", detail["externalIds"]?["imdb"]?.GetValue<string>());
+        Assert.Equal("tt0133093", detail.ExternalIds.Imdb);
     }
 
     [Fact]
