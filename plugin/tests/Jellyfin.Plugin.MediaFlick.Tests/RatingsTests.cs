@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaFlick.Tests;
@@ -30,7 +32,8 @@ public sealed class RatingsTests
                 DataProtectedRatingSecretStore.CopyWithSecret(
                     configuration,
                     provider,
-                    protectedValue));
+                    protectedValue),
+            NullLogger<DataProtectedRatingSecretStore>.Instance);
 
         store.Set("mdblist", "mdb-super-secret");
         Assert.True(store.IsConfigured("mdblist"));
@@ -346,7 +349,9 @@ public sealed class RatingsTests
             "server_mdblist",
             response.Items[0].Origin));
 
-        var reloaded = new RatingsCacheStore(fixture.CachePath);
+        var reloaded = new RatingsCacheStore(
+            fixture.CachePath,
+            NullLogger<RatingsCacheStore>.Instance);
         Assert.Equal(1, reloaded.Count);
         Assert.NotNull(reloaded.GetStable(Target("different-card", "tmdb", "603")));
     }
@@ -394,6 +399,57 @@ public sealed class RatingsTests
     }
 
     [Fact]
+    public async Task BackgroundRefreshFailureIsLoggedAsWarningWithoutTheApiKey()
+    {
+        const string secret = "mdb-log-secret-7f3a9c";
+        using var fixture = new RatingsFixture();
+        fixture.ConfigureValidKey();
+        fixture.Secrets.Set("mdblist", secret);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var target = Target("stale-card", "tmdb", "603");
+        fixture.Cache.Upsert([(target, new CachedRatingEntry(
+            "tmdb",
+            "603",
+            "movie",
+            new JsonArray(new JsonObject
+            {
+                ["sourceId"] = "imdb",
+                ["value"] = 8.0
+            }),
+            "2026-08-01T00:00:00Z",
+            now - 100,
+            now - 1,
+            now + 1000))]);
+        // An unexpected failure whose text carries the key-bearing URI.
+        fixture.Transport.BatchException = new InvalidOperationException(
+            $"POST https://api.mdblist.com/tmdb/movie/?apikey={secret} failed");
+
+        var response = await fixture.Service.BatchAsync(
+            new RatingBatchRequest(1, [target]),
+            CancellationToken.None);
+        Assert.True(Assert.Single(response.Items).Stale);
+
+        CapturedLog? warning = null;
+        for (var attempt = 0; attempt < 100 && warning is null; attempt++)
+        {
+            warning = fixture.RatingsLog.Entries.FirstOrDefault(entry =>
+                entry.Level == LogLevel.Warning);
+            if (warning is null)
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+        }
+
+        Assert.NotNull(warning);
+        Assert.Contains("Background MDBList ratings refresh failed", warning.Message);
+        Assert.Contains(nameof(InvalidOperationException), warning.Message);
+        // The exception text would reveal the key, so only its type is logged.
+        Assert.Null(warning.Exception);
+        Assert.All(fixture.RatingsLog.Entries, entry =>
+            Assert.DoesNotContain(secret, entry.Rendered, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task QuotaBackoffIsHonoredAcrossRequestsAndRestarts()
     {
         using var fixture = new RatingsFixture();
@@ -414,12 +470,15 @@ public sealed class RatingsTests
         Assert.Equal(retryAt, second.RetryAt);
         Assert.Equal(0, second.Quota.Remaining);
 
-        var reloadedCache = new RatingsCacheStore(fixture.CachePath);
+        var reloadedCache = new RatingsCacheStore(
+            fixture.CachePath,
+            NullLogger<RatingsCacheStore>.Instance);
         var replacementTransport = new FakeTransport { BatchResponse = MediaResponse(603) };
         using var restarted = new RatingsService(
             reloadedCache,
             fixture.Secrets,
-            replacementTransport);
+            replacementTransport,
+            NullLogger<RatingsService>.Instance);
         var afterRestart = await restarted.BatchAsync(request, CancellationToken.None);
         Assert.Empty(afterRestart.Items);
         Assert.Equal(0, replacementTransport.BatchCalls);
@@ -495,16 +554,24 @@ public sealed class RatingsTests
         public RatingsFixture()
         {
             CachePath = System.IO.Path.Combine(_directory.Path, "ratings.json");
-            Cache = new RatingsCacheStore(CachePath);
-            Service = new RatingsService(Cache, Secrets, Transport, tmdbTransport: TmdbTransport);
+            Cache = new RatingsCacheStore(CachePath, NullLogger<RatingsCacheStore>.Instance);
+            Service = new RatingsService(
+                Cache,
+                Secrets,
+                Transport,
+                RatingsLog,
+                tmdbTransport: TmdbTransport);
             Collections = new CollectionProviderService(
                 TmdbTransport,
                 Transport,
                 Secrets,
-                Cache);
+                Cache,
+                NullLogger<CollectionProviderService>.Instance);
         }
 
         public string CachePath { get; }
+
+        public CapturingLogger<RatingsService> RatingsLog { get; } = new();
 
         public RatingsCacheStore Cache { get; }
 
@@ -572,6 +639,8 @@ public sealed class RatingsTests
 
         public MdbListResponse BatchResponse { get; set; } = MediaResponse(603);
 
+        public Exception? BatchException { get; set; }
+
         public Task<MdbListResponse> ValidateAsync(
             string apiKey,
             CancellationToken cancellationToken)
@@ -594,6 +663,11 @@ public sealed class RatingsTests
             if (BatchDelay > TimeSpan.Zero)
             {
                 await Task.Delay(BatchDelay, cancellationToken);
+            }
+
+            if (BatchException is not null)
+            {
+                throw BatchException;
             }
 
             return BatchResponse;

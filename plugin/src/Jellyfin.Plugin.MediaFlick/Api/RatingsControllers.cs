@@ -3,6 +3,7 @@ using Jellyfin.Plugin.MediaFlick.Services;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Api;
 
@@ -66,15 +67,20 @@ public sealed class RatingsController : ControllerBase
 [Route("MediaFlick/admin/ratings")]
 public sealed class RatingsAdminController : ControllerBase
 {
+    private const string StorageUnavailableMessage =
+        "MediaFlick Companion secure credential storage is unavailable for {Provider}";
     private readonly RatingsService _ratings;
     private readonly CollectionProviderService _collections;
+    private readonly ILogger<RatingsAdminController> _logger;
 
     public RatingsAdminController(
         RatingsService ratings,
-        CollectionProviderService collections)
+        CollectionProviderService collections,
+        ILogger<RatingsAdminController> logger)
     {
         _ratings = ratings;
         _collections = collections;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -108,8 +114,10 @@ public sealed class RatingsAdminController : ControllerBase
         {
             return BadRequest(new { error = exception.Message });
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
+            // Storage failures carry fixed plugin text, never the key.
+            _logger.LogWarning(exception, StorageUnavailableMessage, provider);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new { error = "secure plugin configuration storage is unavailable" });
@@ -136,8 +144,9 @@ public sealed class RatingsAdminController : ControllerBase
         {
             return BadRequest(new { error = exception.Message });
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
+            _logger.LogWarning(exception, StorageUnavailableMessage, provider);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new { error = "secure plugin configuration storage is unavailable" });
@@ -157,8 +166,9 @@ public sealed class RatingsAdminController : ControllerBase
         {
             return BadRequest(new { error = exception.Message });
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
+            _logger.LogWarning(exception, StorageUnavailableMessage, provider);
             return StatusCode(
                 StatusCodes.Status503ServiceUnavailable,
                 new { error = "secure plugin configuration storage is unavailable" });

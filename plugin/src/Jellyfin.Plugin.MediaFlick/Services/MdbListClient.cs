@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -36,15 +37,21 @@ internal interface IMdbListTransport
 /// Fixed-origin MDBList transport. It deliberately does not use
 /// IHttpClientFactory: MDBList API-key authentication is a query parameter and
 /// the factory's normal request logging could otherwise record the full URI.
+/// Diagnostics log only status codes and error categories, never the request
+/// URI, the exception text, or the response body.
 /// </summary>
 internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
 {
     private const int MaxResponseBytes = 8 * 1024 * 1024;
+    private const string Subject = "mdblist";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     private readonly HttpClient _client;
+    private readonly ILogger<MdbListHttpTransport> _logger;
+    private readonly FailureLogGate _failures = new();
 
-    public MdbListHttpTransport()
+    public MdbListHttpTransport(ILogger<MdbListHttpTransport> logger)
     {
+        _logger = logger;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -68,6 +75,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             HttpMethod.Get,
             "user?apikey=" + Uri.EscapeDataString(apiKey),
             null,
+            true,
             cancellationToken);
 
     public Task<MdbListResponse> BatchAsync(
@@ -88,6 +96,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             HttpMethod.Post,
             path,
             new JsonObject { ["ids"] = new JsonArray(bodyIds) },
+            true,
             cancellationToken);
     }
 
@@ -106,6 +115,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             HttpMethod.Get,
             BuildListItemsPath(apiKey, resource),
             null,
+            false,
             cancellationToken);
 
     internal static string BuildListItemsPath(string apiKey, string resource)
@@ -121,6 +131,7 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         HttpMethod method,
         string relativePath,
         JsonNode? body,
+        bool authenticatesKey,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, relativePath);
@@ -142,6 +153,10 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             JsonNode? parsed = null;
             if (response.Content.Headers.ContentLength is > MaxResponseBytes)
             {
+                _logger.Log(
+                    _failures.Failure(Subject, "invalid_response"),
+                    "MDBList returned a response larger than {MaxBytes} bytes",
+                    MaxResponseBytes);
                 return new MdbListResponse(
                     HttpStatusCode.BadGateway,
                     null,
@@ -163,6 +178,10 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                     }
                     catch (JsonException)
                     {
+                        _logger.Log(
+                            _failures.Failure(Subject, "invalid_response"),
+                            "MDBList returned an invalid JSON response (HTTP {StatusCode})",
+                            (int)response.StatusCode);
                         return new MdbListResponse(
                             HttpStatusCode.BadGateway,
                             null,
@@ -187,17 +206,65 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
                     hasMore = offset + limit < total;
                 }
             }
+            ReportStatus(response.StatusCode, retryAt, authenticatesKey);
             return new MdbListResponse(response.StatusCode, parsed, quota, retryAt, hasMore);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _logger.Log(
+                _failures.Failure(Subject, "timeout"),
+                "MDBList did not answer within {TimeoutSeconds} seconds",
+                RequestTimeout.TotalSeconds);
             return new MdbListResponse(HttpStatusCode.GatewayTimeout, null, new(null, null, null), null);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
-            // Never propagate HttpRequestException: its message can contain the
-            // API-key-bearing request URI on some handlers/runtimes.
+            // Never propagate or log HttpRequestException itself: its message
+            // can contain the API-key-bearing request URI on some
+            // handlers/runtimes. Its error category is safe.
+            _logger.Log(
+                _failures.Failure(Subject, "unreachable"),
+                "MDBList could not be reached ({HttpRequestError})",
+                exception.HttpRequestError);
             return new MdbListResponse(HttpStatusCode.BadGateway, null, new(null, null, null), null);
+        }
+    }
+
+    private void ReportStatus(HttpStatusCode status, long? retryAt, bool authenticatesKey)
+    {
+        var code = (int)status;
+        if (status.IsSuccess())
+        {
+            if (_failures.Recovered(Subject))
+            {
+                _logger.LogInformation("MDBList is answering again");
+            }
+        }
+        else if (authenticatesKey && status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            _logger.Log(
+                _failures.Failure(Subject, "rejected"),
+                "MDBList rejected the API key (HTTP {StatusCode})",
+                code);
+        }
+        else if (code == StatusCodes.Status429TooManyRequests)
+        {
+            _logger.Log(
+                _failures.Failure(Subject, "rate_limited"),
+                "MDBList rate limit reached; requests resume after {RetryAt}",
+                retryAt is { } seconds ? DateTimeOffset.FromUnixTimeSeconds(seconds) : (DateTimeOffset?)null);
+        }
+        else if (code >= 500)
+        {
+            _logger.Log(
+                _failures.Failure(Subject, "unavailable"),
+                "MDBList returned HTTP {StatusCode}",
+                code);
+        }
+        else
+        {
+            // Per-request outcomes such as a private or missing public list.
+            _logger.LogDebug("MDBList returned HTTP {StatusCode}", code);
         }
     }
 

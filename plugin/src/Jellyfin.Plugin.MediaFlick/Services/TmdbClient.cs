@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -27,16 +28,23 @@ internal interface ITmdbTransport
 /// <summary>
 /// Fixed-origin TMDB transport. Credentials are added after the relative path
 /// is fixed and no request URI is ever relayed through an exception or log.
+/// Diagnostics log only status codes and error categories, never the request
+/// URI, the exception text, or the response body.
 /// </summary>
 internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
 {
     private const int MaxResponseBytes = 8 * 1024 * 1024;
+    private const string ApiSubject = "TMDB";
+    private const string ImageSubject = "TMDB images";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     private readonly HttpClient _client;
     private readonly HttpClient _imageClient;
+    private readonly ILogger<TmdbHttpTransport> _logger;
+    private readonly FailureLogGate _failures = new();
 
-    public TmdbHttpTransport()
+    public TmdbHttpTransport(ILogger<TmdbHttpTransport> logger)
     {
+        _logger = logger;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -90,12 +98,14 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
                 timeout.Token).ConfigureAwait(false);
             if (response.Content.Headers.ContentLength is > MaxResponseBytes)
             {
+                ReportOversized(ImageSubject);
                 return new ArtworkResponse(HttpStatusCode.BadGateway, [], "application/octet-stream");
             }
             await response.Content.LoadIntoBufferAsync(MaxResponseBytes, timeout.Token)
                 .ConfigureAwait(false);
             var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token)
                 .ConfigureAwait(false);
+            ReportStatus(ImageSubject, response.StatusCode, false);
             return new ArtworkResponse(
                 response.StatusCode,
                 bytes,
@@ -103,10 +113,12 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            ReportTimeout(ImageSubject);
             return new ArtworkResponse(HttpStatusCode.GatewayTimeout, [], "application/octet-stream");
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
+            ReportUnreachable(ImageSubject, exception);
             return new ArtworkResponse(HttpStatusCode.BadGateway, [], "application/octet-stream");
         }
     }
@@ -147,6 +159,7 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
             var retryAt = RetryAt(response);
             if (response.Content.Headers.ContentLength is > MaxResponseBytes)
             {
+                ReportOversized(ApiSubject);
                 return new TmdbResponse(HttpStatusCode.BadGateway, null, retryAt);
             }
             await response.Content.LoadIntoBufferAsync(MaxResponseBytes, timeout.Token)
@@ -162,20 +175,91 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
                 }
                 catch (JsonException)
                 {
+                    _logger.Log(
+                        _failures.Failure(ApiSubject, "invalid_response"),
+                        "TMDB returned an invalid JSON response (HTTP {StatusCode})",
+                        (int)response.StatusCode);
                     return new TmdbResponse(HttpStatusCode.BadGateway, null, retryAt);
                 }
             }
+            ReportStatus(ApiSubject, response.StatusCode, true);
             return new TmdbResponse(response.StatusCode, body, retryAt);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            ReportTimeout(ApiSubject);
             return new TmdbResponse(HttpStatusCode.GatewayTimeout, null, null);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
+            ReportUnreachable(ApiSubject, exception);
             return new TmdbResponse(HttpStatusCode.BadGateway, null, null);
         }
     }
+
+    private void ReportStatus(string subject, HttpStatusCode status, bool authenticated)
+    {
+        var code = (int)status;
+        if (status.IsSuccess())
+        {
+            if (_failures.Recovered(subject))
+            {
+                _logger.LogInformation("{Service} is answering again", subject);
+            }
+        }
+        else if (authenticated && status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            _logger.Log(
+                _failures.Failure(subject, "rejected"),
+                "{Service} rejected the API credential (HTTP {StatusCode})",
+                subject,
+                code);
+        }
+        else if (code == StatusCodes.Status429TooManyRequests)
+        {
+            _logger.Log(
+                _failures.Failure(subject, "rate_limited"),
+                "{Service} rate limit reached (HTTP {StatusCode})",
+                subject,
+                code);
+        }
+        else if (code >= 500)
+        {
+            _logger.Log(
+                _failures.Failure(subject, "unavailable"),
+                "{Service} returned HTTP {StatusCode}",
+                subject,
+                code);
+        }
+        else
+        {
+            // Per-request outcomes such as a title or image that does not exist.
+            _logger.LogDebug("{Service} returned HTTP {StatusCode}", subject, code);
+        }
+    }
+
+    private void ReportOversized(string subject)
+        => _logger.Log(
+            _failures.Failure(subject, "invalid_response"),
+            "{Service} returned a response larger than {MaxBytes} bytes",
+            subject,
+            MaxResponseBytes);
+
+    private void ReportTimeout(string subject)
+        => _logger.Log(
+            _failures.Failure(subject, "timeout"),
+            "{Service} did not answer within {TimeoutSeconds} seconds",
+            subject,
+            RequestTimeout.TotalSeconds);
+
+    // Never log the exception itself: its message can include the request URI,
+    // which carries a v3 API key. Its error category is safe.
+    private void ReportUnreachable(string subject, HttpRequestException exception)
+        => _logger.Log(
+            _failures.Failure(subject, "unreachable"),
+            "{Service} could not be reached ({HttpRequestError})",
+            subject,
+            exception.HttpRequestError);
 
     private static bool SafePath(string path)
         => path.StartsWith("3/", StringComparison.Ordinal)
