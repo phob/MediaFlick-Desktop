@@ -205,9 +205,9 @@ public sealed class UpstreamInputTests
         var source = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"id":1396,"name":"Breaking Bad","episodeRunTime":["long",{"minutes":1},0,47]}"""));
 
-        var detail = Assert.IsType<JsonObject>(SeerrGateway.ShapeMedia(source, "tv"));
+        var detail = SeerrGateway.ShapeMedia(source, "tv");
 
-        Assert.Equal(47, detail["runtimeMinutes"]?.GetValue<int>());
+        Assert.Equal(47, detail.RuntimeMinutes);
     }
 
     private static ServiceConfiguration Service()
