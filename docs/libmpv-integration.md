@@ -6,11 +6,12 @@ MediaFlick uses dynamically loaded libmpv as the default player on fresh
 Windows installations. Linux supports the same React playback overlay using
 a bundled AppImage runtime or system libmpv on X11 or XWayland. Linux and macOS retain external mpv
 as their default; existing explicit backend choices and mpv paths are preserved.
-External mpv and Windows MPC-HC remain supported.
+External mpv remains supported. MPC-HC support was removed; a saved MPC-HC
+selection loads as the platform's standard backend.
 
 Windows uses the integrated player in the normal build and the normal `just
 run` workflow whenever Built-in player was selected when MediaFlick started.
-External mpv and MPC-HC continue through the CEF Views shell.
+External mpv continues through the CEF Views shell.
 
 ## Integrated Windows rendering
 
@@ -106,11 +107,6 @@ React interface, and native close requests use CEF's shutdown lifecycle.
 Window bounds, maximized state, application identity, and the startup-ready
 reveal remain app-owned. `--hidden` suppresses the initial reveal.
 
-Linux keeps the persistent IPC writer and applies resume as a delayed seek
-after `file-loaded`, holding the reported Jellyfin position until that seek
-settles. It does not use load-time `start` or send a timing-related startup
-`pause=false` command.
-
 ## Runtime shape
 
 The existing `MpvController` remains the only owner of mpv playback state. Its
@@ -118,6 +114,11 @@ runtime is either an external child process or an in-process libmpv handle.
 Both start the same unique `input-ipc-server`, so commands, observed events,
 segment skipping, Jellyfin reporting, next-episode handoff, and recovery keep
 using the mature JSON IPC path.
+
+Both runtimes also share one resume path on every platform. They keep the
+persistent IPC writer and apply resume as a delayed seek after `file-loaded`,
+holding the reported Jellyfin position until that seek settles. Neither uses
+load-time `start` or sends a timing-related startup `pause=false` command.
 
 The library adapter loads only the small client API surface needed to create,
 initialize, poll, and destroy a handle. Dynamic loading is intentional: a

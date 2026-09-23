@@ -5,8 +5,8 @@
 //! starts an item in the configured external player through the same launch
 //! path as the UI's own Play button, `Playstate` drives pause/stop/seek/next,
 //! and `GeneralCommand` covers volume and mute. Every command here is
-//! implemented by both the mpv and MPC-HC adapters; anything else is logged
-//! and ignored rather than half-applied.
+//! implemented by the mpv adapter; anything else is logged and ignored rather
+//! than half-applied.
 
 use serde_json::Value;
 

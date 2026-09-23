@@ -9,23 +9,11 @@ use crate::playback::{
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LoadFileBehavior {
-    ExternalDelayedSeek,
-    LibraryPausedAtStart,
-}
-
-pub fn loadfile_command_with_behavior(
-    launch: &PlaybackRequest,
-    behavior: LoadFileBehavior,
-) -> Value {
+pub fn loadfile_command(launch: &PlaybackRequest) -> Value {
     let mut options = Map::new();
-    if behavior == LoadFileBehavior::LibraryPausedAtStart {
-        options.insert("pause".to_string(), json!("yes"));
-        if let Some(start) = launch.start_seconds().filter(|start| *start > 0.0) {
-            options.insert("start".to_string(), json!(format!("{start:.3}")));
-        }
-    }
+    // Intentionally do not set mpv's `start` or `pause` options here. Every
+    // runtime resumes with a delayed absolute seek after file-loaded; see
+    // `kick_start_playback`.
     if let Some(title) = non_empty(launch.title.as_deref()) {
         options.insert(
             "force-media-title".to_string(),
@@ -273,17 +261,11 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        LoadFileBehavior, control_command, loadfile_command_with_behavior, mpv_string_list,
-    };
+    use super::{control_command, loadfile_command, mpv_string_list};
     use crate::playback::{
         HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
     };
-    use serde_json::{Value, json};
-
-    fn loadfile_command(launch: &PlaybackRequest) -> Value {
-        loadfile_command_with_behavior(launch, LoadFileBehavior::ExternalDelayedSeek)
-    }
+    use serde_json::json;
 
     #[test]
     fn loadfile_command_contains_url_replace_options_and_request_id() {
@@ -301,18 +283,6 @@ mod tests {
         assert!(args[4].get("start").is_none());
         assert!(args[4].get("pause").is_none());
         assert_eq!(args[4]["force-media-title"], "A Movie");
-    }
-
-    #[test]
-    fn library_load_starts_paused_at_resume_position() {
-        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
-        launch.start_time_ticks = Some(20_000_000);
-
-        let command =
-            loadfile_command_with_behavior(&launch, LoadFileBehavior::LibraryPausedAtStart);
-        let options = &command["command"][4];
-        assert_eq!(options["pause"], "yes");
-        assert_eq!(options["start"], "2.000");
     }
 
     #[test]

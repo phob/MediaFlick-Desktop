@@ -1,7 +1,7 @@
 # MediaFlick Windows libmpv build
 
 MediaFlick ships a dedicated 64-bit `libmpv-2.dll` on Windows. It is loaded at
-runtime, so users can still select their own external mpv or MPC-HC and the app
+runtime, so users can still select their own external mpv and the app
 can report a missing or incompatible bundled library without failing to start.
 
 The build is based on a pinned `mpv-winbuild-cmake` revision plus the adjacent

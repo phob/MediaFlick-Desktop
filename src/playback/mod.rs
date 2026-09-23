@@ -1,7 +1,7 @@
 //! Backend-neutral playback domain.
 //!
 //! This module owns the contracts and policies used by every player backend.
-//! Concrete mpv and MPC-HC protocol implementations live under `players`.
+//! Concrete mpv protocol implementations live under `players`.
 
 pub mod coordinator;
 pub mod model;
@@ -101,17 +101,6 @@ pub const MPV_CAPABILITIES: Capabilities = Capabilities {
     pushes_position: true,
     fullscreen: true,
     playback_tuning: true,
-};
-
-#[allow(dead_code)]
-pub const MPCHC_CAPABILITIES: Capabilities = Capabilities {
-    chapter_markers: false,
-    external_subtitles: true,
-    injected_hotkeys: false,
-    absolute_volume: true,
-    pushes_position: false,
-    fullscreen: true,
-    playback_tuning: false,
 };
 
 /// Port implemented by each player adapter.

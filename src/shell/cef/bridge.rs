@@ -412,7 +412,6 @@ wrap_run_file_dialog_callback! {
     struct SettingsFileDialogCallback {
         frame: Option<Frame>,
         request_id: String,
-        target: ShellFilePickerTarget,
     }
 
     impl RunFileDialogCallback {
@@ -423,43 +422,25 @@ wrap_run_file_dialog_callback! {
             dispatch_shell_event_to_frame(
                 frame,
                 "file-picker-completed",
-                file_picker_completion_payload(
-                    &self.request_id,
-                    self.target,
-                    path.as_deref(),
-                    None,
-                ),
+                file_picker_completion_payload(&self.request_id, path.as_deref(), None),
             );
         }
     }
 }
 
-fn file_picker_target_id(target: ShellFilePickerTarget) -> &'static str {
-    match target {
-        ShellFilePickerTarget::Mpv => "mpv",
-        ShellFilePickerTarget::Mpchc => "mpchc",
-    }
-}
-
 fn file_picker_completion_payload(
     request_id: &str,
-    target: ShellFilePickerTarget,
     path: Option<&str>,
     error: Option<&str>,
 ) -> serde_json::Value {
     json!({
         "requestId": request_id,
-        "target": file_picker_target_id(target),
         "path": path,
         "error": error,
     })
 }
 
-pub(super) fn open_settings_file_dialog(
-    state: &BrowserState,
-    request_id: String,
-    target: ShellFilePickerTarget,
-) {
+pub(super) fn open_settings_file_dialog(state: &BrowserState, request_id: String) {
     let browser = state
         .lock()
         .ok()
@@ -468,12 +449,7 @@ pub(super) fn open_settings_file_dialog(
         dispatch_shell_event(
             state,
             "file-picker-completed",
-            file_picker_completion_payload(
-                &request_id,
-                target,
-                None,
-                Some("The browser is not ready."),
-            ),
+            file_picker_completion_payload(&request_id, None, Some("The browser is not ready.")),
         );
         return;
     };
@@ -481,22 +457,13 @@ pub(super) fn open_settings_file_dialog(
         dispatch_shell_event(
             state,
             "file-picker-completed",
-            file_picker_completion_payload(
-                &request_id,
-                target,
-                None,
-                Some("The browser is unavailable."),
-            ),
+            file_picker_completion_payload(&request_id, None, Some("The browser is unavailable.")),
         );
         return;
     };
     let settings = services::services()
         .map(|services| services.preferences.snapshot())
         .unwrap_or_default();
-    let (title, initial_path) = match target {
-        ShellFilePickerTarget::Mpv => ("Select mpv executable", settings.mpv_path),
-        ShellFilePickerTarget::Mpchc => ("Select MPC-HC executable", settings.mpchc_path),
-    };
     let mut filters = CefStringList::new();
     #[cfg(target_os = "windows")]
     filters.append(".exe");
@@ -506,18 +473,17 @@ pub(super) fn open_settings_file_dialog(
             "file-picker-completed",
             file_picker_completion_payload(
                 &request_id,
-                target,
                 None,
                 Some("The settings page is not ready."),
             ),
         );
         return;
     };
-    let default_path = initial_path.as_deref().map(CefString::from);
-    let mut callback = SettingsFileDialogCallback::new(Some(frame), request_id, target);
+    let default_path = settings.mpv_path.as_deref().map(CefString::from);
+    let mut callback = SettingsFileDialogCallback::new(Some(frame), request_id);
     host.run_file_dialog(
         FileDialogMode::OPEN,
-        Some(&CefString::from(title)),
+        Some(&CefString::from("Select mpv executable")),
         default_path.as_ref(),
         // CEF's C API reads the list even when no filters are requested.
         // Passing None here dereferences a null list on Linux/macOS.
@@ -581,21 +547,13 @@ mod tests {
 
     #[test]
     fn file_picker_completion_keeps_cancellation_and_errors_correlatable() {
-        let cancelled =
-            file_picker_completion_payload("request-one", ShellFilePickerTarget::Mpv, None, None);
+        let cancelled = file_picker_completion_payload("request-one", None, None);
         assert_eq!(cancelled["requestId"], "request-one");
-        assert_eq!(cancelled["target"], "mpv");
         assert!(cancelled["path"].is_null());
         assert!(cancelled["error"].is_null());
 
-        let failed = file_picker_completion_payload(
-            "request-two",
-            ShellFilePickerTarget::Mpchc,
-            None,
-            Some("dialog failed"),
-        );
+        let failed = file_picker_completion_payload("request-two", None, Some("dialog failed"));
         assert_eq!(failed["requestId"], "request-two");
-        assert_eq!(failed["target"], "mpchc");
         assert_eq!(failed["error"], "dialog failed");
     }
 

@@ -838,9 +838,7 @@ fn apply_settings_snapshot_preserving_live_window(
 fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
     match request {
         ShellRequest::MainWindowReady => reveal_main_window(state),
-        ShellRequest::FilePicker { request_id, target } => {
-            open_settings_file_dialog(state, request_id, target);
-        }
+        ShellRequest::FilePicker { request_id } => open_settings_file_dialog(state, request_id),
         ShellRequest::InstallMpv { request_id } => {
             start_mpv_download_for_settings(state, request_id)
         }

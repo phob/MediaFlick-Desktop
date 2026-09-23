@@ -12,12 +12,12 @@ import { testQueryClient } from "./test-query-client"
 
 const clientSettings: ClientSettings = {
   client: {
-    player: { playerBackend: "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false, comfort: DEFAULT_COMFORT },
+    player: { playerBackend: "mpv", mpvPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", playerConfigured: false, comfort: DEFAULT_COMFORT },
     playback: { streamingQuality: "original", skipIntro: "prompt", skipCredits: "prompt", skipRecap: "prompt", skipCommercial: "prompt" },
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
   appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: [] },
-  capabilities: { platform: "windows", libmpv: true, mpchc: true, mpvInstaller: true },
+  capabilities: { platform: "windows", libmpv: true, mpvInstaller: true },
   serverUrl: null,
 }
 
