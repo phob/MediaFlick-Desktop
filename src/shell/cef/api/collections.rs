@@ -113,11 +113,12 @@ fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
 }
 
 fn jellyfin_index(services: &Arc<Services>) -> ApiResponse {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_box_sets(&client, &user_id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_box_sets(client, user_id) {
         Ok(response) => ApiResponse::ok(json!({
             "collections": response.items.iter().map(|item| json!({
                 "id": item.id,
@@ -127,10 +128,7 @@ fn jellyfin_index(services: &Arc<Services>) -> ApiResponse {
                 "itemCount": item.child_count,
             })).collect::<Vec<_>>(),
         })),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -138,16 +136,17 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
     if id.is_empty() {
         return ApiResponse::error(400, "that is not a Jellyfin collection id");
     }
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    let set = match items::fetch_item(&client, &user_id, id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    let set = match items::fetch_item(client, user_id, id) {
         Ok(Some(item)) => item,
         Ok(None) => return ApiResponse::error(404, "that Jellyfin collection does not exist"),
-        Err(error) => return ApiResponse::from_api_error(&error),
+        Err(error) => return scoped_failure(services, &scope, &error),
     };
-    match items::fetch_box_set_children(&client, &user_id, id) {
+    match items::fetch_box_set_children(client, user_id, id) {
         Ok(children) => ApiResponse::ok(json!({
             "id": set.id,
             "name": set.display_name(),
@@ -156,10 +155,7 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
             "items": children.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
             "totalRecordCount": children.total_record_count,
         })),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 

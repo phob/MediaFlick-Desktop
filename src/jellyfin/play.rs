@@ -16,7 +16,7 @@ use crate::preferences::StreamingQuality;
 use super::api::items::{self, PlaybackInfoRequest};
 use super::api::model::{MediaSourceInfo, MediaStream, PlaybackInfoResponse};
 use super::api::{ApiError, JellyfinClient};
-use super::session::Session;
+use super::session::{Session, SessionScope};
 
 /// What the UI asked for.
 #[derive(Debug, Clone, Default)]
@@ -51,6 +51,8 @@ pub enum StartError {
     NoPlayer,
     /// The playback coordinator has not been attached yet.
     NotReady,
+    /// Another account signed in while playback was being prepared.
+    AccountChanged,
     Api(ApiError),
 }
 
@@ -58,8 +60,12 @@ pub enum StartError {
 ///
 /// This is the one launch path shared by the UI's play endpoints and
 /// remote-control Play messages, so both start playback identically.
+/// `scope` is the account the request came from: its preferences shape the
+/// play, its token negotiates it, and the player only opens while it is still
+/// the signed-in account.
 pub fn start(
     services: &Arc<Services>,
+    scope: &SessionScope,
     options: &PlayOptions,
     origin: &str,
 ) -> Result<PreparedPlayback, StartError> {
@@ -72,27 +78,22 @@ pub fn start(
     };
 
     let mut options = options.clone();
-    options.viewing = services
-        .session
-        .account_key()
-        .map(|key| services.accounts.viewing(&key))
-        .unwrap_or_default();
+    options.viewing = services.accounts.viewing(scope.account());
     let prepared = prepare(
         &services.session,
+        scope,
         &services.library,
         services
-            .session
-            .account_key()
-            .and_then(|account| {
-                services
-                    .playback_preferences
-                    .get(&account, &options.item_id)
-            })
+            .playback_preferences
+            .get(scope.account(), &options.item_id)
             .as_ref(),
         settings.streaming_quality,
         &options,
     )
     .map_err(StartError::Api)?;
+    if !services.session.scope_is_current(scope) {
+        return Err(StartError::AccountChanged);
+    }
 
     tracing::info!(
         target: "playback",
@@ -134,12 +135,13 @@ fn context_from(request: &PlaybackRequest) -> PlaybackContext {
 
 pub fn prepare(
     session: &Session,
+    scope: &SessionScope,
     library: &Library,
     saved_preference: Option<&crate::library::ItemPlaybackPreference>,
     quality: StreamingQuality,
     options: &PlayOptions,
 ) -> Result<PreparedPlayback, ApiError> {
-    let (client, user_id) = session.client_and_user()?;
+    let (client, user_id) = (scope.client(), scope.user_id());
     let quality = options.quality.unwrap_or(quality);
     let cached = library.item(&options.item_id).ok().flatten();
 
@@ -155,14 +157,14 @@ pub fn prepare(
         || options.audio_stream_index.is_some()
         || options.subtitle_stream_index.is_some();
     if !has_explicit_track_options && let Some(preference) = saved_preference {
-        match items::fetch_media_sources(&client, &user_id, &options.item_id) {
+        match items::fetch_media_sources(client, user_id, &options.item_id) {
             Ok(sources) => {
                 if let Some(resolved) = resolve_playback_preference(Some(preference), &sources) {
                     apply_saved_preference(&mut effective_options, resolved);
                 }
             }
             Err(error) => {
-                session.note_error(&error);
+                session.note_scoped_error(scope, &error);
                 tracing::warn!(
                     target: "playback",
                     item_id = %options.item_id,
@@ -179,13 +181,13 @@ pub fn prepare(
             || options.viewing.prefer_original_audio
             || options.viewing.subtitle_mode != crate::preferences::SubtitleMode::Server)
     {
-        match items::fetch_media_sources(&client, &user_id, &options.item_id) {
+        match items::fetch_media_sources(client, user_id, &options.item_id) {
             Ok(sources) => {
                 if let Some(source) = sources.first() {
                     apply_language_defaults(&mut effective_options, source);
                 }
             }
-            Err(error) => session.note_error(&error),
+            Err(error) => session.note_scoped_error(scope, &error),
         }
     }
 
@@ -195,11 +197,11 @@ pub fn prepare(
         audio_stream_index: effective_options.audio_stream_index,
         subtitle_stream_index: effective_options.subtitle_stream_index,
     };
-    let info = items::playback_info(&client, &user_id, &options.item_id, quality, &info_request)
-        .inspect_err(|error| session.note_error(error))?;
+    let info = items::playback_info(client, user_id, &options.item_id, quality, &info_request)
+        .inspect_err(|error| session.note_scoped_error(scope, error))?;
 
     build(
-        &client,
+        client,
         &info,
         quality,
         &effective_options,
