@@ -560,8 +560,8 @@ fn due(library: &Library, key: &str, interval: Duration) -> bool {
 
 fn full_bootstrap_due(library: &Library) -> bool {
     // A missing/false done marker means the resumable initial pass is already
-    // underway. Reset only a previously completed cache whose weekly refresh
-    // is due; otherwise a retry after a network failure would jump back to
+    // underway. Reset only a previously completed cache whose daily
+    // re-bootstrap is due; otherwise a retry after a network failure would jump back to
     // zero and make both the stored offset and the progress UI dishonest.
     library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
         && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)

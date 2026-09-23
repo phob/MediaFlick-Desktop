@@ -74,8 +74,8 @@ pub struct BootstrapProgress {
 }
 
 /// The catalog becomes usable after its first successful page commit. Existing
-/// rows are an equally strong readiness signal during a migration or weekly
-/// refresh, even if an older build never wrote the explicit marker.
+/// rows are an equally strong readiness signal during a rebuild or the daily
+/// re-bootstrap, even if an older build never wrote the explicit marker.
 pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
     let has_items = library.has_items();
     let complete = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1");
