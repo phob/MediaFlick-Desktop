@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
-import CollectionSettingsPage from "../src/routes/CollectionSettings"
+import CollectionSettingsPage from "../src/routes/settings/CollectionSettings"
 import type {
   CollectionProfile,
   CollectionSettings,
@@ -600,4 +600,20 @@ describe("collection settings management", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete collection" }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith(first.id))
   })
+})
+
+test("signed-out users see the sign-in prompt instead of being redirected away", () => {
+  const client = testQueryClient()
+  client.setQueryData(queryKeys.status, { authenticated: false })
+  render(
+    <TestProviders client={client} initialEntries={["/settings/collections"]}>
+      <Routes>
+        <Route path="/settings/collections" element={<CollectionSettingsPage />} />
+        <Route path="*" element={<p>Redirected</p>} />
+      </Routes>
+    </TestProviders>,
+  )
+  expect(screen.getByRole("heading", { name: "Collections" })).toBeTruthy()
+  expect(screen.getByText("Sign in required")).toBeTruthy()
+  expect(screen.queryByText("Redirected")).toBeNull()
 })

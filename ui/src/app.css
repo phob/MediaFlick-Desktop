@@ -49,6 +49,10 @@
   --accent-foreground: #e6ede9;
   --destructive: #ff6b6b;
   --destructive-foreground: #120505;
+  /* Something needs attention but nothing failed, such as a settings file
+     that was recovered from its backup. */
+  --warning: #f59e0b;
+  --warning-foreground: #fef3c7;
 
   /* Lines */
   --border: #202c27;
@@ -141,6 +145,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
