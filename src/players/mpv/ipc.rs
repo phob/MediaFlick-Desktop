@@ -594,12 +594,287 @@ fn set_ipc_command_read_timeout(stream: &IpcConnection, timeout: Duration) -> io
     stream.set_read_timeout(Some(timeout))
 }
 
+/// A scripted mpv IPC endpoint for tests. It accepts the two connections an
+/// [`IpcWorker`] makes, event reader first and command writer second, like mpv.
+/// It records each command, tagged with the connection it arrived on, and
+/// answers with whatever lines the test's `reply` returns for it.
+#[cfg(test)]
+pub(super) mod test_server {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    use serde_json::Value;
+
+    use super::{IpcWorker, MpvEvent};
+
+    /// Connection indexes in the order the worker opens them.
+    pub(in crate::players::mpv) const EVENT_CONNECTION: usize = 0;
+    pub(in crate::players::mpv) const COMMAND_CONNECTION: usize = 1;
+
+    const OBSERVED_PROPERTIES: usize = 15;
+
+    #[cfg(unix)]
+    type Stream = std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    type Stream = std::fs::File;
+
+    pub(in crate::players::mpv) struct FakeMpv {
+        path: String,
+        received: Receiver<(usize, Value)>,
+        events: Arc<Mutex<Option<Stream>>>,
+        server: thread::JoinHandle<()>,
+    }
+
+    impl FakeMpv {
+        /// Starts serving and returns once a client can connect.
+        pub(in crate::players::mpv) fn start(
+            reply: impl Fn(&Value) -> Vec<Value> + Send + 'static,
+        ) -> Self {
+            let path = super::make_ipc_path();
+            let (received_tx, received) = mpsc::channel();
+            let events = Arc::new(Mutex::new(None));
+            let (ready_tx, ready) = mpsc::channel();
+            let server_path = path.clone();
+            let server_events = Arc::clone(&events);
+            let server = thread::spawn(move || {
+                let mut listener = Listener::bind(&server_path);
+                let _ = ready_tx.send(());
+                let event_stream = listener.accept();
+                let mut observers = BufReader::new(clone(&event_stream));
+                let mut line = String::new();
+                for _ in 0..OBSERVED_PROPERTIES {
+                    line.clear();
+                    if observers.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    if let Ok(command) = serde_json::from_str(&line) {
+                        let _ = received_tx.send((EVENT_CONNECTION, command));
+                    }
+                }
+                // Only `events` may hold the server end, so dropping it in
+                // `finish` is what ends the worker's reader.
+                drop(observers);
+                *server_events.lock().expect("event stream") = Some(event_stream);
+
+                let command_stream = listener.accept();
+                let mut commands = BufReader::new(clone(&command_stream));
+                let mut replies = command_stream;
+                loop {
+                    line.clear();
+                    if commands.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let Ok(command) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    for answer in reply(&command) {
+                        let mut text = answer.to_string();
+                        text.push('\n');
+                        if replies.write_all(text.as_bytes()).is_err() {
+                            return;
+                        }
+                    }
+                    let _ = replies.flush();
+                    let _ = received_tx.send((COMMAND_CONNECTION, command));
+                }
+            });
+            ready
+                .recv_timeout(Duration::from_secs(5))
+                .expect("fake mpv IPC endpoint is ready");
+            Self {
+                path,
+                received,
+                events,
+                server,
+            }
+        }
+
+        /// Connects a worker the way the controller does.
+        pub(in crate::players::mpv) fn connect(&self) -> (IpcWorker, Receiver<MpvEvent>) {
+            IpcWorker::start(&self.path).expect("connect to fake mpv")
+        }
+
+        /// The next command mpv received on a given connection.
+        pub(in crate::players::mpv) fn next_command_on(&self, connection: usize) -> Value {
+            loop {
+                let (from, command) = self
+                    .received
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("fake mpv received a command");
+                if from == connection {
+                    return command;
+                }
+            }
+        }
+
+        pub(in crate::players::mpv) fn send_event(&self, event: &Value) {
+            let mut text = event.to_string();
+            text.push('\n');
+            let mut events = self.events.lock().expect("event stream");
+            let stream = events.as_mut().expect("event connection is open");
+            stream.write_all(text.as_bytes()).expect("write event");
+            stream.flush().expect("flush event");
+            drop(events);
+        }
+
+        /// Closes the connections the way mpv does on exit and joins the worker.
+        pub(in crate::players::mpv) fn finish(self, worker: IpcWorker) {
+            self.events.lock().expect("event stream").take();
+            worker.shutdown();
+            let _ = self.server.join();
+            super::cleanup_ipc_path(&self.path);
+        }
+    }
+
+    fn clone(stream: &Stream) -> Stream {
+        stream.try_clone().expect("clone fake mpv connection")
+    }
+
+    #[cfg(unix)]
+    struct Listener(std::os::unix::net::UnixListener);
+
+    #[cfg(unix)]
+    impl Listener {
+        fn bind(path: &str) -> Self {
+            Self(std::os::unix::net::UnixListener::bind(path).expect("bind fake mpv socket"))
+        }
+
+        fn accept(&mut self) -> Stream {
+            self.0.accept().expect("accept fake mpv client").0
+        }
+    }
+
+    /// A named-pipe server. mpv creates one pipe instance per client; the next
+    /// instance must exist before the event reader connects, and the command
+    /// writer's connect retries until the second one does.
+    #[cfg(windows)]
+    struct Listener {
+        name: Vec<u16>,
+        next: Option<Stream>,
+    }
+
+    #[cfg(windows)]
+    impl Listener {
+        fn bind(path: &str) -> Self {
+            let name: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+            let next = Some(Self::instance(&name));
+            Self { name, next }
+        }
+
+        fn instance(name: &[u16]) -> Stream {
+            use std::os::windows::io::FromRawHandle;
+
+            use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+            use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+            use windows_sys::Win32::System::Pipes::{
+                CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+                PIPE_WAIT,
+            };
+
+            // SAFETY: `name` is a NUL-terminated wide string that outlives the
+            // call, and null security attributes select the defaults.
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    name.as_ptr(),
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                    PIPE_UNLIMITED_INSTANCES,
+                    64 * 1024,
+                    64 * 1024,
+                    0,
+                    std::ptr::null(),
+                )
+            };
+            assert_ne!(handle, INVALID_HANDLE_VALUE, "create fake mpv pipe");
+            // SAFETY: the handle is a new pipe instance nothing else owns.
+            unsafe { Stream::from_raw_handle(handle) }
+        }
+
+        fn accept(&mut self) -> Stream {
+            use std::os::windows::io::AsRawHandle;
+
+            use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, GetLastError};
+            use windows_sys::Win32::System::Pipes::ConnectNamedPipe;
+
+            let stream = self
+                .next
+                .take()
+                .unwrap_or_else(|| Self::instance(&self.name));
+            // SAFETY: `stream` owns a live pipe instance; a null OVERLAPPED
+            // makes this a blocking wait for one client.
+            let connected =
+                unsafe { ConnectNamedPipe(stream.as_raw_handle(), std::ptr::null_mut()) };
+            // SAFETY: reads this thread's last error, set by ConnectNamedPipe.
+            let already = connected == 0 && unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
+            assert!(connected != 0 || already, "accept fake mpv client");
+            stream
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::command_reply_result;
+    use super::test_server::{COMMAND_CONNECTION, FakeMpv};
+    use super::{IpcCommandFailure, command_reply_result};
     use serde_json::json;
-    #[cfg(unix)]
     use std::time::Duration;
+
+    #[test]
+    fn one_persistent_writer_carries_every_command_and_matches_replies_by_id() {
+        let fake = FakeMpv::start(|command| {
+            let id = command["request_id"].clone();
+            match command["command"][0].as_str() {
+                // Events and other requests' replies can share the command
+                // connection; the writer waits for its own request id.
+                Some("first") => vec![
+                    json!({ "event": "property-change", "name": "pause", "data": true }),
+                    json!({ "request_id": 999_999, "error": "success" }),
+                    json!({ "request_id": id, "error": "success" }),
+                ],
+                Some("rejected") => {
+                    vec![json!({ "request_id": id, "error": "property unavailable" })]
+                }
+                _ => vec![json!({ "request_id": id, "error": "success" })],
+            }
+        });
+        let (worker, events) = fake.connect();
+        let send = |name: &str, id: i64| {
+            worker.send_with_timeout(
+                json!({ "command": [name], "request_id": id }),
+                Duration::from_secs(5),
+            )
+        };
+
+        assert!(send("first", 1).is_ok());
+        assert!(matches!(
+            send("rejected", 2),
+            Err(IpcCommandFailure::Rejected(_))
+        ));
+        assert!(
+            send("after-rejection", 3).is_ok(),
+            "a rejection keeps the writer"
+        );
+        assert!(worker.is_writer_alive());
+        // The fake accepts only the event and command connections, so a
+        // writer that reopened the pipe per command could not have been
+        // answered at all.
+        for expected in ["first", "rejected", "after-rejection"] {
+            assert_eq!(
+                fake.next_command_on(COMMAND_CONNECTION)["command"][0],
+                expected
+            );
+        }
+
+        fake.send_event(&json!({ "event": "file-loaded" }));
+        let event = events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("event through the reader connection");
+        assert_eq!(event.name, "file-loaded");
+        fake.finish(worker);
+    }
 
     #[test]
     fn command_replies_surface_mpv_rejections() {
