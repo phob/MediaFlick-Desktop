@@ -40,7 +40,8 @@ const settings: ClientSettings = {
     showMediaInfo: true,
     ratingSources: [],
   },
-  capabilities: { platform: "windows", libmpv: true, mpvInstaller: true },
+  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
+  recoveries: [],
   serverUrl: "https://jellyfin.example",
 }
 
