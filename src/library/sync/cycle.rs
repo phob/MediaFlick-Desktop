@@ -132,6 +132,12 @@ pub(super) fn run_cycle_inner(
     if initial_catalog || report.changed() || recovering_ownership {
         crate::app::services::notify_library_sync_completed();
     }
+    if (initial_catalog || report.changed())
+        && let Err(error) = library.optimize()
+    {
+        // Stale statistics only slow queries down; the sync itself succeeded.
+        tracing::warn!(target: "library.sync", "could not refresh query statistics: {error}");
+    }
     Ok(report)
 }
 
