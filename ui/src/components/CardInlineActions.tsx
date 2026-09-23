@@ -1,9 +1,8 @@
-import { Check, Play, Plus, ThumbsUp } from "lucide-react"
 import { toast } from "sonner"
+import { ItemActionButtons } from "@/components/ItemActionButtons"
 import type { ItemSummary } from "@/lib/api"
 import { useQualityOverride } from "@/lib/playback-quality"
 import { useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
-import { cn } from "@/lib/utils"
 
 /**
  * The expanded preview's three actions, kept on the artwork when that preview
@@ -46,55 +45,16 @@ export function CardInlineActions({
     : item.positionTicks > 0
       ? "Resume"
       : "Play"
-  const favoriteLabel = item.favorite ? "Remove from My List" : "Add to My List"
-  const playedLabel = item.played ? "Mark as unwatched" : "Mark as watched"
-
   return (
     <div className="card-inline-actions">
-      <button
-        type="button"
-        disabled={play.isPending || resolvingPlayTarget}
-        aria-label={playLabel}
-        title={playLabel}
-        onClick={() => void startPlayback()}
-        className="preview-action bg-primary text-primary-foreground hover:bg-primary/85"
-      >
-        <Play className="size-4 fill-current" />
-      </button>
-      <button
-        type="button"
-        disabled={setFavorite.isPending}
-        aria-label={favoriteLabel}
-        aria-pressed={item.favorite}
-        title={favoriteLabel}
-        onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
-        className={cn(
-          "preview-action border bg-black/85",
-          item.favorite
-            ? "border-primary/70 text-primary"
-            : "border-white/35 text-white hover:border-primary/70 hover:text-primary",
-        )}
-      >
-        {item.favorite ? <Check className="size-4" /> : <Plus className="size-4" />}
-      </button>
-      <button
-        type="button"
-        disabled={setPlayed.isPending}
-        aria-label={playedLabel}
-        aria-pressed={item.played}
-        title={playedLabel}
-        onClick={() =>
-          setPlayed.mutate({ id: item.id, played: !item.played, context: playedContext })
-        }
-        className={cn(
-          "preview-action border bg-black/85",
-          item.played
-            ? "border-primary/70 text-primary"
-            : "border-white/35 text-white hover:border-primary/70 hover:text-primary",
-        )}
-      >
-        <ThumbsUp className={cn("size-4", item.played && "fill-current")} />
-      </button>
+      <ItemActionButtons
+        variant="card"
+        item={item}
+        play={{ label: playLabel, disabled: play.isPending || resolvingPlayTarget, onPlay: () => void startPlayback() }}
+        favorite={setFavorite}
+        played={setPlayed}
+        playedContext={playedContext}
+      />
     </div>
   )
 }
