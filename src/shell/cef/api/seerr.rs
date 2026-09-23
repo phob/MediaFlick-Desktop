@@ -5,7 +5,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["seerr", "status"] if request.is("GET") => {
             companion_call(services, || services.companion.seerr_status())
@@ -46,43 +46,33 @@ pub(super) fn route(
 fn companion_call(
     services: &Arc<Services>,
     call: impl FnOnce() -> Result<Value, ApiError>,
-) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+) -> Handled {
+    let scope = session_scope(services)?;
     match call() {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => scoped_failure(services, &scope, &error),
+        Ok(value) => Ok(ApiResponse::ok(value)),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let query = request.param("q").unwrap_or_default();
     companion_call(services, || {
         services.companion.seerr_search(&query, page_param(request))
     })
 }
 
-fn seerr_person_credits(
-    services: &Arc<Services>,
-    tmdb_id: &str,
-    request: &ApiRequest,
-) -> ApiResponse {
+fn seerr_person_credits(services: &Arc<Services>, tmdb_id: &str, request: &ApiRequest) -> Handled {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
-        return ApiResponse::error(400, "that is not a TMDB person id");
+        return Err(ApiResponse::error(400, "that is not a TMDB person id"));
     };
     if tmdb_id <= 0 {
-        return ApiResponse::error(400, "that is not a TMDB person id");
+        return Err(ApiResponse::error(400, "that is not a TMDB person id"));
     }
 
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let mut value = match services.companion.seerr_person_credits(tmdb_id) {
         Ok(value) => value,
-        Err(error) => return scoped_failure(services, &scope, &error),
+        Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
     // During progressive catalog fill, SQLite cannot yet prove that every
     // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
@@ -90,11 +80,11 @@ fn seerr_person_credits(
     // failure hides Discover only; the independently loaded server grid stays.
     if let Some(person_id) = request.param("personId") {
         return match join_server_person_availability(services, &scope, &person_id, &mut value) {
-            Ok(()) => ApiResponse::ok(value),
-            Err(error) => scoped_failure(services, &scope, &error),
+            Ok(()) => Ok(ApiResponse::ok(value)),
+            Err(error) => Err(scoped_failure(services, &scope, &error)),
         };
     }
-    ApiResponse::ok(value)
+    Ok(ApiResponse::ok(value))
 }
 
 fn join_server_person_availability(
@@ -339,9 +329,9 @@ fn join_person_items(value: &mut Value, server_items: &[BaseItemDto]) {
     }
 }
 
-fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) -> ApiResponse {
+fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) -> Handled {
     let Some(kind) = DiscoverKind::from_id(kind) else {
-        return ApiResponse::error(404, "unknown discover row");
+        return Err(ApiResponse::error(404, "unknown discover row"));
     };
     let options = match DiscoverOptions::from_values(
         request.param("genre").as_deref(),
@@ -352,7 +342,7 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
         request.param("timeWindow").as_deref(),
     ) {
         Ok(options) => options,
-        Err(error) => return ApiResponse::error(400, &error),
+        Err(error) => return Err(ApiResponse::error(400, &error)),
     };
     companion_call(services, || {
         services
@@ -361,16 +351,16 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
     })
 }
 
-fn seerr_genres(services: &Arc<Services>, media_type: &str) -> ApiResponse {
+fn seerr_genres(services: &Arc<Services>, media_type: &str) -> Handled {
     if !matches!(media_type, "movie" | "tv") {
-        return ApiResponse::error(404, "unknown genre kind");
+        return Err(ApiResponse::error(404, "unknown genre kind"));
     }
     companion_call(services, || services.companion.seerr_genres(media_type))
 }
 
-fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> ApiResponse {
+fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Handled {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
-        return ApiResponse::error(400, "that is not a TMDB id");
+        return Err(ApiResponse::error(400, "that is not a TMDB id"));
     };
     companion_call(services, || {
         services.companion.seerr_media(media_type, tmdb_id)
@@ -381,7 +371,7 @@ fn seerr_request_options(
     services: &Arc<Services>,
     media_type: &str,
     request: &ApiRequest,
-) -> ApiResponse {
+) -> Handled {
     let is_4k = request
         .param("is4k")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
@@ -404,11 +394,8 @@ struct SeerrRequestBody {
     profile_id: Option<i64>,
 }
 
-fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<SeerrRequestBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<SeerrRequestBody>()?;
     let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
@@ -418,10 +405,10 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
             })
         }
         _ => {
-            return ApiResponse::error(
+            return Err(ApiResponse::error(
                 400,
                 "the download destination and quality profile must be selected together",
-            );
+            ));
         }
     };
     companion_call(services, || {
@@ -435,7 +422,7 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
     })
 }
 
-fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let number = |key: &str, fallback: i64| {
         request
             .param(key)
@@ -451,9 +438,9 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
     })
 }
 
-fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiResponse {
+fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> Handled {
     let Ok(request_id) = request_id.parse::<i64>() else {
-        return ApiResponse::error(400, "that is not a request id");
+        return Err(ApiResponse::error(400, "that is not a request id"));
     };
     companion_call(services, || {
         services.companion.seerr_cancel_request(request_id)
@@ -467,9 +454,9 @@ fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiRespon
 /// the most bytes, so it shares the pruned on-disk cache the Jellyfin image
 /// proxy already has, and is served as immutable — a TMDB file name addresses
 /// one unchanging image.
-fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> ApiResponse {
+fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> Handled {
     let Some(path) = tmdb_image_path(size, file) else {
-        return ApiResponse::error(404, "no such poster");
+        return Err(ApiResponse::error(404, "no such poster"));
     };
     let key = cache_key("tmdb", size, file, 0);
     let cache_path = crate::app::paths::image_cache_dir().join(&key);
@@ -477,7 +464,11 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> ApiResponse 
         && !bytes.is_empty()
     {
         if let Some(content_type) = image_mime_type(&bytes) {
-            return ApiResponse::bytes(content_type.to_string(), bytes, IMMUTABLE_CACHE);
+            return Ok(ApiResponse::bytes(
+                content_type.to_string(),
+                bytes,
+                IMMUTABLE_CACHE,
+            ));
         }
         // An earlier Companion proxy cached JSON error bodies under image keys.
         // Drop only the invalid entry so the same request repairs it below.
@@ -486,14 +477,18 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> ApiResponse 
     match services.companion.collection_artwork(size, &path) {
         Ok((bytes, _)) => {
             let Some(content_type) = image_mime_type(&bytes) else {
-                return ApiResponse::from_api_error(&ApiError::Decode(
+                return Err(ApiResponse::from_api_error(&ApiError::Decode(
                     "the companion artwork response was not an image".to_string(),
-                ));
+                )));
             };
             store_image(&cache_path, &bytes);
-            ApiResponse::bytes(content_type.to_string(), bytes, IMMUTABLE_CACHE)
+            Ok(ApiResponse::bytes(
+                content_type.to_string(),
+                bytes,
+                IMMUTABLE_CACHE,
+            ))
         }
-        Err(error) => ApiResponse::from_api_error(&error),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 

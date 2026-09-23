@@ -10,7 +10,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     if let Some(response) = configuration_route(services, segments, request) {
         return Some(response);
     }
@@ -48,7 +48,7 @@ fn configuration_route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     match segments {
         ["collections", "settings"] if request.is("GET") => {
             Some(profiles::settings(services, false))
@@ -112,14 +112,11 @@ fn active_account(services: &Arc<Services>) -> Result<AccountKey, ApiResponse> {
     active_scope(services).map(|scope| scope.account().clone())
 }
 
-fn jellyfin_index(services: &Arc<Services>) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn jellyfin_index(services: &Arc<Services>) -> Handled {
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_box_sets(client, user_id) {
-        Ok(response) => ApiResponse::ok(json!({
+        Ok(response) => Ok(ApiResponse::ok(json!({
             "collections": response.items.iter().map(|item| json!({
                 "id": item.id,
                 "name": item.display_name(),
@@ -127,35 +124,40 @@ fn jellyfin_index(services: &Arc<Services>) -> ApiResponse {
                 "backdropImageTag": item.backdrop_image_tags.first(),
                 "itemCount": item.child_count,
             })).collect::<Vec<_>>(),
-        })),
-        Err(error) => scoped_failure(services, &scope, &error),
+        }))),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn jellyfin_detail(services: &Arc<Services>, id: &str) -> ApiResponse {
+fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
     if id.is_empty() {
-        return ApiResponse::error(400, "that is not a Jellyfin collection id");
+        return Err(ApiResponse::error(
+            400,
+            "that is not a Jellyfin collection id",
+        ));
     }
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     let set = match items::fetch_item(client, user_id, id) {
         Ok(Some(item)) => item,
-        Ok(None) => return ApiResponse::error(404, "that Jellyfin collection does not exist"),
-        Err(error) => return scoped_failure(services, &scope, &error),
+        Ok(None) => {
+            return Err(ApiResponse::error(
+                404,
+                "that Jellyfin collection does not exist",
+            ));
+        }
+        Err(error) => return Err(scoped_failure(services, &scope, &error)),
     };
     match items::fetch_box_set_children(client, user_id, id) {
-        Ok(children) => ApiResponse::ok(json!({
+        Ok(children) => Ok(ApiResponse::ok(json!({
             "id": set.id,
             "name": set.display_name(),
             "primaryImageTag": set.primary_image_tag(),
             "backdropImageTag": set.backdrop_image_tags.first(),
             "items": children.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
             "totalRecordCount": children.total_record_count,
-        })),
-        Err(error) => scoped_failure(services, &scope, &error),
+        }))),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -169,54 +171,52 @@ fn configuration_failure(error: &std::io::Error) -> ApiResponse {
     ApiResponse::error(status, error.to_string())
 }
 
-fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let scope = match active_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn upload_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let scope = active_scope(services)?;
     match services.artwork.stage(&request.body) {
         Ok(id) => match services
             .session
             .commit_if_current(&scope, stale_account_response, || {
                 Ok(ApiResponse::ok(json!({ "id": &id })))
             }) {
-            Ok(response) => response,
+            Ok(response) => Ok(response),
             Err(response) => {
                 if let Err(error) = services.artwork.remove(&id) {
                     tracing::warn!(target: "collections", "could not remove stale custom artwork: {error}");
                 }
-                response
+                Err(response)
             }
         },
-        Err(error) => configuration_failure(&error),
+        Err(error) => Err(configuration_failure(&error)),
     }
 }
 
-fn custom_artwork(services: &Arc<Services>, id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+fn custom_artwork(services: &Arc<Services>, id: &str) -> Handled {
+    let account = active_account(services)?;
     if !services
         .collections
         .artwork_ids_for_account(&account)
         .iter()
         .any(|candidate| candidate == id)
     {
-        return ApiResponse::error(404, "that custom poster does not exist");
+        return Err(ApiResponse::error(404, "that custom poster does not exist"));
     }
     let Some(path) = services.artwork.path(id) else {
-        return ApiResponse::error(404, "that custom poster does not exist");
+        return Err(ApiResponse::error(404, "that custom poster does not exist"));
     };
     let content_type = match path.extension().and_then(|value| value.to_str()) {
         Some("png") => "image/png",
         Some("jpg") => "image/jpeg",
         Some("webp") => "image/webp",
-        _ => return ApiResponse::error(404, "that custom poster does not exist"),
+        _ => return Err(ApiResponse::error(404, "that custom poster does not exist")),
     };
     match std::fs::read(path) {
-        Ok(bytes) => ApiResponse::bytes(content_type.to_string(), bytes, IMMUTABLE_CACHE),
-        Err(_) => ApiResponse::error(404, "that custom poster does not exist"),
+        Ok(bytes) => Ok(ApiResponse::bytes(
+            content_type.to_string(),
+            bytes,
+            IMMUTABLE_CACHE,
+        )),
+        Err(_) => Err(ApiResponse::error(404, "that custom poster does not exist")),
     }
 }
 
@@ -238,71 +238,62 @@ struct ConfirmationBody {
     confirmed: bool,
 }
 
-fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<PublicListSearchBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
-    if let Err(response) = active_account(services) {
-        return response;
-    }
+fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<PublicListSearchBody>()?;
+    active_account(services)?;
     let query = body.query.trim();
     if query.is_empty() {
-        return ApiResponse::error(400, "enter a public-list search");
+        return Err(ApiResponse::error(400, "enter a public-list search"));
     }
     match services.companion.search_public_lists(query) {
-        Ok(result) => ApiResponse::ok(result),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(result) => Ok(ApiResponse::ok(result)),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<PublicListValidateBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
-    if let Err(response) = active_account(services) {
-        return response;
-    }
+fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<PublicListValidateBody>()?;
+    active_account(services)?;
     let selector = body.selector.trim();
     if selector.is_empty() {
-        return ApiResponse::error(400, "enter a public-list ID or canonical URL");
+        return Err(ApiResponse::error(
+            400,
+            "enter a public-list ID or canonical URL",
+        ));
     }
     match services.companion.validate_public_list(selector) {
-        Ok(result) => ApiResponse::ok(result),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(result) => Ok(ApiResponse::ok(result)),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    if let Err(response) = active_account(services) {
-        return response;
-    }
+fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    active_account(services)?;
     let Some(size) = request.param("size") else {
-        return ApiResponse::error(400, "artwork size is required");
+        return Err(ApiResponse::error(400, "artwork size is required"));
     };
     let Some(path) = request.param("path") else {
-        return ApiResponse::error(400, "artwork path is required");
+        return Err(ApiResponse::error(400, "artwork path is required"));
     };
     match services.companion.collection_artwork(&size, &path) {
         Ok((bytes, content_type)) if content_type.starts_with("image/") => {
-            ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
+            Ok(ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
-        Ok(_) => ApiResponse::error(502, "provider returned invalid artwork"),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(_) => Err(ApiResponse::error(502, "provider returned invalid artwork")),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let confirmed = match request.body::<ConfirmationBody>() {
-        Ok(body) => body.confirmed,
-        Err(response) => return response,
-    };
+fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let confirmed = request.body::<ConfirmationBody>()?.confirmed;
     if !confirmed {
-        return ApiResponse::error(400, "confirm the local account deletion first");
+        return Err(ApiResponse::error(
+            400,
+            "confirm the local account deletion first",
+        ));
     }
     match crate::app::services::delete_local_account_data(services) {
         Ok(()) => super::status(services),
-        Err(error) => ApiResponse::error(500, error),
+        Err(error) => Err(ApiResponse::error(500, error)),
     }
 }

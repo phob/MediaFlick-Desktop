@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["play"] if request.is("POST") => play_item(services, request),
         ["play", "next"] if request.is("POST") => play_next(services, request),
@@ -14,7 +14,7 @@ pub(super) fn route(
         ["player", "command"] if request.is("POST") => player_command(services, request),
         ["sync"] if request.is("POST") => {
             services.sync.request();
-            ApiResponse::ok(json!({ "requested": true }))
+            Ok(ApiResponse::ok(json!({ "requested": true })))
         }
         _ => return None,
     };
@@ -52,13 +52,10 @@ fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
     Ok(body.item_id)
 }
 
-fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<PlayBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<PlayBody>()?;
     if body.item_id.is_empty() {
-        return ApiResponse::error(400, "itemId is required");
+        return Err(ApiResponse::error(400, "itemId is required"));
     }
     let options = PlayOptions {
         item_id: body.item_id,
@@ -75,18 +72,15 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 }
 
 /// Used by the UI when mpv reports end-of-file or a mark-watched-and-next.
-fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let item_id = match item_id_of(request) {
-        Ok(item_id) => item_id,
-        Err(response) => return response,
-    };
+fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let item_id = item_id_of(request)?;
     let next = match services.library.next_episode(&item_id) {
         Ok(Some(next)) => next,
-        Ok(None) => return ApiResponse::ok(json!({ "started": false })),
-        Err(error) => return storage_failure(&error),
+        Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let Some(next_id) = next["id"].as_str() else {
-        return ApiResponse::ok(json!({ "started": false }));
+        return Ok(ApiResponse::ok(json!({ "started": false })));
     };
     start_playback(
         services,
@@ -98,18 +92,15 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     )
 }
 
-fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let item_id = match item_id_of(request) {
-        Ok(item_id) => item_id,
-        Err(response) => return response,
-    };
+fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let item_id = item_id_of(request)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(Some(previous)) => previous,
-        Ok(None) => return ApiResponse::ok(json!({ "started": false })),
-        Err(error) => return storage_failure(&error),
+        Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let Some(previous_id) = previous["id"].as_str() else {
-        return ApiResponse::ok(json!({ "started": false }));
+        return Ok(ApiResponse::ok(json!({ "started": false })));
     };
     start_playback(
         services,
@@ -121,43 +112,40 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
     )
 }
 
-fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let item_id = match item_id_of(request) {
-        Ok(item_id) => item_id,
-        Err(response) => return response,
-    };
+fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let item_id = item_id_of(request)?;
     let previous = match services.library.previous_episode(&item_id) {
         Ok(previous) => previous,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let next = match services.library.next_episode(&item_id) {
         Ok(next) => next,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
-    ApiResponse::ok(json!({ "previous": previous, "next": next }))
+    Ok(ApiResponse::ok(
+        json!({ "previous": previous, "next": next }),
+    ))
 }
 
-fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
+    let scope = session_scope(services)?;
     match play::start(services, &scope, options, "own UI") {
-        Ok(prepared) => ApiResponse::ok(json!({
+        Ok(prepared) => Ok(ApiResponse::ok(json!({
             "started": true,
             "itemId": options.item_id,
             "playMethod": prepared.play_method,
             "mediaSource": prepared.media_source_name,
             "startTicks": prepared.request.start_time_ticks.unwrap_or(0),
-        })),
-        Err(play::StartError::NoPlayer) => ApiResponse::error(
+        }))),
+        Err(play::StartError::NoPlayer) => Err(ApiResponse::error(
             409,
             "No media player is configured. Open Settings to set up the built-in player or mpv.",
-        ),
-        Err(play::StartError::NotReady) => {
-            ApiResponse::error(503, "the playback coordinator is not ready yet")
-        }
-        Err(play::StartError::AccountChanged) => stale_account_response(),
+        )),
+        Err(play::StartError::NotReady) => Err(ApiResponse::error(
+            503,
+            "the playback coordinator is not ready yet",
+        )),
+        Err(play::StartError::AccountChanged) => Err(stale_account_response()),
         Err(play::StartError::Api(error)) => {
             // A 404 from `PlaybackInfo` means the item no longer exists on the
             // server, so the cached row is a phantom: drop it now rather than
@@ -165,17 +153,17 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiRespons
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_item(services, &scope, &options.item_id);
             }
-            ApiResponse::from_api_error(&error)
+            Err(ApiResponse::from_api_error(&error))
         }
     }
 }
 
-fn player_state(services: &Arc<Services>) -> ApiResponse {
+fn player_state(services: &Arc<Services>) -> Handled {
     let snapshot = services
         .playback()
         .map(|playback| playback.snapshot())
         .unwrap_or_default();
-    ApiResponse::ok(snapshot)
+    Ok(ApiResponse::ok(snapshot))
 }
 
 /// The commands the player bar sends, as the UI's `PlayerCommand` union.
@@ -321,17 +309,17 @@ impl PlayerCommandBody {
     }
 }
 
-fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<PlayerCommandBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn player_command(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<PlayerCommandBody>()?;
     let Some(command) = body.into_command() else {
-        return ApiResponse::error(400, "unsupported player command");
+        return Err(ApiResponse::error(400, "unsupported player command"));
     };
     let Some(playback) = services.playback() else {
-        return ApiResponse::error(503, "the playback coordinator is not ready yet");
+        return Err(ApiResponse::error(
+            503,
+            "the playback coordinator is not ready yet",
+        ));
     };
     playback.control(command);
-    ApiResponse::ok(json!({ "accepted": true }))
+    Ok(ApiResponse::ok(json!({ "accepted": true })))
 }

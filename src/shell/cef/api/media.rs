@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["technical", "batch"] if request.is("POST") => technical_batch(services, request),
         ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
@@ -65,11 +65,8 @@ struct FavoriteBody {
 /// badge scheduler. Container ids (Series, Season) answer with the streams of
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
-fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<IdsBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<IdsBody>()?;
     let mut seen = HashSet::new();
     let ids = body
         .ids
@@ -81,7 +78,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
         .map(str::to_string)
         .collect::<Vec<_>>();
     if ids.is_empty() {
-        return ApiResponse::ok(json!({ "items": [] }));
+        return Ok(ApiResponse::ok(json!({ "items": [] })));
     }
     // Series and Season cards advertise the same badges as movies, but their
     // rows are containers Jellyfin reports without streams. Each is answered
@@ -89,7 +86,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
     // is dropped rather than queried uselessly.
     let sources = match services.library.technical_stream_sources(&ids) {
         Ok(sources) => sources,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let mut cards_by_source: HashMap<String, Vec<String>> = HashMap::new();
     let mut source_ids = Vec::new();
@@ -101,12 +98,9 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
         cards.push(card_id);
     }
     if source_ids.is_empty() {
-        return ApiResponse::ok(json!({ "items": [] }));
+        return Ok(ApiResponse::ok(json!({ "items": [] })));
     }
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     let mut results = Vec::new();
     for chunk in source_ids.chunks(TECHNICAL_BATCH_SIZE) {
@@ -115,7 +109,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
         // upstream calls. Checking between chunks keeps rapid scrolling from
         // running every remaining request for an answer nobody will read.
         if request.is_cancelled() {
-            return ApiResponse::error(499, "the browser abandoned the request");
+            return Err(ApiResponse::error(499, "the browser abandoned the request"));
         }
         match items::fetch_media_stream_batch(client, user_id, chunk) {
             Ok(response) => {
@@ -131,31 +125,28 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
             }
             Err(error) => {
                 services.session.note_scoped_error(&scope, &error);
-                return ApiResponse::from_api_error(&error);
+                return Err(ApiResponse::from_api_error(&error));
             }
         }
     }
-    ApiResponse::ok(json!({ "items": results }))
+    Ok(ApiResponse::ok(json!({ "items": results })))
 }
 
 /// Container, codec, and track detail for the detail page.
 ///
 /// Folders have no streams of their own, so they are answered from here without
 /// a round trip rather than letting the server return an empty source list.
-fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
     if matches!(
         services.library.kind(item_id).as_deref(),
         Some("Series" | "Season")
     ) {
-        return ApiResponse::ok(json!({
+        return Ok(ApiResponse::ok(json!({
             "sources": [],
             "playbackPreference": Value::Null,
-        }));
+        })));
     }
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_media_sources(client, user_id, item_id) {
         Ok(sources) => {
@@ -163,12 +154,12 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                 .session
                 .account_key()
                 .and_then(|account| services.playback_preferences.get(&account, item_id));
-            ApiResponse::ok(json!({
+            Ok(ApiResponse::ok(json!({
                 "sources": sources.iter().map(media_source_json).collect::<Vec<_>>(),
                 "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
-            }))
+            })))
         }
-        Err(error) => scoped_failure(services, &scope, &error),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -181,32 +172,29 @@ fn set_item_playback_preference(
     services: &Arc<Services>,
     item_id: &str,
     request: &ApiRequest,
-) -> ApiResponse {
+) -> Handled {
     if matches!(
         services.library.kind(item_id).as_deref(),
         None | Some("Series" | "Season")
     ) {
-        return ApiResponse::error(404, "this item has no selectable media tracks");
+        return Err(ApiResponse::error(
+            404,
+            "this item has no selectable media tracks",
+        ));
     }
-    let body = match request.body::<PlaybackPreferenceBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+    let body = request.body::<PlaybackPreferenceBody>()?;
     let source_index = body.media_source_index;
     let requested_source_id = body
         .media_source_id
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty());
-    let scope = match services.session.scope() {
-        Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
-    };
+    let scope = session_scope(services)?;
     let sources = match items::fetch_media_sources(scope.client(), scope.user_id(), item_id) {
         Ok(sources) => sources,
         Err(error) => {
             services.session.note_scoped_error(&scope, &error);
-            return ApiResponse::from_api_error(&error);
+            return Err(ApiResponse::from_api_error(&error));
         }
     };
     let Some(source) = sources
@@ -216,7 +204,10 @@ fn set_item_playback_preference(
             None => source.id.as_deref().is_none_or(str::is_empty),
         })
     else {
-        return ApiResponse::error(409, "the available media sources changed; try again");
+        return Err(ApiResponse::error(
+            409,
+            "the available media sources changed; try again",
+        ));
     };
 
     let requested_audio_index = body.audio_stream_index;
@@ -224,12 +215,25 @@ fn set_item_playback_preference(
         Some(index) if index >= 0 => source
             .streams_of_type("Audio")
             .find(|stream| stream.index == index),
-        Some(_) => return ApiResponse::error(400, "audioStreamIndex must not be negative"),
+        Some(_) => {
+            return Err(ApiResponse::error(
+                400,
+                "audioStreamIndex must not be negative",
+            ));
+        }
         None if source.streams_of_type("Audio").next().is_none() => None,
-        None => return ApiResponse::error(400, "audioStreamIndex is required for this source"),
+        None => {
+            return Err(ApiResponse::error(
+                400,
+                "audioStreamIndex is required for this source",
+            ));
+        }
     };
     if requested_audio_index.is_some() && audio.is_none() {
-        return ApiResponse::error(409, "the selected audio track is no longer available");
+        return Err(ApiResponse::error(
+            409,
+            "the selected audio track is no longer available",
+        ));
     }
 
     let requested_subtitle_index = body.subtitle_stream_index;
@@ -237,11 +241,19 @@ fn set_item_playback_preference(
         Some(index) if index >= 0 => source
             .streams_of_type("Subtitle")
             .find(|stream| stream.index == index),
-        Some(_) => return ApiResponse::error(400, "subtitleStreamIndex must not be negative"),
+        Some(_) => {
+            return Err(ApiResponse::error(
+                400,
+                "subtitleStreamIndex must not be negative",
+            ));
+        }
         None => None,
     };
     if requested_subtitle_index.is_some() && subtitle.is_none() {
-        return ApiResponse::error(409, "the selected subtitle track is no longer available");
+        return Err(ApiResponse::error(
+            409,
+            "the selected subtitle track is no longer available",
+        ));
     }
 
     let preference = ItemPlaybackPreference::capture(source, source_index, audio, subtitle);
@@ -254,7 +266,7 @@ fn set_item_playback_preference(
                     .save(scope.account(), item_id, &preference)
             {
                 tracing::warn!(target: "app.api", "could not save playback preference: {error}");
-                return Ok(ApiResponse::error(
+                return Err(ApiResponse::error(
                     500,
                     format!("could not save playback preference: {error}"),
                 ));
@@ -263,39 +275,31 @@ fn set_item_playback_preference(
                 "playbackPreference": resolve_playback_preference(Some(&preference), &sources),
             })))
         })
-        .unwrap_or_else(|response| response)
 }
 
 /// The first local trailer attached to an item, if the server has one.
-fn trailer_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_local_trailers(client, user_id, item_id) {
         Ok(trailers) => match trailers
             .into_iter()
             .find(|trailer| !trailer.id.trim().is_empty())
         {
-            Some(trailer) => ApiResponse::ok(json!({
+            Some(trailer) => Ok(ApiResponse::ok(json!({
                 "trailer": {
                     "id": trailer.id,
                     "name": trailer.display_name(),
                     "embedUrl": Value::Null,
                 }
-            })),
+            }))),
             None => remote_trailer_info(services, &scope, item_id),
         },
-        Err(error) => scoped_failure(services, &scope, &error),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn remote_trailer_info(
-    services: &Arc<Services>,
-    scope: &SessionScope,
-    item_id: &str,
-) -> ApiResponse {
+fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: &str) -> Handled {
     match items::fetch_remote_trailers(scope.client(), scope.user_id(), item_id) {
         Ok(trailers) => {
             let trailer = trailers.into_iter().find_map(|trailer| {
@@ -307,9 +311,9 @@ fn remote_trailer_info(
                     })
                 })
             });
-            ApiResponse::ok(json!({ "trailer": trailer }))
+            Ok(ApiResponse::ok(json!({ "trailer": trailer })))
         }
-        Err(error) => scoped_failure(services, scope, &error),
+        Err(error) => Err(scoped_failure(services, scope, &error)),
     }
 }
 
@@ -346,25 +350,22 @@ fn youtube_embed_url(value: &str) -> Option<String> {
 ///
 /// The UI receives only an opaque item id. The Jellyfin token stays in the
 /// native client, just as it does for artwork and full playback.
-fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiRequest) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiRequest) -> Handled {
+    let scope = session_scope(services)?;
     let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
     let range = bounded_byte_range(request.range.as_deref());
     match scope
         .client()
         .get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
     {
-        Ok(response) => ApiResponse::ranged_bytes(
+        Ok(response) => Ok(ApiResponse::ranged_bytes(
             response.status,
             response.content_type,
             response.body,
             response.content_range,
             response.accept_ranges,
-        ),
-        Err(error) => scoped_failure(services, &scope, &error),
+        )),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -469,9 +470,9 @@ fn file_name_of(path: &str) -> Option<&str> {
 /// page agrees with the Next Up row. It runs out on a fully watched show and is
 /// unavailable offline, and in both cases the first episode is a better answer
 /// than a page with nothing to play.
-fn next_up(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
     if services.library.kind(item_id).as_deref() != Some("Series") {
-        return ApiResponse::ok(json!({ "item": Value::Null }));
+        return Ok(ApiResponse::ok(json!({ "item": Value::Null })));
     }
     let from_server = match services.session.scope() {
         Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
@@ -487,7 +488,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> ApiResponse {
         Some(item) => Some(item),
         None => services.library.first_episode(item_id).unwrap_or_default(),
     };
-    ApiResponse::ok(json!({ "item": item }))
+    Ok(ApiResponse::ok(json!({ "item": item })))
 }
 
 #[derive(Clone, Copy)]
@@ -548,28 +549,31 @@ impl ExternalProvider {
 /// The UI names a provider, never a URL: the id and the item kind both come
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
-fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<ExternalBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
+    let body = request.body::<ExternalBody>()?;
     let Some(provider) = ExternalProvider::parse(&body.provider) else {
-        return ApiResponse::error(404, "unknown external information provider");
+        return Err(ApiResponse::error(
+            404,
+            "unknown external information provider",
+        ));
     };
     let item = match services.library.item(item_id) {
         Ok(Some(item)) => item,
-        Ok(None) => return ApiResponse::error(404, "no cached item with that id"),
-        Err(error) => return storage_failure(&error),
+        Ok(None) => return Err(ApiResponse::error(404, "no cached item with that id")),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let kind = item["kind"].as_str().unwrap_or_default();
     let id = item["providerIds"][provider.id_field()]
         .as_str()
         .unwrap_or("");
     let Some(url) = provider.url(id, kind) else {
-        return ApiResponse::error(404, "this item has no id for that database");
+        return Err(ApiResponse::error(
+            404,
+            "this item has no id for that database",
+        ));
     };
     super::super::bridge::open_external_link(&url);
-    ApiResponse::ok(json!({ "opened": true, "url": url }))
+    Ok(ApiResponse::ok(json!({ "opened": true, "url": url })))
 }
 
 fn valid_external_id(source: &str, id: &str) -> bool {
@@ -587,42 +591,30 @@ fn valid_external_id(source: &str, id: &str) -> bool {
     }
 }
 
-fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let played = match request.body::<PlayedBody>() {
-        Ok(body) => body.played,
-        Err(response) => return response,
-    };
-    let scope = match user_data_write(services, item_id, |client, user_id| {
+fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
+    let played = request.body::<PlayedBody>()?.played;
+    let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
-    }) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    })?;
     let _ = services.session.commit_if_current(
         &scope,
         || (),
         || Ok(services.library.set_local_played(item_id, played)),
     );
-    ApiResponse::ok(json!({ "played": played }))
+    Ok(ApiResponse::ok(json!({ "played": played })))
 }
 
-fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let favorite = match request.body::<FavoriteBody>() {
-        Ok(body) => body.favorite,
-        Err(response) => return response,
-    };
-    let scope = match user_data_write(services, item_id, |client, user_id| {
+fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
+    let favorite = request.body::<FavoriteBody>()?.favorite;
+    let scope = user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
-    }) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    })?;
     let _ = services.session.commit_if_current(
         &scope,
         || (),
         || Ok(services.library.set_local_favorite(item_id, favorite)),
     );
-    ApiResponse::ok(json!({ "favorite": favorite }))
+    Ok(ApiResponse::ok(json!({ "favorite": favorite })))
 }
 
 /// The server is the source of truth for watch state, so it is written first

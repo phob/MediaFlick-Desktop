@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["auth", "connect"] if request.is("POST") => auth_connect(services, request),
         ["auth", "login"] if request.is("POST") => auth_login(services, request),
@@ -45,30 +45,22 @@ struct LogoutBody {
     forget_library: bool,
 }
 
-fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<ServerBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn auth_connect(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<ServerBody>()?;
     match services.session.connect(&body.server) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(value) => Ok(ApiResponse::ok(value)),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<LoginBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<LoginBody>()?;
     let result = services
         .session
         .login(&body.server, &body.username, &body.password);
     match result {
         Ok(_) => {
-            if let Err(response) = activate_account_preferences(services) {
-                return response;
-            }
+            activate_account_preferences(services)?;
             services.companion.clear();
             if let Err(error) = services.companion.probe(true) {
                 tracing::debug!(target: "companion", "post-login probe failed: {error}");
@@ -77,35 +69,27 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             crate::collections::scheduler::request_run(services.clone());
             status(services)
         }
-        Err(error) => ApiResponse::from_api_error(&error),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<ServerBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn quick_connect_start(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<ServerBody>()?;
     match services.session.quick_connect_start(&body.server) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(value) => Ok(ApiResponse::ok(value)),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<QuickConnectPollBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<QuickConnectPollBody>()?;
     let result = services
         .session
         .quick_connect_poll(&body.server, &body.secret);
     match result {
         Ok(value) => {
             if value["authenticated"] == json!(true) {
-                if let Err(response) = activate_account_preferences(services) {
-                    return response;
-                }
+                activate_account_preferences(services)?;
                 services.companion.clear();
                 if let Err(error) = services.companion.probe(true) {
                     tracing::debug!(target: "companion", "post-login probe failed: {error}");
@@ -113,24 +97,24 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
                 services.sync.request();
                 crate::collections::scheduler::request_run(services.clone());
             }
-            ApiResponse::ok(value)
+            Ok(ApiResponse::ok(value))
         }
-        Err(error) => ApiResponse::from_api_error(&error),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
-fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = match request.body::<LogoutBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let body = request.body::<LogoutBody>()?;
     if let Err(error) = services.session.logout(body.forget_library) {
         tracing::error!("could not clear the local session after logout: {error}");
-        return ApiResponse::error(500, "could not clear the local session");
+        return Err(ApiResponse::error(500, "could not clear the local session"));
     }
     if let Err(error) = services.preferences.activate_account(None) {
         tracing::error!("could not clear account preferences after logout: {error}");
-        return ApiResponse::error(500, "could not clear account preferences");
+        return Err(ApiResponse::error(
+            500,
+            "could not clear account preferences",
+        ));
     }
     services.companion.clear();
     status(services)
