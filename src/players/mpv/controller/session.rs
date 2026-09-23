@@ -25,7 +25,7 @@ use super::{
     MPV_SESSION_POLL_INTERVAL, PENDING_FILE_LOADED_TIMEOUT, PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT,
     PROGRESS_INTERVAL, SHUTDOWN_WAIT, control_command,
 };
-use crate::playback::non_empty;
+use crate::playback::{StopReason, non_empty};
 
 impl ControllerState {
     pub(super) fn warm(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) {
@@ -197,7 +197,7 @@ impl ControllerState {
                     next = %mpv_path,
                     "restarting mpv because the configured executable changed"
                 );
-                self.finish_active(Some("quit"));
+                self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
             } else if self
                 .ipc_worker
@@ -214,7 +214,7 @@ impl ControllerState {
                     target: "mpv.ipc",
                     "restarting mpv because the tracked process has no live IPC worker"
                 );
-                self.finish_active(Some("quit"));
+                self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
             }
         } else {
@@ -377,9 +377,11 @@ impl ControllerState {
         );
         match event.name.as_str() {
             "file-loaded" => self.activate_pending(),
-            "end-file" => self.finish_active(event.reason.as_deref()),
+            "end-file" => {
+                self.finish_active(event.reason.as_deref().and_then(StopReason::parse));
+            }
             "shutdown" => {
-                self.finish_active(Some("quit"));
+                self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
                 self.restart_configured_mpv("mpv emitted shutdown");
             }
@@ -660,7 +662,7 @@ impl ControllerState {
         match runtime.is_alive() {
             Ok(false) => {
                 tracing::info!(target: "mpv.ipc", "mpv runtime stopped");
-                self.finish_active(Some("quit"));
+                self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
                 self.restart_configured_mpv("mpv runtime stopped");
             }
@@ -716,7 +718,7 @@ impl ControllerState {
     }
 
     pub(super) fn handle_mpv_session_lost(&mut self, reason: &'static str) {
-        self.finish_active(Some("quit"));
+        self.finish_active(Some(StopReason::Quit));
         self.reset_mpv();
         self.restart_configured_mpv(reason);
     }
@@ -855,14 +857,14 @@ impl ControllerState {
                 timeout_ms = PENDING_FILE_LOADED_TIMEOUT.as_millis(),
                 "pending playback timed out waiting for mpv file-loaded"
             );
-            self.finish_active(Some("error"));
+            self.finish_active(Some(StopReason::Error));
             self.pending = None;
         }
     }
 
     pub(super) fn shutdown(&mut self) {
         tracing::debug!(target: "playback", state = %self.last_state, "shutting down mpv controller");
-        self.finish_active(Some("quit"));
+        self.finish_active(Some(StopReason::Quit));
         if let Err(error) = self.send_mpv_command(json!({ "command": ["quit"] })) {
             tracing::debug!(target: "mpv.ipc", "failed to send mpv quit during shutdown: {error}");
         }
@@ -1019,26 +1021,6 @@ fn playback_tracks(data: Option<&Value>) -> Vec<PlayerTrack> {
             })
         })
         .collect()
-}
-
-pub(super) fn normalized_stop_reason(reason: Option<&str>) -> Option<&'static str> {
-    match reason.map(str::trim).filter(|reason| !reason.is_empty()) {
-        Some(reason) if reason.eq_ignore_ascii_case("eof") => Some("eof"),
-        Some(reason) if reason.eq_ignore_ascii_case("watched-next") => Some("watched-next"),
-        Some(reason) if reason.eq_ignore_ascii_case("stop") => Some("stop"),
-        Some(reason) if reason.eq_ignore_ascii_case("quit") => Some("quit"),
-        Some(reason) if reason.eq_ignore_ascii_case("error") => Some("error"),
-        Some(reason) if reason.eq_ignore_ascii_case("redirect") => Some("redirect"),
-        Some(reason) if reason.eq_ignore_ascii_case("shutdown") => Some("shutdown"),
-        Some(_) => Some("unknown"),
-        None => None,
-    }
-}
-
-pub(super) fn is_completion_reason(reason: Option<&str>) -> bool {
-    reason.is_some_and(|reason| {
-        reason.eq_ignore_ascii_case("eof") || reason.eq_ignore_ascii_case("watched-next")
-    })
 }
 
 fn is_mark_watched_next_message(args: &[String]) -> bool {
