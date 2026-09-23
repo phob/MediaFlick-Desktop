@@ -118,8 +118,7 @@ struct ControllerState {
     current_mpv_path: Option<String>,
     ipc: IpcSession,
     pending_external_subtitle_url: Option<String>,
-    active: Option<ActivePlayback>,
-    pending: Option<PendingPlayback>,
+    phase: PlaybackPhase,
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
     #[cfg(target_os = "linux")]
@@ -215,6 +214,81 @@ impl PlaybackIdentity {
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
             play_method: launch.play_method.clone(),
+        }
+    }
+}
+
+/// The Jellyfin item the controller is handling. A load is `Loading` from an
+/// accepted `loadfile` until mpv reports `file-loaded`, then `Playing` while
+/// its playstate is reported; the two never overlap. `Idle` says nothing about
+/// mpv itself, which can still be playing a file of its own.
+enum PlaybackPhase {
+    Idle,
+    Loading(Box<PendingPlayback>),
+    Playing(Box<ActivePlayback>),
+}
+
+impl PlaybackPhase {
+    fn loading(pending: PendingPlayback) -> Self {
+        Self::Loading(Box::new(pending))
+    }
+
+    fn playing(active: ActivePlayback) -> Self {
+        Self::Playing(Box::new(active))
+    }
+
+    fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    fn pending(&self) -> Option<&PendingPlayback> {
+        match self {
+            Self::Loading(pending) => Some(pending),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_mut(&mut self) -> Option<&mut PendingPlayback> {
+        match self {
+            Self::Loading(pending) => Some(pending),
+            _ => None,
+        }
+    }
+
+    fn active(&self) -> Option<&ActivePlayback> {
+        match self {
+            Self::Playing(active) => Some(active),
+            _ => None,
+        }
+    }
+
+    fn active_mut(&mut self) -> Option<&mut ActivePlayback> {
+        match self {
+            Self::Playing(active) => Some(active),
+            _ => None,
+        }
+    }
+
+    /// Ends a load that is still waiting for mpv, leaving other phases alone.
+    fn take_pending(&mut self) -> Option<PendingPlayback> {
+        if !matches!(self, Self::Loading(_)) {
+            return None;
+        }
+        match std::mem::replace(self, Self::Idle) {
+            Self::Loading(pending) => Some(*pending),
+            _ => None,
+        }
+    }
+
+    /// Ends the reported playback, leaving other phases alone.
+    fn take_active(&mut self) -> Option<ActivePlayback> {
+        if !matches!(self, Self::Playing(_)) {
+            return None;
+        }
+        match std::mem::replace(self, Self::Idle) {
+            Self::Playing(active) => Some(*active),
+            _ => None,
         }
     }
 }
@@ -389,8 +463,7 @@ impl ControllerState {
             current_mpv_path: None,
             ipc: IpcSession::default(),
             pending_external_subtitle_url: None,
-            active: None,
-            pending: None,
+            phase: PlaybackPhase::Idle,
             playback_identity: None,
             startup_seek: None,
             #[cfg(target_os = "linux")]
@@ -670,7 +743,7 @@ impl ControllerState {
             );
             return;
         }
-        if let Some(pending) = &self.pending {
+        if let Some(pending) = self.phase.pending() {
             tracing::debug!(
                 target: "playback",
                 pending_dedupe_key = %pending.key,
@@ -696,8 +769,8 @@ impl ControllerState {
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
         self.reset_chapter_markers();
-        let replacing_active_file = self.mpv_playback_active || self.active.is_some();
-        if let Some(active) = self.active.take() {
+        let replacing_active_file = self.mpv_playback_active || self.phase.active().is_some();
+        if let Some(active) = self.phase.take_active() {
             tracing::info!(
                 target: "playback",
                 state = %self.last_state,
@@ -723,7 +796,7 @@ impl ControllerState {
                 self.playback_identity = Some(identity.clone());
                 let playback_id = identity.playback_id;
                 let pending_launch = launch.clone();
-                self.pending = Some(PendingPlayback {
+                self.phase = PlaybackPhase::loading(PendingPlayback {
                     key,
                     identity,
                     launch,
