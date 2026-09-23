@@ -41,7 +41,8 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "info" },
   },
   appearance: appearance(cardPreviews),
-  capabilities: { platform: "windows", libmpv: true, mpvInstaller: false },
+  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: false },
+  recoveries: [],
   serverUrl: null,
 })
 

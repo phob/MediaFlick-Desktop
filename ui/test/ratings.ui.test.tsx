@@ -66,7 +66,8 @@ const clientSettings: ClientSettings = {
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "debug" },
   },
   appearance: { accent: "signal", density: "comfortable", artworkIntensity: 100, backdropIntensity: 100, reducedMotion: false, cardPreviews: true, showMediaInfo: true, ratingSources: ["letterboxd"] },
-  capabilities: { platform: "windows", libmpv: true, mpvInstaller: true },
+  capabilities: { platform: "windows", libmpv: true, integratedLibmpvOverlay: false, mpvInstaller: true },
+  recoveries: [],
   serverUrl: null,
 }
 
