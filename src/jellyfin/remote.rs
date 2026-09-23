@@ -213,7 +213,7 @@ fn resolve_playable(
                     .first_episode(item_id)
                     .ok()
                     .flatten()
-                    .and_then(|episode| episode["id"].as_str().map(str::to_string)),
+                    .map(|episode| episode.id),
             };
             episode.map(|id| (id, true))
         }
@@ -222,11 +222,9 @@ fn resolve_playable(
             .children(item_id)
             .ok()
             .and_then(|children| {
-                children.into_iter().find_map(|child| {
-                    (child["kind"] == "Episode")
-                        .then(|| child["id"].as_str().map(str::to_string))
-                        .flatten()
-                })
+                children
+                    .into_iter()
+                    .find_map(|child| (child.kind == "Episode").then_some(child.id))
             })
             .map(|id| (id, true)),
         // Movies, episodes, and deep-linked ids the cache has not seen play
@@ -261,7 +259,7 @@ pub fn handle_playstate(data: &Value, scope: &SessionScope) {
                 .next_episode(&current)
                 .ok()
                 .flatten()
-                .and_then(|episode| episode["id"].as_str().map(str::to_string));
+                .map(|episode| episode.id);
             let Some(next_id) = next else {
                 tracing::debug!(
                     target: "jellyfin.remote",

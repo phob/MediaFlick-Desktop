@@ -79,13 +79,10 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
         Err(error) => return Err(storage_failure(&error)),
     };
-    let Some(next_id) = next["id"].as_str() else {
-        return Ok(ApiResponse::ok(json!({ "started": false })));
-    };
     start_playback(
         services,
         &PlayOptions {
-            item_id: next_id.to_string(),
+            item_id: next.id,
             resume: true,
             ..Default::default()
         },
@@ -99,13 +96,10 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         Ok(None) => return Ok(ApiResponse::ok(json!({ "started": false }))),
         Err(error) => return Err(storage_failure(&error)),
     };
-    let Some(previous_id) = previous["id"].as_str() else {
-        return Ok(ApiResponse::ok(json!({ "started": false })));
-    };
     start_playback(
         services,
         &PlayOptions {
-            item_id: previous_id.to_string(),
+            item_id: previous.id,
             resume: true,
             ..Default::default()
         },

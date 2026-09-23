@@ -290,7 +290,7 @@ fn home(services: &Arc<Services>) -> Handled {
                 "genre",
                 id,
                 id,
-                home_query(
+                &home_query(
                     &services.library,
                     ItemQuery {
                         kinds: vec!["Movie".to_string(), "Series".to_string()],
@@ -368,7 +368,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             ),
         ),
     };
-    Some(home_row("builtIn", row_id, title, items))
+    Some(home_row("builtIn", row_id, title, &items))
 }
 
 fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
@@ -378,13 +378,13 @@ fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
         .any(|element| element.enabled && element.element == HomeElementId::BuiltIn { id })
 }
 
-fn home_query(library: &Library, mut query: ItemQuery) -> Vec<Value> {
+fn home_query(library: &Library, mut query: ItemQuery) -> Vec<ItemSummary> {
     query.limit = HOME_ROW_LIMIT;
     library.query_page(&query).unwrap_or_default()
 }
 
-fn home_row(kind: &str, id: &str, title: &str, items: Vec<Value>) -> Value {
-    json!({ "kind": kind, "id": id, "title": title, "items": Value::Array(items) })
+fn home_row(kind: &str, id: &str, title: &str, items: &[ItemSummary]) -> Value {
+    json!({ "kind": kind, "id": id, "title": title, "items": items })
 }
 
 fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Value> {
@@ -403,7 +403,7 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
             })
             .clone()
     }?;
-    let genre = seed["genres"].as_array()?.first()?.as_str()?;
+    let genre = seed.genres.first()?;
     let items = home_query(
         &services.library,
         ItemQuery {
@@ -418,11 +418,8 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
         home_row(
             "builtIn",
             "becauseYouWatched",
-            &format!(
-                "Because you watched {}",
-                seed["name"].as_str().unwrap_or("a movie")
-            ),
-            items,
+            &format!("Because you watched {}", seed.summary.name),
+            &items,
         )
     })
 }
@@ -457,16 +454,13 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
         .items_by_ids(&ids)
         .ok()?
         .into_iter()
-        .filter_map(|item| {
-            let id = item["id"].as_str()?.to_string();
-            Some((id, item))
-        })
+        .map(|item| (item.id.clone(), item))
         .collect::<HashMap<_, _>>();
     let items = ids
         .iter()
         .filter_map(|id| by_id.get(id).cloned())
         .collect::<Vec<_>>();
-    Some(home_row("collection", &profile.id, &profile.title, items))
+    Some(home_row("collection", &profile.id, &profile.title, &items))
 }
 
 /// Enriches cached Continue Watching with Jellyfin's server-owned Next Up
@@ -496,7 +490,7 @@ fn home_resume(services: &Arc<Services>) -> Handled {
                 response
                     .items
                     .iter()
-                    .map(summary_from_dto)
+                    .map(ItemSummary::from_dto)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|error| {
@@ -512,30 +506,23 @@ fn home_resume(services: &Arc<Services>) -> Handled {
     })))
 }
 
-fn deduplicate_next_up(resume: &[Value], next_up: Vec<Value>) -> Vec<Value> {
-    fn key(item: &Value, field: &str) -> Option<String> {
-        item[field].as_str().map(str::to_string)
+fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec<ItemSummary> {
+    fn keys(item: &ItemSummary) -> impl Iterator<Item = &str> {
+        [Some(item.id.as_str()), item.series_id.as_deref()]
+            .into_iter()
+            .flatten()
     }
-    let seen = resume
-        .iter()
-        .flat_map(|item| [key(item, "id"), key(item, "seriesId")])
-        .flatten()
-        .collect::<HashSet<_>>();
+    let seen = resume.iter().flat_map(keys).collect::<HashSet<_>>();
     next_up
         .into_iter()
-        .filter(|item| {
-            [key(item, "id"), key(item, "seriesId")]
-                .into_iter()
-                .flatten()
-                .all(|key| !seen.contains(&key))
-        })
+        .filter(|item| keys(item).all(|key| !seen.contains(key)))
         .collect()
 }
 
 /// New releases are separate from Recently Added Movies: importing an older
 /// title moves it to the front of the latter, but not to the front of these
 /// shelves.
-fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
+fn latest_home_items(library: &Library, kind: &str) -> Vec<ItemSummary> {
     home_query(
         library,
         ItemQuery {
@@ -626,7 +613,7 @@ fn query_person_items(services: &Arc<Services>, person_id: &str, request: &ApiRe
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_person_items(client, user_id, person_id, offset, limit) {
         Ok(response) => Ok(ApiResponse::ok(json!({
-            "items": response.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
+            "items": response.items.iter().map(ItemSummary::from_dto).collect::<Vec<_>>(),
             "total": response.total_record_count,
         }))),
         Err(error) => Err(scoped_failure(services, &scope, &error)),
@@ -872,7 +859,7 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
             cached?;
             match services.library.item(item_id) {
                 Ok(Some(item)) => Ok(ApiResponse::ok(item)),
-                Ok(None) => Ok(ApiResponse::ok(summary_from_dto(&dto))),
+                Ok(None) => Ok(ApiResponse::ok(ItemSummary::from_dto(&dto))),
                 Err(error) => Err(storage_failure(&error)),
             }
         }
@@ -955,14 +942,7 @@ fn children(services: &Arc<Services>, item_id: &str) -> Handled {
             // live reconcile answered this request. Otherwise rows have none.
             if let Some(overviews) = &overviews {
                 for child in &mut children {
-                    let Some(id) = child["id"].as_str().map(str::to_string) else {
-                        continue;
-                    };
-                    if let (Some(overview), Some(object)) =
-                        (overviews.get(&id), child.as_object_mut())
-                    {
-                        object.insert("overview".to_string(), overview.clone());
-                    }
+                    child.overview = overviews.get(&child.id).cloned().flatten();
                 }
             }
             Ok(ApiResponse::ok(json!({ "items": children })))
@@ -986,7 +966,10 @@ fn children(services: &Arc<Services>, item_id: &str) -> Handled {
 ///
 /// Returns each live child's synopsis so the response can carry it without the
 /// cache ever storing prose; `None` means the server could not be asked.
-fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashMap<String, Value>> {
+fn reconcile_children(
+    services: &Arc<Services>,
+    parent_id: &str,
+) -> Option<HashMap<String, Option<String>>> {
     let scope = services.session.scope().ok()?;
     let (client, user_id) = (scope.client(), scope.user_id());
 
@@ -1012,7 +995,7 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashM
             break;
         }
         for item in &page.items {
-            overviews.insert(item.id.clone(), json!(item.overview));
+            overviews.insert(item.id.clone(), item.overview.clone());
         }
         live_items.extend(page.items);
         offset += received;
@@ -1088,7 +1071,7 @@ mod tests {
                 "UserData":{"Played":false,"PlaybackPositionTicks":42}}"#,
         )
         .expect("dto");
-        let summary = summary_from_dto(&dto);
+        let summary = serde_json::to_value(ItemSummary::from_dto(&dto)).expect("summary json");
         assert_eq!(summary["id"], "e1");
         assert_eq!(summary["kind"], "Episode");
         assert_eq!(summary["seriesName"], "Severance");
@@ -1175,16 +1158,21 @@ mod tests {
         let movies = latest_home_items(&library, "Movie");
         let shows = latest_home_items(&library, "Series");
 
-        assert_eq!(movies[0]["id"], "new-movie");
-        assert_eq!(movies[1]["id"], "old-movie");
-        assert!(movies.iter().all(|item| item["kind"] == "Movie"));
-        assert_eq!(shows[0]["id"], "new-show");
-        assert_eq!(shows[1]["id"], "old-show");
-        assert!(shows.iter().all(|item| item["kind"] == "Series"));
+        assert_eq!(movies[0].id, "new-movie");
+        assert_eq!(movies[1].id, "old-movie");
+        assert!(movies.iter().all(|item| item.kind == "Movie"));
+        assert_eq!(shows[0].id, "new-show");
+        assert_eq!(shows[1].id, "old-show");
+        assert!(shows.iter().all(|item| item.kind == "Series"));
     }
 
-    fn episode(id: &str, series_id: &str) -> serde_json::Value {
-        json!({ "id": id, "kind": "Episode", "seriesId": series_id })
+    fn episode(id: &str, series_id: &str) -> ItemSummary {
+        ItemSummary {
+            id: id.to_string(),
+            kind: "Episode".to_string(),
+            series_id: Some(series_id.to_string()),
+            ..ItemSummary::default()
+        }
     }
 
     /// The in-progress episode is also its series' Next Up, so the split
@@ -1201,7 +1189,7 @@ mod tests {
         );
         let ids = next_up
             .iter()
-            .map(|item| item["id"].as_str().unwrap())
+            .map(|item| item.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, ["e9"]);
     }

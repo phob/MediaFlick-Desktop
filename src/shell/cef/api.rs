@@ -23,7 +23,8 @@ use crate::jellyfin::play::{self, PlayOptions};
 use crate::jellyfin::session::SessionScope;
 use crate::library::model::technical_media_streams_json;
 use crate::library::{
-    ItemPlaybackPreference, ItemQuery, ItemSort, Library, resolve_playback_preference, sync,
+    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, resolve_playback_preference,
+    sync,
 };
 use crate::maintenance::player_setup;
 use crate::preferences::{
@@ -492,37 +493,6 @@ fn page_param(request: &ApiRequest) -> i64 {
         .unwrap_or(1)
 }
 
-fn summary_from_dto(dto: &BaseItemDto) -> Value {
-    json!({
-        "id": dto.id,
-        "kind": dto.item_type,
-        "name": dto.display_name(),
-        "year": dto.production_year,
-        "runtimeTicks": dto.run_time_ticks,
-        "communityRating": dto.community_rating,
-        "officialRating": dto.official_rating,
-        "seriesId": dto.series_id,
-        "seriesName": dto.series_name,
-        "indexNumber": dto.index_number,
-        "parentIndexNumber": dto.parent_index_number,
-        "primaryImageTag": dto.primary_image_tag(),
-        "thumbImageTag": dto.image_tag("Thumb"),
-        "logoImageTag": dto.image_tag("Logo"),
-        "backdropImageTag": dto.backdrop_image_tags.first(),
-        "childCount": dto.child_count,
-        "premiereDate": dto.premiere_date,
-        "seasonId": dto.season_id,
-        "played": dto.user_data.as_ref().is_some_and(|data| data.played),
-        "playCount": dto.user_data.as_ref().map(|data| data.play_count).unwrap_or(0),
-        "positionTicks": dto
-            .user_data
-            .as_ref()
-            .map(|data| data.playback_position_ticks)
-            .unwrap_or(0),
-        "favorite": dto.user_data.as_ref().is_some_and(|data| data.is_favorite),
-    })
-}
-
 /// Evicts a cached item the server has disowned, and asks for a sync so the
 /// replacement (Jellyfin re-creates the item with a new id) is picked up. The
 /// 404 is only proof for the account that received it.
@@ -819,7 +789,7 @@ mod tests {
             .item("m1")
             .expect("item")
             .expect("kept row");
-        assert_eq!(row["played"], false);
+        assert!(!row.summary.played);
     }
 
     #[test]
