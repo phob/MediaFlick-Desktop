@@ -10,7 +10,7 @@ import { ViewingSync } from "@/components/ViewingSync"
 import Library from "@/routes/Library"
 import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
-import { itemSummary } from "./support/fixtures"
+import { itemSummary, playerSnapshot } from "./support/fixtures"
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); queryClient.clear() })
 
@@ -60,7 +60,7 @@ test("manual playback cancels a pending next-episode countdown", async () => {
   vi.spyOn(api, "playbackNeighbors").mockResolvedValue({previous:null, next:itemSummary({id:"next", kind:"Episode", name:"Next"})})
   const next = vi.spyOn(api, "playNext").mockResolvedValue({started:false})
   render(<TestProviders client={queryClient}><PlaybackBridge /></TestProviders>)
-  act(() => window.__mediaFlickDesktopPlaybackStopped?.({active:false, itemId:"episode", stopReason:"eof"}))
+  act(() => window.__mediaFlickDesktopPlaybackStopped?.(playerSnapshot({active:false, itemId:"episode", stopReason:"eof"})))
   act(() => window.dispatchEvent(new Event("mediaflick-manual-play")))
   await act(() => vi.advanceTimersByTimeAsync(4000))
   expect(next).not.toHaveBeenCalled()
@@ -70,10 +70,10 @@ test("continuous playback stops at the episode limit while explicit next remains
   seed({...DEFAULT_VIEWING, episodeLimit:1})
   const next = vi.spyOn(api, "playNext").mockResolvedValue({started:false})
   render(<TestProviders client={queryClient}><PlaybackBridge /></TestProviders>)
-  act(() => window.__mediaFlickDesktopPlaybackStopped?.({active:false, itemId:"episode", stopReason:"eof"}))
+  act(() => window.__mediaFlickDesktopPlaybackStopped?.(playerSnapshot({active:false, itemId:"episode", stopReason:"eof"})))
   expect(next).not.toHaveBeenCalled()
-  act(() => window.__mediaFlickDesktopPlaybackStateChanged?.({active:true, itemId:"episode2"}))
-  await act(async () => window.__mediaFlickDesktopPlaybackStopped?.({active:false, itemId:"episode2", stopReason:"watched-next"}))
+  act(() => window.__mediaFlickDesktopPlaybackStateChanged?.(playerSnapshot({active:true, itemId:"episode2"})))
+  await act(async () => window.__mediaFlickDesktopPlaybackStopped?.(playerSnapshot({active:false, itemId:"episode2", stopReason:"watched-next"})))
   expect(next).toHaveBeenCalledWith("episode2")
 })
 
@@ -108,7 +108,7 @@ test.each([true, false])("countdown only starts another episode when one exists:
   vi.spyOn(api, "playbackNeighbors").mockResolvedValue({previous:null, next:hasNext ? itemSummary({id:"next", kind:"Episode", name:"Next"}) : null})
   const next = vi.spyOn(api, "playNext").mockResolvedValue({started:false})
   render(<TestProviders client={queryClient}><PlaybackBridge /></TestProviders>)
-  await act(async () => window.__mediaFlickDesktopPlaybackStopped?.({active:false, itemId:"episode", stopReason:"eof"}))
+  await act(async () => window.__mediaFlickDesktopPlaybackStopped?.(playerSnapshot({active:false, itemId:"episode", stopReason:"eof"})))
   await act(() => vi.advanceTimersByTimeAsync(4000))
   expect(next).toHaveBeenCalledTimes(hasNext ? 1 : 0)
 })

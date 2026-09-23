@@ -6,6 +6,7 @@ import type { ClientSettings, PlayerState } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
+import { playerSnapshot } from "./support/fixtures"
 
 const settings = {
   client: {
@@ -73,13 +74,13 @@ describe("integrated libmpv overlay", () => {
     )
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, settings)
-    client.setQueryData<PlayerState>(queryKeys.playerState, {
+    client.setQueryData<PlayerState>(queryKeys.playerState, playerSnapshot({
       active: true,
-      playbackId: "1",
+      playbackId: 1,
       positionMs: 12_000,
       durationMs: 120_000,
       paused: false,
-    })
+    }))
 
     const view = render(
       <TestProviders client={client}>

@@ -371,16 +371,12 @@ export function usePlaybackNeighbors(itemId: string | undefined, enabled = true)
   })
 }
 
-/** mpv pushes state; poll quickly only for a backend that cannot push position. */
+/** mpv pushes state; the slow poll only guards against a missed push. */
 export function usePlayerState() {
   return useQuery({
     queryKey: queryKeys.playerState,
     queryFn: api.playerState,
-    refetchInterval: (query) => {
-      const player = query.state.data
-      if (!player?.active) return false
-      return player.capabilities?.pushesPosition === false ? 1_000 : 10_000
-    },
+    refetchInterval: (query) => (query.state.data?.active ? 10_000 : false),
     staleTime: 0,
   })
 }

@@ -560,35 +560,14 @@ fn playback_event_script(event: &PlaybackEvent) -> String {
     match event {
         PlaybackEvent::StateChanged(snapshot) => format!(
             "window.__mediaFlickDesktopPlaybackStateChanged&&window.__mediaFlickDesktopPlaybackStateChanged({});",
-            js_json(&player_snapshot_json(snapshot))
+            js_json(snapshot)
         ),
         PlaybackEvent::Stopped(snapshot) => format!(
             "window.__mediaFlickDesktopPlaybackStopped&&window.__mediaFlickDesktopPlaybackStopped({});",
-            js_json(&player_snapshot_json(snapshot))
+            js_json(snapshot)
         ),
         PlaybackEvent::Failed { .. } => String::new(),
     }
-}
-
-fn player_snapshot_json(snapshot: &crate::playback::PlayerSnapshot) -> serde_json::Value {
-    json!({
-        "active": snapshot.active,
-        "playbackId": snapshot.playback_id,
-        "itemId": snapshot.item_id,
-        "mediaSourceId": snapshot.media_source_id,
-        "playSessionId": snapshot.play_session_id,
-        "playMethod": snapshot.play_method,
-        "positionMs": snapshot.position_ms,
-        "durationMs": snapshot.duration_ms,
-        "paused": snapshot.paused,
-        "volume": snapshot.volume,
-        "mute": snapshot.mute,
-        "tracks": snapshot.tracks,
-        "chapters": snapshot.chapters,
-        "skipSegments": snapshot.skip_segments,
-        "diagnostics": snapshot.diagnostics,
-        "stopReason": snapshot.stop_reason,
-    })
 }
 
 fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
@@ -1087,7 +1066,7 @@ mod tests {
 
     #[test]
     fn playback_snapshot_script_carries_timeline_and_diagnostics() {
-        let payload = player_snapshot_json(&PlayerSnapshot {
+        let script = playback_event_script(&PlaybackEvent::StateChanged(PlayerSnapshot {
             chapters: vec![PlayerChapter {
                 title: "Opening".to_string(),
                 start_ms: 30_000.0,
@@ -1099,8 +1078,42 @@ mod tests {
                 frame_rate: Some(23.976),
             },
             ..PlayerSnapshot::default()
-        });
+        }));
+        let payload = script
+            .split_once("StateChanged(")
+            .and_then(|(_, call)| call.strip_suffix(");"))
+            .expect("snapshot argument");
+        let payload: serde_json::Value = serde_json::from_str(payload).expect("snapshot json");
 
+        // The field names `PlayerState` in ui/src/lib/api.ts reads.
+        let mut keys = payload
+            .as_object()
+            .expect("snapshot object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "active",
+                "chapters",
+                "diagnostics",
+                "durationMs",
+                "itemId",
+                "mediaSourceId",
+                "mute",
+                "paused",
+                "playMethod",
+                "playSessionId",
+                "playbackId",
+                "positionMs",
+                "skipSegments",
+                "stopReason",
+                "tracks",
+                "volume",
+            ]
+        );
         assert_eq!(payload["chapters"][0]["title"], "Opening");
         assert_eq!(payload["diagnostics"]["bufferedUntilMs"], 60_000.0);
         assert_eq!(payload["diagnostics"]["buffering"], true);

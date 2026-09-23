@@ -6,13 +6,14 @@ import type { PlayerState } from "@/lib/api"
 import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { queryKeys } from "@/lib/query-client"
 import { testQueryClient } from "./test-query-client"
+import { playerSnapshot } from "./support/fixtures"
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe("player bar controls", () => {
   it("switches the live audio and subtitle tracks reported by mpv", async () => {
     const commands: unknown[] = []
-    const playerState: PlayerState = {
+    const playerState: PlayerState = playerSnapshot({
       active: true,
       positionMs: 12_000,
       durationMs: 120_000,
@@ -46,7 +47,7 @@ describe("player bar controls", () => {
           external: true,
         },
       ],
-    }
+    })
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -92,7 +93,7 @@ describe("player bar controls", () => {
 
   it("sends seek, mute, and fullscreen commands without exposing playback speed", async () => {
     const commands: unknown[] = []
-    const playerState: PlayerState = {
+    const playerState: PlayerState = playerSnapshot({
       active: true,
       positionMs: 12_000,
       durationMs: 120_000,
@@ -106,16 +107,7 @@ describe("player bar controls", () => {
         droppedFrames: 2,
         frameRate: 23.976,
       },
-      capabilities: {
-        chapterMarkers: true,
-        externalSubtitles: true,
-        injectedHotkeys: true,
-        absoluteVolume: true,
-        pushesPosition: true,
-        fullscreen: true,
-        playbackTuning: true,
-      },
-    }
+    })
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -159,7 +151,7 @@ describe("player bar controls", () => {
 
 it("uses saved built-in seek intervals and letter shortcuts", async () => {
   const commands: unknown[] = []
-  const player: PlayerState = {active:true, positionMs:12000, durationMs:120000, paused:false}
+  const player: PlayerState = playerSnapshot({active:true, positionMs:12000, durationMs:120000, paused:false})
   vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.body) commands.push(JSON.parse(String(init.body)))
     return new Response(JSON.stringify(init?.body ? {accepted:true} : player), {status:200})

@@ -8,6 +8,7 @@ import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { queryKeys } from "@/lib/query-client"
 import { testQueryClient } from "./test-query-client"
 import { clientSettingsFixture } from "./support/settings"
+import { playerSnapshot } from "./support/fixtures"
 import cases from "./fixtures/player-shortcuts.json"
 import playerSettings from "./fixtures/player-settings.json"
 
@@ -33,7 +34,7 @@ test.each([
   const settings = clientSettingsFixture()
   const comfort: PlayerComfort = {...DEFAULT_COMFORT, [field]:"Ctrl+Shift+p"}
   settings.client.player.comfort = comfort
-  const player: PlayerState = {active:true, positionMs:60000, durationMs:120000, paused:false, mute:false}
+  const player: PlayerState = playerSnapshot({active:true, positionMs:60000, durationMs:120000, paused:false, mute:false})
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings)
   client.setQueryData(queryKeys.playerState, player)
@@ -58,7 +59,7 @@ test.each([
 test("the configured watched-next command uses Command and ignores the old W binding", async () => {
   const settings = clientSettingsFixture()
   settings.client.player.markWatchedNext = "Meta+w"
-  const player: PlayerState = {active:true, positionMs:10000}
+  const player: PlayerState = playerSnapshot({active:true, positionMs:10000})
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings)
   client.setQueryData(queryKeys.playerState, player)

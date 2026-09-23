@@ -17,17 +17,6 @@ pub use model::{
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Capabilities {
-    pub chapter_markers: bool,
-    pub external_subtitles: bool,
-    pub injected_hotkeys: bool,
-    pub absolute_volume: bool,
-    pub pushes_position: bool,
-    pub fullscreen: bool,
-    pub playback_tuning: bool,
-}
-
 /// Opaque native window identity owned by a playback backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeWindowHandle {
@@ -93,16 +82,6 @@ impl NativeWindowHandle {
     }
 }
 
-pub const MPV_CAPABILITIES: Capabilities = Capabilities {
-    chapter_markers: true,
-    external_subtitles: true,
-    injected_hotkeys: true,
-    absolute_volume: true,
-    pushes_position: true,
-    fullscreen: true,
-    playback_tuning: true,
-};
-
 /// Port implemented by each player adapter.
 pub trait PlayerBackend: Send {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
@@ -119,7 +98,6 @@ pub trait PlayerBackend: Send {
     fn set_segment_skip_config(&self, config: SegmentSkipConfig);
     fn update_playback_context(&self, context: PlaybackContext);
     fn snapshot(&self) -> PlayerSnapshot;
-    fn capabilities(&self) -> Capabilities;
     fn shutdown(&self);
 }
 
