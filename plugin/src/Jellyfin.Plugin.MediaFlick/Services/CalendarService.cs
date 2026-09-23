@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -19,16 +20,19 @@ public sealed class CalendarService
     private readonly CompanionHttpClient _http;
     private readonly CalendarCache _cache;
     private readonly ServiceHealthStore _health;
+    private readonly ILogger<CalendarService> _logger;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
 
     public CalendarService(
         CompanionHttpClient http,
         CalendarCache cache,
-        ServiceHealthStore health)
+        ServiceHealthStore health,
+        ILogger<CalendarService> logger)
     {
         _http = http;
         _cache = cache;
         _health = health;
+        _logger = logger;
     }
 
     public async Task RefreshAsync(
@@ -165,6 +169,15 @@ public sealed class CalendarService
         }
         catch (GatewayException exception)
         {
+            // A failed source is retried every FailureRetryInterval; warn only
+            // when it stops being available. The gateway message can carry
+            // upstream text, so only the status is logged.
+            var previous = _cache.Snapshot().Sources.GetValueOrDefault(sourceName);
+            _logger.Log(
+                previous is { Enabled: true, Available: false } ? LogLevel.Debug : LogLevel.Warning,
+                "{Source} calendar refresh failed with status {StatusCode}; the last cached calendar remains available",
+                sourceName,
+                exception.StatusCode);
             _health.Failure(sourceName, exception.Message);
             _cache.MarkFailed(sourceName, true, exception.Message);
         }

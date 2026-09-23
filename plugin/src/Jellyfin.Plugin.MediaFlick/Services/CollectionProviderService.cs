@@ -4,6 +4,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -25,12 +26,15 @@ public sealed class CollectionProviderService
     private readonly ConcurrentDictionary<string, long> _identityCache = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _validatedThisRun =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ILogger<CollectionProviderService> _logger;
+    private readonly FailureLogGate _readinessFailures = new();
 
     internal CollectionProviderService(
         ITmdbTransport tmdb,
         IMdbListTransport mdbList,
         IRatingSecretStore secrets,
         RatingsCacheStore health,
+        ILogger<CollectionProviderService> logger,
         string? preferredLanguage = null,
         string? preferredRegion = null)
     {
@@ -38,6 +42,7 @@ public sealed class CollectionProviderService
         _mdbList = mdbList;
         _secrets = secrets;
         _health = health;
+        _logger = logger;
         _defaultRegion = SafeRegion(preferredRegion) ?? "US";
         _defaultLanguage = SafeLanguage(preferredLanguage) is { } language
             ? language.Contains('-') ? language : $"{language}-{_defaultRegion}"
@@ -502,6 +507,8 @@ public sealed class CollectionProviderService
         {
             if (!_secrets.IsConfigured(provider))
             {
+                // A removed credential is not an outage to recover from.
+                _readinessFailures.Recovered(provider);
                 return;
             }
             if (provider == RatingProviders.Tmdb)
@@ -512,16 +519,35 @@ public sealed class CollectionProviderService
             {
                 _ = await ValidMdbListCredentialAsync(cancellationToken).ConfigureAwait(false);
             }
+            if (_readinessFailures.Recovered(provider))
+            {
+                _logger.LogInformation("{Provider} collection features are available again", provider);
+            }
         }
-        catch (GatewayException)
+        catch (GatewayException exception)
         {
             // Readiness is represented by TmdbReady/MdbListReady. The info
             // probe remains successful when an optional provider is down.
+            // Every info probe repeats this check, so warn once per state;
+            // the transport logs the upstream cause. Gateway messages on this
+            // path are fixed plugin text, never upstream content.
+            var validation = _health.Health(provider).Validation;
+            _logger.Log(
+                _readinessFailures.Failure(provider, validation),
+                "{Provider} collection features are unavailable: {Reason} (provider state {Validation})",
+                provider,
+                exception.Message,
+                validation);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
             // An unreadable saved secret is unavailable without exposing its
             // storage failure to an authenticated Desktop client.
+            _logger.Log(
+                _readinessFailures.Failure(provider, "unreadable"),
+                exception,
+                "{Provider} collection readiness could not read the saved credential",
+                provider);
         }
     }
 

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -23,11 +24,13 @@ public sealed class SeerrGateway
     private const ulong RequestTv = 524288;
     private static readonly TimeSpan MappingLifetime = TimeSpan.FromMinutes(10);
     private readonly CompanionHttpClient _http;
+    private readonly ILogger<SeerrGateway> _logger;
     private readonly ConcurrentDictionary<Guid, MappingRecord> _mappings = new();
 
-    public SeerrGateway(CompanionHttpClient http)
+    public SeerrGateway(CompanionHttpClient http, ILogger<SeerrGateway> logger)
     {
         _http = http;
+        _logger = logger;
     }
 
     public async Task<JsonNode> StatusAsync(Guid jellyfinUserId, CancellationToken cancellationToken)
@@ -51,10 +54,13 @@ public sealed class SeerrGateway
                 seerrUserId,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (GatewayException)
+        catch (GatewayException exception)
         {
             // Permissions remain useful if this optional usage counter is
-            // temporarily unavailable.
+            // temporarily unavailable. The HTTP client logs upstream outages.
+            _logger.LogDebug(
+                "Seerr quota lookup failed with status {StatusCode}; returning permissions without quota",
+                exception.StatusCode);
             quota = null;
         }
         var settings = await SendMappedAsync(

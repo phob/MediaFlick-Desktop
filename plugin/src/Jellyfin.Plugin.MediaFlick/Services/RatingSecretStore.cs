@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -41,13 +43,20 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
     private readonly string _keyRingPath;
     private readonly Func<PluginConfiguration> _readConfiguration;
     private readonly Action<string, string> _writeProtectedValue;
+    private readonly ILogger<DataProtectedRatingSecretStore> _logger;
+    private readonly ConcurrentDictionary<string, byte> _reportedUnreadable =
+        new(StringComparer.Ordinal);
 
-    public DataProtectedRatingSecretStore(IDataProtectionProvider provider, string keyRingPath)
+    public DataProtectedRatingSecretStore(
+        IDataProtectionProvider provider,
+        string keyRingPath,
+        ILogger<DataProtectedRatingSecretStore> logger)
         : this(
             provider,
             keyRingPath,
             () => Plugin.Instance?.Configuration ?? new PluginConfiguration(),
-            WritePluginConfiguration)
+            WritePluginConfiguration,
+            logger)
     {
     }
 
@@ -55,12 +64,14 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
         IDataProtectionProvider provider,
         string keyRingPath,
         Func<PluginConfiguration> readConfiguration,
-        Action<string, string> writeProtectedValue)
+        Action<string, string> writeProtectedValue,
+        ILogger<DataProtectedRatingSecretStore> logger)
     {
         _protector = provider.CreateProtector(ProtectionPurpose);
         _keyRingPath = keyRingPath;
         _readConfiguration = readConfiguration;
         _writeProtectedValue = writeProtectedValue;
+        _logger = logger;
         RestrictKeyRingPermissions();
     }
 
@@ -71,9 +82,8 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
 
     public string? Get(string provider)
     {
-        var protectedValue = ProtectedValue(
-            _readConfiguration(),
-            RatingProviders.Normalize(provider));
+        var normalized = RatingProviders.Normalize(provider);
+        var protectedValue = ProtectedValue(_readConfiguration(), normalized);
         if (string.IsNullOrWhiteSpace(protectedValue))
         {
             return null;
@@ -83,8 +93,19 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
         {
             return _protector.Unprotect(protectedValue);
         }
-        catch (CryptographicException)
+        catch (CryptographicException exception)
         {
+            // Every status probe reads the secret; report each unreadable
+            // credential once until it is replaced or removed. Data
+            // Protection messages name key ids, never the protected value.
+            if (_reportedUnreadable.TryAdd(normalized, 0))
+            {
+                _logger.LogWarning(
+                    exception,
+                    "The saved {Provider} credential cannot be decrypted; replace or remove it in the MediaFlick Companion settings",
+                    normalized);
+            }
+
             throw new InvalidOperationException("the saved credential cannot be decrypted");
         }
     }
@@ -94,6 +115,7 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
         var normalized = RatingProviders.Normalize(provider);
         var protectedValue = _protector.Protect(secret);
         _writeProtectedValue(normalized, protectedValue);
+        _reportedUnreadable.TryRemove(normalized, out _);
         RestrictKeyRingPermissions();
     }
 
@@ -101,6 +123,7 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
     {
         var normalized = RatingProviders.Normalize(provider);
         _writeProtectedValue(normalized, string.Empty);
+        _reportedUnreadable.TryRemove(normalized, out _);
     }
 
     private static void WritePluginConfiguration(string provider, string protectedValue)
@@ -150,14 +173,20 @@ internal sealed class DataProtectedRatingSecretStore : IRatingSecretStore
                 File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
         }
-        catch (IOException)
+        catch (IOException exception)
         {
             // Protection still succeeds when a filesystem does not implement
             // Unix modes (for example, a mounted NAS configuration volume).
+            _logger.LogInformation(
+                exception,
+                "Could not restrict MediaFlick key-ring file modes; protect the plugin data directory with host permissions");
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException exception)
         {
             // Jellyfin may own a read-only externally managed key-ring ACL.
+            _logger.LogInformation(
+                exception,
+                "Could not restrict MediaFlick key-ring file modes; protect the plugin data directory with host permissions");
         }
     }
 }
