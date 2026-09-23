@@ -83,7 +83,10 @@ impl NativeWindowHandle {
 }
 
 /// Port implemented by each player adapter.
-pub trait PlayerBackend: Send {
+/// A player adapter. The coordinator calls it without holding any lock, so
+/// calls from different threads can overlap; implementations serialize their
+/// own work (the mpv adapter posts every call to its controller thread).
+pub trait PlayerBackend: Send + Sync {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
     /// Return the native window owned by this backend, if it exposes one.
     fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle>;

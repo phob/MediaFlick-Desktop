@@ -1,4 +1,4 @@
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -13,22 +13,24 @@ use super::{
 ///
 /// It gives the shell a stable, shareable handle while concrete adapters can be
 /// replaced after a preference change. Player calls never require holding CEF
-/// browser-state locks.
+/// browser-state locks, and the coordinator's own lock only guards which
+/// backend is current: calls run on a clone taken out of it, so a call that
+/// waits (for the native window, or for shutdown) never blocks the others.
 pub struct PlaybackCoordinator {
-    backend: Mutex<Box<dyn PlayerBackend>>,
+    backend: Mutex<Arc<dyn PlayerBackend>>,
     player_path: Mutex<Option<String>>,
 }
 
 impl PlaybackCoordinator {
     pub fn new(backend: Box<dyn PlayerBackend>) -> Self {
         Self {
-            backend: Mutex::new(backend),
+            backend: Mutex::new(Arc::from(backend)),
             player_path: Mutex::new(None),
         }
     }
 
-    fn backend(&self) -> MutexGuard<'_, Box<dyn PlayerBackend>> {
-        self.backend.lock().unwrap_or_else(PoisonError::into_inner)
+    fn backend(&self) -> Arc<dyn PlayerBackend> {
+        Arc::clone(&self.backend.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Publish `backend` as the active player and retire the previous one.
@@ -36,7 +38,10 @@ impl PlaybackCoordinator {
     /// The retired backend's bounded teardown runs on a detached thread so the
     /// calling thread (usually CEF's UI thread) never waits on player shutdown.
     pub fn replace(&self, backend: Box<dyn PlayerBackend>) {
-        let retired = std::mem::replace(&mut *self.backend(), backend);
+        let retired = std::mem::replace(
+            &mut *self.backend.lock().unwrap_or_else(PoisonError::into_inner),
+            Arc::from(backend),
+        );
         *self
             .player_path
             .lock()
@@ -109,7 +114,7 @@ impl PlaybackCoordinator {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
 
     use super::*;
 
@@ -145,6 +150,70 @@ mod tests {
         }
 
         fn shutdown(&self) {}
+    }
+
+    /// Blocks in `native_window` until the test releases it.
+    struct WaitingBackend {
+        entered: Mutex<mpsc::Sender<()>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl PlayerBackend for WaitingBackend {
+        fn warm(&self, _path: String, _fullscreen: FullscreenBehavior) {}
+
+        fn native_window(&self, _timeout: Duration) -> Option<NativeWindowHandle> {
+            let _ = self.entered.lock().expect("entered").send(());
+            let _ = self.release.lock().expect("release").recv();
+            None
+        }
+
+        fn load(&self, _path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {}
+
+        fn control(&self, _command: PlayerCommand) {}
+
+        fn set_preferences(&self, _preferences: PlayerPreferences) {}
+
+        fn update_playback_context(&self, _context: PlaybackContext) {}
+
+        fn snapshot(&self) -> PlayerSnapshot {
+            PlayerSnapshot {
+                active: true,
+                ..PlayerSnapshot::default()
+            }
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    #[test]
+    fn a_call_that_waits_does_not_block_the_other_player_calls() {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let coordinator = Arc::new(PlaybackCoordinator::new(Box::new(WaitingBackend {
+            entered: Mutex::new(entered_tx),
+            release: Mutex::new(release_rx),
+        })));
+        let waiting = Arc::clone(&coordinator);
+        let window = thread::spawn(move || waiting.native_window(Duration::from_secs(10)));
+        entered
+            .recv_timeout(Duration::from_secs(5))
+            .expect("native_window started");
+
+        let polling = Arc::clone(&coordinator);
+        let (snapshot_tx, snapshot) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = snapshot_tx.send(polling.snapshot());
+        });
+        let answered = snapshot.recv_timeout(Duration::from_secs(5));
+
+        release.send(()).expect("release native_window");
+        window.join().expect("native_window thread");
+        assert!(
+            answered
+                .expect("snapshot answered while native_window waited")
+                .active,
+            "the snapshot came from the backend"
+        );
     }
 
     #[test]
