@@ -190,6 +190,24 @@ pub struct SyncHandle {
 }
 
 impl SyncHandle {
+    fn new() -> Self {
+        Self {
+            signal: Arc::new(Signal {
+                flags: Mutex::new(Flags::default()),
+                condvar: Condvar::new(),
+            }),
+            running: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(WorkerState::default())),
+        }
+    }
+
+    /// A handle with no worker thread behind it: requests are recorded and
+    /// never run, so tests cannot start a sync against a real server.
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        Self::new()
+    }
+
     /// Asks for a cycle as soon as possible: sign-in, the refresh button, or an
     /// eviction that proved the cache is behind.
     ///

@@ -224,19 +224,36 @@ fn custom_artwork(services: &Arc<Services>, id: &str) -> ApiResponse {
     }
 }
 
+#[derive(Deserialize)]
+struct PublicListSearchBody {
+    #[serde(default)]
+    query: String,
+}
+
+#[derive(Deserialize)]
+struct PublicListValidateBody {
+    #[serde(default)]
+    selector: String,
+}
+
+#[derive(Deserialize)]
+struct ConfirmationBody {
+    #[serde(default)]
+    confirmed: bool,
+}
+
 fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = match request.body::<PublicListSearchBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     if let Err(response) = active_account(services) {
         return response;
     }
-    let body = request.json();
-    let Some(query) = body
-        .get("query")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|query| !query.is_empty())
-    else {
+    let query = body.query.trim();
+    if query.is_empty() {
         return ApiResponse::error(400, "enter a public-list search");
-    };
+    }
     match services.companion.search_public_lists(query) {
         Ok(result) => ApiResponse::ok(result),
         Err(error) => ApiResponse::from_api_error(&error),
@@ -244,18 +261,17 @@ fn search_public_lists(services: &Arc<Services>, request: &ApiRequest) -> ApiRes
 }
 
 fn validate_public_list(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = match request.body::<PublicListValidateBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     if let Err(response) = active_account(services) {
         return response;
     }
-    let body = request.json();
-    let Some(selector) = body
-        .get("selector")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|selector| !selector.is_empty())
-    else {
+    let selector = body.selector.trim();
+    if selector.is_empty() {
         return ApiResponse::error(400, "enter a public-list ID or canonical URL");
-    };
+    }
     match services.companion.validate_public_list(selector) {
         Ok(result) => ApiResponse::ok(result),
         Err(error) => ApiResponse::from_api_error(&error),
@@ -282,7 +298,11 @@ fn provider_artwork(services: &Arc<Services>, request: &ApiRequest) -> ApiRespon
 }
 
 fn delete_local_account(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    if request.json().get("confirmed").and_then(Value::as_bool) != Some(true) {
+    let confirmed = match request.body::<ConfirmationBody>() {
+        Ok(body) => body.confirmed,
+        Err(response) => return response,
+    };
+    if !confirmed {
         return ApiResponse::error(400, "confirm the local account deletion first");
     }
     match crate::app::services::delete_local_account_data(services) {

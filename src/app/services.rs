@@ -439,3 +439,91 @@ pub fn notify_library_sync_completed() {
 pub fn init_error() -> Option<&'static str> {
     INIT_ERROR.get().map(String::as_str)
 }
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::app::ids::random_hex;
+
+    /// Services over an in-memory catalog and a scratch configuration folder,
+    /// without the sync and event-socket threads, so API tests never touch the
+    /// user's data or reach a server the test did not start.
+    pub(crate) struct TestServices {
+        pub services: Arc<Services>,
+        directory: PathBuf,
+    }
+
+    impl TestServices {
+        pub fn signed_out() -> Self {
+            Self::new(None)
+        }
+
+        /// Signed in as `user` on the Jellyfin server `server` at `server_url`.
+        pub fn signed_in(server_url: &str) -> Self {
+            Self::new(Some(server_url))
+        }
+
+        fn new(server_url: Option<&str>) -> Self {
+            let directory =
+                std::env::temp_dir().join(format!("mediaflick-api-test-{}", random_hex(8)));
+            std::fs::create_dir_all(&directory).expect("test directory");
+            let library = Arc::new(Library::open_in_memory().expect("library"));
+            if let Some(server_url) = server_url {
+                let mut credentials = library.credentials();
+                credentials.server_url = Some(server_url.to_string());
+                credentials.server_id = Some("server".to_string());
+                credentials.user_id = Some("user".to_string());
+                credentials.token = Some("token".to_string());
+                library.save_credentials(&credentials).expect("credentials");
+            }
+            let session = Arc::new(Session::restore(library.clone()));
+            let accounts = Arc::new(
+                AccountConfigurationService::open(directory.join("accounts.json"))
+                    .expect("accounts"),
+            );
+            let preferences = Arc::new(PreferencesService::new(
+                AppSettings::default(),
+                accounts.clone(),
+                session.account_key(),
+            ));
+            let companion = Arc::new(CompanionSession::new(session.clone(), library.clone()));
+            let services = Services {
+                ratings: Arc::new(RatingsService::new(library.clone(), companion.clone())),
+                letterboxd: Arc::new(ReviewService::default()),
+                sync: SyncHandle::detached(),
+                socket: SocketHandle::detached(),
+                accounts,
+                collections: Arc::new(
+                    CollectionConfigurationService::open(directory.join("collections.json"))
+                        .expect("collections"),
+                ),
+                playback_preferences: Arc::new(
+                    PlaybackPreferenceService::open(directory.join("playback.json"))
+                        .expect("playback preferences"),
+                ),
+                artwork: Arc::new(ArtworkStore::open(directory.join("art")).expect("artwork")),
+                pending_deletions: Arc::new(
+                    PendingDeletionService::open(directory.join("deletions.json"))
+                        .expect("pending deletions"),
+                ),
+                preferences,
+                shell: ShellBridge::new(),
+                home_watched: Mutex::new(HashMap::new()),
+                playback: RwLock::new(None),
+                library,
+                session,
+                companion,
+            };
+            Self {
+                services: Arc::new(services),
+                directory,
+            }
+        }
+    }
+
+    impl Drop for TestServices {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+}

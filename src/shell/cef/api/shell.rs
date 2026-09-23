@@ -24,8 +24,7 @@ fn shell_window_ready(services: &Arc<Services>) -> ApiResponse {
 }
 
 fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let request_id = match shell_request_id(body.get("requestId").and_then(Value::as_str)) {
+    let request_id = match shell_request_id(request) {
         Ok(id) => id,
         Err(response) => return response,
     };
@@ -44,8 +43,7 @@ fn shell_install_mpv(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
             "automatic mpv installation is not available on this platform",
         );
     }
-    let body = request.json();
-    let request_id = match shell_request_id(body.get("requestId").and_then(Value::as_str)) {
+    let request_id = match shell_request_id(request) {
         Ok(id) => id,
         Err(response) => return response,
     };
@@ -62,8 +60,15 @@ fn shell_mpv_help() -> ApiResponse {
     ApiResponse::ok(json!({ "opened": true }))
 }
 
-fn shell_request_id(value: Option<&str>) -> Result<String, ApiResponse> {
-    let value = value.unwrap_or_default().trim();
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellRequestBody {
+    request_id: String,
+}
+
+fn shell_request_id(request: &ApiRequest) -> Result<String, ApiResponse> {
+    let body = request.body::<ShellRequestBody>()?;
+    let value = body.request_id.trim();
     if value.is_empty()
         || value.len() > 128
         || !value

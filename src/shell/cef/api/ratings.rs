@@ -21,19 +21,17 @@ fn ratings_status(services: &Arc<Services>) -> ApiResponse {
     ApiResponse::ok(services.ratings.status(&ratings_sources(services)))
 }
 
+#[derive(Deserialize)]
+struct RatingsBatchBody {
+    ids: Vec<String>,
+}
+
 fn ratings_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let ids = request
-        .json()
-        .get("ids")
-        .and_then(Value::as_array)
-        .map(|ids| {
-            ids.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    match services.ratings.batch(&ids) {
+    let body = match request.body::<RatingsBatchBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    match services.ratings.batch(&body.ids) {
         Ok(ratings) => ApiResponse::ok(ratings),
         Err(error) => ApiResponse::error(500, error.to_string()),
     }
