@@ -39,23 +39,54 @@ internal sealed record ProviderHealthState
         => new(QuotaLimit, QuotaRemaining, QuotaResetAt);
 }
 
-internal sealed class RatingsCacheStore
+/// <summary>
+/// The server-wide, rebuildable provider cache: MDBList rating entries plus
+/// MDBList and TMDB credential health (validation, quota, retry timing) used
+/// by both ratings and collections. It keeps the established
+/// <c>ratings-v1-cache.json</c> file and format.
+/// Changes are coalesced into one atomic save shortly after they happen
+/// instead of rewriting the file per change; <see cref="Flush"/> and
+/// <see cref="Dispose"/> write any pending change immediately.
+/// </summary>
+internal sealed class ProviderCacheStore : IDisposable
 {
+    /// <summary>Rating entries kept at most; the oldest fetches go first.</summary>
+    internal const int MaxEntries = 100_000;
+    internal static readonly TimeSpan DefaultSaveDelay = TimeSpan.FromSeconds(2);
     private const int DocumentVersion = 1;
     private readonly object _lock = new();
+    private readonly object _writeLock = new();
     private readonly string _path;
-    private readonly ILogger<RatingsCacheStore> _logger;
+    private readonly ILogger<ProviderCacheStore> _logger;
+    private readonly TimeProvider _time;
+    private readonly TimeSpan _saveDelay;
+    private readonly ITimer _saveTimer;
     private CacheDocument _document;
+    private bool _dirty;
+    private bool _saveScheduled;
+    private bool _disposed;
     private bool _persistFailing;
 
-    public RatingsCacheStore(string path, ILogger<RatingsCacheStore> logger)
+    public ProviderCacheStore(
+        string path,
+        ILogger<ProviderCacheStore> logger,
+        TimeProvider? timeProvider = null,
+        TimeSpan? saveDelay = null)
     {
         _path = path;
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
+        _saveDelay = saveDelay ?? DefaultSaveDelay;
+        _saveTimer = _time.CreateTimer(
+            static state => ((ProviderCacheStore)state!).SaveScheduled(),
+            this,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
         _document = Load(path, logger);
-        if (SanitizeLoadedDocument())
+        if (SanitizeLoadedDocument() | PruneLocked())
         {
-            PersistLocked();
+            _dirty = true;
+            Flush();
         }
     }
 
@@ -96,7 +127,7 @@ internal sealed class RatingsCacheStore
                 _document.Entries[CacheKey(target)] = Sanitize(entry);
             }
 
-            PersistLocked();
+            MarkDirtyLocked();
         }
     }
 
@@ -115,7 +146,7 @@ internal sealed class RatingsCacheStore
         lock (_lock)
         {
             _document.Health[provider] = Sanitize(state);
-            PersistLocked();
+            MarkDirtyLocked();
         }
     }
 
@@ -123,8 +154,10 @@ internal sealed class RatingsCacheStore
     {
         lock (_lock)
         {
-            _document.Health.Remove(provider);
-            PersistLocked();
+            if (_document.Health.Remove(provider))
+            {
+                MarkDirtyLocked();
+            }
         }
     }
 
@@ -137,6 +170,121 @@ internal sealed class RatingsCacheStore
                 return _document.Entries.Count;
             }
         }
+    }
+
+    /// <summary>
+    /// Writes pending changes now. A failed write keeps them pending, so the
+    /// next change or flush retries without losing the in-memory state.
+    /// </summary>
+    public void Flush()
+    {
+        // Writers queue on _writeLock so an older snapshot can never replace
+        // a newer file; readers only wait for the short snapshot below.
+        lock (_writeLock)
+        {
+            string json;
+            lock (_lock)
+            {
+                if (!_dirty)
+                {
+                    return;
+                }
+
+                PruneLocked();
+                json = JsonSerializer.Serialize(_document, CompanionJson.CamelCase);
+                _dirty = false;
+            }
+
+            if (!TryWrite(json))
+            {
+                lock (_lock)
+                {
+                    _dirty = true;
+                }
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+        }
+
+        _saveTimer.Dispose();
+        Flush();
+    }
+
+    private void MarkDirtyLocked()
+    {
+        _dirty = true;
+        if (_saveScheduled || _disposed)
+        {
+            return;
+        }
+
+        _saveScheduled = true;
+        _saveTimer.Change(_saveDelay, Timeout.InfiniteTimeSpan);
+    }
+
+    private void SaveScheduled()
+    {
+        lock (_lock)
+        {
+            _saveScheduled = false;
+        }
+
+        try
+        {
+            Flush();
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            // A timer callback must not throw. The document holds only
+            // sanitized primitives, so this is not expected in practice.
+            _logger.LogWarning(exception, "Could not serialize the MediaFlick provider cache");
+        }
+    }
+
+    /// <summary>
+    /// Drops expired rating entries and, past <see cref="MaxEntries"/>, the
+    /// oldest fetches. Health state is a handful of providers and is kept.
+    /// </summary>
+    private bool PruneLocked()
+    {
+        var now = _time.GetUtcNow().ToUnixTimeSeconds();
+        var changed = false;
+        foreach (var (key, entry) in _document.Entries.ToArray())
+        {
+            if (entry.ExpiresAt <= now)
+            {
+                _document.Entries.Remove(key);
+                changed = true;
+            }
+        }
+
+        var excess = _document.Entries.Count - MaxEntries;
+        if (excess > 0)
+        {
+            foreach (var key in _document.Entries
+                .OrderBy(static pair => pair.Value.FetchedAt)
+                .Take(excess)
+                .Select(static pair => pair.Key)
+                .ToArray())
+            {
+                _document.Entries.Remove(key);
+            }
+
+            changed = true;
+        }
+
+        return changed;
     }
 
     private static string CacheKey(RatingTargetRequest target)
@@ -192,7 +340,7 @@ internal sealed class RatingsCacheStore
             QuotaRemaining = RatingsContract.NormalizeQuota(state.Quota).Remaining,
             QuotaResetAt = RatingsContract.NormalizeQuota(state.Quota).ResetAt,
             RetryAt = RatingsContract.NormalizeTimestamp(state.RetryAt),
-            FailureCount = Math.Clamp(state.FailureCount, 0, 10),
+            FailureCount = Math.Clamp(state.FailureCount, 0, ProviderHealthPolicy.MaxFailureCount),
             LastCheckedAt = RatingsContract.NormalizeTimestamp(state.LastCheckedAt)
         };
     }
@@ -237,7 +385,8 @@ internal sealed class RatingsCacheStore
         }
     }
 
-    private void PersistLocked()
+    /// <summary>Atomically replaces the cache file. Called under _writeLock only.</summary>
+    private bool TryWrite(string json)
     {
         try
         {
@@ -248,32 +397,34 @@ internal sealed class RatingsCacheStore
             }
 
             var temporary = _path + ".tmp";
-            File.WriteAllText(
-                temporary,
-                JsonSerializer.Serialize(_document, CompanionJson.CamelCase));
+            File.WriteAllText(temporary, json);
             File.Move(temporary, _path, true);
             if (_persistFailing)
             {
                 _persistFailing = false;
                 _logger.LogInformation("The MediaFlick ratings cache is being saved again");
             }
+
+            return true;
         }
         catch (IOException exception)
         {
             // The in-memory cache remains usable. Rating persistence failure
             // must not make the Jellyfin catalogue or this optional overlay fail.
             ReportPersistFailure(exception);
+            return false;
         }
         catch (UnauthorizedAccessException exception)
         {
             // Same graceful degradation for a read-only plugin data volume.
             ReportPersistFailure(exception);
+            return false;
         }
     }
 
     private void ReportPersistFailure(Exception exception)
     {
-        // Every cache write retries persistence; warn once per outage.
+        // Every save retries persistence; warn once per outage.
         if (_persistFailing)
         {
             _logger.LogDebug(exception, "The MediaFlick ratings cache still cannot be saved");

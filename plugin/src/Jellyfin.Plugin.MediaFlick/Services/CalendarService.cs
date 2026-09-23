@@ -22,17 +22,20 @@ public sealed class CalendarService
     private readonly ServiceHealthStore _health;
     private readonly ILogger<CalendarService> _logger;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly TimeProvider _time;
 
     public CalendarService(
         CompanionHttpClient http,
         CalendarCache cache,
         ServiceHealthStore health,
-        ILogger<CalendarService> logger)
+        ILogger<CalendarService> logger,
+        TimeProvider? timeProvider = null)
     {
         _http = http;
         _cache = cache;
         _health = health;
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     public async Task RefreshAsync(
@@ -42,7 +45,7 @@ public sealed class CalendarService
         await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var now = DateTimeOffset.UtcNow;
+            var now = _time.GetUtcNow();
             if (IsFresh(_cache.Snapshot(), now))
             {
                 progress?.Report(100);
@@ -69,7 +72,7 @@ public sealed class CalendarService
                 ParseRadarr,
                 cancellationToken).ConfigureAwait(false);
             progress?.Report(++completed * 50);
-            _cache.MarkRefreshAttempt(DateTimeOffset.UtcNow);
+            _cache.MarkRefreshAttempt(_time.GetUtcNow());
         }
         finally
         {
@@ -159,7 +162,7 @@ public sealed class CalendarService
                 null,
                 null,
                 cancellationToken).ConfigureAwait(false);
-            var refreshedAt = DateTimeOffset.UtcNow;
+            var refreshedAt = _time.GetUtcNow();
             _cache.ReplaceSource(
                 sourceName,
                 parse(response),

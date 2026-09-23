@@ -24,16 +24,16 @@ public sealed class RatingsTests
         using var directory = new TemporaryDirectory();
         var configuration = new PluginConfiguration();
         var protection = DataProtectionProvider.Create(new DirectoryInfo(directory.Path));
-        var store = new DataProtectedRatingSecretStore(
+        var store = new DataProtectedProviderSecretStore(
             protection,
             directory.Path,
             () => configuration,
             (provider, protectedValue) => configuration =
-                DataProtectedRatingSecretStore.CopyWithSecret(
+                DataProtectedProviderSecretStore.CopyWithSecret(
                     configuration,
                     provider,
                     protectedValue),
-            NullLogger<DataProtectedRatingSecretStore>.Instance);
+            NullLogger<DataProtectedProviderSecretStore>.Instance);
 
         store.Set("mdblist", "mdb-super-secret");
         Assert.True(store.IsConfigured("mdblist"));
@@ -69,7 +69,7 @@ public sealed class RatingsTests
         AssertAuthorizeAttribute(typeof(RatingsController), null);
         AssertAuthorizeAttribute(typeof(InfoController), null);
         AssertAuthorizeAttribute(
-            typeof(RatingsAdminController),
+            typeof(ProviderCredentialsController),
             MediaBrowser.Common.Api.Policies.RequiresElevation);
 
         using var fixture = new RatingsFixture();
@@ -319,6 +319,7 @@ public sealed class RatingsTests
                 diagnostic = errorResponse.Diagnostic
             },
             CompanionJson.CamelCase);
+        fixture.Cache.Flush();
         var persistedCache = File.ReadAllText(fixture.CachePath);
 
         Assert.DoesNotContain(mdbListKey, desktopVisible);
@@ -377,9 +378,11 @@ public sealed class RatingsTests
             "server_mdblist",
             response.Items[0].Origin));
 
-        var reloaded = new RatingsCacheStore(
+        // Shutting the store down writes its pending batch.
+        fixture.Cache.Dispose();
+        using var reloaded = new ProviderCacheStore(
             fixture.CachePath,
-            NullLogger<RatingsCacheStore>.Instance);
+            NullLogger<ProviderCacheStore>.Instance);
         Assert.Equal(1, reloaded.Count);
         Assert.NotNull(reloaded.GetStable(Target("different-card", "tmdb", "603")));
     }
@@ -498,9 +501,10 @@ public sealed class RatingsTests
         Assert.Equal(retryAt, second.RetryAt);
         Assert.Equal(0, second.Quota.Remaining);
 
-        var reloadedCache = new RatingsCacheStore(
+        fixture.Cache.Dispose();
+        using var reloadedCache = new ProviderCacheStore(
             fixture.CachePath,
-            NullLogger<RatingsCacheStore>.Instance);
+            NullLogger<ProviderCacheStore>.Instance);
         var replacementTransport = new FakeTransport { BatchResponse = MediaResponse(603) };
         using var restarted = new RatingsService(
             reloadedCache,
@@ -582,7 +586,7 @@ public sealed class RatingsTests
         public RatingsFixture()
         {
             CachePath = System.IO.Path.Combine(_directory.Path, "ratings.json");
-            Cache = new RatingsCacheStore(CachePath, NullLogger<RatingsCacheStore>.Instance);
+            Cache = new ProviderCacheStore(CachePath, NullLogger<ProviderCacheStore>.Instance);
             Service = new RatingsService(
                 Cache,
                 Secrets,
@@ -601,7 +605,7 @@ public sealed class RatingsTests
 
         public CapturingLogger<RatingsService> RatingsLog { get; } = new();
 
-        public RatingsCacheStore Cache { get; }
+        public ProviderCacheStore Cache { get; }
 
         public MemorySecretStore Secrets { get; } = new();
 
@@ -622,11 +626,12 @@ public sealed class RatingsTests
         public void Dispose()
         {
             Service.Dispose();
+            Cache.Dispose();
             _directory.Dispose();
         }
     }
 
-    private sealed class MemorySecretStore : IRatingSecretStore
+    private sealed class MemorySecretStore : IProviderSecretStore
     {
         private readonly Dictionary<string, string> _values =
             new(StringComparer.OrdinalIgnoreCase);

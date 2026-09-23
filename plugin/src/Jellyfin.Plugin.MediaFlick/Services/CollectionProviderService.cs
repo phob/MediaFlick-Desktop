@@ -12,18 +12,24 @@ public sealed class CollectionProviderService
 {
     private const int PreviewSize = 24;
     private const int MaximumAllResults = 10_000;
-    private static readonly TimeSpan CacheLifetime = TimeSpan.FromHours(6);
+    internal const int MaxCachedResults = 128;
+    internal const int MaxCachedIdentities = 50_000;
+    internal static readonly TimeSpan CacheLifetime = TimeSpan.FromHours(6);
+    internal static readonly TimeSpan IdentityLifetime = TimeSpan.FromDays(7);
     private readonly ITmdbTransport _tmdb;
     private readonly IMdbListTransport _mdbList;
-    private readonly IRatingSecretStore _secrets;
-    private readonly RatingsCacheStore _health;
+    private readonly IProviderSecretStore _secrets;
+    private readonly ProviderCacheStore _health;
+    private readonly TimeProvider _time;
     private readonly string _defaultLanguage;
     private readonly string _defaultRegion;
     private readonly SemaphoreSlim _requestGate = new(4, 4);
     private readonly SemaphoreSlim _tmdbValidationGate = new(1, 1);
     private readonly SemaphoreSlim _mdbListValidationGate = new(1, 1);
-    private readonly ConcurrentDictionary<string, CachedResult> _cache = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, long> _identityCache = new(StringComparer.Ordinal);
+    // Results can hold thousands of titles, so only a bounded, expiring set
+    // of recent requests stays in memory.
+    private readonly BoundedCache<string, CachedResult> _cache;
+    private readonly BoundedCache<string, long> _identityCache;
     private readonly ConcurrentDictionary<string, byte> _validatedThisRun =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<CollectionProviderService> _logger;
@@ -32,45 +38,46 @@ public sealed class CollectionProviderService
     internal CollectionProviderService(
         ITmdbTransport tmdb,
         IMdbListTransport mdbList,
-        IRatingSecretStore secrets,
-        RatingsCacheStore health,
+        IProviderSecretStore secrets,
+        ProviderCacheStore health,
         ILogger<CollectionProviderService> logger,
         string? preferredLanguage = null,
-        string? preferredRegion = null)
+        string? preferredRegion = null,
+        TimeProvider? timeProvider = null)
     {
         _tmdb = tmdb;
         _mdbList = mdbList;
         _secrets = secrets;
         _health = health;
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
+        _cache = new(MaxCachedResults, CacheLifetime, _time, StringComparer.Ordinal);
+        _identityCache = new(MaxCachedIdentities, IdentityLifetime, _time, StringComparer.Ordinal);
         _defaultRegion = SafeRegion(preferredRegion) ?? "US";
         _defaultLanguage = SafeLanguage(preferredLanguage) is { } language
             ? language.Contains('-') ? language : $"{language}-{_defaultRegion}"
             : "en-US";
     }
 
-    public bool TmdbReady => ProviderReady(RatingProviders.Tmdb)
-        && _validatedThisRun.ContainsKey(RatingProviders.Tmdb);
+    public bool TmdbReady => ProviderReady(CredentialProviders.Tmdb)
+        && _validatedThisRun.ContainsKey(CredentialProviders.Tmdb);
 
-    public bool MdbListReady => ProviderReady(RatingProviders.MdbList)
-        && _validatedThisRun.ContainsKey(RatingProviders.MdbList);
+    public bool MdbListReady => ProviderReady(CredentialProviders.MdbList)
+        && _validatedThisRun.ContainsKey(CredentialProviders.MdbList);
 
     public async Task RefreshReadinessAsync(CancellationToken cancellationToken)
     {
         await Task.WhenAll(
-            ValidateReadinessAsync(RatingProviders.Tmdb, cancellationToken),
-            ValidateReadinessAsync(RatingProviders.MdbList, cancellationToken))
+            ValidateReadinessAsync(CredentialProviders.Tmdb, cancellationToken),
+            ValidateReadinessAsync(CredentialProviders.MdbList, cancellationToken))
             .ConfigureAwait(false);
     }
 
     public void ClearProviderCache(string provider)
     {
-        provider = RatingProviders.Normalize(provider);
-        foreach (var entry in _cache.Where(entry => entry.Value.Provider == provider))
-        {
-            _cache.TryRemove(entry.Key, out _);
-        }
-        if (provider == RatingProviders.Tmdb)
+        provider = CredentialProviders.Normalize(provider);
+        _cache.RemoveWhere(entry => entry.Provider == provider);
+        if (provider == CredentialProviders.Tmdb)
         {
             _identityCache.Clear();
         }
@@ -91,7 +98,7 @@ public sealed class CollectionProviderService
             credential,
             "lists/search?limit=20&query=" + Uri.EscapeDataString(query),
             cancellationToken).ConfigureAwait(false);
-        RecordProviderOutcome(RatingProviders.MdbList, response.StatusCode, response.RetryAt);
+        RecordProviderOutcome(CredentialProviders.MdbList, response.StatusCode, response.RetryAt);
         if (!response.StatusCode.IsSuccess())
         {
             throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "MDBList unavailable");
@@ -127,13 +134,13 @@ public sealed class CollectionProviderService
             var tasks = chunk.Select(async item =>
             {
                 var cacheKey = string.Join('|', item.MediaType, item.Provider, item.ProviderId);
-                if (!_identityCache.TryGetValue(cacheKey, out var tmdbId))
+                if (!_identityCache.TryGet(cacheKey, out var tmdbId))
                 {
                     tmdbId = await FindTmdbIdAsync(credential, item, cancellationToken)
                         .ConfigureAwait(false) ?? 0;
                     if (tmdbId > 0)
                     {
-                        _identityCache[cacheKey] = tmdbId;
+                        _identityCache.Set(cacheKey, tmdbId);
                     }
                 }
                 if (tmdbId > 0)
@@ -212,7 +219,7 @@ public sealed class CollectionProviderService
                 JsonRead.String(detail, "name") ?? $"Collection {collectionId}",
                 JsonRead.String(detail, "poster_path"),
                 JsonRead.String(detail, "backdrop_path"),
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Now(),
                 NormalizeTmdbRows(detail["parts"] as JsonArray, "movie")));
         }
         return new FranchiseResolveResponse(franchises, memberships);
@@ -226,8 +233,8 @@ public sealed class CollectionProviderService
         ValidateRequest(request);
         var cacheKey = JsonSerializer.Serialize(new { Request = request, FetchLimit = fetchLimit }, CompanionJson.CamelCase);
         var kind = JsonRead.String(request.Source, "kind");
-        var provider = kind == "mdbListPublicList" ? RatingProviders.MdbList : RatingProviders.Tmdb;
-        if (provider == RatingProviders.MdbList)
+        var provider = kind == "mdbListPublicList" ? CredentialProviders.MdbList : CredentialProviders.Tmdb;
+        if (provider == CredentialProviders.MdbList)
         {
             _ = await ValidMdbListCredentialAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -235,16 +242,14 @@ public sealed class CollectionProviderService
         {
             _ = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
         }
-        if (_cache.TryGetValue(cacheKey, out var cached)
-            && DateTimeOffset.UtcNow - cached.StoredAt < CacheLifetime)
+        if (_cache.TryGet(cacheKey, out var cached))
         {
             return cached.Result;
         }
         await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_cache.TryGetValue(cacheKey, out cached)
-                && DateTimeOffset.UtcNow - cached.StoredAt < CacheLifetime)
+            if (_cache.TryGet(cacheKey, out cached))
             {
                 return cached.Result;
             }
@@ -260,7 +265,7 @@ public sealed class CollectionProviderService
                     StatusCodes.Status400BadRequest,
                     "Unsupported collection source")
             };
-            _cache[cacheKey] = new(DateTimeOffset.UtcNow, provider, result);
+            _cache.Set(cacheKey, new(provider, result));
             return result;
         }
         finally
@@ -316,7 +321,7 @@ public sealed class CollectionProviderService
         var includeUnreleased = IncludeUnreleased(request.Source);
         if (!includeUnreleased)
         {
-            var today = DateOnly.FromDateTime(DateTime.Today);
+            var today = DateOnly.FromDateTime(_time.GetLocalNow().DateTime);
             var owned = request.OwnedTmdbIds?.Where(id => id > 0).ToHashSet() ?? [];
             rows = rows.Where(item => owned.Contains(item.TmdbId)
                     || item.ReleaseDate is { } date
@@ -354,7 +359,7 @@ public sealed class CollectionProviderService
             var resource = $"lists/{list.Id}/items?unified=true{typeFilter}&limit=1000&offset={offset}";
             var response = await _mdbList.ListItemsAsync(credential, resource, cancellationToken)
                 .ConfigureAwait(false);
-            RecordProviderOutcome(RatingProviders.MdbList, response.StatusCode, response.RetryAt);
+            RecordProviderOutcome(CredentialProviders.MdbList, response.StatusCode, response.RetryAt);
             if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound
                 or HttpStatusCode.Unauthorized)
             {
@@ -377,7 +382,7 @@ public sealed class CollectionProviderService
 
     private Task<string> ValidTmdbCredentialAsync(CancellationToken cancellationToken)
         => ValidCredentialAsync(
-            RatingProviders.Tmdb,
+            CredentialProviders.Tmdb,
             "TMDB unavailable",
             _tmdbValidationGate,
             async (credential, token) => ProviderOutcome.Of(await _tmdb.GetAsync(
@@ -389,7 +394,7 @@ public sealed class CollectionProviderService
 
     private Task<string> ValidMdbListCredentialAsync(CancellationToken cancellationToken)
         => ValidCredentialAsync(
-            RatingProviders.MdbList,
+            CredentialProviders.MdbList,
             "MDBList unavailable",
             _mdbListValidationGate,
             async (credential, token) => ProviderOutcome.Of(
@@ -428,7 +433,7 @@ public sealed class CollectionProviderService
                 outcome,
                 Now(),
                 preserveValidOnTransientFailure: true,
-                rateLimitProvesCredential: provider == RatingProviders.MdbList));
+                rateLimitProvesCredential: provider == CredentialProviders.MdbList));
             if (!outcome.StatusCode.IsSuccess())
             {
                 throw new GatewayException(StatusCodes.Status503ServiceUnavailable, unavailable);
@@ -454,7 +459,7 @@ public sealed class CollectionProviderService
                 _readinessFailures.Recovered(provider);
                 return;
             }
-            if (provider == RatingProviders.Tmdb)
+            if (provider == CredentialProviders.Tmdb)
             {
                 _ = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -541,7 +546,7 @@ public sealed class CollectionProviderService
             credential,
             "lists/" + selector,
             cancellationToken).ConfigureAwait(false);
-        RecordProviderOutcome(RatingProviders.MdbList, response.StatusCode, response.RetryAt);
+        RecordProviderOutcome(CredentialProviders.MdbList, response.StatusCode, response.RetryAt);
         if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound
             or HttpStatusCode.Unauthorized || response.Body is not JsonObject detail)
         {
@@ -624,10 +629,10 @@ public sealed class CollectionProviderService
     {
         if (!response.StatusCode.IsSuccess() || response.Body is not JsonObject body)
         {
-            RecordProviderOutcome(RatingProviders.Tmdb, response.StatusCode, response.RetryAt);
+            RecordProviderOutcome(CredentialProviders.Tmdb, response.StatusCode, response.RetryAt);
             throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "TMDB unavailable");
         }
-        RecordProviderOutcome(RatingProviders.Tmdb, response.StatusCode, response.RetryAt);
+        RecordProviderOutcome(CredentialProviders.Tmdb, response.StatusCode, response.RetryAt);
         return body;
     }
 
@@ -646,7 +651,7 @@ public sealed class CollectionProviderService
     {
         // MDBList answers 401/403 for private lists, which says nothing about
         // the administrator key; TMDB uses them only for a rejected key.
-        var rejectionInvalidatesKey = provider != RatingProviders.MdbList;
+        var rejectionInvalidatesKey = provider != CredentialProviders.MdbList;
         var next = ProviderHealthPolicy.AfterRequest(
             _health.Health(provider),
             status,
@@ -664,7 +669,7 @@ public sealed class CollectionProviderService
         _health.SetHealth(provider, next);
     }
 
-    private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+    private long Now() => _time.GetUtcNow().ToUnixTimeSeconds();
 
     private IReadOnlyDictionary<string, string> BaseQuery()
         => new Dictionary<string, string> { ["language"] = _defaultLanguage };
@@ -701,7 +706,11 @@ public sealed class CollectionProviderService
             query.TryAdd("watch_region", _defaultRegion);
             query["with_watch_monetization_types"] = "flatrate|free|ads";
         }
-        ApplyReleaseWindow(parameters, query, mediaType);
+        ApplyReleaseWindow(
+            parameters,
+            query,
+            mediaType,
+            DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime));
         return query;
     }
 
@@ -734,14 +743,14 @@ public sealed class CollectionProviderService
     private static void ApplyReleaseWindow(
         JsonObject? parameters,
         IDictionary<string, string> query,
-        string mediaType)
+        string mediaType,
+        DateOnly today)
     {
         var window = JsonRead.String(parameters, "releaseWindow");
         if (window is null)
         {
             return;
         }
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var (start, end) = window switch
         {
             "recent" => (today.AddDays(-120), today),
@@ -1034,10 +1043,7 @@ public sealed class CollectionProviderService
         return null;
     }
 
-    private sealed record CachedResult(
-        DateTimeOffset StoredAt,
-        string Provider,
-        CollectionProviderResult Result);
+    private sealed record CachedResult(string Provider, CollectionProviderResult Result);
 
     private sealed record NormalizedMdbListPage(
         IReadOnlyList<NormalizedProviderTitle> Items,

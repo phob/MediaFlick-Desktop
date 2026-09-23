@@ -105,11 +105,13 @@ public sealed class CompanionLoggingTests
         Directory.CreateDirectory(cachePath);
         try
         {
-            var logger = new CapturingLogger<RatingsCacheStore>();
-            var store = new RatingsCacheStore(cachePath, logger);
+            var logger = new CapturingLogger<ProviderCacheStore>();
+            using var store = new ProviderCacheStore(cachePath, logger);
 
             store.SetHealth("mdblist", new ProviderHealthState { Validation = "valid", Valid = true });
+            store.Flush();
             store.SetHealth("tmdb", new ProviderHealthState { Validation = "valid", Valid = true });
+            store.Flush();
 
             Assert.Equal(
                 [LogLevel.Warning, LogLevel.Debug],

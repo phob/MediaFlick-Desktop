@@ -41,10 +41,14 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
     private readonly HttpClient _imageClient;
     private readonly ILogger<TmdbHttpTransport> _logger;
     private readonly FailureLogGate _failures = new();
+    private readonly TimeProvider _time;
 
-    public TmdbHttpTransport(ILogger<TmdbHttpTransport> logger)
+    public TmdbHttpTransport(
+        ILogger<TmdbHttpTransport> logger,
+        TimeProvider? timeProvider = null)
     {
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -274,11 +278,11 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
             && path.All(character => char.IsAsciiLetterOrDigit(character)
                 || character is '/' or '-' or '_' or '.');
 
-    private static long? RetryAt(HttpResponseMessage response)
+    private long? RetryAt(HttpResponseMessage response)
     {
         if (response.Headers.RetryAfter?.Delta is { } delta)
         {
-            return DateTimeOffset.UtcNow.Add(delta).ToUnixTimeSeconds();
+            return _time.GetUtcNow().Add(delta).ToUnixTimeSeconds();
         }
         return response.Headers.RetryAfter?.Date?.ToUnixTimeSeconds();
     }
