@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::app::services::ShellBridge;
 use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
@@ -72,16 +73,18 @@ impl ProbeState {
 pub struct CompanionSession {
     session: Arc<Session>,
     library: Arc<Library>,
+    shell: Arc<ShellBridge>,
     state: RwLock<ProbeState>,
     probe_running: Mutex<bool>,
     probe_finished: Condvar,
 }
 
 impl CompanionSession {
-    pub fn new(session: Arc<Session>, library: Arc<Library>) -> Self {
+    pub fn new(session: Arc<Session>, library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
         Self {
             session,
             library,
+            shell,
             state: RwLock::new(ProbeState::default()),
             probe_running: Mutex::new(false),
             probe_finished: Condvar::new(),
@@ -431,7 +434,7 @@ impl CompanionSession {
                 let previous = self.cached_collection_readiness();
                 self.replace(state);
                 if previous != self.cached_collection_readiness() {
-                    crate::app::services::notify_collections_changed();
+                    self.shell.collections_changed();
                 }
                 Ok(())
             },
@@ -740,8 +743,15 @@ mod tests {
         credentials.user_id = Some("user".to_string());
         credentials.token = Some("token".to_string());
         library.save_credentials(&credentials).expect("credentials");
-        let session = Arc::new(crate::jellyfin::session::Session::restore(library.clone()));
-        let companion = Arc::new(super::CompanionSession::new(session, library));
+        let session = Arc::new(crate::jellyfin::session::Session::restore(
+            library.clone(),
+            Arc::default(),
+        ));
+        let companion = Arc::new(super::CompanionSession::new(
+            session,
+            library,
+            Arc::default(),
+        ));
         let barrier = Arc::new(Barrier::new(3));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..2 {
@@ -803,8 +813,11 @@ mod tests {
         credentials.user_id = Some("user".to_string());
         credentials.token = Some("token".to_string());
         library.save_credentials(&credentials).expect("credentials");
-        let session = Arc::new(crate::jellyfin::session::Session::restore(library.clone()));
-        let companion = super::CompanionSession::new(session, library);
+        let session = Arc::new(crate::jellyfin::session::Session::restore(
+            library.clone(),
+            Arc::default(),
+        ));
+        let companion = super::CompanionSession::new(session, library, Arc::default());
         assert_eq!(companion.cached_collection_readiness(), Default::default());
         companion.replace(ProbeState {
             info: Some(CompanionInfo {

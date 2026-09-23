@@ -8,9 +8,11 @@
 //! implemented by the mpv adapter; anything else is logged and ignored rather
 //! than half-applied.
 
+use std::sync::Arc;
+
 use serde_json::Value;
 
-use crate::app::services::{self, Services};
+use crate::app::services::Services;
 use crate::playback::{PlayerCommand, TICKS_PER_MILLISECOND};
 
 use super::api::items;
@@ -118,11 +120,24 @@ pub(crate) fn parse_general(data: &Value) -> GeneralAction {
     }
 }
 
-/// `scope` is the session whose event stream delivered the command.
-pub fn handle_play(data: &Value, scope: &SessionScope) {
-    let Some(services) = services::services() else {
-        return;
-    };
+/// A remote-control message, with the session whose event stream delivered it.
+pub enum RemoteCommand {
+    Play { data: Value, scope: SessionScope },
+    Playstate { data: Value, scope: SessionScope },
+    General { data: Value },
+}
+
+/// Carries out one command. The socket thread calls this through the handler
+/// the application registered, in the order the server sent them.
+pub fn handle(services: &Arc<Services>, command: RemoteCommand) {
+    match command {
+        RemoteCommand::Play { data, scope } => handle_play(services, &data, &scope),
+        RemoteCommand::Playstate { data, scope } => handle_playstate(services, &data, &scope),
+        RemoteCommand::General { data } => handle_general_command(services, &data),
+    }
+}
+
+fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
     let ask = parse_play(data);
     if !ask.play_command.eq_ignore_ascii_case("PlayNow") {
         // PlayNext/PlayLast are queueing commands and this client has no
@@ -142,7 +157,7 @@ pub fn handle_play(data: &Value, scope: &SessionScope) {
         tracing::debug!(target: "jellyfin.remote", "remote play named no items");
         return;
     };
-    let Some((target_id, resume)) = resolve_playable(&services, scope, item_id) else {
+    let Some((target_id, resume)) = resolve_playable(services, scope, item_id) else {
         tracing::debug!(
             target: "jellyfin.remote",
             item_id,
@@ -160,7 +175,7 @@ pub fn handle_play(data: &Value, scope: &SessionScope) {
         subtitle_stream_index: ask.subtitle_stream_index,
         ..Default::default()
     };
-    match play::start(&services, scope, &options, "remote") {
+    match play::start(services, scope, &options, "remote") {
         Ok(_) => {}
         Err(play::StartError::NoPlayer) => {
             tracing::warn!(
@@ -233,10 +248,7 @@ fn resolve_playable(
     }
 }
 
-pub fn handle_playstate(data: &Value, scope: &SessionScope) {
-    let Some(services) = services::services() else {
-        return;
-    };
+fn handle_playstate(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
     let Some(playback) = services.playback() else {
         return;
     };
@@ -273,7 +285,7 @@ pub fn handle_playstate(data: &Value, scope: &SessionScope) {
                 resume: true,
                 ..Default::default()
             };
-            if let Err(error) = play::start(&services, scope, &options, "remote next") {
+            if let Err(error) = play::start(services, scope, &options, "remote next") {
                 tracing::warn!(target: "jellyfin.remote", "remote next-track failed: {error:?}");
             }
         }
@@ -287,10 +299,7 @@ pub fn handle_playstate(data: &Value, scope: &SessionScope) {
     }
 }
 
-pub fn handle_general_command(data: &Value) {
-    let Some(services) = services::services() else {
-        return;
-    };
+fn handle_general_command(services: &Arc<Services>, data: &Value) {
     let Some(playback) = services.playback() else {
         return;
     };

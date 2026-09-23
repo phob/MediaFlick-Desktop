@@ -60,6 +60,7 @@ fn auth_login(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .login(&body.server, &body.username, &body.password);
     match result {
         Ok(_) => {
+            remember_server_url(services);
             activate_account_preferences(services)?;
             services.companion.clear();
             if let Err(error) = services.companion.probe(true) {
@@ -89,6 +90,7 @@ fn quick_connect_poll(services: &Arc<Services>, request: &ApiRequest) -> Handled
     match result {
         Ok(value) => {
             if value["authenticated"] == json!(true) {
+                remember_server_url(services);
                 activate_account_preferences(services)?;
                 services.companion.clear();
                 if let Err(error) = services.companion.probe(true) {
@@ -118,6 +120,20 @@ fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
     services.companion.clear();
     status(services)
+}
+
+/// Keeps `settings.json` in step with the signed-in server, so the dashboard
+/// action and upgrades from older releases keep working.
+fn remember_server_url(services: &Services) {
+    let Some(server_url) = services.session.server_url() else {
+        return;
+    };
+    if services.preferences.snapshot().jellyfin_url.as_deref() == Some(server_url.as_str()) {
+        return;
+    }
+    if let Err(error) = services.preferences.set_server_url(server_url) {
+        tracing::warn!(target: "jellyfin.session", "failed to save the server URL: {error}");
+    }
 }
 
 fn activate_account_preferences(services: &Arc<Services>) -> Result<(), ApiResponse> {

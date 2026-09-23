@@ -516,7 +516,7 @@ fn forget_item(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
                 item_id,
                 "dropped a cached item the server no longer has"
             );
-            crate::app::services::notify_library_changed(changes);
+            services.shell.library_changed(changes);
             services.sync.request();
         }
         Ok(_) => {}
