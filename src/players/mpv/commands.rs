@@ -158,6 +158,19 @@ pub fn control_command(command: &PlayerCommand) -> Option<Value> {
     }))
 }
 
+/// On-screen text. It uses mpv's async IPC mode: the writer acknowledges it
+/// once written instead of holding the controller thread for mpv's reply, and a
+/// later command's reply wait drains the completion. Only cosmetic commands
+/// whose result is merely logged may do this; seeks, `loadfile` and `sub-add`
+/// stay reply-validated because playback depends on their outcome.
+pub(super) fn osd_text_command(text: &str, duration_ms: i64) -> Value {
+    json!({
+        "command": ["show-text", text, duration_ms, 1],
+        "request_id": next_request_id(),
+        "async": true,
+    })
+}
+
 pub(super) fn next_request_id() -> i64 {
     REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
@@ -257,7 +270,7 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{control_command, loadfile_command, mpv_string_list};
+    use super::{control_command, loadfile_command, mpv_string_list, osd_text_command};
     use crate::playback::{
         HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
     };
@@ -448,6 +461,13 @@ mod tests {
         assert_eq!(fullscreen["command"], json!(["cycle", "fullscreen"]));
 
         assert!(seek.get("async").is_none());
+
+        let osd = osd_text_command("Skipping intro in 3...", 1500);
+        assert_eq!(
+            osd["command"],
+            json!(["show-text", "Skipping intro in 3...", 1500, 1])
+        );
+        assert_eq!(osd["async"], true);
 
         assert!(control_command(&PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
         assert!(control_command(&PlayerCommand::SetAudioDelay(f64::NAN)).is_none());
