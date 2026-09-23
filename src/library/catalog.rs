@@ -229,16 +229,24 @@ impl Library {
     }
 
     /// The item type of a cached item.
+    /// The cached item's kind, or `None` when it is not cached. A failed read
+    /// is logged and also reads as uncached: every caller then asks the server
+    /// or answers as it would for an unknown id.
     pub fn kind(&self, item_id: &str) -> Option<String> {
         self.db
             .with_connection(|connection| {
-                connection.query_row(
-                    "SELECT kind FROM items WHERE jellyfin_id = ?1",
-                    params![item_id],
-                    |row| row.get::<_, String>(0),
-                )
+                connection
+                    .query_row(
+                        "SELECT kind FROM items WHERE jellyfin_id = ?1",
+                        params![item_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()
             })
-            .ok()
+            .unwrap_or_else(|error| {
+                tracing::warn!(target: "library.db", item_id, "could not read a cached item kind: {error}");
+                None
+            })
     }
 
     pub fn ids_by_tmdb(
