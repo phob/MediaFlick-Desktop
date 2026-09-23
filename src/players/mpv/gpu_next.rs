@@ -75,9 +75,12 @@ impl Compositor {
         if raw.is_null() {
             return String::new();
         }
+        // SAFETY: a non-null result is a NUL-terminated string owned by mpv.
         let result = unsafe { CStr::from_ptr(raw) }
             .to_string_lossy()
             .into_owned();
+        // SAFETY: `raw` came from mpv_get_property_string, is freed once, and
+        // `result` owns a copy of its contents.
         unsafe { (self.free)(raw.cast()) };
         result
     }

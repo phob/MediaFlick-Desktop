@@ -112,6 +112,7 @@ fn replace_file(temporary: &Path, destination: &Path) -> io::Result<()> {
         .encode_wide()
         .chain(Some(0))
         .collect();
+    // SAFETY: both paths are NUL-terminated wide strings that outlive the call.
     let moved = unsafe {
         MoveFileExW(
             temporary.as_ptr(),
