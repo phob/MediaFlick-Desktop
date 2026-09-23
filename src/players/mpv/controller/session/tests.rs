@@ -10,6 +10,7 @@ use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
 use super::super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
+use crate::players::mpv::commands::loadfile_command;
 
 fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
     loop {
@@ -557,9 +558,8 @@ fn eof_uses_runtime_when_mpv_duration_is_missing() {
     assert_eq!(state.last_state.position_ticks, 240_000_000);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn linux_library_resume_waits_for_file_loaded_and_holds_reported_position() {
+fn library_resume_waits_for_file_loaded_and_holds_reported_position() {
     let mut state = controller_with_pending_load(Some(200_000_000));
     state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
     let launch = state
@@ -568,7 +568,7 @@ fn linux_library_resume_waits_for_file_loaded_and_holds_reported_position() {
         .expect("pending playback")
         .launch
         .clone();
-    let command = state.loadfile_command(&launch);
+    let command = loadfile_command(&launch);
     assert!(command["command"][4].get("start").is_none());
     assert!(command["command"][4].get("pause").is_none());
     assert!(state.startup_seek.is_none());

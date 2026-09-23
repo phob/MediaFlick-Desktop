@@ -149,7 +149,7 @@ def main() -> None:
             "- Fresh installation, launch, sign-in, and Quick Connect.\n"
             "- Upgrade an existing installation and verify settings, accounts, collections, and posters.\n"
             "- Movies and Series: browsing, search, details, and account switching.\n"
-            "- Built-in libmpv, external mpv, and Windows MPC-HC: start, pause, seek, resume, subtitles, "
+            "- Built-in libmpv and external mpv: start, pause, seek, resume, subtitles, "
             "segment skipping, next episode, and Jellyfin progress/watched state.\n"
             "- Settings Save, Reset, and Discard; restart and verify persistence.\n"
             "- Companion absent/present: discovery, calendar, requests, ratings, and collections.\n"

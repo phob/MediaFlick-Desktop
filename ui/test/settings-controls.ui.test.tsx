@@ -178,12 +178,34 @@ test("backend selection changes the visible controls immediately and retains the
   expect(screen.queryByRole("button", {name:"Stop playback key"})).toBeNull()
   expect(screen.queryByRole("spinbutton", {name:"Subtitle size (%)"})).toBeNull()
   expect(document.querySelectorAll("[data-shortcut-recorder]")).toHaveLength(1)
-  await selectBackend("MPC-HC")
-  expect(screen.queryByText("Keyboard shortcuts")).toBeNull()
-  await selectBackend("Built-in player")
+  fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
+  expect(screen.queryByRole("option", {name:"MPC-HC"})).toBeNull()
+  fireEvent.click(await screen.findByRole("option", {name:"Built-in player"}))
   expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("X")
   fireEvent.click(screen.getByRole("button", {name:"Discard"}))
   expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("Q")
+})
+
+test("the mpv file picker fills only its own request's path into the draft", async () => {
+  page("/settings/client/player")
+  fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
+  fireEvent.click(await screen.findByRole("option", {name:"External mpv"}))
+  const picker = vi.spyOn(api.shell, "filePicker").mockImplementation(async (requestId) => ({ requestId, queued: true }))
+  const choose = await screen.findByRole("button", {name:"Choose mpv executable"})
+  fireEvent.click(choose)
+  await waitFor(() => expect(picker).toHaveBeenCalledTimes(1))
+  const requestId = picker.mock.calls[0]?.[0]
+  expect(choose.hasAttribute("disabled")).toBe(true)
+  const complete = (id: string | undefined, path: string) => window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", {
+    detail: { type: "file-picker-completed", payload: { requestId: id, path, error: null } },
+  }))
+
+  complete("another-request", "C:/other/mpv.exe")
+  expect((screen.getByRole("textbox", {name:"mpv executable"}) as HTMLInputElement).value).toBe("")
+  complete(requestId, "C:/mpv/mpv.exe")
+
+  await waitFor(() => expect((screen.getByRole("textbox", {name:"mpv executable"}) as HTMLInputElement).value).toBe("C:/mpv/mpv.exe"))
+  expect(choose.hasAttribute("disabled")).toBe(false)
 })
 
 test("Playback saves quality and skipping without resetting Player settings", async () => {

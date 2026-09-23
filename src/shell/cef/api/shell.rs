@@ -29,14 +29,8 @@ fn shell_file_picker(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
         Ok(id) => id,
         Err(response) => return response,
     };
-    let target = match body.get("target").and_then(Value::as_str) {
-        Some("mpv") => ShellFilePickerTarget::Mpv,
-        Some("mpchc") => ShellFilePickerTarget::Mpchc,
-        _ => return ApiResponse::error(400, "target must be mpv or mpchc"),
-    };
     match services.shell.request(ShellRequest::FilePicker {
         request_id: request_id.clone(),
-        target,
     }) {
         Ok(()) => ApiResponse::ok(json!({ "requestId": request_id, "queued": true })),
         Err(error) => ApiResponse::error(503, error),

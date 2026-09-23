@@ -71,7 +71,6 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
             "player": {
                 "playerBackend": settings.effective_backend().as_str(),
                 "mpvPath": settings.mpv_path,
-                "mpchcPath": settings.mpchc_path,
                 "defaultFullscreen": settings.default_fullscreen.as_str(),
                 "markWatchedNext": bindings.mark_watched_next,
                 "comfort": settings.comfort,
@@ -104,7 +103,6 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
             "platform": player_setup::platform_id(),
             "libmpv": crate::players::bundled_libmpv_path().is_some(),
             "integratedLibmpvOverlay": crate::shell::cef::prototype_osr::is_active(),
-            "mpchc": cfg!(target_os = "windows"),
             "mpvInstaller": player_setup::supported(),
         },
         "recoveries": recoveries,

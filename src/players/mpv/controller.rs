@@ -20,7 +20,6 @@ use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 pub use super::commands::control_command;
-use super::commands::{LoadFileBehavior, loadfile_command_with_behavior};
 use session::{is_completion_reason, normalized_stop_reason};
 
 #[path = "playback_transition.rs"]
@@ -129,7 +128,6 @@ struct ControllerState {
     pending: Option<PendingPlayback>,
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
-    pending_library_pause: Option<bool>,
     #[cfg(target_os = "linux")]
     pending_library_fullscreen: bool,
     #[cfg(target_os = "linux")]
@@ -378,7 +376,6 @@ impl ControllerState {
             pending: None,
             playback_identity: None,
             startup_seek: None,
-            pending_library_pause: None,
             #[cfg(target_os = "linux")]
             pending_library_fullscreen: false,
             #[cfg(target_os = "linux")]
@@ -531,13 +528,6 @@ impl ControllerState {
             return;
         }
 
-        if self.uses_paused_library_start()
-            && self.pending.is_some()
-            && let PlayerCommand::SetPause(pause) = command
-        {
-            self.pending_library_pause = Some(*pause);
-        }
-
         if matches!(command, PlayerCommand::Stop)
             && self.should_suppress_stop_during_next_playback_handoff()
         {
@@ -572,29 +562,13 @@ impl ControllerState {
         }
     }
 
-    fn loadfile_command(&self, launch: &PlaybackRequest) -> Value {
-        let behavior = if self.uses_paused_library_start() {
-            LoadFileBehavior::LibraryPausedAtStart
-        } else {
-            LoadFileBehavior::ExternalDelayedSeek
-        };
-        loadfile_command_with_behavior(launch, behavior)
-    }
-
-    fn uses_paused_library_start(&self) -> bool {
-        self.runtime_kind == MpvRuntimeKind::Library && !cfg!(target_os = "linux")
-    }
-
     fn kick_start_playback(&mut self, launch: &PlaybackRequest) {
-        if self.uses_paused_library_start() {
-            self.startup_seek = None;
-            return;
-        }
-
         // Regression guard: resumed Jellyfin streams must not use mpv's
         // load-time `start` option. On Windows external mpv can show a still
         // frame until a later seek when opened directly at the resume offset.
-        // Match shim's safer shape: load normally, then seek after file-loaded.
+        // Built-in libmpv uses the same path so every runtime shares one
+        // resume and position-hold policy: load normally, then seek after
+        // file-loaded.
         if let Some(position_ms) = launch
             .start_seconds()
             .map(|seconds| seconds * 1000.0)
@@ -705,7 +679,6 @@ impl ControllerState {
 
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
-        self.pending_library_pause = None;
         self.reset_chapter_markers();
         let replacing_active_file = self.mpv_playback_active || self.active.is_some();
         if let Some(active) = self.active.take() {

@@ -118,7 +118,7 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiRespons
         })),
         Err(play::StartError::NoPlayer) => ApiResponse::error(
             409,
-            "No media player is configured. Open Settings to set up mpv or MPC-HC.",
+            "No media player is configured. Open Settings to set up the built-in player or mpv.",
         ),
         Err(play::StartError::NotReady) => {
             ApiResponse::error(503, "the playback coordinator is not ready yet")

@@ -47,7 +47,7 @@ pub struct PreparedPlayback {
 /// Why [`start`] could not launch the player.
 #[derive(Debug)]
 pub enum StartError {
-    /// No mpv/MPC-HC path is configured in Settings.
+    /// No player runtime is configured in Settings.
     NoPlayer,
     /// The playback coordinator has not been attached yet.
     NotReady,
@@ -437,8 +437,7 @@ fn stream_url(
             .unwrap_or("mkv");
         // No `api_key`: the token travels in `request.headers` instead, so it
         // stays out of the player's command line, its recent-files list, and
-        // its logs. mpv sends those headers; the MPC-HC controller, which
-        // cannot, appends the token to the URL itself at launch time.
+        // its logs.
         let mut query = vec![("static", "true".to_string())];
         if let Some(media_source_id) = &source.id {
             query.push(("mediaSourceId", media_source_id.clone()));

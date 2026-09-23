@@ -9,7 +9,7 @@ use cef::*;
 use serde_json::json;
 
 use crate::app::paths::app_data_dir;
-use crate::app::services::{self, ShellFilePickerTarget, ShellRequest};
+use crate::app::services::{self, ShellRequest};
 use crate::app::{build_info, logger, urls};
 use crate::jellyfin::api::items;
 use crate::jellyfin::bridge as jellyfin_bridge;

@@ -12,7 +12,6 @@ const settings = {
     player: {
       playerBackend: "libmpv",
       mpvPath: null,
-      mpchcPath: null,
       defaultFullscreen: "windowed",
       markWatchedNext: "w",
       playerConfigured: true, comfort: DEFAULT_COMFORT,
@@ -44,7 +43,6 @@ const settings = {
     platform: "windows",
     libmpv: true,
     integratedLibmpvOverlay: true,
-    mpchc: true,
     mpvInstaller: true,
   },
   serverUrl: "http://localhost:8096",

@@ -56,9 +56,9 @@ pub enum ShellRequest {
     /// The startup cover has left the DOM and the completed initial route has
     /// painted. Revealing the native window must happen on CEF's UI thread.
     MainWindowReady,
+    /// Choose the external mpv executable for the Player settings draft.
     FilePicker {
         request_id: String,
-        target: ShellFilePickerTarget,
     },
     InstallMpv {
         request_id: String,
@@ -79,12 +79,6 @@ pub enum ShellRequest {
     /// Relay it so the UI re-reads the canonical session state immediately,
     /// even when the failing request itself is silent by design.
     SessionExpired,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellFilePickerTarget {
-    Mpv,
-    Mpchc,
 }
 
 pub struct ShellBridge {
