@@ -278,7 +278,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         object.insert("syncing".to_string(), json!(services.sync.is_running()));
         object.insert(
             "lastSync".to_string(),
-            json!(services.library.meta("sync.completed_at")),
+            json!(services.library.meta("sync.completed_at").ok().flatten()),
         );
         object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
         object.insert("libraryReady".to_string(), json!(bootstrap.ready));

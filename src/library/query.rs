@@ -10,12 +10,10 @@ const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
 
 impl Library {
-    pub fn has_items(&self) -> bool {
-        self.db
-            .with_connection(|connection| {
-                connection.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |row| row.get(0))
-            })
-            .unwrap_or(false)
+    pub fn has_items(&self) -> rusqlite::Result<bool> {
+        self.db.with_connection(|connection| {
+            connection.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |row| row.get(0))
+        })
     }
 
     pub fn stats(&self) -> LibraryStats {
@@ -37,7 +35,11 @@ impl Library {
                         .query_row("SELECT count(*) FROM items", [], |row| row.get(0))?,
                 })
             })
-            .unwrap_or_default()
+            // Counts are only displayed; zero is the honest fallback.
+            .unwrap_or_else(|error| {
+                tracing::warn!(target: "library.db", "could not count cached items: {error}");
+                LibraryStats::default()
+            })
     }
 
     pub fn query(&self, query: &ItemQuery) -> rusqlite::Result<ItemPage> {
