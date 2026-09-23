@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["settings"] if request.is("GET") => settings_snapshot(services),
         ["settings", "viewing"] if request.is("GET") || request.is("PATCH") => {
@@ -30,7 +30,7 @@ pub(super) fn route(
     Some(response)
 }
 
-fn settings_snapshot(services: &Arc<Services>) -> ApiResponse {
+fn settings_snapshot(services: &Arc<Services>) -> Handled {
     let mut recoveries = Vec::new();
     push_recovery(
         &mut recoveries,
@@ -52,7 +52,10 @@ fn settings_snapshot(services: &Arc<Services>) -> ApiResponse {
         "Deletion journal",
         services.pending_deletions.take_recovery_notice(),
     );
-    settings_response(&services.preferences.snapshot(), &recoveries)
+    Ok(settings_response(
+        &services.preferences.snapshot(),
+        &recoveries,
+    ))
 }
 
 fn push_recovery(
@@ -113,48 +116,33 @@ fn settings_response(settings: &AppSettings, recoveries: &[Value]) -> ApiRespons
     }))
 }
 
-fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match request.body::<PlayerSettingsPatch>() {
-        Ok(patch) => patch,
-        Err(response) => return response,
-    };
+fn patch_player_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let patch = request.body::<PlayerSettingsPatch>()?;
     match services.preferences.patch_player(patch) {
-        Ok(change) => settings_response(&change.settings, &[]),
-        Err(error) => ApiResponse::error(400, error.to_string()),
+        Ok(change) => Ok(settings_response(&change.settings, &[])),
+        Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match request.body::<PlaybackSettingsPatch>() {
-        Ok(patch) => patch,
-        Err(response) => return response,
-    };
+fn patch_playback_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let patch = request.body::<PlaybackSettingsPatch>()?;
     match services.preferences.patch_playback(patch) {
-        Ok(change) => settings_response(&change.settings, &[]),
-        Err(error) => ApiResponse::error(400, error.to_string()),
+        Ok(change) => Ok(settings_response(&change.settings, &[])),
+        Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match request.body::<ApplicationSettingsPatch>() {
-        Ok(patch) => patch,
-        Err(response) => return response,
-    };
+fn patch_application_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let patch = request.body::<ApplicationSettingsPatch>()?;
     match services.preferences.patch_application(patch) {
-        Ok(change) => settings_response(&change.settings, &[]),
-        Err(error) => ApiResponse::error(400, error.to_string()),
+        Ok(change) => Ok(settings_response(&change.settings, &[])),
+        Err(error) => Err(ApiResponse::error(400, error.to_string())),
     }
 }
 
-fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let patch = match request.body::<AppearanceSettingsPatch>() {
-        Ok(patch) => patch,
-        Err(response) => return response,
-    };
-    let scope = match services.session.scope() {
-        Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
-    };
+fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let patch = request.body::<AppearanceSettingsPatch>()?;
+    let scope = session_scope(services)?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -163,22 +151,15 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })
-        .unwrap_or_else(|response| response)
 }
 
-fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let scope = match services.session.scope() {
-        Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
-    };
+fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let scope = session_scope(services)?;
     let key = scope.account();
     if request.is("GET") {
-        return ApiResponse::ok(json!(services.accounts.viewing(key)));
+        return Ok(ApiResponse::ok(json!(services.accounts.viewing(key))));
     }
-    let value = match request.body::<crate::preferences::ViewingSettings>() {
-        Ok(value) => value,
-        Err(response) => return response,
-    };
+    let value = request.body::<crate::preferences::ViewingSettings>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -187,7 +168,6 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespon
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })
-        .unwrap_or_else(|response| response)
 }
 
 #[derive(Deserialize)]
@@ -196,19 +176,13 @@ struct BrowsingBody {
     route: String,
 }
 
-fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let scope = match services.session.scope() {
-        Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
-    };
+fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let scope = session_scope(services)?;
     let key = scope.account();
     if request.is("GET") {
-        return ApiResponse::ok(json!(services.accounts.browsing(key)));
+        return Ok(ApiResponse::ok(json!(services.accounts.browsing(key))));
     }
-    let body = match request.body::<BrowsingBody>() {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+    let body = request.body::<BrowsingBody>()?;
     let (page, route) = (body.page.as_str(), body.route.as_str());
     services
         .session
@@ -218,7 +192,6 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
                 Err(error) => ApiResponse::error(400, error.to_string()),
             })
         })
-        .unwrap_or_else(|response| response)
 }
 
 #[cfg(test)]

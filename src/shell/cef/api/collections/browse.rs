@@ -4,28 +4,22 @@ use crate::collections::matching::{OwnershipPolicy, classify, local_item_map};
 use crate::collections::snapshots::SnapshotRepository;
 use crate::collections::{ClassifiedTitle, compare_titles};
 
-pub(super) fn redirect_state(services: &Arc<Services>) -> ApiResponse {
+pub(super) fn redirect_state(services: &Arc<Services>) -> Handled {
     super::profiles::settings(services, false)
 }
 
-pub(super) fn mine(services: &Arc<Services>) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn mine(services: &Arc<Services>) -> Handled {
+    let account = active_account(services)?;
     let mut profiles = services.collections.account(&account).profiles;
     profiles.sort_by(|left, right| compare_titles(&left.title, &right.title));
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "profiles": profiles,
         "errors": services.collections.profile_errors(&account),
-    }))
+    })))
 }
 
-pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> Handled {
+    let account = active_account(services)?;
     let Some(profile) = services
         .collections
         .account(&account)
@@ -33,7 +27,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         .into_iter()
         .find(|profile| profile.id == profile_id)
     else {
-        return ApiResponse::error(404, "that collection does not exist");
+        return Err(ApiResponse::error(404, "that collection does not exist"));
     };
     let repository = SnapshotRepository::new(&services.library);
     let refresh = repository
@@ -43,7 +37,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
             let unavailable = profile.validate().is_err() || refresh.latest_failure.is_some();
-            return ApiResponse::ok(json!({
+            return Ok(ApiResponse::ok(json!({
                 "profile": profile,
                 "status": if unavailable { "resultsUnavailable" } else { "updating" },
                 "owned": [],
@@ -51,9 +45,9 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
                 "items": [],
                 "libraryItems": [],
                 "refresh": refresh,
-            }));
+            })));
         }
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let mut classified = match classify(
         &services.library,
@@ -65,7 +59,7 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         },
     ) {
         Ok(classified) => classified,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     classified
         .owned
@@ -78,14 +72,14 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         .sort_by(|left, right| compare_titles(&left.title, &right.title));
     let library_items = match primary_library_items(services, &classified.owned) {
         Ok(items) => items,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let overdue = crate::collections::scheduler::is_due(
         refresh.last_success,
         profile.cadence,
         crate::library::now_unix(),
     );
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "profile": profile,
         "status": "ready",
         "owned": classified.owned,
@@ -95,19 +89,16 @@ pub(super) fn profile_detail(services: &Arc<Services>, profile_id: &str) -> ApiR
         "ownershipAvailable": classified.ownership_available,
         "refresh": refresh,
         "overdue": overdue,
-    }))
+    })))
 }
 
-pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let account = active_account(services)?;
     let ownership_available = crate::library::sync::ownership_available(&services.library);
     let repository = SnapshotRepository::new(&services.library);
     let refresh = match repository.franchise_refresh_state(&account) {
         Ok(refresh) => refresh,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     if ownership_available && !refresh.initialized {
         crate::collections::scheduler::request_run(services.clone());
@@ -121,7 +112,7 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
     };
     let snapshots = match repository.franchises(&account) {
         Ok(snapshots) => snapshots,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     if !ownership_available {
         let mut snapshots = snapshots;
@@ -143,10 +134,10 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
                 })
             })
             .collect::<Vec<_>>();
-        return ApiResponse::ok(json!({
+        return Ok(ApiResponse::ok(json!({
             "franchises": franchises,
             "status": status,
-        }));
+        })));
     }
     let provider_items = snapshots
         .iter()
@@ -154,7 +145,7 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
         .collect::<Vec<_>>();
     let local = match local_item_map(&services.library, &provider_items) {
         Ok(local) => local,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let date = request
         .param("localDate")
@@ -171,7 +162,7 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
         }
         franchises.retain(|franchise| franchise.owned.len() >= 2);
     }
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "status": status,
         "franchises": franchises.into_iter().map(|franchise| json!({
             "collectionId": franchise.collection_id,
@@ -182,27 +173,29 @@ pub(super) fn franchises(services: &Arc<Services>, request: &ApiRequest) -> ApiR
             "missingCount": franchise.missing.len(),
             "ownershipAvailable": true,
         })).collect::<Vec<_>>()
-    }))
+    })))
 }
 
 pub(super) fn franchise_detail(
     services: &Arc<Services>,
     collection_id: &str,
     request: &ApiRequest,
-) -> ApiResponse {
+) -> Handled {
     let id = match collection_id.parse::<u64>().ok().filter(|id| *id > 0) {
         Some(id) => id,
-        None => return ApiResponse::error(400, "that is not a TMDB collection id"),
+        None => return Err(ApiResponse::error(400, "that is not a TMDB collection id")),
     };
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+    let account = active_account(services)?;
     let repository = SnapshotRepository::new(&services.library);
     let snapshot = match repository.franchise(&account, id) {
         Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return ApiResponse::error(404, "that movie franchise does not exist"),
-        Err(error) => return storage_failure(&error),
+        Ok(None) => {
+            return Err(ApiResponse::error(
+                404,
+                "that movie franchise does not exist",
+            ));
+        }
+        Err(error) => return Err(storage_failure(&error)),
     };
     let ownership_available = crate::library::sync::ownership_available(&services.library);
     if !ownership_available {
@@ -212,7 +205,7 @@ pub(super) fn franchise_detail(
         if services.session.user_restricted() {
             items.clear();
         }
-        return ApiResponse::ok(json!({
+        return Ok(ApiResponse::ok(json!({
             "collectionId": snapshot.collection_id,
             "name": snapshot.name,
             "posterPath": snapshot.poster_path,
@@ -222,11 +215,11 @@ pub(super) fn franchise_detail(
             "items": items,
             "libraryItems": [],
             "ownershipAvailable": false,
-        }));
+        })));
     }
     let local = match local_item_map(&services.library, &snapshot.items) {
         Ok(local) => local,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     let date = request
         .param("localDate")
@@ -243,19 +236,25 @@ pub(super) fn franchise_detail(
         &date,
     )
     .pop() else {
-        return ApiResponse::error(404, "that movie franchise is not visible");
+        return Err(ApiResponse::error(
+            404,
+            "that movie franchise is not visible",
+        ));
     };
     if services.session.user_restricted() {
         franchise.missing.clear();
         if franchise.owned.len() < 2 {
-            return ApiResponse::error(404, "that movie franchise is not visible");
+            return Err(ApiResponse::error(
+                404,
+                "that movie franchise is not visible",
+            ));
         }
     }
     let library_items = match primary_library_items(services, &franchise.owned) {
         Ok(items) => items,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "collectionId": franchise.collection_id,
         "name": franchise.name,
         "posterPath": franchise.poster_path,
@@ -265,7 +264,7 @@ pub(super) fn franchise_detail(
         "items": [],
         "libraryItems": library_items,
         "ownershipAvailable": true,
-    }))
+    })))
 }
 
 fn primary_library_items(
@@ -280,15 +279,12 @@ fn primary_library_items(
     services.library.items_by_ids(&ids)
 }
 
-pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> ApiResponse {
+pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> Handled {
     let tmdb_id = match tmdb_id.parse::<u64>().ok().filter(|id| *id > 0) {
         Some(id) => id,
-        None => return ApiResponse::error(400, "that is not a TMDB movie id"),
+        None => return Err(ApiResponse::error(400, "that is not a TMDB movie id")),
     };
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+    let account = active_account(services)?;
     let repository = SnapshotRepository::new(&services.library);
     let collection = repository
         .franchises(&account)
@@ -300,35 +296,43 @@ pub(super) fn movie_franchise(services: &Arc<Services>, tmdb_id: &str) -> ApiRes
                 .iter()
                 .any(|item| item.identity.tmdb_id == tmdb_id)
         });
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "tmdbId": tmdb_id,
         "collection": collection.map(|item| json!({
             "id": item.collection_id,
             "name": item.name,
         })),
-    }))
+    })))
 }
 
-pub(super) fn title(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> ApiResponse {
-    let account = match active_account(services) {
-        Ok(account) => account,
-        Err(response) => return response,
-    };
+pub(super) fn title(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> Handled {
+    let account = active_account(services)?;
     if services.session.user_restricted() {
-        return ApiResponse::error(404, "that collection title is not available");
+        return Err(ApiResponse::error(
+            404,
+            "that collection title is not available",
+        ));
     }
     let media_type = match media_type {
         "movie" => crate::collections::MediaType::Movie,
         "series" | "tv" => crate::collections::MediaType::Series,
-        _ => return ApiResponse::error(400, "that is not a collection media type"),
+        _ => {
+            return Err(ApiResponse::error(
+                400,
+                "that is not a collection media type",
+            ));
+        }
     };
     let tmdb_id = match tmdb_id.parse::<u64>().ok().filter(|id| *id > 0) {
         Some(id) => id,
-        None => return ApiResponse::error(400, "that is not a TMDB title id"),
+        None => return Err(ApiResponse::error(400, "that is not a TMDB title id")),
     };
     match SnapshotRepository::new(&services.library).title(&account, media_type, tmdb_id) {
-        Ok(Some(item)) => ApiResponse::ok(json!({ "item": item })),
-        Ok(None) => ApiResponse::error(404, "that collection title is not available"),
-        Err(error) => storage_failure(&error),
+        Ok(Some(item)) => Ok(ApiResponse::ok(json!({ "item": item }))),
+        Ok(None) => Err(ApiResponse::error(
+            404,
+            "that collection title is not available",
+        )),
+        Err(error) => Err(storage_failure(&error)),
     }
 }

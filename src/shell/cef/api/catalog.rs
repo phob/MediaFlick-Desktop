@@ -7,7 +7,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["calendar"] if request.is("GET") => calendar(services, request),
         ["settings", "home"] if request.is("GET") => home_settings(services),
@@ -16,10 +16,10 @@ pub(super) fn route(
         ["home"] if request.is("GET") => home(services),
         ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
-        ["genres"] if request.is("GET") => match services.library.genres() {
+        ["genres"] if request.is("GET") => Ok(match services.library.genres() {
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
-        },
+        }),
         ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "synopsis"] if request.is("GET") => {
@@ -32,26 +32,23 @@ pub(super) fn route(
     Some(response)
 }
 
-fn calendar(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn calendar(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let Some(start) = request.param("start") else {
-        return ApiResponse::error(400, "calendar start is required");
+        return Err(ApiResponse::error(400, "calendar start is required"));
     };
     let Some(end) = request.param("end") else {
-        return ApiResponse::error(400, "calendar end is required");
+        return Err(ApiResponse::error(400, "calendar end is required"));
     };
     if !is_iso_date(&start) || !is_iso_date(&end) || end < start {
-        return ApiResponse::error(
+        return Err(ApiResponse::error(
             400,
             "calendar dates must be YYYY-MM-DD with end after start",
-        );
+        ));
     }
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     match services.companion.calendar(&start, &end) {
-        Ok(value) => ApiResponse::ok(value),
-        Err(error) => scoped_failure(services, &scope, &error),
+        Ok(value) => Ok(ApiResponse::ok(value)),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -228,25 +225,16 @@ fn home_settings_response(home: &ResolvedHome) -> ApiResponse {
     }))
 }
 
-fn home_settings(services: &Arc<Services>) -> ApiResponse {
-    match resolved_home(services) {
-        Ok(home) => home_settings_response(&home),
-        Err(response) => response,
-    }
+fn home_settings(services: &Arc<Services>) -> Handled {
+    Ok(home_settings_response(&resolved_home(services)?))
 }
 
-fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let requested = match request.body::<HomeSettings>() {
-        Ok(settings) => settings,
-        Err(response) => return response,
-    };
+fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let requested = request.body::<HomeSettings>()?;
     if let Err(error) = requested.validate() {
-        return ApiResponse::error(400, error.to_string());
+        return Err(ApiResponse::error(400, error.to_string()));
     }
-    let current = match resolved_home(services) {
-        Ok(home) => home,
-        Err(response) => return response,
-    };
+    let current = resolved_home(services)?;
     let requested_ids = requested
         .elements
         .iter()
@@ -259,12 +247,12 @@ fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRes
         .map(|element| &element.element)
         .collect::<HashSet<_>>();
     if requested_ids != current_ids || requested.elements.len() != current.settings.elements.len() {
-        return ApiResponse::error(409, "Home options changed while the page was open");
+        return Err(ApiResponse::error(
+            409,
+            "Home options changed while the page was open",
+        ));
     }
-    let scope = match services.session.scope() {
-        Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
-    };
+    let scope = session_scope(services)?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
@@ -274,21 +262,12 @@ fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRes
                 .map_err(|error| {
                     ApiResponse::error(500, format!("could not save Home settings: {error}"))
                 })
-        })
-        .map_or_else(
-            |response| response,
-            |_| match resolved_home(services) {
-                Ok(home) => home_settings_response(&home),
-                Err(response) => response,
-            },
-        )
+        })?;
+    Ok(home_settings_response(&resolved_home(services)?))
 }
 
-fn home(services: &Arc<Services>) -> ApiResponse {
-    let home = match resolved_home(services) {
-        Ok(home) => home,
-        Err(response) => return response,
-    };
+fn home(services: &Arc<Services>) -> Handled {
+    let home = resolved_home(services)?;
     let watching_enabled = element_enabled(&home.settings, HomeBuiltIn::Watching);
     let continue_watching = if watching_enabled && home.settings.watching.continue_watching {
         services
@@ -334,11 +313,11 @@ fn home(services: &Arc<Services>) -> ApiResponse {
             rows.push(row);
         }
     }
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "configuration": settings_view(&home, &home.settings),
         "continueWatching": continue_watching,
         "rows": rows,
-    }))
+    })))
 }
 
 /// Watching and Upcoming are not generic shelves; Home assembles them separately.
@@ -492,13 +471,12 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
 
 /// Enriches cached Continue Watching with Jellyfin's server-owned Next Up
 /// decisions without holding the rest of Home behind a network request.
-fn home_resume(services: &Arc<Services>) -> ApiResponse {
-    let home = match resolved_home(services) {
-        Ok(home) => home,
-        Err(response) => return response,
-    };
+fn home_resume(services: &Arc<Services>) -> Handled {
+    let home = resolved_home(services)?;
     if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
-        return ApiResponse::ok(json!({ "continueWatching": [], "nextUp": [] }));
+        return Ok(ApiResponse::ok(
+            json!({ "continueWatching": [], "nextUp": [] }),
+        ));
     }
     let resume = if home.settings.watching.continue_watching {
         services
@@ -528,10 +506,10 @@ fn home_resume(services: &Arc<Services>) -> ApiResponse {
     } else {
         Vec::new()
     };
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "continueWatching": resume,
         "nextUp": deduplicate_next_up(&resume, next_up),
-    }))
+    })))
 }
 
 fn deduplicate_next_up(resume: &[Value], next_up: Vec<Value>) -> Vec<Value> {
@@ -568,18 +546,17 @@ fn latest_home_items(library: &Library, kind: &str) -> Vec<Value> {
     )
 }
 
-fn billboard(services: &Arc<Services>) -> ApiResponse {
-    match resolved_home(services) {
-        Ok(home) if !home.settings.billboard => ApiResponse::ok(json!({ "items": [] })),
-        Err(response) => response,
-        Ok(_) => match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
-            Ok(items) => ApiResponse::ok(json!({ "items": items })),
-            Err(error) => storage_failure(&error),
-        },
+fn billboard(services: &Arc<Services>) -> Handled {
+    if !resolved_home(services)?.settings.billboard {
+        return Ok(ApiResponse::ok(json!({ "items": [] })));
+    }
+    match services.library.random_billboard_titles(BILLBOARD_LIMIT) {
+        Ok(items) => Ok(ApiResponse::ok(json!({ "items": items }))),
+        Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     if let Some(person_id) = request.param("personId") {
         return query_person_items(services, &person_id, request);
     }
@@ -629,16 +606,14 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             .unwrap_or(60),
     };
     match services.library.query(&query) {
-        Ok(page) => ApiResponse::ok(json!({ "items": page.items, "total": page.total })),
-        Err(error) => storage_failure(&error),
+        Ok(page) => Ok(ApiResponse::ok(
+            json!({ "items": page.items, "total": page.total }),
+        )),
+        Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn query_person_items(
-    services: &Arc<Services>,
-    person_id: &str,
-    request: &ApiRequest,
-) -> ApiResponse {
+fn query_person_items(services: &Arc<Services>, person_id: &str, request: &ApiRequest) -> Handled {
     let offset = request
         .param("offset")
         .and_then(|value| value.parse().ok())
@@ -647,17 +622,14 @@ fn query_person_items(
         .param("limit")
         .and_then(|value| value.parse().ok())
         .unwrap_or(60);
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_person_items(client, user_id, person_id, offset, limit) {
-        Ok(response) => ApiResponse::ok(json!({
+        Ok(response) => Ok(ApiResponse::ok(json!({
             "items": response.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
             "total": response.total_record_count,
-        })),
-        Err(error) => scoped_failure(services, &scope, &error),
+        }))),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -677,17 +649,14 @@ fn person_identity(dto: &BaseItemDto, fallback_tmdb_id: Option<i64>) -> Value {
 /// Bridges Jellyfin and TMDB person namespaces without ever treating a fuzzy
 /// name match as identity. A missing provider id may use one unambiguous exact
 /// name; a known conflicting id is always excluded.
-fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let jellyfin_id = request.param("jellyfinId");
     let tmdb_id = request
         .param("tmdbId")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value > 0);
     let name = request.param("name").unwrap_or_default();
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
 
     if let Some(jellyfin_id) = jellyfin_id {
@@ -698,25 +667,31 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
                     .and_then(|id| id.parse::<i64>().ok())
                     .filter(|id| *id > 0);
                 if tmdb_id.is_some() && provider_id.is_some() && tmdb_id != provider_id {
-                    return ApiResponse::error(
+                    return Err(ApiResponse::error(
                         409,
                         "the Jellyfin and TMDB person ids do not match",
-                    );
+                    ));
                 }
-                ApiResponse::ok(json!({
+                Ok(ApiResponse::ok(json!({
                     "person": person_identity(&person, tmdb_id),
                     "candidates": [],
                     "ambiguous": false,
-                }))
+                })))
             }
-            Ok(Some(_)) => ApiResponse::error(409, "that Jellyfin id is not a person"),
-            Ok(None) => ApiResponse::error(404, "the server has no person with that id"),
-            Err(error) => scoped_failure(services, &scope, &error),
+            Ok(Some(_)) => Err(ApiResponse::error(409, "that Jellyfin id is not a person")),
+            Ok(None) => Err(ApiResponse::error(
+                404,
+                "the server has no person with that id",
+            )),
+            Err(error) => Err(scoped_failure(services, &scope, &error)),
         };
     }
 
     if name.trim().is_empty() {
-        return ApiResponse::error(400, "a person name is required to resolve that deep link");
+        return Err(ApiResponse::error(
+            400,
+            "a person name is required to resolve that deep link",
+        ));
     }
     match items::fetch_people(client, user_id, &name) {
         Ok(response) => {
@@ -741,50 +716,50 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
                 })
                 .collect::<Vec<_>>();
             if exact.len() == 1 {
-                return ApiResponse::ok(json!({
+                return Ok(ApiResponse::ok(json!({
                     "person": person_identity(&exact[0], tmdb_id),
                     "candidates": [],
                     "ambiguous": false,
-                }));
+                })));
             }
             let candidates = exact
                 .iter()
                 .map(|person| person_identity(person, tmdb_id))
                 .collect::<Vec<_>>();
-            ApiResponse::ok(json!({
+            Ok(ApiResponse::ok(json!({
                 "person": Value::Null,
                 "ambiguous": candidates.len() > 1,
                 "candidates": candidates,
-            }))
+            })))
         }
-        Err(error) => scoped_failure(services, &scope, &error),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn item_detail(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     match services.library.item(item_id) {
         // The thin catalog row answers instantly; prose, cast, and critic
         // scores arrive separately through the live `about` endpoint.
-        Ok(Some(cached)) => ApiResponse::ok(cached),
+        Ok(Some(cached)) => Ok(ApiResponse::ok(cached)),
         // A deep link can outrun the catalog; fetch that one item and cache it.
         Ok(None) => fetch_and_cache_item(services, item_id),
-        Err(error) => storage_failure(&error),
+        Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn item_synopsis(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn item_synopsis(services: &Arc<Services>, item_id: &str) -> Handled {
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_synopsis(client, user_id, item_id) {
-        Ok(Some(dto)) => ApiResponse::ok(json!({ "overview": dto.overview })),
+        Ok(Some(dto)) => Ok(ApiResponse::ok(json!({ "overview": dto.overview }))),
         Ok(None) => {
             forget_item(services, &scope, item_id);
-            ApiResponse::error(404, "the server has no item with that id")
+            Err(ApiResponse::error(
+                404,
+                "the server has no item with that id",
+            ))
         }
-        Err(error) => scoped_failure(services, &scope, &error),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
@@ -851,11 +826,8 @@ fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
 /// Rich metadata for one item, fetched live from Jellyfin and never persisted.
 /// The detail page draws the cached thin row first and fills this in when it
 /// lands; when the server is unreachable the UI keeps its plain error state.
-fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
+    let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     match items::fetch_item_about(client, user_id, item_id) {
         Ok(Some(dto)) => {
@@ -865,27 +837,27 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                 .iter()
                 .filter_map(|studio| studio.name.clone())
                 .collect::<Vec<_>>();
-            ApiResponse::ok(json!({
+            Ok(ApiResponse::ok(json!({
                 "overview": dto.overview,
                 "criticRating": dto.critic_rating,
                 "people": people,
                 "tags": dto.tags,
                 "studios": studios,
-            }))
+            })))
         }
         Ok(None) => {
             forget_item(services, &scope, item_id);
-            ApiResponse::error(404, "the server has no item with that id")
+            Err(ApiResponse::error(
+                404,
+                "the server has no item with that id",
+            ))
         }
-        Err(error) => scoped_failure(services, &scope, &error),
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
     }
 }
 
-fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
+    let scope = session_scope(services)?;
     match items::fetch_item(scope.client(), scope.user_id(), item_id) {
         Ok(Some(dto)) => {
             // The row belongs to the account that fetched it; an account switch
@@ -897,24 +869,25 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
                     let _ = services.library.ingest_page(std::slice::from_ref(&dto));
                     Ok(())
                 });
-            if let Err(response) = cached {
-                return response;
-            }
+            cached?;
             match services.library.item(item_id) {
-                Ok(Some(item)) => ApiResponse::ok(item),
-                Ok(None) => ApiResponse::ok(summary_from_dto(&dto)),
-                Err(error) => storage_failure(&error),
+                Ok(Some(item)) => Ok(ApiResponse::ok(item)),
+                Ok(None) => Ok(ApiResponse::ok(summary_from_dto(&dto))),
+                Err(error) => Err(storage_failure(&error)),
             }
         }
         Ok(None) => {
             forget_item(services, &scope, item_id);
-            ApiResponse::error(404, "the server has no item with that id")
+            Err(ApiResponse::error(
+                404,
+                "the server has no item with that id",
+            ))
         }
         Err(error) => {
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_item(services, &scope, item_id);
             }
-            scoped_failure(services, &scope, &error)
+            Err(scoped_failure(services, &scope, &error))
         }
     }
 }
@@ -941,7 +914,7 @@ fn claim_child_reconcile(parent_id: &str) -> bool {
     true
 }
 
-fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
+fn children(services: &Arc<Services>, item_id: &str) -> Handled {
     // Only containers have a child list worth asking the server about; a movie
     // detail page asks for children too and must not pay for a round trip.
     let container = matches!(
@@ -950,10 +923,10 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     );
     let cached = match services.library.children(item_id) {
         Ok(children) => children,
-        Err(error) => return storage_failure(&error),
+        Err(error) => return Err(storage_failure(&error)),
     };
     if !container {
-        return ApiResponse::ok(json!({ "items": cached }));
+        return Ok(ApiResponse::ok(json!({ "items": cached })));
     }
     // The synced catalog already holds every season and episode, so a cached
     // list answers at once and the reconcile runs behind it; its change
@@ -972,7 +945,7 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                 tracing::warn!(target: "app.api", "could not start a child reconcile: {error}");
             }
         }
-        return ApiResponse::ok(json!({ "items": cached }));
+        return Ok(ApiResponse::ok(json!({ "items": cached })));
     }
     claim_child_reconcile(item_id);
     let overviews = reconcile_children(services, item_id);
@@ -992,9 +965,9 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                     }
                 }
             }
-            ApiResponse::ok(json!({ "items": children }))
+            Ok(ApiResponse::ok(json!({ "items": children })))
         }
-        Err(error) => storage_failure(&error),
+        Err(error) => Err(storage_failure(&error)),
     }
 }
 

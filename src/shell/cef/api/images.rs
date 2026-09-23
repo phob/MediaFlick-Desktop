@@ -4,7 +4,7 @@ pub(super) fn route(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["image", id, image_type] if request.is("GET") => image(
             services,
@@ -29,7 +29,7 @@ fn image(
     item_id: &str,
     image_type: &str,
     request: &ApiRequest,
-) -> ApiResponse {
+) -> Handled {
     let tag = request.param("tag").unwrap_or_default();
     let max_width = request
         .param("maxWidth")
@@ -42,13 +42,14 @@ fn image(
     if let Ok(bytes) = std::fs::read(&cache_path)
         && !bytes.is_empty()
     {
-        return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
+        return Ok(ApiResponse::bytes(
+            mime_for_image(&bytes),
+            bytes,
+            IMMUTABLE_CACHE,
+        ));
     }
 
-    let scope = match session_scope(services) {
-        Ok(scope) => scope,
-        Err(response) => return response,
-    };
+    let scope = session_scope(services)?;
     let client = scope.client();
     let mut query = Vec::new();
     if !tag.is_empty() {
@@ -62,7 +63,7 @@ fn image(
     match client.get_bytes(&items::image_path(item_id, image_type), &query) {
         Ok((bytes, content_type)) => {
             store_image(&cache_path, &bytes);
-            ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE)
+            Ok(ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
         Err(error) => {
             // A missing image is the first sign of a replaced file, because the
@@ -70,7 +71,7 @@ fn image(
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_if_server_disowns(services, &scope, item_id);
             }
-            scoped_failure(services, &scope, &error)
+            Err(scoped_failure(services, &scope, &error))
         }
     }
 }
