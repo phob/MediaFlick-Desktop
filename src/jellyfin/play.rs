@@ -10,7 +10,7 @@ use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url};
 use crate::library::model::ResolvedPlaybackPreference;
 use crate::library::{Library, resolve_playback_preference};
-use crate::playback::{PlaybackContext, PlaybackRequest, seconds_to_ticks};
+use crate::playback::{PlaybackRequest, seconds_to_ticks};
 use crate::preferences::StreamingQuality;
 
 use super::api::items::{self, PlaybackInfoRequest};
@@ -110,27 +110,7 @@ pub fn start(
         settings.default_fullscreen,
         prepared.request.clone(),
     );
-    playback.update_context(context_from(&prepared.request));
     Ok(prepared)
-}
-
-/// Feeds the player adapters the same identity the launch carries so their
-/// pending playback is complete before the file loads.
-fn context_from(request: &PlaybackRequest) -> PlaybackContext {
-    PlaybackContext {
-        media_url: Some(request.media_url.clone()),
-        item_id: request.item_id.clone(),
-        media_source_id: request.media_source_id.clone(),
-        play_session_id: request.play_session_id.clone(),
-        device_id: request.device_id.clone(),
-        start_time_ticks: request.start_time_ticks,
-        runtime_ticks: request.runtime_ticks,
-        title: request.title.clone(),
-        audio_stream_index: request.audio_stream_index,
-        subtitle_stream_index: request.subtitle_stream_index,
-        play_method: request.play_method.clone(),
-        ..Default::default()
-    }
 }
 
 pub fn prepare(

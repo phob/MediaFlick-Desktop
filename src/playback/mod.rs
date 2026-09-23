@@ -9,10 +9,10 @@ pub mod segments;
 
 pub use coordinator::PlaybackCoordinator;
 pub use model::{
-    HttpHeader, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
-    PlayerChapter, PlayerCommand, PlayerSnapshot, PlayerTrack, PlayerTrackKind, ReportingState,
-    StopReason, TICKS_PER_MILLISECOND, TICKS_PER_SECOND, ToneMapping, VideoAspect, VideoFit,
-    non_empty, seconds_to_ticks, ticks_to_milliseconds,
+    HttpHeader, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerChapter, PlayerCommand,
+    PlayerSnapshot, PlayerTrack, PlayerTrackKind, ReportingState, StopReason,
+    TICKS_PER_MILLISECOND, TICKS_PER_SECOND, ToneMapping, VideoAspect, VideoFit, non_empty,
+    seconds_to_ticks, ticks_to_milliseconds,
 };
 
 use crate::preferences::{FullscreenBehavior, PlayerPreferences};
@@ -100,7 +100,6 @@ pub trait PlayerBackend: Send + Sync {
     /// Replaces the player preferences the adapter applies itself, including on
     /// a running player where the backend supports it.
     fn set_preferences(&self, preferences: PlayerPreferences);
-    fn update_playback_context(&self, context: PlaybackContext);
     fn snapshot(&self) -> PlayerSnapshot;
     fn shutdown(&self);
 }
