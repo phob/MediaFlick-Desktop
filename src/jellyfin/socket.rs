@@ -21,6 +21,7 @@ use tungstenite::http::header::AUTHORIZATION;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
+use crate::app::services::ShellBridge;
 use crate::app::urls::join_url;
 use crate::library::sync::SyncHandle;
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
@@ -29,7 +30,7 @@ use super::api::ApiError;
 use super::api::items;
 use super::api::model::UserItemDataDto;
 use super::api::sessions;
-use super::remote;
+use super::remote::RemoteCommand;
 use super::session::{Session, SessionScope};
 
 /// How often the worker re-checks for a signed-in session while idle. Cheap —
@@ -66,22 +67,44 @@ struct Signal {
 #[derive(Clone)]
 pub struct SocketHandle {
     signal: Arc<Signal>,
+    shell: Arc<ShellBridge>,
+    remote: Arc<Mutex<Option<RemoteHandler>>>,
 }
 
+/// Carries out a remote-control command for the application.
+pub type RemoteHandler = Arc<dyn Fn(RemoteCommand) + Send + Sync>;
+
 impl SocketHandle {
-    fn new() -> Self {
+    fn new(shell: Arc<ShellBridge>) -> Self {
         Self {
             signal: Arc::new(Signal {
                 stopped: Mutex::new(false),
                 condvar: Condvar::new(),
             }),
+            shell,
+            remote: Arc::new(Mutex::new(None)),
         }
     }
 
     /// A handle with no event thread behind it, for tests.
     #[cfg(test)]
     pub fn detached() -> Self {
-        Self::new()
+        Self::new(Arc::default())
+    }
+
+    /// Registers who carries out Play, Playstate and GeneralCommand messages.
+    /// Until then they are dropped, as there is no player to drive.
+    pub fn on_remote_command(&self, handler: RemoteHandler) {
+        if let Ok(mut slot) = self.remote.lock() {
+            *slot = Some(handler);
+        }
+    }
+
+    fn remote(&self, command: RemoteCommand) {
+        let handler = self.remote.lock().ok().and_then(|slot| slot.clone());
+        if let Some(handler) = handler {
+            handler(command);
+        }
     }
 
     pub fn stop(&self) {
@@ -116,8 +139,13 @@ impl SocketHandle {
     }
 }
 
-pub fn spawn(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle) -> SocketHandle {
-    let handle = SocketHandle::new();
+pub fn spawn(
+    library: Arc<Library>,
+    session: Arc<Session>,
+    sync: SyncHandle,
+    shell: Arc<ShellBridge>,
+) -> SocketHandle {
+    let handle = SocketHandle::new(shell);
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("jellyfin-socket".to_string())
@@ -301,7 +329,8 @@ fn listen(
 
         match socket.read() {
             Ok(Message::Text(text)) => {
-                if let Some(interval) = handle_message(text.as_str(), library, session, sync, scope)
+                if let Some(interval) =
+                    handle_message(text.as_str(), library, session, sync, handle, scope)
                 {
                     keepalive_interval = interval;
                     // Answer immediately so the server's lost-connection
@@ -332,17 +361,27 @@ fn handle_message(
     library: &Library,
     session: &Session,
     sync: &SyncHandle,
+    handle: &SocketHandle,
     scope: &SessionScope,
 ) -> Option<Duration> {
+    let shell = handle.shell.as_ref();
     match parse_message(text) {
         ServerMessage::KeepAliveInterval(interval) => return Some(interval),
-        ServerMessage::UserData(records) => apply_user_data(library, session, scope, &records),
-        ServerMessage::LibraryChanged { changed, removed } => {
-            apply_library_change(library, session, sync, scope, &changed, &removed);
+        ServerMessage::UserData(records) => {
+            apply_user_data(library, session, shell, scope, &records);
         }
-        ServerMessage::Play(data) => remote::handle_play(&data, scope),
-        ServerMessage::Playstate(data) => remote::handle_playstate(&data, scope),
-        ServerMessage::GeneralCommand(data) => remote::handle_general_command(&data),
+        ServerMessage::LibraryChanged { changed, removed } => {
+            apply_library_change(library, session, sync, shell, scope, &changed, &removed);
+        }
+        ServerMessage::Play(data) => handle.remote(RemoteCommand::Play {
+            data,
+            scope: scope.clone(),
+        }),
+        ServerMessage::Playstate(data) => handle.remote(RemoteCommand::Playstate {
+            data,
+            scope: scope.clone(),
+        }),
+        ServerMessage::GeneralCommand(data) => handle.remote(RemoteCommand::General { data }),
         ServerMessage::Ignored => {}
     }
     None
@@ -472,6 +511,7 @@ fn log_stale_push() {
 fn apply_user_data(
     library: &Library,
     session: &Session,
+    shell: &ShellBridge,
     scope: &SessionScope,
     records: &[UserDataRecord],
 ) {
@@ -485,7 +525,7 @@ fn apply_user_data(
                 items = changes.item_ids.len(),
                 "applied pushed watch-state changes"
             );
-            crate::app::services::notify_library_changed(changes);
+            shell.library_changed(changes);
         }
         Ok(_) => {}
         Err(ScopedWriteError::Stale) => log_stale_push(),
@@ -503,6 +543,7 @@ fn apply_library_change(
     library: &Library,
     session: &Session,
     sync: &SyncHandle,
+    shell: &ShellBridge,
     scope: &SessionScope,
     changed: &[String],
     removed: &[String],
@@ -561,7 +602,7 @@ fn apply_library_change(
             items = batch.item_ids.len(),
             "applied a pushed library change"
         );
-        crate::app::services::notify_library_changed(batch);
+        shell.library_changed(batch);
     }
 }
 
@@ -649,9 +690,10 @@ impl Endpoint {
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, Endpoint, ServerMessage, apply_library_change, apply_user_data, parse_message,
-        spawn,
+        Duration, Endpoint, RemoteCommand, ServerMessage, SocketHandle, apply_library_change,
+        apply_user_data, handle_message, parse_message, spawn,
     };
+    use crate::app::services::ShellBridge;
     use crate::jellyfin::session::Session;
     use crate::library::sync::SyncHandle;
     use crate::library::{Library, UserDataRecord};
@@ -672,6 +714,39 @@ mod tests {
         credentials.token = Some("alice-token".to_string());
         library.save_credentials(&credentials).expect("save");
         library
+    }
+
+    /// Remote control is the application's job: the socket hands each command
+    /// to the handler registered on its handle, with the delivering session.
+    #[test]
+    fn remote_commands_reach_the_registered_handler_in_order() {
+        let library = alice_library("http://127.0.0.1:9");
+        let session = Session::restore(library.clone(), Arc::default());
+        let scope = session.scope().expect("Alice scope");
+        let handle = SocketHandle::detached();
+        let sync = SyncHandle::detached();
+        let message =
+            |kind: &str| format!(r#"{{"MessageType":"{kind}","Data":{{"Command":"x"}}}}"#);
+
+        // Without a handler the command is dropped rather than half-applied.
+        handle_message(&message("Play"), &library, &session, &sync, &handle, &scope);
+
+        let (seen_tx, seen) = mpsc::channel();
+        handle.on_remote_command(Arc::new(move |command| {
+            let _ = seen_tx.send(match command {
+                RemoteCommand::Play { scope, .. } => format!("play:{}", scope.user_id()),
+                RemoteCommand::Playstate { scope, .. } => format!("playstate:{}", scope.user_id()),
+                RemoteCommand::General { .. } => "general".to_string(),
+            });
+        }));
+        for kind in ["Play", "Playstate", "GeneralCommand"] {
+            handle_message(&message(kind), &library, &session, &sync, &handle, &scope);
+        }
+
+        assert_eq!(
+            seen.try_iter().collect::<Vec<_>>(),
+            ["play:alice", "playstate:alice", "general"]
+        );
     }
 
     /// Reads one whole HTTP request, body included, so answering and closing
@@ -761,7 +836,7 @@ mod tests {
         });
 
         let library = alice_library(&server_url);
-        let session = Arc::new(Session::restore(library.clone()));
+        let session = Arc::new(Session::restore(library.clone(), Arc::default()));
         let alice = session.scope().expect("Alice scope");
         let sync = SyncHandle::detached();
 
@@ -770,6 +845,7 @@ mod tests {
             &library,
             &session,
             &sync,
+            &ShellBridge::default(),
             &alice,
             &["alice-first".to_string()],
             &[],
@@ -784,6 +860,7 @@ mod tests {
                     &library,
                     &session,
                     &sync,
+                    &ShellBridge::default(),
                     &alice,
                     &["alice-late".to_string()],
                     &[],
@@ -820,7 +897,7 @@ mod tests {
                 serde_json::from_str(r#"{"Id":"m1","Name":"Kept","Type":"Movie"}"#).expect("dto"),
             ])
             .expect("ingest");
-        let session = Session::restore(library.clone());
+        let session = Session::restore(library.clone(), Arc::default());
         let alice = session.scope().expect("Alice scope");
         session
             .clear_local(false)
@@ -829,6 +906,7 @@ mod tests {
         apply_user_data(
             &library,
             &session,
+            &ShellBridge::default(),
             &alice,
             &[UserDataRecord {
                 jellyfin_id: "m1".to_string(),
@@ -840,6 +918,7 @@ mod tests {
             &library,
             &session,
             &SyncHandle::detached(),
+            &ShellBridge::default(),
             &alice,
             &[],
             &["m1".to_string()],
@@ -1060,9 +1139,14 @@ mod tests {
                     .expect("dto"),
             ])
             .expect("ingest");
-        let session = Arc::new(Session::restore(library.clone()));
+        let session = Arc::new(Session::restore(library.clone(), Arc::default()));
 
-        let handle = spawn(library.clone(), session, SyncHandle::detached());
+        let handle = spawn(
+            library.clone(),
+            session,
+            SyncHandle::detached(),
+            Arc::default(),
+        );
         let deadline = Instant::now() + Duration::from_secs(15);
         let played = loop {
             let item = library.item("ep1").expect("item").expect("cached");

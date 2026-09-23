@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::app::services::ShellBridge;
 use crate::jellyfin::api::ApiError;
 
 use super::{Library, LibraryChangeBatch};
@@ -202,16 +203,21 @@ pub struct SyncProgress {
     pub retry_at: Option<i64>,
 }
 
+/// Runs after a cycle that changed what the library holds.
+pub type CycleCompleted = Arc<dyn Fn() + Send + Sync>;
+
 /// Handle used by the shell to nudge or stop the sync thread.
 #[derive(Clone)]
 pub struct SyncHandle {
     signal: Arc<Signal>,
     running: Arc<AtomicBool>,
     state: Arc<Mutex<WorkerState>>,
+    shell: Arc<ShellBridge>,
+    cycle_completed: Arc<Mutex<Option<CycleCompleted>>>,
 }
 
 impl SyncHandle {
-    fn new() -> Self {
+    fn new(shell: Arc<ShellBridge>) -> Self {
         Self {
             signal: Arc::new(Signal {
                 flags: Mutex::new(Flags::default()),
@@ -219,6 +225,8 @@ impl SyncHandle {
             }),
             running: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(WorkerState::default())),
+            shell,
+            cycle_completed: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -226,7 +234,31 @@ impl SyncHandle {
     /// never run, so tests cannot start a sync against a real server.
     #[cfg(test)]
     pub fn detached() -> Self {
-        Self::new()
+        Self::new(Arc::default())
+    }
+
+    /// Registers what the application does after a cycle that changed the
+    /// library; the collections scheduler re-derives ownership from it.
+    pub fn on_cycle_completed(&self, hook: CycleCompleted) {
+        if let Ok(mut slot) = self.cycle_completed.lock() {
+            *slot = Some(hook);
+        }
+    }
+
+    pub(super) fn shell(&self) -> &ShellBridge {
+        &self.shell
+    }
+
+    pub(super) fn announce_cycle_completed(&self) {
+        self.shell.library_sync_completed();
+        let hook = self
+            .cycle_completed
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     /// Asks for a cycle as soon as possible: sign-in, the refresh button, or an
@@ -410,6 +442,8 @@ mod tests {
             }),
             running: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(WorkerState::default())),
+            shell: Arc::default(),
+            cycle_completed: Arc::new(Mutex::new(None)),
         };
 
         let filling = handle.progress(bootstrap_progress(&library));

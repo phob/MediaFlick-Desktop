@@ -43,7 +43,7 @@ pub struct Services {
     pub artwork: Arc<ArtworkStore>,
     pub pending_deletions: Arc<PendingDeletionService>,
     pub preferences: Arc<PreferencesService>,
-    pub shell: ShellBridge,
+    pub shell: Arc<ShellBridge>,
     pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
@@ -81,17 +81,15 @@ pub enum ShellRequest {
     SessionExpired,
 }
 
+/// The queue from background work to the CEF UI thread. The services that
+/// change what the UI shows hold it directly; until CEF subscribes, requests
+/// are dropped, which is safe because no page can have read the old state.
+#[derive(Default)]
 pub struct ShellBridge {
     sender: Mutex<Option<mpsc::Sender<ShellRequest>>>,
 }
 
 impl ShellBridge {
-    fn new() -> Self {
-        Self {
-            sender: Mutex::new(None),
-        }
-    }
-
     pub fn subscribe(&self) -> mpsc::Receiver<ShellRequest> {
         let (sender, receiver) = mpsc::channel();
         if let Ok(mut slot) = self.sender.lock() {
@@ -110,6 +108,41 @@ impl ShellBridge {
         sender
             .send(request)
             .map_err(|_| "the desktop shell is unavailable")
+    }
+
+    /// A committed cache batch. An empty batch has nothing to refresh.
+    pub fn library_changed(&self, changes: LibraryChangeBatch) {
+        if changes.item_ids.is_empty() {
+            return;
+        }
+        let _ = self.request(ShellRequest::LibraryChanged {
+            item_ids: changes.item_ids,
+            context_ids: changes.context_ids,
+        });
+    }
+
+    pub fn catalog_changed(&self, changes: LibraryChangeBatch) {
+        let _ = self.request(ShellRequest::CatalogChanged {
+            item_ids: changes.item_ids,
+            context_ids: changes.context_ids,
+        });
+    }
+
+    pub fn session_expired(&self) {
+        let _ = self.request(ShellRequest::SessionExpired);
+    }
+
+    pub fn collections_changed(&self) {
+        let _ = self.request(ShellRequest::CollectionsChanged);
+    }
+
+    /// Refreshes aggregate watch-state projections once after a full catalog
+    /// observation, including user data learned during a daily rebootstrap.
+    pub fn library_sync_completed(&self) {
+        let _ = self.request(ShellRequest::LibraryChanged {
+            item_ids: Vec::new(),
+            context_ids: Vec::new(),
+        });
     }
 }
 
@@ -162,7 +195,8 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         }
     };
     let restored = library.credentials().is_authenticated();
-    let session = Arc::new(Session::restore(library.clone()));
+    let shell = Arc::new(ShellBridge::default());
+    let session = Arc::new(Session::restore(library.clone(), shell.clone()));
     let account_path = accounts_file_path();
     let accounts = open_configuration(&account_path, AccountConfigurationService::open)?;
     let active_account = session.account_key();
@@ -192,24 +226,23 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     }
     let deletion_path = pending_deletions_file_path();
     let pending_deletions = open_configuration(&deletion_path, PendingDeletionService::open)?;
-    let companion = Arc::new(CompanionSession::new(session.clone(), library.clone()));
+    let companion = Arc::new(CompanionSession::new(
+        session.clone(),
+        library.clone(),
+        shell.clone(),
+    ));
     if restored {
-        // `init` holds INIT_LOCK, which the CEF UI thread waits on, so the
-        // probe must not wait on the network here; it warms the cache from its own
-        // thread and the API paths re-check lazily.
-        let companion = companion.clone();
-        let session = session.clone();
-        crate::app::threads::spawn_named("session-restore", move || {
-            session.refresh_user_policy();
-            if let Err(error) = companion.probe(false) {
-                tracing::debug!(target: "companion", "initial companion probe failed: {error}");
-            }
-        });
+        warm_restored_session(session.clone(), companion.clone());
     }
     let ratings = Arc::new(RatingsService::new(library.clone(), companion.clone()));
     let letterboxd = Arc::new(ReviewService::default());
-    let sync = sync::spawn(library.clone(), session.clone());
-    let socket = socket::spawn(library.clone(), session.clone(), sync.clone());
+    let sync = sync::spawn(library.clone(), session.clone(), shell.clone());
+    let socket = socket::spawn(
+        library.clone(),
+        session.clone(),
+        sync.clone(),
+        shell.clone(),
+    );
     tracing::info!(
         target: "jellyfin.session",
         restored,
@@ -229,15 +262,46 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         artwork,
         pending_deletions,
         preferences,
-        shell: ShellBridge::new(),
+        shell,
         home_watched: Mutex::new(HashMap::new()),
         playback: RwLock::new(None),
     });
+    connect_app_hooks(&services);
     resume_pending_deletions(&services);
     let _ = SERVICES.set(services.clone());
     crate::collections::scheduler::start(services.clone());
     tracing::info!(target: "library.db", path = %path.display(), "library database ready");
     Some(services)
+}
+
+/// `init` holds INIT_LOCK, which the CEF UI thread waits on, so the probe must
+/// not wait on the network there; it warms the cache from its own thread and
+/// the API paths re-check lazily.
+fn warm_restored_session(session: Arc<Session>, companion: Arc<CompanionSession>) {
+    crate::app::threads::spawn_named("session-restore", move || {
+        session.refresh_user_policy();
+        if let Err(error) = companion.probe(false) {
+            tracing::debug!(target: "companion", "initial companion probe failed: {error}");
+        }
+    });
+}
+
+/// The lower layers report work that only the application can act on through
+/// hooks registered here, rather than looking the services up themselves. The
+/// hooks hold weak references, so they never keep the services alive.
+fn connect_app_hooks(services: &Arc<Services>) {
+    let weak = Arc::downgrade(services);
+    services.sync.on_cycle_completed(Arc::new(move || {
+        if let Some(services) = weak.upgrade() {
+            crate::collections::scheduler::request_after_library_sync(services);
+        }
+    }));
+    let weak = Arc::downgrade(services);
+    services.socket.on_remote_command(Arc::new(move |command| {
+        if let Some(services) = weak.upgrade() {
+            crate::jellyfin::remote::handle(&services, command);
+        }
+    }));
 }
 
 fn resume_pending_deletions(services: &Arc<Services>) {
@@ -387,54 +451,6 @@ pub fn services() -> Option<Arc<Services>> {
     SERVICES.get().cloned()
 }
 
-/// Best-effort UI notification for a committed cache batch. If CEF has not
-/// subscribed yet, no query could have observed the old row through that
-/// browser, so dropping the event is safe.
-pub fn notify_library_changed(changes: LibraryChangeBatch) {
-    if changes.item_ids.is_empty() {
-        return;
-    }
-    if let Some(services) = services() {
-        let _ = services.shell.request(ShellRequest::LibraryChanged {
-            item_ids: changes.item_ids,
-            context_ids: changes.context_ids,
-        });
-    }
-}
-
-pub fn notify_catalog_changed(changes: LibraryChangeBatch) {
-    if let Some(services) = services() {
-        let _ = services.shell.request(ShellRequest::CatalogChanged {
-            item_ids: changes.item_ids,
-            context_ids: changes.context_ids,
-        });
-    }
-}
-
-pub fn notify_session_expired() {
-    if let Some(services) = services() {
-        let _ = services.shell.request(ShellRequest::SessionExpired);
-    }
-}
-
-pub fn notify_collections_changed() {
-    if let Some(services) = services() {
-        let _ = services.shell.request(ShellRequest::CollectionsChanged);
-    }
-}
-
-pub fn notify_library_sync_completed() {
-    if let Some(services) = services() {
-        // Refresh aggregate watch-state projections once after the full catalog
-        // observation, including user data learned during a daily rebootstrap.
-        let _ = services.shell.request(ShellRequest::LibraryChanged {
-            item_ids: Vec::new(),
-            context_ids: Vec::new(),
-        });
-        crate::collections::scheduler::request_after_library_sync(services);
-    }
-}
-
 /// Why [`init`] failed, for the error the UI shows instead of a blank window.
 pub fn init_error() -> Option<&'static str> {
     INIT_ERROR.get().map(String::as_str)
@@ -476,7 +492,8 @@ pub(crate) mod test_support {
                 credentials.token = Some("token".to_string());
                 library.save_credentials(&credentials).expect("credentials");
             }
-            let session = Arc::new(Session::restore(library.clone()));
+            let shell = Arc::new(ShellBridge::default());
+            let session = Arc::new(Session::restore(library.clone(), shell.clone()));
             let accounts = Arc::new(
                 AccountConfigurationService::open(directory.join("accounts.json"))
                     .expect("accounts"),
@@ -486,7 +503,11 @@ pub(crate) mod test_support {
                 accounts.clone(),
                 session.account_key(),
             ));
-            let companion = Arc::new(CompanionSession::new(session.clone(), library.clone()));
+            let companion = Arc::new(CompanionSession::new(
+                session.clone(),
+                library.clone(),
+                shell.clone(),
+            ));
             let services = Services {
                 ratings: Arc::new(RatingsService::new(library.clone(), companion.clone())),
                 letterboxd: Arc::new(ReviewService::default()),
@@ -507,7 +528,7 @@ pub(crate) mod test_support {
                         .expect("pending deletions"),
                 ),
                 preferences,
-                shell: ShellBridge::new(),
+                shell,
                 home_watched: Mutex::new(HashMap::new()),
                 playback: RwLock::new(None),
                 library,

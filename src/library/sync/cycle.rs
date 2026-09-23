@@ -105,8 +105,11 @@ pub(super) fn run_cycle_inner(
         // Bootstrap/incremental pages commit independently. A later network
         // failure must not strand already-visible SQLite changes without the
         // same batched UI notification a fully successful cycle receives.
-        if !report.changes.is_empty() && session.scope_is_current(&scope) {
-            crate::app::services::notify_library_changed(report.changes.clone());
+        if !report.changes.is_empty()
+            && session.scope_is_current(&scope)
+            && let Some(control) = control
+        {
+            control.shell().library_changed(report.changes.clone());
         }
     }
     result?;
@@ -123,14 +126,16 @@ pub(super) fn run_cycle_inner(
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })?;
-    if recovering_ownership {
-        crate::app::services::notify_collections_changed();
-    }
-    if !report.changes.is_empty() {
-        crate::app::services::notify_library_changed(report.changes.clone());
-    }
-    if initial_catalog || report.changed() || recovering_ownership {
-        crate::app::services::notify_library_sync_completed();
+    if let Some(control) = control {
+        if recovering_ownership {
+            control.shell().collections_changed();
+        }
+        if !report.changes.is_empty() {
+            control.shell().library_changed(report.changes.clone());
+        }
+        if initial_catalog || report.changed() || recovering_ownership {
+            control.announce_cycle_completed();
+        }
     }
     if (initial_catalog || report.changed())
         && let Err(error) = library.optimize()
@@ -204,8 +209,10 @@ fn bootstrap(
             );
         }
         // Bootstrap commits invalidate local projections without refetching live Next Up.
-        if !page_changes.is_empty() {
-            crate::app::services::notify_catalog_changed(page_changes);
+        if !page_changes.is_empty()
+            && let Some(control) = control
+        {
+            control.shell().catalog_changed(page_changes);
         }
         tracing::debug!(
             target: "library.sync",
@@ -676,7 +683,7 @@ mod tests {
                 token: Some("token-1".to_string()),
             })
             .expect("credentials");
-        Session::restore(library.clone())
+        Session::restore(library.clone(), Arc::default())
     }
 
     #[test]
