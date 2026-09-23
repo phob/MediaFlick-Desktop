@@ -340,8 +340,8 @@ fn handle_message(
         ServerMessage::LibraryChanged { changed, removed } => {
             apply_library_change(library, session, sync, scope, &changed, &removed);
         }
-        ServerMessage::Play(data) => remote::handle_play(&data),
-        ServerMessage::Playstate(data) => remote::handle_playstate(&data),
+        ServerMessage::Play(data) => remote::handle_play(&data, scope),
+        ServerMessage::Playstate(data) => remote::handle_playstate(&data, scope),
         ServerMessage::GeneralCommand(data) => remote::handle_general_command(&data),
         ServerMessage::Ignored => {}
     }
@@ -653,7 +653,8 @@ mod tests {
         spawn,
     };
     use crate::jellyfin::session::Session;
-    use crate::library::{Library, UserDataRecord, sync};
+    use crate::library::sync::SyncHandle;
+    use crate::library::{Library, UserDataRecord};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, mpsc};
@@ -762,7 +763,7 @@ mod tests {
         let library = alice_library(&server_url);
         let session = Arc::new(Session::restore(library.clone()));
         let alice = session.scope().expect("Alice scope");
-        let sync = sync::detached_handle();
+        let sync = SyncHandle::detached();
 
         // While Alice is current, a pushed change is fetched and cached.
         apply_library_change(
@@ -838,7 +839,7 @@ mod tests {
         apply_library_change(
             &library,
             &session,
-            &sync::detached_handle(),
+            &SyncHandle::detached(),
             &alice,
             &[],
             &["m1".to_string()],
@@ -1061,7 +1062,7 @@ mod tests {
             .expect("ingest");
         let session = Arc::new(Session::restore(library.clone()));
 
-        let handle = spawn(library.clone(), session, sync::detached_handle());
+        let handle = spawn(library.clone(), session, SyncHandle::detached());
         let deadline = Instant::now() + Duration::from_secs(15);
         let played = loop {
             let item = library.item("ep1").expect("item").expect("cached");

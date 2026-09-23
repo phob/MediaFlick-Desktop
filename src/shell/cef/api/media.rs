@@ -103,10 +103,11 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
     if source_ids.is_empty() {
         return ApiResponse::ok(json!({ "items": [] }));
     }
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
+    let (client, user_id) = (scope.client(), scope.user_id());
     let mut results = Vec::new();
     for chunk in source_ids.chunks(TECHNICAL_BATCH_SIZE) {
         // The UI aborts a batch once none of its cards remains mounted; the
@@ -116,7 +117,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
         if request.is_cancelled() {
             return ApiResponse::error(499, "the browser abandoned the request");
         }
-        match items::fetch_media_stream_batch(&client, &user_id, chunk) {
+        match items::fetch_media_stream_batch(client, user_id, chunk) {
             Ok(response) => {
                 for dto in &response.items {
                     let streams = technical_media_streams_json(&dto.media_streams);
@@ -129,7 +130,7 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiRespons
                 }
             }
             Err(error) => {
-                services.session.note_error(&error);
+                services.session.note_scoped_error(&scope, &error);
                 return ApiResponse::from_api_error(&error);
             }
         }
@@ -151,11 +152,12 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
             "playbackPreference": Value::Null,
         }));
     }
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_media_sources(&client, &user_id, item_id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_media_sources(client, user_id, item_id) {
         Ok(sources) => {
             let preference = services
                 .session
@@ -166,10 +168,7 @@ fn media_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                 "playbackPreference": resolve_playback_preference(preference.as_ref(), &sources),
             }))
         }
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -269,11 +268,12 @@ fn set_item_playback_preference(
 
 /// The first local trailer attached to an item, if the server has one.
 fn trailer_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_local_trailers(&client, &user_id, item_id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_local_trailers(client, user_id, item_id) {
         Ok(trailers) => match trailers
             .into_iter()
             .find(|trailer| !trailer.id.trim().is_empty())
@@ -285,22 +285,18 @@ fn trailer_info(services: &Arc<Services>, item_id: &str) -> ApiResponse {
                     "embedUrl": Value::Null,
                 }
             })),
-            None => remote_trailer_info(services, &client, &user_id, item_id),
+            None => remote_trailer_info(services, &scope, item_id),
         },
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
 fn remote_trailer_info(
     services: &Arc<Services>,
-    client: &JellyfinClient,
-    user_id: &str,
+    scope: &SessionScope,
     item_id: &str,
 ) -> ApiResponse {
-    match items::fetch_remote_trailers(client, user_id, item_id) {
+    match items::fetch_remote_trailers(scope.client(), scope.user_id(), item_id) {
         Ok(trailers) => {
             let trailer = trailers.into_iter().find_map(|trailer| {
                 youtube_embed_url(&trailer.url).map(|embed_url| {
@@ -313,10 +309,7 @@ fn remote_trailer_info(
             });
             ApiResponse::ok(json!({ "trailer": trailer }))
         }
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, scope, &error),
     }
 }
 
@@ -354,13 +347,16 @@ fn youtube_embed_url(value: &str) -> Option<String> {
 /// The UI receives only an opaque item id. The Jellyfin token stays in the
 /// native client, just as it does for artwork and full playback.
 fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiRequest) -> ApiResponse {
-    let client = match services.session.client() {
-        Ok(client) => client,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
     let path = format!("/Videos/{}/stream", encode_path_segment(trailer_id));
     let range = bounded_byte_range(request.range.as_deref());
-    match client.get_bytes_range(&path, &[("static", "true".to_string())], Some(&range)) {
+    match scope
+        .client()
+        .get_bytes_range(&path, &[("static", "true".to_string())], Some(&range))
+    {
         Ok(response) => ApiResponse::ranged_bytes(
             response.status,
             response.content_type,
@@ -368,10 +364,7 @@ fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiReque
             response.content_range,
             response.accept_ranges,
         ),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -480,11 +473,11 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     if services.library.kind(item_id).as_deref() != Some("Series") {
         return ApiResponse::ok(json!({ "item": Value::Null }));
     }
-    let from_server = match services.session.client_and_user() {
-        Ok((client, user_id)) => items::fetch_next_up(&client, &user_id, Some(item_id), 1)
+    let from_server = match services.session.scope() {
+        Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
             .map(|response| response.items.first().map(summary_from_dto))
             .unwrap_or_else(|error| {
-                services.session.note_error(&error);
+                services.session.note_scoped_error(&scope, &error);
                 tracing::debug!(target: "app.api", "Next Up unavailable for {item_id}: {error}");
                 None
             }),
@@ -599,12 +592,17 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
         Ok(body) => body.played,
         Err(response) => return response,
     };
-    if let Err(response) = user_data_write(services, item_id, |client, user_id| {
+    let scope = match user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
     }) {
-        return response;
-    }
-    let _ = services.library.set_local_played(item_id, played);
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let _ = services.session.commit_if_current(
+        &scope,
+        || (),
+        || Ok(services.library.set_local_played(item_id, played)),
+    );
     ApiResponse::ok(json!({ "played": played }))
 }
 
@@ -613,31 +611,34 @@ fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -
         Ok(body) => body.favorite,
         Err(response) => return response,
     };
-    if let Err(response) = user_data_write(services, item_id, |client, user_id| {
+    let scope = match user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
     }) {
-        return response;
-    }
-    let _ = services.library.set_local_favorite(item_id, favorite);
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let _ = services.session.commit_if_current(
+        &scope,
+        || (),
+        || Ok(services.library.set_local_favorite(item_id, favorite)),
+    );
     ApiResponse::ok(json!({ "favorite": favorite }))
 }
 
 /// The server is the source of truth for watch state, so it is written first
-/// and the local mirror only follows a success.
+/// and the local mirror only follows a success. The returned scope is the
+/// account that wrote it: only that account's cache may mirror the change.
 fn user_data_write(
     services: &Arc<Services>,
     item_id: &str,
     write: impl FnOnce(&JellyfinClient, &str) -> Result<(), ApiError>,
-) -> Result<(), ApiResponse> {
-    let (client, user_id) = services
-        .session
-        .client_and_user()
-        .map_err(|error| ApiResponse::from_api_error(&error))?;
-    write(&client, &user_id).map_err(|error| {
-        services.session.note_error(&error);
+) -> Result<SessionScope, ApiResponse> {
+    let scope = session_scope(services)?;
+    write(scope.client(), scope.user_id()).map_err(|error| {
         tracing::warn!(target: "app.api", item_id, "user-data write failed: {error}");
-        ApiResponse::from_api_error(&error)
-    })
+        scoped_failure(services, &scope, &error)
+    })?;
+    Ok(scope)
 }
 
 #[cfg(test)]

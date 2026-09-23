@@ -423,12 +423,6 @@ impl Session {
     }
 
     /// Routes an API failure so a rejected token is only ever handled once.
-    pub fn note_error(&self, error: &ApiError) {
-        if *error == ApiError::Unauthorized {
-            self.mark_expired();
-        }
-    }
-
     pub fn note_scoped_error(&self, scope: &SessionScope, error: &ApiError) {
         if *error == ApiError::Unauthorized && self.mark_expired_inner(Some(scope)) {
             tracing::warn!(
@@ -557,7 +551,8 @@ mod tests {
         library.save_credentials(&credentials).expect("save");
 
         let session = Session::restore(library);
-        session.note_error(&ApiError::Unauthorized);
+        let scope = session.scope().expect("scope");
+        session.note_scoped_error(&scope, &ApiError::Unauthorized);
         assert!(!session.is_authenticated());
         assert!(matches!(session.client(), Err(ApiError::Unauthorized)));
         assert_eq!(session.status()["expired"], true);
@@ -574,8 +569,9 @@ mod tests {
         library.save_credentials(&credentials).expect("save");
 
         let session = Session::restore(library);
-        session.note_error(&ApiError::Status { status: 500 });
-        session.note_error(&ApiError::Transport("reset".to_string()));
+        let scope = session.scope().expect("scope");
+        session.note_scoped_error(&scope, &ApiError::Status { status: 500 });
+        session.note_scoped_error(&scope, &ApiError::Transport("reset".to_string()));
         assert!(session.is_authenticated());
     }
 

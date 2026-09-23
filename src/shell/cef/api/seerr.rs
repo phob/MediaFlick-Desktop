@@ -8,7 +8,7 @@ pub(super) fn route(
 ) -> Option<ApiResponse> {
     let response = match segments {
         ["seerr", "status"] if request.is("GET") => {
-            companion_response(services, services.companion.seerr_status())
+            companion_call(services, || services.companion.seerr_status())
         }
         ["seerr", "search"] if request.is("GET") => seerr_search(services, request),
         ["seerr", "person", tmdb_id, "credits"] if request.is("GET") => {
@@ -41,22 +41,27 @@ pub(super) fn route(
     Some(response)
 }
 
-fn companion_response(services: &Arc<Services>, result: Result<Value, ApiError>) -> ApiResponse {
-    match result {
+/// Runs one Companion call for the signed-in account. The account is fixed
+/// before the call, so a late 401 from its token cannot expire a newer one.
+fn companion_call(
+    services: &Arc<Services>,
+    call: impl FnOnce() -> Result<Value, ApiError>,
+) -> ApiResponse {
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    match call() {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
 fn seerr_search(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
     let query = request.param("q").unwrap_or_default();
-    companion_response(
-        services,
-        services.companion.seerr_search(&query, page_param(request)),
-    )
+    companion_call(services, || {
+        services.companion.seerr_search(&query, page_param(request))
+    })
 }
 
 fn seerr_person_credits(
@@ -71,24 +76,22 @@ fn seerr_person_credits(
         return ApiResponse::error(400, "that is not a TMDB person id");
     }
 
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
     let mut value = match services.companion.seerr_person_credits(tmdb_id) {
         Ok(value) => value,
-        Err(error) => {
-            services.session.note_error(&error);
-            return ApiResponse::from_api_error(&error);
-        }
+        Err(error) => return scoped_failure(services, &scope, &error),
     };
     // During progressive catalog fill, SQLite cannot yet prove that every
     // Seerr credit is non-local. An exact Jellyfin identity lets this secondary
     // section verify ownership against the live complete person relation. A
     // failure hides Discover only; the independently loaded server grid stays.
     if let Some(person_id) = request.param("personId") {
-        return match join_server_person_availability(services, &person_id, &mut value) {
+        return match join_server_person_availability(services, &scope, &person_id, &mut value) {
             Ok(()) => ApiResponse::ok(value),
-            Err(error) => {
-                services.session.note_error(&error);
-                ApiResponse::from_api_error(&error)
-            }
+            Err(error) => scoped_failure(services, &scope, &error),
         };
     }
     ApiResponse::ok(value)
@@ -96,17 +99,18 @@ fn seerr_person_credits(
 
 fn join_server_person_availability(
     services: &Arc<Services>,
+    scope: &SessionScope,
     person_id: &str,
     value: &mut Value,
 ) -> Result<(), ApiError> {
-    let (client, user_id) = services.session.client_and_user()?;
+    let (client, user_id) = (scope.client(), scope.user_id());
     // The provider first joined against SQLite, which can contain both unseen
     // progressive rows and stale rows awaiting deletion reconciliation. The
     // live exact-person pass is authoritative, so rebuild availability rather
     // than only adding to that provisional answer.
     clear_person_availability(value);
-    let filmography = fetch_person_filmography(&client, &user_id, person_id, value)?;
-    let extras = verify_off_filmography_titles(services, &client, &user_id, value, &filmography);
+    let filmography = fetch_person_filmography(client, user_id, person_id, value)?;
+    let extras = verify_off_filmography_titles(services, client, user_id, value, &filmography);
     mark_owned_credits(value, &extras);
     value["libraryExtras"] = json!(extras.iter().map(summary_from_dto).collect::<Vec<_>>());
     Ok(())
@@ -350,29 +354,27 @@ fn seerr_discover(services: &Arc<Services>, kind: &str, request: &ApiRequest) ->
         Ok(options) => options,
         Err(error) => return ApiResponse::error(400, &error),
     };
-    companion_response(
-        services,
+    companion_call(services, || {
         services
             .companion
-            .seerr_discover(kind, page_param(request), &options),
-    )
+            .seerr_discover(kind, page_param(request), &options)
+    })
 }
 
 fn seerr_genres(services: &Arc<Services>, media_type: &str) -> ApiResponse {
     if !matches!(media_type, "movie" | "tv") {
         return ApiResponse::error(404, "unknown genre kind");
     }
-    companion_response(services, services.companion.seerr_genres(media_type))
+    companion_call(services, || services.companion.seerr_genres(media_type))
 }
 
 fn seerr_media(services: &Arc<Services>, media_type: &str, tmdb_id: &str) -> ApiResponse {
     let Ok(tmdb_id) = tmdb_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a TMDB id");
     };
-    companion_response(
-        services,
-        services.companion.seerr_media(media_type, tmdb_id),
-    )
+    companion_call(services, || {
+        services.companion.seerr_media(media_type, tmdb_id)
+    })
 }
 
 fn seerr_request_options(
@@ -383,10 +385,9 @@ fn seerr_request_options(
     let is_4k = request
         .param("is4k")
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-    companion_response(
-        services,
-        services.companion.seerr_request_options(media_type, is_4k),
-    )
+    companion_call(services, || {
+        services.companion.seerr_request_options(media_type, is_4k)
+    })
 }
 
 #[derive(Deserialize)]
@@ -423,14 +424,15 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
             );
         }
     };
-    let result = services.companion.seerr_create_request(
-        &body.media_type,
-        body.tmdb_id,
-        body.seasons.as_deref(),
-        body.is4k,
-        profile,
-    );
-    companion_response(services, result)
+    companion_call(services, || {
+        services.companion.seerr_create_request(
+            &body.media_type,
+            body.tmdb_id,
+            body.seasons.as_deref(),
+            body.is4k,
+            profile,
+        )
+    })
 }
 
 fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
@@ -440,22 +442,22 @@ fn seerr_requests(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
             .and_then(|value| value.parse().ok())
             .unwrap_or(fallback)
     };
-    let result = services.companion.seerr_requests(
-        number("take", 20),
-        number("skip", 0),
-        &request.param("filter").unwrap_or_else(|| "all".to_string()),
-    );
-    companion_response(services, result)
+    companion_call(services, || {
+        services.companion.seerr_requests(
+            number("take", 20),
+            number("skip", 0),
+            &request.param("filter").unwrap_or_else(|| "all".to_string()),
+        )
+    })
 }
 
 fn seerr_cancel_request(services: &Arc<Services>, request_id: &str) -> ApiResponse {
     let Ok(request_id) = request_id.parse::<i64>() else {
         return ApiResponse::error(400, "that is not a request id");
     };
-    companion_response(
-        services,
-        services.companion.seerr_cancel_request(request_id),
-    )
+    companion_call(services, || {
+        services.companion.seerr_cancel_request(request_id)
+    })
 }
 
 /// The poster proxy accepts only a named rendition and a plain image file.
