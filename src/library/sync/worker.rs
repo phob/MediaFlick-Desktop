@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,7 +9,7 @@ use crate::jellyfin::session::Session;
 use crate::library::Library;
 
 use super::cycle::run_cycle_inner;
-use super::{Flags, SYNC_INTERVAL, Signal, SyncHandle, Trigger, WorkerState};
+use super::{SYNC_INTERVAL, SyncHandle, Trigger};
 
 /// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
@@ -20,14 +20,7 @@ const STARTUP_HOLD_MAX: Duration = Duration::from_secs(15);
 const STARTUP_HOLD_SETTLE: Duration = Duration::from_secs(3);
 
 pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
-    let handle = SyncHandle {
-        signal: Arc::new(Signal {
-            flags: Mutex::new(Flags::default()),
-            condvar: Condvar::new(),
-        }),
-        running: Arc::new(AtomicBool::new(false)),
-        state: Arc::new(Mutex::new(WorkerState::default())),
-    };
+    let handle = SyncHandle::new();
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("library-sync".to_string())
@@ -211,12 +204,10 @@ fn jittered(base: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     use super::{STARTUP_HOLD_SETTLE, Wake, jittered, startup_hold_deadline, wait};
-    use crate::library::sync::{Flags, SYNC_INTERVAL, Signal, SyncHandle, WorkerState};
+    use crate::library::sync::{SYNC_INTERVAL, SyncHandle};
 
     #[test]
     fn incomplete_catalog_retries_quickly_with_a_bounded_backoff() {
@@ -260,14 +251,7 @@ mod tests {
 
     #[test]
     fn a_window_ready_report_wakes_a_held_worker_without_requesting_a_cycle() {
-        let handle = SyncHandle {
-            signal: Arc::new(Signal {
-                flags: Mutex::new(Flags::default()),
-                condvar: Condvar::new(),
-            }),
-            running: Arc::new(AtomicBool::new(false)),
-            state: Arc::new(Mutex::new(WorkerState::default())),
-        };
+        let handle = SyncHandle::new();
         assert!(!handle.window_ready());
 
         handle.release_startup_hold();
@@ -289,14 +273,7 @@ mod tests {
     /// timeout would silently fall back to the hourly gate.
     #[test]
     fn a_request_is_distinguishable_from_a_timeout_and_is_consumed_once() {
-        let handle = SyncHandle {
-            signal: Arc::new(Signal {
-                flags: Mutex::new(Flags::default()),
-                condvar: Condvar::new(),
-            }),
-            running: Arc::new(AtomicBool::new(false)),
-            state: Arc::new(Mutex::new(WorkerState::default())),
-        };
+        let handle = SyncHandle::new();
 
         handle.request();
         assert_eq!(wait(&handle, Duration::ZERO), Wake::Requested);

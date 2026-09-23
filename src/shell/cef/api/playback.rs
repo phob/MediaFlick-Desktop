@@ -23,22 +23,52 @@ pub(super) fn route(
 
 // ------------------------------------------------------------------ playback
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlayBody {
+    item_id: String,
+    #[serde(default)]
+    resume: bool,
+    start_ticks: Option<i64>,
+    media_source_id: Option<String>,
+    media_source_index: Option<usize>,
+    audio_stream_index: Option<i64>,
+    subtitle_stream_index: Option<i64>,
+    quality: Option<StreamingQuality>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemBody {
+    item_id: String,
+}
+
+/// The item a playback request names; blank ids are rejected like missing ones.
+fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
+    let body = request.body::<ItemBody>()?;
+    if body.item_id.is_empty() {
+        return Err(ApiResponse::error(400, "itemId is required"));
+    }
+    Ok(body.item_id)
+}
+
 fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let Some(item_id) = body["itemId"].as_str().filter(|id| !id.is_empty()) else {
-        return ApiResponse::error(400, "itemId is required");
+    let body = match request.body::<PlayBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
     };
+    if body.item_id.is_empty() {
+        return ApiResponse::error(400, "itemId is required");
+    }
     let options = PlayOptions {
-        item_id: item_id.to_string(),
-        resume: body["resume"].as_bool().unwrap_or(false),
-        start_ticks: body["startTicks"].as_i64(),
-        media_source_id: body["mediaSourceId"].as_str().map(str::to_string),
-        media_source_index: body["mediaSourceIndex"]
-            .as_u64()
-            .and_then(|index| usize::try_from(index).ok()),
-        audio_stream_index: body["audioStreamIndex"].as_i64(),
-        subtitle_stream_index: body["subtitleStreamIndex"].as_i64(),
-        quality: body["quality"].as_str().and_then(StreamingQuality::from_id),
+        item_id: body.item_id,
+        resume: body.resume,
+        start_ticks: body.start_ticks,
+        media_source_id: body.media_source_id,
+        media_source_index: body.media_source_index,
+        audio_stream_index: body.audio_stream_index,
+        subtitle_stream_index: body.subtitle_stream_index,
+        quality: body.quality,
         ..Default::default()
     };
     start_playback(services, &options)
@@ -46,11 +76,11 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 
 /// Used by the UI when mpv reports end-of-file or a mark-watched-and-next.
 fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let Some(item_id) = body["itemId"].as_str().filter(|id| !id.is_empty()) else {
-        return ApiResponse::error(400, "itemId is required");
+    let item_id = match item_id_of(request) {
+        Ok(item_id) => item_id,
+        Err(response) => return response,
     };
-    let next = match services.library.next_episode(item_id) {
+    let next = match services.library.next_episode(&item_id) {
         Ok(Some(next)) => next,
         Ok(None) => return ApiResponse::ok(json!({ "started": false })),
         Err(error) => return storage_failure(&error),
@@ -69,11 +99,11 @@ fn play_next(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
 }
 
 fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let Some(item_id) = body["itemId"].as_str().filter(|id| !id.is_empty()) else {
-        return ApiResponse::error(400, "itemId is required");
+    let item_id = match item_id_of(request) {
+        Ok(item_id) => item_id,
+        Err(response) => return response,
     };
-    let previous = match services.library.previous_episode(item_id) {
+    let previous = match services.library.previous_episode(&item_id) {
         Ok(Some(previous)) => previous,
         Ok(None) => return ApiResponse::ok(json!({ "started": false })),
         Err(error) => return storage_failure(&error),
@@ -92,15 +122,15 @@ fn play_previous(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
 }
 
 fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let Some(item_id) = body["itemId"].as_str().filter(|id| !id.is_empty()) else {
-        return ApiResponse::error(400, "itemId is required");
+    let item_id = match item_id_of(request) {
+        Ok(item_id) => item_id,
+        Err(response) => return response,
     };
-    let previous = match services.library.previous_episode(item_id) {
+    let previous = match services.library.previous_episode(&item_id) {
         Ok(previous) => previous,
         Err(error) => return storage_failure(&error),
     };
-    let next = match services.library.next_episode(item_id) {
+    let next = match services.library.next_episode(&item_id) {
         Ok(next) => next,
         Err(error) => return storage_failure(&error),
     };
@@ -170,81 +200,155 @@ fn player_state(services: &Arc<Services>) -> ApiResponse {
     }))
 }
 
-fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    use crate::playback::{PlayerCommand, ToneMapping, VideoAspect, VideoFit};
+/// The commands the player bar sends, as the UI's `PlayerCommand` union.
+#[derive(Deserialize)]
+#[serde(
+    tag = "command",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+enum PlayerCommandBody {
+    Pause,
+    Resume,
+    Seek {
+        position_ms: f64,
+    },
+    SetVolume {
+        volume: f64,
+    },
+    SetMute {
+        mute: bool,
+    },
+    SetPlaybackRate {
+        rate: f64,
+    },
+    SetAudioDelay {
+        delay_seconds: f64,
+    },
+    SetSubtitleDelay {
+        delay_seconds: f64,
+    },
+    SetSubtitleScale {
+        scale: f64,
+    },
+    SetVideoFit {
+        fit: VideoFitBody,
+    },
+    SetVideoAspect {
+        aspect: VideoAspectBody,
+    },
+    SetDeinterlace {
+        enabled: bool,
+    },
+    SetToneMapping {
+        mode: ToneMappingBody,
+    },
+    SetAudioTrack {
+        audio_track: i64,
+    },
+    /// A null track turns subtitles off.
+    SetSubtitleTrack {
+        subtitle_track: Option<i64>,
+    },
+    ToggleSubtitles,
+    ToggleFullscreen,
+    Stop,
+    MarkWatchedNext,
+}
 
-    let body = request.json();
-    let command = match body["command"].as_str().unwrap_or_default() {
-        "pause" => Some(PlayerCommand::SetPause(true)),
-        "resume" => Some(PlayerCommand::SetPause(false)),
-        "toggle-pause" => Some(PlayerCommand::SetPause(
-            !body["paused"].as_bool().unwrap_or(false),
-        )),
-        "seek" => body["positionMs"]
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(PlayerCommand::SeekMilliseconds),
-        "set-volume" => body["volume"]
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(PlayerCommand::SetVolume),
-        "set-mute" => body["mute"].as_bool().map(PlayerCommand::SetMute),
-        "set-playback-rate" => body["rate"]
-            .as_f64()
-            .filter(|rate| rate.is_finite() && *rate > 0.0)
-            .map(PlayerCommand::SetPlaybackRate),
-        "set-audio-delay" => body["delaySeconds"]
-            .as_f64()
-            .filter(|delay| delay.is_finite())
-            .map(PlayerCommand::SetAudioDelay),
-        "set-subtitle-delay" => body["delaySeconds"]
-            .as_f64()
-            .filter(|delay| delay.is_finite())
-            .map(PlayerCommand::SetSubtitleDelay),
-        "set-subtitle-scale" => body["scale"]
-            .as_f64()
-            .filter(|scale| scale.is_finite() && *scale > 0.0)
-            .map(PlayerCommand::SetSubtitleScale),
-        "set-video-fit" => match body["fit"].as_str() {
-            Some("fit") => Some(PlayerCommand::SetVideoFit(VideoFit::Fit)),
-            Some("fill") => Some(PlayerCommand::SetVideoFit(VideoFit::Fill)),
-            _ => None,
-        },
-        "set-video-aspect" => match body["aspect"].as_str() {
-            Some("source") => Some(PlayerCommand::SetVideoAspect(VideoAspect::Source)),
-            Some("4:3") => Some(PlayerCommand::SetVideoAspect(VideoAspect::Ratio4x3)),
-            Some("16:9") => Some(PlayerCommand::SetVideoAspect(VideoAspect::Ratio16x9)),
-            Some("21:9") => Some(PlayerCommand::SetVideoAspect(VideoAspect::Ratio21x9)),
-            _ => None,
-        },
-        "set-deinterlace" => body["enabled"].as_bool().map(PlayerCommand::SetDeinterlace),
-        "set-tone-mapping" => match body["mode"].as_str() {
-            Some("auto") => Some(PlayerCommand::SetToneMapping(ToneMapping::Auto)),
-            Some("clip") => Some(PlayerCommand::SetToneMapping(ToneMapping::Clip)),
-            Some("mobius") => Some(PlayerCommand::SetToneMapping(ToneMapping::Mobius)),
-            Some("reinhard") => Some(PlayerCommand::SetToneMapping(ToneMapping::Reinhard)),
-            Some("hable") => Some(PlayerCommand::SetToneMapping(ToneMapping::Hable)),
-            Some("bt.2390") => Some(PlayerCommand::SetToneMapping(ToneMapping::Bt2390)),
-            _ => None,
-        },
-        "set-audio-track" => body["audioTrack"]
-            .as_i64()
-            .filter(|track| *track > 0)
-            .map(PlayerCommand::SetAudioTrack),
-        "set-subtitle-track" => match body["subtitleUrl"].as_str().map(str::trim) {
-            Some(url) if !url.is_empty() => Some(PlayerCommand::AddSubtitle(url.to_string())),
-            // A null track turns subtitles off.
-            _ => Some(PlayerCommand::SetSubtitleTrack(
-                body["subtitleTrack"].as_i64().filter(|track| *track > 0),
-            )),
-        },
-        "toggle-subtitles" => Some(PlayerCommand::ToggleSubtitleVisibility),
-        "toggle-fullscreen" => Some(PlayerCommand::ToggleFullscreen),
-        "stop" => Some(PlayerCommand::Stop),
-        "mark-watched-next" => Some(PlayerCommand::MarkWatchedAndPlayNext),
-        _ => None,
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum VideoFitBody {
+    Fit,
+    Fill,
+}
+
+#[derive(Deserialize)]
+enum VideoAspectBody {
+    #[serde(rename = "source")]
+    Source,
+    #[serde(rename = "4:3")]
+    Ratio4x3,
+    #[serde(rename = "16:9")]
+    Ratio16x9,
+    #[serde(rename = "21:9")]
+    Ratio21x9,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ToneMappingBody {
+    Auto,
+    Clip,
+    Mobius,
+    Reinhard,
+    Hable,
+    #[serde(rename = "bt.2390")]
+    Bt2390,
+}
+
+impl PlayerCommandBody {
+    /// Values the player cannot apply (a zero rate, a non-positive track) are
+    /// rejected here rather than forwarded.
+    fn into_command(self) -> Option<crate::playback::PlayerCommand> {
+        use crate::playback::{PlayerCommand, ToneMapping, VideoAspect, VideoFit};
+
+        Some(match self {
+            Self::Pause => PlayerCommand::SetPause(true),
+            Self::Resume => PlayerCommand::SetPause(false),
+            Self::Seek { position_ms } => PlayerCommand::SeekMilliseconds(position_ms),
+            Self::SetVolume { volume } => PlayerCommand::SetVolume(volume),
+            Self::SetMute { mute } => PlayerCommand::SetMute(mute),
+            Self::SetPlaybackRate { rate } if rate > 0.0 => PlayerCommand::SetPlaybackRate(rate),
+            Self::SetPlaybackRate { .. } => return None,
+            Self::SetAudioDelay { delay_seconds } => PlayerCommand::SetAudioDelay(delay_seconds),
+            Self::SetSubtitleDelay { delay_seconds } => {
+                PlayerCommand::SetSubtitleDelay(delay_seconds)
+            }
+            Self::SetSubtitleScale { scale } if scale > 0.0 => {
+                PlayerCommand::SetSubtitleScale(scale)
+            }
+            Self::SetSubtitleScale { .. } => return None,
+            Self::SetVideoFit { fit } => PlayerCommand::SetVideoFit(match fit {
+                VideoFitBody::Fit => VideoFit::Fit,
+                VideoFitBody::Fill => VideoFit::Fill,
+            }),
+            Self::SetVideoAspect { aspect } => PlayerCommand::SetVideoAspect(match aspect {
+                VideoAspectBody::Source => VideoAspect::Source,
+                VideoAspectBody::Ratio4x3 => VideoAspect::Ratio4x3,
+                VideoAspectBody::Ratio16x9 => VideoAspect::Ratio16x9,
+                VideoAspectBody::Ratio21x9 => VideoAspect::Ratio21x9,
+            }),
+            Self::SetDeinterlace { enabled } => PlayerCommand::SetDeinterlace(enabled),
+            Self::SetToneMapping { mode } => PlayerCommand::SetToneMapping(match mode {
+                ToneMappingBody::Auto => ToneMapping::Auto,
+                ToneMappingBody::Clip => ToneMapping::Clip,
+                ToneMappingBody::Mobius => ToneMapping::Mobius,
+                ToneMappingBody::Reinhard => ToneMapping::Reinhard,
+                ToneMappingBody::Hable => ToneMapping::Hable,
+                ToneMappingBody::Bt2390 => ToneMapping::Bt2390,
+            }),
+            Self::SetAudioTrack { audio_track } if audio_track > 0 => {
+                PlayerCommand::SetAudioTrack(audio_track)
+            }
+            Self::SetAudioTrack { .. } => return None,
+            Self::SetSubtitleTrack { subtitle_track } => {
+                PlayerCommand::SetSubtitleTrack(subtitle_track.filter(|track| *track > 0))
+            }
+            Self::ToggleSubtitles => PlayerCommand::ToggleSubtitleVisibility,
+            Self::ToggleFullscreen => PlayerCommand::ToggleFullscreen,
+            Self::Stop => PlayerCommand::Stop,
+            Self::MarkWatchedNext => PlayerCommand::MarkWatchedAndPlayNext,
+        })
+    }
+}
+
+fn player_command(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = match request.body::<PlayerCommandBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
     };
-    let Some(command) = command else {
+    let Some(command) = body.into_command() else {
         return ApiResponse::error(400, "unsupported player command");
     };
     let Some(playback) = services.playback() else {

@@ -69,6 +69,21 @@ pub struct SocketHandle {
 }
 
 impl SocketHandle {
+    fn new() -> Self {
+        Self {
+            signal: Arc::new(Signal {
+                stopped: Mutex::new(false),
+                condvar: Condvar::new(),
+            }),
+        }
+    }
+
+    /// A handle with no event thread behind it, for tests.
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        Self::new()
+    }
+
     pub fn stop(&self) {
         if let Ok(mut stopped) = self.signal.stopped.lock() {
             *stopped = true;
@@ -102,12 +117,7 @@ impl SocketHandle {
 }
 
 pub fn spawn(library: Arc<Library>, session: Arc<Session>, sync: SyncHandle) -> SocketHandle {
-    let handle = SocketHandle {
-        signal: Arc::new(Signal {
-            stopped: Mutex::new(false),
-            condvar: Condvar::new(),
-        }),
-    };
+    let handle = SocketHandle::new();
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("jellyfin-socket".to_string())

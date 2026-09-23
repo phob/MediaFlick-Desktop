@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::app::services::ShellRequest;
@@ -62,8 +64,19 @@ pub struct ApiRequest {
 }
 
 impl ApiRequest {
-    fn json(&self) -> Value {
-        serde_json::from_slice(&self.body).unwrap_or_else(|_| json!({}))
+    /// Decodes the JSON body into the endpoint's request type. A request sent
+    /// without a body decodes like `{}`, so it is accepted exactly when every
+    /// field of `T` is optional. A body that is not JSON, or does not match
+    /// `T`, is rejected rather than read as defaults: a garbled "mark as
+    /// unwatched" must not mark the item watched.
+    fn body<T: DeserializeOwned>(&self) -> Result<T, ApiResponse> {
+        let body: &[u8] = if self.body.iter().all(u8::is_ascii_whitespace) {
+            b"{}"
+        } else {
+            &self.body
+        };
+        serde_json::from_slice(body)
+            .map_err(|error| ApiResponse::error(400, format!("invalid request body: {error}")))
     }
 
     fn param(&self, key: &str) -> Option<String> {
@@ -168,6 +181,12 @@ fn stale_account_response() -> ApiResponse {
 }
 
 pub fn handle(request: &ApiRequest) -> ApiResponse {
+    dispatch(request, services::init)
+}
+
+/// [`handle`] with the service lookup injected, so tests route requests
+/// against their own services instead of the user's data folder.
+fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services>>) -> ApiResponse {
     if let Some(response) = assets::static_asset(&request.path) {
         return response;
     }
@@ -177,7 +196,7 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
         return assets::index_html();
     };
 
-    let Some(services) = services::init() else {
+    let Some(services) = services() else {
         return ApiResponse::error(
             503,
             services::init_error().unwrap_or("the library database is unavailable"),
@@ -375,6 +394,7 @@ fn storage_failure(error: &rusqlite::Error) -> ApiResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::services::test_support::TestServices;
 
     fn get(path: &str) -> ApiResponse {
         handle(&ApiRequest {
@@ -403,17 +423,168 @@ mod tests {
         assert!(get("/app.css").content_type.starts_with("text/css"));
     }
 
-    #[test]
-    fn request_bodies_that_are_not_json_degrade_to_an_empty_object() {
-        let request = ApiRequest {
+    fn post(path: &str, body: &[u8]) -> ApiRequest {
+        ApiRequest {
             method: "POST".to_string(),
-            path: "/api/auth/login".to_string(),
+            path: path.to_string(),
             query: String::new(),
-            body: b"not json".to_vec(),
+            body: body.to_vec(),
             range: None,
             cancelled: Default::default(),
-        };
-        assert_eq!(request.json(), json!({}));
+        }
+    }
+
+    fn send(fixture: &TestServices, request: &ApiRequest) -> ApiResponse {
+        dispatch(request, || Some(fixture.services.clone()))
+    }
+
+    fn error_of(response: &ApiResponse) -> String {
+        let body: Value = serde_json::from_slice(&response.body).expect("json error");
+        body["error"].as_str().unwrap_or_default().to_string()
+    }
+
+    /// A Jellyfin address that accepts connections but never answers, so a
+    /// test can prove that no request was sent to it.
+    fn silent_server() -> std::net::TcpListener {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        listener
+    }
+
+    fn server_url(listener: &std::net::TcpListener) -> String {
+        format!("http://{}", listener.local_addr().expect("address"))
+    }
+
+    #[test]
+    fn an_empty_body_decodes_like_an_empty_object() {
+        #[derive(Debug, Deserialize)]
+        struct Optional {
+            #[serde(default)]
+            flag: bool,
+        }
+        #[derive(Debug, Deserialize)]
+        struct Required {
+            #[expect(dead_code, reason = "decoding is what the test observes")]
+            flag: bool,
+        }
+        for body in [&b""[..], b"  \r\n"] {
+            let request = post("/api/test", body);
+            assert!(!request.body::<Optional>().expect("defaults").flag);
+            assert_eq!(request.body::<Required>().expect_err("missing").status, 400);
+        }
+        let garbled = post("/api/test", b"not json");
+        let response = garbled.body::<Optional>().expect_err("not json");
+        assert_eq!(response.status, 400);
+        assert!(error_of(&response).starts_with("invalid request body"));
+    }
+
+    #[test]
+    fn malformed_bodies_are_rejected_before_anything_reaches_jellyfin() {
+        let server = silent_server();
+        let fixture = TestServices::signed_in(&server_url(&server));
+        let cases: [(&str, &[u8]); 10] = [
+            // A garbled "mark unwatched" used to decode as `{}` and mark the
+            // item watched.
+            ("/api/item/item-1/played", b"not json"),
+            ("/api/item/item-1/played", b"{}"),
+            ("/api/item/item-1/played", br#"{"played":"false"}"#),
+            ("/api/item/item-1/favorite", b"true"),
+            ("/api/play", br#"{"resume":true}"#),
+            ("/api/play", br#"{"itemId":"item-1","quality":"8k"}"#),
+            ("/api/auth/connect", b"{"),
+            ("/api/player/command", br#"{"command":"set-mute"}"#),
+            ("/api/player/command", br#"{"command":"toggle-pause"}"#),
+            (
+                "/api/player/command",
+                br#"{"command":"set-video-aspect","aspect":"5:4"}"#,
+            ),
+        ];
+        for (path, body) in cases {
+            let response = send(&fixture, &post(path, body));
+            let body = String::from_utf8_lossy(body);
+            assert_eq!(response.status, 400, "{path} {body}");
+            assert!(
+                error_of(&response).starts_with("invalid request body"),
+                "{path} {body}: {}",
+                error_of(&response)
+            );
+        }
+        assert_eq!(
+            server.accept().expect_err("no request").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn a_well_formed_unwatched_request_clears_the_played_state() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let fixture = TestServices::signed_in(&server_url(&listener));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut reader = BufReader::new(&mut stream);
+            let mut request_line = String::new();
+            let _ = reader.read_line(&mut request_line);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if line == "\r\n" => break,
+                    Ok(_) => {}
+                }
+            }
+            drop(reader);
+            let _ = stream.write_all(
+                b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let _ = sender.send(request_line);
+        });
+
+        let response = send(
+            &fixture,
+            &post("/api/item/item-1/played", br#"{"played":false}"#),
+        );
+        assert_eq!(response.status, 200, "{}", error_of(&response));
+        let body: Value = serde_json::from_slice(&response.body).expect("json");
+        assert_eq!(body, json!({ "played": false }));
+        let request_line = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("Jellyfin request");
+        assert!(
+            request_line.starts_with("DELETE /UserPlayedItems/item-1"),
+            "{request_line}"
+        );
+    }
+
+    #[test]
+    fn player_commands_are_decoded_before_the_player_is_asked() {
+        let fixture = TestServices::signed_out();
+        let command = |body: &[u8]| send(&fixture, &post("/api/player/command", body));
+        // Decoded and valid: only the missing playback coordinator stops it.
+        let response = command(br#"{"command":"set-mute","mute":true}"#);
+        assert_eq!(response.status, 503, "{}", error_of(&response));
+        let response = command(br#"{"command":"set-subtitle-track","subtitleTrack":null}"#);
+        assert_eq!(response.status, 503, "{}", error_of(&response));
+        // Decoded, but not a value the player can apply.
+        let response = command(br#"{"command":"set-playback-rate","rate":0}"#);
+        assert_eq!(response.status, 400);
+        assert_eq!(error_of(&response), "unsupported player command");
+    }
+
+    #[test]
+    fn a_request_without_a_body_takes_the_endpoint_defaults() {
+        let fixture = TestServices::signed_out();
+        let response = send(&fixture, &post("/api/auth/logout", b""));
+        assert_eq!(response.status, 200, "{}", error_of(&response));
+        let response = send(
+            &fixture,
+            &post("/api/auth/logout", br#"{"forgetLibrary":1}"#),
+        );
+        assert_eq!(response.status, 400);
     }
 
     #[test]
