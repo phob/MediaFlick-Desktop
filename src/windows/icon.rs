@@ -28,6 +28,10 @@ pub fn set_native_window_icon(raw_hwnd: usize) {
         return;
     }
 
+    // SAFETY: a null name asks for this executable's module handle; the icon
+    // resource ID is a MAKEINTRESOURCE value, the icons are LR_SHARED and so
+    // never freed by us, and Win32 rejects a stale `hwnd` without touching Rust
+    // memory.
     unsafe {
         let module = GetModuleHandleW(std::ptr::null());
         if module.is_null() {

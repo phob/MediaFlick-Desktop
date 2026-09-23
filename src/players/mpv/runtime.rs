@@ -300,6 +300,7 @@ impl LibMpvRuntime {
         #[cfg(target_os = "windows")]
         let get_property: MpvGetProperty = load_symbol(&library, b"mpv_get_property\0")?;
 
+        // SAFETY: mpv_client_api_version takes no arguments and only returns a value.
         let (major, minor) = validate_client_api(unsafe { client_api_version() })?;
 
         #[cfg(target_os = "linux")]
@@ -308,6 +309,7 @@ impl LibMpvRuntime {
         let host_handle = window.handle()?;
         #[cfg(target_os = "linux")]
         let window_id = host_handle.content().to_string();
+        // SAFETY: mpv_create takes no arguments; a null result is handled below.
         let handle = unsafe { create() };
         if handle.is_null() {
             return Err(io::Error::other("libmpv could not create a client handle"));
@@ -325,13 +327,17 @@ impl LibMpvRuntime {
         let configured = configured
             .and_then(|()| set_option(handle, set_option_string, error_string, "wid", &window_id));
         if let Err(error) = configured {
+            // SAFETY: `handle` is the live handle created above, destroyed once
+            // before it is dropped on this error path.
             unsafe { terminate_destroy(handle) };
             return Err(error);
         }
 
+        // SAFETY: `handle` is the live, configured handle created above.
         let status = unsafe { initialize(handle) };
         if status < 0 {
             let message = mpv_error(error_string, status);
+            // SAFETY: `handle` is live and destroyed once on this error path.
             unsafe { terminate_destroy(handle) };
             return Err(io::Error::other(format!(
                 "libmpv initialization failed: {message}"
@@ -342,6 +348,7 @@ impl LibMpvRuntime {
         let renderer = match gpu_next::Compositor::new(&library, handle) {
             Ok(renderer) => Some(renderer),
             Err(error) => {
+                // SAFETY: `handle` is live and destroyed once on this error path.
                 unsafe { terminate_destroy(handle) };
                 return Err(error);
             }
@@ -352,6 +359,7 @@ impl LibMpvRuntime {
         let native_window = match wait_for_native_window(handle, get_property) {
             Ok(player_window) => Some(player_window),
             Err(error) => {
+                // SAFETY: `handle` is live and destroyed once on this error path.
                 unsafe { terminate_destroy(handle) };
                 return Err(error);
             }
@@ -395,6 +403,7 @@ impl LibMpvRuntime {
                 self.alive = false;
                 break;
             }
+            // SAFETY: `event` is non-null and valid until the next wait call.
             let event_id = unsafe { (*event).event_id };
             match event_id {
                 MPV_EVENT_NONE => break,
@@ -416,6 +425,8 @@ impl LibMpvRuntime {
         self.renderer.take();
         let handle = std::mem::replace(&mut self.handle, std::ptr::null_mut());
         self.alive = false;
+        // SAFETY: `handle` was taken out of the runtime, which now holds null,
+        // so it is destroyed exactly once.
         unsafe { (self.terminate_destroy)(handle) };
     }
 }
@@ -492,6 +503,8 @@ fn set_option(
 ) -> io::Result<()> {
     let c_name = CString::new(name).map_err(io::Error::other)?;
     let c_value = CString::new(value).map_err(io::Error::other)?;
+    // SAFETY: `handle` is a live, uninitialized handle, and both strings are
+    // NUL-terminated and outlive the call; libmpv copies what it keeps.
     let status = unsafe { set_option_string(handle, c_name.as_ptr(), c_value.as_ptr()) };
     // Lean builds omit these options together with their scripting engines.
     // Disabling an absent engine is already satisfied; enabling it (SVP), or
@@ -511,10 +524,12 @@ fn set_option(
 }
 
 fn mpv_error(error_string: MpvErrorString, status: c_int) -> String {
+    // SAFETY: mpv_error_string accepts any status value.
     let message = unsafe { error_string(status) };
     if message.is_null() {
         return format!("error {status}");
     }
+    // SAFETY: a non-null result is a static, NUL-terminated string in libmpv.
     unsafe { CStr::from_ptr(message) }
         .to_string_lossy()
         .into_owned()

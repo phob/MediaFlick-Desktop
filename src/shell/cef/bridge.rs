@@ -134,6 +134,8 @@ fn open_url_in_default_browser(url: &str) -> std::io::Result<()> {
 
     let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
     let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `verb` and `file` are NUL-terminated wide strings that outlive the
+    // call; the null window, parameters and directory are all allowed.
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut::<std::ffi::c_void>() as HWND,

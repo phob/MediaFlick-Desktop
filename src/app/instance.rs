@@ -73,6 +73,8 @@ impl InstanceGuard {
         use windows_sys::Win32::System::Threading::CreateMutexW;
 
         let name = to_wide(&format!("Local\\mediaflick-desktop-instance-{instance_id}"));
+        // SAFETY: `name` is a NUL-terminated wide string that outlives the call;
+        // null security attributes select the defaults.
         let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
         if handle.is_null() {
             tracing::warn!(
@@ -83,7 +85,9 @@ impl InstanceGuard {
                 handle: std::ptr::null_mut(),
             });
         }
+        // SAFETY: reads this thread's last error, set by CreateMutexW above.
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            // SAFETY: `handle` is the mutex handle just opened and is not kept.
             unsafe { CloseHandle(handle) };
             return None;
         }
@@ -100,6 +104,7 @@ impl Drop for InstanceGuard {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         if !self.handle.is_null() {
+            // SAFETY: the guard owns this mutex handle and closes it only here.
             unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
         }
     }
@@ -112,6 +117,7 @@ pub fn notify_already_running() {
 
     let text = to_wide("MediaFlick Desktop is already running.");
     let caption = to_wide("MediaFlick Desktop");
+    // SAFETY: both strings are NUL-terminated and outlive the modal call.
     unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
