@@ -33,13 +33,13 @@ pub(super) fn run_cycle_inner(
     let scope = session.scope()?;
     let client = scope.client();
     let user_id = scope.user_id();
-    let initial_catalog = library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
-        && library.meta(META_LAST_BOOTSTRAP).is_none();
-    let recovering_ownership = library.meta(META_LATEST_FAILURE).as_deref() == Some("1");
+    let initial_catalog = meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
+        && meta(library, META_LAST_BOOTSTRAP)?.is_none();
+    let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
 
     let result = (|| -> Result<(), ApiError> {
-        if full_bootstrap_due(library) {
+        if full_bootstrap_due(library)? {
             // Re-page everything. Upserts are idempotent, so this refreshes
             // metadata in place rather than churning rows.
             commit(session, &scope, || {
@@ -58,7 +58,7 @@ pub(super) fn run_cycle_inner(
                 Ok(())
             })?;
         }
-        if library.meta(META_BOOTSTRAP_DONE).as_deref() != Some("1")
+        if meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
             && let Some(control) = control
         {
             control.set_phase(SyncPhase::Catalog);
@@ -83,7 +83,7 @@ pub(super) fn run_cycle_inner(
             // first-run request load without finding a stale row.
             commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
         } else if trigger.forces_identity_sweep()
-            || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)
+            || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
             let (refreshed, deletion_changes) =
                 identity_sweep(library, session, &scope, client, user_id, control)?;
@@ -151,19 +151,18 @@ fn bootstrap(
     user_id: &str,
     control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
-    if library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1") {
+    if meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1") {
         return Ok(0);
     }
 
     let phase_started = Instant::now();
-    let mut offset = library
-        .meta(META_BOOTSTRAP_OFFSET)
+    let mut offset = meta(library, META_BOOTSTRAP_OFFSET)?
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0)
         .max(0);
     let mut written = 0;
-    let mut watermark = library.meta(META_WATERMARK);
-    let mut watermark_ids = read_watermark_ids(library);
+    let mut watermark = meta(library, META_WATERMARK)?;
+    let mut watermark_ids = read_watermark_ids(library)?;
 
     let mut pages = 0;
     let truncated = loop {
@@ -355,8 +354,8 @@ fn incremental(
     changes: &mut LibraryChangeBatch,
     control: Option<&SyncHandle>,
 ) -> Result<usize, ApiError> {
-    let watermark = library.meta(META_WATERMARK);
-    let known_watermark_ids = read_watermark_ids(library);
+    let watermark = meta(library, META_WATERMARK)?;
+    let known_watermark_ids = read_watermark_ids(library)?;
     let mut offset = 0;
     let mut written = 0;
     let mut newest = watermark.clone();
@@ -510,13 +509,12 @@ fn advance_watermark_with_ids(
     }
 }
 
-fn read_watermark_ids(library: &Library) -> HashSet<String> {
-    library
-        .meta(META_WATERMARK_IDS)
+fn read_watermark_ids(library: &Library) -> Result<HashSet<String>, ApiError> {
+    Ok(meta(library, META_WATERMARK_IDS)?
         .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
         .unwrap_or_default()
         .into_iter()
-        .collect()
+        .collect())
 }
 
 fn write_watermark_ids(library: &Library, ids: &HashSet<String>) -> Result<(), ApiError> {
@@ -548,23 +546,26 @@ fn is_incremental_candidate(
         || (item.date_created.as_deref() == watermark && !known_watermark_ids.contains(&item.id))
 }
 
-fn due(library: &Library, key: &str, interval: Duration) -> bool {
-    let Some(last) = library
-        .meta(key)
-        .and_then(|value| value.parse::<u64>().ok())
-    else {
-        return true;
+fn due(library: &Library, key: &str, interval: Duration) -> Result<bool, ApiError> {
+    let Some(last) = meta(library, key)?.and_then(|value| value.parse::<u64>().ok()) else {
+        return Ok(true);
     };
-    now_unix().saturating_sub(last) >= interval.as_secs()
+    Ok(now_unix().saturating_sub(last) >= interval.as_secs())
 }
 
-fn full_bootstrap_due(library: &Library) -> bool {
+fn full_bootstrap_due(library: &Library) -> Result<bool, ApiError> {
     // A missing/false done marker means the resumable initial pass is already
     // underway. Reset only a previously completed cache whose daily
     // re-bootstrap is due; otherwise a retry after a network failure would jump back to
     // zero and make both the stored offset and the progress UI dishonest.
-    library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-        && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)
+    Ok(meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1")
+        && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)?)
+}
+
+/// A sync-state read. A failed read stops the cycle; treating it as absent
+/// would restart the catalog from its first page.
+fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
+    library.meta(key).map_err(|error| storage_error(&error))
 }
 
 fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
@@ -596,7 +597,7 @@ fn commit<T>(
 }
 
 fn storage_error(error: &rusqlite::Error) -> ApiError {
-    ApiError::Decode(format!("library storage failed: {error}"))
+    ApiError::Storage(error.to_string())
 }
 
 #[cfg(test)]
@@ -610,8 +611,9 @@ mod tests {
 
     use super::{
         MAX_INCREMENTAL_PAGES, PAGE_SIZE, advance_watermark_with_ids, full_bootstrap_due,
-        is_incremental_candidate, is_newer,
+        is_incremental_candidate, is_newer, read_watermark_ids,
     };
+    use crate::jellyfin::api::ApiError;
     use crate::jellyfin::api::model::BaseItemDto;
     use crate::jellyfin::session::Session;
     use crate::library::sync::{
@@ -782,7 +784,7 @@ mod tests {
         library
             .set_meta(META_BOOTSTRAP_DONE, "0")
             .expect("incomplete");
-        assert!(!full_bootstrap_due(&library));
+        assert!(!full_bootstrap_due(&library).expect("due"));
 
         // Only an old pass which actually completed is eligible for the
         // periodic reset.
@@ -792,7 +794,31 @@ mod tests {
         library
             .set_meta(META_LAST_BOOTSTRAP, "0")
             .expect("old bootstrap");
-        assert!(full_bootstrap_due(&library));
+        assert!(full_bootstrap_due(&library).expect("due"));
+    }
+
+    #[test]
+    fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "1")
+            .expect("complete");
+        library
+            .db
+            .with_connection(|connection| connection.execute_batch("DROP TABLE meta"))
+            .expect("break the sync state");
+
+        // Before, the failed read looked like "never bootstrapped".
+        assert!(matches!(
+            full_bootstrap_due(&library),
+            Err(ApiError::Storage(_))
+        ));
+        assert!(matches!(
+            read_watermark_ids(&library),
+            Err(ApiError::Storage(_))
+        ));
+        let progress = bootstrap_progress(&library);
+        assert!(!progress.complete);
     }
 
     #[test]

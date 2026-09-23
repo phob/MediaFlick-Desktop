@@ -104,16 +104,20 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                     IDLE_INTERVAL
                 }
                 Err(ApiError::Unauthorized) => {
-                    // `mark_expired` itself notifies the UI, exactly once.
+                    // The cycle already reported the 401 against the account it
+                    // ran for, so a late rejection of a previous account's
+                    // token cannot expire the account that replaced it.
                     backoff = Duration::ZERO;
-                    session.mark_expired();
                     IDLE_INTERVAL
                 }
                 Err(error) => {
                     tracing::warn!(target: "library.sync", "library sync cycle failed: {error}");
                     backoff = next_backoff(
                         backoff,
-                        library.meta(super::META_BOOTSTRAP_DONE).as_deref() != Some("1"),
+                        !matches!(
+                            library.meta(super::META_BOOTSTRAP_DONE),
+                            Ok(Some(done)) if done == "1"
+                        ),
                     );
                     let delay = retry_delay(&error, jittered(backoff));
                     handle.set_retry(&error, delay);

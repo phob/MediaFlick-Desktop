@@ -19,7 +19,7 @@ mod session_store;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde_json::Value;
 
 use crate::app::ids::new_device_id;
@@ -216,16 +216,18 @@ impl Library {
         })
     }
 
-    pub fn meta(&self, key: &str) -> Option<String> {
-        self.db
-            .with_connection(|connection| {
-                connection.query_row(
+    /// A sync-state value. Unlike an absent key, a failed read is an error:
+    /// reading "not done" from a broken database would restart the catalog.
+    pub fn meta(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        self.db.with_connection(|connection| {
+            connection
+                .query_row(
                     "SELECT value FROM meta WHERE key = ?1",
                     params![key],
                     |row| row.get::<_, String>(0),
                 )
-            })
-            .ok()
+                .optional()
+        })
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> rusqlite::Result<()> {
@@ -319,9 +321,12 @@ mod tests {
     #[test]
     fn meta_values_round_trip() {
         let library = Library::open_in_memory().expect("library");
-        assert_eq!(library.meta("watermark"), None);
+        assert_eq!(library.meta("watermark").expect("meta"), None);
         library.set_meta("watermark", "2024-01-01").expect("set");
         library.set_meta("watermark", "2024-06-01").expect("update");
-        assert_eq!(library.meta("watermark").as_deref(), Some("2024-06-01"));
+        assert_eq!(
+            library.meta("watermark").expect("meta").as_deref(),
+            Some("2024-06-01")
+        );
     }
 }
