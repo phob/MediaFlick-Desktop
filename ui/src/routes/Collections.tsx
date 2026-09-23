@@ -42,7 +42,7 @@ function titleCardPalette(name: string) {
 function CollectionArtwork({ name, poster }: { name: string; poster: string | null }) {
   return (
     <div
-      className="relative flex h-poster-h w-poster-w flex-col justify-end overflow-hidden rounded-lg bg-card shadow-lg ring-1 ring-white/10 transition group-hover:ring-white/25"
+      className="relative flex h-poster-h w-poster-w flex-col justify-end overflow-hidden rounded-lg bg-card shadow-lg ring-1 ring-edge transition group-hover:ring-white/25"
       style={poster ? undefined : titleCardPalette(name)}
     >
       {poster ? (

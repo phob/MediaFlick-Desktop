@@ -91,7 +91,7 @@ describe("release calendar Today navigation", () => {
 
     fireEvent.mouseDown(screen.getByRole("tab", { name: "Month" }), { button: 0, ctrlKey: false })
     await waitFor(() => {
-      expect(view.container.querySelector(`[data-calendar-date="${dateFromToday(0)}"].min-h-32`)).toBeTruthy()
+      expect(view.container.querySelector(`[data-calendar-date="${dateFromToday(0)}"][data-calendar-cell]`)).toBeTruthy()
     })
     scrollIntoView.mockClear()
     fireEvent.click(screen.getByRole("button", { name: "Today" }))
@@ -100,7 +100,7 @@ describe("release calendar Today navigation", () => {
     const target = scrollIntoView.mock.instances[0]
     if (!(target instanceof HTMLElement)) throw new Error("Expected the month scroll target")
     expect(target.dataset.calendarDate).toBe(dateFromToday(0))
-    expect(target.classList.contains("min-h-32")).toBe(true)
+    expect(target.hasAttribute("data-calendar-cell")).toBe(true)
 
     scrollIntoView.mockRestore()
   })

@@ -241,6 +241,7 @@ function MonthGrid({
             <div
               key={date}
               data-calendar-date={date}
+              data-calendar-cell
               className={cn(
                 "min-h-32 scroll-mt-4 border-r border-b border-white/6 p-2 last:border-r-0",
                 outside && "bg-black/12 text-muted-foreground/50",

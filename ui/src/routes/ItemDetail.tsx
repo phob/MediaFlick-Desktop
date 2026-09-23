@@ -38,7 +38,7 @@ function CollectionChip({ tmdbId }: { tmdbId: number }) {
   return (
     <Link
       to={`/collections/franchises/${collection.id}`}
-      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-white/10 bg-card px-3 py-1 text-xs text-muted-foreground shadow-lg shadow-black/40 transition hover:border-white/25 hover:text-foreground"
+      className="inline-flex w-fit items-center gap-1.5 rounded-full border border-edge bg-card px-3 py-1 text-xs text-muted-foreground shadow-lg shadow-black/40 transition hover:border-white/25 hover:text-foreground"
     >
       <Layers className="size-3" aria-hidden />
       Part of&nbsp;<span className="font-medium text-foreground">{collection.name}</span>
