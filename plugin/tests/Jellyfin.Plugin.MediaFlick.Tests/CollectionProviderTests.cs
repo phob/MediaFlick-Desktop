@@ -456,6 +456,94 @@ public sealed class CollectionProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task AWronglyTypedIncludeUnreleasedFlagIsARequestError()
+    {
+        ConfigureTmdb();
+        _tmdb.Handler = (path, query) => path == "3/collection/10"
+            ? Ok(new JsonObject { ["id"] = 10, ["parts"] = new JsonArray() })
+            : Ok(new JsonObject());
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => _service.ResultsAsync(
+            Request(new JsonObject
+            {
+                ["kind"] = "tmdbCollection",
+                ["collectionId"] = 10,
+                ["includeUnreleased"] = "yes"
+            }),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task WronglyTypedProviderFieldsAreSkippedInsteadOfFailingTheRequest()
+    {
+        ConfigureTmdb();
+        _tmdb.Handler = (path, query) => path switch
+        {
+            "3/discover/movie" => Ok(new JsonObject
+            {
+                ["total_results"] = 3,
+                ["total_pages"] = 1,
+                ["results"] = new JsonArray(
+                    new JsonObject { ["id"] = 1, ["title"] = "Kept", ["adult"] = "false" },
+                    new JsonObject { ["id"] = 2, ["title"] = "Adult", ["adult"] = "1" },
+                    new JsonObject { ["id"] = 3, ["title"] = "Odd", ["adult"] = new JsonObject() })
+            }),
+            "3/movie/101" => Ok(new JsonObject { ["belongs_to_collection"] = "Saga" }),
+            _ => Ok(new JsonObject())
+        };
+
+        var discover = await _service.ResultsAsync(
+            Request(new JsonObject { ["kind"] = "tmdbDiscover", ["parameters"] = new JsonObject() }),
+            TestContext.Current.CancellationToken);
+        var franchises = await _service.FranchisesAsync(
+            new FranchiseResolveRequest([101]),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([1L, 3L], discover.Items.Select(item => item.TmdbId));
+        Assert.Null(Assert.Single(franchises.Memberships).CollectionId);
+    }
+
+    [Fact]
+    public async Task MdbListRowsWithScalarIdsAndMalformedPrivacyStaySafe()
+    {
+        ConfigureMdbList();
+        _mdbList.Handler = resource => resource switch
+        {
+            "user" => new(HttpStatusCode.OK, new JsonObject(), new(null, null, null), null),
+            "lists/42" => new(
+                HttpStatusCode.OK,
+                new JsonObject { ["id"] = 42, ["name"] = "Mixed", ["private"] = 0 },
+                new(null, null, null),
+                null),
+            "lists/43" => new(
+                HttpStatusCode.OK,
+                new JsonObject { ["id"] = 43, ["name"] = "Hidden", ["private"] = "unknown" },
+                new(null, null, null),
+                null),
+            "lists/42/items?unified=true&limit=1000&offset=0" => new(
+                HttpStatusCode.OK,
+                new JsonArray(
+                    new JsonObject { ["ids"] = "603", ["title"] = "No object ids" },
+                    new JsonObject { ["ids"] = new JsonObject { ["tmdb"] = 604 }, ["title"] = "Kept" }),
+                new(null, null, null),
+                null),
+            _ => new(HttpStatusCode.NotFound, null, new(null, null, null), null)
+        };
+
+        var result = await _service.ResultsAsync(
+            Request(new JsonObject { ["kind"] = "mdbListPublicList", ["listId"] = "42" }, "mixed"),
+            TestContext.Current.CancellationToken);
+        var hidden = await Assert.ThrowsAsync<GatewayException>(() => _service.ValidatePublicListAsync(
+            new PublicListSelectorRequest("43"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(604L, Assert.Single(result.Items).TmdbId);
+        Assert.Equal(StatusCodes.Status404NotFound, hidden.StatusCode);
+    }
+
+    [Fact]
     public async Task FranchiseResolutionReusesKnownCollectionsAndReturnsNegativeMemberships()
     {
         ConfigureTmdb();

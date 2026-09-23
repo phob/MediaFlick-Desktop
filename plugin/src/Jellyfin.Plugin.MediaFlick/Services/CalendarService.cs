@@ -170,18 +170,35 @@ public sealed class CalendarService
         catch (GatewayException exception)
         {
             // A failed source is retried every FailureRetryInterval; warn only
-            // when it stops being available. The gateway message can carry
-            // upstream text, so only the status is logged.
+            // when it stops being available. Only the status is logged, and
+            // Desktop receives a fixed reason derived from it.
             var previous = _cache.Snapshot().Sources.GetValueOrDefault(sourceName);
             _logger.Log(
                 previous is { Enabled: true, Available: false } ? LogLevel.Debug : LogLevel.Warning,
                 "{Source} calendar refresh failed with status {StatusCode}; the last cached calendar remains available",
                 sourceName,
                 exception.StatusCode);
-            _health.Failure(sourceName, exception.Message);
-            _cache.MarkFailed(sourceName, true, exception.Message);
+            var failure = exception.Failure ?? ServiceFailure.Unavailable;
+            _health.Failure(sourceName, failure);
+            _cache.MarkFailed(sourceName, true, FailureReason(failure));
         }
     }
+
+    /// <summary>
+    /// The Desktop-visible reason for a failed source refresh. It is chosen
+    /// from the failure category alone, so no upstream or transport text is
+    /// relayed.
+    /// </summary>
+    internal static string FailureReason(ServiceFailure failure)
+        => failure switch
+        {
+            ServiceFailure.NotConfigured => "not configured",
+            ServiceFailure.Rejected => "API key rejected",
+            ServiceFailure.Timeout => "timed out",
+            ServiceFailure.Unreachable => "unreachable",
+            ServiceFailure.InvalidResponse => "unreadable response",
+            _ => "unavailable"
+        };
 
     internal static IReadOnlyList<CalendarEntry> ParseSonarr(JsonNode? root)
     {

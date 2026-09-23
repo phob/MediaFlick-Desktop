@@ -2,6 +2,22 @@ using System.Collections.Concurrent;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
+/// <summary>
+/// Why a configured service last failed. Only these fixed categories are
+/// retained: upstream response text and transport exception messages can name
+/// the service address or echo request data, so they never enter health state.
+/// </summary>
+public enum ServiceFailure
+{
+    NotConfigured,
+    Rejected,
+    Unavailable,
+    Timeout,
+    Unreachable,
+    InvalidResponse,
+    RequestFailed
+}
+
 public sealed class ServiceHealthStore
 {
     private readonly ConcurrentDictionary<string, HealthRecord> _records =
@@ -21,11 +37,11 @@ public sealed class ServiceHealthStore
             {
                 State = ServiceHealthState.Healthy,
                 LastSuccess = observedAt,
-                Error = null
+                Failure = null
             });
     }
 
-    public void Failure(string service, string message)
+    public void Failure(string service, ServiceFailure failure)
     {
         var observedAt = DateTimeOffset.UtcNow;
         _records.AddOrUpdate(
@@ -34,12 +50,12 @@ public sealed class ServiceHealthStore
                 ServiceHealthState.Unhealthy,
                 null,
                 observedAt,
-                message),
+                failure),
             (_, previous) => previous with
             {
                 State = ServiceHealthState.Unhealthy,
                 LastFailure = observedAt,
-                Error = message
+                Failure = failure
             });
     }
 
@@ -55,7 +71,7 @@ public sealed class ServiceHealthStore
         ServiceHealthState State,
         DateTimeOffset? LastSuccess,
         DateTimeOffset? LastFailure,
-        string? Error);
+        ServiceFailure? Failure);
 
     public enum ServiceHealthState
     {
