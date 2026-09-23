@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -248,7 +247,7 @@ impl MpvController {
         let controller_snapshot = snapshot.clone();
         let controller_shutdown_requested = shutdown_requested.clone();
         let controller_tx = tx.clone();
-        thread::spawn(move || {
+        crate::app::threads::spawn_named("mpv-controller", move || {
             ControllerState::new(
                 controller_tx,
                 rx,

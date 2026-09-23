@@ -56,14 +56,17 @@ const MENU_ID_CLIENT_SETTINGS: i32 = MENU_ID_FULLSCREEN + 1;
 const MENU_ID_DASHBOARD: i32 = MENU_ID_CLIENT_SETTINGS + 1;
 const MENU_ID_ABOUT: i32 = MENU_ID_DASHBOARD + 1;
 
-pub(super) fn cef_i32<T>(value: T) -> i32
+/// CEF takes several enum and flag values as `i32`. The constants used here all
+/// fit; one that ever did not is logged and the call skipped, not a panic.
+pub(super) fn cef_i32<T>(value: T) -> Option<i32>
 where
-    T: TryInto<i32>,
-    T::Error: std::fmt::Debug,
+    T: TryInto<i32> + Copy + std::fmt::Debug,
 {
-    value
-        .try_into()
-        .unwrap_or_else(|error| panic!("CEF enum value does not fit in i32: {error:?}"))
+    let converted = value.try_into().ok();
+    if converted.is_none() {
+        tracing::error!(target: "cef", ?value, "a CEF enum value does not fit in i32");
+    }
+    converted
 }
 
 fn remove_trailing_separator(model: &MenuModel) {
@@ -89,8 +92,11 @@ wrap_context_menu_handler! {
             let Some(model) = model else {
                 return;
             };
-            model.remove(cef_i32(MenuId::PRINT.get_raw()));
-            model.remove(cef_i32(MenuId::VIEW_SOURCE.get_raw()));
+            for id in [MenuId::PRINT, MenuId::VIEW_SOURCE] {
+                if let Some(id) = cef_i32(id.get_raw()) {
+                    model.remove(id);
+                }
+            }
             remove_trailing_separator(model);
             if model.count() > 0 {
                 model.add_separator();
