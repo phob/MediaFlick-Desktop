@@ -138,7 +138,11 @@ fn playback_neighbors(services: &Arc<Services>, request: &ApiRequest) -> ApiResp
 }
 
 fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiResponse {
-    match play::start(services, options, "own UI") {
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    match play::start(services, &scope, options, "own UI") {
         Ok(prepared) => ApiResponse::ok(json!({
             "started": true,
             "itemId": options.item_id,
@@ -153,12 +157,13 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiRespons
         Err(play::StartError::NotReady) => {
             ApiResponse::error(503, "the playback coordinator is not ready yet")
         }
+        Err(play::StartError::AccountChanged) => stale_account_response(),
         Err(play::StartError::Api(error)) => {
             // A 404 from `PlaybackInfo` means the item no longer exists on the
             // server, so the cached row is a phantom: drop it now rather than
             // offering a Play button that can never work.
             if matches!(error, ApiError::Status { status: 404 }) {
-                forget_item(services, &options.item_id);
+                forget_item(services, &scope, &options.item_id);
             }
             ApiResponse::from_api_error(&error)
         }

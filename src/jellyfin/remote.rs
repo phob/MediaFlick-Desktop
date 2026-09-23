@@ -15,6 +15,7 @@ use crate::playback::{PlayerCommand, TICKS_PER_SECOND};
 
 use super::api::items;
 use super::play::{self, PlayOptions};
+use super::session::SessionScope;
 
 /// What a `Play` message asked for, in this client's terms.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -117,7 +118,8 @@ pub(crate) fn parse_general(data: &Value) -> GeneralAction {
     }
 }
 
-pub fn handle_play(data: &Value) {
+/// `scope` is the session whose event stream delivered the command.
+pub fn handle_play(data: &Value, scope: &SessionScope) {
     let Some(services) = services::services() else {
         return;
     };
@@ -140,7 +142,7 @@ pub fn handle_play(data: &Value) {
         tracing::debug!(target: "jellyfin.remote", "remote play named no items");
         return;
     };
-    let Some((target_id, resume)) = resolve_playable(&services, item_id) else {
+    let Some((target_id, resume)) = resolve_playable(&services, scope, item_id) else {
         tracing::debug!(
             target: "jellyfin.remote",
             item_id,
@@ -158,7 +160,7 @@ pub fn handle_play(data: &Value) {
         subtitle_stream_index: ask.subtitle_stream_index,
         ..Default::default()
     };
-    match play::start(&services, &options, "remote") {
+    match play::start(&services, scope, &options, "remote") {
         Ok(_) => {}
         Err(play::StartError::NoPlayer) => {
             tracing::warn!(
@@ -172,8 +174,14 @@ pub fn handle_play(data: &Value) {
                 "a remote client asked to play here before the playback coordinator was ready"
             );
         }
+        Err(play::StartError::AccountChanged) => {
+            tracing::debug!(
+                target: "jellyfin.remote",
+                "ignoring a remote play request from an account that is no longer signed in"
+            );
+        }
+        // `play::start` already reported the failure against `scope`.
         Err(play::StartError::Api(error)) => {
-            services.session.note_error(&error);
             tracing::warn!(target: "jellyfin.remote", "remote play failed: {error}");
         }
     }
@@ -183,19 +191,21 @@ pub fn handle_play(data: &Value) {
 /// episodes play as themselves; a series plays its Next Up episode (first
 /// episode once fully watched), matching the series page's Play button; a
 /// season plays its first episode.
-fn resolve_playable(services: &Services, item_id: &str) -> Option<(String, bool)> {
+fn resolve_playable(
+    services: &Services,
+    scope: &SessionScope,
+    item_id: &str,
+) -> Option<(String, bool)> {
     match services.library.kind(item_id).as_deref() {
         Some("Series") => {
-            let next_up = services
-                .session
-                .client_and_user()
-                .ok()
-                .and_then(|(client, user_id)| {
-                    items::fetch_next_up(&client, &user_id, Some(item_id), 1)
-                        .ok()
-                        .and_then(|response| response.items.into_iter().next())
-                        .map(|item| item.id)
-                });
+            let next_up =
+                match items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1) {
+                    Ok(response) => response.items.into_iter().next().map(|item| item.id),
+                    Err(error) => {
+                        services.session.note_scoped_error(scope, &error);
+                        None
+                    }
+                };
             let episode = match next_up {
                 Some(id) => Some(id),
                 None => services
@@ -225,7 +235,7 @@ fn resolve_playable(services: &Services, item_id: &str) -> Option<(String, bool)
     }
 }
 
-pub fn handle_playstate(data: &Value) {
+pub fn handle_playstate(data: &Value, scope: &SessionScope) {
     let Some(services) = services::services() else {
         return;
     };
@@ -265,7 +275,7 @@ pub fn handle_playstate(data: &Value) {
                 resume: true,
                 ..Default::default()
             };
-            if let Err(error) = play::start(&services, &options, "remote next") {
+            if let Err(error) = play::start(&services, scope, &options, "remote next") {
                 tracing::warn!(target: "jellyfin.remote", "remote next-track failed: {error:?}");
             }
         }

@@ -298,20 +298,6 @@ impl SyncHandle {
     }
 }
 
-/// A handle no worker listens to, so tests can exercise consumers of sync
-/// nudges without spawning the sync thread.
-#[cfg(test)]
-pub(crate) fn detached_handle() -> SyncHandle {
-    SyncHandle {
-        signal: Arc::new(Signal {
-            flags: Mutex::new(Flags::default()),
-            condvar: Condvar::new(),
-        }),
-        running: Arc::new(AtomicBool::new(false)),
-        state: Arc::new(Mutex::new(WorkerState::default())),
-    }
-}
-
 pub(super) fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

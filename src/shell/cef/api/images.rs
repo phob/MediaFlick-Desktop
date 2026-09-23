@@ -45,10 +45,11 @@ fn image(
         return ApiResponse::bytes(mime_for_image(&bytes), bytes, IMMUTABLE_CACHE);
     }
 
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
+    let client = scope.client();
     let mut query = Vec::new();
     if !tag.is_empty() {
         query.push(("tag", tag));
@@ -67,10 +68,9 @@ fn image(
             // A missing image is the first sign of a replaced file, because the
             // grid renders posters long before anything tries to play them.
             if matches!(error, ApiError::Status { status: 404 }) {
-                forget_if_server_disowns(services, &client, &user_id, item_id);
+                forget_if_server_disowns(services, &scope, item_id);
             }
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
+            scoped_failure(services, &scope, &error)
         }
     }
 }
@@ -81,14 +81,9 @@ fn image(
 /// that tag. `fetch_item` queries `/Items?ids=`, so a missing item comes back as
 /// an empty result rather than an error, which cleanly separates "deleted" from
 /// "the server is unwell" — the latter lands in `Err` and is left alone.
-fn forget_if_server_disowns(
-    services: &Arc<Services>,
-    client: &JellyfinClient,
-    user_id: &str,
-    item_id: &str,
-) {
-    match items::fetch_item(client, user_id, item_id) {
-        Ok(None) => forget_item(services, item_id),
+fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
+    match items::fetch_item(scope.client(), scope.user_id(), item_id) {
+        Ok(None) => forget_item(services, scope, item_id),
         Ok(Some(_)) => {}
         Err(error) => {
             tracing::debug!(
