@@ -116,21 +116,13 @@ struct ControllerState {
     runtime: Option<MpvRuntime>,
     configured_mpv: Option<ConfiguredMpv>,
     current_mpv_path: Option<String>,
-    ipc_path: Option<String>,
-    ipc_worker: Option<IpcWorker>,
-    active_ipc_session_id: Option<u64>,
-    next_ipc_session_id: u64,
+    ipc: IpcSession,
     pending_external_subtitle_url: Option<String>,
-    active: Option<ActivePlayback>,
-    pending: Option<PendingPlayback>,
+    phase: PlaybackPhase,
     playback_identity: Option<PlaybackIdentity>,
     startup_seek: Option<StartupSeek>,
     #[cfg(target_os = "linux")]
-    pending_library_fullscreen: bool,
-    #[cfg(target_os = "linux")]
-    library_video_ready: bool,
-    #[cfg(target_os = "linux")]
-    library_waiting_seek_event: bool,
+    fullscreen_gate: FullscreenGate,
     mpv_playback_active: bool,
     playback_runtime_ticks: Option<i64>,
     last_state: ReportingState,
@@ -139,12 +131,7 @@ struct ControllerState {
     last_position_log_bucket: Option<i64>,
     skip_segments: Vec<SkipSegment>,
     segment_skip_state: SegmentSkipState,
-    original_chapters: Option<Vec<Value>>,
-    injected_chapter_markers: Vec<Value>,
-    last_sent_chapter_list: Option<Vec<Value>>,
-    pending_chapter_markers: Option<Vec<Value>>,
-    chapter_marker_attempts: u32,
-    chapter_marker_next_attempt_at: Option<Instant>,
+    chapter_markers: ChapterMarkers,
     seek_started_at_ticks: Option<i64>,
     segment_skip_config: SegmentSkipConfig,
     /// The mark-watched-and-play-next key the input section binds.
@@ -158,6 +145,50 @@ struct ControllerState {
     last_session_poll: Instant,
     event_tx: Option<Sender<PlaybackEvent>>,
     shutdown_requested: Arc<AtomicBool>,
+}
+
+/// The IPC connection to the running mpv. `next_id` numbers the sessions so
+/// an event from a replaced connection can be recognized and dropped.
+struct IpcSession {
+    path: Option<String>,
+    worker: Option<IpcWorker>,
+    active_id: Option<u64>,
+    next_id: u64,
+}
+
+impl Default for IpcSession {
+    fn default() -> Self {
+        Self {
+            path: None,
+            worker: None,
+            active_id: None,
+            next_id: 1,
+        }
+    }
+}
+
+/// Media-segment markers added to mpv's chapter list, and the retry state for
+/// writing them while mpv is still loading the file.
+#[derive(Default)]
+struct ChapterMarkers {
+    /// The file's own chapters, before any markers were added.
+    original: Option<Vec<Value>>,
+    injected: Vec<Value>,
+    last_sent: Option<Vec<Value>>,
+    pending: Option<Vec<Value>>,
+    attempts: u32,
+    next_attempt_at: Option<Instant>,
+}
+
+/// Built-in libmpv on Linux: a fullscreen start waits until the video is
+/// ready and no startup seek is outstanding, so the first fullscreen frame is
+/// the resumed picture rather than the start of the file.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct FullscreenGate {
+    pending: bool,
+    video_ready: bool,
+    waiting_seek_event: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +214,81 @@ impl PlaybackIdentity {
             media_source_id: launch.media_source_id.clone(),
             play_session_id: launch.play_session_id.clone(),
             play_method: launch.play_method.clone(),
+        }
+    }
+}
+
+/// The Jellyfin item the controller is handling. A load is `Loading` from an
+/// accepted `loadfile` until mpv reports `file-loaded`, then `Playing` while
+/// its playstate is reported; the two never overlap. `Idle` says nothing about
+/// mpv itself, which can still be playing a file of its own.
+enum PlaybackPhase {
+    Idle,
+    Loading(Box<PendingPlayback>),
+    Playing(Box<ActivePlayback>),
+}
+
+impl PlaybackPhase {
+    fn loading(pending: PendingPlayback) -> Self {
+        Self::Loading(Box::new(pending))
+    }
+
+    fn playing(active: ActivePlayback) -> Self {
+        Self::Playing(Box::new(active))
+    }
+
+    fn is_idle(&self) -> bool {
+        matches!(self, Self::Idle)
+    }
+
+    fn pending(&self) -> Option<&PendingPlayback> {
+        match self {
+            Self::Loading(pending) => Some(pending),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_mut(&mut self) -> Option<&mut PendingPlayback> {
+        match self {
+            Self::Loading(pending) => Some(pending),
+            _ => None,
+        }
+    }
+
+    fn active(&self) -> Option<&ActivePlayback> {
+        match self {
+            Self::Playing(active) => Some(active),
+            _ => None,
+        }
+    }
+
+    fn active_mut(&mut self) -> Option<&mut ActivePlayback> {
+        match self {
+            Self::Playing(active) => Some(active),
+            _ => None,
+        }
+    }
+
+    /// Ends a load that is still waiting for mpv, leaving other phases alone.
+    fn take_pending(&mut self) -> Option<PendingPlayback> {
+        if !matches!(self, Self::Loading(_)) {
+            return None;
+        }
+        match std::mem::replace(self, Self::Idle) {
+            Self::Loading(pending) => Some(*pending),
+            _ => None,
+        }
+    }
+
+    /// Ends the reported playback, leaving other phases alone.
+    fn take_active(&mut self) -> Option<ActivePlayback> {
+        if !matches!(self, Self::Playing(_)) {
+            return None;
+        }
+        match std::mem::replace(self, Self::Idle) {
+            Self::Playing(active) => Some(*active),
+            _ => None,
         }
     }
 }
@@ -355,21 +461,13 @@ impl ControllerState {
             runtime: None,
             configured_mpv: None,
             current_mpv_path: None,
-            ipc_path: None,
-            ipc_worker: None,
-            active_ipc_session_id: None,
-            next_ipc_session_id: 1,
+            ipc: IpcSession::default(),
             pending_external_subtitle_url: None,
-            active: None,
-            pending: None,
+            phase: PlaybackPhase::Idle,
             playback_identity: None,
             startup_seek: None,
             #[cfg(target_os = "linux")]
-            pending_library_fullscreen: false,
-            #[cfg(target_os = "linux")]
-            library_video_ready: false,
-            #[cfg(target_os = "linux")]
-            library_waiting_seek_event: false,
+            fullscreen_gate: FullscreenGate::default(),
             mpv_playback_active: false,
             playback_runtime_ticks: None,
             last_state: ReportingState {
@@ -381,12 +479,7 @@ impl ControllerState {
             last_position_log_bucket: None,
             skip_segments: Vec::new(),
             segment_skip_state: SegmentSkipState::default(),
-            original_chapters: None,
-            injected_chapter_markers: Vec::new(),
-            last_sent_chapter_list: None,
-            pending_chapter_markers: None,
-            chapter_marker_attempts: 0,
-            chapter_marker_next_attempt_at: None,
+            chapter_markers: ChapterMarkers::default(),
             seek_started_at_ticks: None,
             segment_skip_config: preferences.segment_skip,
             mark_watched_next: preferences.mark_watched_next,
@@ -418,7 +511,8 @@ impl ControllerState {
         if preferences.mark_watched_next != self.mark_watched_next {
             self.mark_watched_next = preferences.mark_watched_next;
             if self
-                .ipc_worker
+                .ipc
+                .worker
                 .as_ref()
                 .is_some_and(IpcWorker::is_writer_alive)
             {
@@ -512,7 +606,7 @@ impl ControllerState {
             command,
             PlayerCommand::Stop | PlayerCommand::ToggleFullscreen
         ) {
-            self.pending_library_fullscreen = false;
+            self.fullscreen_gate.pending = false;
         }
         if matches!(command, PlayerCommand::MarkWatchedAndPlayNext) {
             self.mark_watched_and_play_next();
@@ -608,8 +702,8 @@ impl ControllerState {
                 Ok(()) => {
                     #[cfg(target_os = "linux")]
                     {
-                        self.library_video_ready = false;
-                        self.library_waiting_seek_event = true;
+                        self.fullscreen_gate.video_ready = false;
+                        self.fullscreen_gate.waiting_seek_event = true;
                     }
                     if let Some(startup_seek) = &mut self.startup_seek {
                         startup_seek.sent_at = Some(now);
@@ -649,7 +743,7 @@ impl ControllerState {
             );
             return;
         }
-        if let Some(pending) = &self.pending {
+        if let Some(pending) = self.phase.pending() {
             tracing::debug!(
                 target: "playback",
                 pending_dedupe_key = %pending.key,
@@ -675,8 +769,8 @@ impl ControllerState {
         let reporter = PlaybackReporter::from_launch(&launch);
         self.startup_seek = None;
         self.reset_chapter_markers();
-        let replacing_active_file = self.mpv_playback_active || self.active.is_some();
-        if let Some(active) = self.active.take() {
+        let replacing_active_file = self.mpv_playback_active || self.phase.active().is_some();
+        if let Some(active) = self.phase.take_active() {
             tracing::info!(
                 target: "playback",
                 state = %self.last_state,
@@ -702,7 +796,7 @@ impl ControllerState {
                 self.playback_identity = Some(identity.clone());
                 let playback_id = identity.playback_id;
                 let pending_launch = launch.clone();
-                self.pending = Some(PendingPlayback {
+                self.phase = PlaybackPhase::loading(PendingPlayback {
                     key,
                     identity,
                     launch,
