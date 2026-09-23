@@ -231,15 +231,17 @@ fn item_letterboxd(services: &Arc<Services>, item_id: &str) -> Handled {
     // Letterboxd's RSS movieId namespace is TMDB's movie namespace. Refuse a
     // series or episode even if it happens to carry the same numeric provider
     // id, or a TV record could inherit an unrelated film review.
-    if item["kind"].as_str() != Some("Movie") {
+    if item.summary.kind != "Movie" {
         return Ok(ApiResponse::ok(json!({
             "reviews": [],
             "configuredProfiles": 0,
             "unavailableProfiles": 0,
         })));
     }
-    let Some(tmdb_id) = item["providerIds"]["tmdb"]
-        .as_str()
+    let Some(tmdb_id) = item
+        .provider_ids
+        .tmdb
+        .as_deref()
         .filter(|value| !value.is_empty())
     else {
         return Ok(ApiResponse::ok(json!({

@@ -476,7 +476,7 @@ fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
     }
     let from_server = match services.session.scope() {
         Ok(scope) => items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1)
-            .map(|response| response.items.first().map(summary_from_dto))
+            .map(|response| response.items.first().map(ItemSummary::from_dto))
             .unwrap_or_else(|error| {
                 services.session.note_scoped_error(&scope, &error);
                 tracing::debug!(target: "app.api", "Next Up unavailable for {item_id}: {error}");
@@ -562,10 +562,8 @@ fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) 
         Ok(None) => return Err(ApiResponse::error(404, "no cached item with that id")),
         Err(error) => return Err(storage_failure(&error)),
     };
-    let kind = item["kind"].as_str().unwrap_or_default();
-    let id = item["providerIds"][provider.id_field()]
-        .as_str()
-        .unwrap_or("");
+    let kind = item.summary.kind.as_str();
+    let id = item.provider_ids.get(provider.id_field()).unwrap_or("");
     let Some(url) = provider.url(id, kind) else {
         return Err(ApiResponse::error(
             404,

@@ -846,7 +846,7 @@ mod tests {
         );
 
         let item = library.item("m1").expect("item").expect("still cached");
-        assert_eq!(item["played"], false);
+        assert!(!item.summary.played);
     }
 
     #[test]
@@ -989,8 +989,8 @@ mod tests {
             vec!["season1".to_string(), "show1".to_string()]
         );
         let item = library.item("ep1").expect("item").expect("cached");
-        assert_eq!(item["played"], true);
-        assert_eq!(item["playCount"], 2);
+        assert!(item.summary.played);
+        assert_eq!(item.summary.play_count, 2);
 
         // The same state again moves nothing and must not re-notify.
         assert!(
@@ -1066,7 +1066,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         let played = loop {
             let item = library.item("ep1").expect("item").expect("cached");
-            if item["played"] == true {
+            if item.summary.played {
                 break true;
             }
             if Instant::now() >= deadline {
@@ -1079,6 +1079,6 @@ mod tests {
         assert!(played, "the pushed watch state never reached the cache");
 
         let item = library.item("ep1").expect("item").expect("cached");
-        assert_eq!(item["playCount"], 3);
+        assert_eq!(item.summary.play_count, 3);
     }
 }

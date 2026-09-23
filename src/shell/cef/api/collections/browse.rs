@@ -270,7 +270,7 @@ pub(super) fn franchise_detail(
 fn primary_library_items(
     services: &Services,
     owned: &[ClassifiedTitle],
-) -> rusqlite::Result<Vec<Value>> {
+) -> rusqlite::Result<Vec<ItemSummary>> {
     let ids = owned
         .iter()
         .filter_map(|title| title.local_items.first())

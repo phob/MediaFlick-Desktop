@@ -102,7 +102,7 @@ fn join_server_person_availability(
     let filmography = fetch_person_filmography(client, user_id, person_id, value)?;
     let extras = verify_off_filmography_titles(services, client, user_id, value, &filmography);
     mark_owned_credits(value, &extras);
-    value["libraryExtras"] = json!(extras.iter().map(summary_from_dto).collect::<Vec<_>>());
+    value["libraryExtras"] = json!(extras.iter().map(ItemSummary::from_dto).collect::<Vec<_>>());
     Ok(())
 }
 
