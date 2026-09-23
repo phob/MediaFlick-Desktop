@@ -1,5 +1,4 @@
 import { useSpoilerProtection } from "@/lib/viewing"
-import { Check, Play, Plus, ThumbsUp } from "lucide-react"
 import {
   useCallback,
   useEffect,
@@ -12,6 +11,7 @@ import {
 import { createPortal } from "react-dom"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
+import { ItemActionButtons, type ItemActionMutation } from "@/components/ItemActionButtons"
 import { RatingOverlay } from "@/components/RatingOverlay"
 import {
   LANDSCAPE_WIDTH,
@@ -25,7 +25,6 @@ import { formatRemaining, formatRuntime } from "@/lib/format"
 import { detailNavigationState } from "@/lib/navigation"
 import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
-import { cn } from "@/lib/utils"
 
 /**
  * How long the pointer has to rest on a card before it expands. Short enough to
@@ -57,17 +56,12 @@ interface PreviewLayerState {
   target: PreviewTarget | null
 }
 
-interface PreviewMutation<Input> {
-  isPending: boolean
-  mutate: (input: Input) => void
-}
-
 export interface PreviewDependencies {
   item: (id: string | undefined) => PreviewQuery<PreviewItemData>
   nextUp: (id: string | undefined, enabled: boolean) => PreviewQuery<{ item: ItemSummary | null }>
-  play: () => PreviewMutation<{ id: string; resume: boolean }>
-  favorite: () => PreviewMutation<{ id: string; favorite: boolean }>
-  played: () => PreviewMutation<{ id: string; played: boolean; context?: string | null }>
+  play: () => ItemActionMutation<{ id: string; resume: boolean }>
+  favorite: () => ItemActionMutation<{ id: string; favorite: boolean }>
+  played: () => ItemActionMutation<{ id: string; played: boolean; context?: string | null }>
 }
 
 const DEFAULT_PREVIEW_DEPENDENCIES: PreviewDependencies = {
@@ -366,56 +360,18 @@ function PreviewPanel({
 
       <div className="flex flex-col gap-3 p-4">
         <div className="flex items-center gap-2">
-          {canPlay && (
-            <button
-              type="button"
-              disabled={play.isPending}
-              title={playTarget!.positionTicks > 0 ? "Resume" : "Play"}
-              onClick={(event) => {
-                event.stopPropagation()
-                play.mutate({ id: playTarget!.id, resume: playTarget!.positionTicks > 0 })
-              }}
-              className="preview-action relative z-20 bg-primary text-primary-foreground hover:bg-primary/85"
-            >
-              <Play className="size-5 fill-current" />
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={setFavorite.isPending}
-            title={item.favorite ? "Remove from My List" : "Add to My List"}
-            onClick={(event) => {
-              event.stopPropagation()
-              setFavorite.mutate({ id: item.id, favorite: !item.favorite })
-            }}
-            className={cn(
-              "preview-action relative z-20 border",
-              item.favorite
-                ? "border-primary/70 text-primary"
-                : "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
-            )}
-          >
-            {item.favorite ? <Check className="size-5" /> : <Plus className="size-5" />}
-          </button>
-          {/* Jellyfin has no separate "liked"; watched is the nearest real
-              state, and the thumb is how this row is read at a glance. */}
-          <button
-            type="button"
-            disabled={setPlayed.isPending}
-            title={item.played ? "Mark as unwatched" : "Mark as watched"}
-            onClick={(event) => {
-              event.stopPropagation()
-              setPlayed.mutate({ id: item.id, played: !item.played, context: item.seriesId })
-            }}
-            className={cn(
-              "preview-action relative z-20 border",
-              item.played
-                ? "border-primary/70 bg-primary/15 text-primary"
-                : "border-foreground/30 text-foreground/80 hover:border-primary/60 hover:text-primary",
-            )}
-          >
-            <ThumbsUp className={cn("size-5", item.played && "fill-current")} />
-          </button>
+          <ItemActionButtons
+            variant="panel"
+            item={item}
+            play={canPlay && playTarget ? {
+              label: playTarget.positionTicks > 0 ? "Resume" : "Play",
+              disabled: play.isPending,
+              onPlay: () => play.mutate({ id: playTarget.id, resume: playTarget.positionTicks > 0 }),
+            } : null}
+            favorite={setFavorite}
+            played={setPlayed}
+            playedContext={item.seriesId}
+          />
         </div>
 
         <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-1.5">
