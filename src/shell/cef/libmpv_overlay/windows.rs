@@ -1,4 +1,3 @@
-#[path = "windows/compositor.rs"]
 mod compositor;
 
 use std::cell::{Cell, RefCell};

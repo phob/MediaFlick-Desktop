@@ -11,7 +11,7 @@
 use serde_json::Value;
 
 use crate::app::services::{self, Services};
-use crate::playback::{PlayerCommand, TICKS_PER_SECOND};
+use crate::playback::{PlayerCommand, TICKS_PER_MILLISECOND};
 
 use super::api::items;
 use super::play::{self, PlayOptions};
@@ -82,7 +82,7 @@ pub(crate) fn parse_playstate(data: &Value) -> PlaystateAction {
         "PlayPause" => PlaystateAction::PlayPause,
         "Seek" => PlaystateAction::Seek {
             position_ms: data["SeekPositionTicks"].as_i64().unwrap_or(0).max(0) as f64
-                / (TICKS_PER_SECOND / 1_000.0),
+                / TICKS_PER_MILLISECOND,
         },
         "NextTrack" => PlaystateAction::NextTrack,
         other => PlaystateAction::Unsupported(other.to_string()),

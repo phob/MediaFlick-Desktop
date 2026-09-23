@@ -18,13 +18,14 @@ use crate::players::mpv::ipc::{
 };
 use crate::preferences::FullscreenBehavior;
 
-use super::super::commands::{loadfile_command, next_request_id, non_empty};
+use super::super::commands::{loadfile_command, next_request_id};
 use super::{
     ConfiguredMpv, ControllerMessage, ControllerState, DUPLICATE_DEBOUNCE, IPC_COMMAND_TIMEOUT,
     IPC_CONNECT_TIMEOUT, IPC_SUBTITLE_COMMAND_TIMEOUT, MPV_RAISE_PULSE_DELAY,
     MPV_SESSION_POLL_INTERVAL, PENDING_FILE_LOADED_TIMEOUT, PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT,
     PROGRESS_INTERVAL, SHUTDOWN_WAIT, control_command,
 };
+use crate::playback::non_empty;
 
 impl ControllerState {
     pub(super) fn warm(&mut self, mpv_path: &str, fullscreen: FullscreenBehavior) {

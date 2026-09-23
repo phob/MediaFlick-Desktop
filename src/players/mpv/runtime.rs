@@ -14,10 +14,8 @@ use crate::preferences::FullscreenBehavior;
 use super::ExternalMpv;
 
 #[cfg(target_os = "linux")]
-#[path = "gpu_next.rs"]
 mod gpu_next;
 #[cfg(target_os = "linux")]
-#[path = "linux_window.rs"]
 mod linux_window;
 
 const MPV_EVENT_NONE: c_int = 0;
