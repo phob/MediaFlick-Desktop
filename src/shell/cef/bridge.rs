@@ -2,7 +2,7 @@ use super::document::*;
 use super::events::*;
 use super::*;
 
-/// The remaining native About and update dialogs talk to the shell over
+/// The native update toast talks to the shell over
 /// `mediaflick-desktop://<action>` URLs. Settings-specific native operations
 /// use the typed API and shell queue instead. Dialog actions require this
 /// session's token; the harmless readiness fallback instead requires the exact
@@ -55,22 +55,15 @@ fn bridge_token_is_valid(request_url: &str) -> bool {
     urls::query_param(query, "token").is_some_and(|token| token == jellyfin_bridge::bridge_token())
 }
 
-pub(super) fn route_bridge_action(
-    request_url: &str,
-    browser: Option<&mut Browser>,
-    frame: Option<&mut Frame>,
-    state: &BrowserState,
-) -> bool {
+pub(super) fn route_bridge_action(request_url: &str, state: &BrowserState) -> bool {
     use jellyfin_bridge::BridgeAction;
 
     let Some(action) = jellyfin_bridge::parse_bridge_action(request_url) else {
         return false;
     };
     match action {
-        BridgeAction::About => show_about_dialog(browser, frame),
-        BridgeAction::Exit => initiate_app_exit(browser, state),
         BridgeAction::WindowReady => reveal_main_window(state),
-        BridgeAction::DownloadUpdate(query) => start_update_download(query, state),
+        BridgeAction::DownloadUpdate => start_update_download(state),
         BridgeAction::OpenUpdateRelease => open_update_release_page(),
     }
     true
@@ -208,8 +201,7 @@ pub(super) fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mu
     }
 }
 
-/// Kept as a bridge target for an older update-toast document, but it now
-/// performs an in-app navigation rather than injecting a native modal.
+/// The context menu's Settings entry: an in-app navigation.
 pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     let target_frame = browser
         .and_then(|browser| browser.main_frame())
@@ -221,21 +213,17 @@ pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&m
     }
 }
 
-pub(super) fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserState) {
-    tracing::info!(target: "app", "exit requested from Jellyfin Web user menu");
+/// Closes every browser and quits, as after an update installer has started.
+pub(super) fn initiate_app_exit(state: &BrowserState) {
+    tracing::info!(target: "app", "exit requested");
 
-    let mut browsers = state
+    let browsers = state
         .lock()
         .map(|mut state| {
             state.force_close_requested = true;
             state.browsers.clone()
         })
         .unwrap_or_default();
-    if browsers.is_empty()
-        && let Some(browser) = browser.cloned()
-    {
-        browsers.push(browser);
-    }
 
     let mut close_requests = 0usize;
     for browser in browsers {
@@ -254,7 +242,7 @@ pub(super) fn initiate_app_exit(browser: Option<&mut Browser>, state: &BrowserSt
     }
 }
 
-fn start_update_download(_query: &str, state: &BrowserState) {
+fn start_update_download(state: &BrowserState) {
     let release = match state.lock() {
         Ok(mut state) => {
             if state.update_download_started {
@@ -311,36 +299,23 @@ fn start_update_download(_query: &str, state: &BrowserState) {
     });
 }
 
-fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
-    if !mpv_setup::supported() {
-        dispatch_mpv_setup(
+/// Installs mpv for the Player settings shelf, reporting progress to the page
+/// as `mpv-install-progress` shell events tagged with `request_id`.
+pub(super) fn start_mpv_download(state: &BrowserState, request_id: String) {
+    let failed = |message: &str| {
+        dispatch_shell_event(
             state,
-            "error",
-            &json!({ "message": "Automatic mpv download is only available on Windows." }),
+            "mpv-install-progress",
+            json!({ "requestId": request_id, "state": "failed", "message": message }),
         );
-        if let Some(request_id) = request_id {
-            dispatch_shell_event(
-                state,
-                "mpv-install-progress",
-                json!({
-                    "requestId": request_id,
-                    "state": "failed",
-                    "message": "Automatic mpv download is only available on Windows.",
-                }),
-            );
-        }
+    };
+    if !mpv_setup::supported() {
+        failed("Automatic mpv download is only available on Windows.");
         return;
     }
 
     let already_running = match state.lock() {
-        Ok(mut state) => {
-            if state.mpv_setup_started {
-                true
-            } else {
-                state.mpv_setup_started = true;
-                false
-            }
-        }
+        Ok(mut state) => std::mem::replace(&mut state.mpv_setup_started, true),
         Err(error) => {
             tracing::warn!(target: "mpv.setup", "failed to lock browser state for mpv download: {error}");
             return;
@@ -348,27 +323,11 @@ fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
     };
     if already_running {
         tracing::debug!(target: "mpv.setup", "ignored duplicate mpv download request");
-        if let Some(request_id) = request_id.as_ref() {
-            dispatch_shell_event(
-                state,
-                "mpv-install-progress",
-                json!({
-                    "requestId": request_id,
-                    "state": "failed",
-                    "message": "An mpv installation is already running.",
-                }),
-            );
-        }
+        failed("An mpv installation is already running.");
         return;
     }
 
     tracing::info!(target: "mpv.setup", "starting mpv download");
-    dispatch_mpv_setup(
-        state,
-        "downloading",
-        &json!({ "downloaded": 0, "total": null }),
-    );
-
     let state_for_thread = state.clone();
     thread::spawn(move || {
         let progress_state = state_for_thread.clone();
@@ -402,10 +361,6 @@ fn start_mpv_download(state: &BrowserState, request_id: Option<String>) {
             ),
         }
     });
-}
-
-pub(super) fn start_mpv_download_for_settings(state: &BrowserState, request_id: String) {
-    start_mpv_download(state, Some(request_id));
 }
 
 wrap_run_file_dialog_callback! {
