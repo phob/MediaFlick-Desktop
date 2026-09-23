@@ -220,6 +220,14 @@ enum PlaybackCacheRefreshOutcome {
     Deferred,
 }
 
+/// Why a post-playback refresh did not reach the catalog cache.
+enum PlaybackCacheWriteError {
+    /// The account changed during the fetch; the row belongs to the previous
+    /// account's cache.
+    StaleSession,
+    Storage(rusqlite::Error),
+}
+
 impl PlaybackCacheRefreshOutcome {
     fn as_str(self) -> &'static str {
         match self {
@@ -437,24 +445,44 @@ fn mirror_playback_progress(state: &BrowserState, snapshot: &crate::playback::Pl
                 PlaybackCacheRefreshOutcome::Deferred
             } else {
                 let result = (|| {
-                    let (client, user_id) = services.session.client_and_user()?;
-                    items::fetch_item(&client, &user_id, &item_id)
+                    let scope = services.session.scope()?;
+                    let item = items::fetch_item(scope.client(), scope.user_id(), &item_id)?;
+                    Ok::<_, crate::jellyfin::api::ApiError>((scope, item))
                 })();
                 match result {
-                    Ok(Some(item)) => {
-                        if let Err(error) = services.library.upsert_page(&[item]) {
-                            tracing::warn!(
-                                target: "library.db",
-                                item_id,
-                                "failed to cache Jellyfin's resolved playback state: {error}"
-                            );
-                            services.sync.request();
-                            PlaybackCacheRefreshOutcome::Deferred
-                        } else {
-                            PlaybackCacheRefreshOutcome::Refreshed
+                    Ok((scope, Some(item))) => {
+                        let cached = services.session.commit_if_current(
+                            &scope,
+                            || PlaybackCacheWriteError::StaleSession,
+                            || {
+                                services
+                                    .library
+                                    .upsert_page(&[item])
+                                    .map_err(PlaybackCacheWriteError::Storage)
+                            },
+                        );
+                        match cached {
+                            Ok(_) => PlaybackCacheRefreshOutcome::Refreshed,
+                            Err(PlaybackCacheWriteError::StaleSession) => {
+                                tracing::debug!(
+                                    target: "jellyfin.playstate",
+                                    item_id,
+                                    "dropped a playback-state refresh for a previous session"
+                                );
+                                PlaybackCacheRefreshOutcome::Deferred
+                            }
+                            Err(PlaybackCacheWriteError::Storage(error)) => {
+                                tracing::warn!(
+                                    target: "library.db",
+                                    item_id,
+                                    "failed to cache Jellyfin's resolved playback state: {error}"
+                                );
+                                services.sync.request();
+                                PlaybackCacheRefreshOutcome::Deferred
+                            }
                         }
                     }
-                    Ok(None) => {
+                    Ok((_, None)) => {
                         tracing::debug!(
                             target: "jellyfin.playstate",
                             item_id,
