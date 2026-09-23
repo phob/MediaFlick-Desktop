@@ -1,8 +1,8 @@
-use super::handlers::{JellyfinClient, cef_i32};
+use super::handlers::{ShellClient, cef_i32};
 use super::*;
 
 wrap_app! {
-    pub struct JellyfinApp {
+    pub struct ShellApp {
         config: AppConfig,
     }
 
@@ -57,7 +57,7 @@ wrap_app! {
             );
 
             #[cfg(target_os = "linux")]
-            if prototype_osr::is_configured(&self.config.settings) {
+            if libmpv_overlay::is_configured(&self.config.settings) {
                 command_line.append_switch_with_value(Some(&CefString::from("ozone-platform")),
                     Some(&CefString::from("x11")));
                 // This adapter consumes software OnPaint frames, not DMA-BUF
@@ -147,7 +147,7 @@ wrap_browser_process_handler! {
                 .ok()
                 .map(|state| state.playback.clone());
             if let Some(surface) = playback.and_then(|playback| {
-                prototype_osr::PrototypeOsrSurface::select(&settings, playback)
+                libmpv_overlay::LibmpvOverlaySurface::select(&settings, playback)
             }) {
                 prepare_player_for_window(&handler_state);
                 let native_window = configured_player_native_window(
@@ -157,7 +157,7 @@ wrap_browser_process_handler! {
                 if let Some(native_window) = native_window {
                     match surface.bind(native_window) {
                         Ok(()) => {
-                            let mut client = JellyfinClient::new(
+                            let mut client = ShellClient::new(
                                 handler_state.clone(),
                                 Some(surface.clone()),
                             );
@@ -178,7 +178,7 @@ wrap_browser_process_handler! {
                 }
             }
 
-            *self.client.borrow_mut() = Some(JellyfinClient::new(handler_state.clone(), None));
+            *self.client.borrow_mut() = Some(ShellClient::new(handler_state.clone(), None));
             let mut client = self.default_client();
             let browser_settings = BrowserSettings::default();
             let mut browser_delegate = JellyfinBrowserViewDelegate::new(runtime_style);

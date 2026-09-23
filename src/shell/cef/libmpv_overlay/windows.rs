@@ -110,7 +110,7 @@ impl Default for HostCloseHooks {
     }
 }
 
-pub(crate) struct PrototypeOsrSurface {
+pub(crate) struct LibmpvOverlaySurface {
     playback: Arc<PlaybackCoordinator>,
     host: Cell<HWND>,
     input: Cell<HWND>,
@@ -128,7 +128,7 @@ pub(crate) struct PrototypeOsrSurface {
     closing: Cell<bool>,
 }
 
-impl PrototypeOsrSurface {
+impl LibmpvOverlaySurface {
     pub(crate) fn select(
         settings: &AppSettings,
         playback: Arc<PlaybackCoordinator>,
@@ -157,7 +157,7 @@ impl PrototypeOsrSurface {
     }
 
     pub(crate) fn render_handler(self: &Rc<Self>) -> Option<RenderHandler> {
-        Some(PrototypeRenderHandler::new(Rc::clone(self)))
+        Some(OverlayRenderHandler::new(Rc::clone(self)))
     }
 
     pub(crate) fn set_cursor(&self, cursor: CursorType) {
@@ -542,7 +542,7 @@ impl PrototypeOsrSurface {
     }
 }
 
-impl Drop for PrototypeOsrSurface {
+impl Drop for LibmpvOverlaySurface {
     fn drop(&mut self) {
         self.destroy();
     }
@@ -558,7 +558,7 @@ pub(crate) fn is_configured(settings: &AppSettings) -> bool {
 
 wrap_task! {
     struct SurfaceSyncTask {
-        surface: Rc<PrototypeOsrSurface>,
+        surface: Rc<LibmpvOverlaySurface>,
     }
 
     impl Task {
@@ -571,8 +571,8 @@ wrap_task! {
 }
 
 wrap_render_handler! {
-    struct PrototypeRenderHandler {
-        surface: Rc<PrototypeOsrSurface>,
+    struct OverlayRenderHandler {
+        surface: Rc<LibmpvOverlaySurface>,
     }
 
     impl RenderHandler {
@@ -747,13 +747,13 @@ unsafe extern "system" fn input_wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == WM_NCCREATE {
-        // SAFETY: CreateWindowExW supplied a live PrototypeOsrSurface pointer
+        // SAFETY: CreateWindowExW supplied a live LibmpvOverlaySurface pointer
         // in lpCreateParams; the window-owned Rc keeps it alive until destroy.
         let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
         unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, create.lpCreateParams as isize) };
     }
     let surface_ptr =
-        unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const PrototypeOsrSurface;
+        unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const LibmpvOverlaySurface;
     if surface_ptr.is_null() {
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     }
@@ -782,7 +782,7 @@ fn navigation_mouse_button(message: u32, wparam: WPARAM) -> Option<bool> {
 }
 
 fn dispatch_window_message(
-    surface: &PrototypeOsrSurface,
+    surface: &LibmpvOverlaySurface,
     window: HWND,
     message: u32,
     wparam: WPARAM,

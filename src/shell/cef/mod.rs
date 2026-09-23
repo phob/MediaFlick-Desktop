@@ -49,7 +49,7 @@ pub fn run(config: &AppConfig) -> i32 {
 
     let type_switch = CefString::from("type");
     let is_browser_process = command_line.has_switch(Some(&type_switch)) != 1;
-    let mut app = JellyfinApp::new(config.clone());
+    let mut app = ShellApp::new(config.clone());
 
     if !is_browser_process {
         let exit_code = execute_process(
@@ -78,7 +78,7 @@ pub fn run(config: &AppConfig) -> i32 {
     let cache_path = paths.cache_dir.to_string_lossy();
     let log_file = paths.log_file.to_string_lossy();
     let product = format!("mediaflick-desktop/{}", env!("CARGO_PKG_VERSION"));
-    let windowless_rendering_enabled = i32::from(prototype_osr::is_configured(&config.settings));
+    let windowless_rendering_enabled = i32::from(libmpv_overlay::is_configured(&config.settings));
     let settings = Settings {
         no_sandbox: 1,
         browser_subprocess_path: cef_string_from_path(paths.browser_subprocess_path.as_ref()),
@@ -226,14 +226,14 @@ mod bridge;
 mod document;
 mod events;
 mod handlers;
-mod prototype_osr;
+mod libmpv_overlay;
 mod runtime;
 
 use events::{
     start_playback_event_bridge, start_preferences_event_bridge, start_shell_request_bridge,
     start_update_check_bridge, warm_configured_player,
 };
-use runtime::JellyfinApp;
+use runtime::ShellApp;
 
 fn update_webui_window_from_window(state: Option<&BrowserState>, window: Option<&Window>) {
     let bounds = window.map(Window::bounds);
@@ -347,10 +347,10 @@ fn reveal_main_window(state: &BrowserState) {
             return;
         }
         #[cfg(target_os = "linux")]
-        if prototype_osr::is_active() {
+        if libmpv_overlay::is_active() {
             state.main_window_revealed = true;
             drop(state);
-            prototype_osr::reveal();
+            libmpv_overlay::reveal();
             return;
         }
         let Some(window) = state.main_window.clone() else {

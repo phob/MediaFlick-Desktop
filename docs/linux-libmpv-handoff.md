@@ -88,7 +88,7 @@ OpenGL render-API path's cap to physical monitor density. See
 
 Before changing rendering, read `AGENTS.md`, `docs/libmpv-integration.md`,
 `src/players/mpv/runtime.rs`, `gpu_next.rs`, `linux_window.rs`, and the Linux
-implementation under `src/shell/cef/prototype_osr/`. Preserve the working
+implementation under `src/shell/cef/libmpv_overlay/`. Preserve the working
 overlay, HiDPI scaling, popups, pointer/keyboard/focus handling, fullscreen,
 window placement, and delayed startup seek. Preserve persistent IPC writes
 and resume/playstate invariants; do not replace them with loadfile start

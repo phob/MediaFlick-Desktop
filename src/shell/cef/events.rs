@@ -16,7 +16,7 @@ pub(super) fn warm_configured_player(playback: &PlaybackCoordinator, settings: &
 }
 
 fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
-    if prototype_osr::is_configured(settings) {
+    if libmpv_overlay::is_configured(settings) {
         FullscreenBehavior::Windowed
     } else {
         settings.default_fullscreen
@@ -197,19 +197,19 @@ pub(super) enum UpdateEvent {
 #[derive(Debug, Clone)]
 pub(super) enum MpvSetupEvent {
     Progress {
-        request_id: Option<String>,
+        request_id: String,
         downloaded: u64,
         total: Option<u64>,
     },
     Extracting {
-        request_id: Option<String>,
+        request_id: String,
     },
     Ready {
-        request_id: Option<String>,
+        request_id: String,
         path: PathBuf,
     },
     Error {
-        request_id: Option<String>,
+        request_id: String,
         message: String,
     },
 }
@@ -320,19 +320,12 @@ wrap_task! {
 wrap_task! {
     struct BridgeActionTask {
         request_url: String,
-        browser: Option<Browser>,
-        frame: Option<Frame>,
         state: BrowserState,
     }
 
     impl Task {
         fn execute(&self) {
-            if !route_bridge_action(
-                &self.request_url,
-                self.browser.clone().as_mut(),
-                self.frame.clone().as_mut(),
-                &self.state,
-            ) {
+            if !route_bridge_action(&self.request_url, &self.state) {
                 tracing::warn!(
                     target: "bridge",
                     url = %logger::redact_url_secrets(&self.request_url),
@@ -343,13 +336,8 @@ wrap_task! {
     }
 }
 
-pub(super) fn post_bridge_action(
-    request_url: String,
-    browser: Option<Browser>,
-    frame: Option<Frame>,
-    state: BrowserState,
-) {
-    let mut task = BridgeActionTask::new(request_url, browser, frame, state);
+pub(super) fn post_bridge_action(request_url: String, state: BrowserState) {
+    let mut task = BridgeActionTask::new(request_url, state);
     if post_task(ThreadId::UI, Some(&mut task)) == 0 {
         tracing::warn!(target: "bridge", "failed to post bridge action to CEF UI thread");
     }
@@ -595,7 +583,7 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
         UpdateEvent::DownloadReady(path) => {
             dispatch_update_progress(state, "installing", &json!({ "downloaded": 1, "total": 1 }));
             match updater::start_installer(&path) {
-                Ok(()) => initiate_app_exit(None, state),
+                Ok(()) => initiate_app_exit(state),
                 Err(error) => {
                     if let Ok(mut state) = state.lock() {
                         state.update_download_started = false;
@@ -649,45 +637,31 @@ pub(super) fn dispatch_update_progress(
 }
 
 fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
+    let progress = |request_id: String, mut payload: serde_json::Value| {
+        payload["requestId"] = json!(request_id);
+        dispatch_shell_event(state, "mpv-install-progress", payload);
+    };
+    let finished = || {
+        if let Ok(mut state) = state.lock() {
+            state.mpv_setup_started = false;
+        }
+    };
     match event {
         MpvSetupEvent::Progress {
             request_id,
             downloaded,
             total,
-        } => {
-            dispatch_mpv_setup(
-                state,
-                "downloading",
-                &json!({ "downloaded": downloaded, "total": total }),
-            );
-            if let Some(request_id) = request_id {
-                dispatch_shell_event(
-                    state,
-                    "mpv-install-progress",
-                    json!({
-                        "requestId": request_id, "state": "downloading", "downloaded": downloaded, "total": total,
-                    }),
-                );
-            }
-        }
+        } => progress(
+            request_id,
+            json!({ "state": "downloading", "downloaded": downloaded, "total": total }),
+        ),
         MpvSetupEvent::Extracting { request_id } => {
-            dispatch_mpv_setup(state, "extracting", &json!({}));
-            if let Some(request_id) = request_id {
-                dispatch_shell_event(
-                    state,
-                    "mpv-install-progress",
-                    json!({
-                        "requestId": request_id, "state": "extracting",
-                    }),
-                );
-            }
+            progress(request_id, json!({ "state": "extracting" }));
         }
         MpvSetupEvent::Ready { request_id, path } => {
             let mpv_path = path.to_string_lossy().into_owned();
             tracing::info!(target: "mpv.setup", path = %mpv_path, "mpv installed");
-            if let Ok(mut state) = state.lock() {
-                state.mpv_setup_started = false;
-            }
+            finished();
             let save_result: Result<(), String> = match services::services() {
                 Some(services) => services
                     .preferences
@@ -697,30 +671,13 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
                 None => Err("preferences service is unavailable".to_string()),
             };
             match save_result {
-                Ok(()) => {
-                    dispatch_mpv_setup(state, "done", &json!({ "path": mpv_path }));
-                    if let Some(request_id) = request_id {
-                        dispatch_shell_event(
-                            state,
-                            "mpv-install-progress",
-                            json!({
-                                "requestId": request_id, "state": "completed", "path": mpv_path,
-                            }),
-                        );
-                    }
-                }
+                Ok(()) => progress(
+                    request_id,
+                    json!({ "state": "completed", "path": mpv_path }),
+                ),
                 Err(message) => {
                     tracing::warn!(target: "mpv.setup", "failed to save installed mpv path: {message}");
-                    dispatch_mpv_setup(state, "error", &json!({ "message": message }));
-                    if let Some(request_id) = request_id {
-                        dispatch_shell_event(
-                            state,
-                            "mpv-install-progress",
-                            json!({
-                                "requestId": request_id, "state": "failed", "message": message,
-                            }),
-                        );
-                    }
+                    progress(request_id, json!({ "state": "failed", "message": message }));
                 }
             }
         }
@@ -729,32 +686,8 @@ fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
             message,
         } => {
             tracing::warn!(target: "mpv.setup", "mpv setup failed: {message}");
-            if let Ok(mut state) = state.lock() {
-                state.mpv_setup_started = false;
-            }
-            dispatch_mpv_setup(state, "error", &json!({ "message": message }));
-            if let Some(request_id) = request_id {
-                dispatch_shell_event(
-                    state,
-                    "mpv-install-progress",
-                    json!({
-                        "requestId": request_id, "state": "failed", "message": message,
-                    }),
-                );
-            }
-        }
-    }
-}
-
-pub(super) fn dispatch_mpv_setup(state: &BrowserState, status: &str, payload: &serde_json::Value) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    let script = mpv_setup::setup_script(status, payload);
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            execute_mpv_setup_script(&frame, &script);
+            finished();
+            progress(request_id, json!({ "state": "failed", "message": message }));
         }
     }
 }
@@ -813,9 +746,7 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
     match request {
         ShellRequest::MainWindowReady => reveal_main_window(state),
         ShellRequest::FilePicker { request_id } => open_settings_file_dialog(state, request_id),
-        ShellRequest::InstallMpv { request_id } => {
-            start_mpv_download_for_settings(state, request_id)
-        }
+        ShellRequest::InstallMpv { request_id } => start_mpv_download(state, request_id),
         ShellRequest::LibraryChanged {
             item_ids,
             context_ids,
@@ -949,14 +880,6 @@ fn execute_error_script(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
         Some(&CefString::from("mediaflick-desktop://error-toast")),
-        1,
-    );
-}
-
-fn execute_mpv_setup_script(frame: &Frame, script: &str) {
-    frame.execute_java_script(
-        Some(&CefString::from(script)),
-        Some(&CefString::from("mediaflick-desktop://mpv-setup")),
         1,
     );
 }
