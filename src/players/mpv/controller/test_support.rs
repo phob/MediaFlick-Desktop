@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use crate::playback::PlaybackRequest;
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntimeKind};
-use crate::preferences::SegmentSkipConfig;
 
 use super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
 
@@ -20,7 +19,7 @@ pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> Con
         Arc::new(Mutex::new(Default::default())),
         None,
         Arc::new(AtomicBool::new(false)),
-        SegmentSkipConfig::default(),
+        crate::preferences::AppSettings::default().player_preferences(),
         RuntimeSelection {
             kind: MpvRuntimeKind::External,
             libmpv_profile: LibmpvProfile::Standard,

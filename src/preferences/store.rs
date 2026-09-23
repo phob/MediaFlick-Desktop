@@ -139,59 +139,80 @@ pub fn take_device_recovery_notice() -> Option<RecoveryNotice> {
 
 fn load_legacy_settings() -> AppSettings {
     let path = config_dir().join("config.json");
-    let Ok(bytes) = std::fs::read(&path) else {
-        return AppSettings::default();
-    };
-    serde_json::from_slice::<AppSettings>(&bytes).map_or_else(
-        |_| AppSettings::default(),
-        |mut settings| {
-            settings.sanitize();
-            settings
+    let parsed = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AppSettings>(&bytes).ok());
+    let mut settings = parsed.unwrap_or_else(|| AppSettings {
+        mark_watched_next: legacy_mark_watched_next(),
+        ..AppSettings::default()
+    });
+    settings.sanitize();
+    settings
+}
+
+/// The mark-watched-next key from `input.json`, where builds before
+/// `settings.json` carried the binding kept it. A missing or unreadable file
+/// means the default key; a blank value means the binding was disabled. The
+/// file is only read, so a newer settings file never disagrees with it.
+pub(crate) fn legacy_mark_watched_next() -> Option<String> {
+    let path = config_dir().join("input.json");
+    let value = match std::fs::read(&path) {
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("failed to read {}: {error}", path.display());
+                return Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string());
+            }
         },
-    )
+        Err(_) => return Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string()),
+    };
+    legacy_binding(&value)
+}
+
+fn legacy_binding(value: &serde_json::Value) -> Option<String> {
+    let lookup = |key: &str| {
+        value
+            .get("bindings")
+            .and_then(|bindings| bindings.get(key))
+            .or_else(|| value.get(key))
+    };
+    // `kb_watched` is the name the first builds used.
+    match lookup("mark_watched_next").or_else(|| lookup("kb_watched")) {
+        None => Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string()),
+        Some(binding) => super::clean_binding(binding.as_str()),
+    }
 }
 
 pub fn config_dir() -> PathBuf {
-    roaming_base_dir().join("mediaflick-desktop")
-}
-
-fn roaming_base_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(value) = std::env::var_os("APPDATA") {
-            return PathBuf::from(value);
-        }
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            return PathBuf::from(home).join("AppData").join("Roaming");
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join("Library")
-                .join("Application Support");
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        if let Some(value) = std::env::var_os("XDG_CONFIG_HOME") {
-            return PathBuf::from(value);
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(".config");
-        }
-    }
-
-    std::env::temp_dir()
+    crate::app::paths::platform_config_dir().join("mediaflick-desktop")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::preferences::{AppearanceAccent, AppearanceSettings};
+
+    #[test]
+    fn legacy_input_files_keep_their_watched_binding() {
+        use serde_json::json;
+
+        for (file, expected) in [
+            (
+                json!({ "bindings": { "mark_watched_next": " W " } }),
+                Some("W"),
+            ),
+            (
+                json!({ "mark_watched_next": "Shift+Meta+w" }),
+                Some("Shift+Meta+w"),
+            ),
+            (json!({ "kb_watched": "x" }), Some("x")),
+            (json!({ "bindings": { "mark_watched_next": "" } }), None),
+            (json!({ "bindings": { "mark_watched_next": 5 } }), None),
+            (json!({}), Some("w")),
+        ] {
+            assert_eq!(legacy_binding(&file).as_deref(), expected, "{file}");
+        }
+    }
 
     #[test]
     fn the_device_snapshot_excludes_account_owned_appearance() {
