@@ -4,6 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::ids::random_hex;
+use crate::app::services::ShellBridge;
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::Session;
 use crate::library::Library;
@@ -19,8 +20,8 @@ const STARTUP_HOLD_MAX: Duration = Duration::from_secs(15);
 /// follow-up requests finish before the cycle's change notifications arrive.
 const STARTUP_HOLD_SETTLE: Duration = Duration::from_secs(3);
 
-pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
-    let handle = SyncHandle::new();
+pub fn spawn(library: Arc<Library>, session: Arc<Session>, shell: Arc<ShellBridge>) -> SyncHandle {
+    let handle = SyncHandle::new(shell);
     let worker = handle.clone();
     if let Err(error) = thread::Builder::new()
         .name("library-sync".to_string())
@@ -208,6 +209,7 @@ fn jittered(base: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use super::{STARTUP_HOLD_SETTLE, Wake, jittered, startup_hold_deadline, wait};
@@ -255,7 +257,7 @@ mod tests {
 
     #[test]
     fn a_window_ready_report_wakes_a_held_worker_without_requesting_a_cycle() {
-        let handle = SyncHandle::new();
+        let handle = SyncHandle::new(Arc::default());
         assert!(!handle.window_ready());
 
         handle.release_startup_hold();
@@ -277,7 +279,7 @@ mod tests {
     /// timeout would silently fall back to the hourly gate.
     #[test]
     fn a_request_is_distinguishable_from_a_timeout_and_is_consumed_once() {
-        let handle = SyncHandle::new();
+        let handle = SyncHandle::new(Arc::default());
 
         handle.request();
         assert_eq!(wait(&handle, Duration::ZERO), Wake::Requested);

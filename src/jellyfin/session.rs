@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::{Value, json};
 
+use crate::app::services::ShellBridge;
 use crate::library::{Library, StoredCredentials};
 use crate::preferences::{AccountKey, AppSettings, normalize_server_url};
 
@@ -29,6 +30,8 @@ struct SessionState {
 
 pub struct Session {
     library: Arc<Library>,
+    /// Where an expired token is announced, so the UI can ask to sign in.
+    shell: Arc<ShellBridge>,
     state: RwLock<SessionState>,
     operation_gate: Mutex<()>,
 }
@@ -58,7 +61,7 @@ impl SessionScope {
 impl Session {
     /// Restores the persisted session, falling back to the server URL that the
     /// pre-own-UI releases kept in the legacy `config.json`.
-    pub fn restore(library: Arc<Library>) -> Self {
+    pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
         let stored = library.credentials();
         let authenticated = stored.is_authenticated();
         let server_url = stored
@@ -82,6 +85,7 @@ impl Session {
         };
         Self {
             library,
+            shell,
             state: RwLock::new(state),
             operation_gate: Mutex::new(()),
         }
@@ -296,7 +300,6 @@ impl Session {
                 "cleared the metadata cache for a new Jellyfin account"
             );
         }
-        self.remember_server_url(server_url);
         tracing::info!(
             target: "jellyfin.session",
             user = %user_name,
@@ -359,21 +362,6 @@ impl Session {
         Ok(switched_account)
     }
 
-    /// Keeps `settings.json` in step so the dashboard action and upgrades from
-    /// older releases keep working.
-    fn remember_server_url(&self, server_url: &str) {
-        let Some(services) = crate::app::services::services() else {
-            tracing::warn!(target: "jellyfin.session", "preferences service was unavailable while saving the server URL");
-            return;
-        };
-        if services.preferences.snapshot().jellyfin_url.as_deref() == Some(server_url) {
-            return;
-        }
-        if let Err(error) = services.preferences.set_server_url(server_url.to_string()) {
-            tracing::warn!(target: "jellyfin.session", "failed to save the server URL: {error}");
-        }
-    }
-
     pub fn logout(&self, forget_library: bool) -> rusqlite::Result<()> {
         if let Ok(client) = self.client()
             && let Err(error) = auth::logout(&client)
@@ -434,7 +422,7 @@ impl Session {
                 target: "jellyfin.session",
                 "the Jellyfin server rejected the stored token; re-authentication required"
             );
-            crate::app::services::notify_session_expired();
+            self.shell.session_expired();
         }
     }
 
@@ -500,7 +488,10 @@ mod tests {
     use std::sync::Arc;
 
     fn session() -> Session {
-        Session::restore(Arc::new(Library::open_in_memory().expect("library")))
+        Session::restore(
+            Arc::new(Library::open_in_memory().expect("library")),
+            Arc::default(),
+        )
     }
 
     fn credentials(user: &str) -> Credentials {
@@ -537,7 +528,7 @@ mod tests {
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 
-        let session = Session::restore(library);
+        let session = Session::restore(library, Arc::default());
         assert!(session.is_authenticated());
         let client = session.client().expect("client");
         assert_eq!(client.base_url(), "http://server:8096");
@@ -555,7 +546,7 @@ mod tests {
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 
-        let session = Session::restore(library);
+        let session = Session::restore(library, Arc::default());
         let scope = session.scope().expect("scope");
         session.note_scoped_error(&scope, &ApiError::Unauthorized);
         assert!(!session.is_authenticated());
@@ -573,7 +564,7 @@ mod tests {
         credentials.token = Some("tok".to_string());
         library.save_credentials(&credentials).expect("save");
 
-        let session = Session::restore(library);
+        let session = Session::restore(library, Arc::default());
         let scope = session.scope().expect("scope");
         session.note_scoped_error(&scope, &ApiError::Status { status: 500 });
         session.note_scoped_error(&scope, &ApiError::Transport("reset".to_string()));
@@ -631,7 +622,7 @@ mod tests {
     #[test]
     fn a_restricted_user_gets_an_empty_cache_after_a_normal_logout_and_switch() {
         let library = Arc::new(Library::open_in_memory().expect("library"));
-        let session = Session::restore(library.clone());
+        let session = Session::restore(library.clone(), Arc::default());
         session
             .accept("http://server:8096", credentials("alice"))
             .expect("sign in Alice");

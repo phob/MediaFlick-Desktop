@@ -60,7 +60,7 @@ pub fn sync_once() -> i32 {
         return 1;
     };
     let library = Arc::new(library);
-    let session = Session::restore(library.clone());
+    let session = Session::restore(library.clone(), Arc::default());
     if !session.is_authenticated() {
         eprintln!("not signed in: start the app and sign in first");
         return 2;
