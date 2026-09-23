@@ -11,8 +11,8 @@ use crate::jellyfin::playback_reporter::PlaybackReporter;
 use crate::playback::model::allocate_playback_id;
 use crate::playback::segments::{SegmentSkipState, SkipSegment};
 use crate::playback::{
-    NativeWindowHandle, PlaybackContext, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest,
-    PlayerCommand, PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
+    NativeWindowHandle, PlaybackDiagnostics, PlaybackEvent, PlaybackRequest, PlayerCommand,
+    PlayerSnapshot, PlayerTrack, ReportingState, StopReason,
 };
 use crate::players::mpv::ipc::{IpcCommandFailure, IpcWorker, MpvEvent};
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntime, MpvRuntimeKind};
@@ -77,7 +77,6 @@ enum ControllerMessage {
         fullscreen: FullscreenBehavior,
         launch: Box<PlaybackRequest>,
     },
-    PlaybackContext(Box<PlaybackContext>),
     Control(PlayerCommand),
     Preferences(PlayerPreferences),
     MediaSegmentsFetched {
@@ -315,12 +314,6 @@ impl MpvController {
         let _ = self.tx.send(ControllerMessage::Preferences(preferences));
     }
 
-    pub fn update_playback_context(&self, context: PlaybackContext) {
-        let _ = self
-            .tx
-            .send(ControllerMessage::PlaybackContext(Box::new(context)));
-    }
-
     pub fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot
             .lock()
@@ -463,10 +456,6 @@ impl ControllerState {
                 }) => {
                     tracing::debug!(target: "playback", "received playback load request");
                     self.load(&mpv_path, fullscreen, *launch);
-                }
-                Ok(ControllerMessage::PlaybackContext(context)) => {
-                    tracing::debug!(target: "playback", "received playback context update");
-                    self.update_active_playback_context(context.as_ref());
                 }
                 Ok(ControllerMessage::Control(command)) => {
                     tracing::debug!(target: "playback", ?command, "received playback control request");

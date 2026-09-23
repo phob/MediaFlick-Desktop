@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::{logger, urls};
 use crate::playback::{
-    HttpHeader, PlaybackContext, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty,
+    HttpHeader, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -57,10 +57,6 @@ impl PlaybackReporter {
 
     pub fn from_launch(launch: &PlaybackRequest) -> Option<Self> {
         PlaybackSession::from_launch(launch).map(Self::new)
-    }
-
-    pub fn merge_context(&mut self, context: &PlaybackContext) {
-        self.session.merge_context(context);
     }
 
     pub fn report_start(&self, state: &ReportingState) {
@@ -299,40 +295,6 @@ impl PlaybackSession {
 
     pub(crate) fn auth_headers(&self) -> &[HttpHeader] {
         &self.auth_headers
-    }
-
-    fn merge_context(&mut self, context: &PlaybackContext) {
-        fill_string(
-            &mut self.media_source_id,
-            context.media_source_id.as_deref(),
-        );
-        fill_string(
-            &mut self.play_session_id,
-            context.play_session_id.as_deref(),
-        );
-        fill_string(
-            &mut self.playlist_item_id,
-            context.playlist_item_id.as_deref(),
-        );
-        if let Some(play_method) = non_empty(context.play_method.as_deref()) {
-            self.play_method = play_method.to_string();
-        }
-        if self.audio_stream_index.is_none() {
-            self.audio_stream_index = context.audio_stream_index;
-        }
-        if self.subtitle_stream_index.is_none() {
-            self.subtitle_stream_index = context.subtitle_stream_index;
-        }
-        if self.runtime_ticks.is_none() {
-            self.runtime_ticks = context.runtime_ticks.filter(|ticks| *ticks > 0);
-        }
-        if self.queue.is_none() {
-            self.queue = context
-                .queue
-                .as_ref()
-                .filter(|value| value.is_array())
-                .cloned();
-        }
     }
 }
 
@@ -619,14 +581,6 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
             .then(|| urls::percent_decode(raw_value))
             .filter(|value| !value.trim().is_empty())
     })
-}
-
-fn fill_string(target: &mut Option<String>, value: Option<&str>) {
-    if non_empty(target.as_deref()).is_none()
-        && let Some(value) = non_empty(value)
-    {
-        *target = Some(value.to_string());
-    }
 }
 
 fn display_opt(value: Option<&str>) -> &str {

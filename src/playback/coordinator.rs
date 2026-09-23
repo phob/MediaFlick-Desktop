@@ -4,10 +4,7 @@ use std::time::Duration;
 
 use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 
-use super::{
-    NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
-    PlayerSnapshot,
-};
+use super::{NativeWindowHandle, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot};
 
 /// Application-facing playback service.
 ///
@@ -98,10 +95,6 @@ impl PlaybackCoordinator {
         self.backend().set_preferences(preferences);
     }
 
-    pub fn update_context(&self, context: PlaybackContext) {
-        self.backend().update_playback_context(context);
-    }
-
     pub fn snapshot(&self) -> PlayerSnapshot {
         self.backend().snapshot()
     }
@@ -143,8 +136,6 @@ mod tests {
             self.configured.fetch_add(1, Ordering::SeqCst);
         }
 
-        fn update_playback_context(&self, _context: PlaybackContext) {}
-
         fn snapshot(&self) -> PlayerSnapshot {
             PlayerSnapshot::default()
         }
@@ -172,8 +163,6 @@ mod tests {
         fn control(&self, _command: PlayerCommand) {}
 
         fn set_preferences(&self, _preferences: PlayerPreferences) {}
-
-        fn update_playback_context(&self, _context: PlaybackContext) {}
 
         fn snapshot(&self) -> PlayerSnapshot {
             PlayerSnapshot {
