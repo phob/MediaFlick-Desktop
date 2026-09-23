@@ -54,6 +54,7 @@ import {
   useItem,
   useLogout,
   useStatus,
+  useSyncProgress,
 } from "@/lib/queries"
 
 const NAV = [
@@ -134,9 +135,8 @@ export function SearchBox() {
 }
 
 export function LibrarySyncProgress() {
-  const { data: status } = useStatus()
-  const progress = status?.syncProgress
-  if (!status?.authenticated || !progress?.active) return null
+  const { data: progress } = useSyncProgress()
+  if (!progress) return null
 
   const catalog = progress.catalog
   const error = progress.error

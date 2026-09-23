@@ -7,7 +7,7 @@ import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
 import { RatingsProvider } from "@/lib/ratings"
 import { TechnicalProvider } from "@/lib/technical"
-import { useBillboard, useHome, useSettings, useStatus } from "@/lib/queries"
+import { useBillboard, useHome, useSettings, useStatusPulse } from "@/lib/queries"
 import { startupScreenReady } from "@/lib/startup"
 import Discover from "@/routes/Discover"
 import DiscoverDetail from "@/routes/DiscoverDetail"
@@ -31,7 +31,7 @@ import SignIn from "@/routes/SignIn"
 import Settings, { AppearanceSync } from "@/routes/Settings"
 
 export default function App() {
-  const { data: status, isPending } = useStatus()
+  const { data: status, isPending } = useStatusPulse()
   const settings = useSettings()
   const viewing = useViewing()
   const location = useLocation()

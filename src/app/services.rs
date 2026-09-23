@@ -200,8 +200,8 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
     let pending_deletions = open_configuration(&deletion_path, PendingDeletionService::open)?;
     let companion = Arc::new(CompanionSession::new(session.clone(), library.clone()));
     if restored {
-        // `init` runs on the CEF UI thread and holds INIT_LOCK, so the probe
-        // must not wait on the network here; it warms the cache from its own
+        // `init` holds INIT_LOCK, which the CEF UI thread waits on, so the
+        // probe must not wait on the network here; it warms the cache from its own
         // thread and the API paths re-check lazily.
         let companion = companion.clone();
         let session = session.clone();
