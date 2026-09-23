@@ -116,6 +116,7 @@ export default function CollectionTemplatePictogram({
   return (
     <span
       aria-hidden="true"
+      data-pictogram={pictogram}
       className={cn(
         "flex size-16 shrink-0 items-center justify-center rounded-lg",
         CATEGORY_STYLES[category],

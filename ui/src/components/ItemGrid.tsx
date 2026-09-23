@@ -180,7 +180,7 @@ export function ItemGrid({
             description={empty}
           />
         ) : (
-          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {items.map((row) => (
               <div
                 key={row.key}

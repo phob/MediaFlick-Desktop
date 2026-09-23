@@ -76,7 +76,7 @@ function FiltersButton({
       size={touch ? "default" : "sm"}
       aria-label={`Filters${count ? `, ${count} active` : ""}`}
       className={cn(
-        "border-white/10 bg-white/5 shadow-none hover:bg-white/8",
+        "border-edge bg-field shadow-none hover:bg-field-hover",
         touch && "min-h-11",
         className,
       )}
@@ -239,7 +239,7 @@ function TouchChoice({ value, children }: { value: string; children: ReactNode }
   return (
     <Label
       className={cn(
-        "flex min-h-11 cursor-pointer items-center gap-3 rounded-md border border-white/10 bg-white/4 px-3 py-2 text-left text-sm leading-normal font-normal text-muted-foreground",
+        "flex min-h-11 cursor-pointer items-center gap-3 rounded-md border border-edge bg-white/4 px-3 py-2 text-left text-sm leading-normal font-normal text-muted-foreground",
         "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
         "has-[[data-state=checked]]:border-primary/60 has-[[data-state=checked]]:bg-primary/12 has-[[data-state=checked]]:text-foreground",
       )}
@@ -427,14 +427,14 @@ export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) 
   const genreOptions = genres.data?.genres ?? []
 
   return (
-    <div className="space-y-3 border-b border-white/5 px-6 pb-5 sm:px-10 lg:px-14">
+    <div className="space-y-3 border-b border-hairline px-6 pb-5 sm:px-10 lg:px-14">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={value.sort || "name"} onValueChange={(sort) => onChange({ sort })}>
           <SelectTrigger
             size={touchInput ? "default" : "sm"}
             aria-label="Sort by"
             className={cn(
-              "border-white/10 bg-white/5 shadow-none hover:bg-white/8",
+              "border-edge bg-field shadow-none hover:bg-field-hover",
               touchInput && "min-h-11",
             )}
           >

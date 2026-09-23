@@ -22,12 +22,12 @@ test.each(["Movie", "Series"])("%s grid restores a deep item after its catalog c
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(700)
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(700)
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return Number.parseFloat(this.querySelector<HTMLElement>(".relative.w-full")?.style.height ?? "0")
+    return Number.parseFloat(this.querySelector<HTMLElement>("[data-item-grid-canvas]")?.style.height ?? "0")
   })
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
     value({ top }: ScrollToOptions) {
-      const height = Number.parseFloat(this.querySelector(".relative.w-full")?.style.height ?? "0")
+      const height = Number.parseFloat(this.querySelector("[data-item-grid-canvas]")?.style.height ?? "0")
       this.scrollTop = Math.min(top ?? 0, Math.max(0, height - 700))
       queueMicrotask(() => { if (this.isConnected) this.dispatchEvent(new Event("scroll")) })
     },

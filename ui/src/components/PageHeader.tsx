@@ -44,8 +44,8 @@ export function PageEmptyState({
   action?: ReactNode
 }) {
   return (
-    <div className="cinematic-empty-state flex min-h-64 flex-col items-center justify-center gap-4 rounded-2xl border border-white/5 bg-card/35 px-6 py-12 text-center">
-      <div className="grid size-14 place-items-center rounded-full bg-white/5 text-muted-foreground">
+    <div className="cinematic-empty-state flex min-h-64 flex-col items-center justify-center gap-4 rounded-2xl border border-hairline bg-card/35 px-6 py-12 text-center">
+      <div className="grid size-14 place-items-center rounded-full bg-field text-muted-foreground">
         {icon}
       </div>
       <div className="max-w-md space-y-1.5">

@@ -149,7 +149,7 @@ function AvailabilitySelect({
   return (
     <FilterField label="Library">
       <Select value={value} onValueChange={(next) => onChange(availabilityFilter(next))}>
-        <SelectTrigger className="h-10 min-w-40 border-white/10 bg-white/5">
+        <SelectTrigger className="h-10 min-w-40 border-edge bg-field">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -192,7 +192,7 @@ function GenreBrowser({
             onClick={() => onSelect(undefined)}
             className={cn(
               "group relative h-20 w-36 shrink-0 snap-start overflow-hidden rounded-media border bg-card text-left outline-none transition focus-visible:ring-2 focus-visible:ring-ring",
-              !selected ? "border-primary" : "border-white/10 hover:border-white/30",
+              !selected ? "border-primary" : "border-edge hover:border-white/30",
             )}
           >
             <span className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,color-mix(in_srgb,var(--primary)_30%,transparent),transparent_55%),linear-gradient(135deg,var(--card),var(--background))]" />
@@ -214,7 +214,7 @@ function GenreBrowser({
                       "group relative h-20 w-36 shrink-0 snap-start overflow-hidden rounded-media border bg-card text-left outline-none transition focus-visible:ring-2 focus-visible:ring-ring",
                       selected === genre.id
                         ? "border-primary"
-                        : "border-white/10 hover:border-white/30",
+                        : "border-edge hover:border-white/30",
                     )}
                   >
                     {backdrop ? (
@@ -260,7 +260,7 @@ function DiscoveryControls({
   const catalogueMediaType = row === "movies" ? "movie" : "tv"
 
   return (
-    <div className="flex flex-wrap items-end gap-3 border-y border-white/5 bg-white/[0.025] px-4 py-3">
+    <div className="flex flex-wrap items-end gap-3 border-y border-hairline bg-white/[0.025] px-4 py-3">
       <div className="mr-1 flex h-10 items-center gap-2 text-sm font-medium text-foreground/80">
         <Filter className="size-4 text-primary" />
         Refine
@@ -278,7 +278,7 @@ function DiscoveryControls({
                 })
               }
             >
-              <SelectTrigger className="h-10 min-w-32 border-white/10 bg-white/5">
+              <SelectTrigger className="h-10 min-w-32 border-edge bg-field">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -298,7 +298,7 @@ function DiscoveryControls({
                 })
               }
             >
-              <SelectTrigger className="h-10 min-w-28 border-white/10 bg-white/5">
+              <SelectTrigger className="h-10 min-w-28 border-edge bg-field">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -322,7 +322,7 @@ function DiscoveryControls({
                 })
               }
             >
-              <SelectTrigger className="h-10 min-w-36 border-white/10 bg-white/5">
+              <SelectTrigger className="h-10 min-w-36 border-edge bg-field">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -345,7 +345,7 @@ function DiscoveryControls({
               >
                 <SelectTrigger
                   aria-label="Filter by release decade"
-                  className="h-10 min-w-52 border-white/10 bg-white/5"
+                  className="h-10 min-w-52 border-edge bg-field"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -370,7 +370,7 @@ function DiscoveryControls({
                 })
               }
             >
-              <SelectTrigger className="h-10 min-w-32 border-white/10 bg-white/5">
+              <SelectTrigger className="h-10 min-w-32 border-edge bg-field">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -473,14 +473,14 @@ function SearchResults({
           </span>
         ) : null}
       </div>
-      <div className="flex flex-wrap items-end gap-3 border-y border-white/5 bg-white/[0.025] px-4 py-3">
+      <div className="flex flex-wrap items-end gap-3 border-y border-hairline bg-white/[0.025] px-4 py-3">
         <div className="mr-1 flex h-10 items-center gap-2 text-sm font-medium text-foreground/80">
           <Filter className="size-4 text-primary" />
           Refine
         </div>
         <FilterField label="Format">
           <Select value={mediaType} onValueChange={(value) => setMediaType(searchMediaFilter(value))}>
-            <SelectTrigger className="h-10 min-w-32 border-white/10 bg-white/5">
+            <SelectTrigger className="h-10 min-w-32 border-edge bg-field">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -650,7 +650,7 @@ export default function Discover() {
             placeholder="Search movies and series…"
             aria-label="Search Seerr"
             minLength={2}
-            className="h-12 rounded-xl border-white/10 bg-white/5 pr-12 pl-12 text-base shadow-lg shadow-black/10 placeholder:text-muted-foreground/75"
+            className="h-12 rounded-xl border-edge bg-field pr-12 pl-12 text-base shadow-lg shadow-black/10 placeholder:text-muted-foreground/75"
           />
           {draft ? (
             <Button
@@ -697,7 +697,7 @@ export default function Discover() {
             className="gap-6"
           >
             <div className="media-strip max-w-full overflow-x-auto pb-1">
-              <TabsList className="h-11 rounded-xl border border-white/5 bg-white/5 p-1">
+              <TabsList className="h-11 rounded-xl border border-hairline bg-field p-1">
                 {discoveryRows.map((entry) => (
                   <TabsTrigger
                     key={entry.id}

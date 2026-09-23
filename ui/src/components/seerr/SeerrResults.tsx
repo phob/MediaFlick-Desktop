@@ -60,7 +60,7 @@ export function SeerrResults({
   }
   if (isPending) {
     return (
-      <div className="flex flex-wrap gap-[var(--card-gap)]">
+      <div role="status" aria-label="Loading results" className="flex flex-wrap gap-[var(--card-gap)]">
         {Array.from({ length: placeholders }, (_, index) => (
           <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
         ))}
