@@ -3,12 +3,10 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use serde::{Deserialize, Deserializer};
 
-use crate::players::mpv::input::MpvInputBindings;
-
 use super::{
     AccountConfigurationService, AccountKey, AppSettings, AppearanceAccent, AppearanceDensity,
     CloseBehavior, FullscreenBehavior, PlayerBackend, SegmentSkipMode, StreamingQuality,
-    WebUiWindowSettings,
+    WebUiWindowSettings, clean_binding,
 };
 
 /// Serialized patches accepted by the settings API.  These deliberately name
@@ -199,60 +197,45 @@ impl PreferencesService {
         &self,
         patch: PlayerSettingsPatch,
     ) -> Result<SettingsChange, PreferencesError> {
-        let binding = patch.mark_watched_next.clone();
-        let update_input_bindings = !matches!(&binding, NullablePatch::Unchanged);
-        self.update_with_plan(
-            move |next| {
-                if let Some(value) = patch.player_backend.as_deref() {
-                    next.player_backend = Some(
-                        PlayerBackend::from_id(value)
-                            .ok_or_else(|| PreferencesError::invalid("player backend"))?,
-                    );
-                }
-                match patch.mpv_path {
-                    NullablePatch::Unchanged => {}
-                    NullablePatch::Clear => next.mpv_path = None,
-                    NullablePatch::Set(value) => next.mpv_path = clean_path(&value),
-                }
-                if let Some(value) = patch.default_fullscreen.as_deref() {
-                    next.default_fullscreen = FullscreenBehavior::from_id(value)
-                        .ok_or_else(|| PreferencesError::invalid("fullscreen behavior"))?;
-                }
-                if let Some(comfort) = patch.comfort {
-                    comfort
-                        .validate()
-                        .map_err(|error| PreferencesError(error.to_string()))?;
-                    next.comfort = comfort;
-                }
-                // An unconfigured player is a valid saved state: it lets users reset
-                // the section to defaults and finish choosing a backend later. Playback
-                // still performs the concrete executable check before it starts.
-                let save_binding = |mark_watched_next| {
-                    MpvInputBindings { mark_watched_next }
-                        .save()
-                        .map_err(|error| {
-                            PreferencesError(format!("could not save input bindings: {error}"))
-                        })
-                };
-                if next.effective_backend() == PlayerBackend::Libmpv {
-                    let watched_next = match &binding {
-                        NullablePatch::Unchanged => MpvInputBindings::load().mark_watched_next,
-                        NullablePatch::Clear => None,
-                        NullablePatch::Set(value) => clean_path(value),
-                    };
-                    next.comfort
-                        .validate_watched_next(watched_next.as_deref())
-                        .map_err(|error| PreferencesError(error.to_string()))?;
-                }
-                match binding {
-                    NullablePatch::Unchanged => {}
-                    NullablePatch::Clear => save_binding(None)?,
-                    NullablePatch::Set(value) => save_binding(clean_path(&value))?,
-                }
-                Ok(())
-            },
-            move |plan| plan.update_input_bindings = update_input_bindings,
-        )
+        self.update(move |next| {
+            if let Some(value) = patch.player_backend.as_deref() {
+                next.player_backend = Some(
+                    PlayerBackend::from_id(value)
+                        .ok_or_else(|| PreferencesError::invalid("player backend"))?,
+                );
+            }
+            match patch.mpv_path {
+                NullablePatch::Unchanged => {}
+                NullablePatch::Clear => next.mpv_path = None,
+                NullablePatch::Set(value) => next.mpv_path = clean_path(&value),
+            }
+            if let Some(value) = patch.default_fullscreen.as_deref() {
+                next.default_fullscreen = FullscreenBehavior::from_id(value)
+                    .ok_or_else(|| PreferencesError::invalid("fullscreen behavior"))?;
+            }
+            if let Some(comfort) = patch.comfort {
+                comfort
+                    .validate()
+                    .map_err(|error| PreferencesError(error.to_string()))?;
+                next.comfort = comfort;
+            }
+            match patch.mark_watched_next {
+                NullablePatch::Unchanged => {}
+                NullablePatch::Clear => next.mark_watched_next = None,
+                NullablePatch::Set(value) => next.mark_watched_next = clean_binding(Some(&value)),
+            }
+            // An unconfigured player is a valid saved state: it lets users reset
+            // the section to defaults and finish choosing a backend later. Playback
+            // still performs the concrete executable check before it starts. The
+            // built-in player shares its keyboard with the comfort shortcuts, so
+            // the watched binding must not collide with them there.
+            if next.effective_backend() == PlayerBackend::Libmpv {
+                next.comfort
+                    .validate_watched_next(next.mark_watched_next.as_deref())
+                    .map_err(|error| PreferencesError(error.to_string()))?;
+            }
+            Ok(())
+        })
     }
 
     pub fn patch_playback(
@@ -405,14 +388,6 @@ impl PreferencesService {
         &self,
         mutate: impl FnOnce(&mut AppSettings) -> Result<(), PreferencesError>,
     ) -> Result<SettingsChange, PreferencesError> {
-        self.update_with_plan(mutate, |_| {})
-    }
-
-    fn update_with_plan(
-        &self,
-        mutate: impl FnOnce(&mut AppSettings) -> Result<(), PreferencesError>,
-        augment_plan: impl FnOnce(&mut SettingsApplyPlan),
-    ) -> Result<SettingsChange, PreferencesError> {
         let change = {
             let mut state = self
                 .state
@@ -424,8 +399,7 @@ impl PreferencesService {
             next.sanitize();
             next.save()
                 .map_err(|error| PreferencesError(format!("could not save config: {error}")))?;
-            let mut plan = SettingsApplyPlan::between(&previous, &next);
-            augment_plan(&mut plan);
+            let plan = SettingsApplyPlan::between(&previous, &next);
             let change = SettingsChange {
                 settings: next.clone(),
                 plan,
@@ -467,8 +441,8 @@ fn set_segment(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SettingsApplyPlan {
     pub rebuild_player: bool,
-    pub update_input_bindings: bool,
-    pub update_segment_policy: bool,
+    /// Segment skipping, subtitle styling, or the watched binding changed.
+    pub update_player_preferences: bool,
     pub update_shell_css: bool,
     pub restart_required: bool,
 }
@@ -488,8 +462,7 @@ impl SettingsApplyPlan {
                         super::PlayerBackend::Libmpv => false,
                         super::PlayerBackend::Mpv => previous.mpv_path != next.mpv_path,
                     }),
-            update_input_bindings: false,
-            update_segment_policy: previous.segment_skip_config() != next.segment_skip_config(),
+            update_player_preferences: previous.player_preferences() != next.player_preferences(),
             update_shell_css: previous.show_scrollbars != next.show_scrollbars,
             restart_required: previous.log_level != next.log_level || window_model_changed,
         }
@@ -689,8 +662,7 @@ mod tests {
             SettingsApplyPlan::between(&previous, &next),
             SettingsApplyPlan {
                 rebuild_player: cfg!(not(windows)),
-                update_input_bindings: false,
-                update_segment_policy: true,
+                update_player_preferences: true,
                 update_shell_css: true,
                 restart_required: true,
             }
@@ -698,12 +670,19 @@ mod tests {
     }
 
     #[test]
-    fn an_input_binding_request_is_a_live_runtime_effect() {
-        let mut plan = SettingsApplyPlan::between(&AppSettings::default(), &AppSettings::default());
-        plan.update_input_bindings = true;
+    fn a_watched_binding_or_subtitle_change_is_a_live_player_update() {
+        let previous = AppSettings::default();
+        let mut binding = previous.clone();
+        binding.mark_watched_next = Some("Ctrl+w".to_string());
+        let mut subtitles = previous.clone();
+        subtitles.comfort.subtitle_size = 140;
 
-        assert!(!plan.rebuild_player);
-        assert!(plan.update_input_bindings);
+        for next in [binding, subtitles] {
+            let plan = SettingsApplyPlan::between(&previous, &next);
+            assert!(plan.update_player_preferences);
+            assert!(!plan.rebuild_player);
+            assert!(!plan.restart_required);
+        }
     }
 
     #[cfg(windows)]
@@ -715,7 +694,7 @@ mod tests {
 
         let plan = SettingsApplyPlan::between(&previous, &next);
         assert!(!plan.rebuild_player);
-        assert!(!plan.update_segment_policy);
+        assert!(!plan.update_player_preferences);
         assert!(!plan.update_shell_css);
         assert!(plan.restart_required);
     }

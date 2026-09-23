@@ -1,118 +1,29 @@
-use std::path::PathBuf;
-
-use serde_json::{Value, json};
-
-use crate::preferences::config_dir;
-
 pub const INPUT_SECTION_NAME: &str = "mediaflick_desktop_input";
 pub const MARK_WATCHED_NEXT_COMMAND: &str = "mark-watched-next";
-const DEFAULT_MARK_WATCHED_NEXT_KEY: &str = "w";
 const STOP_PLAYBACK_KEYS: &[&str] = &["q", "Q", "CLOSE_WIN", "STOP"];
 const SEEK_PLAYBACK_BINDINGS: &[(&str, i32)] =
     &[("LEFT", -10), ("RIGHT", 10), ("DOWN", -30), ("UP", 30)];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MpvInputBindings {
-    pub mark_watched_next: Option<String>,
-}
-
-impl Default for MpvInputBindings {
-    fn default() -> Self {
-        Self {
-            mark_watched_next: Some(DEFAULT_MARK_WATCHED_NEXT_KEY.to_string()),
-        }
-    }
-}
-
-impl MpvInputBindings {
-    pub fn load() -> Self {
-        let path = input_file_path();
-        let Ok(bytes) = std::fs::read(&path) else {
-            return Self::default();
-        };
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(value) => Self::from_json(&value),
-            Err(error) => {
-                tracing::warn!("failed to read {}: {error}", path.display());
-                Self::default()
-            }
-        }
-    }
-
-    fn from_json(value: &Value) -> Self {
-        let binding = match find_binding(value, "mark_watched_next") {
-            BindingLookup::Missing => find_binding(value, "kb_watched"),
-            binding => binding,
-        };
-        let mark_watched_next = match binding {
-            BindingLookup::Missing => Some(DEFAULT_MARK_WATCHED_NEXT_KEY.to_string()),
-            BindingLookup::Disabled => None,
-            BindingLookup::Key(key) => Some(key),
-        };
-        Self { mark_watched_next }
-    }
-
-    pub fn section_contents(&self) -> String {
-        let mut lines = STOP_PLAYBACK_KEYS
+/// The mpv input section MediaFlick defines: stop and seek keys, plus the
+/// mark-watched-and-play-next binding from Player settings when it is set.
+pub fn section_contents(mark_watched_next: Option<&str>) -> String {
+    let mut lines = STOP_PLAYBACK_KEYS
+        .iter()
+        .map(|key| format!("{key} stop"))
+        .collect::<Vec<_>>();
+    lines.extend(
+        SEEK_PLAYBACK_BINDINGS
             .iter()
-            .map(|key| format!("{key} stop"))
-            .collect::<Vec<_>>();
-        lines.extend(
-            SEEK_PLAYBACK_BINDINGS
-                .iter()
-                .map(|(key, seconds)| format!("{key} seek {seconds} relative+exact")),
-        );
+            .map(|(key, seconds)| format!("{key} seek {seconds} relative+exact")),
+    );
 
-        if let Some(key) = self.mark_watched_next.as_deref().and_then(sanitize_mpv_key) {
-            lines.push(format!(
-                "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
-            ));
-        }
-
-        lines.join("\n")
+    if let Some(key) = mark_watched_next.and_then(sanitize_mpv_key) {
+        lines.push(format!(
+            "{key} script-message mediaflick-desktop {MARK_WATCHED_NEXT_COMMAND}"
+        ));
     }
 
-    pub fn save(&self) -> std::io::Result<()> {
-        let path = input_file_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let value = json!({
-            "bindings": {
-                "mark_watched_next": self.mark_watched_next.as_deref().unwrap_or("")
-            }
-        });
-        let json = serde_json::to_vec_pretty(&value).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
-    }
-}
-
-pub fn input_file_path() -> PathBuf {
-    config_dir().join("input.json")
-}
-
-enum BindingLookup {
-    Missing,
-    Disabled,
-    Key(String),
-}
-
-fn find_binding(value: &Value, key: &str) -> BindingLookup {
-    let value = value
-        .get("bindings")
-        .and_then(|bindings| bindings.get(key))
-        .or_else(|| value.get(key));
-    match value {
-        None => BindingLookup::Missing,
-        Some(value) => binding_value(value).map_or(BindingLookup::Disabled, BindingLookup::Key),
-    }
-}
-
-fn binding_value(value: &Value) -> Option<String> {
-    value.as_str().and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
+    lines.join("\n")
 }
 
 fn sanitize_mpv_key(value: &str) -> Option<String> {
@@ -129,78 +40,38 @@ fn sanitize_mpv_key(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MARK_WATCHED_NEXT_COMMAND, MpvInputBindings};
-    use serde_json::json;
+    use super::{MARK_WATCHED_NEXT_COMMAND, section_contents};
 
     #[test]
-    fn defaults_to_watched_skip_on_w() {
-        let bindings = MpvInputBindings::from_json(&json!({}));
+    fn binds_stop_seek_and_the_watched_key() {
+        let section = section_contents(Some("w"));
 
-        assert_eq!(bindings.mark_watched_next.as_deref(), Some("w"));
-        assert!(
-            bindings
-                .section_contents()
-                .contains("w script-message mediaflick-desktop mark-watched-next")
-        );
-        assert!(bindings.section_contents().contains("q stop"));
-        assert!(bindings.section_contents().contains("Q stop"));
-        assert!(
-            bindings
-                .section_contents()
-                .contains("LEFT seek -10 relative+exact")
-        );
-        assert!(
-            bindings
-                .section_contents()
-                .contains("RIGHT seek 10 relative+exact")
-        );
-        assert!(
-            bindings
-                .section_contents()
-                .contains("DOWN seek -30 relative+exact")
-        );
-        assert!(
-            bindings
-                .section_contents()
-                .contains("UP seek 30 relative+exact")
-        );
+        for line in [
+            "w script-message mediaflick-desktop mark-watched-next",
+            "q stop",
+            "Q stop",
+            "LEFT seek -10 relative+exact",
+            "RIGHT seek 10 relative+exact",
+            "DOWN seek -30 relative+exact",
+            "UP seek 30 relative+exact",
+        ] {
+            assert!(section.contains(line), "{line}");
+        }
     }
 
     #[test]
-    fn reads_nested_binding() {
-        let bindings = MpvInputBindings::from_json(&json!({
-            "bindings": {
-                "mark_watched_next": "W"
-            }
-        }));
-
-        assert_eq!(bindings.mark_watched_next.as_deref(), Some("W"));
-        assert!(
-            bindings
-                .section_contents()
-                .contains(MARK_WATCHED_NEXT_COMMAND)
-        );
-    }
-
-    #[test]
-    fn blank_binding_disables_command() {
-        let bindings = MpvInputBindings::from_json(&json!({
-            "mark_watched_next": ""
-        }));
-
-        assert_eq!(bindings.mark_watched_next, None);
-        assert!(!bindings.section_contents().contains("mark-watched-next"));
-        assert!(bindings.section_contents().contains("q stop"));
+    fn a_disabled_or_unusable_binding_leaves_only_stop_and_seek() {
+        for binding in [None, Some(""), Some("two words"), Some("tab\tkey")] {
+            let section = section_contents(binding);
+            assert!(!section.contains(MARK_WATCHED_NEXT_COMMAND), "{binding:?}");
+            assert!(section.contains("q stop"));
+        }
     }
 
     #[test]
     fn command_combinations_are_preserved_for_external_mpv_on_macos() {
-        let bindings = MpvInputBindings::from_json(&json!({
-            "bindings": { "mark_watched_next": "Shift+Meta+w" }
-        }));
         assert!(
-            bindings
-                .section_contents()
+            section_contents(Some("Shift+Meta+w"))
                 .contains("Shift+Meta+w script-message mediaflick-desktop mark-watched-next")
         );
     }

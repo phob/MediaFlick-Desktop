@@ -45,6 +45,40 @@ pub fn platform_data_dir() -> PathBuf {
     std::env::temp_dir()
 }
 
+/// Platform convention for roaming (synced) configuration, where the durable
+/// user settings live. Like [`platform_data_dir`], a root the environment
+/// supplies must be absolute.
+pub fn platform_config_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = trusted_root(std::env::var_os("APPDATA")) {
+            return path;
+        }
+        if let Some(home) = trusted_root(std::env::var_os("USERPROFILE")) {
+            return home.join("AppData").join("Roaming");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = trusted_root(std::env::var_os("HOME")) {
+            return home.join("Library").join("Application Support");
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(path) = trusted_root(std::env::var_os("XDG_CONFIG_HOME")) {
+            return path;
+        }
+        if let Some(home) = trusted_root(std::env::var_os("HOME")) {
+            return home.join(".config");
+        }
+    }
+
+    std::env::temp_dir()
+}
+
 pub fn app_data_dir() -> PathBuf {
     platform_data_dir().join("mediaflick-desktop")
 }
@@ -92,5 +126,6 @@ mod tests {
     #[test]
     fn the_data_root_is_never_relative_to_the_working_directory() {
         assert!(platform_data_dir().is_absolute());
+        assert!(super::platform_config_dir().is_absolute());
     }
 }

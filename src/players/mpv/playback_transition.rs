@@ -205,32 +205,29 @@ impl ControllerState {
 
     fn apply_subtitle_appearance(&self) {
         if self.runtime_kind == crate::players::mpv::runtime::MpvRuntimeKind::Library {
-            let comfort = crate::preferences::AppSettings::load().comfort;
+            let appearance = self.subtitle_appearance;
             for (property, value) in [
                 (
                     "sub-scale",
-                    serde_json::json!(f64::from(comfort.subtitle_size) / 100.0),
+                    serde_json::json!(f64::from(appearance.size) / 100.0),
                 ),
-                (
-                    "sub-border-size",
-                    serde_json::json!(comfort.subtitle_outline),
-                ),
+                ("sub-border-size", serde_json::json!(appearance.outline)),
                 (
                     "sub-back-color",
                     serde_json::json!(format!(
                         "#{}000000",
-                        format_args!("{:02X}", u16::from(comfort.subtitle_background) * 255 / 100)
+                        format_args!("{:02X}", u16::from(appearance.background) * 255 / 100)
                     )),
                 ),
                 (
                     "sub-border-style",
-                    serde_json::json!(if comfort.subtitle_background > 0 {
+                    serde_json::json!(if appearance.background > 0 {
                         "background-box"
                     } else {
                         "outline-and-shadow"
                     }),
                 ),
-                ("sub-pos", serde_json::json!(comfort.subtitle_position)),
+                ("sub-pos", serde_json::json!(appearance.position)),
             ] {
                 if let Err(error) = self.send_mpv_command(
                     serde_json::json!({"command": ["set_property", property, value]}),
