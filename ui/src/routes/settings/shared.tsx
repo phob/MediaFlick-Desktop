@@ -33,6 +33,15 @@ export function SettingsRow({
   )
 }
 
+/** A notice that a damaged settings file was moved aside and what replaced it. */
+export function RecoveryNotice({ children }: { children: ReactNode }) {
+  return (
+    <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground" role="status">
+      {children}
+    </p>
+  )
+}
+
 export type SelectOption<Value extends string> = {
   value: Value
   label: string
@@ -45,28 +54,33 @@ export function SelectField<const Value extends string>({
   options,
   label,
   id,
+  disabled,
+  placeholder,
   "aria-describedby": descriptionId,
 }: {
   id?: string
   "aria-describedby"?: string
-  value: Value
+  value: Value | ""
   onValueChange: (value: Value) => void
   options: readonly SelectOption<Value>[]
   label: string
+  disabled?: boolean
+  /** Shown while `value` is empty, such as before the saved value loads. */
+  placeholder?: string
 }) {
   const selectOption = (candidate: string) => {
     const selected = options.find((option) => option.value === candidate)?.value
     if (selected !== undefined) onValueChange(selected)
   }
   return (
-    <Select value={value} onValueChange={selectOption}>
+    <Select value={value} onValueChange={selectOption} disabled={disabled}>
       <SelectTrigger
         id={id}
         aria-label={label}
         aria-describedby={descriptionId}
         className="w-64 max-w-full h-auto min-h-9 whitespace-normal [&_[data-slot=select-value]]:line-clamp-none"
       >
-        <SelectValue />
+        <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (

@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, ImagePlus, Layers, Pencil, Search, Trash2 } from "lucide-react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Navigate, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import collectionTemplateArt from "@/assets/collection-template.svg"
 import CollectionTemplatePictogram from "@/components/CollectionTemplatePictogram"
@@ -11,7 +11,6 @@ import PublicListCombobox from "@/components/PublicListCombobox"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -49,6 +48,16 @@ import {
   useCollectionTemplates,
   useStatus,
 } from "@/lib/queries"
+import {
+  PageTitle,
+  RecoveryNotice,
+  Section,
+  SelectField,
+  SettingsError,
+  SettingsLoading,
+  SettingsRow,
+  SignInRequired,
+} from "./shared"
 
 const CATEGORY_LABELS = {
   trending: "Trending",
@@ -98,31 +107,13 @@ function resultSignature(profile: CollectionProfileDraft) {
   })
 }
 
-function SettingsSection({
-  title,
-  description,
-  children,
-}: {
-  title: string
-  description: string
-  children: React.ReactNode
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">{children}</CardContent>
-    </Card>
-  )
-}
-
 type CollectionSettingsDraft = {
   modeSelection: CollectionSettings["effectiveMode"]
   includeUnreleased: boolean
   profileIds: string[]
 }
+
+const GENERAL_DESCRIPTION = "Choose which collection experience this account sees."
 
 function GeneralSettings({ draft, onChange }: {
   draft: CollectionSettingsDraft | null
@@ -132,53 +123,55 @@ function GeneralSettings({ draft, onChange }: {
   const settings = query.data
   if (query.isError && !settings) {
     return (
-      <SettingsSection title="General" description="Choose which collection experience this account sees.">
+      <Section title="General" description={GENERAL_DESCRIPTION}>
         <p className="text-sm text-destructive" role="alert">Collection settings could not be loaded.</p>
-        <Button className="self-start" variant="outline" onClick={() => void query.refetch()}>Try again</Button>
-      </SettingsSection>
+        <Button variant="outline" onClick={() => void query.refetch()}>Try again</Button>
+      </Section>
     )
   }
+  const loading = !settings || !draft
   return (
-    <SettingsSection title="General" description="Choose which collection experience this account sees.">
+    <Section title="General" description={GENERAL_DESCRIPTION}>
       {settings?.recovery && (
-        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100" role="status">
-          Damaged collection settings were moved aside{settings.recovery.restoredBackup ? " and the backup was restored." : ". Defaults are in use."}
-        </p>
+        <RecoveryNotice>
+          Damaged collection settings were moved aside
+          {settings.recovery.restoredBackup ? " and the backup was restored." : ". Defaults are in use."}
+        </RecoveryNotice>
       )}
-      <div className="settings-row">
-        <div>
-          <h3 className="font-medium"><Label htmlFor="collection-mode">Mode</Label></h3>
-          <p id="collection-mode-help" className="mt-1 text-sm text-muted-foreground">MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly.</p>
-        </div>
-        <Select
+      <SettingsRow
+        controlId="collection-mode"
+        title="Mode"
+        description="MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly."
+      >
+        <SelectField
+          id="collection-mode"
+          aria-describedby="collection-mode-help"
+          label="Collection mode"
+          placeholder="Loading…"
+          disabled={loading}
           value={draft?.modeSelection ?? ""}
-          disabled={!settings || !draft}
-          onValueChange={(modeSelection) => {
-            if (draft && (modeSelection === "mediaFlick" || modeSelection === "jellyfin")) onChange({ ...draft, modeSelection })
-          }}
-        >
-          <SelectTrigger id="collection-mode" aria-describedby="collection-mode-help" className="w-48" aria-label="Collection mode"><SelectValue placeholder="Loading…" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="mediaFlick" disabled={!settings?.mediaFlickAvailable}>MediaFlick</SelectItem>
-            <SelectItem value="jellyfin">Jellyfin</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="settings-row">
-        <div>
-          <h3 className="font-medium"><Label htmlFor="collection-general-unreleased">Include unreleased titles</Label></h3>
-          <p id="collection-general-unreleased-help" className="mt-1 text-sm text-muted-foreground">Show future and undated missing movies in Movie Franchises.</p>
-        </div>
+          onValueChange={(modeSelection) => { if (draft) onChange({ ...draft, modeSelection }) }}
+          options={[
+            { value: "mediaFlick", label: "MediaFlick", disabled: !settings?.mediaFlickAvailable },
+            { value: "jellyfin", label: "Jellyfin" },
+          ]}
+        />
+      </SettingsRow>
+      <SettingsRow
+        controlId="collection-general-unreleased"
+        title="Include unreleased titles"
+        description="Show future and undated missing movies in Movie Franchises."
+      >
         <Switch
           id="collection-general-unreleased"
           aria-describedby="collection-general-unreleased-help"
           aria-label="Include unreleased titles"
           checked={draft?.includeUnreleased ?? false}
-          disabled={!settings || !draft}
+          disabled={loading}
           onCheckedChange={(includeUnreleased) => { if (draft) onChange({ ...draft, includeUnreleased }) }}
         />
-      </div>
-    </SettingsSection>
+      </SettingsRow>
+    </Section>
   )
 }
 
@@ -212,7 +205,7 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
     onError: (error: Error) => toast.error(error.message),
   })
   return (
-    <SettingsSection title="Configured My Collections" description="Order, edit, or remove the collections saved for this account.">
+    <Section title="Configured My Collections" description="Order, edit, or remove the collections saved for this account.">
       {query.isError ? (
         <div className="flex flex-col items-start gap-2">
           <p className="text-sm text-destructive" role="alert">Configured collections could not be loaded.</p>
@@ -253,7 +246,7 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
           </div>
         </div>
       ))}
-    </SettingsSection>
+    </Section>
   )
 }
 
@@ -273,7 +266,7 @@ function TemplateCatalog({
     [catalog.templates, normalized],
   )
   return (
-    <SettingsSection title="Template catalog" description="Templates are starting points. Saving one copies its current values into your account.">
+    <Section title="Template catalog" description="Templates are starting points. Saving one copies its current values into your account.">
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search templates" aria-label="Search templates" />
@@ -310,7 +303,7 @@ function TemplateCatalog({
           </section>
         )
       })}
-    </SettingsSection>
+    </Section>
   )
 }
 
@@ -336,13 +329,25 @@ function CollectionWizard({
   const [posterName, setPosterName] = useState("")
   const posterInput = useRef<HTMLInputElement>(null)
   const posterRequest = useRef<AbortController | null>(null)
-  const [busy, setBusy] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const previewRequest = useRef<{ controller: AbortController | null; generation: number }>({
     controller: null,
     generation: 0,
   })
   const settings = useCollectionSettings()
+  const saveProfile = useMutation({
+    mutationFn: (value: CollectionProfileDraft) =>
+      profileId ? api.collections.updateProfile(profileId, value) : api.collections.createProfile(value),
+    onSuccess: () => {
+      void cache.invalidateQueries({ queryKey: ["collections", account] })
+      void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
+      void cache.invalidateQueries({ queryKey: queryKeys.home })
+      toast.success(profileId ? "Collection saved" : "Collection created")
+      onOpenChange(false)
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const busy = previewing || saveProfile.isPending
 
   useEffect(() => () => {
     previewRequest.current.generation += 1
@@ -381,7 +386,6 @@ function CollectionWizard({
     previewRequest.current.controller = null
     setPreview(null)
     setPreviewError(null)
-    setBusy(false)
     setPreviewing(false)
   }
 
@@ -417,7 +421,6 @@ function CollectionWizard({
     previewRequest.current = { controller, generation }
     setPreview(null)
     setPreviewError(null)
-    setBusy(true)
     setPreviewing(true)
     try {
       const result = await api.collections.preview(structuredClone(draft), controller.signal)
@@ -437,7 +440,6 @@ function CollectionWizard({
     } finally {
       if (previewRequest.current.generation === generation) {
         previewRequest.current.controller = null
-        setBusy(false)
         setPreviewing(false)
       }
     }
@@ -487,22 +489,7 @@ function CollectionWizard({
       void runPreview()
       return
     }
-    void (async () => {
-      setBusy(true)
-      try {
-        if (profileId) await api.collections.updateProfile(profileId, draft)
-        else await api.collections.createProfile(draft)
-        void cache.invalidateQueries({ queryKey: ["collections", account] })
-        void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
-        void cache.invalidateQueries({ queryKey: queryKeys.home })
-        toast.success(profileId ? "Collection saved" : "Collection created")
-        onOpenChange(false)
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not save collection")
-      } finally {
-        setBusy(false)
-      }
-    })()
+    saveProfile.mutate(draft)
   }
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) cancelPoster(); onOpenChange(next) }}>
@@ -665,7 +652,8 @@ function CollectionWizard({
 
 export default function CollectionSettingsPage() {
   const cache = useQueryClient()
-  const { data: status } = useStatus()
+  const statusQuery = useStatus()
+  const { data: status } = statusQuery
   const account = accountKey(status)
   const settings = useCollectionSettings(Boolean(status?.authenticated))
   const templates = useCollectionTemplates(Boolean(status?.authenticated))
@@ -733,9 +721,17 @@ export default function CollectionSettingsPage() {
     profileId: requestedProfile.id,
   } : null)
 
-  if (!status?.authenticated) {
-    return <Navigate to="/settings/client/player" replace />
+  if (statusQuery.error && !status) {
+    return (
+      <SettingsError
+        title="Collections unavailable"
+        error={statusQuery.error}
+        onRetry={() => void statusQuery.refetch()}
+      />
+    )
   }
+  if (statusQuery.isPending) return <SettingsLoading />
+  if (!status?.authenticated) return <SignInRequired name="Collections" />
   const edit = (profile: CollectionProfile) => {
     setSelection({ draft: draftFromProfile(profile), profileId: profile.id })
   }
@@ -749,20 +745,26 @@ export default function CollectionSettingsPage() {
   }
   return (
     <div className="settings-page">
-      <div><span className="settings-eyebrow">Account</span><h1 className="text-2xl font-semibold">Collections</h1></div>
+      <PageTitle title="Collections" />
       <GeneralSettings draft={draft} onChange={setDraft} />
       <ConfiguredProfiles
         profileIds={draft?.profileIds ?? []}
         onProfileIdsChange={(profileIds) => { if (draft) setDraft({ ...draft, profileIds }) }}
         onEdit={edit}
       />
-      {templates.data ? <TemplateCatalog catalog={templates.data} disabled={!settings.data} onAdd={add} /> : templates.isError ? (
-        <SettingsSection title="Template catalog" description="Templates are starting points for My Collections.">
+      {templates.data ? (
+        <TemplateCatalog catalog={templates.data} disabled={!settings.data} onAdd={add} />
+      ) : templates.isError ? (
+        <Section title="Template catalog" description="Templates are starting points for My Collections.">
           <p className="text-sm text-destructive" role="alert">The template catalog could not be loaded.</p>
-          <Button className="self-start" variant="outline" onClick={() => void templates.refetch()}>Try again</Button>
-        </SettingsSection>
+          <Button variant="outline" onClick={() => void templates.refetch()}>Try again</Button>
+        </Section>
       ) : (
-        <SettingsSection title="Template catalog" description="Loading available templates…"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Layers className="size-4" /> Loading templates…</div></SettingsSection>
+        <Section title="Template catalog" description="Loading available templates…">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Layers className="size-4" /> Loading templates…
+          </div>
+        </Section>
       )}
       <SaveBar
         dirty={Boolean(draft && savedDraft && JSON.stringify(draft) !== JSON.stringify(savedDraft))}
