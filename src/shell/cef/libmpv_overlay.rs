@@ -12,21 +12,21 @@ use crate::playback::{NativeWindowHandle, PlaybackCoordinator};
 use crate::preferences::AppSettings;
 
 #[cfg(target_os = "windows")]
-#[path = "prototype_osr/windows.rs"]
+#[path = "libmpv_overlay/windows.rs"]
 mod platform;
 
 #[cfg(target_os = "linux")]
-#[path = "prototype_osr/linux.rs"]
+#[path = "libmpv_overlay/linux.rs"]
 mod platform;
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-pub(super) use platform::{PrototypeOsrSurface, is_active, is_configured};
+pub(super) use platform::{LibmpvOverlaySurface, is_active, is_configured};
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-pub(super) struct PrototypeOsrSurface;
+pub(super) struct LibmpvOverlaySurface;
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-impl PrototypeOsrSurface {
+impl LibmpvOverlaySurface {
     pub(super) fn select(
         _settings: &AppSettings,
         _playback: Arc<PlaybackCoordinator>,

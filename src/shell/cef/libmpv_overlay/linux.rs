@@ -26,7 +26,7 @@ use window::OverlayWindow;
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 const SYNC_MS: i64 = 16;
 thread_local! {
-    static SURFACE: RefCell<Weak<PrototypeOsrSurface>> = const { RefCell::new(Weak::new()) };
+    static SURFACE: RefCell<Weak<LibmpvOverlaySurface>> = const { RefCell::new(Weak::new()) };
 }
 
 pub(crate) fn reveal() {
@@ -55,7 +55,7 @@ struct Geometry {
     maximized: bool,
 }
 
-pub(crate) struct PrototypeOsrSurface {
+pub(crate) struct LibmpvOverlaySurface {
     playback: Arc<PlaybackCoordinator>,
     window: RefCell<Option<OverlayWindow>>,
     browser: RefCell<Option<Browser>>,
@@ -75,7 +75,7 @@ pub(crate) struct PrototypeOsrSurface {
     placement_invalidated: Cell<bool>,
 }
 
-impl PrototypeOsrSurface {
+impl LibmpvOverlaySurface {
     pub(crate) fn select(
         settings: &AppSettings,
         playback: Arc<PlaybackCoordinator>,
@@ -671,12 +671,12 @@ fn blend_popup(frame: &mut [u8], width: u16, height: u16, popup: &[u8], rect: &R
 }
 
 wrap_task! {
-    struct LinuxSurfaceTask { surface: Rc<PrototypeOsrSurface> }
+    struct LinuxSurfaceTask { surface: Rc<LibmpvOverlaySurface> }
     impl Task { fn execute(&self) { if self.surface.tick() { self.surface.schedule(); } } }
 }
 
 wrap_render_handler! {
-    struct LinuxRenderHandler { surface: Rc<PrototypeOsrSurface> }
+    struct LinuxRenderHandler { surface: Rc<LibmpvOverlaySurface> }
     impl RenderHandler {
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
             if let Some(rect) = rect { let g = self.surface.geometry.get();
