@@ -309,7 +309,63 @@ pub struct PlayerSnapshot {
     pub chapters: Vec<PlayerChapter>,
     pub skip_segments: Vec<crate::playback::segments::SkipSegment>,
     pub diagnostics: PlaybackDiagnostics,
-    pub stop_reason: Option<&'static str>,
+    pub stop_reason: Option<StopReason>,
+}
+
+/// Why playback ended, sent to the UI as `stopReason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StopReason {
+    /// The file played to its end.
+    Eof,
+    /// The viewer marked the item watched and asked for the next one.
+    WatchedNext,
+    Stop,
+    Quit,
+    Error,
+    Redirect,
+    Shutdown,
+    /// A reason this app does not know.
+    Unknown,
+}
+
+impl StopReason {
+    /// Reads an mpv `end-file` reason, ignoring case and surrounding space.
+    /// A missing or blank reason is `None`.
+    pub fn parse(reason: &str) -> Option<Self> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return None;
+        }
+        Some(match reason.to_ascii_lowercase().as_str() {
+            "eof" => Self::Eof,
+            "watched-next" => Self::WatchedNext,
+            "stop" => Self::Stop,
+            "quit" => Self::Quit,
+            "error" => Self::Error,
+            "redirect" => Self::Redirect,
+            "shutdown" => Self::Shutdown,
+            _ => Self::Unknown,
+        })
+    }
+
+    /// The item was finished, so it counts as watched.
+    pub fn is_completion(self) -> bool {
+        matches!(self, Self::Eof | Self::WatchedNext)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Eof => "eof",
+            Self::WatchedNext => "watched-next",
+            Self::Stop => "stop",
+            Self::Quit => "quit",
+            Self::Error => "error",
+            Self::Redirect => "redirect",
+            Self::Shutdown => "shutdown",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -380,5 +436,37 @@ fn redact_url_query_value(url: &str, keys: &[&str]) -> String {
     match fragment {
         Some(fragment) => format!("{before_query}?{redacted}#{fragment}"),
         None => format!("{before_query}?{redacted}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StopReason;
+
+    #[test]
+    fn stop_reasons_keep_their_wire_names() {
+        for (reason, wire) in [
+            (StopReason::Eof, "eof"),
+            (StopReason::WatchedNext, "watched-next"),
+            (StopReason::Stop, "stop"),
+            (StopReason::Quit, "quit"),
+            (StopReason::Error, "error"),
+            (StopReason::Redirect, "redirect"),
+            (StopReason::Shutdown, "shutdown"),
+            (StopReason::Unknown, "unknown"),
+        ] {
+            assert_eq!(serde_json::to_value(reason).expect("serialize"), wire);
+            assert_eq!(reason.as_str(), wire);
+            assert_eq!(StopReason::parse(wire), Some(reason));
+        }
+    }
+
+    #[test]
+    fn mpv_end_file_reasons_are_read_loosely() {
+        assert_eq!(StopReason::parse(" EOF "), Some(StopReason::Eof));
+        assert_eq!(StopReason::parse("   "), None);
+        assert_eq!(StopReason::parse("unheard-of"), Some(StopReason::Unknown));
+        assert!(StopReason::WatchedNext.is_completion());
+        assert!(!StopReason::Stop.is_completion());
     }
 }
