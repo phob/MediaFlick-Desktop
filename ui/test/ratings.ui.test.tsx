@@ -19,11 +19,9 @@ import {
   type DisplayRating,
 } from "../src/lib/rating-context"
 import { RatingsProvider } from "../src/lib/ratings"
-import Settings, {
-  Appearance,
-  AppearanceSync,
-  RatingSourceSelector,
-} from "../src/routes/Settings"
+import { AppearanceSync } from "../src/components/AppearanceSync"
+import Settings from "../src/routes/Settings"
+import { Appearance, RatingSourceSelector } from "../src/routes/settings/AppearanceSettings"
 import { queryKeys } from "../src/lib/query-client"
 import { requireElement } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
