@@ -11,8 +11,7 @@ pub use controller::MpvController;
 pub use external::ExternalMpv;
 
 use crate::playback::{
-    NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
-    PlayerSnapshot,
+    NativeWindowHandle, PlaybackRequest, PlayerBackend, PlayerCommand, PlayerSnapshot,
 };
 use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 use std::time::Duration;
@@ -44,10 +43,6 @@ impl PlayerBackend for MpvController {
 
     fn set_preferences(&self, preferences: PlayerPreferences) {
         self.set_preferences(preferences);
-    }
-
-    fn update_playback_context(&self, context: PlaybackContext) {
-        self.update_playback_context(context);
     }
 
     fn snapshot(&self) -> PlayerSnapshot {

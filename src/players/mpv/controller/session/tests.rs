@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, StopReason};
+use crate::playback::{PlaybackEvent, PlaybackRequest, PlayerCommand, StopReason};
 use crate::preferences::FullscreenBehavior;
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
@@ -365,40 +365,6 @@ fn end_file_error_still_fails_pending_load() {
     state.finish_active(Some(StopReason::Error));
 
     assert!(state.pending.is_none());
-}
-
-#[test]
-fn late_playback_context_updates_active_identity() {
-    let mut state = controller_with_pending_load(None);
-    let pending = state.pending.as_mut().expect("pending");
-    pending.launch.item_id = Some("item-1".to_string());
-    pending.launch.media_source_id = Some("source-1".to_string());
-    pending.identity = PlaybackIdentity::from_launch(1, &pending.launch);
-
-    state.activate_pending();
-    state.update_active_playback_context(&PlaybackContext {
-        item_id: Some("item-1".to_string()),
-        media_source_id: Some("source-1".to_string()),
-        play_session_id: Some("session-1".to_string()),
-        ..Default::default()
-    });
-
-    assert_eq!(
-        state
-            .playback_identity
-            .as_ref()
-            .and_then(|identity| identity.play_session_id.as_deref()),
-        Some("session-1")
-    );
-    assert_eq!(
-        state
-            .snapshot
-            .lock()
-            .expect("snapshot")
-            .play_session_id
-            .as_deref(),
-        Some("session-1")
-    );
 }
 
 #[test]
