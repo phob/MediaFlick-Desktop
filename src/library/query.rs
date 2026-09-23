@@ -2,7 +2,9 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
 
-use super::{ItemPage, ItemQuery, Library, LibraryStats, TmdbCandidate};
+use super::{
+    ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds, TmdbCandidate,
+};
 
 /// Bound on one `tmdb_id IN (...)` clause so even a full person filmography
 /// stays well under SQLite's host-parameter limit.
@@ -52,7 +54,7 @@ impl Library {
 
     /// One page without its total, for surfaces such as Home rows that never
     /// show a count.
-    pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<Value>> {
+    pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db
             .with_connection(|connection| page_items(connection, query))
     }
@@ -98,7 +100,7 @@ impl Library {
         Ok(candidates)
     }
 
-    pub fn item(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
+    pub fn item(&self, item_id: &str) -> rusqlite::Result<Option<ItemDetail>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {DETAIL_COLUMNS} FROM items i
@@ -116,7 +118,7 @@ impl Library {
     /// Card rows for a bounded set of Jellyfin ids. Collection pages already
     /// know their exact local members, so one batched read avoids a separate
     /// app-scheme request and SQLite connection for every mounted card.
-    pub fn items_by_ids(&self, item_ids: &[String]) -> rusqlite::Result<Vec<Value>> {
+    pub fn items_by_ids(&self, item_ids: &[String]) -> rusqlite::Result<Vec<ItemSummary>> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -146,7 +148,7 @@ impl Library {
     ///
     /// Summary rows only: episode synopses are not cached. The children API
     /// handler overlays them from its live server reconcile when online.
-    pub fn children(&self, parent_id: &str) -> rusqlite::Result<Vec<Value>> {
+    pub fn children(&self, parent_id: &str) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -163,7 +165,7 @@ impl Library {
         })
     }
 
-    pub fn continue_watching(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
+    pub fn continue_watching(&self, limit: i64) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -182,7 +184,7 @@ impl Library {
 
     /// One stable recommendation seed can be selected from this process's
     /// account cache. The detail row carries the leading genre needed by Home.
-    pub fn random_played_movie_with_genre(&self) -> rusqlite::Result<Option<Value>> {
+    pub fn random_played_movie_with_genre(&self) -> rusqlite::Result<Option<ItemDetail>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {DETAIL_COLUMNS} FROM items i
@@ -203,7 +205,7 @@ impl Library {
     /// The newest added episode of each series, newest first. Rows stream from
     /// `items_kind_added`, so the walk stops once `limit` series are found
     /// instead of grouping every cached episode.
-    pub fn recently_added_episodes(&self, limit: usize) -> rusqlite::Result<Vec<Value>> {
+    pub fn recently_added_episodes(&self, limit: usize) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -227,7 +229,7 @@ impl Library {
     }
 
     /// A fresh set of movies and series for the home billboard.
-    pub fn random_billboard_titles(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
+    pub fn random_billboard_titles(&self, limit: i64) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -273,7 +275,7 @@ impl Library {
     }
 
     /// The earliest episode of a series in broadcast order.
-    pub fn first_episode(&self, series_id: &str) -> rusqlite::Result<Option<Value>> {
+    pub fn first_episode(&self, series_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -293,7 +295,7 @@ impl Library {
     }
 
     /// The episode immediately before `item_id` inside its series.
-    pub fn previous_episode(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
+    pub fn previous_episode(&self, item_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -315,7 +317,7 @@ impl Library {
     }
 
     /// The episode that follows `item_id` inside its series.
-    pub fn next_episode(&self, item_id: &str) -> rusqlite::Result<Option<Value>> {
+    pub fn next_episode(&self, item_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
                 "SELECT {SUMMARY_COLUMNS} FROM items i
@@ -358,68 +360,49 @@ fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a s
     })
 }
 
-fn summary_object(row: &Row<'_>) -> rusqlite::Result<serde_json::Map<String, Value>> {
+/// Reads [`SUMMARY_COLUMNS`], which [`DETAIL_COLUMNS`] begins with.
+fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
     let image_tags = parsed_json(&row.get::<_, String>(19)?);
-    let Value::Object(object) = json!({
-        "id": row.get::<_, String>(0)?,
-        "kind": row.get::<_, String>(1)?,
-        "name": row.get::<_, String>(2)?,
-        "year": row.get::<_, Option<i64>>(3)?,
-        "runtimeTicks": row.get::<_, Option<i64>>(4)?,
-        "communityRating": row.get::<_, Option<f64>>(5)?,
-        "officialRating": row.get::<_, Option<String>>(6)?,
-        "seriesId": row.get::<_, Option<String>>(7)?,
-        "seriesName": row.get::<_, Option<String>>(8)?,
-        "indexNumber": row.get::<_, Option<i64>>(9)?,
-        "parentIndexNumber": row.get::<_, Option<i64>>(10)?,
-        "primaryImageTag": row.get::<_, Option<String>>(11)?,
-        "childCount": row.get::<_, Option<i64>>(12)?,
-        "premiereDate": row.get::<_, Option<String>>(13)?,
-        "seasonId": row.get::<_, Option<String>>(14)?,
-        "played": row.get::<_, i64>(15)? != 0,
-        "playCount": row.get::<_, i64>(16)?,
-        "positionTicks": row.get::<_, i64>(17)?,
-        "favorite": row.get::<_, i64>(18)? != 0,
-        "thumbImageTag": cached_image_tag(&image_tags, "Thumb"),
-        "logoImageTag": cached_image_tag(&image_tags, "Logo"),
-        "backdropImageTag": row.get::<_, Option<String>>(20)?,
-    }) else {
-        unreachable!("a JSON object literal always produces an object");
-    };
-    Ok(object)
+    Ok(ItemSummary {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        name: row.get(2)?,
+        year: row.get(3)?,
+        runtime_ticks: row.get(4)?,
+        community_rating: row.get(5)?,
+        official_rating: row.get(6)?,
+        series_id: row.get(7)?,
+        series_name: row.get(8)?,
+        index_number: row.get(9)?,
+        parent_index_number: row.get(10)?,
+        primary_image_tag: row.get(11)?,
+        child_count: row.get(12)?,
+        premiere_date: row.get(13)?,
+        season_id: row.get(14)?,
+        played: row.get::<_, i64>(15)? != 0,
+        play_count: row.get(16)?,
+        position_ticks: row.get(17)?,
+        favorite: row.get::<_, i64>(18)? != 0,
+        thumb_image_tag: cached_image_tag(&image_tags, "Thumb").map(str::to_string),
+        logo_image_tag: cached_image_tag(&image_tags, "Logo").map(str::to_string),
+        backdrop_image_tag: row.get(20)?,
+        overview: None,
+    })
 }
 
-fn summary_row(row: &Row<'_>) -> rusqlite::Result<Value> {
-    summary_object(row).map(Value::Object)
-}
-
-fn detail_row(row: &Row<'_>) -> rusqlite::Result<Value> {
-    let mut object = summary_object(row)?;
-    object.insert(
-        "genres".to_string(),
-        parsed_json(&row.get::<_, String>(21)?),
-    );
-    object.insert(
-        "originalTitle".to_string(),
-        json!(row.get::<_, Option<String>>(22)?),
-    );
-    object.insert(
-        "providerIds".to_string(),
-        json!({
-            "tmdb": row.get::<_, Option<String>>(23)?,
-            "imdb": row.get::<_, Option<String>>(24)?,
-            "tvdb": row.get::<_, Option<String>>(25)?,
-        }),
-    );
-    object.insert(
-        "parentId".to_string(),
-        json!(row.get::<_, Option<String>>(26)?),
-    );
-    object.insert(
-        "dateCreated".to_string(),
-        json!(row.get::<_, Option<String>>(27)?),
-    );
-    Ok(Value::Object(object))
+fn detail_row(row: &Row<'_>) -> rusqlite::Result<ItemDetail> {
+    Ok(ItemDetail {
+        summary: summary_row(row)?,
+        genres: serde_json::from_str(&row.get::<_, String>(21)?).unwrap_or_default(),
+        original_title: row.get(22)?,
+        provider_ids: ProviderIds {
+            tmdb: row.get(23)?,
+            imdb: row.get(24)?,
+            tvdb: row.get(25)?,
+        },
+        parent_id: row.get(26)?,
+        date_created: row.get(27)?,
+    })
 }
 
 fn parsed_json(raw: &str) -> Value {
@@ -436,7 +419,7 @@ fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i
         .query_row(params_from_iter(arguments.iter()), |row| row.get(0))
 }
 
-fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Vec<Value>> {
+fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
     let (sql, arguments) = page_sql(query);
     let mut statement = connection.prepare_cached(&sql)?;
     statement
@@ -601,7 +584,7 @@ mod tests {
             })
             .expect("query");
         assert_eq!(page.total, 1);
-        assert_eq!(page.items[0]["name"], "The Matrix");
+        assert_eq!(page.items[0].name, "The Matrix");
 
         let by_genre = library
             .query(&ItemQuery {
@@ -611,7 +594,7 @@ mod tests {
             })
             .expect("query");
         assert_eq!(by_genre.total, 1);
-        assert_eq!(by_genre.items[0]["id"], "m1");
+        assert_eq!(by_genre.items[0].id, "m1");
     }
 
     #[test]
@@ -627,7 +610,7 @@ mod tests {
             })
             .expect("query");
         assert_eq!(page.total, 1);
-        assert_eq!(page.items[0]["id"], "m1");
+        assert_eq!(page.items[0].id, "m1");
 
         let watched = library
             .query(&ItemQuery {
@@ -638,7 +621,7 @@ mod tests {
             })
             .expect("query");
         assert_eq!(watched.total, 1);
-        assert_eq!(watched.items[0]["id"], "m2");
+        assert_eq!(watched.items[0].id, "m2");
     }
 
     #[test]
@@ -655,7 +638,7 @@ mod tests {
             })
             .expect("favorites");
         assert_eq!(favorites.total, 1);
-        assert_eq!(favorites.items[0]["id"], "m1");
+        assert_eq!(favorites.items[0].id, "m1");
 
         let not_favorites = library
             .query(&ItemQuery {
@@ -666,7 +649,7 @@ mod tests {
             })
             .expect("not favorites");
         assert_eq!(not_favorites.total, 1);
-        assert_eq!(not_favorites.items[0]["id"], "m2");
+        assert_eq!(not_favorites.items[0].id, "m2");
     }
 
     #[test]
@@ -725,12 +708,12 @@ mod tests {
         assert_eq!(rows.len(), ITEM_ID_CHUNK + 1);
         assert_eq!(
             rows.iter()
-                .filter_map(|row| row["id"].as_str())
+                .map(|row| row.id.as_str())
                 .collect::<HashSet<_>>()
                 .len(),
             ITEM_ID_CHUNK + 1
         );
-        assert!(rows.iter().all(|row| row.get("overview").is_none()));
+        assert!(rows.iter().all(|row| row.overview.is_none()));
     }
 
     #[test]
@@ -785,7 +768,7 @@ mod tests {
         assert_eq!(
             all.items
                 .iter()
-                .map(|item| item["id"].as_str().expect("id"))
+                .map(|item| item.id.as_str())
                 .collect::<HashSet<_>>(),
             HashSet::from(["start", "end"])
         );
@@ -819,9 +802,9 @@ mod tests {
             })
             .expect("series");
 
-        assert_eq!(movies.items[0]["id"], "movie");
-        assert_eq!(series.items[0]["id"], "series");
-        assert_eq!(series.items[0]["year"], 2017);
+        assert_eq!(movies.items[0].id, "movie");
+        assert_eq!(series.items[0].id, "series");
+        assert_eq!(series.items[0].year, Some(2017));
     }
 
     #[test]
@@ -846,7 +829,7 @@ mod tests {
             })
             .expect("query");
         assert_eq!(by_year.total, 2);
-        assert_eq!(by_year.items[0]["id"], "m2");
+        assert_eq!(by_year.items[0].id, "m2");
 
         let second_page = library
             .query(&ItemQuery {
@@ -857,17 +840,17 @@ mod tests {
                 ..Default::default()
             })
             .expect("query");
-        assert_eq!(second_page.items[0]["id"], "m1");
+        assert_eq!(second_page.items[0].id, "m1");
     }
 
     #[test]
     fn continue_watching_lists_partially_played_items() {
         let rows = seeded().continue_watching(10).expect("rows");
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["id"], "m1");
-        assert_eq!(rows[0]["positionTicks"], 600_000_000i64);
-        assert_eq!(rows[0]["thumbImageTag"], "thumb-tag");
-        assert_eq!(rows[0]["backdropImageTag"], "backdrop-tag");
+        assert_eq!(rows[0].id, "m1");
+        assert_eq!(rows[0].position_ticks, 600_000_000i64);
+        assert_eq!(rows[0].thumb_image_tag.as_deref(), Some("thumb-tag"));
+        assert_eq!(rows[0].backdrop_image_tag.as_deref(), Some("backdrop-tag"));
     }
 
     #[test]
@@ -900,7 +883,7 @@ mod tests {
                 .recently_added_episodes(limit)
                 .expect("rows")
                 .iter()
-                .map(|row| row["id"].as_str().expect("id").to_string())
+                .map(|row| row.id.clone())
                 .collect::<Vec<_>>()
         };
         assert_eq!(ids(10), ["sev-2", "silo-1", "andor-1"]);
@@ -913,8 +896,8 @@ mod tests {
             .random_played_movie_with_genre()
             .expect("query")
             .expect("seed");
-        assert_eq!(seed["id"], "m2");
-        assert_eq!(seed["genres"][0], "Drama");
+        assert_eq!(seed.summary.id, "m2");
+        assert_eq!(seed.genres[0], "Drama");
     }
 
     #[test]
@@ -922,7 +905,7 @@ mod tests {
         let rows = seeded().random_billboard_titles(5).expect("rows");
         let mut kinds = rows
             .iter()
-            .map(|row| (row["id"].as_str().unwrap(), row["kind"].as_str().unwrap()))
+            .map(|row| (row.id.as_str(), row.kind.as_str()))
             .collect::<Vec<_>>();
         kinds.sort_unstable();
         assert_eq!(kinds, [("m1", "Movie"), ("s1", "Series")]);
@@ -932,15 +915,15 @@ mod tests {
     fn children_returns_episodes_of_a_season_in_order() {
         let rows = seeded().children("season1").expect("children");
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["id"], "e1");
-        assert_eq!(rows[1]["id"], "e2");
+        assert_eq!(rows[0].id, "e1");
+        assert_eq!(rows[1].id, "e2");
     }
 
     #[test]
     fn next_episode_follows_broadcast_order() {
         let library = seeded();
         let next = library.next_episode("e1").expect("next").expect("episode");
-        assert_eq!(next["id"], "e2");
+        assert_eq!(next.id, "e2");
         assert!(library.next_episode("e2").expect("next").is_none());
     }
 
@@ -951,7 +934,7 @@ mod tests {
             .previous_episode("e2")
             .expect("previous")
             .expect("episode");
-        assert_eq!(previous["id"], "e1");
+        assert_eq!(previous.id, "e1");
         assert!(library.previous_episode("e1").expect("previous").is_none());
     }
 
@@ -972,7 +955,8 @@ mod tests {
                 ..Default::default()
             })
             .expect("query");
-        let row = page.items[0].as_object().expect("row object");
+        let row = serde_json::to_value(&page.items[0]).expect("row json");
+        let row = row.as_object().expect("row object");
         assert!(!row.contains_key("mediaStreams"));
         assert!(!row.contains_key("overview"));
         assert!(!row.contains_key("people"));
@@ -987,10 +971,23 @@ mod tests {
                     "ProviderIds":{"Tmdb":"603"}}"#)])
             .expect("seed");
         let detail = library.item("m1").expect("query").expect("item");
-        assert_eq!(detail["genres"][0], "Action");
-        assert_eq!(detail["originalTitle"], "Matrix");
-        assert_eq!(detail["providerIds"]["tmdb"], "603");
+        assert_eq!(detail.genres[0], "Action");
+        assert_eq!(detail.original_title.as_deref(), Some("Matrix"));
+        assert_eq!(detail.provider_ids.tmdb.as_deref(), Some("603"));
         assert!(library.item("missing").expect("query").is_none());
+
+        // The UI's ItemDetail extends ItemSummary: one flat object.
+        let wire = serde_json::to_value(&detail).expect("detail json");
+        assert_eq!(wire["id"], "m1");
+        assert_eq!(wire["kind"], "Movie");
+        assert_eq!(wire["played"], false);
+        assert_eq!(wire["genres"], json!(["Action"]));
+        assert_eq!(
+            wire["providerIds"],
+            json!({ "tmdb": "603", "imdb": null, "tvdb": null })
+        );
+        assert!(wire.get("summary").is_none());
+        assert!(wire.get("overview").is_none());
     }
 
     #[test]
@@ -1027,7 +1024,7 @@ mod tests {
             })
             .expect("action");
         assert_eq!(action.total, 1);
-        assert_eq!(action.items[0]["id"], "b");
+        assert_eq!(action.items[0].id, "b");
     }
 
     #[test]

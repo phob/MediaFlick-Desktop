@@ -25,7 +25,8 @@ use serde_json::Value;
 use crate::app::ids::new_device_id;
 
 pub use model::{
-    ItemPlaybackPreference, ItemRecord, LibraryStats, UserDataRecord, resolve_playback_preference,
+    ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, LibraryStats, ProviderIds,
+    UserDataRecord, resolve_playback_preference,
 };
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
@@ -175,7 +176,7 @@ pub struct ItemQuery {
 
 #[derive(Debug, Clone)]
 pub struct ItemPage {
-    pub items: Vec<Value>,
+    pub items: Vec<ItemSummary>,
     pub total: i64,
 }
 

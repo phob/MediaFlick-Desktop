@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url};
 use crate::library::model::ResolvedPlaybackPreference;
-use crate::library::{Library, resolve_playback_preference};
+use crate::library::{ItemSummary, Library, resolve_playback_preference};
 use crate::playback::{PlaybackRequest, seconds_to_ticks};
 use crate::preferences::StreamingQuality;
 
@@ -123,12 +123,13 @@ pub fn prepare(
 ) -> Result<PreparedPlayback, ApiError> {
     let (client, user_id) = (scope.client(), scope.user_id());
     let quality = options.quality.unwrap_or(quality);
-    let cached = library.item(&options.item_id).ok().flatten();
+    let cached = library
+        .item(&options.item_id)
+        .ok()
+        .flatten()
+        .map(|item| item.summary);
 
-    let position = cached
-        .as_ref()
-        .and_then(|item| item["positionTicks"].as_i64())
-        .unwrap_or(0);
+    let position = cached.as_ref().map_or(0, |item| item.position_ticks);
     let start_ticks = resume_start_ticks(options, position);
 
     let mut effective_options = options.clone();
@@ -302,7 +303,7 @@ fn build(
     quality: StreamingQuality,
     options: &PlayOptions,
     start_ticks: i64,
-    cached: Option<&serde_json::Value>,
+    cached: Option<&ItemSummary>,
 ) -> Result<PreparedPlayback, ApiError> {
     let source = select_source(
         info,
@@ -338,7 +339,7 @@ fn build(
     request.runtime_ticks = source
         .run_time_ticks
         .filter(|ticks| *ticks > 0)
-        .or_else(|| cached.and_then(|item| item["runtimeTicks"].as_i64()));
+        .or_else(|| cached.and_then(|item| item.runtime_ticks));
     request.title = cached.map(display_title);
     request.play_method = Some(play_method.clone());
     request.audio_stream_index = audio.map(|stream| stream.index);
@@ -519,12 +520,16 @@ fn embedded_ordinal(source: &MediaSourceInfo, kind: &str, index: i64) -> Option<
         .map(|position| position as i64 + 1)
 }
 
-fn display_title(item: &serde_json::Value) -> String {
-    let name = item["name"].as_str().unwrap_or("Unknown");
+fn display_title(item: &ItemSummary) -> String {
+    let name = if item.name.is_empty() {
+        "Unknown"
+    } else {
+        item.name.as_str()
+    };
     let (Some(series), Some(season), Some(episode)) = (
-        item["seriesName"].as_str(),
-        item["parentIndexNumber"].as_i64(),
-        item["indexNumber"].as_i64(),
+        item.series_name.as_deref(),
+        item.parent_index_number,
+        item.index_number,
     ) else {
         return name.to_string();
     };
@@ -539,9 +544,9 @@ mod tests {
     };
     use crate::jellyfin::api::JellyfinClient;
     use crate::jellyfin::api::model::{MediaSourceInfo, PlaybackInfoResponse};
+    use crate::library::ItemSummary;
     use crate::library::model::ResolvedPlaybackPreference;
     use crate::preferences::StreamingQuality;
-    use serde_json::json;
 
     #[test]
     fn resume_rewind_never_changes_explicit_positions_or_seeks_before_zero() {
@@ -910,14 +915,19 @@ mod tests {
 
     #[test]
     fn episode_titles_read_as_series_season_episode() {
-        let episode = json!({
-            "name": "Half Loop",
-            "seriesName": "Severance",
-            "parentIndexNumber": 1,
-            "indexNumber": 2,
-        });
+        let episode = ItemSummary {
+            name: "Half Loop".to_string(),
+            series_name: Some("Severance".to_string()),
+            parent_index_number: Some(1),
+            index_number: Some(2),
+            ..ItemSummary::default()
+        };
         assert_eq!(display_title(&episode), "Severance · S01E02 · Half Loop");
-        assert_eq!(display_title(&json!({ "name": "Arrival" })), "Arrival");
+        let movie = ItemSummary {
+            name: "Arrival".to_string(),
+            ..ItemSummary::default()
+        };
+        assert_eq!(display_title(&movie), "Arrival");
     }
 
     #[test]

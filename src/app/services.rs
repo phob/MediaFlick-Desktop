@@ -44,7 +44,7 @@ pub struct Services {
     pub pending_deletions: Arc<PendingDeletionService>,
     pub preferences: Arc<PreferencesService>,
     pub shell: ShellBridge,
-    pub home_watched: Mutex<HashMap<AccountKey, Option<serde_json::Value>>>,
+    pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
