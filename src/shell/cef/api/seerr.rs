@@ -389,19 +389,26 @@ fn seerr_request_options(
     )
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeerrRequestBody {
+    media_type: String,
+    tmdb_id: i64,
+    /// An explicit list means "these seasons"; its absence means "the whole
+    /// show", which Seerr expands to whatever it does not already have.
+    seasons: Option<Vec<i64>>,
+    #[serde(default)]
+    is4k: bool,
+    server_id: Option<i64>,
+    profile_id: Option<i64>,
+}
+
 fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    // An explicit list means "these seasons"; its absence means "the whole
-    // show", which Seerr expands to whatever it does not already have.
-    let seasons = body["seasons"].as_array().map(|seasons| {
-        seasons
-            .iter()
-            .filter_map(serde_json::Value::as_i64)
-            .collect::<Vec<_>>()
-    });
-    let server_id = body["serverId"].as_i64();
-    let profile_id = body["profileId"].as_i64();
-    let profile = match (server_id, profile_id) {
+    let body = match request.body::<SeerrRequestBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let profile = match (body.server_id, body.profile_id) {
         (None, None) => None,
         (Some(server_id), Some(profile_id)) if server_id >= 0 && profile_id > 0 => {
             Some(RequestProfileSelection {
@@ -417,10 +424,10 @@ fn seerr_request(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse 
         }
     };
     let result = services.companion.seerr_create_request(
-        body["mediaType"].as_str().unwrap_or_default(),
-        body["tmdbId"].as_i64().unwrap_or_default(),
-        seasons.as_deref(),
-        body["is4k"].as_bool().unwrap_or(false),
+        &body.media_type,
+        body.tmdb_id,
+        body.seasons.as_deref(),
+        body.is4k,
         profile,
     );
     companion_response(services, result)

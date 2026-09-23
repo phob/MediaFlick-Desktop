@@ -32,27 +32,54 @@ pub(super) fn route(
 
 const TECHNICAL_BATCH_SIZE: usize = 40;
 
+#[derive(Deserialize)]
+struct IdsBody {
+    ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaybackPreferenceBody {
+    media_source_index: usize,
+    media_source_id: Option<String>,
+    audio_stream_index: Option<i64>,
+    subtitle_stream_index: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ExternalBody {
+    provider: String,
+}
+
+#[derive(Deserialize)]
+struct PlayedBody {
+    played: bool,
+}
+
+#[derive(Deserialize)]
+struct FavoriteBody {
+    favorite: bool,
+}
+
 /// Live technical stream descriptors for visible cards, batched by the UI's
 /// badge scheduler. Container ids (Series, Season) answer with the streams of
 /// a representative episode. Nothing is persisted; a failure is silent on
 /// cards.
 fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+    let body = match request.body::<IdsBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     let mut seen = HashSet::new();
-    let ids = request
-        .json()
-        .get("ids")
-        .and_then(Value::as_array)
-        .map(|ids| {
-            ids.iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-                .filter(|id| seen.insert(id.to_string()))
-                .take(100)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let ids = body
+        .ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .filter(|id| seen.insert(id.to_string()))
+        .take(100)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
     if ids.is_empty() {
         return ApiResponse::ok(json!({ "items": [] }));
     }
@@ -162,15 +189,14 @@ fn set_item_playback_preference(
     ) {
         return ApiResponse::error(404, "this item has no selectable media tracks");
     }
-    let body = request.json();
-    let Some(source_index) = body["mediaSourceIndex"]
-        .as_u64()
-        .and_then(|index| usize::try_from(index).ok())
-    else {
-        return ApiResponse::error(400, "mediaSourceIndex is required");
+    let body = match request.body::<PlaybackPreferenceBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
     };
-    let requested_source_id = body["mediaSourceId"]
-        .as_str()
+    let source_index = body.media_source_index;
+    let requested_source_id = body
+        .media_source_id
+        .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty());
     let scope = match services.session.scope() {
@@ -194,7 +220,7 @@ fn set_item_playback_preference(
         return ApiResponse::error(409, "the available media sources changed; try again");
     };
 
-    let requested_audio_index = body["audioStreamIndex"].as_i64();
+    let requested_audio_index = body.audio_stream_index;
     let audio = match requested_audio_index {
         Some(index) if index >= 0 => source
             .streams_of_type("Audio")
@@ -207,7 +233,7 @@ fn set_item_playback_preference(
         return ApiResponse::error(409, "the selected audio track is no longer available");
     }
 
-    let requested_subtitle_index = body["subtitleStreamIndex"].as_i64();
+    let requested_subtitle_index = body.subtitle_stream_index;
     let subtitle = match requested_subtitle_index {
         Some(index) if index >= 0 => source
             .streams_of_type("Subtitle")
@@ -530,8 +556,11 @@ impl ExternalProvider {
 /// from the cached row here, so nothing the page can say turns into a launched
 /// address.
 fn open_external(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let body = request.json();
-    let Some(provider) = body["provider"].as_str().and_then(ExternalProvider::parse) else {
+    let body = match request.body::<ExternalBody>() {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let Some(provider) = ExternalProvider::parse(&body.provider) else {
         return ApiResponse::error(404, "unknown external information provider");
     };
     let item = match services.library.item(item_id) {
@@ -566,7 +595,10 @@ fn valid_external_id(source: &str, id: &str) -> bool {
 }
 
 fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let played = request.json()["played"].as_bool().unwrap_or(true);
+    let played = match request.body::<PlayedBody>() {
+        Ok(body) => body.played,
+        Err(response) => return response,
+    };
     if let Err(response) = user_data_write(services, item_id, |client, user_id| {
         items::set_played(client, user_id, item_id, played)
     }) {
@@ -577,7 +609,10 @@ fn set_played(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> 
 }
 
 fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> ApiResponse {
-    let favorite = request.json()["favorite"].as_bool().unwrap_or(true);
+    let favorite = match request.body::<FavoriteBody>() {
+        Ok(body) => body.favorite,
+        Err(response) => return response,
+    };
     if let Err(response) = user_data_write(services, item_id, |client, user_id| {
         items::set_favorite(client, user_id, item_id, favorite)
     }) {

@@ -235,9 +235,9 @@ fn home_settings(services: &Arc<Services>) -> ApiResponse {
 }
 
 fn patch_home_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
-    let requested = match serde_json::from_value::<HomeSettings>(request.json()) {
+    let requested = match request.body::<HomeSettings>() {
         Ok(settings) => settings,
-        Err(error) => return ApiResponse::error(400, format!("invalid Home settings: {error}")),
+        Err(response) => return response,
     };
     if let Err(error) = requested.validate() {
         return ApiResponse::error(400, error.to_string());
