@@ -151,6 +151,7 @@ pub(super) struct Signal {
 pub(super) struct Flags {
     requested: bool,
     stopped: bool,
+    window_ready: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -199,6 +200,23 @@ impl SyncHandle {
             flags.requested = true;
         }
         self.signal.condvar.notify_all();
+    }
+
+    /// Reports that the main window has painted its first route, which ends
+    /// the startup hold on a warm start's first cycle.
+    pub fn release_startup_hold(&self) {
+        if let Ok(mut flags) = self.signal.flags.lock() {
+            flags.window_ready = true;
+        }
+        self.signal.condvar.notify_all();
+    }
+
+    pub(super) fn window_ready(&self) -> bool {
+        self.signal
+            .flags
+            .lock()
+            .map(|flags| flags.window_ready)
+            .unwrap_or(true)
     }
 
     pub fn stop(&self) {

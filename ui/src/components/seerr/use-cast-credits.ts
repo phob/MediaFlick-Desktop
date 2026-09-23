@@ -38,7 +38,7 @@ export function useCastCredits({
   const providerSupportsPeople =
     !companionProvidesSeerr || companionCapabilities.includes("seerr-person-discovery")
   const linked = seerr.data?.linked ?? false
-  const catalogComplete = Boolean(app.data?.bootstrap?.complete ?? app.data?.bootstrapped)
+  const catalogComplete = app.data?.catalogComplete ?? false
   // With an exact Jellyfin person id the backend verifies every Seerr credit
   // against the live server relation. Without one, wait for the progressive
   // catalog to finish so an unseen local title is never offered as a request.

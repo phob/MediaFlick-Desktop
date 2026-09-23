@@ -1,3 +1,6 @@
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
 use super::*;
 
 pub(super) fn route(
@@ -909,21 +912,67 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
     }
 }
 
+/// How long one parent's reconciled child list is trusted before a later
+/// navigation asks the server again. It also absorbs the refetch that the
+/// reconcile's own change notification triggers.
+const CHILD_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
+static CHILD_RECONCILES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+/// Claims the next reconcile of `parent_id`, or `false` while one is running
+/// or ran within [`CHILD_RECONCILE_INTERVAL`].
+fn claim_child_reconcile(parent_id: &str) -> bool {
+    let now = Instant::now();
+    let mut reconciles = CHILD_RECONCILES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    reconciles.retain(|_, started| now.duration_since(*started) < CHILD_RECONCILE_INTERVAL);
+    if reconciles.contains_key(parent_id) {
+        return false;
+    }
+    reconciles.insert(parent_id.to_string(), now);
+    true
+}
+
 fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     // Only containers have a child list worth asking the server about; a movie
     // detail page asks for children too and must not pay for a round trip.
-    let overviews = if matches!(
+    let container = matches!(
         services.library.kind(item_id).as_deref(),
         Some("Series" | "Season")
-    ) {
-        reconcile_children(services, item_id)
-    } else {
-        None
+    );
+    let cached = match services.library.children(item_id) {
+        Ok(children) => children,
+        Err(error) => return storage_failure(&error),
     };
+    if !container {
+        return ApiResponse::ok(json!({ "items": cached }));
+    }
+    // The synced catalog already holds every season and episode, so a cached
+    // list answers at once and the reconcile runs behind it; its change
+    // notification refreshes the page if the server disagreed. Only a
+    // container with nothing cached yet waits for the server.
+    if !cached.is_empty() {
+        if claim_child_reconcile(item_id) {
+            let services = Arc::clone(services);
+            let parent_id = item_id.to_string();
+            if let Err(error) = std::thread::Builder::new()
+                .name("reconcile-children".to_string())
+                .spawn(move || {
+                    reconcile_children(&services, &parent_id);
+                })
+            {
+                tracing::warn!(target: "app.api", "could not start a child reconcile: {error}");
+            }
+        }
+        return ApiResponse::ok(json!({ "items": cached }));
+    }
+    claim_child_reconcile(item_id);
+    let overviews = reconcile_children(services, item_id);
     match services.library.children(item_id) {
         Ok(mut children) => {
-            // Episode synopses are not cached; they ride along from the live
-            // reconcile that just answered. Offline, rows simply have none.
+            // Episode synopses are not cached; they ride along only when a
+            // live reconcile answered this request. Otherwise rows have none.
             if let Some(overviews) = &overviews {
                 for child in &mut children {
                     let Some(id) = child["id"].as_str().map(str::to_string) else {
@@ -942,7 +991,7 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
     }
 }
 
-/// Re-reads one parent's child list from the server before answering.
+/// Re-reads one parent's child list from the server.
 ///
 /// The cache alone cannot be trusted on a detail page: deleting episodes in
 /// Jellyfin leaves their rows behind until the next identity sweep, and the
@@ -952,7 +1001,8 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
 /// fold and episodes that never had artwork.
 ///
 /// One small non-recursive request per navigation buys a correct list, and it
-/// also makes newly added episodes appear without waiting for a sweep.
+/// also makes newly added episodes appear without waiting for a sweep. Changed
+/// rows reach an open page through the library change notification.
 ///
 /// Returns each live child's synopsis so the response can carry it without the
 /// cache ever storing prose; `None` means the server could not be asked.
@@ -1016,6 +1066,14 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashM
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_background_child_reconcile_is_claimed_once_per_interval() {
+        let parent = "reconcile-claim-test-parent";
+        assert!(claim_child_reconcile(parent));
+        assert!(!claim_child_reconcile(parent));
+        assert!(claim_child_reconcile("reconcile-claim-test-other"));
+    }
 
     #[test]
     fn calendar_dates_are_strict_iso_days() {
