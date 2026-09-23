@@ -1,6 +1,8 @@
-import { Check, Heart, ListFilter, X } from "lucide-react"
-import type { ComponentProps, ReactNode } from "react"
+import { Heart, ListFilter, X } from "lucide-react"
+import { useId, type ComponentProps, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -233,52 +235,46 @@ function DesktopFilters({
   )
 }
 
-function TouchChoice({
-  name,
-  value,
-  selected,
-  children,
-  onSelect,
-}: {
-  name: string
-  value: string
-  selected: boolean
-  children: ReactNode
-  onSelect: () => void
-}) {
+function TouchChoice({ value, children }: { value: string; children: ReactNode }) {
   return (
-    <label
+    <Label
       className={cn(
-        "flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-left text-sm outline-none has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
-        selected
-          ? "border-primary/60 bg-primary/12 text-foreground"
-          : "border-white/10 bg-white/4 text-muted-foreground",
+        "flex min-h-11 cursor-pointer items-center gap-3 rounded-md border border-white/10 bg-white/4 px-3 py-2 text-left text-sm leading-normal font-normal text-muted-foreground",
+        "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+        "has-[[data-state=checked]]:border-primary/60 has-[[data-state=checked]]:bg-primary/12 has-[[data-state=checked]]:text-foreground",
       )}
     >
-      <input
-        type="radio"
-        name={name}
-        value={value}
-        checked={selected}
-        onChange={onSelect}
-        className="sr-only"
-      />
-      <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden="true">
-        {selected && <Check className="size-4 text-primary" />}
-      </span>
+      <RadioGroupItem value={value} />
       {children}
-    </label>
+    </Label>
   )
 }
 
-function TouchGroup({ label, children }: { label: string; children: ReactNode }) {
+/** One touch-sized radio group per filter; `ANY` stands for "no filter". */
+function TouchGroup({
+  label,
+  value,
+  onValueChange,
+  children,
+}: {
+  label: string
+  value: string
+  onValueChange: (value: string) => void
+  children: ReactNode
+}) {
+  const labelId = useId()
   return (
-    <fieldset className="space-y-2">
-      <legend className="mb-2 text-sm font-medium text-foreground">{label}</legend>
-      <div className="grid gap-2 sm:grid-cols-2">
+    <div className="space-y-2">
+      <p id={labelId} className="mb-2 text-sm font-medium text-foreground">{label}</p>
+      <RadioGroup
+        aria-labelledby={labelId}
+        value={value}
+        onValueChange={onValueChange}
+        className="grid gap-2 sm:grid-cols-2"
+      >
         {children}
-      </div>
-    </fieldset>
+      </RadioGroup>
+    </div>
   )
 }
 
@@ -308,86 +304,49 @@ function TouchFilters({
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-6 overflow-y-auto px-4 py-5">
-          <TouchGroup label="Genre">
-            <TouchChoice
-              name="library-genre"
-              value="any"
-              selected={!value.genre}
-              onSelect={() => onChange({ genre: "" })}
-            >
-              Any genre
-            </TouchChoice>
+          <TouchGroup
+            label="Genre"
+            value={value.genre || ANY}
+            onValueChange={(genre) => onChange({ genre: genre === ANY ? "" : genre })}
+          >
+            <TouchChoice value={ANY}>Any genre</TouchChoice>
             {genres.map((genre) => (
-              <TouchChoice
-                key={genre}
-                name="library-genre"
-                value={genre}
-                selected={value.genre === genre}
-                onSelect={() => onChange({ genre })}
-              >
-                {genre}
-              </TouchChoice>
+              <TouchChoice key={genre} value={genre}>{genre}</TouchChoice>
             ))}
             {genresLoading && (
               <p className="px-3 py-2 text-sm text-muted-foreground">Loading genres…</p>
             )}
           </TouchGroup>
 
-          <TouchGroup label="Release decade">
-            <TouchChoice
-              name="library-decade"
-              value="any"
-              selected={!value.decade}
-              onSelect={() => onChange({ decade: "" })}
-            >
-              Any decade
-            </TouchChoice>
+          <TouchGroup
+            label="Release decade"
+            value={value.decade || ANY}
+            onValueChange={(decade) => onChange({ decade: decade === ANY ? "" : decade })}
+          >
+            <TouchChoice value={ANY}>Any decade</TouchChoice>
             {RELEASE_DECADES.map((decade) => (
-              <TouchChoice
-                key={decade.value}
-                name="library-decade"
-                value={String(decade.value)}
-                selected={value.decade === String(decade.value)}
-                onSelect={() => onChange({ decade: String(decade.value) })}
-              >
-                {decade.label}
-              </TouchChoice>
+              <TouchChoice key={decade.value} value={String(decade.value)}>{decade.label}</TouchChoice>
             ))}
           </TouchGroup>
 
-          <TouchGroup label="Watch status">
+          <TouchGroup
+            label="Watch status"
+            value={value.watched || ANY}
+            onValueChange={(watched) =>
+              onChange({ watched: watched === "true" || watched === "false" ? watched : "" })}
+          >
             {WATCHED.map((option) => (
-              <TouchChoice
-                key={option.id}
-                name="library-watched"
-                value={option.id}
-                selected={(value.watched || ANY) === option.id}
-                onSelect={() =>
-                  onChange({ watched: option.id === ANY ? "" : option.id })
-                }
-              >
-                {option.label}
-              </TouchChoice>
+              <TouchChoice key={option.id} value={option.id}>{option.label}</TouchChoice>
             ))}
           </TouchGroup>
 
-          <TouchGroup label="My List">
-            <TouchChoice
-              name="library-favorite"
-              value="any"
-              selected={!value.favorite}
-              onSelect={() => onChange({ favorite: false })}
-            >
-              All titles
-            </TouchChoice>
-            <TouchChoice
-              name="library-favorite"
-              value="favorite"
-              selected={value.favorite}
-              onSelect={() => onChange({ favorite: true })}
-            >
-              In My List
-            </TouchChoice>
+          <TouchGroup
+            label="My List"
+            value={value.favorite ? "favorite" : ANY}
+            onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
+          >
+            <TouchChoice value={ANY}>All titles</TouchChoice>
+            <TouchChoice value="favorite">In My List</TouchChoice>
           </TouchGroup>
         </div>
         <SheetFooter className="flex-row border-t">
