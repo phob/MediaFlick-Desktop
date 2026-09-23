@@ -6,6 +6,7 @@ import { ServerCastExtras } from "../src/components/seerr/ServerCastExtras"
 import type { ItemSummary, SeerrStatusInfo, Status } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
@@ -21,12 +22,11 @@ const linked: SeerrStatusInfo = {
   quota: null,
 }
 
-const appStatus: Status = {
+const signedIn: Status = appStatus({
   authenticated: true,
   bootstrapped: true,
   bootstrap: { complete: true, ready: true, processed: 100, total: 100, initial: false },
-  companion: undefined,
-}
+})
 
 function summary(id: string, name: string): ItemSummary {
   return {
@@ -68,7 +68,7 @@ describe("proven server cast extras", () => {
   test("renders only backend-proven titles as library cards", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
-    client.setQueryData(queryKeys.status, appStatus)
+    client.setQueryData(queryKeys.status, signedIn)
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
       page: 1,
       totalPages: 1,
@@ -89,7 +89,7 @@ describe("proven server cast extras", () => {
   test("stays silent until the backend has proven at least one title", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
-    client.setQueryData(queryKeys.status, appStatus)
+    client.setQueryData(queryKeys.status, signedIn)
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
       page: 1,
       totalPages: 1,
@@ -112,7 +112,7 @@ describe("proven server cast extras", () => {
   test("an unlinked Seerr never renders the section", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, { ...linked, linked: false, mapped: false })
-    client.setQueryData(queryKeys.status, appStatus)
+    client.setQueryData(queryKeys.status, signedIn)
 
     renderExtras(
       client,

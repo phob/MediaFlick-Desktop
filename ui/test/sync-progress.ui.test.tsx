@@ -5,6 +5,7 @@ import { LibrarySyncProgress } from "../src/components/AppSidebar"
 import type { Status, SyncProgress } from "../src/lib/api"
 import { useStatus } from "../src/lib/queries"
 import { createQueryClient, queryKeys } from "../src/lib/query-client"
+import { appStatus } from "./support/fixtures"
 
 const queryClient = createQueryClient()
 
@@ -17,7 +18,7 @@ const catalog = {
 }
 
 function status(progress: SyncProgress): Status {
-  return { authenticated: true, libraryReady: true, syncProgress: progress }
+  return appStatus({ authenticated: true, libraryReady: true, syncProgress: progress })
 }
 
 function renderProgress(progress: SyncProgress) {
