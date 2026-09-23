@@ -237,20 +237,8 @@ impl JellyfinClient {
         query: &[(&str, String)],
     ) -> Result<T, ApiError> {
         let url = self.url(path, query);
-        self.with_retry(path, || {
-            let mut response = core_response(
-                self.agent
-                    .get(url.as_str())
-                    .header("Accept", "application/json")
-                    .header("Authorization", self.authorization_header())
-                    .call()
-                    .map_err(map_ureq_error)?,
-            )?;
-            response
-                .body_mut()
-                .read_json::<T>()
-                .map_err(|error| ApiError::Decode(error.to_string()))
-        })
+        let response = self.core_send(path, || self.json(self.agent.get(&url)).call())?;
+        read_json(response, Diagnostics::Relayed)
     }
 
     pub fn get_bytes(
@@ -274,7 +262,7 @@ impl JellyfinClient {
         range: Option<&str>,
     ) -> Result<ByteResponse, ApiError> {
         let url = self.url(path, query);
-        self.with_retry(path, || {
+        let mut response = self.core_send(path, || {
             let mut request = self
                 .agent
                 .get(url.as_str())
@@ -282,38 +270,54 @@ impl JellyfinClient {
             if let Some(range) = range {
                 request = request.header("Range", range);
             }
-            let mut response = core_response(request.call().map_err(map_ureq_error)?)?;
-            let status = response.status().as_u16();
-            let content_type = response
-                .headers()
-                .get("content-type")
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let content_range = response
-                .headers()
-                .get("content-range")
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string);
-            let accept_ranges = response
-                .headers()
-                .get("accept-ranges")
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string);
-            let bytes = response
-                .body_mut()
-                .with_config()
-                .limit(64 * 1024 * 1024)
-                .read_to_vec()
-                .map_err(|error| ApiError::Transport(error.to_string()))?;
-            Ok(ByteResponse {
-                status,
-                content_type,
-                content_range,
-                accept_ranges,
-                body: bytes,
-            })
+            request.call()
+        })?;
+        let status = response.status().as_u16();
+        let content_type = header(&response, "content-type")
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        let content_range = header(&response, "content-range");
+        let accept_ranges = header(&response, "accept-ranges");
+        let body = read_bytes(&mut response, 64 * 1024 * 1024)?;
+        Ok(ByteResponse {
+            status,
+            content_type,
+            content_range,
+            accept_ranges,
+            body,
         })
+    }
+
+    pub fn post_json<B: Serialize, T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        body: &B,
+    ) -> Result<T, ApiError> {
+        let url = self.url(path, query);
+        let response = self.core_send(path, || {
+            self.json(self.agent.post(url.as_str())).send_json(body)
+        })?;
+        read_json(response, Diagnostics::Relayed)
+    }
+
+    /// POST that ignores the response body (Jellyfin often answers 204).
+    pub fn post_empty<B: Serialize>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        body: &B,
+    ) -> Result<(), ApiError> {
+        let url = self.url(path, query);
+        self.core_send(path, || {
+            self.json(self.agent.post(url.as_str())).send_json(body)
+        })
+        .map(|_| ())
+    }
+
+    pub fn delete(&self, path: &str, query: &[(&str, String)]) -> Result<(), ApiError> {
+        let url = self.url(path, query);
+        self.core_send(path, || self.json(self.agent.delete(url.as_str())).call())
+            .map(|_| ())
     }
 
     /// Authenticated plugin GET that preserves a 403 as an action refusal.
@@ -328,16 +332,11 @@ impl JellyfinClient {
         query: &[(&str, String)],
     ) -> Result<T, ApiError> {
         let url = self.url(path, query);
-        self.with_retry(path, || {
-            let response = self
-                .companion_agent
-                .get(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .call()
-                .map_err(map_companion_ureq_error)?;
-            companion_json(response)
-        })
+        let response =
+            self.companion_send(path, Attempts::Retried, Diagnostics::Relayed, || {
+                self.json(self.companion_agent.get(url.as_str())).call()
+            })?;
+        read_json(response, Diagnostics::Relayed)
     }
 
     pub fn companion_get_bytes(
@@ -346,55 +345,16 @@ impl JellyfinClient {
         query: &[(&str, String)],
     ) -> Result<(Vec<u8>, String), ApiError> {
         let url = self.url(path, query);
-        let mut response = self
-            .companion_agent
-            .get(url.as_str())
-            .header("Authorization", self.authorization_header())
-            .call()
-            .map_err(|error| map_companion_ureq_error_safe(&error))?;
-        let status = response.status().as_u16();
-        if status == 401 {
-            return Err(ApiError::Unauthorized);
-        }
-        if status >= 400 {
-            return Err(companion_status_error(&mut response, status));
-        }
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let bytes = response
-            .body_mut()
-            .with_config()
-            .limit(12 * 1024 * 1024)
-            .read_to_vec()
-            .map_err(|error| ApiError::Transport(error.to_string()))?;
-        Ok((bytes, content_type))
-    }
-
-    pub fn post_json<B: Serialize, T: DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-        body: &B,
-    ) -> Result<T, ApiError> {
-        let url = self.url(path, query);
-        self.with_retry(path, || {
-            let mut response = core_response(
-                self.agent
-                    .post(url.as_str())
-                    .header("Accept", "application/json")
+        let mut response =
+            self.companion_send(path, Attempts::Retried, Diagnostics::Relayed, || {
+                self.companion_agent
+                    .get(url.as_str())
                     .header("Authorization", self.authorization_header())
-                    .send_json(body)
-                    .map_err(map_ureq_error)?,
-            )?;
-            response
-                .body_mut()
-                .read_json::<T>()
-                .map_err(|error| ApiError::Decode(error.to_string()))
-        })
+                    .call()
+            })?;
+        let content_type = header(&response, "content-type")
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+        Ok((read_bytes(&mut response, 12 * 1024 * 1024)?, content_type))
     }
 
     pub fn companion_post_json_once<B: Serialize, T: DeserializeOwned>(
@@ -403,14 +363,11 @@ impl JellyfinClient {
         body: &B,
     ) -> Result<T, ApiError> {
         let url = self.url(path, &[]);
-        let response = self
-            .companion_agent
-            .post(url.as_str())
-            .header("Accept", "application/json")
-            .header("Authorization", self.authorization_header())
-            .send_json(body)
-            .map_err(map_companion_ureq_error)?;
-        companion_json(response)
+        let response = self.companion_send(path, Attempts::Once, Diagnostics::Relayed, || {
+            self.json(self.companion_agent.post(url.as_str()))
+                .send_json(body)
+        })?;
+        read_json(response, Diagnostics::Relayed)
     }
 
     /// Typed companion boundary for rating data. Unlike general companion
@@ -423,78 +380,72 @@ impl JellyfinClient {
         body: &B,
     ) -> Result<T, ApiError> {
         let url = self.url(path, &[]);
-        let response = self
-            .companion_agent
-            .post(url.as_str())
-            .header("Accept", "application/json")
-            .header("Authorization", self.authorization_header())
-            .send_json(body)
-            .map_err(|error| map_companion_ureq_error_safe(&error))?;
-        companion_json_safe(response)
+        let response = self.companion_send(path, Attempts::Once, Diagnostics::Withheld, || {
+            self.json(self.companion_agent.post(url.as_str()))
+                .send_json(body)
+        })?;
+        read_json(response, Diagnostics::Withheld)
     }
 
     /// Info feeds the native capability/status surface. Keep malformed or
     /// failed plugin diagnostics out of that publicly serialized state too.
     pub fn companion_get_info_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let url = self.url(path, &[]);
-        self.with_retry(path, || {
-            let response = self
-                .companion_agent
-                .get(url.as_str())
-                .header("Accept", "application/json")
-                .header("Authorization", self.authorization_header())
-                .call()
-                .map_err(|error| map_companion_ureq_error_safe(&error))?;
-            companion_json_safe(response)
-        })
-    }
-
-    /// POST that ignores the response body (Jellyfin often answers 204).
-    pub fn post_empty<B: Serialize>(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-        body: &B,
-    ) -> Result<(), ApiError> {
-        let url = self.url(path, query);
-        self.with_retry(path, || {
-            core_response(
-                self.agent
-                    .post(url.as_str())
-                    .header("Accept", "application/json")
-                    .header("Authorization", self.authorization_header())
-                    .send_json(body)
-                    .map_err(map_ureq_error)?,
-            )
-            .map(|_| ())
-        })
-    }
-
-    pub fn delete(&self, path: &str, query: &[(&str, String)]) -> Result<(), ApiError> {
-        let url = self.url(path, query);
-        self.with_retry(path, || {
-            core_response(
-                self.agent
-                    .delete(url.as_str())
-                    .header("Accept", "application/json")
-                    .header("Authorization", self.authorization_header())
-                    .call()
-                    .map_err(map_ureq_error)?,
-            )
-            .map(|_| ())
-        })
+        let response =
+            self.companion_send(path, Attempts::Retried, Diagnostics::Withheld, || {
+                self.json(self.companion_agent.get(url.as_str())).call()
+            })?;
+        read_json(response, Diagnostics::Withheld)
     }
 
     pub fn companion_delete_once(&self, path: &str) -> Result<(), ApiError> {
         let url = self.url(path, &[]);
-        let response = self
-            .companion_agent
-            .delete(url.as_str())
+        self.companion_send(path, Attempts::Once, Diagnostics::Relayed, || {
+            self.json(self.companion_agent.delete(url.as_str())).call()
+        })
+        .map(|_| ())
+    }
+
+    /// The headers every JSON request carries.
+    fn json<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        request
             .header("Accept", "application/json")
             .header("Authorization", self.authorization_header())
-            .call()
-            .map_err(map_companion_ureq_error)?;
-        companion_empty(response)
+    }
+
+    /// One core Jellyfin request, retried while its failure is transient.
+    fn core_send(
+        &self,
+        path: &str,
+        send: impl Fn() -> Result<Response, ureq::Error>,
+    ) -> Result<Response, ApiError> {
+        self.with_retry(path, || {
+            core_response(send().map_err(|error| transport_error(&error))?)
+        })
+    }
+
+    /// One MediaFlick Companion request. Reads retry like core requests; writes
+    /// run once, because a retried POST could file a second Seerr request.
+    fn companion_send(
+        &self,
+        path: &str,
+        attempts: Attempts,
+        diagnostics: Diagnostics,
+        send: impl Fn() -> Result<Response, ureq::Error>,
+    ) -> Result<Response, ApiError> {
+        let attempt = || {
+            let response = send().map_err(|error| match diagnostics {
+                Diagnostics::Relayed => transport_error(&error),
+                Diagnostics::Withheld => ApiError::Transport(
+                    "could not reach the MediaFlick Companion plugin".to_string(),
+                ),
+            })?;
+            companion_response(response, diagnostics)
+        };
+        match attempts {
+            Attempts::Retried => self.with_retry(path, attempt),
+            Attempts::Once => attempt(),
+        }
     }
 
     fn with_retry<T>(
@@ -542,9 +493,31 @@ impl JellyfinClient {
     }
 }
 
-fn core_response(
-    response: ureq::http::Response<ureq::Body>,
-) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
+type Response = ureq::http::Response<ureq::Body>;
+
+#[derive(Debug, Clone, Copy)]
+enum Attempts {
+    Retried,
+    Once,
+}
+
+/// Whether a companion failure may carry the plugin's own wording. Ratings and
+/// the capability probe withhold it: the plugin owns provider credentials, and
+/// those answers feed publicly serialized state.
+#[derive(Debug, Clone, Copy)]
+enum Diagnostics {
+    Relayed,
+    Withheld,
+}
+
+/// Both agents keep HTTP error statuses as responses, so ureq only fails for
+/// transport problems (connect, TLS, timeout, protocol); statuses are mapped by
+/// [`core_response`] and [`companion_response`].
+fn transport_error(error: &ureq::Error) -> ApiError {
+    ApiError::Transport(error.to_string())
+}
+
+fn core_response(response: Response) -> Result<Response, ApiError> {
     let status = response.status().as_u16();
     match status {
         200..=399 => Ok(response),
@@ -561,79 +534,53 @@ fn core_response(
     }
 }
 
-fn map_ureq_error(error: ureq::Error) -> ApiError {
-    match error {
-        ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => ApiError::Unauthorized,
-        ureq::Error::StatusCode(429) => ApiError::RateLimited {
-            retry_after_secs: None,
-        },
-        ureq::Error::StatusCode(status) => ApiError::Status { status },
-        other => ApiError::Transport(other.to_string()),
-    }
-}
-
-fn map_companion_ureq_error(error: ureq::Error) -> ApiError {
-    match error {
-        ureq::Error::StatusCode(401) => ApiError::Unauthorized,
-        ureq::Error::StatusCode(status) => ApiError::Status { status },
-        other => ApiError::Transport(other.to_string()),
-    }
-}
-
-fn map_companion_ureq_error_safe(error: &ureq::Error) -> ApiError {
-    match error {
-        ureq::Error::StatusCode(401) => ApiError::Unauthorized,
-        ureq::Error::StatusCode(status) => ApiError::Status { status: *status },
-        _ => ApiError::Transport("could not reach the MediaFlick Companion plugin".to_string()),
-    }
-}
-
-fn companion_json<T: DeserializeOwned>(
-    mut response: ureq::http::Response<ureq::Body>,
-) -> Result<T, ApiError> {
+/// Only a 401 is the Jellyfin session; a 403 is the plugin refusing one action.
+fn companion_response(
+    mut response: Response,
+    diagnostics: Diagnostics,
+) -> Result<Response, ApiError> {
     let status = response.status().as_u16();
-    if status == 401 {
-        return Err(ApiError::Unauthorized);
+    match (status, diagnostics) {
+        (401, _) => Err(ApiError::Unauthorized),
+        (400.., Diagnostics::Relayed) => Err(companion_status_error(&mut response, status)),
+        (400.., Diagnostics::Withheld) => Err(ApiError::Status { status }),
+        _ => Ok(response),
     }
-    if status >= 400 {
-        return Err(companion_status_error(&mut response, status));
-    }
+}
+
+fn read_json<T: DeserializeOwned>(
+    mut response: Response,
+    diagnostics: Diagnostics,
+) -> Result<T, ApiError> {
     response
         .body_mut()
         .read_json::<T>()
-        .map_err(|error| ApiError::Decode(error.to_string()))
+        .map_err(|error| match diagnostics {
+            Diagnostics::Relayed => ApiError::Decode(error.to_string()),
+            Diagnostics::Withheld => {
+                ApiError::Decode("the companion returned an invalid response".to_string())
+            }
+        })
 }
 
-fn companion_json_safe<T: DeserializeOwned>(
-    mut response: ureq::http::Response<ureq::Body>,
-) -> Result<T, ApiError> {
-    let status = response.status().as_u16();
-    if status == 401 {
-        return Err(ApiError::Unauthorized);
-    }
-    if status >= 400 {
-        return Err(ApiError::Status { status });
-    }
-    response.body_mut().read_json::<T>().map_err(|_| {
-        ApiError::Decode("the companion returned an invalid rating response".to_string())
-    })
+fn read_bytes(response: &mut Response, limit: u64) -> Result<Vec<u8>, ApiError> {
+    response
+        .body_mut()
+        .with_config()
+        .limit(limit)
+        .read_to_vec()
+        .map_err(|error| transport_error(&error))
 }
 
-fn companion_empty(mut response: ureq::http::Response<ureq::Body>) -> Result<(), ApiError> {
-    let status = response.status().as_u16();
-    if status == 401 {
-        return Err(ApiError::Unauthorized);
-    }
-    if status >= 400 {
-        return Err(companion_status_error(&mut response, status));
-    }
-    Ok(())
+fn header(response: &Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
 
-fn companion_status_error(
-    response: &mut ureq::http::Response<ureq::Body>,
-    status: u16,
-) -> ApiError {
+fn companion_status_error(response: &mut Response, status: u16) -> ApiError {
     let message = response
         .body_mut()
         .read_json::<serde_json::Value>()
@@ -668,7 +615,7 @@ fn quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiError, JellyfinClient, map_companion_ureq_error, map_ureq_error, quote};
+    use super::{ApiError, JellyfinClient, quote};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -720,20 +667,77 @@ mod tests {
         assert_eq!(quote("evil\", Token=\"x\r\n"), "evil, Token=x");
     }
 
+    /// Answers each request in turn with `responses`, returning the request
+    /// lines it received.
+    fn serve(responses: Vec<&'static str>) -> (String, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = format!("http://{}", listener.local_addr().expect("address"));
+        let server = thread::spawn(move || {
+            responses
+                .into_iter()
+                .map(|response| {
+                    let (mut stream, _) = listener.accept().expect("accept");
+                    let mut request = [0_u8; 4_096];
+                    let read = stream.read(&mut request).expect("request");
+                    stream.write_all(response.as_bytes()).expect("response");
+                    String::from_utf8_lossy(&request[..read])
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect()
+        });
+        (address, server)
+    }
+
+    const FORBIDDEN: &str =
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const UNAVAILABLE: &str =
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const OK_JSON: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+
     #[test]
-    fn unauthorized_statuses_map_to_the_session_error() {
+    fn a_rejected_core_request_is_a_rejected_session() {
+        let (address, server) = serve(vec![FORBIDDEN]);
+        let client = JellyfinClient::new(&address, "device", Some("token"));
         assert_eq!(
-            map_ureq_error(ureq::Error::StatusCode(401)),
-            ApiError::Unauthorized
+            client.get_json::<serde_json::Value>("/Items", &[]),
+            Err(ApiError::Unauthorized)
         );
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn companion_permissions_do_not_expire_the_jellyfin_session() {
+        let (address, server) = serve(vec![FORBIDDEN]);
+        let client = JellyfinClient::new(&address, "device", Some("token"));
         assert_eq!(
-            map_ureq_error(ureq::Error::StatusCode(403)),
-            ApiError::Unauthorized
+            client.companion_get_info_json::<serde_json::Value>("/MediaFlick/info"),
+            Err(ApiError::Status { status: 403 })
         );
-        assert_eq!(
-            map_ureq_error(ureq::Error::StatusCode(404)),
-            ApiError::Status { status: 404 }
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn companion_reads_retry_and_writes_run_once() {
+        let (address, server) = serve(vec![UNAVAILABLE, OK_JSON]);
+        let client = JellyfinClient::new(&address, "device", Some("token"));
+        client
+            .companion_get_json::<serde_json::Value>("/MediaFlick/seerr/status", &[])
+            .expect("second attempt");
+        assert_eq!(server.join().expect("server").len(), 2);
+
+        let (address, server) = serve(vec![UNAVAILABLE]);
+        let client = JellyfinClient::new(&address, "device", Some("token"));
+        let error = client
+            .companion_post_json_once::<_, serde_json::Value>("/MediaFlick/seerr/request", &())
+            .expect_err("one attempt");
+        assert!(
+            matches!(error, ApiError::Remote { status: 503, .. }),
+            "{error:?}"
         );
+        assert_eq!(server.join().expect("server").len(), 1);
     }
 
     #[test]
@@ -795,18 +799,6 @@ mod tests {
             }
         );
         server.join().expect("server");
-    }
-
-    #[test]
-    fn companion_permissions_do_not_expire_the_jellyfin_session() {
-        assert_eq!(
-            map_companion_ureq_error(ureq::Error::StatusCode(401)),
-            ApiError::Unauthorized
-        );
-        assert_eq!(
-            map_companion_ureq_error(ureq::Error::StatusCode(403)),
-            ApiError::Status { status: 403 }
-        );
     }
 
     #[test]
