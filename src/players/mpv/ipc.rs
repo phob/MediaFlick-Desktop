@@ -837,6 +837,13 @@ mod tests {
                 Some("rejected") => {
                     vec![json!({ "request_id": id, "error": "property unavailable" })]
                 }
+                // mpv answers an async command only when it completes; here that
+                // is just before the next command's own reply.
+                Some("late") => Vec::new(),
+                Some("after-async") => vec![
+                    json!({ "request_id": 4, "error": "success" }),
+                    json!({ "request_id": id, "error": "success" }),
+                ],
                 _ => vec![json!({ "request_id": id, "error": "success" })],
             }
         });
@@ -862,6 +869,21 @@ mod tests {
         // writer that reopened the pipe per command could not have been
         // answered at all.
         for expected in ["first", "rejected", "after-rejection"] {
+            assert_eq!(
+                fake.next_command_on(COMMAND_CONNECTION)["command"][0],
+                expected
+            );
+        }
+
+        // An async command is acknowledged once written; its late reply is
+        // skipped by the next validated command's wait.
+        let asynchronous = worker.send_with_timeout(
+            json!({ "command": ["late"], "request_id": 4, "async": true }),
+            Duration::from_secs(5),
+        );
+        assert!(asynchronous.is_ok());
+        assert!(send("after-async", 5).is_ok());
+        for expected in ["late", "after-async"] {
             assert_eq!(
                 fake.next_command_on(COMMAND_CONNECTION)["command"][0],
                 expected
