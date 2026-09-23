@@ -894,13 +894,24 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
 }
 
 fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
+    let scope = match services.session.scope() {
+        Ok(scope) => scope,
         Err(error) => return ApiResponse::from_api_error(&error),
     };
-    match items::fetch_item(&client, &user_id, item_id) {
+    match items::fetch_item(scope.client(), scope.user_id(), item_id) {
         Ok(Some(dto)) => {
-            let _ = services.library.ingest_page(std::slice::from_ref(&dto));
+            // The row belongs to the account that fetched it; an account switch
+            // during the request must not seed the next account's cache.
+            let cached = services
+                .session
+                .commit_if_current(&scope, stale_account_response, || {
+                    // A storage failure still answers from the fetched DTO.
+                    let _ = services.library.ingest_page(std::slice::from_ref(&dto));
+                    Ok(())
+                });
+            if let Err(response) = cached {
+                return response;
+            }
             match services.library.item(item_id) {
                 Ok(Some(item)) => ApiResponse::ok(item),
                 Ok(None) => ApiResponse::ok(summary_from_dto(&dto)),
@@ -915,7 +926,7 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_item(services, item_id);
             }
-            services.session.note_error(&error);
+            services.session.note_scoped_error(&scope, &error);
             ApiResponse::from_api_error(&error)
         }
     }
