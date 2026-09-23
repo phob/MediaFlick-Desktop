@@ -11,16 +11,15 @@ use crate::playback::{NativeWindowHandle, PlaybackCoordinator};
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 use crate::preferences::AppSettings;
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "windows")]
-#[path = "libmpv_overlay/windows.rs"]
-mod platform;
+mod windows;
 
 #[cfg(target_os = "linux")]
-#[path = "libmpv_overlay/linux.rs"]
-mod platform;
-
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-pub(super) use platform::{LibmpvOverlaySurface, is_active, is_configured};
+pub(super) use self::linux::{LibmpvOverlaySurface, is_active, is_configured};
+#[cfg(target_os = "windows")]
+pub(super) use self::windows::{LibmpvOverlaySurface, is_active, is_configured};
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub(super) struct LibmpvOverlaySurface;
@@ -64,4 +63,4 @@ pub(super) fn is_active() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) use platform::reveal;
+pub(super) use self::linux::reveal;
