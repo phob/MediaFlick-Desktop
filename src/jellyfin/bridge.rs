@@ -2,9 +2,9 @@
 //!
 //! The jellyfin-web injection bridge is gone: the own UI talks to Rust over
 //! `mediaflick-desktop://app/api/*`. What remains here is the small
-//! `mediaflick-desktop://<action>` protocol used by the About and update-toast
-//! dialogs, plus the readiness fallback used when the typed API is unavailable.
-//! A per-session token authenticates every dialog action.
+//! `mediaflick-desktop://<action>` protocol used by the update toast, plus the
+//! readiness fallback used when the typed API is unavailable. A per-session
+//! token authenticates every toast action.
 
 use std::sync::OnceLock;
 
@@ -12,30 +12,24 @@ static BRIDGE_TOKEN: OnceLock<String> = OnceLock::new();
 const BRIDGE_TOKEN_ENV: &str = "MEDIAFLICK_BRIDGE_TOKEN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BridgeAction<'a> {
-    About,
-    Exit,
+pub enum BridgeAction {
     WindowReady,
-    DownloadUpdate(&'a str),
+    DownloadUpdate,
     OpenUpdateRelease,
 }
 
-pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction<'_>> {
+pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction> {
     let request = request_url.strip_prefix("mediaflick-desktop://")?;
     let request = request.split('#').next().unwrap_or_default();
-    let (path, query) = request
-        .split_once('?')
-        .map_or((request, ""), |(path, query)| (path, query));
+    let path = request.split('?').next().unwrap_or_default();
     let action = path.strip_suffix('/').unwrap_or(path);
     if action.contains('/') {
         return None;
     }
 
     Some(match action {
-        "app-about" => BridgeAction::About,
-        "app-exit" => BridgeAction::Exit,
         "window-ready" => BridgeAction::WindowReady,
-        "update-download" => BridgeAction::DownloadUpdate(query),
+        "update-download" => BridgeAction::DownloadUpdate,
         "update-release" => BridgeAction::OpenUpdateRelease,
         _ => return None,
     })
@@ -75,7 +69,7 @@ mod tests {
     fn parses_remaining_native_actions_exactly() {
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://update-download?token=x&version=1#ignored"),
-            Some(BridgeAction::DownloadUpdate("token=x&version=1"))
+            Some(BridgeAction::DownloadUpdate)
         );
         assert_eq!(
             parse_bridge_action("mediaflick-desktop://window-ready"),

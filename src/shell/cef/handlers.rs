@@ -7,9 +7,9 @@ use super::*;
 type CursorHandle = *mut u8;
 
 wrap_client! {
-    pub(super) struct JellyfinClient {
+    pub(super) struct ShellClient {
         state: BrowserState,
-        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
+        overlay_surface: Option<std::rc::Rc<libmpv_overlay::LibmpvOverlaySurface>>,
     }
 
     impl Client {
@@ -20,7 +20,7 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(JellyfinDisplayHandler::new(
                 self.state.clone(),
-                self.prototype_surface.clone(),
+                self.overlay_surface.clone(),
             ))
         }
 
@@ -31,7 +31,7 @@ wrap_client! {
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(JellyfinLifeSpanHandler::new(
                 self.state.clone(),
-                self.prototype_surface.clone(),
+                self.overlay_surface.clone(),
             ))
         }
 
@@ -44,7 +44,7 @@ wrap_client! {
         }
 
         fn render_handler(&self) -> Option<RenderHandler> {
-            self.prototype_surface
+            self.overlay_surface
                 .as_ref()
                 .and_then(|surface| surface.render_handler())
         }
@@ -191,7 +191,7 @@ fn is_key_down_event(event: &KeyEvent) -> bool {
 wrap_display_handler! {
     struct JellyfinDisplayHandler {
         state: BrowserState,
-        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
+        overlay_surface: Option<std::rc::Rc<libmpv_overlay::LibmpvOverlaySurface>>,
     }
 
     impl DisplayHandler {
@@ -202,7 +202,7 @@ wrap_display_handler! {
             type_: CursorType,
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> std::os::raw::c_int {
-            let Some(surface) = &self.prototype_surface else {
+            let Some(surface) = &self.overlay_surface else {
                 return 0;
             };
             surface.set_cursor(type_);
@@ -220,7 +220,7 @@ wrap_display_handler! {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(fallback_title);
             #[cfg(target_os = "linux")]
-            if let Some(surface) = &self.prototype_surface { surface.set_title(&title_string); }
+            if let Some(surface) = &self.overlay_surface { surface.set_title(&title_string); }
             let title = CefString::from(title_string.as_str());
 
             let mut browser = browser.cloned();
@@ -240,7 +240,7 @@ wrap_display_handler! {
 wrap_life_span_handler! {
     struct JellyfinLifeSpanHandler {
         state: BrowserState,
-        prototype_surface: Option<std::rc::Rc<prototype_osr::PrototypeOsrSurface>>,
+        overlay_surface: Option<std::rc::Rc<libmpv_overlay::LibmpvOverlaySurface>>,
     }
 
     impl LifeSpanHandler {
@@ -304,7 +304,7 @@ wrap_life_span_handler! {
             };
 
             if should_quit {
-                if let Some(surface) = &self.prototype_surface {
+                if let Some(surface) = &self.overlay_surface {
                     surface.destroy();
                 }
                 let playback = self
@@ -410,8 +410,6 @@ wrap_request_handler! {
                 return 0;
             };
             let request_url = CefString::from(&request.url()).to_string();
-            let mut browser = browser;
-            let mut frame = frame;
             if request_url.starts_with("https://www.youtube-nocookie.com/embed/") {
                 request.set_referrer(
                     Some(&CefString::from("http://localhost/")),
@@ -432,11 +430,7 @@ wrap_request_handler! {
                 return 0;
             }
 
-            if !bridge_request_is_trusted(
-                &request_url,
-                browser.as_deref_mut(),
-                frame.as_deref_mut(),
-            ) {
+            if !bridge_request_is_trusted(&request_url, browser, frame) {
                 tracing::warn!(
                     target: "bridge",
                     url = %request_url,
@@ -444,7 +438,7 @@ wrap_request_handler! {
                 );
                 return 1;
             }
-            if !route_bridge_action(&request_url, browser, frame, &self.state) {
+            if !route_bridge_action(&request_url, &self.state) {
                 tracing::warn!(
                     target: "bridge",
                     url = %request_url,
@@ -508,19 +502,8 @@ wrap_resource_request_handler! {
                 return ReturnValue::CONTINUE;
             }
 
-            let mut browser = browser;
-            let mut frame = frame;
-            if bridge_request_is_trusted(
-                &request_url,
-                browser.as_deref_mut(),
-                frame.as_deref_mut(),
-            ) {
-                post_bridge_action(
-                    request_url,
-                    browser.as_deref().cloned(),
-                    frame.as_deref().cloned(),
-                    self.state.clone(),
-                );
+            if bridge_request_is_trusted(&request_url, browser, frame) {
+                post_bridge_action(request_url, self.state.clone());
             } else {
                 tracing::warn!(
                     target: "bridge",
