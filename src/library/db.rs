@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags};
 /// Bump whenever the schema changes. Pre-1.0 databases are not migrated: an
 /// older version is dropped wholesale and recreated, and the app resyncs the
 /// catalog from the server.
-pub const SCHEMA_VERSION: i32 = 16;
+pub const SCHEMA_VERSION: i32 = 17;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -101,6 +101,29 @@ impl Database {
     ) -> rusqlite::Result<T> {
         let connection = self.acquire()?;
         let result = work(&connection);
+        self.release(connection);
+        result
+    }
+
+    /// Refreshes the query planner's statistics. SQLite only reads them when a
+    /// connection opens, so idle pooled connections are retired and reopen
+    /// with the new statistics on their next use.
+    pub fn optimize(&self) -> rusqlite::Result<()> {
+        let connection = self.acquire()?;
+        let result = (|| {
+            // Bounds each ANALYZE to a sample so a large catalog stays cheap.
+            connection.pragma_update(None, "analysis_limit", 1000)?;
+            connection.pragma_update(None, "optimize", 0x10002)
+        })();
+        if result.is_ok() {
+            // Closed after the pool lock is released.
+            let retired = self
+                .idle
+                .lock()
+                .map(|mut idle| std::mem::take(&mut *idle))
+                .unwrap_or_default();
+            drop(retired);
+        }
         self.release(connection);
         result
     }
@@ -437,17 +460,49 @@ CREATE TABLE items (
     synced_at           INTEGER NOT NULL
 );
 
-CREATE INDEX items_kind_sort ON items (kind, sort_name);
+-- One index per library grid sort. Each matches its `ItemSort` ORDER BY
+-- column for column, collation included, so a page reads rows in order and
+-- stops at LIMIT instead of sorting the whole kind.
+CREATE INDEX items_kind_name
+    ON items (kind, sort_name COLLATE NOCASE, name COLLATE NOCASE);
+-- Also serves release-decade filtering: kind, then a bounded year range.
+CREATE INDEX items_kind_year ON items (kind, year DESC, sort_name COLLATE NOCASE);
+CREATE INDEX items_kind_added ON items (kind, date_created);
+CREATE INDEX items_kind_rating
+    ON items (kind, community_rating DESC, sort_name COLLATE NOCASE);
 CREATE INDEX items_series ON items (series_id, parent_index_number, index_number);
 CREATE INDEX items_parent ON items (parent_id);
-CREATE INDEX items_date_created ON items (date_created DESC);
-CREATE INDEX items_date_last_saved ON items (date_last_saved DESC);
+CREATE INDEX items_season ON items (season_id) WHERE season_id IS NOT NULL;
 CREATE INDEX items_tmdb ON items (tmdb_id) WHERE tmdb_id IS NOT NULL;
 CREATE INDEX items_imdb ON items (imdb_id) WHERE imdb_id IS NOT NULL;
 CREATE INDEX items_tvdb ON items (tvdb_id) WHERE tvdb_id IS NOT NULL;
--- Release-decade filtering starts with kind and then applies a bounded year
--- range, so this composite index keeps both the count and each page efficient.
-CREATE INDEX items_kind_year ON items (kind, year);
+
+-- `items.genres` normalized for lookup. Parsing the JSON of every row made the
+-- genre list and each genre filter a full scan. Triggers keep it current, so no
+-- write path can forget it.
+CREATE TABLE item_genres (
+    genre   TEXT NOT NULL,
+    item_id INTEGER NOT NULL,
+    PRIMARY KEY (genre, item_id)
+) WITHOUT ROWID;
+CREATE INDEX item_genres_item ON item_genres (item_id);
+
+CREATE TRIGGER item_genres_insert AFTER INSERT ON items BEGIN
+    INSERT OR IGNORE INTO item_genres (genre, item_id)
+    SELECT value, new.id FROM json_each(new.genres) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_genres_update AFTER UPDATE OF genres ON items
+    WHEN old.genres IS NOT new.genres
+BEGIN
+    DELETE FROM item_genres WHERE item_id = old.id;
+    INSERT OR IGNORE INTO item_genres (genre, item_id)
+    SELECT value, new.id FROM json_each(new.genres) WHERE type = 'text' AND value <> '';
+END;
+
+CREATE TRIGGER item_genres_delete AFTER DELETE ON items BEGIN
+    DELETE FROM item_genres WHERE item_id = old.id;
+END;
 
 CREATE TABLE user_data (
     jellyfin_id             TEXT PRIMARY KEY,
@@ -688,6 +743,7 @@ mod tests {
             "franchise_snapshot_items",
             "franchise_movie_membership",
             "provider_identity_map",
+            "item_genres",
         ] {
             let count: i64 = database
                 .with_connection(|connection| {
@@ -958,6 +1014,68 @@ mod tests {
                 Ok(())
             })
             .expect("fts consistency");
+    }
+
+    #[test]
+    fn genre_rows_track_item_inserts_updates_and_deletes() {
+        let database = Database::open_in_memory().expect("open");
+        database
+            .with_connection(|connection| {
+                let genres = |connection: &Connection| -> rusqlite::Result<Vec<String>> {
+                    let mut statement = connection.prepare(
+                        "SELECT genre FROM item_genres g JOIN items i ON i.id = g.item_id
+                         WHERE i.jellyfin_id = 'a' ORDER BY genre",
+                    )?;
+                    statement.query_map([], |row| row.get(0))?.collect()
+                };
+                connection.execute(
+                    r#"INSERT INTO items (jellyfin_id, kind, name, genres, synced_at)
+                       VALUES ('a', 'Movie', 'A', '["Drama","","Action","Drama"]', 0)"#,
+                    [],
+                )?;
+                assert_eq!(genres(connection)?, ["Action", "Drama"]);
+
+                connection.execute("UPDATE items SET name = 'Renamed'", [])?;
+                assert_eq!(genres(connection)?, ["Action", "Drama"]);
+
+                connection.execute(r#"UPDATE items SET genres = '["Comedy"]'"#, [])?;
+                assert_eq!(genres(connection)?, ["Comedy"]);
+
+                connection.execute("DELETE FROM items", [])?;
+                let left: i64 =
+                    connection
+                        .query_row("SELECT count(*) FROM item_genres", [], |row| row.get(0))?;
+                assert_eq!(left, 0);
+                Ok(())
+            })
+            .expect("genre consistency");
+    }
+
+    #[test]
+    fn optimizing_records_statistics_and_keeps_the_pool_usable() {
+        let database = Database::open_in_memory().expect("open");
+        database
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO items (jellyfin_id, kind, name, synced_at) VALUES ('a','Movie','A',0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .expect("seed");
+
+        database.optimize().expect("optimize");
+
+        let analyzed: i64 = database
+            .with_connection(|connection| {
+                connection.query_row(
+                    "SELECT count(*) FROM sqlite_stat1 WHERE tbl = 'items'",
+                    [],
+                    |row| row.get(0),
+                )
+            })
+            .expect("statistics");
+        assert!(analyzed > 0);
     }
 
     #[test]
