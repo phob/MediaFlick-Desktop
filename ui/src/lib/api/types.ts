@@ -411,6 +411,7 @@ export interface PlayerComfort {
   seekForwardThirtyKey: string
 }
 
+/** Mirrors `SettingsView` (`src/shell/cef/api/settings.rs`); every field is always sent. */
 export interface ClientSettings {
   client: {
     player: PlayerSettings
@@ -431,10 +432,11 @@ export interface ClientSettings {
   capabilities: {
     platform: "windows" | "macos" | "linux" | "other"
     libmpv: boolean
-    integratedLibmpvOverlay?: boolean
+    integratedLibmpvOverlay: boolean
     mpvInstaller: boolean
   }
-  recoveries?: { area: string; restoredBackup: boolean }[]
+  /** Durable settings files restored from their backup at startup. */
+  recoveries: { area: string; restoredBackup: boolean }[]
   serverUrl: string | null
 }
 
