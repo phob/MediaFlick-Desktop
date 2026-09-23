@@ -30,7 +30,7 @@ use super::api::items;
 use super::api::model::UserItemDataDto;
 use super::api::sessions;
 use super::remote;
-use super::session::Session;
+use super::session::{Session, SessionScope};
 
 /// How often the worker re-checks for a signed-in session while idle. Cheap —
 /// one in-process state read — so sign-in starts the stream promptly.
@@ -129,14 +129,14 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
         }
 
         match connect(session) {
-            Ok((mut socket, authorization)) => {
+            Ok((mut socket, scope)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
-                announce_capabilities(session);
+                announce_capabilities(session, &scope);
                 // Whatever happened while no connection existed was never
                 // pushed; one requested cycle reconciles the gap.
                 sync.request();
                 let connected_at = Instant::now();
-                match listen(&mut socket, library, session, sync, handle, &authorization) {
+                match listen(&mut socket, library, session, sync, handle, &scope) {
                     Disconnect::Stopped => return,
                     Disconnect::SessionChanged => {
                         tracing::debug!(
@@ -180,15 +180,13 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
 /// its own thread: the announcement is a bounded HTTP POST that must not hold
 /// up event handling, and a failure only means "Play On" menus skip this
 /// device until the next reconnect.
-fn announce_capabilities(session: &Arc<Session>) {
+fn announce_capabilities(session: &Arc<Session>, scope: &SessionScope) {
     let session = session.clone();
+    let scope = scope.clone();
     let spawned = thread::Builder::new()
         .name("jellyfin-capabilities".to_string())
-        .spawn(move || {
-            let Ok(client) = session.client() else {
-                return;
-            };
-            match sessions::announce_capabilities(&client) {
+        .spawn(
+            move || match sessions::announce_capabilities(scope.client()) {
                 Ok(()) => {
                     tracing::debug!(
                         target: "jellyfin.socket",
@@ -196,14 +194,14 @@ fn announce_capabilities(session: &Arc<Session>) {
                     );
                 }
                 Err(error) => {
-                    session.note_error(&error);
+                    session.note_scoped_error(&scope, &error);
                     tracing::debug!(
                         target: "jellyfin.socket",
                         "could not announce remote-control capabilities: {error}"
                     );
                 }
-            }
-        });
+            },
+        );
     if let Err(error) = spawned {
         tracing::warn!(
             target: "jellyfin.socket",
@@ -224,8 +222,12 @@ enum Disconnect {
     Failed(String),
 }
 
-fn connect(session: &Session) -> Result<(Socket, String), String> {
-    let client = session.client().map_err(|error| error.to_string())?;
+/// Opens the stream for the current account. The returned scope is the
+/// connection's identity: everything the server pushes over it belongs to that
+/// account, so every cache write it causes commits against the scope.
+fn connect(session: &Session) -> Result<(Socket, SessionScope), String> {
+    let scope = session.scope().map_err(|error| error.to_string())?;
+    let client = scope.client();
     let authorization = client.authorization_header();
     let endpoint = Endpoint::parse(client.base_url())
         .ok_or_else(|| format!("unsupported server URL {}", client.base_url()))?;
@@ -248,12 +250,12 @@ fn connect(session: &Session) -> Result<(Socket, String), String> {
             &error
             && response.status().as_u16() == 401
         {
-            session.note_error(&ApiError::Unauthorized);
+            session.note_scoped_error(&scope, &ApiError::Unauthorized);
         }
         error.to_string()
     })?;
     set_read_timeout(&mut socket, READ_TICK);
-    Ok((socket, authorization))
+    Ok((socket, scope))
 }
 
 fn listen(
@@ -262,7 +264,7 @@ fn listen(
     session: &Session,
     sync: &SyncHandle,
     handle: &SocketHandle,
-    authorization: &str,
+    scope: &SessionScope,
 ) -> Disconnect {
     let mut keepalive_interval = DEFAULT_KEEPALIVE_INTERVAL;
     let mut keepalive_sent = Instant::now();
@@ -272,9 +274,10 @@ fn listen(
             let _ = socket.flush();
             return Disconnect::Stopped;
         }
-        // Sign-out and account switches revoke the token this connection
-        // authenticated with; keep listening only while it is still current.
-        if current_authorization(session).as_deref() != Some(authorization) {
+        // Sign-out, account switches, and token rejection end the session
+        // this connection authenticated as; keep listening only while it is
+        // still current.
+        if !session.scope_is_current(scope) {
             let _ = socket.close(None);
             let _ = socket.flush();
             return Disconnect::SessionChanged;
@@ -288,7 +291,8 @@ fn listen(
 
         match socket.read() {
             Ok(Message::Text(text)) => {
-                if let Some(interval) = handle_message(text.as_str(), library, session, sync) {
+                if let Some(interval) = handle_message(text.as_str(), library, session, sync, scope)
+                {
                     keepalive_interval = interval;
                     // Answer immediately so the server's lost-connection
                     // timer resets from a known point.
@@ -318,12 +322,13 @@ fn handle_message(
     library: &Library,
     session: &Session,
     sync: &SyncHandle,
+    scope: &SessionScope,
 ) -> Option<Duration> {
     match parse_message(text) {
         ServerMessage::KeepAliveInterval(interval) => return Some(interval),
-        ServerMessage::UserData(records) => apply_user_data(library, &records),
+        ServerMessage::UserData(records) => apply_user_data(library, session, scope, &records),
         ServerMessage::LibraryChanged { changed, removed } => {
-            apply_library_change(library, session, sync, &changed, &removed);
+            apply_library_change(library, session, sync, scope, &changed, &removed);
         }
         ServerMessage::Play(data) => remote::handle_play(&data),
         ServerMessage::Playstate(data) => remote::handle_playstate(&data),
@@ -425,11 +430,45 @@ fn id_list(data: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn apply_user_data(library: &Library, records: &[UserDataRecord]) {
+/// Why a pushed change was not written to the catalog cache.
+enum ScopedWriteError {
+    /// The account the connection belongs to is no longer the signed-in one.
+    Stale,
+    Storage(rusqlite::Error),
+}
+
+/// Writes to the catalog cache only while `scope` is still the signed-in
+/// session, atomically with account switches and sign-out, so a push that
+/// raced one can never land in the next account's cache.
+fn commit_scoped<T>(
+    session: &Session,
+    scope: &SessionScope,
+    write: impl FnOnce() -> rusqlite::Result<T>,
+) -> Result<T, ScopedWriteError> {
+    session.commit_if_current(
+        scope,
+        || ScopedWriteError::Stale,
+        || write().map_err(ScopedWriteError::Storage),
+    )
+}
+
+fn log_stale_push() {
+    tracing::debug!(
+        target: "jellyfin.socket",
+        "dropped a pushed change for a session that is no longer signed in"
+    );
+}
+
+fn apply_user_data(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    records: &[UserDataRecord],
+) {
     if records.is_empty() {
         return;
     }
-    match library.apply_user_data(records) {
+    match commit_scoped(session, scope, || library.apply_user_data(records)) {
         Ok(changes) if !changes.is_empty() => {
             tracing::debug!(
                 target: "jellyfin.socket",
@@ -439,24 +478,34 @@ fn apply_user_data(library: &Library, records: &[UserDataRecord]) {
             crate::app::services::notify_library_changed(changes);
         }
         Ok(_) => {}
-        Err(error) => {
+        Err(ScopedWriteError::Stale) => log_stale_push(),
+        Err(ScopedWriteError::Storage(error)) => {
             tracing::warn!(target: "jellyfin.socket", "failed to store pushed user data: {error}");
         }
     }
 }
 
+/// Evicts removed items and fetches changed ones as the connection's own
+/// account. Fetches run without any lock held; each write then commits only if
+/// that session is still current. A stale result is dropped, because the next
+/// session's own sync owns its cache.
 fn apply_library_change(
     library: &Library,
     session: &Session,
     sync: &SyncHandle,
+    scope: &SessionScope,
     changed: &[String],
     removed: &[String],
 ) {
     let mut batch = LibraryChangeBatch::default();
     for item_id in removed {
-        match library.forget(item_id) {
+        match commit_scoped(session, scope, || library.forget(item_id)) {
             Ok(changes) => batch.merge(changes),
-            Err(error) => {
+            Err(ScopedWriteError::Stale) => {
+                log_stale_push();
+                return;
+            }
+            Err(ScopedWriteError::Storage(error)) => {
                 tracing::warn!(
                     target: "jellyfin.socket",
                     "failed to drop removed item {item_id}: {error}"
@@ -465,35 +514,34 @@ fn apply_library_change(
         }
     }
 
-    if !changed.is_empty() {
-        match session.client_and_user() {
-            Ok((client, user_id)) => {
-                for chunk in changed.chunks(FETCH_CHUNK) {
-                    match items::fetch_items(&client, &user_id, chunk) {
-                        // Non-library kinds (music, folders) come back too;
-                        // ingest_page already filters them out.
-                        Ok(response) => match library.ingest_page(&response.items) {
-                            Ok(changes) => batch.merge(changes),
-                            Err(error) => {
-                                tracing::warn!(
-                                    target: "jellyfin.socket",
-                                    "failed to cache pushed items: {error}"
-                                );
-                            }
-                        },
-                        Err(error) => {
-                            session.note_error(&error);
-                            tracing::debug!(
-                                target: "jellyfin.socket",
-                                "could not fetch pushed items ({error}); asking for a sync cycle"
-                            );
-                            sync.request();
-                            break;
-                        }
+    for chunk in changed.chunks(FETCH_CHUNK) {
+        match items::fetch_items(scope.client(), scope.user_id(), chunk) {
+            // Non-library kinds (music, folders) come back too; ingest_page
+            // already filters them out.
+            Ok(response) => {
+                match commit_scoped(session, scope, || library.ingest_page(&response.items)) {
+                    Ok(changes) => batch.merge(changes),
+                    Err(ScopedWriteError::Stale) => {
+                        log_stale_push();
+                        return;
+                    }
+                    Err(ScopedWriteError::Storage(error)) => {
+                        tracing::warn!(
+                            target: "jellyfin.socket",
+                            "failed to cache pushed items: {error}"
+                        );
                     }
                 }
             }
-            Err(_) => sync.request(),
+            Err(error) => {
+                session.note_scoped_error(scope, &error);
+                tracing::debug!(
+                    target: "jellyfin.socket",
+                    "could not fetch pushed items ({error}); asking for a sync cycle"
+                );
+                sync.request();
+                break;
+            }
         }
     }
 
@@ -505,13 +553,6 @@ fn apply_library_change(
         );
         crate::app::services::notify_library_changed(batch);
     }
-}
-
-fn current_authorization(session: &Session) -> Option<String> {
-    session
-        .client()
-        .ok()
-        .map(|client| client.authorization_header())
 }
 
 fn set_read_timeout(socket: &mut Socket, timeout: Duration) {
@@ -597,14 +638,205 @@ impl Endpoint {
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, Endpoint, ServerMessage, parse_message, spawn};
+    use super::{
+        Duration, Endpoint, ServerMessage, apply_library_change, apply_user_data, parse_message,
+        spawn,
+    };
     use crate::jellyfin::session::Session;
-    use crate::library::{Library, sync};
-    use std::net::TcpListener;
-    use std::sync::Arc;
+    use crate::library::{Library, UserDataRecord, sync};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Instant;
     use tungstenite::Message;
+
+    fn alice_library(server_url: &str) -> Arc<Library> {
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let mut credentials = library.credentials();
+        credentials.server_url = Some(server_url.to_string());
+        credentials.user_id = Some("alice".to_string());
+        credentials.user_name = Some("Alice".to_string());
+        credentials.server_id = Some("server".to_string());
+        credentials.token = Some("alice-token".to_string());
+        library.save_credentials(&credentials).expect("save");
+        library
+    }
+
+    /// Reads one whole HTTP request, body included, so answering and closing
+    /// never resets a connection that still holds unread request bytes.
+    fn receive_request(listener: &TcpListener) -> (TcpStream, String) {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2_048];
+        let header_end = loop {
+            let read = stream.read(&mut buffer).expect("read request");
+            assert!(read > 0, "connection closed before headers");
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break end + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&request[..header_end]).into_owned();
+        let body_length = head
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        while request.len() < header_end + body_length {
+            let read = stream.read(&mut buffer).expect("read request body");
+            assert!(read > 0, "connection closed before the body");
+            request.extend_from_slice(&buffer[..read]);
+        }
+        let target = head
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .expect("request target")
+            .to_string();
+        (stream, target)
+    }
+
+    fn send_json(mut stream: TcpStream, body: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("write response");
+    }
+
+    /// The race this guards: a LibraryChanged fetch for Alice is still in
+    /// flight when the user switches to Bob, whose sign-in clears the cache.
+    /// Alice's late response must not land in Bob's catalog.
+    #[test]
+    fn a_pushed_change_fetched_before_an_account_switch_is_not_cached() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let server_url = format!("http://{}", listener.local_addr().expect("address"));
+        let (stale_fetch_tx, stale_fetch_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let server = thread::spawn(move || {
+            let mut targets = Vec::new();
+            let (stream, target) = receive_request(&listener);
+            targets.push(target);
+            send_json(
+                stream,
+                r#"{"Items":[{"Id":"alice-first","Name":"First","Type":"Movie"}],"TotalRecordCount":1}"#,
+            );
+
+            let (stale, target) = receive_request(&listener);
+            targets.push(target);
+            stale_fetch_tx.send(()).expect("signal the in-flight fetch");
+
+            let (stream, target) = receive_request(&listener);
+            targets.push(target);
+            send_json(
+                stream,
+                r#"{"AccessToken":"bob-token","ServerId":"server",
+                    "User":{"Id":"bob","Name":"Bob","Policy":{"IsAdministrator":true}}}"#,
+            );
+
+            release_rx.recv().expect("release the stale fetch");
+            send_json(
+                stale,
+                r#"{"Items":[{"Id":"alice-late","Name":"Late","Type":"Movie"}],"TotalRecordCount":1}"#,
+            );
+            targets
+        });
+
+        let library = alice_library(&server_url);
+        let session = Arc::new(Session::restore(library.clone()));
+        let alice = session.scope().expect("Alice scope");
+        let sync = sync::detached_handle();
+
+        // While Alice is current, a pushed change is fetched and cached.
+        apply_library_change(
+            &library,
+            &session,
+            &sync,
+            &alice,
+            &["alice-first".to_string()],
+            &[],
+        );
+        assert!(library.item("alice-first").expect("item").is_some());
+
+        let worker = {
+            let library = library.clone();
+            let session = session.clone();
+            thread::spawn(move || {
+                apply_library_change(
+                    &library,
+                    &session,
+                    &sync,
+                    &alice,
+                    &["alice-late".to_string()],
+                    &[],
+                );
+            })
+        };
+        stale_fetch_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the pushed fetch reached the server");
+        session
+            .login(&server_url, "bob", "secret")
+            .expect("switch to Bob");
+        release_tx.send(()).expect("release");
+        worker.join().expect("push worker");
+
+        let targets = server.join().expect("server");
+        assert!(targets[0].starts_with("/Items?") && targets[0].contains("alice-first"));
+        assert!(targets[1].starts_with("/Items?") && targets[1].contains("alice-late"));
+        assert_eq!(targets[2], "/Users/AuthenticateByName");
+        assert_eq!(session.user_id().as_deref(), Some("bob"));
+        assert_eq!(
+            library.cache_owner(),
+            Some(("server".to_string(), "bob".to_string()))
+        );
+        assert!(library.item("alice-late").expect("item").is_none());
+        assert_eq!(library.stats().total, 0);
+    }
+
+    #[test]
+    fn pushed_removals_and_watch_state_for_a_signed_out_session_are_dropped() {
+        let library = alice_library("http://server:8096");
+        library
+            .ingest_page(&[
+                serde_json::from_str(r#"{"Id":"m1","Name":"Kept","Type":"Movie"}"#).expect("dto"),
+            ])
+            .expect("ingest");
+        let session = Session::restore(library.clone());
+        let alice = session.scope().expect("Alice scope");
+        session
+            .clear_local(false)
+            .expect("sign out, keeping the cache");
+
+        apply_user_data(
+            &library,
+            &session,
+            &alice,
+            &[UserDataRecord {
+                jellyfin_id: "m1".to_string(),
+                played: true,
+                ..Default::default()
+            }],
+        );
+        apply_library_change(
+            &library,
+            &session,
+            &sync::detached_handle(),
+            &alice,
+            &[],
+            &["m1".to_string()],
+        );
+
+        let item = library.item("m1").expect("item").expect("still cached");
+        assert_eq!(item["played"], false);
+    }
 
     #[test]
     fn endpoints_map_http_bases_to_socket_urls() {
