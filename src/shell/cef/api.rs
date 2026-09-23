@@ -173,6 +173,23 @@ impl ApiResponse {
     }
 }
 
+/// The signed-in account this request runs against. Its failures go through
+/// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
+/// response that arrives after an account switch cannot expire or rewrite the
+/// account that replaced it.
+fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
+    services
+        .session
+        .scope()
+        .map_err(|error| ApiResponse::from_api_error(&error))
+}
+
+/// A failed Jellyfin call, reported against the account that made it.
+fn scoped_failure(services: &Services, scope: &SessionScope, error: &ApiError) -> ApiResponse {
+    services.session.note_scoped_error(scope, error);
+    ApiResponse::from_api_error(error)
+}
+
 fn stale_account_response() -> ApiResponse {
     ApiResponse::error(
         409,
@@ -367,9 +384,22 @@ fn summary_from_dto(dto: &BaseItemDto) -> Value {
 }
 
 /// Evicts a cached item the server has disowned, and asks for a sync so the
-/// replacement (Jellyfin re-creates the item with a new id) is picked up.
-fn forget_item(services: &Arc<Services>, item_id: &str) {
-    match services.library.forget(item_id) {
+/// replacement (Jellyfin re-creates the item with a new id) is picked up. The
+/// 404 is only proof for the account that received it.
+fn forget_item(services: &Arc<Services>, scope: &SessionScope, item_id: &str) {
+    let forgotten =
+        services
+            .session
+            .commit_if_current(scope, || (), || Ok(services.library.forget(item_id)));
+    let Ok(forgotten) = forgotten else {
+        tracing::debug!(
+            target: "app.api",
+            item_id,
+            "kept a cached item: the account changed before the server disowned it"
+        );
+        return;
+    };
+    match forgotten {
         Ok(changes) if !changes.is_empty() => {
             tracing::info!(
                 target: "app.api",
@@ -558,6 +588,154 @@ mod tests {
             request_line.starts_with("DELETE /UserPlayedItems/item-1"),
             "{request_line}"
         );
+    }
+
+    /// One request read to its end: the request line, then its body, so the
+    /// client never sees a reset from unread bytes.
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        use std::io::{BufRead, BufReader, Read};
+
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        let _ = reader.read_line(&mut request_line);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) if line == "\r\n" => break,
+                Ok(_) => {
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+            }
+        }
+        let mut body = vec![0; length];
+        let _ = reader.read_exact(&mut body);
+        request_line
+    }
+
+    fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
+        use std::io::Write;
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    }
+
+    fn movie_row(fixture: &TestServices, id: &str) {
+        let dto = serde_json::from_value(json!({ "Id": id, "Name": "Kept", "Type": "Movie" }))
+            .expect("dto");
+        fixture
+            .services
+            .library
+            .ingest_page(&[dto])
+            .expect("ingest");
+    }
+
+    #[test]
+    fn a_watch_state_answer_after_sign_out_leaves_the_kept_cache_alone() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let fixture = TestServices::signed_in(&server_url(&listener));
+        movie_row(&fixture, "m1");
+        let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("write request");
+            let request_line = read_request(&mut stream);
+            reached_tx.send(()).expect("signal");
+            release_rx.recv().expect("release");
+            respond(&mut stream, "204 No Content", "");
+            request_line
+        });
+        let services = fixture.services.clone();
+        let worker = std::thread::spawn(move || {
+            dispatch(&post("/api/item/m1/played", br#"{"played":true}"#), || {
+                Some(services.clone())
+            })
+        });
+        reached_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the write reached the server");
+        fixture
+            .services
+            .session
+            .clear_local(false)
+            .expect("sign out, keeping the cache");
+        release_tx.send(()).expect("release");
+
+        assert_eq!(worker.join().expect("worker").status, 200);
+        assert!(
+            server
+                .join()
+                .expect("server")
+                .starts_with("POST /UserPlayedItems/m1")
+        );
+        let row = fixture
+            .services
+            .library
+            .item("m1")
+            .expect("item")
+            .expect("kept row");
+        assert_eq!(row["played"], false);
+    }
+
+    #[test]
+    fn a_late_401_from_the_previous_account_does_not_expire_the_next_one() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let url = server_url(&listener);
+        let fixture = TestServices::signed_in(&url);
+        let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut stale, _) = listener.accept().expect("stale request");
+            let stale_line = read_request(&mut stale);
+            reached_tx.send(()).expect("signal");
+            let (mut login, _) = listener.accept().expect("login request");
+            let login_line = read_request(&mut login);
+            respond(
+                &mut login,
+                "200 OK",
+                r#"{"AccessToken":"bob-token","ServerId":"server","User":{"Id":"bob","Name":"Bob","Policy":{"IsAdministrator":true}}}"#,
+            );
+            release_rx.recv().expect("release");
+            respond(&mut stale, "401 Unauthorized", "");
+            (stale_line, login_line)
+        });
+        let services = fixture.services.clone();
+        let worker = std::thread::spawn(move || {
+            let request = ApiRequest {
+                method: "GET".to_string(),
+                ..post("/api/item/m1/trailer", b"")
+            };
+            dispatch(&request, || Some(services.clone()))
+        });
+        reached_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the stale request reached the server");
+        fixture
+            .services
+            .session
+            .login(&url, "bob", "secret")
+            .expect("switch to Bob");
+        release_tx.send(()).expect("release");
+
+        assert_eq!(worker.join().expect("worker").status, 401);
+        let (stale_line, login_line) = server.join().expect("server");
+        assert!(
+            stale_line.starts_with("GET /Items/m1/LocalTrailers"),
+            "{stale_line}"
+        );
+        assert!(
+            login_line.starts_with("POST /Users/AuthenticateByName"),
+            "{login_line}"
+        );
+        let session = &fixture.services.session;
+        assert!(session.is_authenticated());
+        assert_eq!(session.user_id().as_deref(), Some("bob"));
+        assert_eq!(session.status()["expired"], false);
     }
 
     #[test]

@@ -45,12 +45,13 @@ fn calendar(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
             "calendar dates must be YYYY-MM-DD with end after start",
         );
     }
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
     match services.companion.calendar(&start, &end) {
         Ok(value) => ApiResponse::ok(value),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -508,12 +509,11 @@ fn home_resume(services: &Arc<Services>) -> ApiResponse {
         Vec::new()
     };
     let next_up = if home.settings.watching.next_up {
-        services
-            .session
-            .client_and_user()
-            .and_then(|(client, user_id)| {
-                items::fetch_next_up(&client, &user_id, None, HOME_ROW_LIMIT)
-            })
+        let fetched = services.session.scope().and_then(|scope| {
+            items::fetch_next_up(scope.client(), scope.user_id(), None, HOME_ROW_LIMIT)
+                .inspect_err(|error| services.session.note_scoped_error(&scope, error))
+        });
+        fetched
             .map(|response| {
                 response
                     .items
@@ -522,7 +522,6 @@ fn home_resume(services: &Arc<Services>) -> ApiResponse {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_else(|error| {
-                services.session.note_error(&error);
                 tracing::debug!(target: "app.api", "Next Up unavailable: {error}");
                 Vec::new()
             })
@@ -648,19 +647,17 @@ fn query_person_items(
         .param("limit")
         .and_then(|value| value.parse().ok())
         .unwrap_or(60);
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_person_items(&client, &user_id, person_id, offset, limit) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_person_items(client, user_id, person_id, offset, limit) {
         Ok(response) => ApiResponse::ok(json!({
             "items": response.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
             "total": response.total_record_count,
         })),
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -687,13 +684,14 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value > 0);
     let name = request.param("name").unwrap_or_default();
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
+    let (client, user_id) = (scope.client(), scope.user_id());
 
     if let Some(jellyfin_id) = jellyfin_id {
-        return match items::fetch_item(&client, &user_id, &jellyfin_id) {
+        return match items::fetch_item(client, user_id, &jellyfin_id) {
             Ok(Some(person)) if person.item_type.as_deref() == Some("Person") => {
                 let provider_id = person
                     .provider_id("Tmdb")
@@ -713,17 +711,14 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
             }
             Ok(Some(_)) => ApiResponse::error(409, "that Jellyfin id is not a person"),
             Ok(None) => ApiResponse::error(404, "the server has no person with that id"),
-            Err(error) => {
-                services.session.note_error(&error);
-                ApiResponse::from_api_error(&error)
-            }
+            Err(error) => scoped_failure(services, &scope, &error),
         };
     }
 
     if name.trim().is_empty() {
         return ApiResponse::error(400, "a person name is required to resolve that deep link");
     }
-    match items::fetch_people(&client, &user_id, &name) {
+    match items::fetch_people(client, user_id, &name) {
         Ok(response) => {
             let mut seen = HashSet::new();
             let exact = response
@@ -762,10 +757,7 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse
                 "candidates": candidates,
             }))
         }
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -781,20 +773,18 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> ApiResponse {
 }
 
 fn item_synopsis(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_item_synopsis(&client, &user_id, item_id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_item_synopsis(client, user_id, item_id) {
         Ok(Some(dto)) => ApiResponse::ok(json!({ "overview": dto.overview })),
         Ok(None) => {
-            forget_item(services, item_id);
+            forget_item(services, &scope, item_id);
             ApiResponse::error(404, "the server has no item with that id")
         }
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
@@ -862,11 +852,12 @@ fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
 /// The detail page draws the cached thin row first and fills this in when it
 /// lands; when the server is unreachable the UI keeps its plain error state.
 fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let (client, user_id) = match services.session.client_and_user() {
-        Ok(pair) => pair,
-        Err(error) => return ApiResponse::from_api_error(&error),
+    let scope = match session_scope(services) {
+        Ok(scope) => scope,
+        Err(response) => return response,
     };
-    match items::fetch_item_about(&client, &user_id, item_id) {
+    let (client, user_id) = (scope.client(), scope.user_id());
+    match items::fetch_item_about(client, user_id, item_id) {
         Ok(Some(dto)) => {
             let people = bounded_about_people(&dto.people);
             let studios = dto
@@ -883,20 +874,17 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> ApiResponse {
             }))
         }
         Ok(None) => {
-            forget_item(services, item_id);
+            forget_item(services, &scope, item_id);
             ApiResponse::error(404, "the server has no item with that id")
         }
-        Err(error) => {
-            services.session.note_error(&error);
-            ApiResponse::from_api_error(&error)
-        }
+        Err(error) => scoped_failure(services, &scope, &error),
     }
 }
 
 fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse {
-    let scope = match services.session.scope() {
+    let scope = match session_scope(services) {
         Ok(scope) => scope,
-        Err(error) => return ApiResponse::from_api_error(&error),
+        Err(response) => return response,
     };
     match items::fetch_item(scope.client(), scope.user_id(), item_id) {
         Ok(Some(dto)) => {
@@ -919,15 +907,14 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> ApiResponse 
             }
         }
         Ok(None) => {
-            forget_item(services, item_id);
+            forget_item(services, &scope, item_id);
             ApiResponse::error(404, "the server has no item with that id")
         }
         Err(error) => {
             if matches!(error, ApiError::Status { status: 404 }) {
-                forget_item(services, item_id);
+                forget_item(services, &scope, item_id);
             }
-            services.session.note_scoped_error(&scope, &error);
-            ApiResponse::from_api_error(&error)
+            scoped_failure(services, &scope, &error)
         }
     }
 }
@@ -1027,13 +1014,14 @@ fn children(services: &Arc<Services>, item_id: &str) -> ApiResponse {
 /// Returns each live child's synopsis so the response can carry it without the
 /// cache ever storing prose; `None` means the server could not be asked.
 fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashMap<String, Value>> {
-    let (client, user_id) = services.session.client_and_user().ok()?;
+    let scope = services.session.scope().ok()?;
+    let (client, user_id) = (scope.client(), scope.user_id());
 
     let mut live_items = Vec::new();
     let mut overviews = HashMap::new();
     let mut offset = 0;
     loop {
-        let page = match items::fetch_children(&client, &user_id, parent_id, offset) {
+        let page = match items::fetch_children(client, user_id, parent_id, offset) {
             Ok(page) => page,
             Err(error) => {
                 // Offline, or the server is unwell. The cached list is still the
@@ -1042,7 +1030,7 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashM
                     target: "app.api",
                     "could not reconcile the children of {parent_id}: {error}"
                 );
-                services.session.note_error(&error);
+                services.session.note_scoped_error(&scope, &error);
                 return None;
             }
         };
@@ -1063,7 +1051,21 @@ fn reconcile_children(services: &Arc<Services>, parent_id: &str) -> Option<HashM
     // An empty `live_items` here came from a successful request, so it is the server
     // saying this parent has no children left — unlike the library-wide sweep,
     // where the blast radius makes that answer too dangerous to trust.
-    match services.library.reconcile_children(parent_id, &live_items) {
+    // The list is the server's answer for the account that asked.
+    let reconciled = services.session.commit_if_current(
+        &scope,
+        || (),
+        || Ok(services.library.reconcile_children(parent_id, &live_items)),
+    );
+    let Ok(reconciled) = reconciled else {
+        tracing::debug!(
+            target: "app.api",
+            parent_id,
+            "skipped a child reconcile: the account changed while it ran"
+        );
+        return None;
+    };
+    match reconciled {
         Ok(changes) => {
             if !changes.is_empty() {
                 tracing::info!(
