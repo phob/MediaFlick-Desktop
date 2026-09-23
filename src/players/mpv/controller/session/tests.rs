@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand};
+use crate::playback::{PlaybackContext, PlaybackEvent, PlaybackRequest, PlayerCommand, StopReason};
 use crate::preferences::FullscreenBehavior;
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
@@ -107,7 +107,7 @@ fn libmpv_watched_next_command_uses_the_existing_completion_handoff() {
             .lock()
             .expect("playback snapshot")
             .stop_reason,
-        Some("watched-next")
+        Some(StopReason::WatchedNext)
     );
 }
 
@@ -147,7 +147,7 @@ fn external_watched_next_message_uses_the_completion_handoff() {
             .lock()
             .expect("playback snapshot")
             .stop_reason,
-        Some("watched-next")
+        Some(StopReason::WatchedNext)
     );
 }
 
@@ -272,7 +272,7 @@ fn finish_without_reporter_marks_mpv_snapshot_inactive() {
     let mut state = controller_with_pending_load(None);
 
     state.activate_pending();
-    state.finish_active(Some("quit"));
+    state.finish_active(Some(StopReason::Quit));
 
     assert!(state.active.is_none());
     assert!(!snapshot_active(&state));
@@ -316,14 +316,14 @@ fn finish_without_reporter_emits_stopped_event() {
     });
 
     state.activate_pending();
-    state.finish_active(Some("quit"));
+    state.finish_active(Some(StopReason::Quit));
 
     let event = next_terminal_event(&event_rx);
     assert!(matches!(
         event,
         PlaybackEvent::Stopped(snapshot)
             if !snapshot.active
-                && snapshot.stop_reason == Some("quit")
+                && snapshot.stop_reason == Some(StopReason::Quit)
                 && snapshot.playback_id == Some(1)
                 && snapshot.item_id.as_deref() == Some("item-1")
     ));
@@ -334,10 +334,10 @@ fn eof_stop_reason_is_preserved_in_snapshot() {
     let mut state = controller_with_pending_load(None);
 
     state.activate_pending();
-    state.finish_active(Some("eof"));
+    state.finish_active(Some(StopReason::Eof));
 
     let snapshot = state.snapshot.lock().expect("snapshot");
-    assert_eq!(snapshot.stop_reason, Some("eof"));
+    assert_eq!(snapshot.stop_reason, Some(StopReason::Eof));
     drop(snapshot);
 }
 
@@ -362,7 +362,7 @@ fn startup_seek_holds_resume_position_until_mpv_reaches_resume_range() {
 fn end_file_error_still_fails_pending_load() {
     let mut state = controller_with_pending_load(None);
 
-    state.finish_active(Some("error"));
+    state.finish_active(Some(StopReason::Error));
 
     assert!(state.pending.is_none());
 }
@@ -438,7 +438,7 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
     assert!(state.pending_raise_pulse_reset_at.is_none());
     let snapshot = state.snapshot.lock().expect("snapshot").clone();
     assert!(!snapshot.active);
-    assert_eq!(snapshot.stop_reason, Some("error"));
+    assert_eq!(snapshot.stop_reason, Some(StopReason::Error));
     assert_eq!(snapshot.playback_id, Some(2));
     assert_eq!(snapshot.item_id.as_deref(), Some("replacement-item"));
     assert_eq!(
@@ -456,7 +456,7 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
         PlaybackEvent::StateChanged(_) => unreachable!(),
     };
     assert!(!stopped.active);
-    assert_eq!(stopped.stop_reason, Some("error"));
+    assert_eq!(stopped.stop_reason, Some(StopReason::Error));
     assert_eq!(stopped.playback_id, snapshot.playback_id);
     assert_eq!(stopped.item_id, snapshot.item_id);
     assert_eq!(stopped.media_source_id, snapshot.media_source_id);
@@ -508,7 +508,7 @@ fn next_playback_handoff_ignores_old_end_file_while_replacement_is_pending() {
     let mut state = controller_with_pending_load(None);
     state.next_playback_handoff_until = Some(Instant::now() + Duration::from_secs(1));
 
-    state.finish_active(Some("stop"));
+    state.finish_active(Some(StopReason::Stop));
 
     assert!(state.pending.is_some());
 }
@@ -518,7 +518,7 @@ fn active_replacement_ignores_old_end_file_without_next_episode_handoff() {
     let mut state = controller_with_pending_load(None);
     state.replacement_end_file_pending = true;
 
-    state.finish_active(Some("stop"));
+    state.finish_active(Some(StopReason::Stop));
 
     assert!(state.pending.is_some());
     assert!(!state.replacement_end_file_pending);
@@ -534,7 +534,7 @@ fn eof_arms_next_playback_handoff() {
     state.mpv_playback_active = true;
     state.last_state.duration_ticks = Some(120_000_000);
 
-    state.finish_active(Some("eof"));
+    state.finish_active(Some(StopReason::Eof));
 
     assert!(state.next_playback_handoff_until.is_some());
     assert_eq!(state.last_state.position_ticks, 120_000_000);
@@ -552,7 +552,7 @@ fn eof_uses_runtime_when_mpv_duration_is_missing() {
     state.activate_pending();
     state.mpv_playback_active = true;
 
-    state.finish_active(Some("eof"));
+    state.finish_active(Some(StopReason::Eof));
 
     assert_eq!(state.last_state.duration_ticks, Some(240_000_000));
     assert_eq!(state.last_state.position_ticks, 240_000_000);

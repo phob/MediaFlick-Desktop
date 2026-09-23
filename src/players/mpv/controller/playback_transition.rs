@@ -8,12 +8,12 @@ use std::time::Instant;
 
 use crate::app::logger;
 use crate::playback::{
-    PlaybackContext, PlayerChapter, non_empty, seconds_to_ticks, ticks_to_milliseconds,
+    PlaybackContext, PlayerChapter, StopReason, non_empty, seconds_to_ticks, ticks_to_milliseconds,
 };
 
 use super::{
     ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
-    PlaybackIdentity, PlayerSnapshot, is_completion_reason, normalized_stop_reason,
+    PlaybackIdentity, PlayerSnapshot,
 };
 
 impl ControllerState {
@@ -31,11 +31,11 @@ impl ControllerState {
         false
     }
 
-    pub(super) fn arm_next_playback_handoff(&mut self, reason: &'static str) {
+    pub(super) fn arm_next_playback_handoff(&mut self, reason: StopReason) {
         self.next_playback_handoff_until = Some(Instant::now() + NEXT_PLAYBACK_HANDOFF_TIMEOUT);
         tracing::debug!(
             target: "mpv.ipc",
-            reason,
+            reason = reason.as_str(),
             "keeping mpv alive for next playback handoff"
         );
     }
@@ -50,14 +50,14 @@ impl ControllerState {
 
     pub(super) fn publish_snapshot_with_stop_reason(
         &self,
-        stop_reason: Option<&'static str>,
+        stop_reason: Option<StopReason>,
     ) -> PlayerSnapshot {
         self.publish_snapshot_for_identity(stop_reason, self.current_identity())
     }
 
     fn publish_snapshot_for_identity(
         &self,
-        stop_reason: Option<&'static str>,
+        stop_reason: Option<StopReason>,
         identity: Option<&PlaybackIdentity>,
     ) -> PlayerSnapshot {
         let snapshot = PlayerSnapshot {
@@ -128,7 +128,7 @@ impl ControllerState {
             item_id = %snapshot.item_id.as_deref().unwrap_or("unknown"),
             media_source_id = %snapshot.media_source_id.as_deref().unwrap_or("unknown"),
             play_session_id = %snapshot.play_session_id.as_deref().unwrap_or("unknown"),
-            stop_reason = %snapshot.stop_reason.unwrap_or("unknown"),
+            stop_reason = snapshot.stop_reason.map_or("unknown", StopReason::as_str),
             "notifying WebUI that mpv playback stopped"
         );
         if let Some(tx) = &self.event_tx {
@@ -327,26 +327,25 @@ impl ControllerState {
             state = %self.last_state,
             "marking current item watched and requesting next item"
         );
-        self.finish_active(Some("watched-next"));
-        self.arm_next_playback_handoff("watched-next");
+        self.finish_active(Some(StopReason::WatchedNext));
+        self.arm_next_playback_handoff(StopReason::WatchedNext);
     }
 
-    pub(super) fn finish_active(&mut self, reason: Option<&str>) {
+    pub(super) fn finish_active(&mut self, reason: Option<StopReason>) {
         tracing::debug!(
             target: "playback",
-            reason = reason.unwrap_or("unknown"),
+            reason = reason.map_or("unknown", StopReason::as_str),
             state = %self.last_state,
             "finishing playback"
         );
         let had_mpv_playback =
             self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
         self.startup_seek = None;
-        let failed = matches!(reason, Some("error"));
-        let stop_reason = normalized_stop_reason(reason);
+        let failed = reason == Some(StopReason::Error);
         if self.should_ignore_pending_end_file_during_playback_handoff(reason) {
             tracing::debug!(
                 target: "playback",
-                reason = reason.unwrap_or("unknown"),
+                reason = reason.map_or("unknown", StopReason::as_str),
                 "ignored old mpv end-file while replacement playback is pending"
             );
             return;
@@ -360,14 +359,14 @@ impl ControllerState {
                 if failed {
                     tracing::warn!(
                         target: "playback",
-                        reason = reason.unwrap_or("unknown"),
+                        reason = reason.map_or("unknown", StopReason::as_str),
                         "pending playback failed before activation"
                     );
                     reporter.report_stopped(&self.last_state, true);
-                } else if is_completion_reason(reason) {
+                } else if reason.is_some_and(StopReason::is_completion) {
                     tracing::info!(
                         target: "playback",
-                        reason = reason.unwrap_or("unknown"),
+                        reason = reason.map_or("unknown", StopReason::as_str),
                         state = %self.last_state,
                         "reporting pending playback completed before activation"
                     );
@@ -376,7 +375,7 @@ impl ControllerState {
             }
         }
 
-        if is_completion_reason(reason)
+        if reason.is_some_and(StopReason::is_completion)
             && let Some(duration) = self.completion_duration_ticks()
         {
             self.last_state.duration_ticks = Some(duration);
@@ -387,10 +386,10 @@ impl ControllerState {
             self.mpv_playback_active = false;
             self.playback_runtime_ticks = None;
             if had_mpv_playback {
-                let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
+                let snapshot = self.publish_snapshot_with_stop_reason(reason);
                 self.notify_playback_stopped(snapshot);
-                if reason.is_some_and(|reason| reason.eq_ignore_ascii_case("eof")) {
-                    self.arm_next_playback_handoff("eof");
+                if reason == Some(StopReason::Eof) {
+                    self.arm_next_playback_handoff(StopReason::Eof);
                 }
             }
             tracing::trace!(target: "playback", "no active playback to finish");
@@ -400,16 +399,16 @@ impl ControllerState {
         tracing::info!(
             target: "playback",
             failed,
-            reason = reason.unwrap_or("unknown"),
+            reason = reason.map_or("unknown", StopReason::as_str),
             state = %self.last_state,
             "reporting active playback stopped"
         );
         active.reporter.report_stopped(&self.last_state, failed);
         self.playback_runtime_ticks = None;
-        let snapshot = self.publish_snapshot_with_stop_reason(stop_reason);
+        let snapshot = self.publish_snapshot_with_stop_reason(reason);
         self.notify_playback_stopped(snapshot);
-        if reason.is_some_and(|reason| reason.eq_ignore_ascii_case("eof")) {
-            self.arm_next_playback_handoff("eof");
+        if reason == Some(StopReason::Eof) {
+            self.arm_next_playback_handoff(StopReason::Eof);
         }
     }
 
@@ -428,9 +427,11 @@ impl ControllerState {
 
     fn should_ignore_pending_end_file_during_playback_handoff(
         &mut self,
-        reason: Option<&str>,
+        reason: Option<StopReason>,
     ) -> bool {
-        if self.pending.is_none() || !matches!(reason, Some("stop" | "redirect")) {
+        if self.pending.is_none()
+            || !matches!(reason, Some(StopReason::Stop | StopReason::Redirect))
+        {
             return false;
         }
         if self.replacement_end_file_pending {
