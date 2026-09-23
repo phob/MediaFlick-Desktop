@@ -232,7 +232,7 @@ impl HomeSettings {
 }
 
 use super::json_file::{
-    RecoveryNotice, load_with_recovery, replace_backup_with_primary, save_with_backup,
+    RecoveryNotice, load_versioned_with_recovery, replace_backup_with_primary, save_with_backup,
 };
 use super::store::config_dir;
 
@@ -327,7 +327,8 @@ pub struct AccountConfigurationService {
 
 impl AccountConfigurationService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        let loaded = load_with_recovery(&path)?;
+        let loaded =
+            load_versioned_with_recovery(&path, ACCOUNT_CONFIG_VERSION, "account configuration")?;
         let recovery = loaded.as_ref().and_then(|loaded| loaded.recovery.clone());
         let mut document =
             loaded.map_or_else(AccountConfigurationFile::default, |loaded| loaded.document);
@@ -1012,15 +1013,19 @@ mod tests {
 
     #[test]
     fn a_newer_configuration_version_is_left_untouched() {
-        let path = test_path("future");
-        let contents = br#"{"version":2,"accounts":[]}"#;
-        std::fs::write(&path, contents).expect("write future file");
+        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
 
-        let error = AccountConfigurationService::open(path.clone())
-            .err()
-            .expect("future file must fail");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(std::fs::read(&path).expect("read original"), contents);
-        cleanup(&path);
+        for contents in [&br#"{"version":2,"accounts":[]}"#[..], NEWER_DOCUMENT] {
+            let path = test_path("future");
+            std::fs::write(&path, contents).expect("write future file");
+
+            let error = AccountConfigurationService::open(path.clone())
+                .err()
+                .expect("future file must fail");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("version 2"), "{error}");
+            assert_left_untouched(&path, contents);
+            cleanup(&path);
+        }
     }
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::library::ItemPlaybackPreference;
 
 use super::AccountKey;
-use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
+use super::json_file::{RecoveryNotice, load_versioned_with_recovery, save_with_backup};
 use super::store::config_dir;
 
 const PLAYBACK_CONFIG_VERSION: u32 = 1;
@@ -56,7 +56,8 @@ pub struct PlaybackPreferenceService {
 
 impl PlaybackPreferenceService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        let loaded = load_with_recovery(&path)?;
+        let loaded =
+            load_versioned_with_recovery(&path, PLAYBACK_CONFIG_VERSION, "playback preference")?;
         let recovery = loaded.as_ref().and_then(|loaded| loaded.recovery.clone());
         let document =
             loaded.map_or_else(PlaybackPreferenceFile::default, |loaded| loaded.document);
@@ -229,5 +230,36 @@ mod tests {
             Some(preference)
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_newer_file_is_rejected_without_restoring_the_backup() {
+        use super::super::json_file::backup_path;
+        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
+
+        let path = std::env::temp_dir().join(format!(
+            "mediaflick-playback-json-{}-{}.json",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let key = AccountKey::new("server", "user").expect("key");
+        let service = PlaybackPreferenceService::open(path.clone()).expect("open");
+        let preference = ItemPlaybackPreference::default();
+        service.save(&key, "first", &preference).expect("first");
+        service.save(&key, "second", &preference).expect("second");
+        drop(service);
+        let backup = std::fs::read(backup_path(&path)).expect("backup");
+        std::fs::write(&path, NEWER_DOCUMENT).expect("newer file");
+
+        let error = PlaybackPreferenceService::open(path.clone())
+            .err()
+            .expect("newer file must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("version 2"), "{error}");
+        assert_left_untouched(&path, NEWER_DOCUMENT);
+        assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(backup_path(&path));
     }
 }

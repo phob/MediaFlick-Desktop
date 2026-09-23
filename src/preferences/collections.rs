@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::collections::{CollectionMode, CollectionProfile, ProviderReadiness};
 
 use super::AccountKey;
-use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
+use super::json_file::{RecoveryNotice, load_versioned_with_recovery, save_with_backup};
 use super::store::config_dir;
 
 const COLLECTION_CONFIG_VERSION: u32 = 1;
@@ -77,8 +77,11 @@ pub struct CollectionConfigurationService {
 
 impl CollectionConfigurationService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        reject_unsupported_version(&path)?;
-        let loaded = load_with_recovery::<CollectionConfigurationFile>(&path)?;
+        let loaded = load_versioned_with_recovery::<CollectionConfigurationFile>(
+            &path,
+            COLLECTION_CONFIG_VERSION,
+            "collections configuration",
+        )?;
         let (document, recovery) = match loaded {
             None => (CollectionConfigurationFile::default(), None),
             Some(loaded) if loaded.document.version == COLLECTION_CONFIG_VERSION => {
@@ -312,20 +315,6 @@ impl CollectionConfigurationService {
     }
 }
 
-fn reject_unsupported_version(path: &Path) -> io::Result<()> {
-    let Some(version) = std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64))
-        .filter(|version| *version != u64::from(COLLECTION_CONFIG_VERSION))
-    else {
-        return Ok(());
-    };
-    Err(invalid_data(format!(
-        "unsupported collections configuration version {version}"
-    )))
-}
-
 pub fn collections_file_path() -> PathBuf {
     config_dir().join("collections.json")
 }
@@ -463,12 +452,18 @@ mod tests {
 
     #[test]
     fn a_newer_file_is_rejected_without_being_modified() {
-        let path = test_path();
-        let bytes = br#"{"version":2,"futureTopLevel":true,"accounts":[]}"#;
-        std::fs::write(&path, bytes).expect("future file");
+        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
 
-        assert!(CollectionConfigurationService::open(path.clone()).is_err());
-        assert_eq!(std::fs::read(&path).expect("unchanged"), bytes);
+        let path = test_path();
+        std::fs::write(&path, NEWER_DOCUMENT).expect("future file");
+
+        let error = CollectionConfigurationService::open(path.clone())
+            .err()
+            .expect("newer file must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("version 2"), "{error}");
+        assert_left_untouched(&path, NEWER_DOCUMENT);
         let _ = std::fs::remove_file(&path);
     }
 }

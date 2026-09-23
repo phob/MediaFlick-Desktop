@@ -27,12 +27,60 @@ pub fn load_with_recovery<T>(path: &Path) -> io::Result<Option<LoadedDocument<T>
 where
     T: DeserializeOwned + Default,
 {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+    match read_document(path)? {
+        Some(bytes) => parse_or_recover(path, &bytes),
+        None => Ok(None),
+    }
+}
+
+/// Loads a JSON document that records its format in a top-level `version`.
+/// The version is read leniently before the strict parse: a document from
+/// another app version (typically one that adds fields) is rejected and left
+/// byte-for-byte in place, never moved aside or replaced by its backup. A
+/// document without a readable numeric version is damaged and goes through
+/// the normal recovery path.
+pub fn load_versioned_with_recovery<T>(
+    path: &Path,
+    supported_version: u32,
+    document_name: &str,
+) -> io::Result<Option<LoadedDocument<T>>>
+where
+    T: DeserializeOwned + Default,
+{
+    let Some(bytes) = read_document(path)? else {
+        return Ok(None);
     };
-    match serde_json::from_slice(&bytes) {
+    if let Some(version) = declared_version(&bytes)
+        && version != u64::from(supported_version)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unsupported {document_name} version {version}"),
+        ));
+    }
+    parse_or_recover(path, &bytes)
+}
+
+fn read_document(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn declared_version(bytes: &[u8]) -> Option<u64> {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()?
+        .get("version")?
+        .as_u64()
+}
+
+fn parse_or_recover<T>(path: &Path, bytes: &[u8]) -> io::Result<Option<LoadedDocument<T>>>
+where
+    T: DeserializeOwned + Default,
+{
+    match serde_json::from_slice(bytes) {
         Ok(document) => Ok(Some(LoadedDocument {
             document,
             recovery: None,
@@ -133,6 +181,31 @@ fn appended_path(path: &Path, suffix: &str) -> PathBuf {
 }
 
 #[cfg(test)]
+pub(super) mod test_support {
+    use std::path::Path;
+
+    /// A document written by a newer app version: an unsupported version plus
+    /// a field this reader's strict schema does not know.
+    pub const NEWER_DOCUMENT: &[u8] = br#"{"version":2,"futureField":{"added":true}}"#;
+
+    /// Asserts that a rejected document was neither moved aside, replaced by
+    /// its backup, nor reset to defaults.
+    pub fn assert_left_untouched(path: &Path, original: &[u8]) {
+        assert_eq!(std::fs::read(path).expect("read original"), original);
+        let name = path
+            .file_name()
+            .map(|name| format!("{}.broken-", name.to_string_lossy()))
+            .unwrap_or_default();
+        let parent = path.parent().expect("test file parent");
+        let moved_aside = std::fs::read_dir(parent)
+            .expect("read test directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().starts_with(&name));
+        assert!(!moved_aside, "the document must not be moved aside");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -210,5 +283,95 @@ mod tests {
         assert_eq!(backup, Document { value: 1 });
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(backup_path(&path));
+    }
+
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct VersionedDocument {
+        version: u32,
+        value: u32,
+    }
+
+    impl Default for VersionedDocument {
+        fn default() -> Self {
+            Self {
+                version: 1,
+                value: 0,
+            }
+        }
+    }
+
+    fn load_versioned(path: &Path) -> io::Result<Option<LoadedDocument<VersionedDocument>>> {
+        load_versioned_with_recovery(path, 1, "test document")
+    }
+
+    #[test]
+    fn a_newer_version_is_rejected_before_recovery_can_touch_it() {
+        let path = test_path();
+        save_with_backup(&path, &VersionedDocument::default()).expect("first save");
+        save_with_backup(
+            &path,
+            &VersionedDocument {
+                version: 1,
+                value: 2,
+            },
+        )
+        .expect("second");
+        let backup = std::fs::read(backup_path(&path)).expect("backup");
+        std::fs::write(&path, test_support::NEWER_DOCUMENT).expect("newer primary");
+
+        let error = load_versioned(&path).expect_err("newer document");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "unsupported test document version 2");
+        test_support::assert_left_untouched(&path, test_support::NEWER_DOCUMENT);
+        assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(backup_path(&path));
+    }
+
+    #[test]
+    fn a_document_without_a_readable_supported_version_still_recovers() {
+        for damaged in [
+            &b"{\"version\":2"[..],
+            br#"{"value":5}"#,
+            br#"{"version":"2","value":5}"#,
+            br#"{"version":1,"value":5,"unknown":true}"#,
+        ] {
+            let path = test_path();
+            save_with_backup(
+                &path,
+                &VersionedDocument {
+                    version: 1,
+                    value: 1,
+                },
+            )
+            .expect("first");
+            save_with_backup(
+                &path,
+                &VersionedDocument {
+                    version: 1,
+                    value: 2,
+                },
+            )
+            .expect("second");
+            std::fs::write(&path, damaged).expect("damage primary");
+
+            let loaded = load_versioned(&path).expect("recover").expect("document");
+
+            assert_eq!(
+                loaded.document,
+                VersionedDocument {
+                    version: 1,
+                    value: 1
+                }
+            );
+            let notice = loaded.recovery.expect("recovery notice");
+            assert!(notice.restored_backup);
+            assert_eq!(std::fs::read(&notice.damaged_path).expect("moved"), damaged);
+            let _ = std::fs::remove_file(&notice.damaged_path);
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(backup_path(&path));
+        }
     }
 }
