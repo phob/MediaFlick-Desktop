@@ -57,7 +57,7 @@ function CollectionShell({
       {backdrop && <DetailBackdrop src={backdrop} />}
       <header className="relative">
         <div className="relative z-10 flex items-end gap-6 px-6 pt-10 sm:px-10 lg:px-14">
-          <div className="hidden h-40 w-27 shrink-0 overflow-hidden rounded-lg bg-card shadow-xl ring-1 ring-white/10 sm:block">
+          <div className="hidden h-40 w-27 shrink-0 overflow-hidden rounded-lg bg-card shadow-xl ring-1 ring-edge sm:block">
             {poster ? (
               <img src={poster} alt="" decoding="async" className="media-artwork-image h-full w-full object-cover" />
             ) : (
@@ -87,7 +87,7 @@ function CollectionShell({
 function TitleArtwork({ title }: { title: NormalizedCollectionTitle }) {
   const poster = api.collections.providerArtworkUrl(title.posterPath, "w342")
   return (
-    <div className="relative h-poster-h w-poster-w overflow-hidden rounded-lg bg-card ring-1 ring-white/10">
+    <div className="relative h-poster-h w-poster-w overflow-hidden rounded-lg bg-card ring-1 ring-edge">
       {poster ? (
         <img src={poster} alt="" loading="lazy" className="media-artwork-image h-full w-full object-cover" />
       ) : (

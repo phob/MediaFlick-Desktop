@@ -115,7 +115,7 @@ function UpcomingCard({ entry }: { entry: CalendarEntry }) {
 
   return (
     <article className="signal-card group flex w-landscape-w shrink-0 snap-start flex-col gap-2">
-      <div className="media-frame relative h-landscape-h w-landscape-w overflow-hidden rounded-media bg-card ring-1 ring-white/5">
+      <div className="media-frame relative h-landscape-h w-landscape-w overflow-hidden rounded-media bg-card ring-1 ring-hairline">
         <Link to={destination} state={itemId ? detailNavigationState(location) : undefined} aria-label={`Open ${title}`} className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
           {image ? <img src={image} alt="" decoding="async" onError={() => setImageIndex((current) => current + 1)} className="media-backdrop-image h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center px-4 text-center text-sm text-muted-foreground">{title}</span>}
           <span className="data-label absolute top-0 right-0 z-[4] bg-primary px-2 py-1 leading-none text-primary-foreground">{upcomingDate(entry.date)}</span>

@@ -113,7 +113,7 @@ export const MediaCard = memo(function MediaCard({
           them. */}
       <div
         className={cn(
-          "media-frame relative overflow-hidden rounded-media bg-card ring-1 ring-white/5",
+          "media-frame relative overflow-hidden rounded-media bg-card ring-1 ring-hairline",
           landscape ? "h-landscape-h w-landscape-w" : "h-poster-h w-poster-w",
         )}
       >

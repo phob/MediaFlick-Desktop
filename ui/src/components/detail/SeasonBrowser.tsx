@@ -25,7 +25,7 @@ function SeasonPoster({ season, selected }: { season: ItemSummary; selected: boo
     <span
       className={cn(
         "relative block aspect-2/3 w-full overflow-hidden rounded-media bg-card",
-        selected ? "ring-2 ring-primary" : "ring-1 ring-white/5",
+        selected ? "ring-2 ring-primary" : "ring-1 ring-hairline",
       )}
     >
       {season.primaryImageTag && !failed ? (
@@ -130,7 +130,7 @@ function EpisodeCard({
           "media-frame relative aspect-video overflow-hidden rounded-media bg-card",
           // The accent ring is the "you are here" mark: the next-up season is
           // preselected, and this pins the eye to the episode inside it.
-          nextUp ? "ring-2 ring-primary" : "ring-1 ring-white/5",
+          nextUp ? "ring-2 ring-primary" : "ring-1 ring-hairline",
         )}
       >
         <Link

@@ -100,7 +100,7 @@ function RatingStars({ entry }: { entry: LetterboxdReview }) {
 function ProfileIdentity({ entry }: { entry: LetterboxdReview }) {
   return (
     <>
-      <span className="grid size-24 place-items-center rounded-full bg-[#14181c] ring-1 ring-white/10">
+      <span className="grid size-24 place-items-center rounded-full bg-[#14181c] ring-1 ring-edge">
         <LetterboxdMark className="size-16" />
       </span>
       <RatingStars entry={entry} />

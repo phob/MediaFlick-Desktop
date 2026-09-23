@@ -137,7 +137,7 @@ function RailArrow({
       disabled={hidden}
       onClick={onClick}
       className={cn(
-        "absolute top-1/2 z-20 flex h-24 w-8 -translate-y-1/2 items-center justify-center rounded-media border border-white/10 bg-background/85 text-foreground/80 backdrop-blur-sm transition hover:border-primary/60 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none",
+        "absolute top-1/2 z-20 flex h-24 w-8 -translate-y-1/2 items-center justify-center rounded-media border border-edge bg-background/85 text-foreground/80 backdrop-blur-sm transition hover:border-primary/60 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none",
         side === "start" ? "left-1 sm:left-2" : "right-1 sm:right-2",
         hidden ? "opacity-0" : "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100",
       )}
