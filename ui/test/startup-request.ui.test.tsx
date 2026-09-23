@@ -2,15 +2,16 @@ import { afterEach, describe, expect, test, vi } from "vitest"
 import { api, type StartupResponse } from "../src/lib/api"
 import { primeStartupQueries } from "../src/lib/queries"
 import { createQueryClient, queryKeys } from "../src/lib/query-client"
+import { appStatus } from "./support/fixtures"
 
 const queryClient = createQueryClient()
 
-const status = {
+const status = appStatus({
   authenticated: true,
   serverUrl: "https://jellyfin.example",
   userId: "user-1",
   libraryReady: true,
-}
+})
 const account = "https://jellyfin.example:user-1"
 
 function startup(overrides: Partial<StartupResponse> = {}): StartupResponse {

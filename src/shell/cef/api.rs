@@ -14,17 +14,19 @@ use serde_json::{Value, json};
 use crate::app::services::ShellRequest;
 use crate::app::services::{self, Services};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
+use crate::companion::CompanionStatus;
 use crate::integrations::letterboxd as letterboxd_integration;
 use crate::integrations::letterboxd::ExternalProfile;
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, BaseItemPerson, MediaSourceInfo, MediaStream};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
-use crate::jellyfin::session::SessionScope;
+use crate::jellyfin::session::{SessionScope, SessionStatus};
 use crate::library::model::technical_media_streams_json;
+use crate::library::sync::{BootstrapProgress, SyncProgress};
 use crate::library::{
-    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, resolve_playback_preference,
-    sync,
+    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats,
+    resolve_playback_preference, sync,
 };
 use crate::maintenance::player_setup;
 use crate::preferences::{
@@ -408,27 +410,42 @@ fn route_status(
     Some(response)
 }
 
-fn status(services: &Arc<Services>) -> Handled {
-    let mut status = services.session.status();
-    let stats = services.library.stats();
+/// `/api/status`: the session plus the library, sync and Companion state the
+/// shell gates on. Mirrors `Status` in `ui/src/lib/api/types.ts`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppStatus {
+    #[serde(flatten)]
+    session: SessionStatus,
+    library: LibraryStats,
+    syncing: bool,
+    last_sync: Option<String>,
+    bootstrapped: bool,
+    library_ready: bool,
+    bootstrap: BootstrapProgress,
+    sync_progress: SyncProgress,
+    companion: CompanionStatus,
+}
+
+fn app_status(services: &Services) -> AppStatus {
     let progress = services
         .sync
         .progress(sync::bootstrap_progress(&services.library));
-    let bootstrap = &progress.catalog;
-    if let Some(object) = status.as_object_mut() {
-        object.insert("library".to_string(), json!(stats));
-        object.insert("syncing".to_string(), json!(services.sync.is_running()));
-        object.insert(
-            "lastSync".to_string(),
-            json!(services.library.meta("sync.completed_at").ok().flatten()),
-        );
-        object.insert("bootstrapped".to_string(), json!(bootstrap.complete));
-        object.insert("libraryReady".to_string(), json!(bootstrap.ready));
-        object.insert("bootstrap".to_string(), json!(bootstrap));
-        object.insert("syncProgress".to_string(), json!(progress));
-        object.insert("companion".to_string(), services.companion.status());
+    AppStatus {
+        session: services.session.status(),
+        library: services.library.stats(),
+        syncing: services.sync.is_running(),
+        last_sync: services.library.meta("sync.completed_at").ok().flatten(),
+        bootstrapped: progress.catalog.complete,
+        library_ready: progress.catalog.ready,
+        bootstrap: progress.catalog.clone(),
+        sync_progress: progress,
+        companion: services.companion.status(),
     }
-    Ok(ApiResponse::ok(status))
+}
+
+fn status(services: &Arc<Services>) -> Handled {
+    Ok(ApiResponse::ok(app_status(services)))
 }
 
 /// Everything the first frame reads, in one request. Without it the UI asks
@@ -456,11 +473,10 @@ fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         }
         serde_json::from_slice(&response.body).unwrap_or(Value::Null)
     };
-    let status = part("status");
-    let authenticated = status["authenticated"].as_bool() == Some(true);
-    let home = authenticated
-        && status["libraryReady"].as_bool() == Some(true)
-        && request.param("home").as_deref() == Some("1");
+    let status = app_status(services);
+    let authenticated = status.session.authenticated;
+    let home =
+        authenticated && status.library_ready && request.param("home").as_deref() == Some("1");
     let account_part = |path: &str| {
         if authenticated {
             part(path)
@@ -576,6 +592,54 @@ mod tests {
 
     fn send(fixture: &TestServices, request: &ApiRequest) -> ApiResponse {
         dispatch(request, || Some(fixture.services.clone()))
+    }
+
+    /// `/api/status` is `Status` in `ui/src/lib/api/types.ts`, whose fields
+    /// are all required: the keys must match it exactly.
+    #[test]
+    fn status_sends_every_field_the_ui_type_declares() {
+        let fixture = TestServices::signed_out();
+        let response = send(
+            &fixture,
+            &ApiRequest {
+                method: "GET".to_string(),
+                path: "/api/status".to_string(),
+                query: String::new(),
+                body: Vec::new(),
+                range: None,
+                cancelled: Default::default(),
+            },
+        );
+        let body: Value = serde_json::from_slice(&response.body).expect("status json");
+        let mut keys = body
+            .as_object()
+            .expect("status object")
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "authenticated",
+                "bootstrap",
+                "bootstrapped",
+                "companion",
+                "deviceId",
+                "expired",
+                "lastSync",
+                "library",
+                "libraryReady",
+                "serverName",
+                "serverUrl",
+                "syncProgress",
+                "syncing",
+                "userId",
+                "userName",
+            ]
+        );
+        assert_eq!(body["authenticated"], false);
+        assert_eq!(body["companion"]["supportedApi"]["min"], 1);
     }
 
     fn error_of(response: &ApiResponse) -> String {
@@ -845,7 +909,7 @@ mod tests {
         let session = &fixture.services.session;
         assert!(session.is_authenticated());
         assert_eq!(session.user_id().as_deref(), Some("bob"));
-        assert_eq!(session.status()["expired"], false);
+        assert!(!session.status().expired);
     }
 
     fn request(method: &str, path: &str) -> ApiRequest {

@@ -7,6 +7,7 @@ import { api } from "@/lib/api"
 import { useStatus } from "@/lib/queries"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import Settings from "@/routes/Settings"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const queryClient = createQueryClient()
@@ -43,12 +44,12 @@ const settings: ClientSettings = {
   serverUrl: "https://jellyfin.example",
 }
 
-const authenticated: Status = {
+const authenticated: Status = appStatus({
   authenticated: true,
   serverUrl: "https://jellyfin.example",
   userId: "user-a",
   userName: "Alice",
-}
+})
 
 const anonymous: Status = {
   ...authenticated,

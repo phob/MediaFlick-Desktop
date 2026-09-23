@@ -276,19 +276,24 @@ interface BootstrapProgress {
   initial: boolean
 }
 
+/** Mirrors `AppStatus` (`src/shell/cef/api.rs`); every field is always sent. */
 export interface Status {
-  authenticated?: boolean
-  serverUrl?: string | null
-  userId?: string | null
-  userName?: string | null
-  library?: LibraryStats
-  syncing?: boolean
-  lastSync?: string | null
-  bootstrapped?: boolean
-  libraryReady?: boolean
-  bootstrap?: BootstrapProgress
-  syncProgress?: SyncProgress
-  companion?: CompanionStatus
+  authenticated: boolean
+  /** The server rejected the stored token; the user must sign in again. */
+  expired: boolean
+  serverUrl: string | null
+  serverName: string | null
+  userId: string | null
+  userName: string | null
+  deviceId: string
+  library: LibraryStats
+  syncing: boolean
+  lastSync: string | null
+  bootstrapped: boolean
+  libraryReady: boolean
+  bootstrap: BootstrapProgress
+  syncProgress: SyncProgress
+  companion: CompanionStatus
 }
 
 export type CompanionService = "sonarr" | "radarr" | "seerr" | "mdblist" | "tmdb"

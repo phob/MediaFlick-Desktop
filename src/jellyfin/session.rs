@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex, RwLock};
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::app::services::ShellBridge;
@@ -26,6 +27,20 @@ struct SessionState {
     expired: bool,
     generation: u64,
     deleting: bool,
+}
+
+/// The signed-in state, as `/api/status` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatus {
+    pub authenticated: bool,
+    /// The server rejected the stored token; the UI must sign in again.
+    pub expired: bool,
+    pub server_url: Option<String>,
+    pub server_name: Option<String>,
+    pub user_id: Option<String>,
+    pub user_name: Option<String>,
+    pub device_id: String,
 }
 
 pub struct Session {
@@ -255,7 +270,7 @@ impl Session {
         server_url: &str,
         username: &str,
         password: &str,
-    ) -> Result<Value, ApiError> {
+    ) -> Result<SessionStatus, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
         let credentials = auth::authenticate_by_name(&client, username, password)?;
@@ -290,7 +305,11 @@ impl Session {
         Ok(json!({ "authenticated": true, "session": session }))
     }
 
-    fn accept(&self, server_url: &str, credentials: Credentials) -> Result<Value, ApiError> {
+    fn accept(
+        &self,
+        server_url: &str,
+        credentials: Credentials,
+    ) -> Result<SessionStatus, ApiError> {
         let user_name = credentials.user_name.clone();
         let cleared_cache = self.commit_credentials(server_url, credentials)?;
         // Logging and the settings write happen after the gate is released.
@@ -442,18 +461,20 @@ impl Session {
         true
     }
 
-    pub fn status(&self) -> Value {
+    pub fn status(&self) -> SessionStatus {
         let state = self.read();
-        json!({
-            "authenticated": !state.expired && !state.deleting
-                && state.token.is_some() && state.user_id.is_some(),
-            "expired": state.expired,
-            "serverUrl": state.server_url,
-            "serverName": state.server_name,
-            "userId": state.user_id,
-            "userName": state.user_name,
-            "deviceId": state.device_id,
-        })
+        SessionStatus {
+            authenticated: !state.expired
+                && !state.deleting
+                && state.token.is_some()
+                && state.user_id.is_some(),
+            expired: state.expired,
+            server_url: state.server_url,
+            server_name: state.server_name,
+            user_id: state.user_id,
+            user_name: state.user_name,
+            device_id: state.device_id,
+        }
     }
 }
 
@@ -509,13 +530,8 @@ mod tests {
         let session = session();
         assert!(!session.is_authenticated());
         assert!(matches!(session.client(), Err(ApiError::NotConfigured)));
-        assert_eq!(session.status()["authenticated"], false);
-        assert!(
-            !session.status()["deviceId"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-        );
+        assert!(!session.status().authenticated);
+        assert!(!session.status().device_id.is_empty());
     }
 
     #[test]
@@ -551,7 +567,7 @@ mod tests {
         session.note_scoped_error(&scope, &ApiError::Unauthorized);
         assert!(!session.is_authenticated());
         assert!(matches!(session.client(), Err(ApiError::Unauthorized)));
-        assert_eq!(session.status()["expired"], true);
+        assert!(session.status().expired);
     }
 
     #[test]
@@ -587,10 +603,7 @@ mod tests {
     #[test]
     fn anonymous_clients_reuse_the_persisted_device_id() {
         let session = session();
-        let device_id = session.status()["deviceId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
+        let device_id = session.status().device_id;
         let client = session.anonymous_client("http://server:8096");
         assert_eq!(client.device_id(), device_id);
         assert_eq!(client.token(), None);
@@ -616,7 +629,7 @@ mod tests {
         session.note_scoped_error(&alice, &ApiError::Unauthorized);
         assert!(session.is_authenticated());
         assert_eq!(session.user_id().as_deref(), Some("bob"));
-        assert_eq!(session.status()["expired"], false);
+        assert!(!session.status().expired);
     }
 
     #[test]

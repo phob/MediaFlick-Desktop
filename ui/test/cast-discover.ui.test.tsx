@@ -7,6 +7,7 @@ import type { SeerrResult, SeerrStatusInfo, Status } from "../src/lib/api"
 import { castDiscoverResults } from "../src/lib/cast-search"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
@@ -22,12 +23,11 @@ const linked: SeerrStatusInfo = {
   quota: null,
 }
 
-const appStatus: Status = {
+const signedIn: Status = appStatus({
   authenticated: true,
   bootstrapped: true,
   bootstrap: { complete: true, ready: true, processed: 100, total: 100, initial: false },
-  companion: undefined,
-}
+})
 
 function result(patch: Partial<SeerrResult>): SeerrResult {
   return {
@@ -54,7 +54,7 @@ function providers(client: QueryClient) {
   }
 }
 
-function clientWithStatus(status: SeerrStatusInfo = linked, app: Status = appStatus) {
+function clientWithStatus(status: SeerrStatusInfo = linked, app: Status = signedIn) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.seerrStatus, status)
   client.setQueryData(queryKeys.status, app)
@@ -132,7 +132,7 @@ describe("cast Discover results", () => {
 
   test("waits for an incomplete progressive catalog when no exact Jellyfin identity exists", () => {
     const client = clientWithStatus(linked, {
-      ...appStatus,
+      ...signedIn,
       bootstrapped: false,
       bootstrap: { complete: false, ready: true, processed: 200, total: 1000, initial: true },
     })
