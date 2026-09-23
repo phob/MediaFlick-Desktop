@@ -625,8 +625,8 @@ impl ControllerState {
             Some("playback-abort") if data.and_then(Value::as_bool).unwrap_or(false) => {
                 tracing::debug!(
                     target: "playback",
-                    pending = self.pending.is_some(),
-                    active = self.active.is_some(),
+                    pending = self.phase.pending().is_some(),
+                    active = self.phase.active().is_some(),
                     state = %self.last_state,
                     "mpv playback-abort is true; waiting for end-file before finishing playback"
                 );
@@ -637,7 +637,7 @@ impl ControllerState {
     }
 
     pub(super) fn maybe_report_progress(&mut self) {
-        let Some(active) = &mut self.active else {
+        let Some(active) = self.phase.active_mut() else {
             return;
         };
         let now = Instant::now();
@@ -832,8 +832,8 @@ impl ControllerState {
 
     pub(super) fn is_duplicate(&mut self, key: &str) -> bool {
         self.prune_recent_loads();
-        self.pending
-            .as_ref()
+        self.phase
+            .pending()
             .is_some_and(|pending| pending.key == key)
             || self
                 .recent_loads
@@ -850,8 +850,8 @@ impl ControllerState {
             self.recent_loads.pop_front();
         }
         if self
-            .pending
-            .as_ref()
+            .phase
+            .pending()
             .is_some_and(|pending| pending.requested_at.elapsed() > PENDING_FILE_LOADED_TIMEOUT)
         {
             tracing::warn!(
@@ -860,7 +860,7 @@ impl ControllerState {
                 "pending playback timed out waiting for mpv file-loaded"
             );
             self.finish_active(Some(StopReason::Error));
-            self.pending = None;
+            self.phase.take_pending();
         }
     }
 
@@ -903,7 +903,7 @@ impl ControllerState {
         self.playback_tracks.clear();
         self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
-        if self.active.is_none() && self.pending.is_none() {
+        if self.phase.is_idle() {
             self.playback_runtime_ticks = None;
             self.mpv_playback_active = false;
         }

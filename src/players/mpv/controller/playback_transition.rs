@@ -11,12 +11,12 @@ use crate::playback::{PlayerChapter, StopReason, seconds_to_ticks, ticks_to_mill
 
 use super::{
     ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
-    PlaybackIdentity, PlayerSnapshot,
+    PlaybackIdentity, PlaybackPhase, PlayerSnapshot,
 };
 
 impl ControllerState {
     pub(super) fn should_suppress_stop_during_next_playback_handoff(&mut self) -> bool {
-        if self.pending.is_none() {
+        if self.phase.pending().is_none() {
             return false;
         }
         let Some(deadline) = self.next_playback_handoff_until else {
@@ -59,7 +59,7 @@ impl ControllerState {
         identity: Option<&PlaybackIdentity>,
     ) -> PlayerSnapshot {
         let snapshot = PlayerSnapshot {
-            active: self.mpv_playback_active || self.active.is_some() || self.pending.is_some(),
+            active: self.mpv_playback_active || !self.phase.is_idle(),
             playback_id: identity.map(|identity| identity.playback_id),
             item_id: identity.and_then(|identity| identity.item_id.clone()),
             media_source_id: identity.and_then(|identity| identity.media_source_id.clone()),
@@ -113,10 +113,10 @@ impl ControllerState {
     }
 
     fn current_identity(&self) -> Option<&PlaybackIdentity> {
-        self.pending
-            .as_ref()
+        self.phase
+            .pending()
             .map(|pending| &pending.identity)
-            .or_else(|| self.active.as_ref().map(|active| &active.identity))
+            .or_else(|| self.phase.active().map(|active| &active.identity))
             .or(self.playback_identity.as_ref())
     }
 
@@ -142,7 +142,7 @@ impl ControllerState {
             self.fullscreen_gate.video_ready = false;
             self.fullscreen_gate.waiting_seek_event = false;
         }
-        let Some(pending) = self.pending.as_ref() else {
+        let Some(pending) = self.phase.pending() else {
             tracing::debug!(target: "playback", "no pending playback state to prepare");
             return;
         };
@@ -195,7 +195,7 @@ impl ControllerState {
     }
 
     pub(super) fn activate_pending(&mut self) {
-        let Some(pending) = self.pending.take() else {
+        let Some(pending) = self.phase.take_pending() else {
             tracing::debug!(target: "playback", "mpv reported file-loaded without pending playback");
             return;
         };
@@ -223,7 +223,7 @@ impl ControllerState {
         self.playback_runtime_ticks = launch.runtime_ticks.filter(|ticks| *ticks > 0);
         if let Some(reporter) = pending.reporter {
             reporter.report_start(&self.last_state);
-            self.active = Some(ActivePlayback {
+            self.phase = PlaybackPhase::playing(ActivePlayback {
                 identity,
                 reporter,
                 runtime_ticks: launch.runtime_ticks.filter(|ticks| *ticks > 0),
@@ -250,7 +250,7 @@ impl ControllerState {
     }
 
     pub(super) fn mark_watched_and_play_next(&mut self) {
-        if self.active.is_none() && self.pending.is_none() && !self.mpv_playback_active {
+        if self.phase.is_idle() && !self.mpv_playback_active {
             tracing::debug!(target: "playback", "ignored mark-watched-next because playback is idle");
             return;
         }
@@ -260,10 +260,10 @@ impl ControllerState {
             .duration_ticks
             .filter(|ticks| *ticks > 0)
             .or(self.playback_runtime_ticks)
-            .or_else(|| self.active.as_ref().and_then(|active| active.runtime_ticks))
+            .or_else(|| self.phase.active().and_then(|active| active.runtime_ticks))
             .or_else(|| {
-                self.pending
-                    .as_ref()
+                self.phase
+                    .pending()
                     .and_then(|pending| pending.launch.runtime_ticks.filter(|ticks| *ticks > 0))
             });
         if let Some(duration_ticks) = duration_ticks {
@@ -292,8 +292,7 @@ impl ControllerState {
             state = %self.last_state,
             "finishing playback"
         );
-        let had_mpv_playback =
-            self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
+        let had_mpv_playback = self.mpv_playback_active || !self.phase.is_idle();
         self.startup_seek = None;
         let failed = reason == Some(StopReason::Error);
         if self.should_ignore_pending_end_file_during_playback_handoff(reason) {
@@ -307,7 +306,7 @@ impl ControllerState {
         self.pending_external_subtitle_url = None;
         self.replacement_end_file_pending = false;
         self.clear_skip_segment_state();
-        if let Some(pending) = self.pending.take() {
+        if let Some(pending) = self.phase.take_pending() {
             self.next_playback_handoff_until = None;
             if let Some(reporter) = pending.reporter {
                 if failed {
@@ -336,7 +335,7 @@ impl ControllerState {
             self.last_state.position_ticks = duration;
         }
 
-        let Some(active) = self.active.take() else {
+        let Some(active) = self.phase.take_active() else {
             self.mpv_playback_active = false;
             self.playback_runtime_ticks = None;
             if had_mpv_playback {
@@ -371,10 +370,10 @@ impl ControllerState {
             .duration_ticks
             .filter(|ticks| *ticks > 0)
             .or(self.playback_runtime_ticks)
-            .or_else(|| self.active.as_ref().and_then(|active| active.runtime_ticks))
+            .or_else(|| self.phase.active().and_then(|active| active.runtime_ticks))
             .or_else(|| {
-                self.pending
-                    .as_ref()
+                self.phase
+                    .pending()
                     .and_then(|pending| pending.launch.runtime_ticks.filter(|ticks| *ticks > 0))
             })
     }
@@ -383,7 +382,7 @@ impl ControllerState {
         &mut self,
         reason: Option<StopReason>,
     ) -> bool {
-        if self.pending.is_none()
+        if self.phase.pending().is_none()
             || !matches!(reason, Some(StopReason::Stop | StopReason::Redirect))
         {
             return false;

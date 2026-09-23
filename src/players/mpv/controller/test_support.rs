@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::playback::PlaybackRequest;
 use crate::players::mpv::runtime::{LibmpvProfile, MpvRuntimeKind};
 
-use super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
+use super::{ControllerState, PendingPlayback, PlaybackIdentity, PlaybackPhase, RuntimeSelection};
 
 pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> ControllerState {
     let (tx, rx) = mpsc::channel();
@@ -25,7 +25,7 @@ pub(super) fn controller_with_pending_load(start_time_ticks: Option<i64>) -> Con
             libmpv_profile: LibmpvProfile::Standard,
         },
     );
-    state.pending = Some(PendingPlayback {
+    state.phase = PlaybackPhase::loading(PendingPlayback {
         key: "test-load".to_string(),
         identity: PlaybackIdentity::from_launch(1, &launch),
         launch,

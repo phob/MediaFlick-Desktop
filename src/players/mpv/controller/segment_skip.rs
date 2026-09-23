@@ -70,12 +70,12 @@ impl ControllerState {
     }
 
     fn playback_id_is_current(&self, playback_id: i64) -> bool {
-        self.pending
-            .as_ref()
+        self.phase
+            .pending()
             .is_some_and(|pending| pending.identity.playback_id == playback_id)
             || self
-                .active
-                .as_ref()
+                .phase
+                .active()
                 .is_some_and(|active| active.identity.playback_id == playback_id)
             || (self.mpv_playback_active
                 && self
