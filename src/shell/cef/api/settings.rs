@@ -7,8 +7,12 @@ pub(super) fn route(
 ) -> Option<ApiResponse> {
     let response = match segments {
         ["settings"] if request.is("GET") => settings_snapshot(services),
-        ["settings", "viewing"] => viewing_settings(services, request),
-        ["settings", "browsing"] => browsing_settings(services, request),
+        ["settings", "viewing"] if request.is("GET") || request.is("PATCH") => {
+            viewing_settings(services, request)
+        }
+        ["settings", "browsing"] if request.is("GET") || request.is("PATCH") => {
+            browsing_settings(services, request)
+        }
         ["settings", "client", "player"] if request.is("PATCH") => {
             patch_player_settings(services, request)
         }
@@ -171,9 +175,6 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespon
     if request.is("GET") {
         return ApiResponse::ok(json!(services.accounts.viewing(key)));
     }
-    if !request.is("PATCH") {
-        return ApiResponse::error(405, "method not allowed");
-    }
     let value = match request.body::<crate::preferences::ViewingSettings>() {
         Ok(value) => value,
         Err(response) => return response,
@@ -203,9 +204,6 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> ApiRespo
     let key = scope.account();
     if request.is("GET") {
         return ApiResponse::ok(json!(services.accounts.browsing(key)));
-    }
-    if !request.is("PATCH") {
-        return ApiResponse::error(405, "method not allowed");
     }
     let body = match request.body::<BrowsingBody>() {
         Ok(body) => body,
