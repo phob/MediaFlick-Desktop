@@ -11,8 +11,8 @@ pub use controller::MpvController;
 pub use external::ExternalMpv;
 
 use crate::playback::{
-    Capabilities, MPV_CAPABILITIES, NativeWindowHandle, PlaybackContext, PlaybackRequest,
-    PlayerBackend, PlayerCommand, PlayerSnapshot,
+    NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
+    PlayerSnapshot,
 };
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 use std::time::Duration;
@@ -56,10 +56,6 @@ impl PlayerBackend for MpvController {
 
     fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot()
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        MPV_CAPABILITIES
     }
 
     fn shutdown(&self) {
