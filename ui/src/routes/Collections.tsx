@@ -18,10 +18,9 @@ import {
   type FranchiseCollectionSummary,
   type JellyfinCollectionSummary,
 } from "@/lib/api"
-import { queryClient } from "@/lib/query-client"
 import { useLocalDate } from "@/lib/local-date"
 import {
-  collectionAccountKey,
+  accountKey,
   franchiseQueryOptions,
   myCollectionQueryOptions,
   useCollectionSettings,
@@ -155,7 +154,7 @@ export function FranchiseCollections() {
   const query = useFranchises(date)
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const rows = query.data?.franchises
   return (
     <CollectionPage
@@ -214,6 +213,7 @@ function ProfileMenu({
   error?: string
   providerAvailable: boolean
 }) {
+  const cache = useQueryClient()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -236,7 +236,7 @@ function ProfileMenu({
           onSelect={() => {
             void api.collections.refreshProfile(profile.id).then(
               () => {
-                void queryClient.invalidateQueries({ queryKey: ["collections"] })
+                void cache.invalidateQueries({ queryKey: ["collections"] })
                 toast.success(`${profile.title} updated`)
               },
               (error: Error) => toast.error(error.message),
@@ -255,7 +255,7 @@ export function MyCollections() {
   const settings = useCollectionSettings()
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const profiles = query.data?.profiles
   return (
     <CollectionPage

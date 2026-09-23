@@ -1,7 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api, type ItemRatings } from "./api"
 import { RatingsContext } from "./rating-context"
-import { queryClient, queryKeys } from "./query-client"
+import { queryKeys } from "./query-client"
 import { useRatingsStatus, useSettings } from "./queries"
 import { readShellEvent, shellEventIds } from "./shell-events"
 
@@ -37,6 +38,7 @@ interface RatingsConfiguration {
  * aborts every other in-flight batch mid-request.
  */
 export function RatingsProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const settings = useSettings()
   const status = useRatingsStatus()
   const [items, setItems] = useState<ReadonlyMap<string, ItemRatings>>(new Map())
@@ -116,7 +118,7 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
       ids.forEach((id) => inFlight.current.delete(id))
       if (pending.current.size > 0) schedule(retryingOmitted ? OMITTED_RETRY_MS : COALESCE_MS)
     }
-  }, [schedule])
+  }, [queryClient, schedule])
 
   useEffect(() => {
     flushRef.current = flush

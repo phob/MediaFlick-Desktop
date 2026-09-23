@@ -1,15 +1,26 @@
+import { QueryClientProvider } from "@tanstack/react-query"
 import { render } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { useLibraryMetadataBridge } from "../src/lib/library-events"
 import {
+  createQueryClient,
   invalidateMediaSurfaces,
-  queryClient,
   queryKeys,
 } from "../src/lib/query-client"
 
-function Bridge() {
+const queryClient = createQueryClient()
+
+function MetadataBridge() {
   useLibraryMetadataBridge()
   return null
+}
+
+function Bridge() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <MetadataBridge />
+    </QueryClientProvider>
+  )
 }
 
 describe("native library change bridge", () => {
@@ -109,7 +120,7 @@ describe("native library change bridge", () => {
   test("user-state changes leave rich and technical item queries cached", () => {
     const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
 
-    invalidateMediaSurfaces("episode", "series")
+    invalidateMediaSurfaces(queryClient, "episode", "series")
 
     const filters = invalidate.mock.calls.map(([filter]) => filter)
     const filterFor = (queryKey: readonly unknown[]) =>

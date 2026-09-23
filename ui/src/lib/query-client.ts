@@ -1,32 +1,41 @@
 import { QueryClient } from "@tanstack/react-query"
 import { ApiError, type ItemQuery, type PlayerState } from "./api"
 
-// Defaults follow SILO Server's `lib/query-client.ts` — see
-// .planning/research/silo-server-web.md. `refetchOnWindowFocus` is off because
-// the library cache is local and the sync thread is the source of change; a
-// focus-driven refetch storm buys nothing here.
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 2 * 60_000,
-      gcTime: 10 * 60_000,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: true,
-      retry: (failureCount, error) => {
-        // An expired token will not resolve itself by retrying — the shell
-        // needs to fall back to sign-in instead.
-        if (error instanceof ApiError && (error.expired || error.status === 401)) return false
-        return failureCount < 1
+/**
+ * The app's one cache, created by `main.tsx` and handed to the provider. React
+ * code reaches it through `useQueryClient()`, and the helpers below take it as
+ * a parameter, so a test can render against its own client.
+ *
+ * `refetchOnWindowFocus` is off because the library cache is local and the
+ * sync thread is the source of change; a focus-driven refetch storm buys
+ * nothing here.
+ */
+export function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 2 * 60_000,
+        gcTime: 10 * 60_000,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: true,
+        retry: (failureCount, error) => {
+          // An expired token will not resolve itself by retrying — the shell
+          // needs to fall back to sign-in instead.
+          if (error instanceof ApiError && (error.expired || error.status === 401)) return false
+          return failureCount < 1
+        },
       },
     },
-  },
-})
+  })
+}
 
 export const queryKeys = {
   status: ["status"] as const,
   companion: ["companion"] as const,
   calendar: (start: string, end: string) => ["calendar", start, end] as const,
   settings: ["settings"] as const,
+  viewing: (account: string) => ["viewing", account] as const,
+  browsing: (account: string) => ["browsing", account] as const,
   ratingsStatus: ["ratings", "status"] as const,
   home: ["home"] as const,
   homeResume: ["home", "resume"] as const,
@@ -47,6 +56,7 @@ export const queryKeys = {
   itemAbout: (id: string) => ["item", id, "about"] as const,
   letterboxdReviews: (id: string) => ["letterboxd", "item", id] as const,
   letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
+  letterboxdProfiles: ["letterboxd", "profiles"] as const,
   children: (id: string) => ["item", id, "children"] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
@@ -68,6 +78,8 @@ export const queryKeys = {
   collectionSettings: (account: string) => ["collections", account, "settings"] as const,
   collectionTemplates: (account: string) => ["collections", account, "templates"] as const,
   collectionProfiles: (account: string) => ["collections", account, "profiles"] as const,
+  collectionPublicListSearch: (account: string, term: string) =>
+    ["collections", account, "public-list-search", term] as const,
   collectionMine: (account: string) => ["collections", account, "mine"] as const,
   collectionMineDetail: (account: string, id: string) =>
     ["collections", account, "mine", id] as const,
@@ -102,8 +114,8 @@ const ACCOUNT_QUERY_ROOTS = new Set([
 ])
 
 /** Removes data whose meaning depends on the signed-in Jellyfin account. */
-export function removeAccountQueryData() {
-  queryClient.removeQueries({
+export function removeAccountQueryData(client: QueryClient) {
+  client.removeQueries({
     predicate: (query) => ACCOUNT_QUERY_ROOTS.has(String(query.queryKey[0])),
   })
 }
@@ -113,27 +125,26 @@ export function removeAccountQueryData() {
  * `invalidateMediaSurfaces`: a Seerr write changes nothing about the local
  * library, and refetching the grid over it would be wasted work.
  */
-export function invalidateSeerrSurfaces() {
+export function invalidateSeerrSurfaces(client: QueryClient) {
   const active = { refetchType: "active" as const }
-  void queryClient.invalidateQueries({ queryKey: ["seerr", "requests"], ...active })
-  void queryClient.invalidateQueries({ queryKey: ["seerr", "search"], ...active })
-  void queryClient.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
-  void queryClient.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
-  void queryClient.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
+  void client.invalidateQueries({ queryKey: ["seerr", "requests"], ...active })
+  void client.invalidateQueries({ queryKey: ["seerr", "search"], ...active })
+  void client.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
+  void client.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
+  void client.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
   // Collection parts carry the same Seerr availability badges as discovery
   // rows, so a request made from anywhere refreshes them too.
-  void queryClient.invalidateQueries({ queryKey: ["collections"], ...active })
+  void client.invalidateQueries({ queryKey: ["collections"], ...active })
   // The quota moves with every request, and it lives on the status.
-  void queryClient.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }
 
 /**
- * Applies a control's expected outcome to the player snapshot right away. The
- * state is polled once a second, so without this every button spends up to a
- * second looking like it did nothing.
+ * Applies a control's expected outcome to the player snapshot right away, so a
+ * button does not look like it did nothing until mpv pushes the new state.
  */
-export function patchPlayerState(patch: Partial<PlayerState>) {
-  queryClient.setQueryData(queryKeys.playerState, (previous?: PlayerState) =>
+export function patchPlayerState(client: QueryClient, patch: Partial<PlayerState>) {
+  client.setQueryData<PlayerState>(queryKeys.playerState, (previous) =>
     previous ? { ...previous, ...patch } : previous,
   )
 }
@@ -147,22 +158,25 @@ export function patchPlayerState(patch: Partial<PlayerState>) {
  * on screen: marking an episode watched from a season page has to refresh the
  * season's child list, and the series' Next Up, as well as the episode itself.
  */
-export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[]) {
+export function invalidateMediaSurfaces(
+  client: QueryClient,
+  ...itemIds: (string | null | undefined)[]
+) {
   const active = { refetchType: "active" as const }
   const exactActive = { ...active, exact: true }
-  void queryClient.invalidateQueries({ queryKey: queryKeys.home, ...active })
+  void client.invalidateQueries({ queryKey: queryKeys.home, ...active })
   // Billboard slides come from a randomized endpoint. Their user-data controls
   // are patched by the mutations, so refreshing that query here would replace
   // the active title instead of merely updating it.
-  void queryClient.invalidateQueries({ queryKey: ["items"], ...active })
+  void client.invalidateQueries({ queryKey: ["items"], ...active })
   // Explicit user-data writes should refresh a live person card too; metadata
   // batches deliberately do not, because that response is already server-live.
-  void queryClient.invalidateQueries({ queryKey: ["person-items"], ...active })
+  void client.invalidateQueries({ queryKey: ["person-items"], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
-    void queryClient.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
-    void queryClient.invalidateQueries({ queryKey: queryKeys.children(itemId), ...exactActive })
-    void queryClient.invalidateQueries({ queryKey: queryKeys.nextUp(itemId), ...exactActive })
+    void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
+    void client.invalidateQueries({ queryKey: queryKeys.children(itemId), ...exactActive })
+    void client.invalidateQueries({ queryKey: queryKeys.nextUp(itemId), ...exactActive })
   }
 }
 
@@ -173,12 +187,13 @@ export function invalidateMediaSurfaces(...itemIds: (string | null | undefined)[
  * refetch behavior.
  */
 export function invalidateLibraryChanged(
+  client: QueryClient,
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
   scope: "library" | "catalog" | "items" = "library",
 ) {
   const relevant = new Set([...itemIds, ...contextIds])
-  void queryClient.invalidateQueries({
+  void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey

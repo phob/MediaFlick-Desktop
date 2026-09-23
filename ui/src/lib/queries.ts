@@ -1,4 +1,12 @@
-import { queryOptions, useInfiniteQuery, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import {
+  queryOptions,
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   ApiError,
@@ -8,6 +16,7 @@ import {
   type ItemQuery,
   type ItemSummary,
   type PlayerCommand,
+  type PlayerState,
   type MediaInfoResponse,
   type PlaybackTrackPreferenceWrite,
   type PersonResolveQuery,
@@ -21,7 +30,7 @@ import {
 import {
   invalidateMediaSurfaces,
   invalidateSeerrSurfaces,
-  queryClient,
+  patchPlayerState,
   queryKeys,
   removeAccountQueryData,
 } from "./query-client"
@@ -34,12 +43,14 @@ import {
  * Shared mutation failure handler. Without this a failed action is completely
  * silent — which reads as "nothing happened" and gets clicked again.
  */
-function reportError(error: Error) {
-  toast.error(error.message)
-  // The server rejected the token: re-read status so the shell falls back to
-  // the sign-in view instead of leaving dead controls on screen.
-  if (error instanceof ApiError && (error.expired || error.status === 401)) {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.status })
+function reportError(client: QueryClient) {
+  return (error: Error) => {
+    toast.error(error.message)
+    // The server rejected the token: re-read status so the shell falls back to
+    // the sign-in view instead of leaving dead controls on screen.
+    if (error instanceof ApiError && (error.expired || error.status === 401)) {
+      void client.invalidateQueries({ queryKey: queryKeys.status })
+    }
   }
 }
 
@@ -95,7 +106,7 @@ export function useSyncProgress() {
  * they need not wait on status one round trip at a time. Anything missing or
  * failed is left to its own query.
  */
-export async function primeStartupQueries(pathname: string) {
+export async function primeStartupQueries(client: QueryClient, pathname: string) {
   let startup
   try {
     startup = await api.startup(pathname === "/")
@@ -104,13 +115,39 @@ export async function primeStartupQueries(pathname: string) {
   }
   const { status } = startup
   if (!status) return
-  queryClient.setQueryData(queryKeys.status, status)
-  if (startup.settings) queryClient.setQueryData(queryKeys.settings, startup.settings)
-  const account = collectionAccountKey(status)
-  if (startup.viewing) queryClient.setQueryData(["viewing", account], startup.viewing)
-  if (startup.browsing) queryClient.setQueryData(["browsing", account], startup.browsing)
-  if (startup.home) queryClient.setQueryData(queryKeys.home, startup.home)
-  if (startup.billboard) queryClient.setQueryData(queryKeys.billboard, startup.billboard)
+  client.setQueryData(queryKeys.status, status)
+  if (startup.settings) client.setQueryData(queryKeys.settings, startup.settings)
+  const account = accountKey(status)
+  if (startup.viewing) client.setQueryData(viewingQueryOptions(account).queryKey, startup.viewing)
+  if (startup.browsing) client.setQueryData(browsingQueryOptions(account).queryKey, startup.browsing)
+  if (startup.home) client.setQueryData(queryKeys.home, startup.home)
+  if (startup.billboard) client.setQueryData(queryKeys.billboard, startup.billboard)
+}
+
+/** The signed-in account's viewing preferences. */
+export function viewingQueryOptions(account: string) {
+  return queryOptions({ queryKey: queryKeys.viewing(account), queryFn: api.viewing })
+}
+
+/** The last route and remembered library filters of the signed-in account. */
+export function browsingQueryOptions(account: string) {
+  return queryOptions({ queryKey: queryKeys.browsing(account), queryFn: api.browsing })
+}
+
+export function useBrowsing() {
+  const { data: status } = useStatus()
+  return useQuery({
+    ...browsingQueryOptions(accountKey(status)),
+    enabled: Boolean(status?.authenticated),
+  })
+}
+
+export function letterboxdProfilesQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.letterboxdProfiles,
+    queryFn: api.letterboxd.profiles,
+    retry: false,
+  })
 }
 
 export function useSettings() {
@@ -127,9 +164,9 @@ export function useRatingsStatus(enabled = true) {
   })
 }
 
-function resetAccountQueries() {
-  removeAccountQueryData()
-  void queryClient.resetQueries({ queryKey: queryKeys.settings })
+function resetAccountQueries(client: QueryClient) {
+  removeAccountQueryData(client)
+  void client.resetQueries({ queryKey: queryKeys.settings })
 }
 
 export function useHome(enabled = true) {
@@ -312,22 +349,21 @@ export function useMediaInfo(id: string | undefined, enabled = true) {
 
 /** Saves source, audio, and subtitle together so indices never cross sources. */
 export function useSetPlaybackPreference(itemId: string) {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: (preference: PlaybackTrackPreferenceWrite) =>
       api.setPlaybackPreference(itemId, preference),
     onSuccess: ({ playbackPreference }) => {
-      queryClient.setQueryData(
-        queryKeys.media(itemId),
-        (current: MediaInfoResponse | undefined) =>
-          current ? { ...current, playbackPreference } : current,
+      client.setQueryData<MediaInfoResponse>(queryKeys.media(itemId), (current) =>
+        current ? { ...current, playbackPreference } : current,
       )
     },
     onError: (error: Error) => {
-      reportError(error)
+      reportError(client)(error)
       // A 409 means the file changed between reading and saving the controls.
       // Re-fetching restores safe current choices instead of keeping stale UI.
       if (error instanceof ApiError && error.status === 409) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.media(itemId) })
+        void client.invalidateQueries({ queryKey: queryKeys.media(itemId) })
       }
     },
   })
@@ -354,10 +390,11 @@ export function useNextUp(id: string | undefined, enabled = true) {
 }
 
 export function useOpenExternal() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({ id, provider }: { id: string; provider: ExternalProvider }) =>
       api.openExternal(id, provider),
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
@@ -396,8 +433,8 @@ type BillboardUserDataPatch = Partial<
 >
 
 /** Update controls on stable billboard slides without asking the random endpoint again. */
-function patchBillboardItem(id: string, patch: BillboardUserDataPatch) {
-  queryClient.setQueryData<{ items: ItemSummary[] }>(queryKeys.billboard, (previous) => {
+function patchBillboardItem(client: QueryClient, id: string, patch: BillboardUserDataPatch) {
+  client.setQueryData<{ items: ItemSummary[] }>(queryKeys.billboard, (previous) => {
     if (!previous) return previous
     const index = previous.items.findIndex((item) => item.id === id)
     if (index < 0) return previous
@@ -408,30 +445,33 @@ function patchBillboardItem(id: string, patch: BillboardUserDataPatch) {
 }
 
 export function useSetPlayed() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({ id, played }: UserDataMutation & { played: boolean }) =>
       api.setPlayed(id, played),
     onSuccess: (_result, { id, context, played }) => {
-      patchBillboardItem(id, { played, positionTicks: 0 })
-      invalidateMediaSurfaces(id, context)
+      patchBillboardItem(client, id, { played, positionTicks: 0 })
+      invalidateMediaSurfaces(client, id, context)
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
 export function useSetFavorite() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({ id, favorite }: UserDataMutation & { favorite: boolean }) =>
       api.setFavorite(id, favorite),
     onSuccess: (_result, { id, context, favorite }) => {
-      patchBillboardItem(id, { favorite })
-      invalidateMediaSurfaces(id, context)
+      patchBillboardItem(client, id, { favorite })
+      invalidateMediaSurfaces(client, id, context)
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
 export function usePlay() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({
       id,
@@ -446,13 +486,14 @@ export function usePlay() {
       // The player is a separate window that can take a moment to come up, so
       // say something: otherwise Play looks like it did nothing at all.
       toast.success(started.playMethod ? `Playing (${started.playMethod})` : "Playing")
-      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+      void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
 export function useChangePlaybackQuality() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({
       itemId,
@@ -465,13 +506,14 @@ export function useChangePlaybackQuality() {
     }) => api.changePlaybackQuality(itemId, Math.round(positionMs * 10_000), quality),
     onSuccess: (started) => {
       toast.success(started.playMethod ? `Playback restarted (${started.playMethod})` : "Playback restarted")
-      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+      void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
 export function usePlayNeighbor() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({ itemId, direction }: { itemId: string; direction: "previous" | "next" }) =>
       direction === "previous" ? api.playPrevious(itemId) : api.playNext(itemId),
@@ -481,29 +523,37 @@ export function usePlayNeighbor() {
         return
       }
       toast.success(direction === "previous" ? "Playing the previous episode" : "Playing the next episode")
-      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+      void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
 export function usePlayerCommand() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: (command: PlayerCommand) => api.playerCommand(command),
     onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.playerState })
+      void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
-    onError: reportError,
+    onError: reportError(client),
   })
 }
 
+/** Keeps a control's expected outcome on screen until mpv pushes the new state. */
+export function usePatchPlayerState() {
+  const client = useQueryClient()
+  return (patch: Partial<PlayerState>) => patchPlayerState(client, patch)
+}
+
 export function useLogin() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: ({ server, username, password }: { server: string; username: string; password: string }) =>
       api.login(server, username, password),
     onSuccess: (status) => {
-      queryClient.setQueryData(queryKeys.status, status)
-      resetAccountQueries()
+      client.setQueryData(queryKeys.status, status)
+      resetAccountQueries(client)
     },
   })
 }
@@ -533,6 +583,7 @@ export function useQuickConnectStart() {
  * answers 404, which surfaces here as a plain error.
  */
 export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
+  const client = useQueryClient()
   return useQuery({
     queryKey: queryKeys.quickConnect(started?.secret ?? ""),
     queryFn: async ({ signal }) => {
@@ -541,10 +592,10 @@ export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
         // The shell gates on `/api/status`; re-reading it is what actually
         // swaps the sign-in view for the app. A billboard selection belongs to
         // that authenticated session and must not cross into the new account.
-        queryClient.removeQueries({ queryKey: queryKeys.billboard })
-        await queryClient.invalidateQueries({ queryKey: queryKeys.status })
-        resetAccountQueries()
-        invalidateMediaSurfaces()
+        client.removeQueries({ queryKey: queryKeys.billboard })
+        await client.invalidateQueries({ queryKey: queryKeys.status })
+        resetAccountQueries(client)
+        invalidateMediaSurfaces(client)
       }
       return result
     },
@@ -557,12 +608,13 @@ export function useQuickConnectPoll(started: QuickConnectStart | undefined) {
 }
 
 export function useLogout() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: api.logout,
-    onError: reportError,
+    onError: reportError(client),
     onSuccess: (status) => {
-      queryClient.setQueryData(queryKeys.status, status)
-      resetAccountQueries()
+      client.setQueryData(queryKeys.status, status)
+      resetAccountQueries(client)
     },
   })
 }
@@ -714,6 +766,7 @@ export function useSeerrRequests(filter: string, enabled = true) {
 }
 
 export function useSeerrRequest() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: (body: {
       mediaType: SeerrMediaType
@@ -723,36 +776,38 @@ export function useSeerrRequest() {
       serverId?: number
       profileId?: number
     }) => api.seerr.request(body),
-    onError: reportError,
+    onError: reportError(client),
     onSuccess: (created) => {
-      // The dialog is kept even for an auto-approving user (chunk 11's resolved
-      // default), so the outcome is reported from what Seerr actually did.
+      // The dialog is shown even to users whose requests Seerr auto-approves,
+      // so the outcome is reported from what Seerr actually did.
       toast.success(created.status === "approved" ? "Approved" : "Requested")
-      invalidateSeerrSurfaces()
+      invalidateSeerrSurfaces(client)
     },
   })
 }
 
 export function useSeerrCancelRequest() {
+  const client = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api.seerr.cancelRequest(id),
-    onError: reportError,
+    onError: reportError(client),
     onSuccess: () => {
       toast.success("Request cancelled")
-      invalidateSeerrSurfaces()
+      invalidateSeerrSurfaces(client)
     },
   })
 }
 
 // ------------------------------------------------------------- collections
 
-export function collectionAccountKey(status: Pick<Status, "serverUrl" | "userId"> | undefined) {
+/** Scopes account-owned query keys to the signed-in server and user. */
+export function accountKey(status: Pick<Status, "serverUrl" | "userId"> | undefined) {
   return `${status?.serverUrl ?? "anonymous"}:${status?.userId ?? "anonymous"}`
 }
 
 export function useCollectionSettings(enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionSettings(account),
     queryFn: () => api.collections.settings(),
@@ -763,7 +818,7 @@ export function useCollectionSettings(enabled = true) {
 
 export function useCollectionTemplates(enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionTemplates(account),
     queryFn: ({ signal }) => api.collections.templates(signal),
@@ -775,7 +830,7 @@ export function useCollectionTemplates(enabled = true) {
 
 export function useCollectionProfiles(enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionProfiles(account),
     queryFn: ({ signal }) => api.collections.profiles(signal),
@@ -794,7 +849,7 @@ export function myCollectionsQueryOptions(account: string) {
 
 export function useMyCollections(enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     ...myCollectionsQueryOptions(account),
     enabled: enabled && Boolean(status?.authenticated),
@@ -811,7 +866,7 @@ export function myCollectionQueryOptions(account: string, id: string) {
 
 export function useMyCollection(id: string | null) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     ...myCollectionQueryOptions(account, id ?? ""),
     enabled: id !== null && Boolean(status?.authenticated),
@@ -829,7 +884,7 @@ export function franchisesQueryOptions(account: string, localDate: string) {
 
 export function useFranchises(localDate: string) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     ...franchisesQueryOptions(account, localDate),
     enabled: Boolean(status?.authenticated),
@@ -847,7 +902,7 @@ export function franchiseQueryOptions(account: string, id: number, localDate: st
 
 export function useFranchise(id: number | null, localDate: string) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     ...franchiseQueryOptions(account, id ?? 0, localDate),
     enabled: id !== null && Boolean(status?.authenticated),
@@ -860,7 +915,7 @@ export function useCollectionTitle(
   enabled = true,
 ) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionTitle(account, mediaType ?? "", tmdbId ?? 0),
     queryFn: ({ signal }) => api.collections.title(mediaType!, tmdbId!, signal),
@@ -871,7 +926,7 @@ export function useCollectionTitle(
 
 export function useJellyfinCollections(enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionJellyfin(account),
     queryFn: ({ signal }) => api.collections.jellyfin(signal),
@@ -882,7 +937,7 @@ export function useJellyfinCollections(enabled = true) {
 
 export function useJellyfinCollection(id: string | null) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.collectionJellyfinDetail(account, id ?? ""),
     queryFn: ({ signal }) => api.collections.jellyfinDetail(id!, signal),
@@ -893,7 +948,7 @@ export function useJellyfinCollection(id: string | null) {
 
 export function useMovieCollection(tmdbId: number | null, enabled = true) {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   return useQuery({
     queryKey: queryKeys.movieCollection(account, tmdbId ?? 0),
     queryFn: () => api.collections.forMovie(tmdbId!),

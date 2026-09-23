@@ -64,7 +64,7 @@ function LocationProbe() {
 function renderAppearance(cardPreviews: boolean, authenticated = true) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
-  client.setQueryData(["viewing", "anonymous:anonymous"], DEFAULT_VIEWING)
+  client.setQueryData(queryKeys.viewing("anonymous:anonymous"), DEFAULT_VIEWING)
   client.setQueryData(queryKeys.status, { authenticated })
   client.setQueryData(queryKeys.home, {
     continueWatching: [],
