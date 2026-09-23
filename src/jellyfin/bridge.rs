@@ -45,6 +45,8 @@ pub fn ensure_session_token() {
             return token;
         }
         let token = crate::app::ids::random_hex(32);
+        // SAFETY: main calls this first, before any other thread exists, so no
+        // one can read the environment concurrently.
         unsafe {
             std::env::set_var(BRIDGE_TOKEN_ENV, &token);
         }

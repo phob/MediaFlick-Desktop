@@ -95,6 +95,8 @@ impl HostCloseHooks {
     fn uninstall(self) {
         for hook in [self.dispatched, self.queued] {
             if !hook.is_null() {
+                // SAFETY: `hook` came from SetWindowsHookExW and is unhooked once,
+                // because `uninstall` consumes the pair that owns it.
                 unsafe { UnhookWindowsHookEx(hook) };
             }
         }
@@ -166,6 +168,7 @@ impl LibmpvOverlaySurface {
         if input.is_null() {
             return;
         }
+        // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
         unsafe {
             PostMessageW(input, WM_SETCURSOR, input as WPARAM, HTCLIENT as LPARAM);
         }
@@ -176,6 +179,7 @@ impl LibmpvOverlaySurface {
             return Err("failed to register the CEF input window class".to_string());
         }
         let host = parent.raw() as HWND;
+        // SAFETY: IsWindow only inspects the handle value.
         if host.is_null() || unsafe { IsWindow(host) } == 0 {
             return Err("libmpv returned an invalid native window".to_string());
         }
@@ -185,6 +189,7 @@ impl LibmpvOverlaySurface {
         let metrics = sample_metrics(host).unwrap_or(seeded);
         crate::windows::set_native_window_icon(parent.raw());
         let compositor = Compositor::new(parent.raw()).map_err(|error| error.to_string())?;
+        // SAFETY: a null name asks for this process's own module handle.
         let module = unsafe { GetModuleHandleW(null()) };
         if module.is_null() {
             return Err(io::Error::last_os_error().to_string());
@@ -193,6 +198,9 @@ impl LibmpvOverlaySurface {
         // the raw pointer through CREATESTRUCT keeps the Rust surface alive
         // for every message the native child can receive.
         let retained = Rc::into_raw(Rc::clone(self));
+        // SAFETY: INPUT_CLASS is a registered, NUL-terminated class name and
+        // `retained` is a live surface pointer; input_wndproc stores it at
+        // WM_NCCREATE and releases it at WM_NCDESTROY.
         let input = unsafe {
             CreateWindowExW(
                 0,
@@ -210,12 +218,16 @@ impl LibmpvOverlaySurface {
             )
         };
         if input.is_null() {
+            // SAFETY: creation failed before any window message could store the
+            // pointer, so this reclaims the only use of `retained`.
             unsafe { drop(Rc::from_raw(retained)) };
             return Err(io::Error::last_os_error().to_string());
         }
         let host_close_hooks = match install_host_close_hooks(host, input) {
             Ok(hooks) => hooks,
             Err(error) => {
+                // SAFETY: `input` was created on this thread just above; destroying
+                // it runs WM_NCDESTROY, which releases the retained surface.
                 unsafe { DestroyWindow(input) };
                 return Err(error.to_string());
             }
@@ -262,6 +274,7 @@ impl LibmpvOverlaySurface {
         }
         let input = self.input.get();
         if !input.is_null() {
+            // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
             unsafe { SetFocus(input) };
         }
         self.schedule_sync();
@@ -275,6 +288,7 @@ impl LibmpvOverlaySurface {
     pub(crate) fn show(&self) {
         let input = self.input.get();
         if !input.is_null() {
+            // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
             unsafe { ShowWindow(input, SW_SHOW) };
         }
     }
@@ -288,7 +302,10 @@ impl LibmpvOverlaySurface {
             .replace(HostCloseHooks::default())
             .uninstall();
         let input = self.input.replace(null_mut());
+        // SAFETY: IsWindow only inspects the handle value, and a live `input`
+        // is our own child window, destroyed on the thread that created it.
         if !input.is_null() && unsafe { IsWindow(input) } != 0 {
+            // SAFETY: as above; WM_NCDESTROY releases the retained surface.
             unsafe { DestroyWindow(input) };
         }
         self.browser.borrow_mut().take();
@@ -309,11 +326,13 @@ impl LibmpvOverlaySurface {
             return false;
         }
         let host = self.host.get();
+        // SAFETY: IsWindow only inspects the handle value.
         if host.is_null() || unsafe { IsWindow(host) } == 0 {
             self.close_browser();
             return false;
         }
         let input = self.input.get();
+        // SAFETY: IsWindow only inspects the handle value.
         if input.is_null() || unsafe { IsWindow(input) } == 0 {
             self.close_browser();
             return false;
@@ -330,6 +349,7 @@ impl LibmpvOverlaySurface {
             return true;
         };
         let previous = self.metrics.replace(metrics);
+        // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
         unsafe {
             SetWindowPos(
                 input,
@@ -373,6 +393,7 @@ impl LibmpvOverlaySurface {
         if host.is_null() {
             return;
         }
+        // SAFETY: IsWindow only inspects the handle value.
         if unsafe { IsWindow(host) } != 0 {
             self.capture_window_settings(host);
         }
@@ -393,11 +414,14 @@ impl LibmpvOverlaySurface {
             return false;
         }
         if matches!(message, WM_RBUTTONDOWN | WM_RBUTTONDBLCLK) {
+            // SAFETY: `window` is the input window receiving this message on its
+            // own thread. Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
             unsafe {
                 SetFocus(window);
                 SetCapture(window);
             }
         } else if message == WM_RBUTTONUP {
+            // SAFETY: releases this thread's own capture, if any.
             unsafe { ReleaseCapture() };
         }
         if let Some(pause) = right_button_pause(message, snapshot.paused) {
@@ -652,6 +676,7 @@ fn paint_part(type_: PaintElementType) -> Option<bool> {
 
 fn input_class_registered() -> bool {
     *CLASS_REGISTERED.get_or_init(|| {
+        // SAFETY: a null name asks for this process's own module handle.
         let module = unsafe { GetModuleHandleW(null()) };
         if module.is_null() {
             return false;
@@ -660,21 +685,27 @@ fn input_class_registered() -> bool {
             style: CS_DBLCLKS,
             lpfnWndProc: Some(input_wndproc),
             hInstance: module,
+            // SAFETY: IDC_ARROW names a stock system cursor.
             hCursor: unsafe { LoadCursorW(null_mut(), IDC_ARROW) },
             lpszClassName: INPUT_CLASS.as_ptr(),
             ..WNDCLASSW::default()
         };
+        // SAFETY: `class` is fully initialized, names a NUL-terminated static
+        // class string, and points at input_wndproc, which lives for the program.
         unsafe { RegisterClassW(&class) != 0 }
     })
 }
 
 fn install_host_close_hooks(host: HWND, input: HWND) -> io::Result<HostCloseHooks> {
+    // SAFETY: a null process-id pointer is allowed; only the thread id is read.
     let thread_id = unsafe { GetWindowThreadProcessId(host, null_mut()) };
     if thread_id == 0 {
         return Err(io::Error::last_os_error());
     }
     HOOKED_HOST.store(host as usize, Ordering::Release);
     CLOSE_TARGET.store(input as usize, Ordering::Release);
+    // SAFETY: the hook procedure is a static function with the hook signature,
+    // installed for one thread of this process, and removed by `uninstall`.
     let dispatched = unsafe {
         SetWindowsHookExW(
             WH_CALLWNDPROCRET,
@@ -688,6 +719,7 @@ fn install_host_close_hooks(host: HWND, input: HWND) -> io::Result<HostCloseHook
         HOOKED_HOST.store(0, Ordering::Release);
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: as for the dispatched-message hook above.
     let queued = unsafe {
         SetWindowsHookExW(
             WH_GETMESSAGE,
@@ -711,9 +743,12 @@ unsafe extern "system" fn dispatched_host_message_hook(
     lparam: LPARAM,
 ) -> LRESULT {
     if code >= 0 && lparam != 0 {
+        // SAFETY: for a non-negative code, a WH_CALLWNDPROCRET hook receives a
+        // valid CWPRETSTRUCT for the duration of the call.
         let message = unsafe { &*(lparam as *const CWPRETSTRUCT) };
         forward_host_close(message.hwnd, message.message);
     }
+    // SAFETY: passes the hook arguments through unchanged, as required.
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
@@ -723,9 +758,12 @@ unsafe extern "system" fn queued_host_message_hook(
     lparam: LPARAM,
 ) -> LRESULT {
     if code >= 0 && lparam != 0 {
+        // SAFETY: for a non-negative code, a WH_GETMESSAGE hook receives a
+        // valid MSG for the duration of the call.
         let message = unsafe { &*(lparam as *const MSG) };
         forward_host_close(message.hwnd, message.message);
     }
+    // SAFETY: passes the hook arguments through unchanged, as required.
     unsafe { CallNextHookEx(null_mut(), code, wparam, lparam) }
 }
 
@@ -736,6 +774,7 @@ fn forward_host_close(window: HWND, message: u32) {
     }
     let input = CLOSE_TARGET.load(Ordering::Acquire) as HWND;
     if !input.is_null() {
+        // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
         unsafe { PostMessageW(input, WM_HOST_CLOSE_REQUESTED, 0, 0) };
     }
 }
@@ -747,26 +786,33 @@ unsafe extern "system" fn input_wndproc(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == WM_NCCREATE {
+        // SAFETY: WM_NCCREATE's lparam is the CREATESTRUCTW of this creation.
+        let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
         // SAFETY: CreateWindowExW supplied a live LibmpvOverlaySurface pointer
         // in lpCreateParams; the window-owned Rc keeps it alive until destroy.
-        let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
         unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, create.lpCreateParams as isize) };
     }
+    // SAFETY: reads this window's own user data slot.
     let surface_ptr =
         unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) } as *const LibmpvOverlaySurface;
     if surface_ptr.is_null() {
+        // SAFETY: default handling for a message before WM_NCCREATE.
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     }
+    // SAFETY: a non-null slot holds the surface stored at WM_NCCREATE, kept
+    // alive by the retained Rc until WM_NCDESTROY clears the slot below.
     let surface = unsafe { &*surface_ptr };
     let handled = dispatch_window_message(surface, window, message, wparam, lparam);
     if message == WM_NCDESTROY {
-        // Reclaim exactly the strong reference transferred by Rc::into_raw in
-        // bind after no later window message can observe GWLP_USERDATA.
+        // SAFETY: reclaims exactly the strong reference transferred by
+        // Rc::into_raw in bind; the slot is cleared first, so no later window
+        // message can observe it.
         unsafe {
             SetWindowLongPtrW(window, GWLP_USERDATA, 0);
             drop(Rc::from_raw(surface_ptr));
         }
     }
+    // SAFETY: default handling for messages the surface does not consume.
     handled.unwrap_or_else(|| unsafe { DefWindowProcW(window, message, wparam, lparam) })
 }
 
@@ -830,11 +876,14 @@ fn dispatch_window_message(
         | WM_RBUTTONDBLCLK | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK => {
             let mouse_up = matches!(message, WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP);
             if !mouse_up {
+                // SAFETY: `window` is the input window receiving this message on
+                // its own thread. Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
                 unsafe {
                     SetFocus(window);
                     SetCapture(window);
                 }
             } else {
+                // SAFETY: releases this thread's own capture, if any.
                 unsafe { ReleaseCapture() };
             }
             let event = surface.mouse_event(
@@ -853,6 +902,7 @@ fn dispatch_window_message(
                 x: signed_low_word(lparam),
                 y: signed_high_word(lparam),
             };
+            // SAFETY: `point` is a live local the call converts in place.
             unsafe { ScreenToClient(window, &raw mut point) };
             let event = surface.mouse_event(point.x, point.y, mouse_modifiers(wparam));
             let delta = signed_high_word(wparam as isize);
@@ -873,6 +923,7 @@ fn dispatch_window_message(
         WM_SYSKEYDOWN if is_alt_f4(wparam) => {
             let host = surface.host.get();
             if !host.is_null() {
+                // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
                 unsafe { PostMessageW(host, WM_CLOSE, 0, 0) };
             }
             Some(0)
@@ -887,6 +938,7 @@ fn dispatch_window_message(
 }
 
 fn apply_saved_window_settings(host: HWND, settings: WebUiWindowSettings) {
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
     let (width, height) = settings.size();
     let width = logical_to_physical(width, dpi).max(1);
@@ -901,6 +953,7 @@ fn apply_saved_window_settings(host: HWND, settings: WebUiWindowSettings) {
             )
         },
     );
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     unsafe {
         SetWindowPos(host, null_mut(), x, y, width, height, flags);
         if settings.maximized {
@@ -913,17 +966,21 @@ fn sample_window_settings(
     host: HWND,
     mut settings: WebUiWindowSettings,
 ) -> Option<WebUiWindowSettings> {
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     if unsafe { IsIconic(host) } != 0 {
         return None;
     }
     let mut rect = RECT::default();
+    // SAFETY: `rect` is a live local the call writes.
     if unsafe { GetWindowRect(host, &raw mut rect) } == 0 {
         return None;
     }
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let maximized = unsafe { IsZoomed(host) } != 0;
     if !maximized && window_fills_monitor(host, &rect) {
         return None;
     }
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
     settings.record_bounds(
         physical_to_logical(rect.left, dpi),
@@ -936,6 +993,7 @@ fn sample_window_settings(
 }
 
 fn display_frame_rate(host: HWND) -> i32 {
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let monitor = unsafe { MonitorFromWindow(host, MONITOR_DEFAULTTONULL) };
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
@@ -944,7 +1002,11 @@ fn display_frame_rate(host: HWND) -> i32 {
         ..DEVMODEW::default()
     };
     if monitor.is_null()
+        // SAFETY: `info` is a live MONITORINFOEXW with cbSize set, so the call
+        // may write the extended layout.
         || unsafe { GetMonitorInfoW(monitor, &raw mut info.monitorInfo) } == 0
+        // SAFETY: `mode` is a live DEVMODEW with dmSize set, and `szDevice` is
+        // the NUL-terminated device name the previous call filled in.
         || unsafe {
             EnumDisplaySettingsW(info.szDevice.as_ptr(), ENUM_CURRENT_SETTINGS, &raw mut mode)
         } == 0
@@ -964,6 +1026,7 @@ fn usable_frame_rate(frequency: u32) -> i32 {
 }
 
 fn window_fills_monitor(host: HWND, window_rect: &RECT) -> bool {
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let monitor = unsafe { MonitorFromWindow(host, MONITOR_DEFAULTTONULL) };
     if monitor.is_null() {
         return false;
@@ -972,6 +1035,7 @@ fn window_fills_monitor(host: HWND, window_rect: &RECT) -> bool {
         cbSize: size_of::<MONITORINFO>() as u32,
         ..MONITORINFO::default()
     };
+    // SAFETY: `info` is a live MONITORINFO with cbSize set.
     if unsafe { GetMonitorInfoW(monitor, &raw mut info) } == 0 {
         return false;
     }
@@ -983,6 +1047,7 @@ fn window_fills_monitor(host: HWND, window_rect: &RECT) -> bool {
 
 fn sample_metrics(host: HWND) -> Option<ViewMetrics> {
     let mut rect = RECT::default();
+    // SAFETY: `rect` is a live local the call writes.
     if unsafe { GetClientRect(host, &raw mut rect) } == 0 {
         return None;
     }
@@ -992,9 +1057,11 @@ fn sample_metrics(host: HWND) -> Option<ViewMetrics> {
         return None;
     }
     let mut origin = POINT { x: 0, y: 0 };
+    // SAFETY: `origin` is a live local the call converts in place.
     if unsafe { ClientToScreen(host, &raw mut origin) } == 0 {
         return None;
     }
+    // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
     let dpi = unsafe { GetDpiForWindow(host) }.max(DEFAULT_DPI);
     Some(ViewMetrics {
         logical_width: physical_to_logical(physical_width, dpi).max(1),
@@ -1020,15 +1087,19 @@ fn track_mouse_leave(window: HWND) {
         hwndTrack: window,
         dwHoverTime: 0,
     };
+    // SAFETY: `event` is a live TRACKMOUSEEVENT with cbSize set.
     unsafe { TrackMouseEvent(&raw mut event) };
 }
 
 fn apply_cursor(cursor: CursorType) {
     let Some(resource) = cursor_resource(cursor) else {
+        // SAFETY: a null cursor hides the pointer.
         unsafe { SetCursor(null_mut()) };
         return;
     };
+    // SAFETY: `resource` is one of the stock IDC_* cursor identifiers.
     let handle = unsafe { LoadCursorW(null_mut(), resource) };
+    // SAFETY: `handle` is a shared stock cursor, or null, which hides it.
     unsafe { SetCursor(handle) };
 }
 
@@ -1138,9 +1209,11 @@ fn keyboard_modifiers(lparam: LPARAM) -> u32 {
     if key_down(VK_LWIN) || key_down(VK_RWIN) {
         modifiers |= sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 as u32;
     }
+    // SAFETY: GetKeyState only reads this thread's keyboard state.
     if unsafe { GetKeyState(VK_NUMLOCK as i32) } & 1 != 0 {
         modifiers |= sys::cef_event_flags_t::EVENTFLAG_NUM_LOCK_ON.0 as u32;
     }
+    // SAFETY: GetKeyState only reads this thread's keyboard state.
     if unsafe { GetKeyState(VK_CAPITAL as i32) } & 1 != 0 {
         modifiers |= sys::cef_event_flags_t::EVENTFLAG_CAPS_LOCK_ON.0 as u32;
     }
@@ -1191,6 +1264,7 @@ fn mouse_button(message: u32) -> (MouseButtonType, i32) {
 }
 
 fn key_down(key: u16) -> bool {
+    // SAFETY: GetKeyState only reads this thread's keyboard state.
     (unsafe { GetKeyState(key as i32) }) < 0
 }
 
