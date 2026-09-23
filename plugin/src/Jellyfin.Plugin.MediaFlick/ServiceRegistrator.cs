@@ -24,15 +24,15 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton(serviceProvider => new SeerrGateway(
             serviceProvider.GetRequiredService<ISeerrTransport>(),
             serviceProvider.GetRequiredService<ILogger<SeerrGateway>>()));
-        serviceCollection.AddSingleton<RatingsCacheStore>(serviceProvider =>
+        serviceCollection.AddSingleton<ProviderCacheStore>(serviceProvider =>
         {
             var dataPath = Plugin.Instance?.DataFolderPath
                 ?? throw new InvalidOperationException("plugin data path is unavailable");
-            return new RatingsCacheStore(
+            return new ProviderCacheStore(
                 Path.Combine(dataPath, "ratings-v1-cache.json"),
-                serviceProvider.GetRequiredService<ILogger<RatingsCacheStore>>());
+                serviceProvider.GetRequiredService<ILogger<ProviderCacheStore>>());
         });
-        serviceCollection.AddSingleton<IRatingSecretStore>(serviceProvider =>
+        serviceCollection.AddSingleton<IProviderSecretStore>(serviceProvider =>
         {
             var dataPath = Plugin.Instance?.DataFolderPath
                 ?? throw new InvalidOperationException("plugin data path is unavailable");
@@ -41,26 +41,26 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
             var protection = DataProtectionProvider.Create(
                 new DirectoryInfo(keyRingPath),
                 builder => builder.SetApplicationName("Jellyfin.MediaFlick.Companion"));
-            return new DataProtectedRatingSecretStore(
+            return new DataProtectedProviderSecretStore(
                 protection,
                 keyRingPath,
-                serviceProvider.GetRequiredService<ILogger<DataProtectedRatingSecretStore>>());
+                serviceProvider.GetRequiredService<ILogger<DataProtectedProviderSecretStore>>());
         });
         serviceCollection.AddSingleton<IMdbListTransport, MdbListHttpTransport>();
         serviceCollection.AddSingleton<ITmdbTransport, TmdbHttpTransport>();
         serviceCollection.AddSingleton(serviceProvider => new CollectionProviderService(
             serviceProvider.GetRequiredService<ITmdbTransport>(),
             serviceProvider.GetRequiredService<IMdbListTransport>(),
-            serviceProvider.GetRequiredService<IRatingSecretStore>(),
-            serviceProvider.GetRequiredService<RatingsCacheStore>(),
+            serviceProvider.GetRequiredService<IProviderSecretStore>(),
+            serviceProvider.GetRequiredService<ProviderCacheStore>(),
             serviceProvider.GetRequiredService<ILogger<CollectionProviderService>>(),
             serviceProvider.GetRequiredService<IServerConfigurationManager>()
                 .Configuration.PreferredMetadataLanguage,
             serviceProvider.GetRequiredService<IServerConfigurationManager>()
                 .Configuration.MetadataCountryCode));
         serviceCollection.AddSingleton(serviceProvider => new RatingsService(
-            serviceProvider.GetRequiredService<RatingsCacheStore>(),
-            serviceProvider.GetRequiredService<IRatingSecretStore>(),
+            serviceProvider.GetRequiredService<ProviderCacheStore>(),
+            serviceProvider.GetRequiredService<IProviderSecretStore>(),
             serviceProvider.GetRequiredService<IMdbListTransport>(),
             serviceProvider.GetRequiredService<ILogger<RatingsService>>(),
             tmdbTransport: serviceProvider.GetRequiredService<ITmdbTransport>()));

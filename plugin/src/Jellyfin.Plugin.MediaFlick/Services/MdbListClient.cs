@@ -48,10 +48,14 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
     private readonly HttpClient _client;
     private readonly ILogger<MdbListHttpTransport> _logger;
     private readonly FailureLogGate _failures = new();
+    private readonly TimeProvider _time;
 
-    public MdbListHttpTransport(ILogger<MdbListHttpTransport> logger)
+    public MdbListHttpTransport(
+        ILogger<MdbListHttpTransport> logger,
+        TimeProvider? timeProvider = null)
     {
         _logger = logger;
+        _time = timeProvider ?? TimeProvider.System;
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -291,9 +295,9 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
             && offset + limit < total;
     }
 
-    private static long? ReadRetryAt(HttpResponseMessage response, long? quotaResetAt)
+    private long? ReadRetryAt(HttpResponseMessage response, long? quotaResetAt)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _time.GetUtcNow();
         var retry = response.Headers.RetryAfter;
         if (retry?.Delta is { } delta)
         {

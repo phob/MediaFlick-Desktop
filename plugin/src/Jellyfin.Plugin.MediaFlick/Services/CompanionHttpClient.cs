@@ -11,20 +11,41 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 public sealed class CompanionHttpClient
 {
     public const string ClientName = "MediaFlick.Companion";
+    /// <summary>Seerr answers are single pages of results.</summary>
+    internal const int MaxSeerrResponseBytes = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Sonarr's calendar and Radarr's movie list cover a whole library in one
+    /// response, so they get a larger, still bounded, allowance.
+    /// </summary>
+    internal const int MaxLibraryResponseBytes = 64 * 1024 * 1024;
+
+    private const int ReadChunkBytes = 81_920;
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
     private readonly IHttpClientFactory _factory;
     private readonly ServiceHealthStore _health;
     private readonly ILogger<CompanionHttpClient> _logger;
     private readonly FailureLogGate _failures = new();
+    private readonly int? _maxResponseBytes;
 
     public CompanionHttpClient(
         IHttpClientFactory factory,
         ServiceHealthStore health,
         ILogger<CompanionHttpClient> logger)
+        : this(factory, health, logger, null)
+    {
+    }
+
+    internal CompanionHttpClient(
+        IHttpClientFactory factory,
+        ServiceHealthStore health,
+        ILogger<CompanionHttpClient> logger,
+        int? maxResponseBytes)
     {
         _factory = factory;
         _health = health;
         _logger = logger;
+        _maxResponseBytes = maxResponseBytes;
     }
 
     public async Task<JsonNode?> SendAsync(
@@ -45,7 +66,7 @@ public sealed class CompanionHttpClient
         if (seerrUserId is not null)
         {
             request.Headers.Add("X-API-User", seerrUserId.Value.ToString(
-                System.Globalization.CultureInfo.InvariantCulture));
+                CultureInfo.InvariantCulture));
         }
 
         if (body is not null)
@@ -60,7 +81,6 @@ public sealed class CompanionHttpClient
             using var response = await _factory.CreateClient(ClientName)
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
                 .ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 var mappedUser = seerrUserId is not null;
@@ -84,12 +104,30 @@ public sealed class CompanionHttpClient
                     failure);
             }
 
+            var maxBytes = _maxResponseBytes ?? MaxResponseBytes(serviceName);
+            var bytes = await ReadBoundedAsync(response.Content, maxBytes, timeout.Token)
+                .ConfigureAwait(false);
+            if (bytes is null)
+            {
+                _health.Failure(serviceName, ServiceFailure.InvalidResponse);
+                _logger.Log(
+                    _failures.Failure(serviceName, "invalid_response"),
+                    "{Service} returned a response larger than {MaxBytes} bytes",
+                    serviceName,
+                    maxBytes);
+                throw new GatewayException(
+                    StatusCodes.Status502BadGateway,
+                    $"{DisplayName(serviceName)} returned a response that is too large",
+                    ServiceFailure.InvalidResponse);
+            }
+
             JsonNode? parsed = null;
-            if (!string.IsNullOrWhiteSpace(text))
+            var json = WithoutByteOrderMark(bytes);
+            if (!IsBlank(json))
             {
                 try
                 {
-                    parsed = JsonNode.Parse(text);
+                    parsed = JsonNode.Parse(json.Span);
                 }
                 catch (JsonException)
                 {
@@ -239,6 +277,64 @@ public sealed class CompanionHttpClient
             // without permission for an action.
             _logger.LogDebug("{Service} returned HTTP {StatusCode}", serviceName, code);
         }
+    }
+
+    internal static int MaxResponseBytes(string serviceName)
+        => serviceName.Equals("seerr", StringComparison.OrdinalIgnoreCase)
+            ? MaxSeerrResponseBytes
+            : MaxLibraryResponseBytes;
+
+    /// <summary>
+    /// Reads at most <paramref name="maxBytes"/>, or returns null as soon as
+    /// the body (declared or actual) is larger, without buffering the rest.
+    /// </summary>
+    internal static async Task<byte[]?> ReadBoundedAsync(
+        HttpContent content,
+        int maxBytes,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > maxBytes)
+        {
+            return null;
+        }
+
+        var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using (stream.ConfigureAwait(false))
+        {
+            using var buffer = new MemoryStream();
+            var chunk = new byte[ReadChunkBytes];
+            int read;
+            while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                if (buffer.Length + read > maxBytes)
+                {
+                    return null;
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+
+            return buffer.ToArray();
+        }
+    }
+
+    private static ReadOnlyMemory<byte> WithoutByteOrderMark(byte[] bytes)
+        => bytes is [0xEF, 0xBB, 0xBF, ..]
+            ? bytes.AsMemory(3)
+            : bytes;
+
+    private static bool IsBlank(ReadOnlyMemory<byte> json)
+    {
+        foreach (var value in json.Span)
+        {
+            // JSON whitespace: space, tab, carriage return, line feed.
+            if (value is not (0x20 or 0x09 or 0x0D or 0x0A))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static ServiceFailure FailureKind(HttpStatusCode status, bool mappedUser)

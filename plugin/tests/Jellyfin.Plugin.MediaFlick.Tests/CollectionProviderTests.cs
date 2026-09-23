@@ -20,15 +20,15 @@ public sealed class CollectionProviderTests : IDisposable
     private readonly MemorySecrets _secrets = new();
     private readonly FakeTmdb _tmdb = new();
     private readonly FakeMdbList _mdbList = new();
-    private readonly RatingsCacheStore _health;
+    private readonly ProviderCacheStore _health;
     private readonly CollectionProviderService _service;
 
     public CollectionProviderTests()
     {
         Directory.CreateDirectory(_directory);
-        _health = new RatingsCacheStore(
+        _health = new ProviderCacheStore(
             Path.Combine(_directory, "provider-cache.json"),
-            NullLogger<RatingsCacheStore>.Instance);
+            NullLogger<ProviderCacheStore>.Instance);
         _service = new CollectionProviderService(
             _tmdb,
             _mdbList,
@@ -588,7 +588,7 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.NotNull(typeof(CollectionExperienceController).GetCustomAttribute<AuthorizeAttribute>());
         Assert.Equal(
             MediaBrowser.Common.Api.Policies.RequiresElevation,
-            typeof(RatingsAdminController).GetCustomAttribute<AuthorizeAttribute>()?.Policy);
+            typeof(ProviderCredentialsController).GetCustomAttribute<AuthorizeAttribute>()?.Policy);
     }
 
     [Fact]
@@ -635,6 +635,7 @@ public sealed class CollectionProviderTests : IDisposable
 
     public void Dispose()
     {
+        _health.Dispose();
         try
         {
             Directory.Delete(_directory, true);
@@ -677,7 +678,7 @@ public sealed class CollectionProviderTests : IDisposable
     private static TmdbResponse Ok(JsonNode body)
         => new(HttpStatusCode.OK, body, null);
 
-    private sealed class MemorySecrets : IRatingSecretStore
+    private sealed class MemorySecrets : IProviderSecretStore
     {
         private readonly Dictionary<string, string> _values = new(StringComparer.OrdinalIgnoreCase);
 
