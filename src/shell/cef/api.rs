@@ -172,6 +172,11 @@ impl ApiResponse {
     }
 }
 
+/// What an endpoint handler returns. Both sides are complete responses; the
+/// error side lets a handler stop early with `?` on a bad body, a signed-out
+/// session or a failed lookup, and the router sends whichever it gets.
+type Handled = Result<ApiResponse, ApiResponse>;
+
 /// The signed-in account this request runs against. Its failures go through
 /// [`scoped_failure`] and its cache writes through `commit_if_current`, so a
 /// response that arrives after an account switch cannot expire or rewrite the
@@ -353,7 +358,7 @@ fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
     let segments = path.split('/').collect::<Vec<_>>();
-    route_status(services, &segments, request)
+    let handled = route_status(services, &segments, request)
         .or_else(|| settings::route(services, &segments, request))
         .or_else(|| ratings::route(services, &segments, request))
         .or_else(|| collections::route(services, &segments, request))
@@ -364,8 +369,11 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         .or_else(|| catalog::route(services, &segments, request))
         .or_else(|| media::route(services, &segments, request))
         .or_else(|| images::route(services, &segments, request))
-        .or_else(|| playback::route(services, &segments, request))
-        .unwrap_or_else(|| unrouted(path, &segments))
+        .or_else(|| playback::route(services, &segments, request));
+    match handled {
+        Some(Ok(response) | Err(response)) => response,
+        None => unrouted(path, &segments),
+    }
 }
 
 fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
@@ -388,7 +396,7 @@ fn route_status(
     services: &Arc<Services>,
     segments: &[&str],
     request: &ApiRequest,
-) -> Option<ApiResponse> {
+) -> Option<Handled> {
     let response = match segments {
         ["status"] if request.is("GET") => status(services),
         ["startup"] if request.is("GET") => startup(services, request),
@@ -399,7 +407,7 @@ fn route_status(
     Some(response)
 }
 
-fn status(services: &Arc<Services>) -> ApiResponse {
+fn status(services: &Arc<Services>) -> Handled {
     let mut status = services.session.status();
     let stats = services.library.stats();
     let progress = services
@@ -419,7 +427,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
         object.insert("syncProgress".to_string(), json!(progress));
         object.insert("companion".to_string(), services.companion.status());
     }
-    ApiResponse::ok(status)
+    Ok(ApiResponse::ok(status))
 }
 
 /// Everything the first frame reads, in one request. Without it the UI asks
@@ -428,7 +436,7 @@ fn status(services: &Arc<Services>) -> ApiResponse {
 /// does not succeed is `null`, so the UI requests it separately and surfaces
 /// its error there. `home` adds the local Home and billboard once the catalog
 /// is ready, for a launch that opens on Home.
-fn startup(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
+fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let part = |path: &str| {
         let response = route(
             services,
@@ -460,20 +468,20 @@ fn startup(services: &Arc<Services>, request: &ApiRequest) -> ApiResponse {
         }
     };
     let home_part = |path: &str| if home { part(path) } else { Value::Null };
-    ApiResponse::ok(json!({
+    Ok(ApiResponse::ok(json!({
         "settings": part("settings"),
         "viewing": account_part("settings/viewing"),
         "browsing": account_part("settings/browsing"),
         "home": home_part("home"),
         "billboard": home_part("billboard"),
         "status": status,
-    }))
+    })))
 }
 
-fn companion_info(services: &Arc<Services>, force: bool) -> ApiResponse {
+fn companion_info(services: &Arc<Services>, force: bool) -> Handled {
     match services.companion.probe(force) {
-        Ok(_) => ApiResponse::ok(services.companion.status()),
-        Err(error) => ApiResponse::from_api_error(&error),
+        Ok(_) => Ok(ApiResponse::ok(services.companion.status())),
+        Err(error) => Err(ApiResponse::from_api_error(&error)),
     }
 }
 
