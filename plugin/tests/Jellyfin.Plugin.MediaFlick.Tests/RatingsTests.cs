@@ -162,6 +162,34 @@ public sealed class RatingsTests
         Assert.Contains("32-character", error.Message);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task TmdbOutagesNeverMarkASavedKeyRejected(HttpStatusCode status)
+    {
+        using var fixture = new RatingsFixture();
+        const string saved = "0123456789abcdef0123456789abcdef";
+        fixture.Secrets.Set("tmdb", saved);
+        fixture.Cache.SetHealth("tmdb", ValidState());
+        fixture.TmdbTransport.Response = new TmdbResponse(status, null, null);
+
+        var validated = await fixture.Service.ValidateCredentialAsync("tmdb", CancellationToken.None);
+
+        Assert.True(validated.Tmdb.Valid);
+        Assert.NotEqual("invalid", validated.Tmdb.Validation);
+        Assert.DoesNotContain("MDBList", validated.Tmdb.Detail ?? string.Empty, StringComparison.Ordinal);
+
+        var error = await Assert.ThrowsAsync<RatingRequestException>(() =>
+            fixture.Service.SaveCredentialAsync(
+                "tmdb",
+                "abcdef0123456789abcdef0123456789",
+                CancellationToken.None));
+        Assert.Contains("could not be reached", error.Message);
+        Assert.Equal(saved, fixture.Secrets.Get("tmdb"));
+        Assert.True(fixture.Cache.Health("tmdb").Valid);
+    }
+
     [Fact]
     public void BatchValidationPinsVersionBoundsAndStableIdentifiers()
     {
