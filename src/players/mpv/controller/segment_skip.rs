@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::super::commands::next_request_id;
 use super::{
-    CHAPTER_MARKER_MAX_ATTEMPTS, CHAPTER_MARKER_RETRY_INTERVAL, ControllerMessage, ControllerState,
-    SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS, SEGMENT_SKIP_OSD_DURATION_MS,
+    CHAPTER_MARKER_MAX_ATTEMPTS, CHAPTER_MARKER_RETRY_INTERVAL, ChapterMarkers, ControllerMessage,
+    ControllerState, SEGMENT_AUTO_SKIP_COUNTDOWN_OSD_DURATION_MS, SEGMENT_SKIP_OSD_DURATION_MS,
     STARTUP_SEEK_POSITION_TOLERANCE,
 };
 use crate::jellyfin::media_segments;
@@ -91,30 +91,26 @@ impl ControllerState {
     }
 
     pub(super) fn reset_chapter_markers(&mut self) {
-        self.original_chapters = None;
-        self.injected_chapter_markers.clear();
-        self.last_sent_chapter_list = None;
-        self.pending_chapter_markers = None;
-        self.chapter_marker_attempts = 0;
-        self.chapter_marker_next_attempt_at = None;
+        self.chapter_markers = ChapterMarkers::default();
     }
 
     pub(super) fn handle_chapter_list_event(&mut self, chapters: Vec<Value>) {
-        if !self.injected_chapter_markers.is_empty()
+        if !self.chapter_markers.injected.is_empty()
             && self
-                .injected_chapter_markers
+                .chapter_markers
+                .injected
                 .iter()
                 .all(|marker| chapters.contains(marker))
         {
-            self.pending_chapter_markers = None;
-            self.chapter_marker_next_attempt_at = None;
+            self.chapter_markers.pending = None;
+            self.chapter_markers.next_attempt_at = None;
             let base = chapters
                 .iter()
-                .filter(|chapter| !self.injected_chapter_markers.contains(chapter))
+                .filter(|chapter| !self.chapter_markers.injected.contains(chapter))
                 .cloned()
                 .collect::<Vec<_>>();
-            self.original_chapters = Some(base);
-            self.last_sent_chapter_list = Some(chapters);
+            self.chapter_markers.original = Some(base);
+            self.chapter_markers.last_sent = Some(chapters);
             return;
         }
         self.capture_original_chapters(chapters);
@@ -123,12 +119,12 @@ impl ControllerState {
     pub(super) fn capture_original_chapters(&mut self, chapters: Vec<Value>) {
         let base = chapters
             .into_iter()
-            .filter(|chapter| !self.injected_chapter_markers.contains(chapter))
+            .filter(|chapter| !self.chapter_markers.injected.contains(chapter))
             .collect::<Vec<_>>();
-        if self.original_chapters.as_deref() == Some(base.as_slice()) {
+        if self.chapter_markers.original.as_deref() == Some(base.as_slice()) {
             return;
         }
-        self.original_chapters = Some(base);
+        self.chapter_markers.original = Some(base);
         self.refresh_chapter_markers();
     }
 
@@ -140,7 +136,7 @@ impl ControllerState {
         let markers = if self.skip_segments.is_empty() {
             Vec::new()
         } else {
-            if self.original_chapters.is_none() {
+            if self.chapter_markers.original.is_none() {
                 return;
             }
             let Some(duration_ticks) = self.last_state.duration_ticks.filter(|ticks| *ticks > 0)
@@ -151,38 +147,38 @@ impl ControllerState {
             build_segment_chapter_markers(&self.skip_segments, duration_seconds)
         };
 
-        let base = self.original_chapters.clone().unwrap_or_default();
+        let base = self.chapter_markers.original.clone().unwrap_or_default();
 
         if markers.is_empty() {
-            self.injected_chapter_markers.clear();
-            self.pending_chapter_markers = None;
-            self.chapter_marker_next_attempt_at = None;
-            if self.last_sent_chapter_list.take().is_some() {
+            self.chapter_markers.injected.clear();
+            self.chapter_markers.pending = None;
+            self.chapter_markers.next_attempt_at = None;
+            if self.chapter_markers.last_sent.take().is_some() {
                 let _ = self.send_chapter_list(&base);
             }
             return;
         }
 
-        self.injected_chapter_markers.clone_from(&markers);
+        self.chapter_markers.injected.clone_from(&markers);
         self.queue_chapter_list(merge_chapter_markers(base, markers));
     }
 
     fn queue_chapter_list(&mut self, list: Vec<Value>) {
-        if self.pending_chapter_markers.is_none()
-            && self.last_sent_chapter_list.as_ref() == Some(&list)
+        if self.chapter_markers.pending.is_none()
+            && self.chapter_markers.last_sent.as_ref() == Some(&list)
         {
             return;
         }
-        if self.pending_chapter_markers.as_ref() == Some(&list) {
+        if self.chapter_markers.pending.as_ref() == Some(&list) {
             return;
         }
-        self.pending_chapter_markers = Some(list);
-        self.chapter_marker_attempts = 0;
-        self.chapter_marker_next_attempt_at = Some(Instant::now());
+        self.chapter_markers.pending = Some(list);
+        self.chapter_markers.attempts = 0;
+        self.chapter_markers.next_attempt_at = Some(Instant::now());
     }
 
     pub(super) fn maybe_apply_chapter_markers(&mut self) {
-        let Some(list) = self.pending_chapter_markers.clone() else {
+        let Some(list) = self.chapter_markers.pending.clone() else {
             return;
         };
         if !self.mpv_playback_active {
@@ -190,24 +186,25 @@ impl ControllerState {
         }
         let now = Instant::now();
         if self
-            .chapter_marker_next_attempt_at
+            .chapter_markers
+            .next_attempt_at
             .is_some_and(|at| now < at)
         {
             return;
         }
-        if self.chapter_marker_attempts >= CHAPTER_MARKER_MAX_ATTEMPTS {
+        if self.chapter_markers.attempts >= CHAPTER_MARKER_MAX_ATTEMPTS {
             tracing::debug!(
                 target: "mpv.ipc",
                 "gave up applying segment chapter markers after {CHAPTER_MARKER_MAX_ATTEMPTS} attempts"
             );
-            self.pending_chapter_markers = None;
-            self.chapter_marker_next_attempt_at = None;
+            self.chapter_markers.pending = None;
+            self.chapter_markers.next_attempt_at = None;
             return;
         }
-        self.chapter_marker_attempts += 1;
-        self.last_sent_chapter_list = Some(list.clone());
+        self.chapter_markers.attempts += 1;
+        self.chapter_markers.last_sent = Some(list.clone());
         let _ = self.send_chapter_list(&list);
-        self.chapter_marker_next_attempt_at = Some(now + CHAPTER_MARKER_RETRY_INTERVAL);
+        self.chapter_markers.next_attempt_at = Some(now + CHAPTER_MARKER_RETRY_INTERVAL);
     }
 
     fn send_chapter_list(&self, chapters: &[Value]) -> bool {
