@@ -17,7 +17,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react"
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react"
+import { useEffect, useEffectEvent, useRef, useState, type PointerEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import {
@@ -34,8 +34,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Slider } from "@/components/ui/slider"
+import { cn } from "@/lib/utils"
 import {
   STREAMING_QUALITIES,
+  TICKS_PER_MS,
   imageUrl,
   qualityLabel,
   type PlayerChapter,
@@ -67,7 +69,6 @@ import {
 
 const SUBTITLES_OFF = "__off__"
 const TIME_DISPLAY_KEY = "mediaflick.player.time-display"
-const TICKS_PER_MS = 10_000
 
 function savedTimeDisplay() {
   try {
@@ -92,6 +93,13 @@ function formatClock(ms: number) {
   const seconds = total % 60
   const pad = (value: number) => String(value).padStart(2, "0")
   return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
+}
+
+/** "Pause (Space or K)": fixed keys first, then whichever bindings are set. */
+function withShortcuts(label: string, fixed: string[], bindings: (string | null | undefined)[] = []) {
+  const keys = [...fixed, ...bindings.filter((binding): binding is string => Boolean(binding)).map(shortcutLabel)]
+  const unique = keys.filter((key, index) => keys.indexOf(key) === index)
+  return unique.length ? `${label} (${unique.join(" or ")})` : label
 }
 
 function trackLabel(track: PlayerTrack, position: number) {
@@ -135,25 +143,38 @@ function currentChapter(chapters: PlayerChapter[], positionMs: number) {
   )
 }
 
-function TrackMenu({
-  icon,
-  label,
-  tracks,
-  value,
-  allowOff = false,
-  onValueChange,
-  onOpenChange,
-}: {
-  icon: ReactNode
-  label: string
+interface TrackChoices {
   tracks: PlayerTrack[]
   value: string
   allowOff?: boolean
   onValueChange: (value: string) => void
+}
+
+function TrackRadioItems({ tracks, value, allowOff = false, onValueChange }: TrackChoices) {
+  return (
+    <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
+      {allowOff && <DropdownMenuRadioItem value={SUBTITLES_OFF}>Off</DropdownMenuRadioItem>}
+      {tracks.map((track, index) => (
+        <DropdownMenuRadioItem key={track.id} value={String(track.id)}>
+          <span className="min-w-0 truncate">{trackLabel(track, index)}</span>
+        </DropdownMenuRadioItem>
+      ))}
+    </DropdownMenuRadioGroup>
+  )
+}
+
+function TrackMenu({
+  icon,
+  label,
+  onOpenChange,
+  ...choices
+}: TrackChoices & {
+  icon: ReactNode
+  label: string
   onOpenChange?: (open: boolean) => void
 }) {
-  const selected = tracks.find((track) => String(track.id) === value)
-  const title = selected ? `${label}: ${trackLabel(selected, tracks.indexOf(selected))}` : label
+  const selected = choices.tracks.find((track) => String(track.id) === choices.value)
+  const title = selected ? `${label}: ${trackLabel(selected, choices.tracks.indexOf(selected))}` : label
 
   return (
     <DropdownMenu onOpenChange={onOpenChange}>
@@ -164,16 +185,41 @@ function TrackMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" sideOffset={10} className="w-72">
         <DropdownMenuLabel>{label}</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
-          {allowOff && <DropdownMenuRadioItem value={SUBTITLES_OFF}>Off</DropdownMenuRadioItem>}
-          {tracks.map((track, index) => (
-            <DropdownMenuRadioItem key={track.id} value={String(track.id)}>
-              <span className="min-w-0 truncate">{trackLabel(track, index)}</span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+        <TrackRadioItems {...choices} />
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+function TrackSubmenu({ label, ...choices }: TrackChoices & { label: string }) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-72">
+        <TrackRadioItems {...choices} />
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
+function MuteButton({ muted, volume, title, onToggle, className }: {
+  muted: boolean
+  volume: number
+  title?: string
+  onToggle: () => void
+  className?: string
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      title={title}
+      aria-label={muted ? "Unmute" : "Mute"}
+      onClick={onToggle}
+      className={cn("size-8", className)}
+    >
+      {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+    </Button>
   )
 }
 
@@ -302,6 +348,33 @@ function isStreamingQuality(value: string): value is StreamingQualityId {
   return STREAMING_QUALITIES.some((quality) => quality.id === value)
 }
 
+const DELAYS = ["-2", "-1", "-0.5", "0", "0.5", "1", "2"]
+
+function signedSeconds(value: string) {
+  return `${Number(value) >= 0 ? "+" : ""}${value}s`
+}
+
+function DelaySubmenu({ label, value, onValueChange }: {
+  label: string
+  value: string
+  onValueChange: (value: string) => void
+}) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
+          {DELAYS.map((delay) => (
+            <DropdownMenuRadioItem key={delay} value={delay}>
+              {Number(delay) === 0 ? "No delay" : signedSeconds(delay)}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
+}
+
 function TuningMenu({
   tuning,
   onChange,
@@ -309,51 +382,26 @@ function TuningMenu({
   tuning: PlaybackTuning
   onChange: (patch: Partial<PlaybackTuning>, command: PlayerCommand, feedback: string) => void
 }) {
-  const delays = ["-2", "-1", "-0.5", "0", "0.5", "1", "2"]
   return (
     <>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Audio delay</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.audioDelay}
-            onValueChange={(value) =>
-              onChange(
-                { audioDelay: value },
-                { command: "set-audio-delay", delaySeconds: Number(value) },
-                `Audio delay ${Number(value) >= 0 ? "+" : ""}${value}s`,
-              )
-            }
-          >
-            {delays.map((delay) => (
-              <DropdownMenuRadioItem key={delay} value={delay}>
-                {Number(delay) === 0 ? "No delay" : `${Number(delay) > 0 ? "+" : ""}${delay}s`}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
-      <DropdownMenuSub>
-        <DropdownMenuSubTrigger>Subtitle delay</DropdownMenuSubTrigger>
-        <DropdownMenuSubContent>
-          <DropdownMenuRadioGroup
-            value={tuning.subtitleDelay}
-            onValueChange={(value) =>
-              onChange(
-                { subtitleDelay: value },
-                { command: "set-subtitle-delay", delaySeconds: Number(value) },
-                `Subtitle delay ${Number(value) >= 0 ? "+" : ""}${value}s`,
-              )
-            }
-          >
-            {delays.map((delay) => (
-              <DropdownMenuRadioItem key={delay} value={delay}>
-                {Number(delay) === 0 ? "No delay" : `${Number(delay) > 0 ? "+" : ""}${delay}s`}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-        </DropdownMenuSubContent>
-      </DropdownMenuSub>
+      <DelaySubmenu
+        label="Audio delay"
+        value={tuning.audioDelay}
+        onValueChange={(value) => onChange(
+          { audioDelay: value },
+          { command: "set-audio-delay", delaySeconds: Number(value) },
+          `Audio delay ${signedSeconds(value)}`,
+        )}
+      />
+      <DelaySubmenu
+        label="Subtitle delay"
+        value={tuning.subtitleDelay}
+        onValueChange={(value) => onChange(
+          { subtitleDelay: value },
+          { command: "set-subtitle-delay", delaySeconds: Number(value) },
+          `Subtitle delay ${signedSeconds(value)}`,
+        )}
+      />
       <DropdownMenuSub>
         <DropdownMenuSubTrigger>Subtitle size</DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
@@ -601,55 +649,68 @@ function ActivePlayerBar({
     saveTimeDisplay(next ? "remaining" : "elapsed")
   }
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target instanceof HTMLElement ? event.target : null
-      if (
-        target?.isContentEditable ||
-        target?.matches("input, textarea, select, [role='slider'], [role='menuitemradio']")
-      ) {
-        return
-      }
-      if (event.repeat || event.isComposing || target?.closest("[role=dialog], [role=menu], [role=listbox], [data-shortcut-recorder]")) return
-      const binding = shortcutFromEvent(event)
-      if (!binding) return
-      const matches = (key: string | null | undefined) => Boolean(key) && normalizeShortcut(key ?? "") === binding
-      if (binding === "SPACE" && target?.closest("button, a")) return
-      if (builtIn && matches(settings.data?.client.player.markWatchedNext)) {
-        event.preventDefault()
-        send({ command: "mark-watched-next" }, "Marked watched")
-      } else if (binding === "SPACE" || matches(comfort.pauseKey)) {
-        event.preventDefault()
-        togglePause()
-      } else if (binding === "LEFT" || matches(comfort.seekBackKey)) {
-        event.preventDefault()
-        relativeSeek(-seekBackMs)
-      } else if (binding === "RIGHT" || matches(comfort.seekForwardKey)) {
-        event.preventDefault()
-        relativeSeek(seekForwardMs)
-      } else if (matches(comfort.muteKey)) {
-        event.preventDefault()
-        toggleMute()
-      } else if (matches(comfort.fullscreenKey)) {
-        event.preventDefault()
-        send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
-      } else if (builtIn && matches(comfort.stopKey)) {
-        event.preventDefault()
-        send({ command: "stop" }, "Playback stopped")
-      } else if (builtIn && matches(comfort.subtitlesKey)) {
-        event.preventDefault()
-        send({ command: "toggle-subtitles" }, "Subtitles toggled")
-      } else if (builtIn && matches(comfort.seekBackThirtyKey)) {
-        event.preventDefault()
-        relativeSeek(-30_000)
-      } else if (builtIn && matches(comfort.seekForwardThirtyKey)) {
-        event.preventDefault()
-        relativeSeek(30_000)
-      }
+  const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    const target = event.target instanceof HTMLElement ? event.target : null
+    if (
+      target?.isContentEditable ||
+      target?.matches("input, textarea, select, [role='slider'], [role='menuitemradio']")
+    ) {
+      return
     }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
+    if (event.repeat || event.isComposing || target?.closest("[role=dialog], [role=menu], [role=listbox], [data-shortcut-recorder]")) return
+    const binding = shortcutFromEvent(event)
+    if (!binding) return
+    const matches = (key: string | null | undefined) => Boolean(key) && normalizeShortcut(key ?? "") === binding
+    if (binding === "SPACE" && target?.closest("button, a")) return
+    if (builtIn && matches(settings.data?.client.player.markWatchedNext)) {
+      event.preventDefault()
+      send({ command: "mark-watched-next" }, "Marked watched")
+    } else if (binding === "SPACE" || matches(comfort.pauseKey)) {
+      event.preventDefault()
+      togglePause()
+    } else if (binding === "LEFT" || matches(comfort.seekBackKey)) {
+      event.preventDefault()
+      relativeSeek(-seekBackMs)
+    } else if (binding === "RIGHT" || matches(comfort.seekForwardKey)) {
+      event.preventDefault()
+      relativeSeek(seekForwardMs)
+    } else if (matches(comfort.muteKey)) {
+      event.preventDefault()
+      toggleMute()
+    } else if (matches(comfort.fullscreenKey)) {
+      event.preventDefault()
+      send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
+    } else if (builtIn && matches(comfort.stopKey)) {
+      event.preventDefault()
+      send({ command: "stop" }, "Playback stopped")
+    } else if (builtIn && matches(comfort.subtitlesKey)) {
+      event.preventDefault()
+      send({ command: "toggle-subtitles" }, "Subtitles toggled")
+    } else if (builtIn && matches(comfort.seekBackThirtyKey)) {
+      event.preventDefault()
+      relativeSeek(-30_000)
+    } else if (builtIn && matches(comfort.seekForwardThirtyKey)) {
+      event.preventDefault()
+      relativeSeek(30_000)
+    }
   })
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => handleKeyDown(event)
+    window.addEventListener("keydown", listener)
+    return () => window.removeEventListener("keydown", listener)
+  }, [])
+
+  const audioChoices: TrackChoices = {
+    tracks: audioTracks,
+    value: selectedAudio ? String(selectedAudio.id) : "",
+    onValueChange: (value) => selectTrack("audio", Number(value)),
+  }
+  const subtitleChoices: TrackChoices = {
+    tracks: subtitleTracks,
+    value: selectedSubtitle ? String(selectedSubtitle.id) : SUBTITLES_OFF,
+    allowOff: true,
+    onValueChange: (value) => selectTrack("subtitle", value === SUBTITLES_OFF ? null : Number(value)),
+  }
 
   const timeText = showRemaining
     ? `-${formatClock(Math.max(0, duration - position))}`
@@ -706,7 +767,7 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={`Back ${comfort.seekBackSeconds} seconds (Left or J)`}
+        title={withShortcuts(`Back ${comfort.seekBackSeconds} seconds`, ["←"], [comfort.seekBackKey])}
         aria-label={`Back ${comfort.seekBackSeconds} seconds`}
         onClick={() => relativeSeek(-seekBackMs)}
         className="hidden sm:inline-flex"
@@ -716,7 +777,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title={`${paused ? "Resume" : "Pause"} (Space${comfort.pauseKey ? ` or ${shortcutLabel(comfort.pauseKey)}` : ""})`}
+        title={withShortcuts(paused ? "Resume" : "Pause", ["Space"], [comfort.pauseKey])}
         aria-label={paused ? "Resume" : "Pause"}
         onClick={togglePause}
       >
@@ -725,7 +786,7 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title={`Forward ${comfort.seekForwardSeconds} seconds (Right or L)`}
+        title={withShortcuts(`Forward ${comfort.seekForwardSeconds} seconds`, ["→"], [comfort.seekForwardKey])}
         aria-label={`Forward ${comfort.seekForwardSeconds} seconds`}
         onClick={() => relativeSeek(seekForwardMs)}
         className="hidden sm:inline-flex"
@@ -746,7 +807,7 @@ function ActivePlayerBar({
       <Button
         variant="ghost"
         size="icon"
-        title="Stop"
+        title={withShortcuts("Stop", [], builtIn ? [comfort.stopKey] : [])}
         aria-label="Stop"
         onClick={() => send({ command: "stop" })}
         className="hidden 2xl:inline-flex"
@@ -778,27 +839,24 @@ function ActivePlayerBar({
         </Button>
       )}
 
-      <button
-        type="button"
-        className="hidden shrink-0 text-xs tabular-nums text-muted-foreground hover:text-foreground md:block"
+      <Button
+        variant="ghost"
+        size="sm"
+        className="hidden h-auto shrink-0 px-1 text-xs font-normal tabular-nums text-muted-foreground hover:text-foreground md:inline-flex"
         title="Toggle elapsed and remaining time"
         aria-label={`${timeText}. Toggle elapsed and remaining time`}
         onClick={toggleTimeDisplay}
       >
         {timeText}
-      </button>
+      </Button>
 
       <div className="hidden w-32 shrink-0 items-center gap-2 xl:flex">
-        <Button
-          variant="ghost"
-          size="icon"
-          title={muted ? "Unmute (M)" : "Mute (M)"}
-          aria-label={muted ? "Unmute" : "Mute"}
-          onClick={toggleMute}
-          className="size-8"
-        >
-          {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-        </Button>
+        <MuteButton
+          muted={muted}
+          volume={volume}
+          title={withShortcuts(muted ? "Unmute" : "Mute", [], [comfort.muteKey])}
+          onToggle={toggleMute}
+        />
         <Slider
           value={[muted ? 0 : volume]}
           max={100}
@@ -815,10 +873,8 @@ function ActivePlayerBar({
           <TrackMenu
             icon={<AudioLines className="size-4" />}
             label="Audio track"
-            tracks={audioTracks}
-            value={selectedAudio ? String(selectedAudio.id) : ""}
-            onValueChange={(value) => selectTrack("audio", Number(value))}
             onOpenChange={onMenuOpenChange}
+            {...audioChoices}
           />
         </div>
       )}
@@ -827,13 +883,8 @@ function ActivePlayerBar({
           <TrackMenu
             icon={<Captions className="size-4" />}
             label="Subtitles"
-            tracks={subtitleTracks}
-            value={selectedSubtitle ? String(selectedSubtitle.id) : SUBTITLES_OFF}
-            allowOff
-            onValueChange={(value) =>
-              selectTrack("subtitle", value === SUBTITLES_OFF ? null : Number(value))
-            }
             onOpenChange={onMenuOpenChange}
+            {...subtitleChoices}
           />
         </div>
       )}
@@ -926,7 +977,7 @@ function ActivePlayerBar({
       <Button
         variant="secondary"
         size="icon"
-        title="Toggle fullscreen (F)"
+        title={withShortcuts("Toggle fullscreen", [], [comfort.fullscreenKey])}
         aria-label="Toggle fullscreen"
         onClick={() => send({ command: "toggle-fullscreen" }, "Fullscreen toggled")}
         className="hidden sm:inline-flex"
@@ -954,9 +1005,7 @@ function ActivePlayerBar({
             <DropdownMenuSubTrigger>Volume</DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-56 p-3">
               <div className="flex items-center gap-3">
-                <button type="button" aria-label={muted ? "Unmute" : "Mute"} onClick={toggleMute}>
-                  {muted || volume === 0 ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-                </button>
+                <MuteButton muted={muted} volume={volume} onToggle={toggleMute} className="shrink-0" />
                 <Slider
                   value={[muted ? 0 : volume]}
                   max={100}
@@ -969,43 +1018,8 @@ function ActivePlayerBar({
               </div>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          {audioTracks.length > 1 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Audio track</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-72">
-                <DropdownMenuRadioGroup
-                  value={selectedAudio ? String(selectedAudio.id) : ""}
-                  onValueChange={(value) => selectTrack("audio", Number(value))}
-                >
-                  {audioTracks.map((track, index) => (
-                    <DropdownMenuRadioItem key={track.id} value={String(track.id)}>
-                      <span className="truncate">{trackLabel(track, index)}</span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
-          {subtitleTracks.length > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Subtitles</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-72">
-                <DropdownMenuRadioGroup
-                  value={selectedSubtitle ? String(selectedSubtitle.id) : SUBTITLES_OFF}
-                  onValueChange={(value) =>
-                    selectTrack("subtitle", value === SUBTITLES_OFF ? null : Number(value))
-                  }
-                >
-                  <DropdownMenuRadioItem value={SUBTITLES_OFF}>Off</DropdownMenuRadioItem>
-                  {subtitleTracks.map((track, index) => (
-                    <DropdownMenuRadioItem key={track.id} value={String(track.id)}>
-                      <span className="truncate">{trackLabel(track, index)}</span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
+          {audioTracks.length > 1 && <TrackSubmenu label="Audio track" {...audioChoices} />}
+          {subtitleTracks.length > 0 && <TrackSubmenu label="Subtitles" {...subtitleChoices} />}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => send({ command: "stop" })}>
             Stop playback
