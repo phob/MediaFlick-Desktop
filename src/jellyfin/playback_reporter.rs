@@ -6,7 +6,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 
 use crate::app::{logger, urls};
-use crate::playback::{HttpHeader, PlaybackContext, PlaybackRequest, ReportingState};
+use crate::playback::{
+    HttpHeader, PlaybackContext, PlaybackRequest, ReportingState, TICKS_PER_MILLISECOND, non_empty,
+};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -268,7 +270,7 @@ impl PlaybackSession {
                     launch
                         .start_milliseconds
                         .filter(|value| *value > 0.0)
-                        .map(|value| (value * 10_000.0).round() as i64)
+                        .map(|value| (value * TICKS_PER_MILLISECOND).round() as i64)
                 })
                 .unwrap_or(0)
                 .max(0),
@@ -627,10 +629,6 @@ fn fill_string(target: &mut Option<String>, value: Option<&str>) {
     }
 }
 
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
 fn display_opt(value: Option<&str>) -> &str {
     non_empty(value).unwrap_or("unknown")
 }
@@ -638,7 +636,8 @@ fn display_opt(value: Option<&str>) -> &str {
 fn unix_now_ticks() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().saturating_mul(10_000) as i64)
+        // A Jellyfin tick is 100 ns.
+        .map(|duration| i64::try_from(duration.as_nanos() / 100).unwrap_or(i64::MAX))
         .unwrap_or_default()
 }
 

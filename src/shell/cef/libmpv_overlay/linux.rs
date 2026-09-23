@@ -1,10 +1,6 @@
-#[path = "linux/display.rs"]
 mod display;
-#[path = "linux/input.rs"]
 mod input;
-#[path = "linux/scale.rs"]
 mod scale;
-#[path = "linux/window.rs"]
 mod window;
 
 use std::cell::{Cell, RefCell};

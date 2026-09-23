@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::app::urls::percent_decode;
 
+/// Jellyfin positions and durations are ticks of 100 ns.
 pub const TICKS_PER_SECOND: f64 = 10_000_000.0;
+pub const TICKS_PER_MILLISECOND: f64 = 10_000.0;
 
 static PLAYBACK_COUNTER: AtomicI64 = AtomicI64::new(1);
 
@@ -20,6 +22,19 @@ pub fn seconds_to_ticks(seconds: f64) -> Option<i64> {
     seconds
         .is_finite()
         .then(|| (seconds.max(0.0) * TICKS_PER_SECOND).round() as i64)
+}
+
+pub fn ticks_to_seconds(ticks: i64) -> f64 {
+    ticks as f64 / TICKS_PER_SECOND
+}
+
+pub fn ticks_to_milliseconds(ticks: i64) -> f64 {
+    ticks as f64 / TICKS_PER_MILLISECOND
+}
+
+/// The trimmed text, or `None` when it is missing or blank.
+pub fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -75,7 +90,7 @@ impl PlaybackRequest {
         }
         self.start_time_ticks
             .filter(|ticks| *ticks > 0)
-            .map(|ticks| ticks as f64 / 10_000_000.0)
+            .map(ticks_to_seconds)
     }
 
     pub fn dedupe_key(&self) -> String {
@@ -329,12 +344,8 @@ pub enum PlayerCommand {
 
 fn ticks_summary(ticks: Option<i64>) -> String {
     ticks
-        .map(|value| format!("{value} ({:.3}s)", value as f64 / 10_000_000.0))
+        .map(|value| format!("{value} ({:.3}s)", ticks_to_seconds(value)))
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn merge_option<T: Clone>(target: &mut Option<T>, source: &Option<T>) {

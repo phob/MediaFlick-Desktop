@@ -24,7 +24,6 @@ union NodeData {
 }
 
 #[cfg(test)]
-#[path = "gpu_next/tests.rs"]
 mod tests;
 
 #[repr(C)]

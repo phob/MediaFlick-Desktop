@@ -23,7 +23,6 @@ use crate::preferences::{
 pub use super::commands::control_command;
 use session::{is_completion_reason, normalized_stop_reason};
 
-#[path = "playback_transition.rs"]
 mod playback_transition;
 mod segment_skip;
 mod session;
