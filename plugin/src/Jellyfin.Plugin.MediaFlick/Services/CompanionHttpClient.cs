@@ -65,7 +65,16 @@ public sealed class CompanionHttpClient
             {
                 var mappedUser = seerrUserId is not null;
                 var failure = FailureKind(response.StatusCode, mappedUser);
-                _health.Failure(serviceName, failure);
+                if (failure == ServiceFailure.RequestFailed)
+                {
+                    // A missing title or a per-user permission answer proves
+                    // the service is reachable and accepts the key.
+                    _health.Success(serviceName);
+                }
+                else
+                {
+                    _health.Failure(serviceName, failure);
+                }
                 ReportFailureStatus(serviceName, response.StatusCode, mappedUser);
                 // The upstream body can echo request data or name internal
                 // hosts, so Desktop only ever receives fixed plugin wording.

@@ -97,11 +97,8 @@ internal static partial class RatingsContract
             }
             else if (provider == "imdb")
             {
-                providerId = providerId.ToLowerInvariant();
-                if (!ImdbId().IsMatch(providerId))
-                {
-                    throw new RatingRequestException("IMDb providerId must be a stable tt identifier");
-                }
+                providerId = ImdbIds.Normalize(providerId)
+                    ?? throw new RatingRequestException("IMDb providerId must be a stable tt identifier");
             }
             else
             {
@@ -125,8 +122,9 @@ internal static partial class RatingsContract
     /// The legacy source/rawSource keys remain for Desktop v1 compatibility,
     /// but carry the canonical catalog id rather than upstream text.
     /// </summary>
-    public static JsonArray NormalizeMedia(JsonNode? item)
+    public static JsonArray NormalizeMedia(JsonNode? node)
     {
+        var item = node as JsonObject;
         var bySource = new SortedDictionary<string, JsonObject>(StringComparer.Ordinal);
         if (item?["ratings"] is JsonArray ratings)
         {
@@ -134,20 +132,17 @@ internal static partial class RatingsContract
             {
                 AddRating(
                     bySource,
-                    NodeString(candidate["source"]) ?? NodeString(candidate["sourceId"]),
-                    Number(candidate["value"] ?? candidate["rating"]),
-                    Number(candidate["score"]),
+                    JsonRead.String(candidate["source"]) ?? JsonRead.String(candidate["sourceId"]),
+                    JsonRead.Number(candidate["value"] ?? candidate["rating"]),
+                    JsonRead.Number(candidate["score"]),
                     Integer(candidate["votes"]));
             }
         }
 
-        AddRating(bySource, "mdblist_score", Number(item?["score"]), Number(item?["score"]), null);
-        AddRating(
-            bySource,
-            "mdblist_score_average",
-            Number(item?["score_average"] ?? item?["scoreAverage"]),
-            Number(item?["score_average"] ?? item?["scoreAverage"]),
-            null);
+        var score = JsonRead.Number(item?["score"]);
+        AddRating(bySource, "mdblist_score", score, score, null);
+        var average = JsonRead.Number(item?["score_average"] ?? item?["scoreAverage"]);
+        AddRating(bySource, "mdblist_score_average", average, average, null);
         return new JsonArray(bySource.Values.Select(value => (JsonNode)value).ToArray());
     }
 
@@ -166,9 +161,9 @@ internal static partial class RatingsContract
                 // `rawSource` values are deliberately never re-emitted.
                 AddRating(
                     bySource,
-                    NodeString(candidate["sourceId"]),
-                    Number(candidate["value"]),
-                    Number(candidate["score"]),
+                    JsonRead.String(candidate["sourceId"]),
+                    JsonRead.Number(candidate["value"]),
+                    JsonRead.Number(candidate["score"]),
                     Integer(candidate["votes"]));
             }
         }
@@ -178,7 +173,7 @@ internal static partial class RatingsContract
 
     public static string? NormalizeSourceUpdatedAt(JsonNode? value)
     {
-        var text = NodeString(value)?.Trim();
+        var text = JsonRead.String(value)?.Trim();
         if (string.IsNullOrEmpty(text)
             || text.Length > 40
             || text.Any(character => !(char.IsAsciiDigit(character)
@@ -225,8 +220,12 @@ internal static partial class RatingsContract
             "valid" => "Credential is valid.",
             "invalid" when provider == RatingProviders.MdbList => "MDBList rejected the saved API key.",
             "invalid" => "The saved credential is invalid.",
-            "offline" or "unavailable" => "MDBList is temporarily unavailable; cached ratings remain available.",
-            "rate_limited" => "MDBList quota is exhausted; cached ratings remain available.",
+            "offline" or "unavailable" when provider == RatingProviders.MdbList =>
+                "MDBList is temporarily unavailable; cached ratings remain available.",
+            "offline" or "unavailable" => "TMDB is temporarily unavailable; the saved credential is kept.",
+            "rate_limited" when provider == RatingProviders.MdbList =>
+                "MDBList quota is exhausted; cached ratings remain available.",
+            "rate_limited" => "TMDB is limiting requests; try again later.",
             "saved" => "Saved for future TMDB features. Rating retrieval does not use this key.",
             _ => null
         };
@@ -314,64 +313,16 @@ internal static partial class RatingsContract
     private static long? BoundedNonNegative(long? value, long maximum)
         => value is { } number && number >= 0 && number <= maximum ? number : null;
 
-    private static string? NodeString(JsonNode? node)
-    {
-        try
-        {
-            return node?.GetValue<string>();
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
-    private static double? Number(JsonNode? node)
-    {
-        if (node is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            if (node is JsonValue jsonValue
-                && node.GetValueKind() == System.Text.Json.JsonValueKind.Number
-                && jsonValue.TryGetValue<double>(out var number)
-                && double.IsFinite(number))
-            {
-                return number;
-            }
-
-            var text = node.GetValue<string>();
-            return text.Length <= 32
-                && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)
-                && double.IsFinite(number)
-                    ? number
-                    : null;
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
     private static long? Integer(JsonNode? node)
-    {
-        var value = Number(node);
-        return value is { } number && number >= 0 && number <= MaxVotes
+        => JsonRead.Number(node) is { } number && number >= 0 && number <= MaxVotes
             ? Convert.ToInt64(Math.Truncate(number))
             : null;
-    }
 
     [GeneratedRegex("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", RegexOptions.CultureInvariant)]
     private static partial Regex ValidItemId();
 
     [GeneratedRegex("^[1-9][0-9]{0,18}$", RegexOptions.CultureInvariant)]
     private static partial Regex TmdbId();
-
-    [GeneratedRegex("^tt[0-9]{5,12}$", RegexOptions.CultureInvariant)]
-    private static partial Regex ImdbId();
 }
 
 internal sealed class RatingRequestException(string message) : Exception(message);

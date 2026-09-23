@@ -60,7 +60,15 @@ public sealed class UpstreamInputTests
         Assert.DoesNotContain(ServiceHost, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ApiKey, error.Message, StringComparison.Ordinal);
         Assert.NotNull(error.Failure);
-        Assert.Equal(error.Failure, health.Get("seerr").Failure);
+        if (error.Failure == ServiceFailure.RequestFailed)
+        {
+            // Per-request answers prove the service works.
+            Assert.True(health.IsHealthy("seerr"));
+        }
+        else
+        {
+            Assert.Equal(error.Failure, health.Get("seerr").Failure);
+        }
     }
 
     [Fact]
