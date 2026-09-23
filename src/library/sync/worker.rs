@@ -13,6 +13,11 @@ use super::{Flags, SYNC_INTERVAL, Signal, SyncHandle, Trigger, WorkerState};
 
 /// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
+/// The longest a warm start holds its first cycle for the window to paint.
+const STARTUP_HOLD_MAX: Duration = Duration::from_secs(15);
+/// How long the first cycle waits after the window paints, so Home's live
+/// follow-up requests finish before the cycle's change notifications arrive.
+const STARTUP_HOLD_SETTLE: Duration = Duration::from_secs(3);
 
 pub fn spawn(library: Arc<Library>, session: Arc<Session>) -> SyncHandle {
     let handle = SyncHandle {
@@ -37,8 +42,16 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
     let mut backoff = Duration::ZERO;
     let mut normal_deadline = Instant::now();
     let mut trigger = Trigger::Scheduled;
+    // A restored session with a usable catalog paints Home from SQLite. A cycle
+    // started beside it would commit pages and send change notifications that
+    // refetch Home while it is still loading, so the first cycle waits for the
+    // window instead. A catalog that is not ready yet gates the window itself
+    // and is never held.
+    let mut startup_hold = (session.is_authenticated() && super::bootstrap_progress(library).ready)
+        .then(|| Instant::now() + STARTUP_HOLD_MAX);
     loop {
         if !session.is_authenticated() {
+            startup_hold = None;
             handle.running.store(false, Ordering::Relaxed);
             match wait(handle, IDLE_INTERVAL) {
                 Wake::Stopped => return,
@@ -48,6 +61,24 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                 Wake::Elapsed => {}
             }
             continue;
+        }
+
+        if let Some(until) = startup_hold {
+            let until = startup_hold_deadline(until, handle.window_ready(), Instant::now());
+            let remaining = until.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                startup_hold = None;
+            } else {
+                startup_hold = Some(until);
+                // A request made meanwhile, such as the event socket's
+                // reconnect nudge, runs as this first cycle once it is due.
+                match wait(handle, remaining) {
+                    Wake::Stopped => return,
+                    Wake::Requested => trigger = Trigger::Requested,
+                    Wake::Elapsed => {}
+                }
+                continue;
+            }
         }
 
         let normal_due = trigger == Trigger::Requested || Instant::now() >= normal_deadline;
@@ -106,6 +137,16 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
             Wake::Requested => trigger = Trigger::Requested,
             Wake::Elapsed => {}
         }
+    }
+}
+
+/// The held first cycle's start: the cap, or a short settle after the window
+/// has painted, whichever comes first.
+fn startup_hold_deadline(until: Instant, window_ready: bool, now: Instant) -> Instant {
+    if window_ready {
+        until.min(now + STARTUP_HOLD_SETTLE)
+    } else {
+        until
     }
 }
 
@@ -174,7 +215,7 @@ mod tests {
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
-    use super::{Wake, jittered, wait};
+    use super::{STARTUP_HOLD_SETTLE, Wake, jittered, startup_hold_deadline, wait};
     use crate::library::sync::{Flags, SYNC_INTERVAL, Signal, SyncHandle, WorkerState};
 
     #[test]
@@ -195,6 +236,43 @@ mod tests {
             super::next_backoff(Duration::ZERO, false),
             SYNC_INTERVAL * 2
         );
+    }
+
+    #[test]
+    fn a_painted_window_shortens_the_startup_hold_to_its_settle() {
+        let now = std::time::Instant::now();
+        let cap = now + Duration::from_secs(15);
+        assert_eq!(startup_hold_deadline(cap, false, now), cap);
+        assert_eq!(
+            startup_hold_deadline(cap, true, now),
+            now + STARTUP_HOLD_SETTLE
+        );
+        // Re-evaluating later never pushes the start past the settle already set.
+        let settled = startup_hold_deadline(cap, true, now);
+        assert_eq!(
+            startup_hold_deadline(settled, true, now + Duration::from_secs(1)),
+            settled
+        );
+        // Nor past the cap.
+        let late = cap - Duration::from_secs(1);
+        assert_eq!(startup_hold_deadline(cap, true, late), cap);
+    }
+
+    #[test]
+    fn a_window_ready_report_wakes_a_held_worker_without_requesting_a_cycle() {
+        let handle = SyncHandle {
+            signal: Arc::new(Signal {
+                flags: Mutex::new(Flags::default()),
+                condvar: Condvar::new(),
+            }),
+            running: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(WorkerState::default())),
+        };
+        assert!(!handle.window_ready());
+
+        handle.release_startup_hold();
+        assert!(handle.window_ready());
+        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
     }
 
     #[test]

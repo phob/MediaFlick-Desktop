@@ -16,6 +16,7 @@ pub(super) fn route(
 }
 
 fn shell_window_ready(services: &Arc<Services>) -> ApiResponse {
+    services.sync.release_startup_hold();
     match services.shell.request(ShellRequest::MainWindowReady) {
         Ok(()) => ApiResponse::ok(json!({ "queued": true })),
         Err(error) => ApiResponse::error(503, error),

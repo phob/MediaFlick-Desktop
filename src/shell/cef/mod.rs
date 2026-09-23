@@ -99,6 +99,21 @@ pub fn run(config: &AppConfig) -> i32 {
         ..Default::default()
     };
 
+    // The library, session, and preference files need nothing from CEF, so
+    // they load while Chromium initializes. `on_context_initialized` makes the
+    // same call on the UI thread, which waits for this one through the
+    // services init lock (or builds them itself if this thread never ran)
+    // before anything that depends on them is created.
+    let service_settings = config.settings.clone();
+    if let Err(error) = thread::Builder::new()
+        .name("services-init".to_string())
+        .spawn(move || {
+            services::init_with_settings(service_settings);
+        })
+    {
+        tracing::warn!(target: "main", "could not start services early: {error}");
+    }
+
     if initialize(
         Some(args.as_main_args()),
         Some(&settings),
