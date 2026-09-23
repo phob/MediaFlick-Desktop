@@ -77,6 +77,14 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# The fake mpv IPC server in tests creates named pipes.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+] }
+
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"
 
