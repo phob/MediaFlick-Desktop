@@ -1,7 +1,6 @@
 {
   "playerBackend": "libmpv",
   "mpvPath": null,
-  "mpchcPath": null,
   "defaultFullscreen": "fullscreen",
   "markWatchedNext": "q",
   "comfort": {

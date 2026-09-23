@@ -26,7 +26,6 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
     player: {
       playerBackend: "mpv",
       mpvPath: null,
-      mpchcPath: null,
       defaultFullscreen: "windowed",
       markWatchedNext: null,
       playerConfigured: true, comfort: DEFAULT_COMFORT,
@@ -41,7 +40,7 @@ const settings = (cardPreviews: boolean): ClientSettings => ({
     application: { closeBehavior: "exit_app", showScrollbars: false, logLevel: "info" },
   },
   appearance: appearance(cardPreviews),
-  capabilities: { platform: "windows", libmpv: true, mpchc: false, mpvInstaller: false },
+  capabilities: { platform: "windows", libmpv: true, mpvInstaller: false },
   serverUrl: null,
 })
 
@@ -107,18 +106,16 @@ test("appearance settings do not offer a color mode control", () => {
   expect(screen.queryByText("System", { exact: true })).toBeNull()
 })
 
-test.each(["mpv", "mpchc"] as const)("%s player fields are associated with visible labels and help", (backend) => {
+test("external mpv player fields are associated with visible labels and help", () => {
   const client = testQueryClient()
   const configured = settings(false)
-  configured.client.player.playerBackend = backend
-  configured.capabilities.mpchc = true
+  configured.client.player.playerBackend = "mpv"
   client.setQueryData(queryKeys.settings, configured)
   client.setQueryData(queryKeys.status, { authenticated: true })
   render(<TestProviders client={client} initialEntries={["/settings/client/player"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
-  const names = backend === "mpv" ? ["Mark watched key", "mpv executable"] : ["MPC-HC executable"]
-  for (const name of names) {
+  for (const name of ["Mark watched key", "mpv executable"]) {
     const input = screen.getByRole(name === "Mark watched key" ? "button" : "textbox", { name })
     expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBeTruthy()
   }

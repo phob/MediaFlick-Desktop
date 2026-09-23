@@ -44,8 +44,6 @@ pub struct PlayerSettingsPatch {
     /// An explicit JSON `null` clears a path; an omitted field preserves it.
     #[serde(default)]
     pub mpv_path: NullablePatch<String>,
-    #[serde(default)]
-    pub mpchc_path: NullablePatch<String>,
     pub default_fullscreen: Option<String>,
     /// Missing leaves the binding alone; JSON `null` explicitly disables it.
     #[serde(default)]
@@ -206,24 +204,15 @@ impl PreferencesService {
         self.update_with_plan(
             move |next| {
                 if let Some(value) = patch.player_backend.as_deref() {
-                    let backend = PlayerBackend::from_id(value)
-                        .ok_or_else(|| PreferencesError::invalid("player backend"))?;
-                    if backend == PlayerBackend::Mpchc && !cfg!(target_os = "windows") {
-                        return Err(PreferencesError(
-                            "MPC-HC is only available on Windows".to_string(),
-                        ));
-                    }
-                    next.player_backend = Some(backend);
+                    next.player_backend = Some(
+                        PlayerBackend::from_id(value)
+                            .ok_or_else(|| PreferencesError::invalid("player backend"))?,
+                    );
                 }
                 match patch.mpv_path {
                     NullablePatch::Unchanged => {}
                     NullablePatch::Clear => next.mpv_path = None,
                     NullablePatch::Set(value) => next.mpv_path = clean_path(&value),
-                }
-                match patch.mpchc_path {
-                    NullablePatch::Unchanged => {}
-                    NullablePatch::Clear => next.mpchc_path = None,
-                    NullablePatch::Set(value) => next.mpchc_path = clean_path(&value),
                 }
                 if let Some(value) = patch.default_fullscreen.as_deref() {
                     next.default_fullscreen = FullscreenBehavior::from_id(value)
@@ -390,7 +379,7 @@ impl PreferencesService {
             next.mpv_path = clean_path(&path);
             // Choosing the one-click installer is an explicit choice of mpv;
             // make its completed installation immediately usable even if the
-            // previous backend was MPC-HC.
+            // previous backend was the built-in player.
             next.player_backend = Some(PlayerBackend::Mpv);
             Ok(())
         })
@@ -498,7 +487,6 @@ impl SettingsApplyPlan {
                     || match next.effective_backend() {
                         super::PlayerBackend::Libmpv => false,
                         super::PlayerBackend::Mpv => previous.mpv_path != next.mpv_path,
-                        super::PlayerBackend::Mpchc => previous.mpchc_path != next.mpchc_path,
                     }),
             update_input_bindings: false,
             update_segment_policy: previous.segment_skip_config() != next.segment_skip_config(),
@@ -542,7 +530,6 @@ mod tests {
         let writable = json!({
             "playerBackend": "mpv",
             "mpvPath": null,
-            "mpchcPath": null,
             "defaultFullscreen": "fullscreen",
             "markWatchedNext": "w",
         });
@@ -551,7 +538,6 @@ mod tests {
         let response_shape = json!({
             "playerBackend": "mpv",
             "mpvPath": null,
-            "mpchcPath": null,
             "defaultFullscreen": "fullscreen",
             "markWatchedNext": "w",
             "playerConfigured": true,
@@ -677,9 +663,12 @@ mod tests {
 
     #[test]
     fn ignores_inactive_paths_and_non_destructive_window_defaults() {
-        let previous = AppSettings::default();
+        let previous = AppSettings {
+            player_backend: Some(crate::preferences::PlayerBackend::Libmpv),
+            ..AppSettings::default()
+        };
         let mut next = previous.clone();
-        next.mpchc_path = Some("other.exe".to_string());
+        next.mpv_path = Some("other.exe".to_string());
         next.default_fullscreen = crate::preferences::FullscreenBehavior::Windowed;
 
         assert!(!SettingsApplyPlan::between(&previous, &next).rebuild_player);
@@ -722,7 +711,7 @@ mod tests {
     fn switching_the_effective_backend_requires_a_restart() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
-        next.player_backend = Some(crate::preferences::PlayerBackend::Mpchc);
+        next.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
 
         let plan = SettingsApplyPlan::between(&previous, &next);
         assert!(!plan.rebuild_player);

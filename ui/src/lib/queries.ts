@@ -371,7 +371,7 @@ export function usePlaybackNeighbors(itemId: string | undefined, enabled = true)
   })
 }
 
-/** Poll MPC-HC live; mpv pushes state and needs only a missed-event fallback. */
+/** mpv pushes state; poll quickly only for a backend that cannot push position. */
 export function usePlayerState() {
   return useQuery({
     queryKey: queryKeys.playerState,
