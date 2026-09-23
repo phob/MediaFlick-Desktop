@@ -198,31 +198,29 @@ impl Library {
         })
     }
 
-    pub fn recently_added(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
-        // An index can order one kind but not two at once, so each kind takes
-        // its newest rows from `items_kind_added` and only those are merged.
+    /// The newest added episode of each series, newest first. Rows stream from
+    /// `items_kind_added`, so the walk stops once `limit` series are found
+    /// instead of grouping every cached episode.
+    pub fn recently_added_episodes(&self, limit: usize) -> rusqlite::Result<Vec<Value>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS} FROM (
-                     SELECT * FROM (
-                         SELECT id FROM items WHERE kind = 'Movie'
-                         ORDER BY date_created DESC, id DESC LIMIT ?1
-                     )
-                     UNION ALL
-                     SELECT * FROM (
-                         SELECT id FROM items WHERE kind = 'Series'
-                         ORDER BY date_created DESC, id DESC LIMIT ?1
-                     )
-                 ) newest
-                 JOIN items i ON i.id = newest.id
+                "SELECT {SUMMARY_COLUMNS} FROM items i
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
-                 ORDER BY i.date_created DESC NULLS LAST, i.id DESC
-                 LIMIT ?1"
+                 WHERE i.kind = 'Episode'
+                 ORDER BY i.date_created DESC NULLS LAST, i.id DESC"
             ))?;
-            let rows = statement
-                .query_map(params![limit], summary_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
+            let mut rows = statement.query([])?;
+            let mut series = std::collections::HashSet::new();
+            let mut episodes = Vec::new();
+            while episodes.len() < limit
+                && let Some(row) = rows.next()?
+            {
+                let series_id = row.get::<_, Option<String>>(7)?;
+                if series_id.is_none_or(|id| series.insert(id)) {
+                    episodes.push(summary_row(row)?);
+                }
+            }
+            Ok(episodes)
         })
     }
 
@@ -871,10 +869,40 @@ mod tests {
     }
 
     #[test]
-    fn recently_added_orders_by_creation_date() {
-        let rows = seeded().recently_added(10).expect("rows");
-        assert_eq!(rows[0]["id"], "m2");
-        assert_eq!(rows[1]["id"], "s1");
+    fn recently_added_episodes_keep_the_newest_episode_of_each_series() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(
+                    r#"{"Id":"sev-1","Name":"One","Type":"Episode","SeriesId":"sev",
+                    "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2024-01-01"}"#,
+                ),
+                dto(
+                    r#"{"Id":"silo-1","Name":"One","Type":"Episode","SeriesId":"silo",
+                    "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2024-02-01"}"#,
+                ),
+                dto(
+                    r#"{"Id":"sev-2","Name":"Two","Type":"Episode","SeriesId":"sev",
+                    "IndexNumber":2,"ParentIndexNumber":1,"DateCreated":"2024-03-01"}"#,
+                ),
+                dto(
+                    r#"{"Id":"andor-1","Name":"One","Type":"Episode","SeriesId":"andor",
+                    "IndexNumber":1,"ParentIndexNumber":1,"DateCreated":"2023-12-01"}"#,
+                ),
+                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","DateCreated":"2024-04-01"}"#),
+            ])
+            .expect("seed");
+
+        let ids = |limit| {
+            library
+                .recently_added_episodes(limit)
+                .expect("rows")
+                .iter()
+                .map(|row| row["id"].as_str().expect("id").to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(10), ["sev-2", "silo-1", "andor-1"]);
+        assert_eq!(ids(2), ["sev-2", "silo-1"]);
     }
 
     #[test]

@@ -307,6 +307,7 @@ export type HomeBuiltInId =
   | "watching"
   | "becauseYouWatched"
   | "recentlyAdded"
+  | "recentlyAddedShows"
   | "upcoming"
   | "latestMovies"
   | "latestShows"

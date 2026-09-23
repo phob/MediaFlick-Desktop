@@ -32,6 +32,7 @@ pub enum HomeBuiltIn {
     Watching,
     BecauseYouWatched,
     RecentlyAdded,
+    RecentlyAddedShows,
     Upcoming,
     LatestMovies,
     LatestShows,
@@ -39,10 +40,11 @@ pub enum HomeBuiltIn {
 }
 
 impl HomeBuiltIn {
-    pub const ORDER: [Self; 7] = [
+    pub const ORDER: [Self; 8] = [
         Self::Watching,
         Self::BecauseYouWatched,
         Self::RecentlyAdded,
+        Self::RecentlyAddedShows,
         Self::Upcoming,
         Self::LatestMovies,
         Self::LatestShows,
@@ -147,6 +149,37 @@ impl HomeSettings {
             billboard: true,
             watching: HomeWatchingSettings::default(),
             elements,
+        }
+    }
+
+    /// A configuration saved before a built-in shelf existed gains it, enabled
+    /// as in a fresh configuration, after the nearest earlier built-in.
+    pub fn insert_missing_built_ins(&mut self) {
+        for (order, id) in HomeBuiltIn::ORDER.into_iter().enumerate() {
+            let element = HomeElementId::BuiltIn { id };
+            if self
+                .elements
+                .iter()
+                .any(|current| current.element == element)
+            {
+                continue;
+            }
+            let position = HomeBuiltIn::ORDER[..order]
+                .iter()
+                .rev()
+                .find_map(|previous| {
+                    self.elements.iter().position(|current| {
+                        current.element == HomeElementId::BuiltIn { id: *previous }
+                    })
+                })
+                .map_or(0, |index| index + 1);
+            self.elements.insert(
+                position,
+                HomeElement {
+                    element,
+                    enabled: true,
+                },
+            );
         }
     }
 
@@ -638,7 +671,8 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
         for (page, route) in &account.browsing {
             validate_browsing_route(page, route)?;
         }
-        if let Some(home) = &account.home {
+        if let Some(home) = &mut account.home {
+            home.insert_missing_built_ins();
             home.validate()?;
         }
         if account.letterboxd_profiles.len() > MAX_CONNECTED_PROFILES {
@@ -755,6 +789,51 @@ mod tests {
             "label": "not persisted"
         });
         assert!(serde_json::from_value::<HomeElement>(value).is_err());
+    }
+
+    #[test]
+    fn saved_home_gains_a_new_built_in_after_its_predecessor() {
+        let path = test_path("home-new-built-in");
+        let alice = key("server", "alice");
+        let service = AccountConfigurationService::open(path.clone()).expect("open");
+        let mut home = HomeSettings::fresh(&["Drama".to_owned()]);
+        home.elements.rotate_left(1);
+        service.save_home(&alice, &home).expect("save home");
+        drop(service);
+        let mut document: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read account settings"))
+                .expect("parse account settings");
+        let saved = document["accounts"][0]["home"]["elements"]
+            .as_array_mut()
+            .expect("saved Home elements");
+        saved.retain(|element| element["id"] != "recentlyAddedShows");
+        std::fs::write(&path, document.to_string()).expect("write older Home");
+
+        let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
+        let elements = reopened.home(&alice).expect("home").elements;
+        let ids = elements
+            .iter()
+            .map(|element| match &element.element {
+                HomeElementId::BuiltIn { id } => format!("{id:?}"),
+                HomeElementId::Genre { id } | HomeElementId::Collection { id } => id.clone(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            [
+                "BecauseYouWatched",
+                "RecentlyAdded",
+                "RecentlyAddedShows",
+                "Upcoming",
+                "LatestMovies",
+                "LatestShows",
+                "MyList",
+                "Drama",
+                "Watching",
+            ]
+        );
+        assert!(elements.iter().all(|element| element.enabled));
+        cleanup(&path);
     }
 
     #[test]

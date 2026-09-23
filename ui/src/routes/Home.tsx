@@ -143,7 +143,7 @@ function rowViewAll(row: HomeRow) {
   if (row.kind === "genre") return `/library?kind=Movie,Series&genre=${encodeURIComponent(row.id)}&sort=rating`
   if (row.kind === "collection") return `/collections/mine/${encodeURIComponent(row.id)}`
   switch (row.id) {
-    case "recentlyAdded": return "/library?kind=Movie,Series&sort=added"
+    case "recentlyAdded": return "/library?kind=Movie&sort=added"
     case "latestMovies": return "/library?kind=Movie&sort=year"
     case "latestShows": return "/library?kind=Series&sort=year"
     case "myList": return "/library?favorite=true"
@@ -233,7 +233,7 @@ export default function Home() {
       if (element.kind === "builtIn" && element.id === "watching") return <WatchingRows key="watching" continueWatching={continueWatching} nextUp={nextUp} combine={configuration.watching.combine} />
       if (element.kind === "builtIn" && element.id === "upcoming") return <UpcomingRow key="upcoming" entries={upcoming} />
       const row = home.data.rows.find((candidate) => matches(candidate, element))
-      return row ? <Row key={`${element.kind}:${element.id}`} row={row} /> : null
+      return row ? <Row key={`${element.kind}:${element.id}`} row={row} landscape={row.kind === "builtIn" && row.id === "recentlyAddedShows"} /> : null
     })}
   </div></div>
 }
