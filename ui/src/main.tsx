@@ -8,7 +8,7 @@ import "./app.css"
 import { Toaster } from "./components/ui/sonner"
 import { installAppSurfaceGuard } from "./lib/app-surface"
 import { primeStartupQueries } from "./lib/queries"
-import { queryClient } from "./lib/query-client"
+import { createQueryClient } from "./lib/query-client"
 
 // Browser history rather than hash routing: the scheme is registered
 // STANDARD | SECURE | CORS_ENABLED | FETCH_ENABLED (src/shell/cef/mod.rs), so
@@ -16,10 +16,11 @@ import { queryClient } from "./lib/query-client"
 // src/shell/cef/api.rs already serves the shell for unknown non-API paths.
 installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
+const queryClient = createQueryClient()
 // The window stays hidden behind the loading cover until the first route is
 // ready, so rendering after the one startup request costs nothing visible and
 // saves the queries from asking for the same data separately.
-void primeStartupQueries(window.location.pathname).finally(() => {
+void primeStartupQueries(queryClient, window.location.pathname).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

@@ -6,6 +6,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useLiveSearch } from "@/hooks/use-live-search"
 import { api, type PublicCollectionList } from "@/lib/api"
+import { queryKeys } from "@/lib/query-client"
 import { cn } from "@/lib/utils"
 
 export default function PublicListCombobox({ account, value, disabled, onValueChange }: {
@@ -20,7 +21,7 @@ export default function PublicListCombobox({ account, value, disabled, onValueCh
   const [selected, setSelected] = useState<PublicCollectionList | null>(null)
   const settled = search.trim() === term
   const results = useQuery({
-    queryKey: ["collections", account, "public-list-search", term],
+    queryKey: queryKeys.collectionPublicListSearch(account, term),
     queryFn: ({ signal }) => api.collections.searchPublicLists(term, signal),
     enabled: open && !disabled && settled && term.length >= 2,
     staleTime: 60_000,

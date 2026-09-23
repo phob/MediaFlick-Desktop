@@ -4,7 +4,9 @@ import { afterEach, describe, expect, test, vi } from "vitest"
 import { LibrarySyncProgress } from "../src/components/AppSidebar"
 import type { Status, SyncProgress } from "../src/lib/api"
 import { useStatus } from "../src/lib/queries"
-import { queryClient, queryKeys } from "../src/lib/query-client"
+import { createQueryClient, queryKeys } from "../src/lib/query-client"
+
+const queryClient = createQueryClient()
 
 const catalog = {
   complete: true,

@@ -2,7 +2,7 @@ import { ShortcutRecorder } from "@/components/ShortcutRecorder"
 import { PLAYER_SHORTCUTS, shortcutError } from "@/lib/player-shortcuts"
 import { SubtitlePreview } from "@/components/SubtitlePreview"
 import { DEFAULT_VIEWING, DEFAULT_COMFORT, useViewing } from "@/lib/viewing"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   ArrowDown,
@@ -77,9 +77,9 @@ import {
   type Status,
 } from "@/lib/api"
 import { jsonNumber, jsonString } from "@/lib/json"
-import { queryClient, queryKeys, removeAccountQueryData } from "@/lib/query-client"
+import { queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
-import { collectionAccountKey, useCompanion, useHome, useHomeSettings, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
+import { accountKey, letterboxdProfilesQueryOptions, useCompanion, useHome, useHomeSettings, useItem, useNextUp, useRatingsStatus, useSeerrStatus, useSettings, useStatus } from "@/lib/queries"
 import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 import type { CSSVariableProperties } from "@/lib/style"
@@ -109,8 +109,8 @@ function same<T>(left: T, right: T) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function saveSettings(saved: ClientSettings, message = "Settings saved") {
-  queryClient.setQueryData(queryKeys.settings, saved)
+function saveSettings(cache: QueryClient, saved: ClientSettings, message = "Settings saved") {
+  cache.setQueryData(queryKeys.settings, saved)
   toast.success(message)
 }
 
@@ -275,6 +275,7 @@ function requestId() {
 }
 
 function PlayerSettings() {
+  const cache = useQueryClient()
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
   const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(settings?.client.player)
@@ -287,6 +288,7 @@ function PlayerSettings() {
     onSuccess: (saved, submitted) => {
       acceptSaved(saved.client.player, submitted)
       saveSettings(
+        cache,
         saved,
         submitted.playerBackend !== settings?.client.player.playerBackend &&
           (submitted.playerBackend === "libmpv" || settings?.client.player.playerBackend === "libmpv")
@@ -331,14 +333,14 @@ function PlayerSettings() {
       if (state === "completed" && installedPath !== null) {
         pendingInstall.current = null
         updateDraft((current) => current ? { ...current, mpvPath: installedPath } : current)
-        void queryClient.invalidateQueries({ queryKey: queryKeys.settings })
+        void cache.invalidateQueries({ queryKey: queryKeys.settings })
       }
       if (state === "failed") {
         pendingInstall.current = null
         if (message) toast.error(message)
       }
     }
-  }, [updateDraft])
+  }, [cache, updateDraft])
   useShellEvents(onShellEvent)
   if (settingsQuery.error && !settings) return <SettingsError title="Player settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
@@ -440,10 +442,11 @@ const COMFORT_NUMBERS = [
 ] as const
 
 function PlaybackSettings() {
+  const cache = useQueryClient()
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
   const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.client.playback)
-  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.playback, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
+  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["playback"]) => api.settingsPatch.playback(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.playback, submitted); saveSettings(cache, saved) }, onError: (error: Error) => toast.error(error.message) })
   if (settingsQuery.error && !settings) return <SettingsError title="Playback settings unavailable" error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />
   if (!settings || !draft) return <SettingsLoading />
   const update = <Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) => setDraft({ ...draft, [key]: value })
@@ -463,18 +466,19 @@ function PlaybackSettings() {
 }
 
 function ApplicationSettings() {
+  const cache = useQueryClient()
   const settingsQuery = useSettings()
   const { data: settings } = settingsQuery
   const { data: status } = useStatus()
   const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.client.application)
   const [deleteConfirmation, setDeleteConfirmation] = useState("")
-  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.application, submitted); saveSettings(saved) }, onError: (error: Error) => toast.error(error.message) })
+  const mutation = useMutation({ mutationFn: (value: ClientSettings["client"]["application"]) => api.settingsPatch.application(value), onSuccess: (saved, submitted) => { acceptSaved(saved.client.application, submitted); saveSettings(cache, saved) }, onError: (error: Error) => toast.error(error.message) })
   const deleteAccount = useMutation({
     mutationFn: api.collections.deleteLocalAccount,
     onSuccess: (anonymousStatus) => {
-      queryClient.setQueryData(queryKeys.status, anonymousStatus)
-      removeAccountQueryData()
-      void queryClient.resetQueries({ queryKey: queryKeys.settings })
+      cache.setQueryData(queryKeys.status, anonymousStatus)
+      removeAccountQueryData(cache)
+      void cache.resetQueries({ queryKey: queryKeys.settings })
       toast.success("Local account data deleted")
     },
     onError: (error: Error) => toast.error(error.message),
@@ -700,16 +704,16 @@ export function Appearance() {
   const settingsQuery = useSettings()
   const viewing = useViewing()
   const cache = useQueryClient()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const [previewDelay, setPreviewDelay, , acceptDelay] = useSourceDraft(viewing.data?.previewDelayMs, account)
   const ratingsQuery = useRatingsStatus(Boolean(status?.authenticated))
   const { data: settings } = settingsQuery
   const { data: ratings } = ratingsQuery
-  const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.appearance, collectionAccountKey(status))
+  const [draft, setDraft, , acceptSaved] = useSourceDraft(settings?.appearance, accountKey(status))
   const mutation = useMutation({
     mutationFn: async (submitted: { appearance: AppearanceSettings; previewDelay: number | undefined }) => {
       const checkAccount = () => {
-        if (collectionAccountKey(cache.getQueryData<Status>(queryKeys.status)) !== account) throw new Error("The signed-in account changed. Save these settings again.")
+        if (accountKey(cache.getQueryData<Status>(queryKeys.status)) !== account) throw new Error("The signed-in account changed. Save these settings again.")
       }
       checkAccount()
       if (!same(submitted.appearance, settings?.appearance)) {
@@ -723,7 +727,7 @@ export function Appearance() {
         checkAccount()
         const saved = await api.saveViewing({ ...current, previewDelayMs: submitted.previewDelay })
         checkAccount()
-        cache.setQueryData(["viewing", account], saved)
+        cache.setQueryData(queryKeys.viewing(account), saved)
         acceptDelay(saved.previewDelayMs, submitted.previewDelay)
       }
     },
@@ -811,9 +815,10 @@ function dropHomeElement(configuration: HomeConfiguration, key: string, dropInde
 }
 
 function HomeSettingsPage() {
+  const cache = useQueryClient()
   const status = useStatus()
   const query = useHomeSettings(Boolean(status.data?.authenticated))
-  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(query.data?.settings, collectionAccountKey(status.data))
+  const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(query.data?.settings, accountKey(status.data))
   const [dragging, setDragging] = useState<HomeDrag | null>(null)
   const dragRef = useRef<HomeDrag | null>(null)
   const visible = useMemo(() => draft?.elements.filter((element) => element.available) ?? [], [draft])
@@ -870,10 +875,10 @@ function HomeSettingsPage() {
     mutationFn: (value: HomeConfiguration) => api.saveHomeSettings(homeSettingsWrite(value)),
     onSuccess: (saved, submitted) => {
       acceptSaved(saved.settings, submitted)
-      queryClient.setQueryData(queryKeys.homeSettings, saved)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.home })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.homeResume })
-      queryClient.removeQueries({ queryKey: queryKeys.billboard })
+      cache.setQueryData(queryKeys.homeSettings, saved)
+      void cache.invalidateQueries({ queryKey: queryKeys.home })
+      void cache.invalidateQueries({ queryKey: queryKeys.homeResume })
+      cache.removeQueries({ queryKey: queryKeys.billboard })
       toast.success("Home settings saved")
     },
     onError: (error: Error) => toast.error(error.message),
@@ -1002,16 +1007,17 @@ function HomeSettingsPage() {
 }
 
 function ViewingPreferences() {
+  const cache = useQueryClient()
   const query = useViewing()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const [draft, setDraft, , acceptSaved] = useSourceDraft(query.data, account)
   const [audioText, setAudioText, , acceptAudio] = useSourceDraft(query.data?.audioLanguages.join(", "), account)
   const [subtitleText, setSubtitleText, , acceptSubtitles] = useSourceDraft(query.data?.subtitleLanguages.join(", "), account)
   const save = useMutation({
     mutationFn: api.saveViewing,
     onSuccess: (saved, submitted) => {
-      queryClient.setQueryData(["viewing", account], saved)
+      cache.setQueryData(queryKeys.viewing(account), saved)
       acceptSaved(saved, submitted)
       acceptAudio(saved.audioLanguages.join(", "), submitted.audioLanguages.join(", "))
       acceptSubtitles(saved.subtitleLanguages.join(", "), submitted.subtitleLanguages.join(", "))
@@ -1060,16 +1066,16 @@ function Letterboxd() {
   const cache = useQueryClient()
   const statusQuery = useStatus()
   const { data: status } = statusQuery
-  const profiles = useQuery({ queryKey: ["letterboxd", "profiles"], queryFn: api.letterboxd.profiles, enabled: Boolean(status?.authenticated), retry: false })
+  const profiles = useQuery({ ...letterboxdProfilesQueryOptions(), enabled: Boolean(status?.authenticated) })
   const [entry, setEntry] = useState("")
   const [additions, setAdditions] = useState<string[]>([])
   const [removals, setRemovals] = useState<string[]>([])
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const savedEnabled = useMemo<Record<string, boolean> | null>(() => profiles.data ? Object.fromEntries(
     profiles.data.profiles.map((profile) => [profile.id, profile.enabled]),
   ) : null, [profiles.data])
   const [enabledDraft, setEnabledDraft] = useSourceDraft(savedEnabled, account)
-  const isCurrentAccount = () => collectionAccountKey(cache.getQueryData<Status>(queryKeys.status)) === account
+  const isCurrentAccount = () => accountKey(cache.getQueryData<Status>(queryKeys.status)) === account
   const checkAccount = () => {
     if (!isCurrentAccount()) throw new Error("The signed-in account changed. Remaining profile changes were not saved.")
   }
@@ -1077,7 +1083,7 @@ function Letterboxd() {
   const refresh = () => { if (isCurrentAccount()) void cache.invalidateQueries({ queryKey: ["letterboxd"] }) }
   const rememberProfile = (profile: LetterboxdProfile) => {
     checkAccount()
-    cache.setQueryData<Awaited<ReturnType<typeof api.letterboxd.profiles>>>(["letterboxd", "profiles"], (current) => {
+    cache.setQueryData(letterboxdProfilesQueryOptions().queryKey, (current) => {
       const existing = current?.profiles ?? []
       return { profiles: existing.some((candidate) => candidate.id === profile.id)
         ? existing.map((candidate) => candidate.id === profile.id ? profile : candidate)
@@ -1099,7 +1105,7 @@ function Letterboxd() {
         checkAccount()
         await api.letterboxd.remove(id)
         checkAccount()
-        cache.setQueryData<Awaited<ReturnType<typeof api.letterboxd.profiles>>>(["letterboxd", "profiles"], (current) => ({
+        cache.setQueryData(letterboxdProfilesQueryOptions().queryKey, (current) => ({
           profiles: (current?.profiles ?? []).filter((profile) => profile.id !== id),
         }))
         setRemovals((current) => current.filter((removed) => removed !== id))
@@ -1306,5 +1312,5 @@ export function AppearanceSync() {
 
 export default function Settings() {
   const { data: status } = useStatus()
-  return <SettingsDraftGuard key={collectionAccountKey(status)}><div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="viewing" element={<ViewingPreferences />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div></SettingsDraftGuard>
+  return <SettingsDraftGuard key={accountKey(status)}><div className="settings-layout"><SettingsNavigation /><main className="settings-main"><Routes><Route index element={<Navigate to="/settings/client/player" replace />} /><Route path="client/player" element={<PlayerSettings />} /><Route path="client/playback" element={<PlaybackSettings />} /><Route path="client/application" element={<ApplicationSettings />} /><Route path="viewing" element={<ViewingPreferences />} /><Route path="home" element={<HomeSettingsPage />} /><Route path="appearance" element={<Appearance />} /><Route path="collections" element={<CollectionSettingsPage />} /><Route path="integrations/companion" element={<CompanionIntegration />} /><Route path="integrations/letterboxd" element={<Letterboxd />} /><Route path="*" element={<Navigate to="/settings" replace />} /></Routes></main></div></SettingsDraftGuard>
 }

@@ -31,9 +31,9 @@ function NavigationProbe() {
 function renderProfiles() {
   const client = testQueryClient()
   client.setQueryData(queryKeys.status, { authenticated: true, userId: "account-1" })
-  client.setQueryData(["letterboxd", "profiles"], { profiles: [profile] })
+  client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile] })
   vi.spyOn(api.api.letterboxd, "profiles").mockImplementation(async () => ({
-    profiles: client.getQueryData<{ profiles: LetterboxdProfile[] }>(["letterboxd", "profiles"])?.profiles ?? [],
+    profiles: client.getQueryData<{ profiles: LetterboxdProfile[] }>(queryKeys.letterboxdProfiles)?.profiles ?? [],
   }))
   render(<TestProviders client={client} initialEntries={["/settings/client/player", "/settings/integrations/letterboxd"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
@@ -70,7 +70,7 @@ test.each(["Player", "Back"])("unsaved settings guard %s navigation and preserve
 test("refreshed profiles retain an unsaved toggle and expose newly connected profiles", async () => {
   const client = renderProfiles()
   fireEvent.click(screen.getByRole("switch", { name: "Enable Neo" }))
-  act(() => client.setQueryData(["letterboxd", "profiles"], { profiles: [profile, { ...profile, id: "second", displayName: "Trinity", enabled: true }] }))
+  act(() => client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile, { ...profile, id: "second", displayName: "Trinity", enabled: true }] }))
   expect(await screen.findByRole("switch", { name: "Enable Trinity" })).toBeTruthy()
   expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("true")
   fireEvent.click(screen.getByRole("button", { name: "Discard" }))
@@ -140,7 +140,7 @@ test("a partial save keeps failed additions and does not repeat completed writes
 test("Letterboxd enablement waits for Save and supports Reset and Discard", async () => {
   const client = testQueryClient()
   client.setQueryData(queryKeys.status, { authenticated: true })
-  client.setQueryData(["letterboxd", "profiles"], { profiles: [profile] })
+  client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile] })
   vi.spyOn(api.api.letterboxd, "profiles").mockResolvedValue({ profiles: [{ ...profile, enabled: true }] })
   const setEnabled = vi.spyOn(api.api.letterboxd, "setEnabled").mockResolvedValue({
     profile: { ...profile, enabled: true },

@@ -1,9 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { invalidateLibraryChanged, queryClient, queryKeys } from "./query-client"
+import { invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds } from "./shell-events"
 
 /** Relays native background metadata commits into React Query's active views. */
 export function useLibraryMetadataBridge() {
+  const queryClient = useQueryClient()
   useEffect(() => {
     let catalogTimer: ReturnType<typeof setTimeout> | undefined
     let catalogPending = false
@@ -11,7 +13,7 @@ export function useLibraryMetadataBridge() {
       catalogTimer = undefined
       if (catalogPending) {
         catalogPending = false
-        invalidateLibraryChanged([], [], "catalog")
+        invalidateLibraryChanged(queryClient, [], [], "catalog")
         catalogTimer = setTimeout(flushCatalog, 1_000)
       }
     }
@@ -32,14 +34,14 @@ export function useLibraryMetadataBridge() {
       const contextIds = shellEventIds(detail.payload.contextIds)
       if (detail.type === "catalog-changed") {
         // Show the first page immediately, then bound aggregate work during a burst.
-        invalidateLibraryChanged(itemIds, contextIds, catalogTimer ? "items" : "catalog")
+        invalidateLibraryChanged(queryClient, itemIds, contextIds, catalogTimer ? "items" : "catalog")
         if (catalogTimer) catalogPending = true
         else catalogTimer = setTimeout(flushCatalog, 1_000)
       } else {
         clearTimeout(catalogTimer)
         catalogTimer = undefined
         catalogPending = false
-        invalidateLibraryChanged(itemIds, contextIds)
+        invalidateLibraryChanged(queryClient, itemIds, contextIds)
       }
     }
 
@@ -48,5 +50,5 @@ export function useLibraryMetadataBridge() {
       window.removeEventListener("mediaflick-desktop-shell", receive)
       clearTimeout(catalogTimer)
     }
-  }, [])
+  }, [queryClient])
 }
