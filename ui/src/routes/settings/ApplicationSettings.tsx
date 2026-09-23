@@ -23,7 +23,15 @@ import { useSettings, useStatus } from "@/lib/queries"
 import { queryKeys, removeAccountQueryData } from "@/lib/query-client"
 import { DEFAULT_APPLICATION_SETTINGS } from "./defaults"
 import { same, saveSettings } from "./helpers"
-import { PageTitle, Section, SelectField, SettingsError, SettingsLoading, SettingsRow } from "./shared"
+import {
+  PageTitle,
+  RecoveryNotice,
+  Section,
+  SelectField,
+  SettingsError,
+  SettingsLoading,
+  SettingsRow,
+} from "./shared"
 
 type ApplicationDraft = ClientSettings["client"]["application"]
 
@@ -77,16 +85,12 @@ export default function ApplicationSettings() {
       {(settings.recoveries?.length ?? 0) > 0 && (
         <Section title="Recovered local settings" description="MediaFlick preserved each damaged file before continuing.">
           {settings.recoveries?.map((recovery) => (
-            <p
-              key={recovery.area}
-              className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"
-              role="status"
-            >
+            <RecoveryNotice key={recovery.area}>
               {recovery.area}:{" "}
               {recovery.restoredBackup
                 ? "the last valid backup was restored."
                 : "defaults are in use because no valid backup was available."}
-            </p>
+            </RecoveryNotice>
           ))}
         </Section>
       )}

@@ -9,7 +9,7 @@ import {
 } from "../src/routes/Collections"
 import { PreviewProvider } from "../src/components/PreviewCard"
 import { MyCollectionDetail } from "../src/routes/CollectionDetail"
-import CollectionSettingsPage from "../src/routes/CollectionSettings"
+import CollectionSettingsPage from "../src/routes/settings/CollectionSettings"
 import DiscoverDetail from "../src/routes/DiscoverDetail"
 import type {
   ClassifiedCollectionTitle,
