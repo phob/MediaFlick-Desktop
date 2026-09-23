@@ -1,4 +1,4 @@
-import type { ItemDetail, ItemSummary, PlayerState } from "../../src/lib/api"
+import type { ItemDetail, ItemSummary, PlayerState, Status } from "../../src/lib/api"
 import { isJsonObject, type JsonObject, type JsonValue } from "../../src/lib/json"
 
 export function itemSummary(
@@ -47,6 +47,36 @@ export function itemDetail(
 }
 
 /** An idle player snapshot, as the shell sends when nothing is playing. */
+/** A signed-out `/api/status` with an empty, fully synced library and no Companion. */
+export function appStatus(overrides: Partial<Status> = {}): Status {
+  const catalog = { complete: true, ready: true, processed: 0, total: 0, initial: false }
+  return {
+    authenticated: false,
+    expired: false,
+    serverUrl: null,
+    serverName: null,
+    userId: null,
+    userName: null,
+    deviceId: "test-device",
+    library: { movies: 0, series: 0, seasons: 0, episodes: 0, total: 0 },
+    syncing: false,
+    lastSync: null,
+    bootstrapped: true,
+    libraryReady: true,
+    bootstrap: catalog,
+    syncProgress: { active: false, phase: "complete", catalog, error: null, retryAt: null },
+    companion: {
+      available: false,
+      compatible: false,
+      checked: true,
+      info: null,
+      error: null,
+      supportedApi: { min: 1, max: 1 },
+    },
+    ...overrides,
+  }
+}
+
 export function playerSnapshot(overrides: Partial<PlayerState> = {}): PlayerState {
   return {
     active: false,
