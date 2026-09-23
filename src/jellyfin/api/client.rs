@@ -2,6 +2,7 @@
 //! app-scheme API, and the play path.
 
 use std::fmt;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -124,22 +125,39 @@ pub struct JellyfinClient {
     token: Option<String>,
 }
 
+struct SharedAgents {
+    core: ureq::Agent,
+    companion: ureq::Agent,
+}
+
+/// Connection pools live in the agent, and callers build a fresh client for
+/// almost every request. Sharing the agents lets those clients reuse open
+/// connections instead of paying a TCP and TLS handshake each time. Nothing
+/// server- or account-specific is configured here: the base URL and token
+/// travel with each request.
+static SHARED_AGENTS: LazyLock<SharedAgents> = LazyLock::new(|| {
+    let build_agent = |http_status_as_error| -> ureq::Agent {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(HTTP_TIMEOUT))
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .http_status_as_error(http_status_as_error)
+            .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
+            .build()
+            .into()
+    };
+    SharedAgents {
+        // Keep core error responses available so `Retry-After` can be
+        // honored instead of being discarded into `ureq::Error::StatusCode`.
+        core: build_agent(false),
+        companion: build_agent(false),
+    }
+});
+
 impl JellyfinClient {
     pub fn new(base_url: &str, device_id: &str, token: Option<&str>) -> Self {
-        let build_agent = |http_status_as_error| -> ureq::Agent {
-            ureq::Agent::config_builder()
-                .timeout_global(Some(HTTP_TIMEOUT))
-                .timeout_connect(Some(CONNECT_TIMEOUT))
-                .http_status_as_error(http_status_as_error)
-                .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
-                .build()
-                .into()
-        };
         Self {
-            // Keep core error responses available so `Retry-After` can be
-            // honored instead of being discarded into `ureq::Error::StatusCode`.
-            agent: build_agent(false),
-            companion_agent: build_agent(false),
+            agent: SHARED_AGENTS.core.clone(),
+            companion_agent: SHARED_AGENTS.companion.clone(),
             base_url: base_url.trim_end_matches('/').to_string(),
             device_id: device_id.to_string(),
             device_name: device_name(),

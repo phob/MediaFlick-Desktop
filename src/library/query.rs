@@ -1,5 +1,5 @@
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Row, params, params_from_iter};
+use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
 
 use super::{ItemPage, ItemQuery, Library, LibraryStats, TmdbCandidate};
@@ -41,41 +41,18 @@ impl Library {
     }
 
     pub fn query(&self, query: &ItemQuery) -> rusqlite::Result<ItemPage> {
-        let (from_clause, conditions, mut arguments) = query_base(query);
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
+        self.db.with_connection(|connection| {
+            let total = count_items(connection, query)?;
+            let items = page_items(connection, query)?;
+            Ok(ItemPage { items, total })
+        })
+    }
 
-        let total: i64 = self.db.with_connection(|connection| {
-            connection.query_row(
-                &format!("SELECT count(*) {from_clause}{where_clause}"),
-                params_from_iter(arguments.iter()),
-                |row| row.get(0),
-            )
-        })?;
-
-        // Relevance beats alphabetical order while the user is typing.
-        let order = if query.search.is_some() {
-            "bm25(items_fts), i.id ASC".to_string()
-        } else {
-            query.sort.order_clause().to_string()
-        };
-        arguments.push(SqlValue::Integer(query.limit.clamp(1, 500)));
-        arguments.push(SqlValue::Integer(query.offset.max(0)));
-
-        let items = self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS} {from_clause}{where_clause} ORDER BY {order} LIMIT ? OFFSET ?"
-            ))?;
-            let rows = statement
-                .query_map(params_from_iter(arguments.iter()), summary_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(rows)
-        })?;
-
-        Ok(ItemPage { items, total })
+    /// One page without its total, for surfaces such as Home rows that never
+    /// show a count.
+    pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<Value>> {
+        self.db
+            .with_connection(|connection| page_items(connection, query))
     }
 
     /// Cached Jellyfin ids for these TMDB credits. The cache is only a
@@ -209,10 +186,7 @@ impl Library {
                 "SELECT {DETAIL_COLUMNS} FROM items i
                  JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
                  WHERE i.kind = 'Movie' AND u.played = 1
-                   AND EXISTS (
-                       SELECT 1 FROM json_each(i.genres) genre
-                       WHERE COALESCE(genre.value, '') <> ''
-                   )
+                   AND EXISTS (SELECT 1 FROM item_genres g WHERE g.item_id = i.id)
                  ORDER BY random()
                  LIMIT 1"
             ))?;
@@ -225,11 +199,23 @@ impl Library {
     }
 
     pub fn recently_added(&self, limit: i64) -> rusqlite::Result<Vec<Value>> {
+        // An index can order one kind but not two at once, so each kind takes
+        // its newest rows from `items_kind_added` and only those are merged.
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
-                "SELECT {SUMMARY_COLUMNS} FROM items i
+                "SELECT {SUMMARY_COLUMNS} FROM (
+                     SELECT * FROM (
+                         SELECT id FROM items WHERE kind = 'Movie'
+                         ORDER BY date_created DESC, id DESC LIMIT ?1
+                     )
+                     UNION ALL
+                     SELECT * FROM (
+                         SELECT id FROM items WHERE kind = 'Series'
+                         ORDER BY date_created DESC, id DESC LIMIT ?1
+                     )
+                 ) newest
+                 JOIN items i ON i.id = newest.id
                  LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id
-                 WHERE i.kind IN ('Movie', 'Series')
                  ORDER BY i.date_created DESC NULLS LAST, i.id DESC
                  LIMIT ?1"
             ))?;
@@ -266,10 +252,18 @@ impl Library {
     }
 
     pub fn genres(&self) -> rusqlite::Result<Vec<String>> {
+        // Skip-scan: each step seeks the next distinct genre in the primary key
+        // instead of walking every tagged item.
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare(
-                "SELECT DISTINCT genre.value FROM items, json_each(items.genres) AS genre
-                 WHERE genre.value <> '' ORDER BY genre.value COLLATE NOCASE ASC",
+            let mut statement = connection.prepare_cached(
+                "WITH RECURSIVE distinct_genres(genre) AS (
+                     SELECT min(genre) FROM item_genres
+                     UNION ALL
+                     SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
+                     FROM distinct_genres previous WHERE previous.genre IS NOT NULL
+                 )
+                 SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
+                 ORDER BY genre COLLATE NOCASE ASC",
             )?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))?
@@ -432,19 +426,56 @@ fn parsed_json(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap_or_else(|_| json!([]))
 }
 
-/// Builds the FROM clause, WHERE conditions, and bound arguments for a query.
-fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
+fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
+    // `user_data` holds at most one row per item, so the join only matters to
+    // the count when a condition reads it.
+    let needs_user_data = query.watched.is_some() || query.favorite.is_some();
+    let (from_clause, where_clause, arguments) = query_base(query, needs_user_data);
+    connection
+        .prepare_cached(&format!("SELECT count(*) {from_clause}{where_clause}"))?
+        .query_row(params_from_iter(arguments.iter()), |row| row.get(0))
+}
+
+fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Vec<Value>> {
+    let (sql, arguments) = page_sql(query);
+    let mut statement = connection.prepare_cached(&sql)?;
+    statement
+        .query_map(params_from_iter(arguments.iter()), summary_row)?
+        .collect()
+}
+
+fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
+    let (from_clause, where_clause, mut arguments) = query_base(query, true);
+    // Relevance beats alphabetical order while the user is typing.
+    let order = if query.search.is_some() {
+        "bm25(items_fts), i.id ASC"
+    } else {
+        query.sort.order_clause()
+    };
+    arguments.push(SqlValue::Integer(query.limit.clamp(1, 500)));
+    arguments.push(SqlValue::Integer(query.offset.max(0)));
+    (
+        format!(
+            "SELECT {SUMMARY_COLUMNS} {from_clause}{where_clause} ORDER BY {order} LIMIT ? OFFSET ?"
+        ),
+        arguments,
+    )
+}
+
+/// Builds the FROM clause, WHERE clause, and bound arguments for a query.
+fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<SqlValue>) {
     let mut conditions = Vec::new();
     let mut arguments = Vec::new();
 
     let search = query.search.as_deref().and_then(fts_match_expression);
-    let from_clause = if search.is_some() {
-        "FROM items_fts JOIN items i ON i.id = items_fts.rowid \
-         LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id"
-            .to_string()
+    let mut from_clause = if search.is_some() {
+        "FROM items_fts JOIN items i ON i.id = items_fts.rowid".to_string()
     } else {
-        "FROM items i LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id".to_string()
+        "FROM items i".to_string()
     };
+    if with_user_data {
+        from_clause.push_str(" LEFT JOIN user_data u ON u.jellyfin_id = i.jellyfin_id");
+    }
     if let Some(search) = search {
         conditions.push("items_fts MATCH ?".to_string());
         arguments.push(SqlValue::Text(search));
@@ -458,8 +489,7 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
         }
     }
     if let Some(genre) = &query.genre {
-        conditions
-            .push("EXISTS (SELECT 1 FROM json_each(i.genres) AS g WHERE g.value = ?)".to_string());
+        conditions.push("i.id IN (SELECT item_id FROM item_genres WHERE genre = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
     }
     if let Some(decade) = query.release_decade {
@@ -490,7 +520,12 @@ fn query_base(query: &ItemQuery) -> (String, Vec<String>, Vec<SqlValue>) {
         });
     }
 
-    (from_clause, conditions, arguments)
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+    (from_clause, where_clause, arguments)
 }
 
 fn fts_match_expression(input: &str) -> Option<String> {
@@ -527,8 +562,11 @@ mod tests {
 
     use serde_json::json;
 
+    use rusqlite::params_from_iter;
+
     use super::{
         ITEM_ID_CHUNK, ItemQuery, Library, cached_image_tag, civil_from_days, fts_match_expression,
+        page_sql,
     };
     use crate::library::test_support::{dto, seeded};
     use crate::library::{ItemSort, TmdbCandidate, current_release_decade, release_decade_from_id};
@@ -928,6 +966,87 @@ mod tests {
     #[test]
     fn genres_are_deduplicated_across_items() {
         assert_eq!(seeded().genres().expect("genres"), vec!["Action", "Drama"]);
+    }
+
+    #[test]
+    fn genre_lookups_follow_items_through_updates() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["drama","Action",""]}"#),
+                dto(r#"{"Id":"b","Name":"B","Type":"Series","Genres":["Action"]}"#),
+            ])
+            .expect("seed");
+        assert_eq!(
+            library.genres().expect("genres"),
+            vec!["Action", "drama"],
+            "ordered case-insensitively, without empty names"
+        );
+
+        library
+            .upsert_page(&[dto(
+                r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["Comedy"]}"#,
+            )])
+            .expect("retag");
+        assert_eq!(library.genres().expect("genres"), vec!["Action", "Comedy"]);
+        let action = library
+            .query(&ItemQuery {
+                genre: Some("Action".to_string()),
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("action");
+        assert_eq!(action.total, 1);
+        assert_eq!(action.items[0]["id"], "b");
+    }
+
+    #[test]
+    fn a_page_without_its_total_matches_the_counted_page() {
+        let library = seeded();
+        let query = ItemQuery {
+            kinds: vec!["Movie".to_string(), "Series".to_string()],
+            sort: ItemSort::DateAdded,
+            limit: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            library.query_page(&query).expect("page"),
+            library.query(&query).expect("counted").items
+        );
+    }
+
+    #[test]
+    fn single_kind_grid_pages_read_rows_in_index_order() {
+        let library = seeded();
+        library.optimize().expect("statistics");
+        for sort in [
+            ItemSort::Name,
+            ItemSort::Year,
+            ItemSort::DateAdded,
+            ItemSort::CommunityRating,
+        ] {
+            let (sql, arguments) = page_sql(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                sort,
+                limit: 60,
+                ..Default::default()
+            });
+            let plan = library
+                .with_connection(|connection| {
+                    let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+                    statement
+                        .query_map(params_from_iter(arguments.iter()), |row| {
+                            row.get::<_, String>(3)
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .expect("plan")
+                .join(" | ");
+            assert!(
+                !plan.contains("TEMP B-TREE"),
+                "{sort:?} sorts every row instead of reading an index: {plan}"
+            );
+        }
     }
 
     #[test]
