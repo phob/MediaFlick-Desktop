@@ -1195,16 +1195,6 @@ export function qualityLabel(id: string | null | undefined) {
   return STREAMING_QUALITIES.find((quality) => quality.id === id)?.label ?? null
 }
 
-interface PlayerCapabilities {
-  chapterMarkers: boolean
-  externalSubtitles: boolean
-  injectedHotkeys: boolean
-  absoluteVolume: boolean
-  pushesPosition: boolean
-  fullscreen: boolean
-  playbackTuning: boolean
-}
-
 export interface PlayerTrack {
   id: number
   kind: "audio" | "subtitle"
@@ -1234,24 +1224,24 @@ export interface PlaybackDiagnostics {
   frameRate: number | null
 }
 
+/** Mirrors `PlayerSnapshot` (`src/playback/model.rs`); every field is always sent. */
 export interface PlayerState {
   active: boolean
-  playbackId?: string | null
-  itemId?: string | null
-  mediaSourceId?: string | null
-  playSessionId?: string | null
-  playMethod?: string | null
-  positionMs?: number
-  durationMs?: number
-  paused?: boolean
-  volume?: number | null
-  mute?: boolean
-  tracks?: PlayerTrack[]
-  chapters?: PlayerChapter[]
-  skipSegments?: PlayerSkipSegment[]
-  diagnostics?: PlaybackDiagnostics
-  stopReason?: string | null
-  capabilities?: PlayerCapabilities
+  playbackId: number | null
+  itemId: string | null
+  mediaSourceId: string | null
+  playSessionId: string | null
+  playMethod: string | null
+  positionMs: number
+  durationMs: number | null
+  paused: boolean
+  volume: number | null
+  mute: boolean | null
+  tracks: PlayerTrack[]
+  chapters: PlayerChapter[]
+  skipSegments: PlayerSkipSegment[]
+  diagnostics: PlaybackDiagnostics
+  stopReason: string | null
 }
 
 /** The `started: false` shape comes back when there is no next episode. */
@@ -1263,7 +1253,7 @@ export interface PlayStarted {
   startTicks?: number
 }
 
-/** Mirrors the command arm in `player_command` (`src/shell/cef/api.rs`). */
+/** Mirrors `PlayerCommandBody` (`src/shell/cef/api/playback.rs`). */
 export type PlayerCommand =
   | { command: "mark-watched-next" | "toggle-subtitles" }
   | { command: "pause" | "resume" | "stop" }

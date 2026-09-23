@@ -1,4 +1,4 @@
-import type { ItemDetail, ItemSummary } from "../../src/lib/api"
+import type { ItemDetail, ItemSummary, PlayerState } from "../../src/lib/api"
 import { isJsonObject, type JsonObject, type JsonValue } from "../../src/lib/json"
 
 export function itemSummary(
@@ -42,6 +42,29 @@ export function itemDetail(
     providerIds: { tmdb: null, imdb: null, tvdb: null },
     parentId: null,
     dateCreated: null,
+    ...overrides,
+  }
+}
+
+/** An idle player snapshot, as the shell sends when nothing is playing. */
+export function playerSnapshot(overrides: Partial<PlayerState> = {}): PlayerState {
+  return {
+    active: false,
+    playbackId: null,
+    itemId: null,
+    mediaSourceId: null,
+    playSessionId: null,
+    playMethod: null,
+    positionMs: 0,
+    durationMs: null,
+    paused: false,
+    volume: null,
+    mute: null,
+    tracks: [],
+    chapters: [],
+    skipSegments: [],
+    diagnostics: { bufferedUntilMs: null, buffering: false, droppedFrames: null, frameRate: null },
+    stopReason: null,
     ...overrides,
   }
 }

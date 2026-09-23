@@ -5,8 +5,8 @@ use std::time::Duration;
 use crate::preferences::{FullscreenBehavior, SegmentSkipConfig};
 
 use super::{
-    Capabilities, NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend,
-    PlayerCommand, PlayerSnapshot,
+    NativeWindowHandle, PlaybackContext, PlaybackRequest, PlayerBackend, PlayerCommand,
+    PlayerSnapshot,
 };
 
 /// Application-facing playback service.
@@ -105,10 +105,6 @@ impl PlaybackCoordinator {
         self.backend().snapshot()
     }
 
-    pub fn capabilities(&self) -> Capabilities {
-        self.backend().capabilities()
-    }
-
     pub fn shutdown(&self) {
         self.backend().shutdown();
     }
@@ -120,7 +116,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::playback::Capabilities;
 
     struct RecordingBackend {
         binding_refreshes: Arc<AtomicUsize>,
@@ -153,10 +148,6 @@ mod tests {
 
         fn snapshot(&self) -> PlayerSnapshot {
             PlayerSnapshot::default()
-        }
-
-        fn capabilities(&self) -> Capabilities {
-            Capabilities::default()
         }
 
         fn shutdown(&self) {}

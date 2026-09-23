@@ -1,7 +1,8 @@
 use super::*;
 
-pub(super) fn js_json(value: &serde_json::Value) -> String {
-    escape_js_line_separators(&value.to_string())
+pub(super) fn js_json(value: &impl serde::Serialize) -> String {
+    let json = serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+    escape_js_line_separators(&json)
 }
 
 fn escape_js_line_separators(json: &str) -> String {

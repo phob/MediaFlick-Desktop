@@ -166,38 +166,11 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> ApiRespons
 }
 
 fn player_state(services: &Arc<Services>) -> ApiResponse {
-    let Some(playback) = services.playback() else {
-        return ApiResponse::ok(json!({ "active": false }));
-    };
-    let snapshot = playback.snapshot();
-    let capabilities = playback.capabilities();
-    ApiResponse::ok(json!({
-        "active": snapshot.active,
-        "playbackId": snapshot.playback_id,
-        "itemId": snapshot.item_id,
-        "mediaSourceId": snapshot.media_source_id,
-        "playSessionId": snapshot.play_session_id,
-        "playMethod": snapshot.play_method,
-        "positionMs": snapshot.position_ms,
-        "durationMs": snapshot.duration_ms,
-        "paused": snapshot.paused,
-        "volume": snapshot.volume,
-        "mute": snapshot.mute,
-        "tracks": snapshot.tracks,
-        "chapters": snapshot.chapters,
-        "skipSegments": snapshot.skip_segments,
-        "diagnostics": snapshot.diagnostics,
-        "stopReason": snapshot.stop_reason,
-        "capabilities": {
-            "chapterMarkers": capabilities.chapter_markers,
-            "externalSubtitles": capabilities.external_subtitles,
-            "injectedHotkeys": capabilities.injected_hotkeys,
-            "absoluteVolume": capabilities.absolute_volume,
-            "pushesPosition": capabilities.pushes_position,
-            "fullscreen": capabilities.fullscreen,
-            "playbackTuning": capabilities.playback_tuning,
-        },
-    }))
+    let snapshot = services
+        .playback()
+        .map(|playback| playback.snapshot())
+        .unwrap_or_default();
+    ApiResponse::ok(snapshot)
 }
 
 /// The commands the player bar sends, as the UI's `PlayerCommand` union.
