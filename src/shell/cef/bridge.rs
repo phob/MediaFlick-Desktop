@@ -1,6 +1,7 @@
 use super::document::*;
 use super::events::*;
 use super::*;
+use crate::app::threads::spawn_named;
 
 /// The native update toast talks to the shell over
 /// `mediaflick-desktop://<action>` URLs. Settings-specific native operations
@@ -282,7 +283,7 @@ fn start_update_download(state: &BrowserState) {
     );
 
     let state_for_thread = state.clone();
-    thread::spawn(move || {
+    spawn_named("update-download", move || {
         let progress_state = state_for_thread.clone();
         let result = updater::download_update(&release, move |downloaded, total| {
             post_update_event(
@@ -329,7 +330,7 @@ pub(super) fn start_mpv_download(state: &BrowserState, request_id: String) {
 
     tracing::info!(target: "mpv.setup", "starting mpv download");
     let state_for_thread = state.clone();
-    thread::spawn(move || {
+    spawn_named("mpv-install", move || {
         let progress_state = state_for_thread.clone();
         let progress_request_id = request_id.clone();
         let result = mpv_setup::download_and_install(move |phase| match phase {

@@ -1,3 +1,4 @@
+use crate::app::threads::spawn_named;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -46,7 +47,7 @@ impl Drop for FranchiseFlight {
 }
 
 pub fn start(services: Arc<Services>) {
-    std::thread::spawn(move || {
+    spawn_named("collections-scheduler", move || {
         loop {
             refresh_due_work(&services);
             std::thread::sleep(SCHEDULER_INTERVAL);
@@ -55,13 +56,13 @@ pub fn start(services: Arc<Services>) {
 }
 
 pub fn request_run(services: Arc<Services>) {
-    std::thread::spawn(move || refresh_due_work(&services));
+    spawn_named("collections-refresh", move || refresh_due_work(&services));
 }
 
 /// A complete local-library update can change franchise membership and title
 /// ownership without changing a provider snapshot.
 pub fn request_after_library_sync(services: Arc<Services>) {
-    std::thread::spawn(move || {
+    spawn_named("collections-after-sync", move || {
         let Some(account) = active_mediaflick_account(&services) else {
             return;
         };

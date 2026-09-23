@@ -162,8 +162,12 @@ impl IpcWorker {
         };
         let (event_tx, event_rx) = mpsc::channel();
         let (command_tx, command_rx) = mpsc::channel();
-        let reader_thread = thread::spawn(move || read_events(&reader, &event_tx));
-        let writer_thread = thread::spawn(move || writer.write_commands(&command_rx));
+        let reader_thread = thread::Builder::new()
+            .name("mpv-ipc-events".to_string())
+            .spawn(move || read_events(&reader, &event_tx))?;
+        let writer_thread = thread::Builder::new()
+            .name("mpv-ipc-commands".to_string())
+            .spawn(move || writer.write_commands(&command_rx))?;
         Ok((
             Self {
                 path: path.to_string(),

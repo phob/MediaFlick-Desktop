@@ -11,4 +11,5 @@ pub mod instance;
 pub mod logger;
 pub mod paths;
 pub mod services;
+pub mod threads;
 pub mod urls;

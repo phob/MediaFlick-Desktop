@@ -1,4 +1,3 @@
-use std::thread;
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -61,7 +60,7 @@ impl ControllerState {
             return;
         }
         let tx = self.tx.clone();
-        thread::spawn(move || {
+        crate::app::threads::spawn_named("media-segments", move || {
             let result = media_segments::fetch_for_launch(&launch);
             let _ = tx.send(ControllerMessage::MediaSegmentsFetched {
                 playback_id,
