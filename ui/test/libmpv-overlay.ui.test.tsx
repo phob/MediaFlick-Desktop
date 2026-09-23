@@ -46,6 +46,7 @@ const settings = {
     integratedLibmpvOverlay: true,
     mpvInstaller: true,
   },
+  recoveries: [],
   serverUrl: "http://localhost:8096",
 } satisfies ClientSettings
 
