@@ -154,27 +154,45 @@ fn git_version(repo_root: &Path) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+/// Reruns the build when the described commit changes: a checkout moves
+/// `HEAD`, and a commit moves the branch `HEAD` names. The index is left out on
+/// purpose: it changes on every `git add`, and each rerun rebuilds the embedded
+/// UI. A development build's `-dirty` suffix can therefore lag until the next
+/// commit or checkout.
 fn track_git_refs(repo_root: &Path) {
-    let git_dir = repo_root.join(".git");
-    if git_dir.is_dir() {
-        println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-        println!("cargo:rerun-if-changed={}", git_dir.join("index").display());
-        println!(
-            "cargo:rerun-if-changed={}",
-            git_dir.join("packed-refs").display()
-        );
-        return;
-    }
+    let dot_git = repo_root.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        // A linked worktree's `.git` is a file naming its private git dir.
+        let Some(path) = std::fs::read_to_string(&dot_git).ok().and_then(|file| {
+            file.trim()
+                .strip_prefix("gitdir:")
+                .map(|path| path.trim().to_string())
+        }) else {
+            return;
+        };
+        repo_root.join(path)
+    };
+    // Branch refs live in the shared git dir; a worktree names it in `commondir`.
+    let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
+        .map(|path| git_dir.join(path.trim()))
+        .unwrap_or_else(|_| git_dir.clone());
 
-    if let Ok(git_file) = std::fs::read_to_string(&git_dir)
-        && let Some(path) = git_file.trim().strip_prefix("gitdir:")
+    let head = git_dir.join("HEAD");
+    println!("cargo:rerun-if-changed={}", head.display());
+    // A packed branch has no loose ref file until it next moves; naming a
+    // missing path would rerun the script on every build, and `packed-refs`
+    // already covers it.
+    if let Ok(head) = std::fs::read_to_string(&head)
+        && let Some(reference) = head.trim().strip_prefix("ref:")
+        && let branch = common_dir.join(reference.trim())
+        && branch.is_file()
     {
-        let path = repo_root.join(path.trim());
-        println!("cargo:rerun-if-changed={}", path.join("HEAD").display());
-        println!("cargo:rerun-if-changed={}", path.join("index").display());
-        println!(
-            "cargo:rerun-if-changed={}",
-            path.join("packed-refs").display()
-        );
+        println!("cargo:rerun-if-changed={}", branch.display());
     }
+    println!(
+        "cargo:rerun-if-changed={}",
+        common_dir.join("packed-refs").display()
+    );
 }
