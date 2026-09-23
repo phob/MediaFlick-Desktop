@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { SeerrStatusBadge } from "@/components/seerr/SeerrStatusBadge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -62,15 +63,13 @@ function SeasonPicker({
       {seasons.map((season) => (
         <Label
           key={season.seasonNumber}
-          className="flex items-center justify-between gap-3 rounded-sm px-2 py-1.5 font-normal hover:bg-accent has-[input:disabled]:opacity-60"
+          className="flex items-center justify-between gap-3 rounded-sm px-2 py-1.5 font-normal hover:bg-accent has-[button:disabled]:opacity-60"
         >
           <span className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              className="size-4 accent-primary"
+            <Checkbox
               checked={selected.has(season.seasonNumber)}
               disabled={!isRequestable(season, is4k)}
-              onChange={() => onToggle(season.seasonNumber)}
+              onCheckedChange={() => onToggle(season.seasonNumber)}
             />
             <span className="text-sm">{seasonLabel(season)}</span>
           </span>
@@ -85,9 +84,9 @@ function SeasonPicker({
  * The request confirmation. Mounted only while open, so closing it discards the
  * season selection rather than leaving it to be reset.
  *
- * The dialog is shown even to a user whose requests are approved automatically
- * (chunk 11's resolved default) — what changes is the outcome the toast
- * reports, which comes from the status Seerr answers with.
+ * The dialog is shown even to a user whose requests are approved automatically;
+ * what changes is the outcome the toast reports, which comes from the status
+ * Seerr answers with.
  */
 export function RequestDialog({
   result,
@@ -202,12 +201,10 @@ export function RequestDialog({
             permission mask carries the 4K bit for this media type. */}
         {capability4k?.request && (
           <Label className="font-normal">
-            <input
-              type="checkbox"
-              className="size-4 accent-primary"
+            <Checkbox
               checked={is4k}
-              onChange={(event) => {
-                setIs4k(event.target.checked)
+              onCheckedChange={(checked) => {
+                setIs4k(checked === true)
                 setChosen(null)
                 setQualityChoice(null)
               }}
