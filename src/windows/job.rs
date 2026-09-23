@@ -9,6 +9,9 @@ fn kill_on_close_job() -> isize {
     };
 
     static JOB: OnceLock<isize> = OnceLock::new();
+    // SAFETY: null attributes and name create an anonymous job. The zeroed
+    // struct is a valid plain-data JOBOBJECT_EXTENDED_LIMIT_INFORMATION, and
+    // the pointer and size passed to SetInformationJobObject describe it.
     *JOB.get_or_init(|| unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() {
@@ -42,6 +45,8 @@ pub fn confine_to_app_lifetime(child: &std::process::Child) {
     if job == 0 {
         return;
     }
+    // SAFETY: `job` is the process-lifetime job handle, and `child` is borrowed,
+    // so its process handle stays open for the call.
     let assigned =
         unsafe { AssignProcessToJobObject(job as HANDLE, child.as_raw_handle() as HANDLE) };
     if assigned == 0 {

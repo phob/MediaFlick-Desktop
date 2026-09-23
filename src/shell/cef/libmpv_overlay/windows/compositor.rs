@@ -21,6 +21,10 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::core::Interface;
 
+// The `windows` crate marks every COM method `unsafe`. Unless a comment says
+// otherwise, the calls here pass only owned interfaces, borrowed references
+// and plain values, which the crate converts to valid ABI arguments.
+
 pub(super) struct Compositor {
     composition: IDCompositionDevice,
     _target: IDCompositionTarget,
@@ -32,12 +36,18 @@ pub(super) struct Compositor {
 impl Compositor {
     pub(super) fn new(raw_window: usize) -> windows::core::Result<Self> {
         let window = HWND(raw_window as *mut c_void);
+        // SAFETY: no DXGI device is allowed; composition then uses its own.
         let composition: IDCompositionDevice =
             unsafe { DCompositionCreateDevice(None::<&IDXGIDevice>)? };
+        // SAFETY: `window` is libmpv's live top-level window, bound on this thread.
         let target = unsafe { composition.CreateTargetForHwnd(window, false)? };
+        // SAFETY: COM call on an owned interface.
         let root = unsafe { composition.CreateVisual()? };
+        // SAFETY: COM call on an owned interface.
         let content_visual = unsafe { composition.CreateVisual()? };
+        // SAFETY: COM call on an owned interface.
         let popup_visual = unsafe { composition.CreateVisual()? };
+        // SAFETY: COM calls on owned interfaces, linking visuals of one device.
         unsafe {
             content_visual.AddVisual(&popup_visual, true, None::<&IDCompositionVisual>)?;
             root.AddVisual(&content_visual, true, None::<&IDCompositionVisual>)?;
@@ -73,6 +83,7 @@ impl Compositor {
         };
         let source = gpu.open_shared_texture(shared_handle)?;
         let mut source_desc = D3D11_TEXTURE2D_DESC::default();
+        // SAFETY: `source_desc` is a live local the call writes.
         unsafe { source.GetDesc(&mut source_desc) };
         let layer = if popup {
             &mut self.popup
@@ -81,6 +92,7 @@ impl Compositor {
         };
         let rebound = layer.present_shared(gpu, &source, source_desc)?;
         if rebound {
+            // SAFETY: COM call on an owned interface.
             unsafe { self.composition.Commit()? };
         }
         Ok(())
@@ -111,6 +123,7 @@ impl Compositor {
         };
         let rebound = layer.present_software(gpu, pixels, width as u32, height as u32)?;
         if rebound {
+            // SAFETY: COM call on an owned interface.
             unsafe { self.composition.Commit()? };
         }
         Ok(())
@@ -123,6 +136,7 @@ impl Compositor {
     }
 
     pub(super) fn set_popup_position(&mut self, x: f32, y: f32) {
+        // SAFETY: COM calls on an owned interface with plain values.
         unsafe {
             let _ = self.popup.visual.SetOffsetX2(x);
             let _ = self.popup.visual.SetOffsetY2(y);
@@ -131,6 +145,7 @@ impl Compositor {
     }
 
     fn commit(&self) {
+        // SAFETY: COM call on an owned interface.
         if let Err(error) = unsafe { self.composition.Commit() } {
             tracing::warn!(target: "cef.osr", "DirectComposition commit failed: {error}");
         }
@@ -145,15 +160,20 @@ struct GpuDevice {
 
 impl GpuDevice {
     fn default_hardware() -> windows::core::Result<Self> {
+        // SAFETY: creates a new factory; the crate supplies the interface ID.
         let factory = unsafe { CreateDXGIFactory1::<IDXGIFactory1>()? };
+        // SAFETY: COM call on an owned interface; a missing adapter is an error.
         let adapter = unsafe { factory.EnumAdapters1(0)? };
         Self::on_adapter(&adapter.cast()?)
     }
 
     fn open_for_shared_texture(shared_handle: *mut c_void) -> windows::core::Result<Self> {
+        // SAFETY: creates a new factory; the crate supplies the interface ID.
         let factory = unsafe { CreateDXGIFactory1::<IDXGIFactory1>()? };
         let mut index = 0;
         loop {
+            // SAFETY: COM call on an owned interface; past the last adapter it
+            // returns an error, which ends the loop.
             let Ok(adapter) = (unsafe { factory.EnumAdapters1(index) }) else {
                 break;
             };
@@ -174,6 +194,8 @@ impl GpuDevice {
         let mut device = None;
         let mut context = None;
         let mut feature_level = D3D_FEATURE_LEVEL::default();
+        // SAFETY: `adapter` is a live adapter, no software module or feature
+        // list is passed, and the three out-parameters are live locals.
         unsafe {
             D3D11CreateDevice(
                 adapter,
@@ -190,7 +212,9 @@ impl GpuDevice {
         let device = device.ok_or_else(|| unexpected_error("D3D11 returned no device"))?;
         let context = context.ok_or_else(|| unexpected_error("D3D11 returned no context"))?;
         let dxgi_device: IDXGIDevice = device.cast()?;
+        // SAFETY: COM call on an owned interface.
         let adapter = unsafe { dxgi_device.GetAdapter()? };
+        // SAFETY: COM call on an owned interface; the crate supplies the ID.
         let factory = unsafe { adapter.GetParent::<IDXGIFactory2>()? };
         Ok(Self {
             device,
@@ -204,6 +228,8 @@ impl GpuDevice {
         shared_handle: *mut c_void,
     ) -> windows::core::Result<ID3D11Texture2D> {
         let mut texture = None;
+        // SAFETY: CEF keeps `shared_handle` open for the paint callback that
+        // calls this; `texture` is a live local the call writes.
         let legacy_result = unsafe {
             self.device
                 .OpenSharedResource(HANDLE(shared_handle), &mut texture)
@@ -214,6 +240,7 @@ impl GpuDevice {
             return Ok(texture);
         }
         let device: ID3D11Device1 = self.device.cast()?;
+        // SAFETY: as above; CEF keeps `shared_handle` open for this callback.
         unsafe { device.OpenSharedResource1(HANDLE(shared_handle)) }
     }
 }
@@ -257,7 +284,10 @@ impl Layer {
         let Some(swap_chain) = self.swap_chain.as_ref() else {
             return Err(unexpected_error("DXGI returned no content swap chain"));
         };
+        // SAFETY: COM call on an owned swap chain; buffer 0 always exists.
         let back_buffer = unsafe { swap_chain.GetBuffer::<ID3D11Texture2D>(0)? };
+        // SAFETY: both textures belong to `gpu.device`, and the swap chain was
+        // sized and formatted from `source_desc`, so the copy matches.
         unsafe {
             gpu.context.CopyResource(&back_buffer, source);
             swap_chain.Present(1, DXGI_PRESENT(0)).ok()?;
@@ -286,9 +316,10 @@ impl Layer {
         let Some(swap_chain) = self.swap_chain.as_ref() else {
             return Err(unexpected_error("DXGI returned no software swap chain"));
         };
+        // SAFETY: COM call on an owned swap chain; buffer 0 always exists.
         let back_buffer = unsafe { swap_chain.GetBuffer::<ID3D11Texture2D>(0)? };
-        // `pixels` was length-checked against width * height * 4 by the CEF
-        // paint bridge, so UpdateSubresource can read every advertised row.
+        // SAFETY: `pixels` was length-checked against width * height * 4 by the
+        // CEF paint bridge, so UpdateSubresource can read every advertised row.
         unsafe {
             gpu.context.UpdateSubresource(
                 &back_buffer,
@@ -324,6 +355,8 @@ impl Layer {
                 AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
                 ..DXGI_SWAP_CHAIN_DESC1::default()
             };
+            // SAFETY: `description` is a live, fully initialized local, and the
+            // device and factory come from the same adapter.
             let swap_chain = unsafe {
                 gpu.factory.CreateSwapChainForComposition(
                     &gpu.device,
@@ -331,6 +364,7 @@ impl Layer {
                     None::<&windows::Win32::Graphics::Dxgi::IDXGIOutput>,
                 )?
             };
+            // SAFETY: COM call on owned interfaces.
             unsafe { self.visual.SetContent(&swap_chain)? };
             self.swap_chain = Some(swap_chain);
             self.swap_chain_key = Some(key);
@@ -340,6 +374,7 @@ impl Layer {
         if !self.attached
             && let Some(swap_chain) = self.swap_chain.as_ref()
         {
+            // SAFETY: COM call on owned interfaces.
             unsafe { self.visual.SetContent(swap_chain)? };
             self.attached = true;
             return Ok(true);
@@ -353,6 +388,7 @@ impl Layer {
         }
         self.visible = visible;
         if !visible && self.attached {
+            // SAFETY: COM call on an owned interface; no content detaches it.
             let _ = unsafe { self.visual.SetContent(None::<&windows::core::IUnknown>) };
             self.attached = false;
         }

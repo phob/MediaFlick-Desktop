@@ -67,10 +67,12 @@ unsafe extern "system" fn find_process_window(window: HWND, context: LPARAM) -> 
     // SAFETY: activate_process_window passes a valid WindowSearch pointer for
     // the synchronous lifetime of EnumWindows.
     let search = unsafe { &mut *(context as *mut WindowSearch) };
+    // SAFETY: EnumWindows passes a window handle; IsWindowVisible only reads it.
     if unsafe { IsWindowVisible(window) } == 0 {
         return 1;
     }
     let mut process_id = 0;
+    // SAFETY: `process_id` is a live local the call writes.
     unsafe {
         GetWindowThreadProcessId(window, &mut process_id);
     }
