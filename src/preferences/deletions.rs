@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use super::AccountKey;
-use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
+use super::json_file::{RecoveryNotice, load_versioned_with_recovery, save_with_backup};
 use super::store::config_dir;
 
 const DELETION_JOURNAL_VERSION: u32 = 1;
@@ -44,7 +44,8 @@ pub struct PendingDeletionService {
 
 impl PendingDeletionService {
     pub fn open(path: PathBuf) -> io::Result<Self> {
-        let loaded = load_with_recovery(&path)?;
+        let loaded =
+            load_versioned_with_recovery(&path, DELETION_JOURNAL_VERSION, "deletion journal")?;
         let recovery = loaded.as_ref().and_then(|loaded| loaded.recovery.clone());
         let journal = loaded.map_or_else(DeletionJournal::default, |loaded| loaded.document);
         if journal.version != DELETION_JOURNAL_VERSION {
@@ -144,6 +145,28 @@ mod tests {
         assert_eq!(resumed.pending().len(), 1);
         resumed.finish(&account).expect("finish");
         assert!(resumed.pending().is_empty());
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(super::super::json_file::backup_path(&path));
+    }
+
+    #[test]
+    fn a_newer_journal_is_rejected_without_being_modified() {
+        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
+
+        let path = std::env::temp_dir().join(format!(
+            "mediaflick-deletions-{}-{}.json",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, NEWER_DOCUMENT).expect("newer journal");
+
+        let error = PendingDeletionService::open(path.clone())
+            .err()
+            .expect("newer journal must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("version 2"), "{error}");
+        assert_left_untouched(&path, NEWER_DOCUMENT);
+        let _ = std::fs::remove_file(&path);
     }
 }
