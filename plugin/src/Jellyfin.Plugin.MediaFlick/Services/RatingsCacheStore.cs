@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -43,12 +44,15 @@ internal sealed class RatingsCacheStore
     private const int DocumentVersion = 1;
     private readonly object _lock = new();
     private readonly string _path;
+    private readonly ILogger<RatingsCacheStore> _logger;
     private CacheDocument _document;
+    private bool _persistFailing;
 
-    public RatingsCacheStore(string path)
+    public RatingsCacheStore(string path, ILogger<RatingsCacheStore> logger)
     {
         _path = path;
-        _document = Load(path);
+        _logger = logger;
+        _document = Load(path, logger);
         if (SanitizeLoadedDocument())
         {
             PersistLocked();
@@ -193,7 +197,7 @@ internal sealed class RatingsCacheStore
         };
     }
 
-    private static CacheDocument Load(string path)
+    private static CacheDocument Load(string path, ILogger logger)
     {
         try
         {
@@ -205,20 +209,30 @@ internal sealed class RatingsCacheStore
             var parsed = JsonSerializer.Deserialize<CacheDocument>(
                 File.ReadAllText(path),
                 CompanionJson.CamelCase);
-            return parsed is { Version: DocumentVersion }
-                ? parsed
-                : new CacheDocument();
-        }
-        catch (IOException)
-        {
+            if (parsed is { Version: DocumentVersion })
+            {
+                return parsed;
+            }
+
+            logger.LogInformation(
+                "Ignoring the MediaFlick ratings cache with unsupported version {Version}; ratings will be fetched again",
+                parsed?.Version);
             return new CacheDocument();
         }
-        catch (UnauthorizedAccessException)
+        catch (IOException exception)
         {
+            logger.LogWarning(exception, "Could not read the MediaFlick ratings cache; starting with an empty cache");
             return new CacheDocument();
         }
-        catch (JsonException)
+        catch (UnauthorizedAccessException exception)
         {
+            logger.LogWarning(exception, "Could not read the MediaFlick ratings cache; starting with an empty cache");
+            return new CacheDocument();
+        }
+        catch (JsonException exception)
+        {
+            // JsonException text names a position, not cached values.
+            logger.LogWarning(exception, "The MediaFlick ratings cache is corrupt; starting with an empty cache");
             return new CacheDocument();
         }
     }
@@ -238,16 +252,38 @@ internal sealed class RatingsCacheStore
                 temporary,
                 JsonSerializer.Serialize(_document, CompanionJson.CamelCase));
             File.Move(temporary, _path, true);
+            if (_persistFailing)
+            {
+                _persistFailing = false;
+                _logger.LogInformation("The MediaFlick ratings cache is being saved again");
+            }
         }
-        catch (IOException)
+        catch (IOException exception)
         {
             // The in-memory cache remains usable. Rating persistence failure
             // must not make the Jellyfin catalogue or this optional overlay fail.
+            ReportPersistFailure(exception);
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException exception)
         {
             // Same graceful degradation for a read-only plugin data volume.
+            ReportPersistFailure(exception);
         }
+    }
+
+    private void ReportPersistFailure(Exception exception)
+    {
+        // Every cache write retries persistence; warn once per outage.
+        if (_persistFailing)
+        {
+            _logger.LogDebug(exception, "The MediaFlick ratings cache still cannot be saved");
+            return;
+        }
+
+        _persistFailing = true;
+        _logger.LogWarning(
+            exception,
+            "Could not save the MediaFlick ratings cache; ratings stay cached in memory until the plugin data directory is writable");
     }
 
     private sealed class CacheDocument

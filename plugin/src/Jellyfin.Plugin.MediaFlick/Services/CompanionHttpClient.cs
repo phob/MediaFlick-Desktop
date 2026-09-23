@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -12,11 +13,17 @@ public sealed class CompanionHttpClient
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
     private readonly IHttpClientFactory _factory;
     private readonly ServiceHealthStore _health;
+    private readonly ILogger<CompanionHttpClient> _logger;
+    private readonly FailureLogGate _failures = new();
 
-    public CompanionHttpClient(IHttpClientFactory factory, ServiceHealthStore health)
+    public CompanionHttpClient(
+        IHttpClientFactory factory,
+        ServiceHealthStore health,
+        ILogger<CompanionHttpClient> logger)
     {
         _factory = factory;
         _health = health;
+        _logger = logger;
     }
 
     public async Task<JsonNode?> SendAsync(
@@ -57,27 +64,40 @@ public sealed class CompanionHttpClient
             {
                 var message = UpstreamMessage(serviceName, response.StatusCode, text);
                 _health.Failure(serviceName, message);
+                ReportFailureStatus(serviceName, response.StatusCode, seerrUserId is not null);
                 throw new GatewayException(
                     (int)response.StatusCode,
                     message);
             }
 
             _health.Success(serviceName);
-            if (string.IsNullOrWhiteSpace(text))
+            JsonNode? parsed = null;
+            if (!string.IsNullOrWhiteSpace(text))
             {
-                return null;
+                try
+                {
+                    parsed = JsonNode.Parse(text);
+                }
+                catch (JsonException)
+                {
+                    _logger.Log(
+                        _failures.Failure(serviceName, "invalid_response"),
+                        "{Service} returned a non-JSON response",
+                        serviceName);
+                    throw new GatewayException(
+                        StatusCodes.Status502BadGateway,
+                        $"{serviceName} returned a non-JSON response");
+                }
             }
 
-            try
+            // Only a usable answer ends a failure streak; a service that keeps
+            // returning non-JSON must stay on the Debug path after its first Warning.
+            if (_failures.Recovered(serviceName))
             {
-                return JsonNode.Parse(text);
+                _logger.LogInformation("{Service} is answering again", serviceName);
             }
-            catch (JsonException)
-            {
-                throw new GatewayException(
-                    StatusCodes.Status502BadGateway,
-                    $"{serviceName} returned a non-JSON response");
-            }
+
+            return parsed;
         }
         catch (GatewayException)
         {
@@ -86,6 +106,11 @@ public sealed class CompanionHttpClient
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             _health.Failure(serviceName, "request timed out");
+            _logger.Log(
+                _failures.Failure(serviceName, "timeout"),
+                "{Service} did not answer within {TimeoutSeconds} seconds",
+                serviceName,
+                RequestTimeout.TotalSeconds);
             throw new GatewayException(
                 StatusCodes.Status504GatewayTimeout,
                 $"{serviceName} did not answer in time");
@@ -93,6 +118,13 @@ public sealed class CompanionHttpClient
         catch (HttpRequestException exception)
         {
             _health.Failure(serviceName, exception.Message);
+            // The exception text can name the configured service address, so
+            // only its error category is logged.
+            _logger.Log(
+                _failures.Failure(serviceName, "unreachable"),
+                "{Service} could not be reached ({HttpRequestError})",
+                serviceName,
+                exception.HttpRequestError);
             throw new GatewayException(
                 StatusCodes.Status502BadGateway,
                 $"could not reach {serviceName}");
@@ -147,6 +179,38 @@ public sealed class CompanionHttpClient
             throw new GatewayException(
                 StatusCodes.Status503ServiceUnavailable,
                 $"{name} is not configured");
+        }
+    }
+
+    /// <summary>
+    /// Logs only the service name and status. The response body can echo
+    /// request data, so it never reaches the log.
+    /// </summary>
+    private void ReportFailureStatus(string serviceName, HttpStatusCode status, bool mappedUser)
+    {
+        var code = (int)status;
+        if (!mappedUser && status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            _logger.Log(
+                _failures.Failure(serviceName, "rejected"),
+                "{Service} rejected the configured API key (HTTP {StatusCode})",
+                serviceName,
+                code);
+        }
+        else if (code is StatusCodes.Status408RequestTimeout or StatusCodes.Status429TooManyRequests
+            or >= 500)
+        {
+            _logger.Log(
+                _failures.Failure(serviceName, "unavailable"),
+                "{Service} returned HTTP {StatusCode}",
+                serviceName,
+                code);
+        }
+        else
+        {
+            // Per-request outcomes such as a missing title or a Seerr user
+            // without permission for an action.
+            _logger.LogDebug("{Service} returned HTTP {StatusCode}", serviceName, code);
         }
     }
 

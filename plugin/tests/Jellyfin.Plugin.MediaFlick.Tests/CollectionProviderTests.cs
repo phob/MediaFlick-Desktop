@@ -7,6 +7,7 @@ using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaFlick.Tests;
@@ -25,8 +26,15 @@ public sealed class CollectionProviderTests : IDisposable
     public CollectionProviderTests()
     {
         Directory.CreateDirectory(_directory);
-        _health = new RatingsCacheStore(Path.Combine(_directory, "provider-cache.json"));
-        _service = new CollectionProviderService(_tmdb, _mdbList, _secrets, _health);
+        _health = new RatingsCacheStore(
+            Path.Combine(_directory, "provider-cache.json"),
+            NullLogger<RatingsCacheStore>.Instance);
+        _service = new CollectionProviderService(
+            _tmdb,
+            _mdbList,
+            _secrets,
+            _health,
+            NullLogger<CollectionProviderService>.Instance);
     }
 
     [Fact]

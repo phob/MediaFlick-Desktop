@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
@@ -11,6 +12,7 @@ public sealed class RatingsService : IDisposable
     private const long FreshSeconds = 7 * 24 * 60 * 60;
     private const long NegativeFreshSeconds = 24 * 60 * 60;
     private const long ExpireSeconds = 30 * 24 * 60 * 60;
+    private const string BackgroundRefreshSubject = "background-refresh";
     private static readonly TimeSpan ForegroundRefreshTimeout = TimeSpan.FromSeconds(25);
     private readonly RatingsCacheStore _cache;
     private readonly IRatingSecretStore _secrets;
@@ -21,17 +23,21 @@ public sealed class RatingsService : IDisposable
     private readonly ConcurrentDictionary<string, byte> _background =
         new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly ILogger<RatingsService> _logger;
+    private readonly FailureLogGate _backgroundFailures = new();
 
     internal RatingsService(
         RatingsCacheStore cache,
         IRatingSecretStore secrets,
         IMdbListTransport transport,
+        ILogger<RatingsService> logger,
         TimeProvider? timeProvider = null,
         ITmdbTransport? tmdbTransport = null)
     {
         _cache = cache;
         _secrets = secrets;
         _transport = transport;
+        _logger = logger;
         _tmdbTransport = tmdbTransport;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -310,14 +316,29 @@ public sealed class RatingsService : IDisposable
             try
             {
                 await RefreshAsync(claimed, key, true, _shutdown.Token).ConfigureAwait(false);
+                if (_backgroundFailures.Recovered(BackgroundRefreshSubject))
+                {
+                    _logger.LogInformation("Background MDBList ratings refresh is working again");
+                }
             }
             catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
             {
             }
-            catch (Exception)
+            catch (Exception exception)
             {
                 // Background stale refresh is strictly best-effort. The next
                 // request can retry after the persisted provider backoff.
+                // Upstream HTTP outcomes are logged by the transport; this is
+                // an unexpected failure, reported once per exception type and
+                // never with text that could carry the API key.
+                _logger.Log(
+                    _backgroundFailures.Failure(
+                        BackgroundRefreshSubject,
+                        exception.GetType().FullName ?? exception.GetType().Name),
+                    CompanionLogging.WithoutSecret(exception, key),
+                    "Background MDBList ratings refresh failed for {TitleCount} titles ({ExceptionType}); stale ratings remain available",
+                    claimed.Length,
+                    exception.GetType().Name);
             }
             finally
             {
