@@ -1030,7 +1030,7 @@ fn reconcile_children(
                     parent_id,
                     "reconciled changed child rows"
                 );
-                crate::app::services::notify_library_changed(changes);
+                services.shell.library_changed(changes);
             }
         }
         Err(error) => {
