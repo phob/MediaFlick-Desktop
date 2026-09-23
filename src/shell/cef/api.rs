@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::app::services::ShellRequest;
@@ -102,7 +102,7 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
-    fn json(status: u16, value: Value) -> Self {
+    fn json(status: u16, value: impl Serialize) -> Self {
         let body = serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec());
         drop(value);
         Self {
@@ -114,7 +114,7 @@ impl ApiResponse {
         }
     }
 
-    fn ok(value: Value) -> Self {
+    fn ok(value: impl Serialize) -> Self {
         Self::json(200, value)
     }
 
@@ -573,6 +573,22 @@ mod tests {
         let response = command(br#"{"command":"set-playback-rate","rate":0}"#);
         assert_eq!(response.status, 400);
         assert_eq!(error_of(&response), "unsupported player command");
+    }
+
+    #[test]
+    fn the_player_state_is_a_full_idle_snapshot_before_playback_starts() {
+        let fixture = TestServices::signed_out();
+        let request = ApiRequest {
+            method: "GET".to_string(),
+            ..post("/api/player/state", b"")
+        };
+        let response = send(&fixture, &request);
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).expect("json");
+        assert_eq!(body["active"], false);
+        assert_eq!(body["tracks"], json!([]));
+        assert_eq!(body["diagnostics"]["buffering"], false);
+        assert!(body.get("capabilities").is_none());
     }
 
     #[test]

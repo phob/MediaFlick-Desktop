@@ -629,7 +629,7 @@ function ActivePlayerBar({
       } else if (matches(comfort.muteKey)) {
         event.preventDefault()
         toggleMute()
-      } else if (matches(comfort.fullscreenKey) && player.capabilities?.fullscreen !== false) {
+      } else if (matches(comfort.fullscreenKey)) {
         event.preventDefault()
         send({ command: "toggle-fullscreen" }, "Fullscreen toggled")
       } else if (builtIn && matches(comfort.stopKey)) {
@@ -866,9 +866,7 @@ function ActivePlayerBar({
               </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          {player.capabilities?.playbackTuning !== false && (
-            <TuningMenu tuning={tuning} onChange={tune} />
-          )}
+          <TuningMenu tuning={tuning} onChange={tune} />
           {chapters.length > 0 && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>Chapters</DropdownMenuSubTrigger>
@@ -924,18 +922,16 @@ function ActivePlayerBar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {player.capabilities?.fullscreen !== false && (
-        <Button
-          variant="secondary"
-          size="icon"
-          title="Toggle fullscreen (F)"
-          aria-label="Toggle fullscreen"
-          onClick={() => send({ command: "toggle-fullscreen" }, "Fullscreen toggled")}
-          className="hidden sm:inline-flex"
-        >
-          <Maximize className="size-4" />
-        </Button>
-      )}
+      <Button
+        variant="secondary"
+        size="icon"
+        title="Toggle fullscreen (F)"
+        aria-label="Toggle fullscreen"
+        onClick={() => send({ command: "toggle-fullscreen" }, "Fullscreen toggled")}
+        className="hidden sm:inline-flex"
+      >
+        <Maximize className="size-4" />
+      </Button>
 
       <DropdownMenu onOpenChange={onMenuOpenChange}>
         <DropdownMenuTrigger asChild>

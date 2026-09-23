@@ -274,7 +274,10 @@ pub struct PlaybackDiagnostics {
     pub frame_rate: Option<f64>,
 }
 
-#[derive(Debug, Clone, Default)]
+/// The player state the UI reads, from `GET /api/player/state` and from the
+/// pushed playback events alike.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
     pub active: bool,
     pub playback_id: Option<i64>,
