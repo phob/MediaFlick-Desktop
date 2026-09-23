@@ -12,7 +12,7 @@ Users are usually launching the app to browse a personal Jellyfin server, start 
 
 ## Product Purpose
 
-MediaFlick Desktop provides its own desktop library UI and hands direct-play media streams to a player adapter. A bundled libmpv runtime is the zero-setup Windows default; external mpv and MPC-HC remain optional backends. It exists to combine immediate, reliable playback with the flexibility of a user-owned player installation.
+MediaFlick Desktop provides its own desktop library UI and hands direct-play media streams to a player adapter. A bundled libmpv runtime is the zero-setup Windows default; external mpv remains an optional backend. It exists to combine immediate, reliable playback with the flexibility of a user-owned player installation.
 
 Success means the app feels like a native desktop companion to Jellyfin: quick to configure, visually compatible with Jellyfin, transparent about mpv handoff, and dependable enough that playback state never feels fragile or mysterious.
 

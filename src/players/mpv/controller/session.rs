@@ -18,7 +18,7 @@ use crate::players::mpv::ipc::{
 };
 use crate::preferences::FullscreenBehavior;
 
-use super::super::commands::{next_request_id, non_empty};
+use super::super::commands::{loadfile_command, next_request_id, non_empty};
 use super::{
     ConfiguredMpv, ControllerMessage, ControllerState, DUPLICATE_DEBOUNCE, IPC_COMMAND_TIMEOUT,
     IPC_CONNECT_TIMEOUT, IPC_SUBTITLE_COMMAND_TIMEOUT, MPV_RAISE_PULSE_DELAY,
@@ -163,7 +163,7 @@ impl ControllerState {
         fullscreen: FullscreenBehavior,
         launch: &PlaybackRequest,
     ) -> Result<(), IpcCommandFailure> {
-        match self.send_mpv_command(self.loadfile_command(launch)) {
+        match self.send_mpv_command(loadfile_command(launch)) {
             Ok(()) => Ok(()),
             Err(first_error @ IpcCommandFailure::Rejected(_)) => Err(first_error),
             Err(first_error @ IpcCommandFailure::Transport(_)) => {
@@ -173,7 +173,7 @@ impl ControllerState {
                     return Err(first_error);
                 }
                 self.apply_external_default_fullscreen(fullscreen);
-                self.send_mpv_command(self.loadfile_command(launch))
+                self.send_mpv_command(loadfile_command(launch))
                     .map_err(|retry_error| {
                         retry_error
                             .with_context(format!("initial failure: {first_error}; retry failure"))
@@ -442,26 +442,6 @@ impl ControllerState {
             Err(error) => {
                 tracing::warn!(target: "mpv.ipc", "failed to load external subtitle in mpv: {error}");
                 self.handle_mpv_session_lost("mpv external subtitle transport failed");
-            }
-        }
-    }
-
-    pub(super) fn complete_library_startup(&mut self) {
-        if !self.uses_paused_library_start() {
-            return;
-        }
-        let pause = self.pending_library_pause.take().unwrap_or(false);
-        self.last_state.pause = pause;
-        if pause {
-            return;
-        }
-        let Some(command) = control_command(&PlayerCommand::SetPause(false)) else {
-            return;
-        };
-        if let Err(error) = self.send_mpv_command(command) {
-            tracing::warn!(target: "mpv.ipc", "failed to resume libmpv after file setup: {error}");
-            if error.is_transport() {
-                self.handle_mpv_session_lost("libmpv startup resume transport failed");
             }
         }
     }
@@ -914,7 +894,6 @@ impl ControllerState {
         }
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
-        self.pending_library_pause = None;
         self.pending_external_subtitle_url = None;
         self.pending_raise_pulse_reset_at = None;
         self.playback_tracks.clear();

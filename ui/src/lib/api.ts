@@ -473,9 +473,8 @@ export interface ReleaseCalendar {
 
 export interface PlayerSettings {
   comfort: PlayerComfort
-  playerBackend: "libmpv" | "mpv" | "mpchc"
+  playerBackend: "libmpv" | "mpv"
   mpvPath: string | null
-  mpchcPath: string | null
   defaultFullscreen: "fullscreen" | "windowed"
   markWatchedNext: string | null
   /** Computed by the shell from the selected backend/path; never writable. */
@@ -488,7 +487,6 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   return {
     playerBackend: settings.playerBackend,
     mpvPath: settings.mpvPath,
-    mpchcPath: settings.mpchcPath,
     defaultFullscreen: settings.defaultFullscreen,
     markWatchedNext: settings.markWatchedNext,
     comfort: settings.comfort,
@@ -552,7 +550,6 @@ export interface ClientSettings {
     platform: "windows" | "macos" | "linux" | "other"
     libmpv: boolean
     integratedLibmpvOverlay?: boolean
-    mpchc: boolean
     mpvInstaller: boolean
   }
   recoveries?: { area: string; restoredBackup: boolean }[]
@@ -1427,10 +1424,10 @@ export const api = {
   shell: {
     windowReady: () =>
       request<{ queued: boolean }>("/api/shell/window/ready", { method: "POST" }),
-    filePicker: (requestId: string, target: "mpv" | "mpchc") =>
+    filePicker: (requestId: string) =>
       request<{ requestId: string; queued: boolean }>("/api/shell/file-picker", {
         method: "POST",
-        body: { requestId, target },
+        body: { requestId },
       }),
     installMpv: (requestId: string) =>
       request<{ requestId: string; queued: boolean }>("/api/shell/mpv/install", {

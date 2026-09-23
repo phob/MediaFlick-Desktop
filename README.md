@@ -43,7 +43,6 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Two collection modes.** Use exact TMDB franchises and template-created personal collections, or browse Jellyfin BoxSets unchanged. Collection preferences stay local to each account.
 - **Server administration in your browser.** Anything the app deliberately doesn't rebuild (dashboard, users, metadata editing) opens in your default browser from the right-click menu.
 - **Optional external-player setup.** One-click mpv download on Windows; Linux and macOS auto-detect a system `mpv`.
-- **Optional MPC-HC backend on Windows.** Switchable live from Client Settings.
 - **Automatic in-app updates** from GitHub Releases (Windows).
 - **Cross-platform.** Windows, Linux, and macOS.
 

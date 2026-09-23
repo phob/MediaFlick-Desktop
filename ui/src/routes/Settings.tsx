@@ -279,9 +279,9 @@ function PlayerSettings() {
   const { data: settings } = settingsQuery
   const [draft, setDraft, updateDraft, acceptSaved] = useSourceDraft(settings?.client.player)
   const [install, setInstall] = useState<{ state: string; message?: string; downloaded?: number; total?: number | null }>({ state: "idle" })
-  const pendingPickers = useRef<Partial<Record<"mpv" | "mpchc", string>>>({})
+  const pendingPicker = useRef<string | null>(null)
   const pendingInstall = useRef<string | null>(null)
-  const [picking, setPicking] = useState<Partial<Record<"mpv" | "mpchc", boolean>>>({})
+  const [picking, setPicking] = useState(false)
   const mutation = useMutation({
     mutationFn: (value: ClientSettings["client"]["player"]) => api.settingsPatch.player(playerSettingsWrite(value)),
     onSuccess: (saved, submitted) => {
@@ -298,17 +298,10 @@ function PlayerSettings() {
   })
   const onShellEvent = useCallback((event: ShellEvent) => {
     if (event.type === "file-picker-completed") {
-      const target = jsonString(event.payload.target)
       const completedRequestId = jsonString(event.payload.requestId)
-      if (
-        (target !== "mpv" && target !== "mpchc") ||
-        completedRequestId === null ||
-        pendingPickers.current[target] !== completedRequestId
-      ) {
-        return
-      }
-      delete pendingPickers.current[target]
-      setPicking((current) => ({ ...current, [target]: false }))
+      if (completedRequestId === null || pendingPicker.current !== completedRequestId) return
+      pendingPicker.current = null
+      setPicking(false)
 
       const pickerError = jsonString(event.payload.error)
       if (pickerError) {
@@ -319,8 +312,7 @@ function PlayerSettings() {
       // request but deliberately leaves the user's existing draft untouched.
       const path = jsonString(event.payload.path)
       if (path === null) return
-      if (target === "mpv") updateDraft((current) => current ? { ...current, mpvPath: path } : current)
-      if (target === "mpchc") updateDraft((current) => current ? { ...current, mpchcPath: path } : current)
+      updateDraft((current) => current ? { ...current, mpvPath: path } : current)
     }
     if (event.type === "mpv-install-progress") {
       const completedRequestId = jsonString(event.payload.requestId)
@@ -362,23 +354,22 @@ function PlayerSettings() {
       ? "Restart MediaFlick to enable the built-in player."
       : "Restart MediaFlick to switch player backends."
     : undefined
-  const pick = (target: "mpv" | "mpchc") => {
-    if (pendingPickers.current[target]) return
+  const pickMpv = () => {
+    if (pendingPicker.current) return
     const id = requestId()
-    pendingPickers.current[target] = id
-    setPicking((current) => ({ ...current, [target]: true }))
-    void api.shell.filePicker(id, target).then((response) => {
+    pendingPicker.current = id
+    setPicking(true)
+    const settle = () => {
+      if (pendingPicker.current !== id) return
+      pendingPicker.current = null
+      setPicking(false)
+    }
+    void api.shell.filePicker(id).then((response) => {
       if (response.requestId === id) return
-      if (pendingPickers.current[target] === id) {
-        delete pendingPickers.current[target]
-        setPicking((current) => ({ ...current, [target]: false }))
-      }
+      settle()
       toast.error("The file picker returned an unexpected request identifier.")
     }).catch((error: Error) => {
-      if (pendingPickers.current[target] === id) {
-        delete pendingPickers.current[target]
-        setPicking((current) => ({ ...current, [target]: false }))
-      }
+      settle()
       toast.error(error.message)
     })
   }
@@ -409,38 +400,35 @@ function PlayerSettings() {
       <PageTitle title="Player" />
       <Section title="Playback backend" description="The built-in player uses bundled libmpv on Windows and system libmpv on Linux.">
         <SettingsRow controlId="settings-player" title="Player" description="External mpv keeps its own config, scripts, shaders, and SVP setup.">
-          <SelectField id="settings-player" aria-describedby="settings-player-help" label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }, { value: "mpchc", label: "MPC-HC", disabled: !settings.capabilities.mpchc }]} />
+          <SelectField id="settings-player" aria-describedby="settings-player-help" label="Player backend" value={draft.playerBackend} onValueChange={(playerBackend) => setDraft({ ...draft, playerBackend })} options={[{ value: "libmpv", label: "Built-in player", disabled: !settings.capabilities.libmpv }, { value: "mpv", label: "External mpv" }]} />
         </SettingsRow>
         <SettingsRow controlId="settings-start-fullscreen" title="Start fullscreen" description="Use a full-screen player window by default.">
           <SelectField id="settings-start-fullscreen" aria-describedby="settings-start-fullscreen-help" label="Default fullscreen" value={draft.defaultFullscreen} onValueChange={(defaultFullscreen) => setDraft({ ...draft, defaultFullscreen })} options={[{ value: "fullscreen", label: "Fullscreen" }, { value: "windowed", label: "Windowed" }]} />
         </SettingsRow>
       </Section>
-      {draft.playerBackend !== "libmpv" && <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
-        {draft.playerBackend === "mpv" && <SettingsRow controlId="mpv-path" title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
-          <div className="flex w-full max-w-md gap-2"><Input id="mpv-path" aria-describedby="mpv-path-help" value={draft.mpvPath ?? ""} onChange={(event) => setDraft({ ...draft, mpvPath: event.target.value || null })} placeholder="Path to mpv" /><Button variant="outline" size="icon" aria-label="Choose mpv executable" aria-busy={picking.mpv} disabled={picking.mpv} onClick={() => pick("mpv")}><FolderOpen /></Button></div>
-        </SettingsRow>}
-        {draft.playerBackend === "mpv" && settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description={installDetail ?? "Download and install the supported mpv build beside MediaFlick."}>
+      {draft.playerBackend === "mpv" && <Section title="Executables" description="Paths are saved locally and are never sent to your Jellyfin server.">
+        <SettingsRow controlId="mpv-path" title="mpv executable" description="Select mpv.exe or use the installer on supported Windows builds.">
+          <div className="flex w-full max-w-md gap-2"><Input id="mpv-path" aria-describedby="mpv-path-help" value={draft.mpvPath ?? ""} onChange={(event) => setDraft({ ...draft, mpvPath: event.target.value || null })} placeholder="Path to mpv" /><Button variant="outline" size="icon" aria-label="Choose mpv executable" aria-busy={picking} disabled={picking} onClick={pickMpv}><FolderOpen /></Button></div>
+        </SettingsRow>
+        {settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description={installDetail ?? "Download and install the supported mpv build beside MediaFlick."}>
           <div className="flex gap-2"><Button variant="outline" onClick={installMpv} disabled={["queued", "downloading", "extracting"].includes(install.state)}><Download /> {install.state === "idle" || install.state === "failed" ? "Install mpv" : "Installing…"}</Button><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></div>
         </SettingsRow>}
-        {draft.playerBackend === "mpv" && !settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description="See mpv’s installation guide for your operating system."><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></SettingsRow>}
-        {draft.playerBackend === "mpchc" && settings.capabilities.mpchc && <SettingsRow controlId="mpchc-path" title="MPC-HC executable" description="Select the MPC-HC executable used for playback.">
-          <div className="flex w-full max-w-md gap-2"><Input id="mpchc-path" aria-describedby="mpchc-path-help" value={draft.mpchcPath ?? ""} onChange={(event) => setDraft({ ...draft, mpchcPath: event.target.value || null })} placeholder="Path to MPC-HC" /><Button variant="outline" size="icon" aria-label="Choose MPC-HC executable" aria-busy={picking.mpchc} disabled={picking.mpchc} onClick={() => pick("mpchc")}><FolderOpen /></Button></div>
-        </SettingsRow>}
+        {!settings.capabilities.mpvInstaller && <SettingsRow title="Install mpv" description="See mpv’s installation guide for your operating system."><Button variant="ghost" onClick={() => void api.shell.mpvHelp().catch((error: Error) => toast.error(error.message))}>Installation help</Button></SettingsRow>}
       </Section>}
       {draft.playerBackend === "libmpv" && <Section title="Built-in player comfort" description="Subtitle changes apply to the next playback. Styled bitmap subtitles may keep their own appearance.">
         <SubtitlePreview comfort={{ ...comfort, ...Object.fromEntries(COMFORT_NUMBERS.map(([key, , min, max]) => [key, isSettingsNumberValid(comfort[key], min, max) ? comfort[key] : DEFAULT_COMFORT[key]])) }} />
         {COMFORT_NUMBERS.map(([key, label, min, max]) => <SettingsRow key={key} controlId={`comfort-${key}`} title={label}><SettingsNumberField id={`comfort-${key}`} label={label} min={min} max={max} value={(draft.comfort ?? DEFAULT_COMFORT)[key]} onValueChange={(value) => setDraft({...draft, comfort:{...(draft.comfort ?? DEFAULT_COMFORT), [key]:value}})} /></SettingsRow>)}
       </Section>}
-      {draft.playerBackend !== "mpchc" && <Section title="Keyboard shortcuts" description={draft.playerBackend === "libmpv" ? "Record a key combination, or clear it to disable the binding. Space always pauses; Left and Right use the seek intervals above." : "MediaFlick provides the watched/next shortcut. Configure other shortcuts in mpv. Command and Option combinations work on macOS."}>
+      <Section title="Keyboard shortcuts" description={draft.playerBackend === "libmpv" ? "Record a key combination, or clear it to disable the binding. Space always pauses; Left and Right use the seek intervals above." : "MediaFlick provides the watched/next shortcut. Configure other shortcuts in mpv. Command and Option combinations work on macOS."}>
           <SettingsRow controlId="mark-watched-key" title="Mark watched key" description="Marks a movie watched, or marks an episode watched and plays the next available item. Works in the built-in player and external mpv. Record a key combination, or clear it to disable.">
             <ShortcutRecorder id="mark-watched-key" label="Mark watched key" value={draft.markWatchedNext ?? ""} onChange={(value) => setDraft({ ...draft, markWatchedNext: value || null })} />
           </SettingsRow>
         {draft.playerBackend === "libmpv" && PLAYER_SHORTCUTS.map(([key, label]) => <SettingsRow key={key} controlId={`shortcut-${key}`} title={label}>
           <ShortcutRecorder id={`shortcut-${key}`} label={label} value={comfort[key]} onChange={(value) => setDraft({...draft, comfort:{...comfort, [key]:value}})} />
         </SettingsRow>)}
-      </Section>}
+      </Section>
       {keysError && <p role="alert" className="text-sm text-destructive">{keysError}</p>}
-      <SaveBar saveDisabled={!validNumbers || Boolean(keysError)} dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, mpchcPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", comfort: {...DEFAULT_COMFORT} })} restartMessage={restartMessage} />
+      <SaveBar saveDisabled={!validNumbers || Boolean(keysError)} dirty={dirty} saving={mutation.isPending} onSave={() => mutation.mutate(draft)} onDiscard={() => setDraft(settings.client.player)} onReset={() => setDraft({ ...settings.client.player, playerBackend: settings.capabilities.libmpv ? "libmpv" : "mpv", mpvPath: null, defaultFullscreen: "fullscreen", markWatchedNext: "w", comfort: {...DEFAULT_COMFORT} })} restartMessage={restartMessage} />
     </div>
   )
 }

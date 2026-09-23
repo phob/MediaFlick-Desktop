@@ -293,7 +293,6 @@ impl ControllerState {
         if self.startup_seek.is_none() {
             self.load_pending_external_subtitle();
         }
-        self.complete_library_startup();
         self.publish_snapshot();
     }
 
@@ -343,7 +342,6 @@ impl ControllerState {
         let had_mpv_playback =
             self.mpv_playback_active || self.pending.is_some() || self.active.is_some();
         self.startup_seek = None;
-        self.pending_library_pause = None;
         let failed = matches!(reason, Some("error"));
         let stop_reason = normalized_stop_reason(reason);
         if self.should_ignore_pending_end_file_during_playback_handoff(reason) {

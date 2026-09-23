@@ -17,7 +17,7 @@
 - `src/` owns the native app, CEF shell, local persistence, Jellyfin client, playback policy, and player adapters.
 - `ui/` owns the embedded React interface. It talks to the native app through the typed API in `src/shell/cef/api/`; it must not call Jellyfin or provider services directly.
 - `plugin/` is the optional Jellyfin Companion. It owns administrator credentials and fixed-origin calls to Seerr, Sonarr, Radarr, MDBList, and TMDB. Never expose service addresses, API keys, bearer tokens, or a generic proxy to Desktop.
-- Keep policy in its owning domain module and protocol details in adapters. For example, segment-skip decisions belong in `src/playback/segments.rs`; mpv and MPC-HC should only translate actions into backend commands.
+- Keep policy in its owning domain module and protocol details in adapters. For example, segment-skip decisions belong in `src/playback/segments.rs`; the mpv adapter should only translate actions into backend commands.
 - Contract changes must be carried through every affected boundary in the same change: Rust request or response types, `ui/src/lib/api.ts`, UI callers and tests, Companion models and tests, and contract fixtures.
 - `build.rs` embeds the UI bundle. A normal Cargo build may invoke pnpm. Use `MEDIAFLICK_DESKTOP_SKIP_UI_BUILD=1` only when a current UI bundle already exists and the task does not need integrated bundle verification.
 
@@ -42,7 +42,7 @@ Preserve these known-good resume rules unless logs from a real Jellyfin session 
 - Do not send a startup `pause=false` command merely to compensate for load timing.
 - Do not clone event-pipe writes or reopen a Windows pipe for each command.
 
-Exercise built-in libmpv, external mpv, and MPC-HC where shared behavior changes. Keep access tokens in authentication headers and sanitized logs. MPC-HC URL authentication is the explicit adapter exception because it cannot attach request headers.
+These rules apply to built-in libmpv on every platform and to external mpv. Exercise both runtimes where shared behavior changes. Keep access tokens in authentication headers and sanitized logs.
 
 If a backend or real Jellyfin session is unavailable, complete applicable automated checks and report the specific runtime verification still outstanding.
 

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 const DEFAULT_WEBUI_WINDOW_WIDTH: i32 = 1280;
 const DEFAULT_WEBUI_WINDOW_HEIGHT: i32 = 800;
@@ -17,10 +17,12 @@ pub struct AppSettings {
     /// `None` preserves the legacy migration rule: an existing `mpv_path`
     /// selects external mpv. Fresh Windows installs select bundled libmpv;
     /// other platforms keep using external mpv until they ship a bundle.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_player_backend"
+    )]
     pub player_backend: Option<PlayerBackend>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mpchc_path: Option<String>,
     #[serde(
         default = "default_log_level_string",
         skip_serializing_if = "is_default_log_level"
@@ -334,15 +336,22 @@ pub enum PlayerBackend {
     #[default]
     Libmpv,
     Mpv,
-    Mpchc,
 }
 
 impl PlayerBackend {
+    /// The backend a fresh installation uses on this platform.
+    pub fn platform_default() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Libmpv
+        } else {
+            Self::Mpv
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Libmpv => "libmpv",
             Self::Mpv => "mpv",
-            Self::Mpchc => "mpchc",
         }
     }
 
@@ -350,10 +359,33 @@ impl PlayerBackend {
         match value.trim().to_ascii_lowercase().as_str() {
             "libmpv" | "built_in" | "builtin" => Some(Self::Libmpv),
             "mpv" => Some(Self::Mpv),
-            "mpchc" | "mpc-hc" | "mpc_hc" => Some(Self::Mpchc),
             _ => None,
         }
     }
+}
+
+/// Reads the saved backend. MPC-HC support was removed; a device file that
+/// still selects it loads with the platform's standard backend instead of
+/// failing to parse and being moved aside by backup recovery.
+fn deserialize_player_backend<'de, D>(deserializer: D) -> Result<Option<PlayerBackend>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum StoredPlayerBackend {
+        Libmpv,
+        Mpv,
+        Mpchc,
+    }
+
+    Ok(
+        Option::<StoredPlayerBackend>::deserialize(deserializer)?.map(|stored| match stored {
+            StoredPlayerBackend::Libmpv => PlayerBackend::Libmpv,
+            StoredPlayerBackend::Mpv => PlayerBackend::Mpv,
+            StoredPlayerBackend::Mpchc => PlayerBackend::platform_default(),
+        }),
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -488,7 +520,6 @@ impl Default for AppSettings {
             jellyfin_url: None,
             mpv_path: None,
             player_backend: None,
-            mpchc_path: None,
             log_level: DEFAULT_LOG_LEVEL.to_string(),
             default_fullscreen: FullscreenBehavior::default(),
             streaming_quality: StreamingQuality::default(),
@@ -506,37 +537,19 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn effective_backend(&self) -> PlayerBackend {
-        #[cfg(target_os = "windows")]
-        let default_backend = PlayerBackend::Libmpv;
-        #[cfg(not(target_os = "windows"))]
-        let default_backend = PlayerBackend::Mpv;
-
-        let selected = self.player_backend.unwrap_or_else(|| {
+        self.player_backend.unwrap_or_else(|| {
             if self.mpv_path.is_some() {
                 PlayerBackend::Mpv
             } else {
-                default_backend
+                PlayerBackend::platform_default()
             }
-        });
-        #[cfg(target_os = "windows")]
-        {
-            selected
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            if selected == PlayerBackend::Mpchc {
-                PlayerBackend::Mpv
-            } else {
-                selected
-            }
-        }
+        })
     }
 
     pub fn player_path(&self) -> Option<&str> {
         let path = match self.effective_backend() {
             PlayerBackend::Libmpv => None,
             PlayerBackend::Mpv => self.mpv_path.as_deref(),
-            PlayerBackend::Mpchc => self.mpchc_path.as_deref(),
         };
         path.map(str::trim).filter(|value| !value.is_empty())
     }
@@ -554,12 +567,6 @@ impl AppSettings {
         self.jellyfin_url = self.jellyfin_url.as_deref().and_then(normalize_server_url);
         self.mpv_path = self
             .mpv_path
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        self.mpchc_path = self
-            .mpchc_path
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -715,14 +722,12 @@ mod tests {
     fn player_backend_round_trips_by_id() {
         assert_eq!(PlayerBackend::Libmpv.as_str(), "libmpv");
         assert_eq!(PlayerBackend::Mpv.as_str(), "mpv");
-        assert_eq!(PlayerBackend::Mpchc.as_str(), "mpchc");
         assert_eq!(
             PlayerBackend::from_id("libmpv"),
             Some(PlayerBackend::Libmpv)
         );
         assert_eq!(PlayerBackend::from_id("mpv"), Some(PlayerBackend::Mpv));
-        assert_eq!(PlayerBackend::from_id("MPC-HC"), Some(PlayerBackend::Mpchc));
-        assert_eq!(PlayerBackend::from_id("mpchc"), Some(PlayerBackend::Mpchc));
+        assert_eq!(PlayerBackend::from_id("mpchc"), None);
         assert_eq!(PlayerBackend::from_id("vlc"), None);
     }
 
@@ -878,29 +883,40 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_trims_mpchc_path() {
-        let mut settings = AppSettings {
-            mpchc_path: Some("  C:/MPC-HC/mpc-hc64.exe  ".to_string()),
-            ..Default::default()
-        };
-        settings.sanitize();
+    fn a_retired_mpchc_selection_loads_the_platform_default_backend() {
+        let settings: AppSettings = serde_json::from_str(
+            r#"{"player_backend":"mpchc","mpchc_path":"C:/MPC-HC/mpc-hc64.exe","mpv_path":"C:/mpv/mpv.exe"}"#,
+        )
+        .expect("settings that selected MPC-HC still load");
+
         assert_eq!(
-            settings.mpchc_path.as_deref(),
-            Some("C:/MPC-HC/mpc-hc64.exe")
+            settings.effective_backend(),
+            PlayerBackend::platform_default()
         );
+        let saved = serde_json::to_string(&settings).expect("serialize settings");
+        assert!(!saved.contains("mpchc"), "{saved}");
+        assert!(serde_json::from_str::<AppSettings>(r#"{"player_backend":"vlc"}"#).is_err());
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn mpchc_backend_reads_the_mpchc_path() {
-        let mut settings = AppSettings {
-            player_backend: Some(PlayerBackend::Mpchc),
-            ..Default::default()
-        };
-        assert_eq!(settings.effective_backend(), PlayerBackend::Mpchc);
-        assert_eq!(settings.player_path(), None);
-        settings.mpchc_path = Some("C:/MPC-HC/mpc-hc64.exe".to_string());
-        assert_eq!(settings.player_path(), Some("C:/MPC-HC/mpc-hc64.exe"));
+    fn a_settings_file_selecting_mpchc_loads_without_recovery() {
+        let path = std::env::temp_dir().join(format!(
+            "mediaflick-retired-mpchc-settings-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, br#"{"player_backend":"mpchc"}"#).expect("write settings");
+
+        let loaded = crate::preferences::json_file::load_with_recovery::<AppSettings>(&path);
+        let _ = std::fs::remove_file(&path);
+        let loaded = loaded
+            .expect("read settings")
+            .expect("settings file exists");
+
+        assert!(loaded.recovery.is_none());
+        assert_eq!(
+            loaded.document.effective_backend(),
+            PlayerBackend::platform_default()
+        );
     }
 
     #[test]

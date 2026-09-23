@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
+use crate::app::services::ShellRequest;
 use crate::app::services::{self, Services};
-use crate::app::services::{ShellFilePickerTarget, ShellRequest};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
 use crate::integrations::letterboxd as letterboxd_integration;
 use crate::integrations::letterboxd::ExternalProfile;

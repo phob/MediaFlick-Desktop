@@ -14,7 +14,6 @@ const settings: ClientSettings = {
     player: {
       playerBackend: "mpv",
       mpvPath: null,
-      mpchcPath: null,
       defaultFullscreen: "fullscreen",
       markWatchedNext: "w",
       playerConfigured: false, comfort: DEFAULT_COMFORT,
@@ -38,7 +37,7 @@ const settings: ClientSettings = {
     showMediaInfo: true,
     ratingSources: [],
   },
-  capabilities: { platform: "windows", libmpv: true, mpchc: true, mpvInstaller: true },
+  capabilities: { platform: "windows", libmpv: true, mpvInstaller: true },
   serverUrl: "https://jellyfin.example",
 }
 
