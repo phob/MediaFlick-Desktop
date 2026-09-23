@@ -43,7 +43,7 @@ import {
 import { jsonString } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import {
-  collectionAccountKey,
+  accountKey,
   useCollectionProfiles,
   useCollectionSettings,
   useCollectionTemplates,
@@ -189,7 +189,7 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
 }) {
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const query = useCollectionProfiles()
   const settings = useCollectionSettings()
   const byId = new Map(query.data?.profiles.map((profile) => [profile.id, profile]))
@@ -327,7 +327,7 @@ function CollectionWizard({
 }) {
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const [draft, setDraft] = useState<CollectionProfileDraft | null>(initial)
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.collections.preview>> | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -666,7 +666,7 @@ function CollectionWizard({
 export default function CollectionSettingsPage() {
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const settings = useCollectionSettings(Boolean(status?.authenticated))
   const templates = useCollectionTemplates(Boolean(status?.authenticated))
   const profiles = useCollectionProfiles(Boolean(status?.authenticated))

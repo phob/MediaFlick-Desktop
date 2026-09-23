@@ -5,9 +5,11 @@ import { afterEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, Status } from "@/lib/api"
 import { api } from "@/lib/api"
 import { useStatus } from "@/lib/queries"
-import { queryClient, queryKeys } from "@/lib/query-client"
+import { createQueryClient, queryKeys } from "@/lib/query-client"
 import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
+
+const queryClient = createQueryClient()
 
 const settings: ClientSettings = {
   client: {

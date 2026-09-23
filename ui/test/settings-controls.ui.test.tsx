@@ -2,11 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { Route, Routes } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { api } from "@/lib/api"
-import { queryClient, queryKeys } from "@/lib/query-client"
+import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import Settings from "@/routes/Settings"
 import { clientSettingsFixture } from "./support/settings"
 import { TestProviders } from "./test-utils"
+
+const queryClient = createQueryClient()
 
 afterEach(() => { vi.restoreAllMocks(); queryClient.clear() })
 
@@ -16,7 +18,7 @@ function page(route: string, platform: "windows" | "macos" = "windows") {
   if (platform === "macos") { settings.capabilities.libmpv = false; settings.client.player.playerBackend = "mpv" }
   queryClient.setQueryData(queryKeys.status, { authenticated: true, serverUrl: "https://jellyfin.example", userId: "user", libraryReady: true })
   queryClient.setQueryData(queryKeys.settings, settings)
-  queryClient.setQueryData(["viewing", "https://jellyfin.example:user"], { ...DEFAULT_VIEWING })
+  queryClient.setQueryData(queryKeys.viewing("https://jellyfin.example:user"), { ...DEFAULT_VIEWING })
   queryClient.setQueryData(queryKeys.home, { rows: [], continueWatching: [] })
   queryClient.setQueryData(queryKeys.ratingsStatus, { sources: [], selectionEnabled: false })
   render(<TestProviders client={queryClient} initialEntries={[route]}>

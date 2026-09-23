@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes, useLocation } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import { api, type ViewingSettings } from "@/lib/api"
-import { queryClient, queryKeys } from "@/lib/query-client"
+import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING, ViewingContext } from "@/lib/viewing"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { MediaCard } from "@/components/MediaCard"
@@ -12,13 +12,15 @@ import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
 import { itemSummary, playerSnapshot } from "./support/fixtures"
 
+const queryClient = createQueryClient()
+
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); queryClient.clear() })
 
 function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
   queryClient.setQueryDefaults(["status"], {staleTime:Infinity})
   queryClient.setQueryDefaults(["viewing"], {staleTime:Infinity})
   queryClient.setQueryData(queryKeys.status, {authenticated:true, serverUrl:"server", userId:"user"})
-  queryClient.setQueryData(["viewing", "server:user"], viewing)
+  queryClient.setQueryData(queryKeys.viewing("server:user"), viewing)
 }
 
 test("language edits enable Save, Discard restores the text, and Save persists normalized codes", async () => {
@@ -84,7 +86,7 @@ test.each([
   ["/item/explicit", "/item/explicit"],
 ])("startup selection honors an explicit route: %s", async (initial, expected) => {
   seed({...DEFAULT_VIEWING, startupDestination:"series"})
-  queryClient.setQueryData(["browsing", "server:user"], {})
+  queryClient.setQueryData(queryKeys.browsing("server:user"), {})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   vi.spyOn(api, "saveBrowsing").mockResolvedValue({saved:true})
   render(<TestProviders client={queryClient} initialEntries={[initial]}><ViewingSync /><LocationProbe /></TestProviders>)
@@ -93,7 +95,7 @@ test.each([
 
 test("remembered Series filters take precedence over the hide-watched default", () => {
   seed({...DEFAULT_VIEWING, rememberFilters:true, hideWatched:true})
-  queryClient.setQueryData(["browsing", "server:user"], {Series:"/library?kind=Series&sort=year&watched=true&filters=true", Movie:"/library?kind=Movie&sort=rating"})
+  queryClient.setQueryData(queryKeys.browsing("server:user"), {Series:"/library?kind=Series&sort=year&watched=true&filters=true", Movie:"/library?kind=Movie&sort=rating"})
   queryClient.setQueryData(queryKeys.genres, {genres:[]})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   render(<TestProviders client={queryClient} initialEntries={["/library?kind=Series"]}>

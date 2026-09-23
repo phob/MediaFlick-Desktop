@@ -1,9 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
 import { toast } from "sonner"
 import { useViewing } from "./viewing"
-import { collectionAccountKey, useStatus } from "./queries"
+import { accountKey, useStatus } from "./queries"
 import { api, type PlayerState } from "./api"
-import { invalidateMediaSurfaces, queryClient, queryKeys } from "./query-client"
+import { invalidateMediaSurfaces, queryKeys } from "./query-client"
 
 declare global {
   interface Window {
@@ -24,9 +25,10 @@ declare global {
  * completion reason used to decide whether the next episode should start.
  */
 export function usePlaybackEventsBridge() {
+  const queryClient = useQueryClient()
   const viewing = useViewing()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined
     let toastId: string | number | undefined
@@ -49,19 +51,19 @@ export function usePlaybackEventsBridge() {
     window.__mediaFlickDesktopPlaybackStateChanged = (payload) => {
       if (payload.active) { cancel(); stoppedItem = undefined }
 
-      queryClient.setQueryData(queryKeys.playerState, (previous?: PlayerState) => ({
+      queryClient.setQueryData<PlayerState>(queryKeys.playerState, (previous) => ({
         ...previous,
         ...payload,
       }))
     }
 
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
-      queryClient.setQueryData(queryKeys.playerState, { active: false })
+      queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
 
       // An item-bearing stop is invalidated by the completion callback below,
       // after Jellyfin's final playstate has actually reached SQLite. Stops
       // without an item cannot start that refresh, so clear their surfaces now.
-      if (!payload?.itemId) invalidateMediaSurfaces()
+      if (!payload?.itemId) invalidateMediaSurfaces(queryClient)
 
       const finished = payload?.stopReason === "eof" || payload?.stopReason === "watched-next"
       if (!finished || !payload?.itemId) { manualPlay(); return }
@@ -109,7 +111,7 @@ export function usePlaybackEventsBridge() {
       // Deferred means the focused refresh failed and the shell queued a full
       // sync. Invalidating here still avoids treating the pre-stop cache as
       // fresh; the ordinary query lifecycle can pick up that sync afterward.
-      invalidateMediaSurfaces(payload?.itemId)
+      invalidateMediaSurfaces(queryClient, payload?.itemId)
     }
 
     return () => {
@@ -120,5 +122,5 @@ export function usePlaybackEventsBridge() {
       delete window.__mediaFlickDesktopPlaybackStopped
       delete window.__mediaFlickDesktopPlaybackCacheRefreshed
     }
-  }, [account, status?.authenticated, viewing.data])
+  }, [account, queryClient, status?.authenticated, viewing.data])
 }
