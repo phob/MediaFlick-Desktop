@@ -287,6 +287,32 @@ impl Session {
     }
 
     fn accept(&self, server_url: &str, credentials: Credentials) -> Result<Value, ApiError> {
+        let user_name = credentials.user_name.clone();
+        let cleared_cache = self.commit_credentials(server_url, credentials)?;
+        // Logging and the settings write happen after the gate is released.
+        if cleared_cache {
+            tracing::info!(
+                target: "jellyfin.session",
+                "cleared the metadata cache for a new Jellyfin account"
+            );
+        }
+        self.remember_server_url(server_url);
+        tracing::info!(
+            target: "jellyfin.session",
+            user = %user_name,
+            "authenticated against Jellyfin"
+        );
+        Ok(self.status())
+    }
+
+    /// Switches the stored session to `credentials` under the operation gate:
+    /// clears another account's cache, saves the credentials, and starts a new
+    /// generation. Returns whether the cache was cleared.
+    fn commit_credentials(
+        &self,
+        server_url: &str,
+        credentials: Credentials,
+    ) -> Result<bool, ApiError> {
         let _gate = self
             .operation_gate
             .lock()
@@ -302,10 +328,6 @@ impl Session {
             .is_some_and(|owner| owner != &next_owner)
             || cache_owner.is_none() && self.library.stats().total > 0;
         if switched_account {
-            tracing::info!(
-                target: "jellyfin.session",
-                "clearing the metadata cache for a new Jellyfin account"
-            );
             self.library
                 .clear_session(true)
                 .map_err(|error| storage_error(&error))?;
@@ -322,25 +344,19 @@ impl Session {
         self.library
             .save_credentials(&stored)
             .map_err(|error| storage_error(&error))?;
-        self.remember_server_url(server_url);
 
         if let Ok(mut state) = self.state.write() {
             state.server_url = Some(server_url.to_string());
-            state.server_id = Some(credentials.server_id.clone());
-            state.user_id = Some(credentials.user_id.clone());
-            state.user_name = Some(credentials.user_name.clone());
+            state.server_id = Some(credentials.server_id);
+            state.user_id = Some(credentials.user_id);
+            state.user_name = Some(credentials.user_name);
             state.token = Some(credentials.token);
             state.restricted = credentials.restricted;
             state.expired = false;
             state.deleting = false;
             state.generation = next_generation(state.generation);
         }
-        tracing::info!(
-            target: "jellyfin.session",
-            user = %credentials.user_name,
-            "authenticated against Jellyfin"
-        );
-        Ok(self.status())
+        Ok(switched_account)
     }
 
     /// Keeps `settings.json` in step so the dashboard action and upgrades from
