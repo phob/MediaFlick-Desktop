@@ -239,6 +239,11 @@ impl Library {
         })
     }
 
+    /// Refreshes query planner statistics after the catalog changed.
+    pub fn optimize(&self) -> rusqlite::Result<()> {
+        self.db.optimize()
+    }
+
     pub(crate) fn with_connection<T>(
         &self,
         work: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,

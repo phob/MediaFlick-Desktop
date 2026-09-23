@@ -389,10 +389,7 @@ fn element_enabled(settings: &HomeSettings, id: HomeBuiltIn) -> bool {
 
 fn home_query(library: &Library, mut query: ItemQuery) -> Vec<Value> {
     query.limit = HOME_ROW_LIMIT;
-    library
-        .query(&query)
-        .map(|page| page.items)
-        .unwrap_or_default()
+    library.query_page(&query).unwrap_or_default()
 }
 
 fn home_row(kind: &str, id: &str, title: &str, items: Vec<Value>) -> Value {
