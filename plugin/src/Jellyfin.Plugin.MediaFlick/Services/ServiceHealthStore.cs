@@ -22,10 +22,16 @@ public sealed class ServiceHealthStore
 {
     private readonly ConcurrentDictionary<string, HealthRecord> _records =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly TimeProvider _time;
+
+    public ServiceHealthStore(TimeProvider? timeProvider = null)
+    {
+        _time = timeProvider ?? TimeProvider.System;
+    }
 
     public void Success(string service)
     {
-        var observedAt = DateTimeOffset.UtcNow;
+        var observedAt = _time.GetUtcNow();
         _records.AddOrUpdate(
             service,
             _ => new HealthRecord(
@@ -43,7 +49,7 @@ public sealed class ServiceHealthStore
 
     public void Failure(string service, ServiceFailure failure)
     {
-        var observedAt = DateTimeOffset.UtcNow;
+        var observedAt = _time.GetUtcNow();
         _records.AddOrUpdate(
             service,
             _ => new HealthRecord(

@@ -71,4 +71,4 @@ public sealed record RatingAdminStatusResponse(
     RatingProviderStatusResponse Mdblist,
     RatingProviderStatusResponse Tmdb);
 
-public sealed record RatingSecretUpdate(string ApiKey);
+public sealed record ProviderSecretUpdate(string ApiKey);

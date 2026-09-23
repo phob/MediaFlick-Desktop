@@ -216,14 +216,14 @@ internal static partial class RatingsContract
     public static string? StatusDetail(string validation, string provider)
         => validation switch
         {
-            "valid" when provider == RatingProviders.MdbList => "Valid MDBList credential.",
+            "valid" when provider == CredentialProviders.MdbList => "Valid MDBList credential.",
             "valid" => "Credential is valid.",
-            "invalid" when provider == RatingProviders.MdbList => "MDBList rejected the saved API key.",
+            "invalid" when provider == CredentialProviders.MdbList => "MDBList rejected the saved API key.",
             "invalid" => "The saved credential is invalid.",
-            "offline" or "unavailable" when provider == RatingProviders.MdbList =>
+            "offline" or "unavailable" when provider == CredentialProviders.MdbList =>
                 "MDBList is temporarily unavailable; cached ratings remain available.",
             "offline" or "unavailable" => "TMDB is temporarily unavailable; the saved credential is kept.",
-            "rate_limited" when provider == RatingProviders.MdbList =>
+            "rate_limited" when provider == CredentialProviders.MdbList =>
                 "MDBList quota is exhausted; cached ratings remain available.",
             "rate_limited" => "TMDB is limiting requests; try again later.",
             "saved" => "Saved for future TMDB features. Rating retrieval does not use this key.",

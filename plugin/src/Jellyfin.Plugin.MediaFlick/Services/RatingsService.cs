@@ -14,8 +14,8 @@ public sealed class RatingsService : IDisposable
     private const long ExpireSeconds = 30 * 24 * 60 * 60;
     private const string BackgroundRefreshSubject = "background-refresh";
     private static readonly TimeSpan ForegroundRefreshTimeout = TimeSpan.FromSeconds(25);
-    private readonly RatingsCacheStore _cache;
-    private readonly IRatingSecretStore _secrets;
+    private readonly ProviderCacheStore _cache;
+    private readonly IProviderSecretStore _secrets;
     private readonly IMdbListTransport _transport;
     private readonly ITmdbTransport? _tmdbTransport;
     private readonly TimeProvider _timeProvider;
@@ -27,8 +27,8 @@ public sealed class RatingsService : IDisposable
     private readonly FailureLogGate _backgroundFailures = new();
 
     internal RatingsService(
-        RatingsCacheStore cache,
-        IRatingSecretStore secrets,
+        ProviderCacheStore cache,
+        IProviderSecretStore secrets,
         IMdbListTransport transport,
         ILogger<RatingsService> logger,
         TimeProvider? timeProvider = null,
@@ -44,8 +44,8 @@ public sealed class RatingsService : IDisposable
 
     public RatingsCapabilityResponse Capability()
     {
-        var mdblist = ProviderStatus(RatingProviders.MdbList);
-        var tmdb = ProviderStatus(RatingProviders.Tmdb);
+        var mdblist = ProviderStatus(CredentialProviders.MdbList);
+        var tmdb = ProviderStatus(CredentialProviders.Tmdb);
         return new RatingsCapabilityResponse(
             RatingsContract.BoundaryVersion,
             new ContractVersionRange(RatingsContract.BoundaryVersion, RatingsContract.BoundaryVersion),
@@ -64,21 +64,21 @@ public sealed class RatingsService : IDisposable
 
     public RatingAdminStatusResponse AdminStatus()
         => new(
-            ProviderStatus(RatingProviders.MdbList),
-            ProviderStatus(RatingProviders.Tmdb));
+            ProviderStatus(CredentialProviders.MdbList),
+            ProviderStatus(CredentialProviders.Tmdb));
 
     public async Task<RatingAdminStatusResponse> SaveCredentialAsync(
         string provider,
         string secret,
         CancellationToken cancellationToken)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         secret = secret.Trim();
         ValidateSecret(normalized, secret);
         var previousHealth = _cache.Health(normalized);
         try
         {
-            if (normalized == RatingProviders.Tmdb)
+            if (normalized == CredentialProviders.Tmdb)
             {
                 await ValidateTmdbAsync(secret, false, cancellationToken).ConfigureAwait(false);
             }
@@ -101,10 +101,10 @@ public sealed class RatingsService : IDisposable
         string provider,
         CancellationToken cancellationToken)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         var secret = _secrets.Get(normalized)
             ?? throw new RatingRequestException("no credential is saved");
-        if (normalized == RatingProviders.Tmdb)
+        if (normalized == CredentialProviders.Tmdb)
         {
             await ValidateTmdbAsync(secret, true, cancellationToken).ConfigureAwait(false);
         }
@@ -118,7 +118,7 @@ public sealed class RatingsService : IDisposable
 
     public RatingAdminStatusResponse RemoveCredential(string provider)
     {
-        var normalized = RatingProviders.Normalize(provider);
+        var normalized = CredentialProviders.Normalize(provider);
         _secrets.Remove(normalized);
         _cache.ResetHealth(normalized);
         return AdminStatus();
@@ -130,7 +130,7 @@ public sealed class RatingsService : IDisposable
     {
         var targets = RatingsContract.Validate(request);
         var key = ReadMdbListKey();
-        var status = _cache.Health(RatingProviders.MdbList);
+        var status = _cache.Health(CredentialProviders.MdbList);
         if (key is null || !status.Valid)
         {
             throw new RatingsUnavailableException(
@@ -180,7 +180,7 @@ public sealed class RatingsService : IDisposable
         }
 
         cached = _cache.Get(targets);
-        status = _cache.Health(RatingProviders.MdbList);
+        status = _cache.Health(CredentialProviders.MdbList);
         var items = targets
             .Where(target => cached.TryGetValue(target.ItemId, out var entry)
                 && entry.ExpiresAt > now)
@@ -242,7 +242,7 @@ public sealed class RatingsService : IDisposable
             RatingsContract.NormalizeTimestamp(state.RetryAt),
             RatingsContract.NormalizeTimestamp(state.LastCheckedAt),
             "aspnet_data_protection",
-            provider == RatingProviders.MdbList,
+            provider == CredentialProviders.MdbList,
             false);
     }
 
@@ -251,7 +251,7 @@ public sealed class RatingsService : IDisposable
         bool preserveValidOnTransientFailure,
         CancellationToken cancellationToken)
     {
-        var previous = _cache.Health(RatingProviders.MdbList);
+        var previous = _cache.Health(CredentialProviders.MdbList);
         var now = Now();
         if (IsBackedOff(previous, now))
         {
@@ -260,7 +260,7 @@ public sealed class RatingsService : IDisposable
 
         var response = await _transport.ValidateAsync(key, cancellationToken).ConfigureAwait(false);
         _cache.SetHealth(
-            RatingProviders.MdbList,
+            CredentialProviders.MdbList,
             StateFromResponse(response, previous, now, preserveValidOnTransientFailure));
     }
 
@@ -277,7 +277,7 @@ public sealed class RatingsService : IDisposable
         if (_tmdbTransport is null)
         {
             _cache.SetHealth(
-                RatingProviders.Tmdb,
+                CredentialProviders.Tmdb,
                 new ProviderHealthState
                 {
                     Validation = "unchecked",
@@ -286,14 +286,14 @@ public sealed class RatingsService : IDisposable
                 });
             return;
         }
-        var previous = _cache.Health(RatingProviders.Tmdb);
+        var previous = _cache.Health(CredentialProviders.Tmdb);
         var response = await _tmdbTransport.GetAsync(
             key,
             "3/configuration",
             new Dictionary<string, string>(),
             cancellationToken).ConfigureAwait(false);
         _cache.SetHealth(
-            RatingProviders.Tmdb,
+            CredentialProviders.Tmdb,
             ProviderHealthPolicy.AfterValidation(
                 previous,
                 ProviderOutcome.Of(response),
@@ -370,7 +370,7 @@ public sealed class RatingsService : IDisposable
         try
         {
             var now = Now();
-            var state = _cache.Health(RatingProviders.MdbList);
+            var state = _cache.Health(CredentialProviders.MdbList);
             if (IsBackedOff(state, now))
             {
                 return "MDBList retry timing is being respected; cached ratings remain available.";
@@ -398,12 +398,12 @@ public sealed class RatingsService : IDisposable
                         chunk.Select(target => target.ProviderId).ToArray(),
                         cancellationToken).ConfigureAwait(false);
                     state = StateFromResponse(response, state, Now(), true);
-                    _cache.SetHealth(RatingProviders.MdbList, state);
+                    _cache.SetHealth(CredentialProviders.MdbList, state);
                     if (!response.StatusCode.IsSuccess())
                     {
                         // Never relay upstream response/transport text through
                         // the desktop diagnostic boundary.
-                        return RatingsContract.StatusDetail(state.Validation, RatingProviders.MdbList);
+                        return RatingsContract.StatusDetail(state.Validation, CredentialProviders.MdbList);
                     }
 
                     CacheResponse(chunk, response.Body, Now());
@@ -528,7 +528,7 @@ public sealed class RatingsService : IDisposable
             throw new RatingRequestException("enter a valid API key");
         }
 
-        if (provider == RatingProviders.Tmdb && !RatingsContract.ValidTmdbKeyShape(secret))
+        if (provider == CredentialProviders.Tmdb && !RatingsContract.ValidTmdbKeyShape(secret))
         {
             throw new RatingRequestException(
                 "TMDB keys are normally a 32-character v3 key or a v4 JWT token");
@@ -539,7 +539,7 @@ public sealed class RatingsService : IDisposable
     {
         try
         {
-            return _secrets.Get(RatingProviders.MdbList);
+            return _secrets.Get(CredentialProviders.MdbList);
         }
         catch (InvalidOperationException)
         {

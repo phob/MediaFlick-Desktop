@@ -65,18 +65,18 @@ public sealed class RatingsController : ControllerBase
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
 [Route("MediaFlick/admin/ratings")]
-public sealed class RatingsAdminController : ControllerBase
+public sealed class ProviderCredentialsController : ControllerBase
 {
     private const string StorageUnavailableMessage =
         "MediaFlick Companion secure credential storage is unavailable for {Provider}";
     private readonly RatingsService _ratings;
     private readonly CollectionProviderService _collections;
-    private readonly ILogger<RatingsAdminController> _logger;
+    private readonly ILogger<ProviderCredentialsController> _logger;
 
-    public RatingsAdminController(
+    public ProviderCredentialsController(
         RatingsService ratings,
         CollectionProviderService collections,
-        ILogger<RatingsAdminController> logger)
+        ILogger<ProviderCredentialsController> logger)
     {
         _ratings = ratings;
         _collections = collections;
@@ -90,7 +90,7 @@ public sealed class RatingsAdminController : ControllerBase
     [HttpPut("{provider}")]
     public async Task<IActionResult> Save(
         string provider,
-        [FromBody] RatingSecretUpdate? update,
+        [FromBody] ProviderSecretUpdate? update,
         CancellationToken cancellationToken)
     {
         if (update is null)
