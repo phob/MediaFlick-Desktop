@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::urls::percent_decode;
 use crate::playback::{
-    HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
+    HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit, non_empty,
 };
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
@@ -230,10 +230,6 @@ fn sanitize_option(value: &str) -> String {
         .chars()
         .filter(|ch| !matches!(ch, '\0' | '\r' | '\n'))
         .collect::<String>()
-}
-
-pub(super) fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn query_auth_token(url: &str) -> Option<String> {

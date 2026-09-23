@@ -7,7 +7,9 @@
 use std::time::Instant;
 
 use crate::app::logger;
-use crate::playback::{PlaybackContext, PlayerChapter, seconds_to_ticks};
+use crate::playback::{
+    PlaybackContext, PlayerChapter, non_empty, seconds_to_ticks, ticks_to_milliseconds,
+};
 
 use super::{
     ActivePlayback, ControllerState, NEXT_PLAYBACK_HANDOFF_TIMEOUT, PlaybackEvent,
@@ -65,12 +67,12 @@ impl ControllerState {
             media_source_id: identity.and_then(|identity| identity.media_source_id.clone()),
             play_session_id: identity.and_then(|identity| identity.play_session_id.clone()),
             play_method: identity.and_then(|identity| identity.play_method.clone()),
-            position_ms: self.last_state.position_ticks.max(0) as f64 / 10_000.0,
+            position_ms: ticks_to_milliseconds(self.last_state.position_ticks.max(0)),
             duration_ms: self
                 .last_state
                 .duration_ticks
                 .filter(|ticks| *ticks > 0)
-                .map(|ticks| ticks as f64 / 10_000.0),
+                .map(ticks_to_milliseconds),
             paused: self.last_state.pause,
             volume: self.last_state.volume,
             mute: self.last_state.mute,
@@ -497,8 +499,4 @@ fn playback_context_update_summary(context: &PlaybackContext) -> String {
             .map(|ticks| ticks.to_string())
             .unwrap_or_else(|| "unknown".to_string())
     )
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
 }

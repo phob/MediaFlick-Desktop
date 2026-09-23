@@ -10,7 +10,7 @@ use crate::app::services::Services;
 use crate::app::urls::{build_query, encode_path_segment, join_url};
 use crate::library::model::ResolvedPlaybackPreference;
 use crate::library::{Library, resolve_playback_preference};
-use crate::playback::{PlaybackContext, PlaybackRequest};
+use crate::playback::{PlaybackContext, PlaybackRequest, seconds_to_ticks};
 use crate::preferences::StreamingQuality;
 
 use super::api::items::{self, PlaybackInfoRequest};
@@ -218,7 +218,9 @@ fn resume_start_ticks(options: &PlayOptions, position: i64) -> i64 {
         return 0;
     }
     position
-        .saturating_sub(i64::from(options.viewing.resume_rewind_seconds) * 10_000_000)
+        .saturating_sub(
+            seconds_to_ticks(f64::from(options.viewing.resume_rewind_seconds)).unwrap_or(0),
+        )
         .max(0)
 }
 
