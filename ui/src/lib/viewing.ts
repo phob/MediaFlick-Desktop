@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { api, type ItemSummary, type PlayerComfort, type ViewingSettings } from "./api"
-import { collectionAccountKey, useStatus } from "./queries"
+import type { ItemSummary, PlayerComfort, ViewingSettings } from "./api"
+import { accountKey, useStatus, viewingQueryOptions } from "./queries"
 
 export const DEFAULT_VIEWING: ViewingSettings = {
   spoilerProtection: false, nextEpisode: "auto", countdownSeconds: 10, episodeLimit: 0,
@@ -19,8 +19,7 @@ export const DEFAULT_COMFORT: PlayerComfort = {
 
 export function useViewing() {
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
-  return useQuery({ queryKey: ["viewing", account], queryFn: api.viewing, enabled: Boolean(status?.authenticated) })
+  return useQuery({ ...viewingQueryOptions(accountKey(status)), enabled: Boolean(status?.authenticated) })
 }
 
 export function concealEpisode<T extends ItemSummary>(item: T): T {

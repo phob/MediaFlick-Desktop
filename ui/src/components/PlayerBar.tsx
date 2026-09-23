@@ -59,11 +59,11 @@ import {
   useMediaInfo,
   usePlaybackNeighbors,
   usePlayNeighbor,
+  usePatchPlayerState,
   usePlayerCommand,
   usePlayerState,
   useSettings,
 } from "@/lib/queries"
-import { patchPlayerState } from "@/lib/query-client"
 
 const SUBTITLES_OFF = "__off__"
 const TIME_DISPLAY_KEY = "mediaflick.player.time-display"
@@ -475,6 +475,7 @@ function ActivePlayerBar({
   onMenuOpenChange?: (open: boolean) => void
 }) {
   const command = usePlayerCommand()
+  const patchPlayerState = usePatchPlayerState()
   const neighborPlayback = usePlayNeighbor()
   const qualityChange = useChangePlaybackQuality()
   const settings = useSettings()

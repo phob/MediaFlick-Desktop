@@ -1,15 +1,14 @@
-import { useQuery } from "@tanstack/react-query"
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
-import { collectionAccountKey, useStatus } from "@/lib/queries"
+import { accountKey, useBrowsing, useStatus } from "@/lib/queries"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 
 export function ViewingSync() {
   const viewing = useViewing()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
-  const history = useQuery({ queryKey: ["browsing", account], queryFn: api.browsing, enabled: Boolean(status?.authenticated) })
+  const account = accountKey(status)
+  const history = useBrowsing()
   const location = useLocation()
   const navigate = useNavigate()
   const initialized = useRef<string | null>(null)

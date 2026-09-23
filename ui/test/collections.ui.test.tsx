@@ -20,9 +20,11 @@ import type {
   SeerrStatusInfo,
 } from "../src/lib/api"
 import * as api from "../src/lib/api"
-import { queryClient, queryKeys } from "../src/lib/query-client"
+import { createQueryClient, queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
+
+const queryClient = createQueryClient()
 
 function title(id: number, patch: Partial<NormalizedCollectionTitle> = {}): NormalizedCollectionTitle {
   return {

@@ -1,9 +1,8 @@
 import { useScrollRestoration } from "@/lib/scroll-restoration"
 import { toast } from "sonner"
-import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
-import { collectionAccountKey, useStatus } from "@/lib/queries"
+import { useBrowsing } from "@/lib/queries"
 import { useEffect, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
@@ -136,9 +135,7 @@ export default function Library({ components }: LibraryProps = {}) {
   const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
   const [routeParams, setParams] = useSearchParams()
   const viewing = useViewing()
-  const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
-  const history = useQuery({queryKey:["browsing", account], queryFn:api.browsing, enabled:Boolean(status?.authenticated)})
+  const history = useBrowsing()
   const preferences = viewing.data ?? DEFAULT_VIEWING
   const kindKey = libraryKind(routeParams)
   const plainLibrary = ["Movie", "Series"].includes(kindKey) && !routeParams.has("search") && !routeParams.has("mode") && !routeParams.has("favorite")

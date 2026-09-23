@@ -46,7 +46,7 @@ import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
 import {
-  collectionAccountKey,
+  accountKey,
   franchisesQueryOptions,
   myCollectionsQueryOptions,
   useCollectionSettings,
@@ -263,7 +263,7 @@ export function AppSidebar(props: AppSidebarProps = {}) {
   const location = useLocation()
   const cache = useQueryClient()
   const { data: status } = useStatus()
-  const account = collectionAccountKey(status)
+  const account = accountKey(status)
   const localDate = useLocalDate()
   const libraryParams = new URLSearchParams(location.search)
   const detailMatch = location.pathname.match(/^\/item\/([^/]+)$/)
