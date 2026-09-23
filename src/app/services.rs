@@ -199,7 +199,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         // thread and the API paths re-check lazily.
         let companion = companion.clone();
         let session = session.clone();
-        std::thread::spawn(move || {
+        crate::app::threads::spawn_named("session-restore", move || {
             session.refresh_user_policy();
             if let Err(error) = companion.probe(false) {
                 tracing::debug!(target: "companion", "initial companion probe failed: {error}");

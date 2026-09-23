@@ -132,6 +132,39 @@ wrap_scheme_handler_factory! {
     }
 }
 
+/// What `response_headers` needs from a prepared response. The body can be
+/// megabytes of artwork or trailer bytes, so it is never cloned for this.
+struct ResponseHead {
+    status: u16,
+    content_type: String,
+    cache_control: &'static str,
+    headers: Vec<(String, String)>,
+    length: usize,
+}
+
+impl ResponseHead {
+    fn of(response: &ApiResponse) -> Self {
+        Self {
+            status: response.status,
+            content_type: response.content_type.clone(),
+            cache_control: response.cache_control,
+            headers: response.headers.clone(),
+            length: response.body.len(),
+        }
+    }
+
+    /// `open` always stores a response first; this only covers a poisoned lock.
+    fn internal_error() -> Self {
+        Self {
+            status: 500,
+            content_type: "text/plain; charset=utf-8".to_string(),
+            cache_control: "no-store",
+            headers: Vec::new(),
+            length: 0,
+        }
+    }
+}
+
 wrap_resource_handler! {
     struct AppResourceHandler {
         request: ApiRequest,
@@ -187,18 +220,13 @@ wrap_resource_handler! {
             let Some(response) = response else {
                 return;
             };
+            // Only the head is copied out; the body stays in place for `read`.
             let prepared = self
                 .state
                 .lock()
                 .ok()
-                .and_then(|state| state.response.clone())
-                .unwrap_or_else(|| ApiResponse {
-                    status: 500,
-                    content_type: "text/plain; charset=utf-8".to_string(),
-                    body: b"internal error".to_vec(),
-                    cache_control: "no-store",
-                    headers: Vec::new(),
-                });
+                .and_then(|state| state.response.as_ref().map(ResponseHead::of))
+                .unwrap_or_else(ResponseHead::internal_error);
 
             response.set_status(i32::from(prepared.status));
             response.set_status_text(Some(&CefString::from(status_text(prepared.status))));
@@ -226,7 +254,7 @@ wrap_resource_handler! {
                 );
             }
             if let Some(response_length) = response_length {
-                *response_length = prepared.body.len() as i64;
+                *response_length = prepared.length as i64;
             }
         }
 

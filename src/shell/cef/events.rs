@@ -1,3 +1,4 @@
+use crate::app::threads::spawn_named;
 use std::time::Instant;
 
 use super::bridge::*;
@@ -29,7 +30,7 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
     const STATE_PUSH_INTERVAL: Duration = Duration::from_millis(100);
 
     let state = Arc::downgrade(state);
-    thread::spawn(move || {
+    spawn_named("playback-event-bridge", move || {
         let mut last_logged_snapshot = None;
         let mut post = |event| {
             let Some(state) = state.upgrade() else {
@@ -132,7 +133,7 @@ pub(super) fn start_preferences_event_bridge(state: &BrowserState) {
     };
     let receiver = services.preferences.subscribe();
     let state = Arc::downgrade(state);
-    thread::spawn(move || {
+    spawn_named("preference-bridge", move || {
         while let Ok(change) = receiver.recv() {
             let Some(state) = state.upgrade() else {
                 break;
@@ -151,7 +152,7 @@ pub(super) fn start_shell_request_bridge(state: &BrowserState) {
     };
     let receiver = services.shell.subscribe();
     let state = Arc::downgrade(state);
-    thread::spawn(move || {
+    spawn_named("shell-request-bridge", move || {
         while let Ok(request) = receiver.recv() {
             let Some(state) = state.upgrade() else {
                 break;
@@ -165,7 +166,7 @@ pub(super) fn start_shell_request_bridge(state: &BrowserState) {
 }
 
 pub(super) fn start_update_check_bridge(state: BrowserState) {
-    thread::spawn(move || match updater::check_for_update() {
+    spawn_named("update-check", move || match updater::check_for_update() {
         Ok(Some(release)) => post_update_event(state, UpdateEvent::Available(release)),
         Ok(None) => tracing::debug!(target: "updater", "no supported update available"),
         Err(error) => tracing::warn!(target: "updater", "failed to check for updates: {error}"),
@@ -370,43 +371,39 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
         mirror_playback_progress(state, snapshot);
     }
 
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    if browsers.is_empty() {
-        if log_event {
-            tracing::debug!(
-                target: "bridge",
-                ?event,
-                "skipped playback event dispatch because no WebUI browsers are registered"
-            );
-        }
-        return;
-    }
-
-    let script = playback_event_script(event);
-    let browser_count = browsers.len();
-    let mut frame_count = 0usize;
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            frame_count += 1;
-            frame.execute_java_script(
-                Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("mediaflick-desktop://playback-event")),
-                1,
-            );
-        }
-    }
+    let frame_count = broadcast_script(
+        state,
+        &playback_event_script(event),
+        "mediaflick-desktop://playback-event",
+    );
     if log_event {
         tracing::debug!(
             target: "bridge",
             ?event,
-            browser_count,
             frame_count,
             "dispatched playback event to WebUI"
         );
     }
+}
+
+/// Runs `script` in the main frame of every registered browser, attributed to
+/// `source_url` in DevTools, and returns how many frames received it. The
+/// browser list is copied out so no lock is held while CEF runs the script.
+pub(super) fn broadcast_script(state: &BrowserState, script: &str, source_url: &str) -> usize {
+    let browsers = state
+        .lock()
+        .map(|state| state.browsers.clone())
+        .unwrap_or_default();
+    let mut frame_count = 0;
+    for frame in browsers.iter().filter_map(Browser::main_frame) {
+        frame.execute_java_script(
+            Some(&CefString::from(script)),
+            Some(&CefString::from(source_url)),
+            1,
+        );
+        frame_count += 1;
+    }
+    frame_count
 }
 
 /// Refreshes the stopped item from Jellyfin after its final playstate report.
@@ -518,22 +515,11 @@ fn dispatch_playback_cache_refreshed(
     item_id: &str,
     outcome: PlaybackCacheRefreshOutcome,
 ) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    let script = playback_cache_refresh_script(item_id, outcome);
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            frame.execute_java_script(
-                Some(&CefString::from(script.as_str())),
-                Some(&CefString::from(
-                    "mediaflick-desktop://playback-cache-refreshed",
-                )),
-                1,
-            );
-        }
-    }
+    broadcast_script(
+        state,
+        &playback_cache_refresh_script(item_id, outcome),
+        "mediaflick-desktop://playback-cache-refreshed",
+    );
 }
 
 fn playback_cache_refresh_script(item_id: &str, outcome: PlaybackCacheRefreshOutcome) -> String {
@@ -607,16 +593,11 @@ fn handle_update_event(state: &BrowserState, event: UpdateEvent) {
 }
 
 pub(super) fn dispatch_update_available(state: &BrowserState, release: &UpdateRelease) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    let script = updater::update_available_script(release);
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            execute_update_script(&frame, &script);
-        }
-    }
+    broadcast_script(
+        state,
+        &updater::update_available_script(release),
+        UPDATE_TOAST_SOURCE,
+    );
 }
 
 pub(super) fn dispatch_update_progress(
@@ -624,16 +605,11 @@ pub(super) fn dispatch_update_progress(
     status: &str,
     payload: &serde_json::Value,
 ) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    let script = updater::update_progress_script(status, payload);
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            execute_update_script(&frame, &script);
-        }
-    }
+    broadcast_script(
+        state,
+        &updater::update_progress_script(status, payload),
+        UPDATE_TOAST_SOURCE,
+    );
 }
 
 fn handle_mpv_setup_event(state: &BrowserState, event: MpvSetupEvent) {
@@ -777,10 +753,6 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
 }
 
 pub(super) fn dispatch_shell_event(state: &BrowserState, kind: &str, payload: serde_json::Value) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
     let mut event = serde_json::Map::new();
     event.insert("type".to_string(), json!(kind));
     event.insert("payload".to_string(), payload);
@@ -789,15 +761,7 @@ pub(super) fn dispatch_shell_event(state: &BrowserState, kind: &str, payload: se
         "window.dispatchEvent(new CustomEvent('mediaflick-desktop-shell', {{ detail: {} }}));",
         js_json(&event)
     );
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            frame.execute_java_script(
-                Some(&CefString::from(script.as_str())),
-                Some(&CefString::from("mediaflick-desktop://shell-event")),
-                1,
-            );
-        }
-    }
+    broadcast_script(state, &script, "mediaflick-desktop://shell-event");
 }
 
 pub(super) fn show_pending_update_to_frame(frame: &Frame, state: &BrowserState) {
@@ -840,10 +804,12 @@ pub(super) fn apply_scrollbar_settings_to_frame(frame: &Frame, state: &BrowserSt
     );
 }
 
+const UPDATE_TOAST_SOURCE: &str = "mediaflick-desktop://update-toast";
+
 fn execute_update_script(frame: &Frame, script: &str) {
     frame.execute_java_script(
         Some(&CefString::from(script)),
-        Some(&CefString::from("mediaflick-desktop://update-toast")),
+        Some(&CefString::from(UPDATE_TOAST_SOURCE)),
         1,
     );
 }
@@ -856,32 +822,14 @@ pub(super) fn notify_error(state: &BrowserState, title: &str, body: &str) {
 }
 
 fn dispatch_error_toast(state: &BrowserState, title: &str, body: &str) {
-    let browsers = state
-        .lock()
-        .map(|state| state.browsers.clone())
-        .unwrap_or_default();
-    if browsers.is_empty() {
+    let script = error_toast::error_toast_script(title, body);
+    if broadcast_script(state, &script, "mediaflick-desktop://error-toast") == 0 {
         tracing::warn!(
             target: "bridge",
             title,
             "skipped error toast because no WebUI browsers are registered"
         );
-        return;
     }
-    let script = error_toast::error_toast_script(title, body);
-    for browser in browsers {
-        if let Some(frame) = browser.main_frame() {
-            execute_error_script(&frame, &script);
-        }
-    }
-}
-
-fn execute_error_script(frame: &Frame, script: &str) {
-    frame.execute_java_script(
-        Some(&CefString::from(script)),
-        Some(&CefString::from("mediaflick-desktop://error-toast")),
-        1,
-    );
 }
 
 #[cfg(test)]
