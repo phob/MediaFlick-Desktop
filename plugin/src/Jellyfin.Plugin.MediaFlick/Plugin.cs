@@ -4,16 +4,22 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaFlick;
 
 public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     private readonly object _configurationLock = new();
+    private readonly ILogger<Plugin> _logger;
 
-    public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
+    public Plugin(
+        IApplicationPaths applicationPaths,
+        IXmlSerializer xmlSerializer,
+        ILogger<Plugin> logger)
         : base(applicationPaths, xmlSerializer)
     {
+        _logger = logger;
         Instance = this;
         DeleteLegacyCollectionCache();
     }
@@ -30,11 +36,17 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         {
             File.Delete(Path.Combine(DataFolderPath, "collections-v1-cache.json"));
         }
-        catch (IOException)
+        catch (DirectoryNotFoundException)
         {
+            // No data folder yet means there is no legacy cache to remove.
         }
-        catch (UnauthorizedAccessException)
+        catch (IOException exception)
         {
+            _logger.LogWarning(exception, "Could not delete the legacy MediaFlick collection cache");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            _logger.LogWarning(exception, "Could not delete the legacy MediaFlick collection cache");
         }
     }
 
