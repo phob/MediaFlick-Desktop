@@ -313,7 +313,7 @@ public sealed class CollectionProviderService
         var credential = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
         var detail = await TmdbCollectionAsync(credential, id, cancellationToken).ConfigureAwait(false);
         var rows = NormalizeTmdbRows(detail["parts"] as JsonArray, "movie");
-        var includeUnreleased = request.Source["includeUnreleased"]?.GetValue<bool>() ?? false;
+        var includeUnreleased = IncludeUnreleased(request.Source);
         if (!includeUnreleased)
         {
             var today = DateOnly.FromDateTime(DateTime.Today);
@@ -565,7 +565,7 @@ public sealed class CollectionProviderService
         {
             return null;
         }
-        return Positive(RequireTmdb(response)["belongs_to_collection"]?["id"]);
+        return Positive((RequireTmdb(response)["belongs_to_collection"] as JsonObject)?["id"]);
     }
 
     private async Task<JsonObject> TmdbCollectionAsync(
@@ -605,8 +605,7 @@ public sealed class CollectionProviderService
             throw new GatewayException(StatusCodes.Status404NotFound, "List not available");
         }
         if (!response.StatusCode.IsSuccess()
-            || detail["private"]?.GetValue<bool>() == true
-            || String(detail, "privacy")?.Equals("private", StringComparison.OrdinalIgnoreCase) == true)
+            || IsPrivateList(detail))
         {
             throw new GatewayException(
                 response.StatusCode.IsSuccess()
@@ -866,8 +865,7 @@ public sealed class CollectionProviderService
         foreach (var row in rows.OfType<JsonObject>())
         {
             var id = Positive(row["id"]);
-            var adult = row["adult"]?.GetValue<bool>() ?? false;
-            if (id is null || adult)
+            if (id is null || Adult(row["adult"]))
             {
                 continue;
             }
@@ -917,7 +915,7 @@ public sealed class CollectionProviderService
                 continue;
             }
             var id = Positive(row["id"]) ?? Positive(row["tmdbid"])
-                ?? Positive(row["ids"]?["tmdb"]);
+                ?? Positive((row["ids"] as JsonObject)?["tmdb"]);
             if (id is null || Adult(row["adult"]))
             {
                 continue;
@@ -969,25 +967,34 @@ public sealed class CollectionProviderService
         }
     }
 
-    private static bool Adult(JsonNode? node)
+    private static bool Adult(JsonNode? node) => JsonRead.Flag(node) == true;
+
+    /// <summary>
+    /// A `private` marker that is not clearly false hides the list, so an
+    /// unreadable marker fails closed rather than exposing a private list.
+    /// </summary>
+    internal static bool IsPrivateList(JsonObject detail)
+        => (detail["private"] is { } marker && JsonRead.Flag(marker) != false)
+            || String(detail, "privacy")?.Trim()
+                .Equals("private", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>
+    /// `includeUnreleased` is client input: it must be a JSON boolean when
+    /// present, and anything else is a request error rather than a crash.
+    /// </summary>
+    internal static bool IncludeUnreleased(JsonObject source)
     {
-        if (node is not JsonValue value)
+        var node = source["includeUnreleased"];
+        if (node is null)
         {
             return false;
         }
-        if (value.TryGetValue<bool>(out var boolean))
-        {
-            return boolean;
-        }
-        if (value.TryGetValue<long>(out var number))
-        {
-            return number != 0;
-        }
-        if (value.TryGetValue<int>(out var integer))
-        {
-            return integer != 0;
-        }
-        return bool.TryParse(node.ToString(), out boolean) && boolean;
+
+        return node is JsonValue value && value.TryGetValue<bool>(out var include)
+            ? include
+            : throw new GatewayException(
+                StatusCodes.Status400BadRequest,
+                "includeUnreleased must be true or false");
     }
 
     private static IReadOnlyList<PublicListSummary> NormalizePublicLists(JsonNode? body)

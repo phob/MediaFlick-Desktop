@@ -150,24 +150,5 @@ public sealed class CompanionLoggingTests
             TestContext.Current.CancellationToken);
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body)
-        => new(status)
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        };
-
-    private sealed class StubFactory(HttpMessageHandler handler) : IHttpClientFactory
-    {
-        public HttpClient CreateClient(string name) => new(handler, false);
-    }
-
-    private sealed class StubHandler : HttpMessageHandler
-    {
-        public Func<HttpRequestMessage, HttpResponseMessage> Respond { get; set; } =
-            _ => new HttpResponseMessage(HttpStatusCode.OK);
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-            => Task.FromResult(Respond(request));
-    }
+        => StubHandler.Json(status, body);
 }

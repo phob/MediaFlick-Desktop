@@ -39,7 +39,7 @@ public sealed class InfoController : ControllerBase
         var ratings = _ratings.Capability();
         var capabilities = Capabilities(configuration, ratings.Available);
 
-        var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.2.0";
+        var version = typeof(Plugin).Assembly.GetName().Version?.ToString(3) ?? "0.2.2";
         var info = new PluginInfoResponse(
             version,
             1,

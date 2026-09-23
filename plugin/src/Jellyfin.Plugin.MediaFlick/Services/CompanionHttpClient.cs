@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -62,15 +63,18 @@ public sealed class CompanionHttpClient
             var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                var message = UpstreamMessage(serviceName, response.StatusCode, text);
-                _health.Failure(serviceName, message);
-                ReportFailureStatus(serviceName, response.StatusCode, seerrUserId is not null);
+                var mappedUser = seerrUserId is not null;
+                var failure = FailureKind(response.StatusCode, mappedUser);
+                _health.Failure(serviceName, failure);
+                ReportFailureStatus(serviceName, response.StatusCode, mappedUser);
+                // The upstream body can echo request data or name internal
+                // hosts, so Desktop only ever receives fixed plugin wording.
                 throw new GatewayException(
                     (int)response.StatusCode,
-                    message);
+                    FailureMessage(serviceName, response.StatusCode, mappedUser),
+                    failure);
             }
 
-            _health.Success(serviceName);
             JsonNode? parsed = null;
             if (!string.IsNullOrWhiteSpace(text))
             {
@@ -80,15 +84,19 @@ public sealed class CompanionHttpClient
                 }
                 catch (JsonException)
                 {
+                    _health.Failure(serviceName, ServiceFailure.InvalidResponse);
                     _logger.Log(
                         _failures.Failure(serviceName, "invalid_response"),
                         "{Service} returned a non-JSON response",
                         serviceName);
                     throw new GatewayException(
                         StatusCodes.Status502BadGateway,
-                        $"{serviceName} returned a non-JSON response");
+                        $"{DisplayName(serviceName)} returned an unreadable response",
+                        ServiceFailure.InvalidResponse);
                 }
             }
+
+            _health.Success(serviceName);
 
             // Only a usable answer ends a failure streak; a service that keeps
             // returning non-JSON must stay on the Debug path after its first Warning.
@@ -105,7 +113,7 @@ public sealed class CompanionHttpClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _health.Failure(serviceName, "request timed out");
+            _health.Failure(serviceName, ServiceFailure.Timeout);
             _logger.Log(
                 _failures.Failure(serviceName, "timeout"),
                 "{Service} did not answer within {TimeoutSeconds} seconds",
@@ -113,13 +121,14 @@ public sealed class CompanionHttpClient
                 RequestTimeout.TotalSeconds);
             throw new GatewayException(
                 StatusCodes.Status504GatewayTimeout,
-                $"{serviceName} did not answer in time");
+                $"{DisplayName(serviceName)} did not answer in time",
+                ServiceFailure.Timeout);
         }
         catch (HttpRequestException exception)
         {
-            _health.Failure(serviceName, exception.Message);
             // The exception text can name the configured service address, so
-            // only its error category is logged.
+            // only its error category is recorded and logged.
+            _health.Failure(serviceName, ServiceFailure.Unreachable);
             _logger.Log(
                 _failures.Failure(serviceName, "unreachable"),
                 "{Service} could not be reached ({HttpRequestError})",
@@ -127,7 +136,8 @@ public sealed class CompanionHttpClient
                 exception.HttpRequestError);
             throw new GatewayException(
                 StatusCodes.Status502BadGateway,
-                $"could not reach {serviceName}");
+                $"could not reach {DisplayName(serviceName)}",
+                ServiceFailure.Unreachable);
         }
     }
 
@@ -162,14 +172,21 @@ public sealed class CompanionHttpClient
             null,
             null,
             cancellationToken).ConfigureAwait(false);
-        return response?["version"]?.GetValue<string>();
+        return response is JsonObject status
+            && status["version"] is JsonValue version
+            && version.TryGetValue<string>(out var text)
+                ? text
+                : null;
     }
 
     private static void ValidateConfiguration(string name, ServiceConfiguration service)
     {
         if (!service.Enabled)
         {
-            throw new GatewayException(StatusCodes.Status503ServiceUnavailable, $"{name} is disabled");
+            throw new GatewayException(
+                StatusCodes.Status503ServiceUnavailable,
+                $"{DisplayName(name)} is disabled",
+                ServiceFailure.NotConfigured);
         }
 
         if (!Uri.TryCreate(service.BaseUrl, UriKind.Absolute, out var uri)
@@ -178,7 +195,8 @@ public sealed class CompanionHttpClient
         {
             throw new GatewayException(
                 StatusCodes.Status503ServiceUnavailable,
-                $"{name} is not configured");
+                $"{DisplayName(name)} is not configured",
+                ServiceFailure.NotConfigured);
         }
     }
 
@@ -214,22 +232,51 @@ public sealed class CompanionHttpClient
         }
     }
 
-    private static string UpstreamMessage(string service, HttpStatusCode status, string body)
+    private static ServiceFailure FailureKind(HttpStatusCode status, bool mappedUser)
     {
-        try
+        var code = (int)status;
+        if (!mappedUser && status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            var parsed = JsonNode.Parse(body);
-            var message = parsed?["message"]?.GetValue<string>()
-                ?? parsed?["error"]?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(message))
-            {
-                return $"{service}: {message}";
-            }
-        }
-        catch (JsonException)
-        {
+            return ServiceFailure.Rejected;
         }
 
-        return $"{service} returned HTTP {(int)status}";
+        return code is StatusCodes.Status408RequestTimeout or StatusCodes.Status429TooManyRequests
+            or >= 500
+                ? ServiceFailure.Unavailable
+                : ServiceFailure.RequestFailed;
     }
+
+    /// <summary>
+    /// Fixed Desktop-facing wording for an upstream status. Only the service
+    /// name and status code are used; the response body never is.
+    /// </summary>
+    internal static string FailureMessage(string serviceName, HttpStatusCode status, bool mappedUser)
+    {
+        var name = DisplayName(serviceName);
+        var code = (int)status;
+        return status switch
+        {
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden when mappedUser =>
+                $"{name} did not allow this request for your account",
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden =>
+                $"{name} rejected the configured API key",
+            HttpStatusCode.NotFound => $"{name} could not find the requested item",
+            HttpStatusCode.Conflict => $"{name} already has a matching request",
+            HttpStatusCode.TooManyRequests => $"{name} is limiting requests; try again later",
+            HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity =>
+                $"{name} rejected the request",
+            _ when code is StatusCodes.Status408RequestTimeout or >= 500 =>
+                string.Create(CultureInfo.InvariantCulture, $"{name} is unavailable (HTTP {code})"),
+            _ => string.Create(CultureInfo.InvariantCulture, $"{name} returned HTTP {code}")
+        };
+    }
+
+    private static string DisplayName(string serviceName)
+        => serviceName.ToLowerInvariant() switch
+        {
+            "seerr" => "Seerr",
+            "sonarr" => "Sonarr",
+            "radarr" => "Radarr",
+            _ => "The service"
+        };
 }
