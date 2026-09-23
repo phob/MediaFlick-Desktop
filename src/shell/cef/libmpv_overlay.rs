@@ -63,4 +63,4 @@ pub(super) fn is_active() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) use platform::reveal;
+pub(super) use self::linux::reveal;
