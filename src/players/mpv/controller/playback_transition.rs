@@ -87,9 +87,10 @@ impl ControllerState {
     }
 
     fn playback_chapters(&self) -> Vec<PlayerChapter> {
-        self.last_sent_chapter_list
+        self.chapter_markers
+            .last_sent
             .as_deref()
-            .or(self.original_chapters.as_deref())
+            .or(self.chapter_markers.original.as_deref())
             .unwrap_or_default()
             .iter()
             .filter_map(|chapter| {
@@ -137,9 +138,9 @@ impl ControllerState {
     pub(super) fn prepare_pending_playback_state(&mut self) {
         #[cfg(target_os = "linux")]
         {
-            self.pending_library_fullscreen = false;
-            self.library_video_ready = false;
-            self.library_waiting_seek_event = false;
+            self.fullscreen_gate.pending = false;
+            self.fullscreen_gate.video_ready = false;
+            self.fullscreen_gate.waiting_seek_event = false;
         }
         let Some(pending) = self.pending.as_ref() else {
             tracing::debug!(target: "playback", "no pending playback state to prepare");

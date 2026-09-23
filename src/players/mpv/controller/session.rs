@@ -75,7 +75,7 @@ impl ControllerState {
             // Retire the opaque catalog and finish the delayed resume seek
             // before growing video render targets. Seeking can replace the
             // decoder's buffers; don't overlap that with fullscreen resizing.
-            self.pending_library_fullscreen = true;
+            self.fullscreen_gate.pending = true;
             return;
         }
         self.set_fullscreen(fullscreen);
@@ -99,15 +99,15 @@ impl ControllerState {
     #[cfg(target_os = "linux")]
     fn finish_library_fullscreen(&mut self, background_exposed: bool) {
         if !self.mpv_playback_active {
-            self.pending_library_fullscreen = false;
+            self.fullscreen_gate.pending = false;
         }
         if background_exposed
-            && self.pending_library_fullscreen
+            && self.fullscreen_gate.pending
             && self.startup_seek.is_none()
-            && self.library_video_ready
-            && !self.library_waiting_seek_event
+            && self.fullscreen_gate.video_ready
+            && !self.fullscreen_gate.waiting_seek_event
         {
-            self.pending_library_fullscreen = false;
+            self.fullscreen_gate.pending = false;
             self.set_fullscreen(FullscreenBehavior::Fullscreen);
         }
     }
@@ -200,7 +200,8 @@ impl ControllerState {
                 self.finish_active(Some(StopReason::Quit));
                 self.reset_mpv();
             } else if self
-                .ipc_worker
+                .ipc
+                .worker
                 .as_ref()
                 .is_some_and(IpcWorker::is_writer_alive)
             {
@@ -274,14 +275,14 @@ impl ControllerState {
             return false;
         }
 
-        let session_id = self.next_ipc_session_id;
-        self.next_ipc_session_id = self.next_ipc_session_id.wrapping_add(1).max(1);
+        let session_id = self.ipc.next_id;
+        self.ipc.next_id = self.ipc.next_id.wrapping_add(1).max(1);
         self.start_event_relay(session_id, event_rx);
         self.runtime = Some(runtime);
         self.current_mpv_path = Some(mpv_path.to_string());
-        self.ipc_path = Some(ipc_path.clone());
-        self.ipc_worker = Some(ipc_worker);
-        self.active_ipc_session_id = Some(session_id);
+        self.ipc.path = Some(ipc_path.clone());
+        self.ipc.worker = Some(ipc_worker);
+        self.ipc.active_id = Some(session_id);
         tracing::info!(target: "mpv.ipc", ipc_path = %ipc_path, session_id, "mpv IPC connected");
         self.install_input_bindings();
         true
@@ -349,7 +350,7 @@ impl ControllerState {
     }
 
     pub(super) fn handle_session_event(&mut self, session_id: u64, event: &MpvEvent) {
-        if self.active_ipc_session_id != Some(session_id) {
+        if self.ipc.active_id != Some(session_id) {
             tracing::trace!(target: "mpv.ipc", session_id, "ignored event from stale mpv IPC session");
             return;
         }
@@ -357,7 +358,7 @@ impl ControllerState {
     }
 
     pub(super) fn handle_event_stream_disconnected(&mut self, session_id: u64) {
-        if self.active_ipc_session_id != Some(session_id) {
+        if self.ipc.active_id != Some(session_id) {
             return;
         }
         tracing::warn!(target: "mpv.ipc", session_id, "mpv IPC event stream disconnected");
@@ -388,13 +389,13 @@ impl ControllerState {
             "seek" => {
                 #[cfg(target_os = "linux")]
                 {
-                    self.library_video_ready = false;
-                    self.library_waiting_seek_event = false;
+                    self.fullscreen_gate.video_ready = false;
+                    self.fullscreen_gate.waiting_seek_event = false;
                 }
                 self.handle_seek_event();
             }
             #[cfg(target_os = "linux")]
-            "playback-restart" => self.library_video_ready = true,
+            "playback-restart" => self.fullscreen_gate.video_ready = true,
             "property-change" => {
                 self.apply_property(event.property.as_deref(), event.data.as_ref());
             }
@@ -712,7 +713,8 @@ impl ControllerState {
         self.runtime_is_alive()
             && self.current_mpv_path_matches(&config.mpv_path)
             && self
-                .ipc_worker
+                .ipc
+                .worker
                 .as_ref()
                 .is_some_and(IpcWorker::is_writer_alive)
     }
@@ -890,9 +892,9 @@ impl ControllerState {
     pub(super) fn reset_mpv(&mut self) {
         #[cfg(target_os = "linux")]
         {
-            self.pending_library_fullscreen = false;
-            self.library_video_ready = false;
-            self.library_waiting_seek_event = false;
+            self.fullscreen_gate.pending = false;
+            self.fullscreen_gate.video_ready = false;
+            self.fullscreen_gate.waiting_seek_event = false;
         }
         tracing::debug!(target: "mpv.ipc", "resetting mpv process and IPC state");
         self.startup_seek = None;
@@ -910,12 +912,12 @@ impl ControllerState {
             runtime.stop();
         }
         self.current_mpv_path = None;
-        if let Some(path) = self.ipc_path.take() {
+        if let Some(path) = self.ipc.path.take() {
             tracing::trace!(target: "mpv.ipc", ipc_path = %path, "cleaning mpv IPC path");
             cleanup_ipc_path(&path);
         }
-        self.active_ipc_session_id = None;
-        if let Some(worker) = self.ipc_worker.take() {
+        self.ipc.active_id = None;
+        if let Some(worker) = self.ipc.worker.take() {
             worker.shutdown();
         }
         self.last_position_log_bucket = None;
@@ -931,7 +933,7 @@ impl ControllerState {
         command: Value,
         timeout: Duration,
     ) -> Result<(), IpcCommandFailure> {
-        let Some(worker) = &self.ipc_worker else {
+        let Some(worker) = &self.ipc.worker else {
             tracing::warn!(
                 target: "mpv.ipc",
                 command = %logger::mpv_command_summary(&command),

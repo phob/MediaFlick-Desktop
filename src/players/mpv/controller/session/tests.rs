@@ -40,22 +40,22 @@ fn linux_fullscreen_waits_for_the_composed_playback_frame_after_file_loaded() {
     state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
     state.remember_configured_mpv("libmpv.so.2", FullscreenBehavior::Fullscreen);
     state.activate_pending();
-    assert!(state.pending_library_fullscreen);
+    assert!(state.fullscreen_gate.pending);
     assert_eq!(state.last_state.position_ticks, 20_000_000);
     state.finish_library_fullscreen(false);
-    assert!(state.pending_library_fullscreen);
+    assert!(state.fullscreen_gate.pending);
     state.finish_library_fullscreen(true);
-    assert!(state.pending_library_fullscreen);
+    assert!(state.fullscreen_gate.pending);
     state.startup_seek = None;
     state.finish_library_fullscreen(true);
-    assert!(state.pending_library_fullscreen);
-    state.library_video_ready = true;
-    state.library_waiting_seek_event = true;
+    assert!(state.fullscreen_gate.pending);
+    state.fullscreen_gate.video_ready = true;
+    state.fullscreen_gate.waiting_seek_event = true;
     state.finish_library_fullscreen(true);
-    assert!(state.pending_library_fullscreen);
-    state.library_waiting_seek_event = false;
+    assert!(state.fullscreen_gate.pending);
+    state.fullscreen_gate.waiting_seek_event = false;
     state.finish_library_fullscreen(true);
-    assert!(!state.pending_library_fullscreen);
+    assert!(!state.fullscreen_gate.pending);
 }
 
 #[cfg(target_os = "linux")]
@@ -66,10 +66,10 @@ fn linux_fullscreen_wait_does_not_survive_stop_or_runtime_reset() {
     state.remember_configured_mpv("libmpv.so.2", FullscreenBehavior::Fullscreen);
     state.activate_pending();
     state.control(&PlayerCommand::Stop);
-    assert!(!state.pending_library_fullscreen);
-    state.pending_library_fullscreen = true;
+    assert!(!state.fullscreen_gate.pending);
+    state.fullscreen_gate.pending = true;
     state.reset_mpv();
-    assert!(!state.pending_library_fullscreen);
+    assert!(!state.fullscreen_gate.pending);
 }
 
 #[cfg(target_os = "linux")]
@@ -83,7 +83,7 @@ fn windowed_library_and_external_startup_do_not_wait_for_a_browser_frame() {
         state.runtime_kind = kind;
         state.remember_configured_mpv("test-player", FullscreenBehavior::Windowed);
         state.activate_pending();
-        assert!(!state.pending_library_fullscreen);
+        assert!(!state.fullscreen_gate.pending);
     }
 }
 
@@ -123,7 +123,7 @@ fn external_watched_next_message_uses_the_completion_handoff() {
         .launch
         .runtime_ticks = Some(300_000_000);
     state.mpv_playback_active = true;
-    state.active_ipc_session_id = Some(1);
+    state.ipc.active_id = Some(1);
     let event = super::MpvEvent {
         name: "client-message".to_string(),
         reason: None,
@@ -388,7 +388,7 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
     state.pending = None;
     state.mpv_playback_active = true;
     state.current_mpv_path = Some("stale-mpv".to_string());
-    state.ipc_path = Some(crate::players::mpv::ipc::make_ipc_path());
+    state.ipc.path = Some(crate::players::mpv::ipc::make_ipc_path());
     state.replacement_end_file_pending = true;
     state.pending_raise_pulse_reset_at = Some(Instant::now());
     let mut replacement = PlaybackRequest::new("https://example.test/replacement.mkv");
@@ -401,7 +401,7 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
 
     assert!(!state.mpv_playback_active);
     assert!(state.current_mpv_path.is_none());
-    assert!(state.ipc_path.is_none());
+    assert!(state.ipc.path.is_none());
     assert!(!state.replacement_end_file_pending);
     assert!(state.pending_raise_pulse_reset_at.is_none());
     let snapshot = state.snapshot.lock().expect("snapshot").clone();
@@ -583,7 +583,7 @@ fn startup_seek_waits_for_its_delay_then_retries_until_the_position_arrives() {
     let fake = scripted_mpv(false);
     let (worker, _events) = fake.connect();
     let mut state = controller_with_pending_load(Some(RESUME_TICKS));
-    state.ipc_worker = Some(worker);
+    state.ipc.worker = Some(worker);
     state.activate_pending();
 
     state.maybe_send_startup_seek();
@@ -609,7 +609,7 @@ fn startup_seek_waits_for_its_delay_then_retries_until_the_position_arrives() {
 
     assert!(!state.defer_startup_position_update(RESUME_TICKS));
     assert!(state.startup_seek.is_none(), "the seek landed");
-    fake.finish(state.ipc_worker.take().expect("worker"));
+    fake.finish(state.ipc.worker.take().expect("worker"));
 }
 
 #[test]
@@ -617,7 +617,7 @@ fn a_rejected_startup_seek_is_retried_without_resetting_mpv() {
     let fake = scripted_mpv(true);
     let (worker, _events) = fake.connect();
     let mut state = controller_with_pending_load(Some(RESUME_TICKS));
-    state.ipc_worker = Some(worker);
+    state.ipc.worker = Some(worker);
     state.activate_pending();
 
     make_due(&mut state);
@@ -631,12 +631,12 @@ fn a_rejected_startup_seek_is_retried_without_resetting_mpv() {
     assert!(retry.sent_at.is_none(), "a rejected seek was not delivered");
     assert!(retry.due_at >= before + STARTUP_SEEK_RETRY_DELAY);
     assert!(
-        state.ipc_worker.is_some(),
+        state.ipc.worker.is_some(),
         "a rejection keeps the mpv session"
     );
     assert!(
         state.defer_startup_position_update(0),
         "the resume position is held"
     );
-    fake.finish(state.ipc_worker.take().expect("worker"));
+    fake.finish(state.ipc.worker.take().expect("worker"));
 }
