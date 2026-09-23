@@ -48,7 +48,7 @@ pub fn print_stats() -> i32 {
             .total
             .map_or_else(|| "unknown".to_string(), |total| total.to_string())
     );
-    if let Some(report) = library.meta("sync.last_report") {
+    if let Ok(Some(report)) = library.meta("sync.last_report") {
         println!("last sync:   {report}");
     }
     0

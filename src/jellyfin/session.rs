@@ -404,27 +404,16 @@ impl Session {
         true
     }
 
-    /// Called when the server answers 401/403: pauses sync and sends the UI
-    /// back to the login view without discarding the cache.
+    /// Routes an API failure made for `scope`. A rejected token pauses sync and
+    /// sends the UI back to the login view without discarding the cache, once,
+    /// and only while `scope` is still the signed-in account.
     ///
     /// The UI is told through the shell event here, on the first rejection,
     /// because many callers swallow their errors by design (card badges, the
     /// about panel); without the push the app could sit on authenticated
     /// screens with dead controls until something re-read `/api/status`.
-    pub fn mark_expired(&self) {
-        if !self.mark_expired_inner(None) {
-            return;
-        }
-        tracing::warn!(
-            target: "jellyfin.session",
-            "the Jellyfin server rejected the stored token; re-authentication required"
-        );
-        crate::app::services::notify_session_expired();
-    }
-
-    /// Routes an API failure so a rejected token is only ever handled once.
     pub fn note_scoped_error(&self, scope: &SessionScope, error: &ApiError) {
-        if *error == ApiError::Unauthorized && self.mark_expired_inner(Some(scope)) {
+        if *error == ApiError::Unauthorized && self.mark_expired_inner(scope) {
             tracing::warn!(
                 target: "jellyfin.session",
                 "the Jellyfin server rejected the stored token; re-authentication required"
@@ -433,7 +422,7 @@ impl Session {
         }
     }
 
-    fn mark_expired_inner(&self, scope: Option<&SessionScope>) -> bool {
+    fn mark_expired_inner(&self, scope: &SessionScope) -> bool {
         let _gate = self
             .operation_gate
             .lock()
@@ -441,7 +430,7 @@ impl Session {
         let Ok(mut state) = self.state.write() else {
             return false;
         };
-        if state.expired || state.deleting || scope.is_some_and(|scope| !state.matches(scope)) {
+        if state.expired || state.deleting || !state.matches(scope) {
             return false;
         }
         state.expired = true;
@@ -482,7 +471,7 @@ fn next_generation(generation: u64) -> u64 {
 }
 
 fn storage_error(error: &rusqlite::Error) -> ApiError {
-    ApiError::Decode(format!("session storage failed: {error}"))
+    ApiError::Storage(format!("session storage: {error}"))
 }
 
 #[cfg(test)]

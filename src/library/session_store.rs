@@ -25,7 +25,12 @@ impl Library {
                     },
                 )
             })
-            .unwrap_or_default()
+            // An unreadable session reads as signed out; nothing is erased,
+            // and the next successful sign-in overwrites the row.
+            .unwrap_or_else(|error| {
+                tracing::warn!(target: "library.db", "could not read the stored session: {error}");
+                StoredCredentials::default()
+            })
     }
 
     pub fn save_credentials(&self, credentials: &StoredCredentials) -> rusqlite::Result<()> {

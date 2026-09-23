@@ -51,6 +51,8 @@ pub enum ApiError {
     Transport(String),
     /// The response body did not match the expected shape.
     Decode(String),
+    /// The local library database failed, not Jellyfin.
+    Storage(String),
     /// No server URL is configured, or no session exists yet.
     NotConfigured,
     /// Local application shutdown cancelled work between bounded requests.
@@ -63,7 +65,11 @@ impl ApiError {
         match self {
             Self::Transport(_) | Self::RateLimited { .. } => true,
             Self::Status { status } | Self::Remote { status, .. } => *status >= 500,
-            Self::Unauthorized | Self::Decode(_) | Self::NotConfigured | Self::Cancelled => false,
+            Self::Unauthorized
+            | Self::Decode(_)
+            | Self::Storage(_)
+            | Self::NotConfigured
+            | Self::Cancelled => false,
         }
     }
 
@@ -85,6 +91,7 @@ impl ApiError {
             Self::NotConfigured => 409,
             Self::Cancelled => 499,
             Self::Transport(_) | Self::Decode(_) => 502,
+            Self::Storage(_) => 500,
         }
     }
 }
@@ -106,6 +113,7 @@ impl fmt::Display for ApiError {
             Self::Decode(message) => {
                 write!(formatter, "unexpected Jellyfin response: {message}")
             }
+            Self::Storage(message) => write!(formatter, "the local library failed: {message}"),
             Self::NotConfigured => write!(formatter, "no Jellyfin server is configured"),
             Self::Cancelled => write!(formatter, "the request was cancelled during shutdown"),
         }
@@ -813,11 +821,20 @@ mod tests {
         );
         assert!(!ApiError::Status { status: 404 }.is_retryable());
         assert!(!ApiError::Unauthorized.is_retryable());
+        assert!(!ApiError::Storage("disk I/O error".to_string()).is_retryable());
     }
 
     #[test]
     fn client_status_maps_failures_to_our_own_api() {
         assert_eq!(ApiError::Unauthorized.client_status(), 401);
+        assert_eq!(
+            ApiError::Storage("disk full".to_string()).client_status(),
+            500
+        );
+        assert_eq!(
+            ApiError::Storage("disk full".to_string()).to_string(),
+            "the local library failed: disk full"
+        );
         assert_eq!(ApiError::NotConfigured.client_status(), 409);
         assert_eq!(ApiError::Status { status: 404 }.client_status(), 404);
         assert_eq!(

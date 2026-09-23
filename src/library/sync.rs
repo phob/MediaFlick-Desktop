@@ -76,29 +76,50 @@ pub struct BootstrapProgress {
 /// The catalog becomes usable after its first successful page commit. Existing
 /// rows are an equally strong readiness signal during a rebuild or the daily
 /// re-bootstrap, even if an older build never wrote the explicit marker.
+///
+/// This only reports progress; the sync cycle reads its own state fallibly.
+/// An unreadable database is logged and reported as a catalog that is not
+/// ready yet.
 pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
-    let has_items = library.has_items();
-    let complete = library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1");
-    BootstrapProgress {
+    read_bootstrap_progress(library).unwrap_or_else(|error| {
+        tracing::warn!(target: "library.sync", "could not read catalog progress: {error}");
+        BootstrapProgress::default()
+    })
+}
+
+fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgress> {
+    let has_items = library.has_items()?;
+    let complete = flag(library, META_BOOTSTRAP_DONE)?;
+    Ok(BootstrapProgress {
         complete,
-        ready: complete || has_items || library.meta(META_CATALOG_READY).as_deref() == Some("1"),
-        processed: meta_count(library, META_BOOTSTRAP_OFFSET).unwrap_or(0),
-        total: meta_count(library, META_BOOTSTRAP_TOTAL),
+        ready: complete || has_items || flag(library, META_CATALOG_READY)?,
+        processed: meta_count(library, META_BOOTSTRAP_OFFSET)?.unwrap_or(0),
+        total: meta_count(library, META_BOOTSTRAP_TOTAL)?,
         // A migration/backfill over an existing cache is never first-time setup.
-        initial: library.meta(META_LAST_BOOTSTRAP).is_none() && !has_items,
-    }
+        initial: library.meta(META_LAST_BOOTSTRAP)?.is_none() && !has_items,
+    })
 }
 
+/// Whether the cache can answer "is this title in the library". A database
+/// that cannot be read cannot answer, so it is logged and treated as not.
 pub fn ownership_available(library: &Library) -> bool {
-    library.meta(META_BOOTSTRAP_DONE).as_deref() == Some("1")
-        && library.meta(META_LATEST_FAILURE).as_deref() != Some("1")
+    let available = flag(library, META_BOOTSTRAP_DONE)
+        .and_then(|done| Ok(done && !flag(library, META_LATEST_FAILURE)?));
+    available.unwrap_or_else(|error| {
+        tracing::warn!(target: "library.sync", "could not read catalog ownership state: {error}");
+        false
+    })
 }
 
-fn meta_count(library: &Library, key: &str) -> Option<i64> {
-    library
-        .meta(key)
+fn flag(library: &Library, key: &str) -> rusqlite::Result<bool> {
+    Ok(library.meta(key)?.as_deref() == Some("1"))
+}
+
+fn meta_count(library: &Library, key: &str) -> rusqlite::Result<Option<i64>> {
+    Ok(library
+        .meta(key)?
         .and_then(|value| value.parse::<i64>().ok())
-        .map(|value| value.max(0))
+        .map(|value| value.max(0)))
 }
 
 /// What a single cycle changed; surfaced by `/api/status` and `--library-stats`.
