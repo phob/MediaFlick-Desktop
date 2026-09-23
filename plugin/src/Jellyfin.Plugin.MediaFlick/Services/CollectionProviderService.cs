@@ -209,9 +209,9 @@ public sealed class CollectionProviderService
                 .ConfigureAwait(false);
             franchises.Add(new NormalizedFranchise(
                 collectionId,
-                String(detail, "name") ?? $"Collection {collectionId}",
-                String(detail, "poster_path"),
-                String(detail, "backdrop_path"),
+                JsonRead.String(detail, "name") ?? $"Collection {collectionId}",
+                JsonRead.String(detail, "poster_path"),
+                JsonRead.String(detail, "backdrop_path"),
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 NormalizeTmdbRows(detail["parts"] as JsonArray, "movie")));
         }
@@ -225,7 +225,7 @@ public sealed class CollectionProviderService
     {
         ValidateRequest(request);
         var cacheKey = JsonSerializer.Serialize(new { Request = request, FetchLimit = fetchLimit }, CompanionJson.CamelCase);
-        var kind = String(request.Source, "kind");
+        var kind = JsonRead.String(request.Source, "kind");
         var provider = kind == "mdbListPublicList" ? RatingProviders.MdbList : RatingProviders.Tmdb;
         if (provider == RatingProviders.MdbList)
         {
@@ -296,8 +296,8 @@ public sealed class CollectionProviderService
                 query,
                 cancellationToken).ConfigureAwait(false);
             var body = RequireTmdb(response);
-            total = (int)Math.Min(Positive(body["total_results"]) ?? 0, int.MaxValue);
-            totalPages = (int)Math.Min(Positive(body["total_pages"]) ?? 1, 500);
+            total = (int)Math.Min(JsonRead.Positive(body["total_results"]) ?? 0, int.MaxValue);
+            totalPages = (int)Math.Min(JsonRead.Positive(body["total_pages"]) ?? 1, 500);
             rows.AddRange(NormalizeTmdbRows(body["results"] as JsonArray, mediaType));
         }
         return Result(rows.Take(fetchLimit), Math.Min(total, requestedLimit));
@@ -308,7 +308,7 @@ public sealed class CollectionProviderService
         int? maximumItems,
         CancellationToken cancellationToken)
     {
-        var id = Positive(request.Source["collectionId"])
+        var id = JsonRead.Positive(request.Source["collectionId"])
             ?? throw new GatewayException(StatusCodes.Status400BadRequest, "Invalid TMDB collection id");
         var credential = await ValidTmdbCredentialAsync(cancellationToken).ConfigureAwait(false);
         var detail = await TmdbCollectionAsync(credential, id, cancellationToken).ConfigureAwait(false);
@@ -334,7 +334,7 @@ public sealed class CollectionProviderService
         int? maximumItems,
         CancellationToken cancellationToken)
     {
-        var selector = String(request.Source, "listId") ?? string.Empty;
+        var selector = JsonRead.String(request.Source, "listId") ?? string.Empty;
         var credential = await ValidMdbListCredentialAsync(cancellationToken).ConfigureAwait(false);
         var list = await ResolvePublicListAsync(credential, selector, cancellationToken)
             .ConfigureAwait(false);
@@ -375,129 +375,72 @@ public sealed class CollectionProviderService
         return Result(rows.Take(fetchLimit), Math.Min(rows.Count, requestedLimit), list.Id);
     }
 
-    private async Task<string> ValidTmdbCredentialAsync(CancellationToken cancellationToken)
-    {
-        var credential = ReadCredential(RatingProviders.Tmdb, "TMDB unavailable");
-        ThrowIfBackedOff(RatingProviders.Tmdb, "TMDB unavailable");
-        if (_validatedThisRun.ContainsKey(RatingProviders.Tmdb))
-        {
-            return credential;
-        }
-        await _tmdbValidationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (_validatedThisRun.ContainsKey(RatingProviders.Tmdb))
-            {
-                return credential;
-            }
-            var health = _health.Health(RatingProviders.Tmdb);
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (health.RetryAt is { } retryAt && retryAt > now)
-            {
-                throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "TMDB unavailable");
-            }
-            var response = await _tmdb.GetAsync(
+    private Task<string> ValidTmdbCredentialAsync(CancellationToken cancellationToken)
+        => ValidCredentialAsync(
+            RatingProviders.Tmdb,
+            "TMDB unavailable",
+            _tmdbValidationGate,
+            async (credential, token) => ProviderOutcome.Of(await _tmdb.GetAsync(
                 credential,
                 "3/configuration",
                 new Dictionary<string, string>(),
-                cancellationToken).ConfigureAwait(false);
-            var valid = response.StatusCode.IsSuccess();
-            var rejected = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
-            var next = valid ? new ProviderHealthState
-            {
-                Validation = "valid",
-                Valid = true,
-                RetryAt = response.RetryAt,
-                LastCheckedAt = now
-            } : rejected ? RejectedCredentialState(response.RetryAt, now) : health with
-            {
-                Validation = (int)response.StatusCode == StatusCodes.Status429TooManyRequests
-                    ? "rate_limited"
-                    : "unavailable",
-                RetryAt = response.RetryAt ?? now + 60,
-                LastCheckedAt = now
-            };
-            _health.SetHealth(RatingProviders.Tmdb, next);
-            if (!valid)
-            {
-                throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "TMDB unavailable");
-            }
-            _validatedThisRun[RatingProviders.Tmdb] = 0;
-            return credential;
-        }
-        finally
-        {
-            _tmdbValidationGate.Release();
-        }
-    }
+                token).ConfigureAwait(false)),
+            cancellationToken);
 
-    private async Task<string> ValidMdbListCredentialAsync(CancellationToken cancellationToken)
+    private Task<string> ValidMdbListCredentialAsync(CancellationToken cancellationToken)
+        => ValidCredentialAsync(
+            RatingProviders.MdbList,
+            "MDBList unavailable",
+            _mdbListValidationGate,
+            async (credential, token) => ProviderOutcome.Of(
+                await _mdbList.ValidateAsync(credential, token).ConfigureAwait(false)),
+            cancellationToken);
+
+    /// <summary>
+    /// Returns the saved credential once it has been proven valid in this
+    /// plugin run. Validation is serialized per provider and respects the
+    /// persisted retry timing; outages keep an established key valid.
+    /// </summary>
+    private async Task<string> ValidCredentialAsync(
+        string provider,
+        string unavailable,
+        SemaphoreSlim gate,
+        Func<string, CancellationToken, Task<ProviderOutcome>> validate,
+        CancellationToken cancellationToken)
     {
-        var credential = ReadCredential(RatingProviders.MdbList, "MDBList unavailable");
-        ThrowIfBackedOff(RatingProviders.MdbList, "MDBList unavailable");
-        if (_validatedThisRun.ContainsKey(RatingProviders.MdbList))
+        var credential = ReadCredential(provider, unavailable);
+        ThrowIfBackedOff(provider, unavailable);
+        if (_validatedThisRun.ContainsKey(provider))
         {
             return credential;
         }
-        await _mdbListValidationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_validatedThisRun.ContainsKey(RatingProviders.MdbList))
+            if (_validatedThisRun.ContainsKey(provider))
             {
                 return credential;
             }
-            var health = _health.Health(RatingProviders.MdbList);
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (health.RetryAt is { } retryAt && retryAt > now)
+            ThrowIfBackedOff(provider, unavailable);
+            var outcome = await validate(credential, cancellationToken).ConfigureAwait(false);
+            _health.SetHealth(provider, ProviderHealthPolicy.AfterValidation(
+                _health.Health(provider),
+                outcome,
+                Now(),
+                preserveValidOnTransientFailure: true,
+                rateLimitProvesCredential: provider == RatingProviders.MdbList));
+            if (!outcome.StatusCode.IsSuccess())
             {
-                throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "MDBList unavailable");
+                throw new GatewayException(StatusCodes.Status503ServiceUnavailable, unavailable);
             }
-            var response = await _mdbList.ValidateAsync(credential, cancellationToken)
-                .ConfigureAwait(false);
-            var valid = response.StatusCode.IsSuccess();
-            var rejected = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
-            var next = valid ? new ProviderHealthState
-            {
-                Validation = "valid",
-                Valid = true,
-                QuotaLimit = response.Quota.Limit,
-                QuotaRemaining = response.Quota.Remaining,
-                QuotaResetAt = response.Quota.ResetAt,
-                RetryAt = response.RetryAt,
-                LastCheckedAt = now
-            } : rejected ? RejectedCredentialState(response.RetryAt, now) : health with
-            {
-                Validation = (int)response.StatusCode == StatusCodes.Status429TooManyRequests
-                    ? "rate_limited"
-                    : "unavailable",
-                QuotaLimit = response.Quota.Limit ?? health.QuotaLimit,
-                QuotaRemaining = response.Quota.Remaining ?? health.QuotaRemaining,
-                QuotaResetAt = response.Quota.ResetAt ?? health.QuotaResetAt,
-                RetryAt = response.RetryAt ?? now + 60,
-                LastCheckedAt = now
-            };
-            _health.SetHealth(RatingProviders.MdbList, next);
-            if (!valid)
-            {
-                throw new GatewayException(StatusCodes.Status503ServiceUnavailable, "MDBList unavailable");
-            }
-            _validatedThisRun[RatingProviders.MdbList] = 0;
+            _validatedThisRun[provider] = 0;
             return credential;
         }
         finally
         {
-            _mdbListValidationGate.Release();
+            gate.Release();
         }
     }
-
-    private static ProviderHealthState RejectedCredentialState(long? retryAt, long now)
-        => new()
-        {
-            Validation = "invalid",
-            Valid = false,
-            RetryAt = retryAt,
-            LastCheckedAt = now
-        };
 
     private async Task ValidateReadinessAsync(
         string provider,
@@ -565,7 +508,7 @@ public sealed class CollectionProviderService
         {
             return null;
         }
-        return Positive((RequireTmdb(response)["belongs_to_collection"] as JsonObject)?["id"]);
+        return JsonRead.Positive((RequireTmdb(response)["belongs_to_collection"] as JsonObject)?["id"]);
     }
 
     private async Task<JsonObject> TmdbCollectionAsync(
@@ -613,15 +556,15 @@ public sealed class CollectionProviderService
                     : StatusCodes.Status503ServiceUnavailable,
                 response.StatusCode.IsSuccess() ? "List not available" : "MDBList unavailable");
         }
-        var id = Positive(detail["id"]) ?? Positive(detail["listid"]);
+        var id = JsonRead.Positive(detail["id"]) ?? JsonRead.Positive(detail["listid"]);
         if (id is null)
         {
             throw new GatewayException(StatusCodes.Status404NotFound, "List not available");
         }
         return new PublicListValidationResponse(
             id.Value.ToString(CultureInfo.InvariantCulture),
-            String(detail, "name") ?? String(detail, "title") ?? $"List {id}",
-            String(detail, "username") ?? String(detail["user"] as JsonObject, "username"));
+            JsonRead.String(detail, "name") ?? JsonRead.String(detail, "title") ?? $"List {id}",
+            JsonRead.String(detail, "username") ?? JsonRead.String(detail["user"] as JsonObject, "username"));
     }
 
     private async Task<long?> FindTmdbIdAsync(
@@ -644,7 +587,7 @@ public sealed class CollectionProviderService
         }
         var body = RequireTmdb(response);
         var rows = body[item.MediaType == "movie" ? "movie_results" : "tv_results"] as JsonArray;
-        return rows?.OfType<JsonObject>().Select(row => Positive(row["id"]))
+        return rows?.OfType<JsonObject>().Select(row => JsonRead.Positive(row["id"]))
             .FirstOrDefault(id => id is > 0);
     }
 
@@ -667,10 +610,9 @@ public sealed class CollectionProviderService
         try
         {
             var state = _health.Health(provider);
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             return _secrets.IsConfigured(provider)
                 && state.Valid
-                && !(state.RetryAt is { } retryAt && retryAt > now);
+                && !ProviderHealthPolicy.IsBackedOff(state, Now());
         }
         catch (InvalidOperationException)
         {
@@ -691,9 +633,7 @@ public sealed class CollectionProviderService
 
     private void ThrowIfBackedOff(string provider, string unavailable)
     {
-        var state = _health.Health(provider);
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if (state.RetryAt is { } retryAt && retryAt > now)
+        if (ProviderHealthPolicy.IsBackedOff(_health.Health(provider), Now()))
         {
             throw new GatewayException(StatusCodes.Status503ServiceUnavailable, unavailable);
         }
@@ -704,60 +644,36 @@ public sealed class CollectionProviderService
         HttpStatusCode status,
         long? upstreamRetryAt)
     {
-        var previous = _health.Health(provider);
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if (status.IsSuccess())
+        // MDBList answers 401/403 for private lists, which says nothing about
+        // the administrator key; TMDB uses them only for a rejected key.
+        var rejectionInvalidatesKey = provider != RatingProviders.MdbList;
+        var next = ProviderHealthPolicy.AfterRequest(
+            _health.Health(provider),
+            status,
+            upstreamRetryAt,
+            Now(),
+            rejectionInvalidatesKey);
+        if (next is null)
         {
-            if (previous.RetryAt is not null || previous.FailureCount > 0)
-            {
-                _health.SetHealth(provider, previous with
-                {
-                    RetryAt = null,
-                    FailureCount = 0,
-                    LastCheckedAt = now
-                });
-            }
             return;
         }
-        if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        if (rejectionInvalidatesKey && ProviderHealthPolicy.IsRejection(status))
         {
-            if (provider == RatingProviders.MdbList)
-            {
-                return;
-            }
             _validatedThisRun.TryRemove(provider, out _);
-            _health.SetHealth(provider, previous with
-            {
-                Validation = "invalid",
-                Valid = false,
-                RetryAt = null,
-                FailureCount = 0,
-                LastCheckedAt = now
-            });
-            return;
         }
-        if ((int)status != StatusCodes.Status429TooManyRequests && (int)status < 500)
-        {
-            return;
-        }
-        var failures = Math.Min(previous.FailureCount + 1, 10);
-        var delay = Math.Min(30L * (1L << Math.Min(failures, 8)), 6 * 60 * 60);
-        _health.SetHealth(provider, previous with
-        {
-            RetryAt = upstreamRetryAt ?? now + delay,
-            FailureCount = failures,
-            LastCheckedAt = now
-        });
+        _health.SetHealth(provider, next);
     }
+
+    private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
     private IReadOnlyDictionary<string, string> BaseQuery()
         => new Dictionary<string, string> { ["language"] = _defaultLanguage };
 
     private static string DiscoverPath(string mediaType, JsonObject? parameters)
     {
-        if (String(parameters, "feed")?.Equals("trending", StringComparison.OrdinalIgnoreCase) == true)
+        if (JsonRead.String(parameters, "feed")?.Equals("trending", StringComparison.OrdinalIgnoreCase) == true)
         {
-            var window = String(parameters, "window") == "day" ? "day" : "week";
+            var window = JsonRead.String(parameters, "window") == "day" ? "day" : "week";
             return $"3/trending/{(mediaType == "series" ? "tv" : "movie")}/{window}";
         }
         return $"3/discover/{(mediaType == "series" ? "tv" : "movie")}";
@@ -768,7 +684,7 @@ public sealed class CollectionProviderService
         var query = new Dictionary<string, string>(BaseQuery())
         {
             ["include_adult"] = "false",
-            ["sort_by"] = String(parameters, "sortBy") ?? "popularity.desc"
+            ["sort_by"] = JsonRead.String(parameters, "sortBy") ?? "popularity.desc"
         };
         Copy(parameters, query, "genre", "with_genres");
         Copy(parameters, query, "primaryReleaseYear", "primary_release_year");
@@ -778,7 +694,7 @@ public sealed class CollectionProviderService
         Copy(parameters, query, "region", "watch_region");
         Copy(parameters, query, "withKeywords", "with_keywords");
         Copy(parameters, query, "originalLanguage", "with_original_language");
-        if (String(parameters, "watchProvider") is { } provider
+        if (JsonRead.String(parameters, "watchProvider") is { } provider
             && WatchProvider(provider) is { } providerId)
         {
             query["with_watch_providers"] = providerId;
@@ -820,7 +736,7 @@ public sealed class CollectionProviderService
         IDictionary<string, string> query,
         string mediaType)
     {
-        var window = String(parameters, "releaseWindow");
+        var window = JsonRead.String(parameters, "releaseWindow");
         if (window is null)
         {
             return;
@@ -864,26 +780,26 @@ public sealed class CollectionProviderService
         var result = new List<NormalizedProviderTitle>();
         foreach (var row in rows.OfType<JsonObject>())
         {
-            var id = Positive(row["id"]);
-            if (id is null || Adult(row["adult"]))
+            var id = JsonRead.Positive(row["id"]);
+            if (id is null || JsonRead.Flag(row["adult"]) == true)
             {
                 continue;
             }
             var type = mediaType == "mixed"
-                ? NormalizeMediaType(String(row, "media_type") ?? string.Empty)
+                ? NormalizeMediaType(JsonRead.String(row, "media_type") ?? string.Empty)
                 : mediaType;
-            var release = String(row, type == "series" ? "first_air_date" : "release_date");
+            var release = JsonRead.String(row, type == "series" ? "first_air_date" : "release_date");
             result.Add(new NormalizedProviderTitle(
                 type,
                 id.Value,
-                String(row, type == "series" ? "name" : "title") ?? $"Title {id}",
-                String(row, type == "series" ? "original_name" : "original_title"),
-                Year(release),
-                String(row, "overview") ?? string.Empty,
+                JsonRead.String(row, type == "series" ? "name" : "title") ?? $"Title {id}",
+                JsonRead.String(row, type == "series" ? "original_name" : "original_title"),
+                JsonRead.Year(release),
+                JsonRead.String(row, "overview") ?? string.Empty,
                 release,
                 result.Count,
-                String(row, "poster_path"),
-                String(row, "backdrop_path"),
+                JsonRead.String(row, "poster_path"),
+                JsonRead.String(row, "backdrop_path"),
                 false));
         }
         return result;
@@ -914,9 +830,9 @@ public sealed class CollectionProviderService
             {
                 continue;
             }
-            var id = Positive(row["id"]) ?? Positive(row["tmdbid"])
-                ?? Positive((row["ids"] as JsonObject)?["tmdb"]);
-            if (id is null || Adult(row["adult"]))
+            var id = JsonRead.Positive(row["id"]) ?? JsonRead.Positive(row["tmdbid"])
+                ?? JsonRead.Positive((row["ids"] as JsonObject)?["tmdb"]);
+            if (id is null || JsonRead.Flag(row["adult"]) == true)
             {
                 continue;
             }
@@ -925,24 +841,24 @@ public sealed class CollectionProviderService
                 "movie" => "movie",
                 "series" => "series",
                 _ => NormalizeMediaType(
-                    String(row, "mediatype") ?? String(row, "type") ?? "movie")
+                    JsonRead.String(row, "mediatype") ?? JsonRead.String(row, "type") ?? "movie")
             };
             if (requestedMediaType != "mixed" && type != requestedMediaType)
             {
                 continue;
             }
-            var release = String(row, "released") ?? String(row, "release_date");
+            var release = JsonRead.String(row, "released") ?? JsonRead.String(row, "release_date");
             result.Add(new NormalizedProviderTitle(
                 type,
                 id.Value,
-                String(row, "title") ?? String(row, "name") ?? $"Title {id}",
+                JsonRead.String(row, "title") ?? JsonRead.String(row, "name") ?? $"Title {id}",
                 null,
-                Year(release),
-                String(row, "description") ?? string.Empty,
+                JsonRead.Year(release),
+                JsonRead.String(row, "description") ?? string.Empty,
                 release,
                 offset + result.Count,
-                String(row, "poster"),
-                String(row, "backdrop"),
+                JsonRead.String(row, "poster"),
+                JsonRead.String(row, "backdrop"),
                 false));
         }
         return new NormalizedMdbListPage(result, rows.Count);
@@ -967,15 +883,13 @@ public sealed class CollectionProviderService
         }
     }
 
-    private static bool Adult(JsonNode? node) => JsonRead.Flag(node) == true;
-
     /// <summary>
     /// A `private` marker that is not clearly false hides the list, so an
     /// unreadable marker fails closed rather than exposing a private list.
     /// </summary>
     internal static bool IsPrivateList(JsonObject detail)
         => (detail["private"] is { } marker && JsonRead.Flag(marker) != false)
-            || String(detail, "privacy")?.Trim()
+            || JsonRead.String(detail, "privacy")?.Trim()
                 .Equals("private", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>
@@ -1012,11 +926,11 @@ public sealed class CollectionProviderService
         }
         return rows.OfType<JsonObject>().Select(row =>
         {
-            var id = Positive(row["id"]) ?? Positive(row["listid"]);
+            var id = JsonRead.Positive(row["id"]) ?? JsonRead.Positive(row["listid"]);
             return id is null ? null : new PublicListSummary(
                 id.Value.ToString(CultureInfo.InvariantCulture),
-                String(row, "name") ?? String(row, "title") ?? $"List {id}",
-                String(row, "username") ?? String(row["user"] as JsonObject, "username"));
+                JsonRead.String(row, "name") ?? JsonRead.String(row, "title") ?? $"List {id}",
+                JsonRead.String(row, "username") ?? JsonRead.String(row["user"] as JsonObject, "username"));
         }).OfType<PublicListSummary>().Take(20).ToArray();
     }
 
@@ -1108,10 +1022,7 @@ public sealed class CollectionProviderService
         {
             return null;
         }
-        if (request.ImdbId is { } imdb
-            && imdb.Length is >= 3 and <= 20
-            && imdb.StartsWith("tt", StringComparison.Ordinal)
-            && imdb.AsSpan(2).ToArray().All(char.IsAsciiDigit))
+        if (ImdbIds.Normalize(request.ImdbId) is { } imdb)
         {
             return (mediaType, "imdb", imdb);
         }
@@ -1122,25 +1033,6 @@ public sealed class CollectionProviderService
         }
         return null;
     }
-
-    private static int? Year(string? date)
-        => date is { Length: >= 4 }
-            && int.TryParse(date.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var year)
-                ? year
-                : null;
-
-    private static long? Positive(JsonNode? node)
-    {
-        if (node is JsonValue value && value.TryGetValue<long>(out var number) && number > 0)
-        {
-            return number;
-        }
-        return long.TryParse(node?.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out number)
-            && number > 0 ? number : null;
-    }
-
-    private static string? String(JsonObject? value, string name)
-        => value?[name] is JsonValue item && item.TryGetValue<string>(out var text) ? text : null;
 
     private sealed record CachedResult(
         DateTimeOffset StoredAt,

@@ -221,17 +221,17 @@ public sealed class CalendarService
                 "episode",
                 date,
                 "air",
-                StringValue(episode, "title") ?? "Untitled episode",
-                StringValue(series, "title"),
-                IntValue(episode, "seasonNumber"),
-                IntValue(episode, "episodeNumber"),
-                IntValue(episode, "tmdbId"),
-                IntValue(episode, "tvdbId"),
-                BoolValue(episode, "monitored", true),
-                BoolValue(episode, "hasFile", false),
+                JsonRead.String(episode, "title") ?? "Untitled episode",
+                JsonRead.String(series, "title"),
+                JsonRead.Int32(episode, "seasonNumber"),
+                JsonRead.Int32(episode, "episodeNumber"),
+                JsonRead.Int32(episode, "tmdbId"),
+                JsonRead.Int32(episode, "tvdbId"),
+                JsonRead.Bool(episode, "monitored") ?? true,
+                JsonRead.Bool(episode, "hasFile") ?? false,
                 null,
-                SeriesTmdbId: IntValue(series, "tmdbId"),
-                SeriesTvdbId: IntValue(series, "tvdbId")));
+                SeriesTmdbId: JsonRead.Int32(series, "tmdbId"),
+                SeriesTvdbId: JsonRead.Int32(series, "tvdbId")));
         }
 
         return result;
@@ -247,7 +247,7 @@ public sealed class CalendarService
         var result = new List<CalendarEntry>(movies.Count * 2);
         foreach (var movie in movies
             .OfType<JsonObject>()
-            .Where(static movie => BoolValue(movie, "monitored", true)))
+            .Where(static movie => JsonRead.Bool(movie, "monitored") ?? true))
         {
             foreach (var (property, kind) in new[]
             {
@@ -266,14 +266,14 @@ public sealed class CalendarService
                     "movie",
                     date,
                     kind,
-                    StringValue(movie, "title") ?? "Untitled movie",
+                    JsonRead.String(movie, "title") ?? "Untitled movie",
                     null,
                     null,
                     null,
-                    IntValue(movie, "tmdbId"),
-                    IntValue(movie, "tvdbId"),
-                    BoolValue(movie, "monitored", true),
-                    BoolValue(movie, "hasFile", false),
+                    JsonRead.Int32(movie, "tmdbId"),
+                    JsonRead.Int32(movie, "tvdbId"),
+                    JsonRead.Bool(movie, "monitored") ?? true,
+                    JsonRead.Bool(movie, "hasFile") ?? false,
                     null));
             }
         }
@@ -285,7 +285,7 @@ public sealed class CalendarService
     {
         foreach (var name in names)
         {
-            var raw = StringValue(value, name);
+            var raw = JsonRead.String(value, name);
             if (raw is not null && DateTimeOffset.TryParse(
                 raw,
                 CultureInfo.InvariantCulture,
@@ -298,19 +298,4 @@ public sealed class CalendarService
 
         return null;
     }
-
-    internal static string? StringValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<string>(out var parsed)
-            ? parsed
-            : null;
-
-    internal static int? IntValue(JsonObject? value, string name)
-        => value?[name] is JsonValue node && node.TryGetValue<int>(out var parsed)
-            ? parsed
-            : null;
-
-    internal static bool BoolValue(JsonObject? value, string name, bool fallback)
-        => value?[name] is JsonValue node && node.TryGetValue<bool>(out var parsed)
-            ? parsed
-            : fallback;
 }

@@ -285,18 +285,11 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         }
 
         return pagination is not null
-            && Integer(pagination["total"]) is { } total
-            && Integer(pagination["offset"]) is { } offset
-            && Integer(pagination["limit"]) is { } limit
+            && JsonRead.Integer(pagination["total"]) is { } total
+            && JsonRead.Integer(pagination["offset"]) is { } offset
+            && JsonRead.Integer(pagination["limit"]) is { } limit
             && offset + limit < total;
     }
-
-    private static long? Integer(JsonNode? node)
-        => node is JsonValue value && value.TryGetValue<long>(out var number)
-            ? number
-            : long.TryParse(node?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
-                ? number
-                : null;
 
     private static long? ReadRetryAt(HttpResponseMessage response, long? quotaResetAt)
     {
