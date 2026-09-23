@@ -10,7 +10,9 @@ use crate::preferences::FullscreenBehavior;
 
 use super::super::test_support::{controller_with_pending_load, snapshot_active};
 use super::super::{ControllerState, PendingPlayback, PlaybackIdentity, RuntimeSelection};
+use super::super::{STARTUP_SEEK_RETRY_DELAY, StartupSeek};
 use crate::players::mpv::commands::loadfile_command;
+use crate::players::mpv::ipc::test_server::{COMMAND_CONNECTION, FakeMpv};
 
 fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
     loop {
@@ -545,4 +547,96 @@ fn library_resume_waits_for_file_loaded_and_holds_reported_position() {
     );
     state.apply_property(Some("time-pos"), Some(&json!(0.5)));
     assert_eq!(state.last_state.position_ticks, 200_000_000);
+}
+
+/// mpv that accepts every command, or rejects every seek.
+fn scripted_mpv(reject_seeks: bool) -> FakeMpv {
+    FakeMpv::start(move |command| {
+        let rejected = reject_seeks && command["command"][0] == "seek";
+        vec![json!({
+            "request_id": command["request_id"].clone(),
+            "error": if rejected { "property unavailable" } else { "success" },
+        })]
+    })
+}
+
+fn next_seek(fake: &FakeMpv) -> serde_json::Value {
+    loop {
+        let command = fake.next_command_on(COMMAND_CONNECTION);
+        if command["command"][0] == "seek" {
+            return command["command"].clone();
+        }
+    }
+}
+
+fn make_due(state: &mut ControllerState) -> StartupSeek {
+    let seek = state.startup_seek.as_mut().expect("startup seek pending");
+    seek.due_at = Instant::now();
+    *seek
+}
+
+/// 90 s into the item.
+const RESUME_TICKS: i64 = 900_000_000;
+
+#[test]
+fn startup_seek_waits_for_its_delay_then_retries_until_the_position_arrives() {
+    let fake = scripted_mpv(false);
+    let (worker, _events) = fake.connect();
+    let mut state = controller_with_pending_load(Some(RESUME_TICKS));
+    state.ipc_worker = Some(worker);
+    state.activate_pending();
+
+    state.maybe_send_startup_seek();
+    assert!(
+        state.startup_seek.expect("queued").sent_at.is_none(),
+        "the seek waits for the file to settle"
+    );
+
+    make_due(&mut state);
+    let before = Instant::now();
+    state.maybe_send_startup_seek();
+    assert_eq!(next_seek(&fake), json!(["seek", 90.0, "absolute+exact"]));
+    let sent = state.startup_seek.expect("awaiting the resumed position");
+    assert!(sent.sent_at.is_some());
+    assert!(sent.due_at >= before + STARTUP_SEEK_RETRY_DELAY);
+
+    // mpv still reports the start of the file: Jellyfin keeps the resume
+    // position, and the seek goes out again once the retry is due.
+    assert!(state.defer_startup_position_update(0));
+    make_due(&mut state);
+    state.maybe_send_startup_seek();
+    assert_eq!(next_seek(&fake), json!(["seek", 90.0, "absolute+exact"]));
+
+    assert!(!state.defer_startup_position_update(RESUME_TICKS));
+    assert!(state.startup_seek.is_none(), "the seek landed");
+    fake.finish(state.ipc_worker.take().expect("worker"));
+}
+
+#[test]
+fn a_rejected_startup_seek_is_retried_without_resetting_mpv() {
+    let fake = scripted_mpv(true);
+    let (worker, _events) = fake.connect();
+    let mut state = controller_with_pending_load(Some(RESUME_TICKS));
+    state.ipc_worker = Some(worker);
+    state.activate_pending();
+
+    make_due(&mut state);
+    let before = Instant::now();
+    state.maybe_send_startup_seek();
+    assert_eq!(next_seek(&fake), json!(["seek", 90.0, "absolute+exact"]));
+
+    let retry = state
+        .startup_seek
+        .expect("still pending after the rejection");
+    assert!(retry.sent_at.is_none(), "a rejected seek was not delivered");
+    assert!(retry.due_at >= before + STARTUP_SEEK_RETRY_DELAY);
+    assert!(
+        state.ipc_worker.is_some(),
+        "a rejection keeps the mpv session"
+    );
+    assert!(
+        state.defer_startup_position_update(0),
+        "the resume position is held"
+    );
+    fake.finish(state.ipc_worker.take().expect("worker"));
 }
