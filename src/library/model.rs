@@ -435,6 +435,103 @@ fn release_year_from_date(value: &str) -> Option<i64> {
     (1900..=9999).contains(&year).then_some(year)
 }
 
+/// One item as list, row and grid surfaces show it. Built from a cached row
+/// or a live Jellyfin item; mirrors `ItemSummary` in `ui/src/lib/api/types.ts`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemSummary {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub year: Option<i64>,
+    pub runtime_ticks: Option<i64>,
+    pub community_rating: Option<f64>,
+    pub official_rating: Option<String>,
+    pub series_id: Option<String>,
+    pub series_name: Option<String>,
+    pub index_number: Option<i64>,
+    pub parent_index_number: Option<i64>,
+    pub primary_image_tag: Option<String>,
+    pub thumb_image_tag: Option<String>,
+    pub logo_image_tag: Option<String>,
+    pub backdrop_image_tag: Option<String>,
+    pub child_count: Option<i64>,
+    pub premiere_date: Option<String>,
+    pub season_id: Option<String>,
+    pub played: bool,
+    pub play_count: i64,
+    pub position_ticks: i64,
+    pub favorite: bool,
+    /// An episode synopsis. The cache never stores prose, so only a child
+    /// list that a live reconcile answered carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overview: Option<String>,
+}
+
+impl ItemSummary {
+    pub fn from_dto(dto: &BaseItemDto) -> Self {
+        let user_data = dto.user_data.as_ref();
+        Self {
+            id: dto.id.clone(),
+            kind: dto.item_type.clone().unwrap_or_default(),
+            name: dto.display_name().to_string(),
+            year: dto.production_year,
+            runtime_ticks: dto.run_time_ticks,
+            community_rating: dto.community_rating,
+            official_rating: dto.official_rating.clone(),
+            series_id: dto.series_id.clone(),
+            series_name: dto.series_name.clone(),
+            index_number: dto.index_number,
+            parent_index_number: dto.parent_index_number,
+            primary_image_tag: dto.primary_image_tag().map(str::to_string),
+            thumb_image_tag: dto.image_tag("Thumb").map(str::to_string),
+            logo_image_tag: dto.image_tag("Logo").map(str::to_string),
+            backdrop_image_tag: dto.backdrop_image_tags.first().cloned(),
+            child_count: dto.child_count,
+            premiere_date: dto.premiere_date.clone(),
+            season_id: dto.season_id.clone(),
+            played: user_data.is_some_and(|data| data.played),
+            play_count: user_data.map_or(0, |data| data.play_count),
+            position_ticks: user_data.map_or(0, |data| data.playback_position_ticks),
+            favorite: user_data.is_some_and(|data| data.is_favorite),
+            overview: None,
+        }
+    }
+}
+
+/// A cached item with what its detail page adds to the card; mirrors
+/// `ItemDetail` in `ui/src/lib/api/types.ts`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemDetail {
+    #[serde(flatten)]
+    pub summary: ItemSummary,
+    pub genres: Vec<String>,
+    pub original_title: Option<String>,
+    pub provider_ids: ProviderIds,
+    pub parent_id: Option<String>,
+    pub date_created: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ProviderIds {
+    pub tmdb: Option<String>,
+    pub imdb: Option<String>,
+    pub tvdb: Option<String>,
+}
+
+impl ProviderIds {
+    /// The id for a provider named as in `providerIds`.
+    pub fn get(&self, provider: &str) -> Option<&str> {
+        match provider {
+            "tmdb" => self.tmdb.as_deref(),
+            "imdb" => self.imdb.as_deref(),
+            "tvdb" => self.tvdb.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

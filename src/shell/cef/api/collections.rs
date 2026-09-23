@@ -154,7 +154,7 @@ fn jellyfin_detail(services: &Arc<Services>, id: &str) -> Handled {
             "name": set.display_name(),
             "primaryImageTag": set.primary_image_tag(),
             "backdropImageTag": set.backdrop_image_tags.first(),
-            "items": children.items.iter().map(summary_from_dto).collect::<Vec<_>>(),
+            "items": children.items.iter().map(ItemSummary::from_dto).collect::<Vec<_>>(),
             "totalRecordCount": children.total_record_count,
         }))),
         Err(error) => Err(scoped_failure(services, &scope, &error)),

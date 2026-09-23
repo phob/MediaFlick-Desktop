@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(changes.context_ids, ["s1", "season1"]);
         let remaining = library.children("season1").expect("children");
         assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0]["id"], "e2");
+        assert_eq!(remaining[0].id, "e2");
         assert!(library.item("m1").expect("query").is_some());
         assert!(
             library
@@ -840,9 +840,9 @@ mod tests {
         assert_eq!(changes.context_ids, ["s1", "season1"]);
         let remaining = library.children("season1").expect("children");
         assert_eq!(remaining.len(), 2);
-        assert_eq!(remaining[0]["id"], "e2");
-        assert_eq!(remaining[0]["name"], "Half Loop Updated");
-        assert_eq!(remaining[1]["id"], "e3");
+        assert_eq!(remaining[0].id, "e2");
+        assert_eq!(remaining[0].name, "Half Loop Updated");
+        assert_eq!(remaining[1].id, "e3");
     }
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
                 .continue_watching(10)
                 .expect("rows")
                 .iter()
-                .any(|row| row["id"] == "m1")
+                .any(|row| row.id == "m1")
         );
         assert!(library.forget("m1").expect("forget").is_empty());
     }
@@ -885,8 +885,8 @@ mod tests {
         library.set_local_played("m1", true).expect("played");
         library.set_local_favorite("m1", true).expect("favorite");
         let item = library.item("m1").expect("query").expect("item");
-        assert_eq!(item["played"], true);
-        assert_eq!(item["favorite"], true);
-        assert_eq!(item["positionTicks"], 0);
+        assert!(item.summary.played);
+        assert!(item.summary.favorite);
+        assert_eq!(item.summary.position_ticks, 0);
     }
 }
