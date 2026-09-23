@@ -22,16 +22,16 @@ public sealed class ServiceHealthStoreTests
         Assert.Equal(ServiceHealthStore.ServiceHealthState.Healthy, success.State);
         Assert.NotNull(success.LastSuccess);
         Assert.Null(success.LastFailure);
-        Assert.Null(success.Error);
+        Assert.Null(success.Failure);
 
-        health.Failure("sonarr", "request timed out");
+        health.Failure("sonarr", ServiceFailure.Timeout);
 
         var failure = health.Get("sonarr");
         Assert.False(health.IsHealthy("sonarr"));
         Assert.Equal(ServiceHealthStore.ServiceHealthState.Unhealthy, failure.State);
         Assert.Equal(success.LastSuccess, failure.LastSuccess);
         Assert.NotNull(failure.LastFailure);
-        Assert.Equal("request timed out", failure.Error);
+        Assert.Equal(ServiceFailure.Timeout, failure.Failure);
 
         health.Success("sonarr");
 
@@ -39,6 +39,6 @@ public sealed class ServiceHealthStoreTests
         Assert.True(health.IsHealthy("sonarr"));
         Assert.Equal(ServiceHealthStore.ServiceHealthState.Healthy, recovery.State);
         Assert.Equal(failure.LastFailure, recovery.LastFailure);
-        Assert.Null(recovery.Error);
+        Assert.Null(recovery.Failure);
     }
 }
