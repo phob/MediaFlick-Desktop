@@ -61,7 +61,7 @@ export function DetailHeroLayout({
         {showPoster && (
           <div
             className={cn(
-              "relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-white/10 sm:block",
+              "relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-edge sm:block",
               poster?.aspect === "still" ? "w-[340px]" : "w-[220px]",
             )}
           >

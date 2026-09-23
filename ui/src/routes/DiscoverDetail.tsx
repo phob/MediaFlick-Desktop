@@ -47,7 +47,7 @@ function CollectionSnapshotDetail({ item }: { item: NormalizedCollectionTitle })
     <div className="detail-page relative isolate flex min-h-full flex-col pb-16">
       {backdrop && <DetailBackdrop src={backdrop} />}
       <div className="relative z-10 flex flex-col gap-6 px-6 pt-10 sm:flex-row sm:px-10 lg:px-14">
-        <div className="h-72 w-48 shrink-0 overflow-hidden rounded-lg bg-card ring-1 ring-white/10">
+        <div className="h-72 w-48 shrink-0 overflow-hidden rounded-lg bg-card ring-1 ring-edge">
           {poster ? <img src={poster} alt="" className="media-artwork-image h-full w-full object-cover" /> : <div className="h-full bg-gradient-to-br from-slate-700 to-slate-950" />}
         </div>
         <div className="max-w-3xl self-end pb-2">

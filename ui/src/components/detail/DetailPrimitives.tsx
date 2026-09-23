@@ -88,7 +88,7 @@ function Headshot({ entry }: { entry: DetailCastEntry }) {
   const [failed, setFailed] = useState(false)
   if (!entry.imageUrl || failed) {
     return (
-      <div className="grid size-24 place-items-center rounded-full bg-card text-muted-foreground ring-1 ring-white/10">
+      <div className="grid size-24 place-items-center rounded-full bg-card text-muted-foreground ring-1 ring-edge">
         <UserRound className="size-8" aria-hidden />
       </div>
     )
@@ -100,7 +100,7 @@ function Headshot({ entry }: { entry: DetailCastEntry }) {
       decoding="async"
       loading="lazy"
       onError={() => setFailed(true)}
-      className="size-24 rounded-full object-cover ring-1 ring-white/10"
+      className="size-24 rounded-full object-cover ring-1 ring-edge"
     />
   )
 }

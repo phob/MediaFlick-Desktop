@@ -126,7 +126,8 @@ describe("cast Discover results", () => {
 
     expect(screen.getByText("Server results ready")).toBeTruthy()
     expect(screen.getByRole("heading", { name: "Discover" })).toBeTruthy()
-    expect(document.querySelectorAll(".h-poster-h").length).toBe(4)
+    const loading = screen.getByRole("status", { name: "Loading results" })
+    expect(loading.querySelectorAll('[data-slot="skeleton"]').length).toBe(4)
   })
 
   test("waits for an incomplete progressive catalog when no exact Jellyfin identity exists", () => {

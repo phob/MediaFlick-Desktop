@@ -265,7 +265,7 @@ describe("collection settings wizard", () => {
     page()
 
     const card = await screen.findByRole("button", { name: /Popular movies/ })
-    expect(card.querySelector(".lucide-star")).toBeTruthy()
+    expect(card.querySelector('[data-pictogram="star"] svg')).toBeTruthy()
     expect(card.querySelector("img")).toBeNull()
   })
 

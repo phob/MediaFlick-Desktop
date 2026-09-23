@@ -98,7 +98,7 @@ export default function SignIn() {
                 }}
                 placeholder="https://jellyfin.example.com"
                 autoComplete="url"
-                className="h-11 border-white/10 bg-white/5"
+                className="h-11 border-edge bg-field"
               />
             </div>
             <div className="flex flex-col gap-3 border-b border-white/8 pb-4">
@@ -134,7 +134,7 @@ export default function SignIn() {
                 onChange={(event) => setUsername(event.target.value)}
                 placeholder="Your Jellyfin username"
                 autoComplete="username"
-                className="h-11 border-white/10 bg-white/5"
+                className="h-11 border-edge bg-field"
               />
             </div>
             <div className="space-y-1.5">
@@ -146,7 +146,7 @@ export default function SignIn() {
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Your Jellyfin password"
                 autoComplete="current-password"
-                className="h-11 border-white/10 bg-white/5"
+                className="h-11 border-edge bg-field"
               />
             </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
