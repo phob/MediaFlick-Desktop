@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react"
+import { sameJson } from "@/lib/json"
 
 function mergeDraft<T>(previous: T, draft: T, source: T): T {
-  if (JSON.stringify(previous) === JSON.stringify(draft)) return source
+  if (sameJson(previous, draft)) return source
   if (previous == null || draft == null || source == null) return source
   if (typeof previous !== "object" || typeof draft !== "object" || typeof source !== "object") return draft
   if (Array.isArray(draft)) return draft
   const next = { ...source }
   for (const key in source) {
-    if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) next[key] = draft[key]
+    if (!sameJson(draft[key], previous[key])) next[key] = draft[key]
   }
   return next
 }

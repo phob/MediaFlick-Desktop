@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
-import { api } from "@/lib/api"
+import { api, type ClientSettings } from "@/lib/api"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import Settings from "@/routes/Settings"
@@ -13,12 +13,12 @@ const queryClient = createQueryClient()
 
 afterEach(() => { vi.restoreAllMocks(); queryClient.clear() })
 
-function page(route: string, platform: "windows" | "macos" = "windows") {
+function page(route: string, platform: "windows" | "macos" = "windows", cached: (settings: ClientSettings) => ClientSettings = (settings) => settings) {
   const settings = clientSettingsFixture()
   settings.capabilities.platform = platform
   if (platform === "macos") { settings.capabilities.libmpv = false; settings.client.player.playerBackend = "mpv" }
   queryClient.setQueryData(queryKeys.status, { authenticated: true, serverUrl: "https://jellyfin.example", userId: "user", libraryReady: true })
-  queryClient.setQueryData(queryKeys.settings, settings)
+  queryClient.setQueryData(queryKeys.settings, cached(settings))
   queryClient.setQueryData(queryKeys.viewing("https://jellyfin.example:user"), { ...DEFAULT_VIEWING })
   queryClient.setQueryData(queryKeys.home, { rows: [], continueWatching: [] })
   queryClient.setQueryData(queryKeys.ratingsStatus, { sources: [], selectionEnabled: false })
@@ -166,6 +166,25 @@ test("Player groups all shortcuts and saves a W/stop swap in one request", async
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({markWatchedNext:"q", comfort:expect.objectContaining({stopKey:"w"})})))
   expect(save).toHaveBeenCalledTimes(1)
   expect(playbackSave).not.toHaveBeenCalled()
+})
+
+/** Mirrors `/api/startup`, whose `serde_json::Value` round trip sorts object keys. */
+function sortedKeys<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(sortedKeys) as T
+  if (typeof value !== "object" || value === null) return value
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortedKeys(entry)])) as T
+}
+
+test("Save clears the draft when the response orders keys differently from the cached settings", async () => {
+  const settings = page("/settings/client/player", "windows", sortedKeys)
+  const save = vi.spyOn(api.settingsPatch, "player").mockImplementation(async (player) => ({...settings, client:{...settings.client, player:{...player, comfort:{...settings.client.player.comfort}, playerConfigured: true}}}))
+  fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
+  fireEvent.click(await screen.findByRole("option", {name:"External mpv"}))
+  fireEvent.change(screen.getByRole("textbox", {name:"mpv executable"}), {target:{value:"C:\\mpv\\mpv.exe"}})
+  fireEvent.click(screen.getByRole("button", {name:"Save"}))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
+  expect(screen.queryByText("You have unsaved changes.")).toBeNull()
 })
 
 test("backend selection changes the visible controls immediately and retains the built-in draft", async () => {
