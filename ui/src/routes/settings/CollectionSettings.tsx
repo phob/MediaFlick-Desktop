@@ -39,7 +39,7 @@ import {
   type CollectionTemplate,
   type CollectionTemplates,
 } from "@/lib/api"
-import { jsonString } from "@/lib/json"
+import { jsonString, sameJson } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import {
   accountKey,
@@ -638,7 +638,7 @@ function CollectionWizard({
           )}
         </div>
         <SaveBar
-          dirty={uploading || Boolean(posterError) || !profileId || JSON.stringify(draft) !== JSON.stringify(initial)}
+          dirty={uploading || Boolean(posterError) || !profileId || !sameJson(draft, initial)}
           saving={busy}
           saveDisabled={uploading || Boolean(posterError) || readOnly || !validDraft || (refreshesResults && !providerAvailable)}
           onSave={save}
@@ -675,7 +675,7 @@ export default function CollectionSettingsPage() {
         modeSelection: value.modeSelection,
         includeUnreleased: value.includeUnreleased,
       })
-      const nextProfiles = savedDraft && JSON.stringify(value.profileIds) !== JSON.stringify(savedDraft.profileIds)
+      const nextProfiles = savedDraft && !sameJson(value.profileIds, savedDraft.profileIds)
         ? await api.collections.reorderProfiles(value.profileIds)
         : profiles.data
       return { settings: nextSettings, profiles: nextProfiles }
@@ -767,7 +767,7 @@ export default function CollectionSettingsPage() {
         </Section>
       )}
       <SaveBar
-        dirty={Boolean(draft && savedDraft && JSON.stringify(draft) !== JSON.stringify(savedDraft))}
+        dirty={Boolean(draft && savedDraft && !sameJson(draft, savedDraft))}
         saving={save.isPending}
         onSave={() => { if (draft) save.mutate(draft) }}
         onDiscard={() => setDraft(savedDraft)}

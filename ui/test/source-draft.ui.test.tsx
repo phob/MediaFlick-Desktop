@@ -32,3 +32,13 @@ test("account changes discard the previous account's draft", () => {
   rerender({ account: "two" })
   expect(result.current[0]).toEqual(source)
 })
+
+test("a refresh that only reorders keys is not an edit", () => {
+  const original = { name: "Original", nested: { a: 1, b: 2 } }
+  const { result, rerender } = renderHook(({ source }) => useSourceDraft(source), { initialProps: { source: original } })
+  const reordered = { nested: { b: 2, a: 1 }, name: "Original" }
+  act(() => result.current[1](reordered))
+  const refreshed = { name: "Server", nested: { a: 1, b: 2 } }
+  rerender({ source: refreshed })
+  expect(result.current[0]).toBe(refreshed)
+})
