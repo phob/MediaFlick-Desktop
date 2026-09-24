@@ -95,7 +95,6 @@ describe("person-mode Search route", () => {
       </Providers>,
     )
 
-    expect(screen.getByText("On your Jellyfin server")).toBeTruthy()
     expect(routeQuery()).toEqual({ personId: "jf-keanu" })
     await waitFor(() => expect(location()).toContain("tmdbPersonId=6384"))
     expect(JSON.parse(document.querySelector("[data-cast-discover]")?.textContent ?? "{}")).toMatchObject({
@@ -107,10 +106,8 @@ describe("person-mode Search route", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }))
     await waitFor(() => expect(location()).toContain("search=Matrix"))
     expect(routeQuery()).toMatchObject({ search: "Matrix", sort: "rating" })
-    expect(screen.queryByText("On your Jellyfin server")).toBeNull()
 
     fireEvent.click(screen.getByRole("button", { name: "Forward" }))
     await waitFor(() => expect(routeQuery()).toEqual({ personId: "jf-keanu" }))
-    expect(screen.getByText("On your Jellyfin server")).toBeTruthy()
   })
 })

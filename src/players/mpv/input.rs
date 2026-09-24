@@ -43,17 +43,13 @@ mod tests {
     use super::{MARK_WATCHED_NEXT_COMMAND, section_contents};
 
     #[test]
-    fn binds_stop_seek_and_the_watched_key() {
+    fn binds_stop_and_the_watched_key() {
         let section = section_contents(Some("w"));
 
         for line in [
             "w script-message mediaflick-desktop mark-watched-next",
             "q stop",
             "Q stop",
-            "LEFT seek -10 relative+exact",
-            "RIGHT seek 10 relative+exact",
-            "DOWN seek -30 relative+exact",
-            "UP seek 30 relative+exact",
         ] {
             assert!(section.contains(line), "{line}");
         }

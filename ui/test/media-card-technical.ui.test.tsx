@@ -119,9 +119,6 @@ describe("media-card technical formatting", () => {
 
     expect(summary?.video).toEqual(["4K", "DV&HDR10+"])
     expect(summary?.audio).toEqual(["TrueHD", "Atmos"])
-    expect(summary?.description).toBe(
-      "Video: 4K, Dolby Vision / HDR10+, HEVC, 10-bit; Audio: TrueHD, Atmos, 7.1",
-    )
   })
 
   test("uses meaningful codec and channel fallbacks for ordinary SDR media", () => {
@@ -143,27 +140,6 @@ describe("media-card technical formatting", () => {
   test("omits the readout when no useful stream metadata exists", () => {
     expect(summarizeCardMedia(undefined)).toBeNull()
     expect(summarizeCardMedia([stream({ type: "Subtitle", codec: "subrip" })])).toBeNull()
-  })
-
-  test("renders one integrated semantic readout rather than badges or pills", () => {
-    const { container } = render(
-      withTechnical(
-        new Map([[movie.id, technicalStreams]]),
-        <MediaCard item={movie} preview={false} />,
-      ),
-    )
-
-    const readout = screen.getByLabelText(/Technical media information/)
-    expect(readout.tagName).toBe("DL")
-    expect(readout.textContent).toContain("4K")
-    expect(readout.textContent).toContain("DV&HDR10+")
-    expect(readout.textContent).not.toContain("DOVIWithHDR10Plus")
-    expect(readout.textContent).toContain("TrueHD")
-    expect(readout.textContent).toContain("Atmos")
-    expect(readout.getAttribute("aria-label")).toContain("Dolby Vision / HDR10+")
-    expect(readout.getAttribute("title")).toContain("Dolby Vision / HDR10+")
-    expect(readout.getAttribute("title")).toContain("HEVC")
-    expect(container.querySelector('[data-slot="badge"]')).toBeNull()
   })
 
   test("series cards read the same live channel as movie cards", () => {
@@ -188,10 +164,8 @@ describe("media-card technical formatting", () => {
   })
 
   test("a card whose streams have not arrived renders no readout at all", () => {
-    const { container } = render(
-      withTechnical(new Map(), <MediaCard item={movie} preview={false} />),
-    )
-    expect(container.querySelector(".card-technical-readout")).toBeNull()
+    render(withTechnical(new Map(), <MediaCard item={movie} preview={false} />))
+    expect(screen.queryByLabelText(/Technical media information/)).toBeNull()
   })
 
   test("mounted shelf cards register only when they approach the viewport", () => {

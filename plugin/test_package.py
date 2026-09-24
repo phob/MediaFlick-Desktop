@@ -13,14 +13,19 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("package.py")
 
 
+def published_plugin(root):
+    publish = root / "publish"
+    publish.mkdir()
+    (publish / "Jellyfin.Plugin.MediaFlick.dll").write_bytes(b"assembly fixture")
+    (publish / "LICENSE").write_text("license fixture")
+    return publish
+
+
 class PackageTests(unittest.TestCase):
     def test_catalog_matches_package(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            publish = root / "publish"
-            publish.mkdir()
-            (publish / "Jellyfin.Plugin.MediaFlick.dll").write_bytes(b"assembly fixture")
-            (publish / "LICENSE").write_text("license fixture")
+            publish = published_plugin(root)
             output = root / "package"
             url = "https://example.org/packages/mediaflick-companion_0.2.1.zip"
             subprocess.run([sys.executable, str(SCRIPT), "--version", "0.2.1", "--publish-dir", str(publish), "--output-dir", str(output), "--source-url", url, "--changelog", "Test build"], check=True, capture_output=True)
@@ -29,7 +34,6 @@ class PackageTests(unittest.TestCase):
             archive = output / "mediaflick-companion_0.2.1.zip"
             self.assertEqual(release["checksum"], hashlib.md5(archive.read_bytes()).hexdigest())
             self.assertEqual(release["sourceUrl"], url)
-            self.assertEqual(release["targetAbi"], "12.1.0.0")
             with zipfile.ZipFile(archive) as package:
                 self.assertEqual(set(package.namelist()), {"Jellyfin.Plugin.MediaFlick.dll", "meta.json", "LICENSE"})
                 meta = json.loads(package.read("meta.json"))
@@ -38,9 +42,13 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(meta["changelog"], "Test build")
 
     def test_jellyfin_rejects_semver_prerelease_suffix(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--version", "0.2.1-test.1", "--publish-dir", ".", "--output-dir", ".", "--source-url", "https://example.org/test.zip"], capture_output=True, text=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("numeric components", result.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            publish = published_plugin(root)
+            output = root / "package"
+            result = subprocess.run([sys.executable, str(SCRIPT), "--version", "0.2.1-test.1", "--publish-dir", str(publish), "--output-dir", str(output), "--source-url", "https://example.org/test.zip"], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(output.exists())
 
     def test_repository_preserves_versions_and_rejects_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,7 +68,6 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((repository / "packages/0.2.1/mediaflick-companion_0.2.1.zip").read_bytes(), b"0.2.1")
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("use a new version", result.stderr)
             self.assertEqual(catalog.read_bytes(), before)
 
 

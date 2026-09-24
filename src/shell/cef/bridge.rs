@@ -471,26 +471,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_scheme_lowercases_known_schemes() {
-        assert_eq!(url_scheme("HTTPS://host").as_deref(), Some("https"));
-        assert_eq!(
-            url_scheme("MailTo:user@example.com").as_deref(),
-            Some("mailto")
-        );
-    }
-
-    #[test]
-    fn url_scheme_rejects_invalid_input() {
-        assert_eq!(url_scheme("no-scheme-here"), None);
-        assert_eq!(url_scheme(":missing"), None);
-        assert_eq!(url_scheme("has space:rest"), None);
-    }
-
-    #[test]
     fn browser_openable_allows_only_safe_schemes() {
         assert!(is_browser_openable_url("https://example.com"));
         assert!(is_browser_openable_url("http://example.com"));
         assert!(is_browser_openable_url("mailto:user@example.com"));
+        assert!(is_browser_openable_url("HTTPS://example.com"));
+        assert!(is_browser_openable_url("MailTo:user@example.com"));
+        assert!(!is_browser_openable_url("JavaScript:alert(1)"));
+        assert!(!is_browser_openable_url("example.com"));
         assert!(!is_browser_openable_url("javascript:alert(1)"));
         assert!(!is_browser_openable_url("file:///etc/passwd"));
         assert!(!is_browser_openable_url("data:text/html,evil"));

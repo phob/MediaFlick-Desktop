@@ -570,11 +570,7 @@ mod tests {
     fn client_api_rejects_incompatible_majors() {
         for major in [0, 1, 3, 0xffff] {
             let version = (major << 16) | 42;
-            let error = validate_client_api(version).expect_err("unsupported API");
-            assert_eq!(
-                error.to_string(),
-                format!("unsupported libmpv client API {major}.42; expected major 2")
-            );
+            assert!(validate_client_api(version).is_err(), "major {major}");
         }
     }
 

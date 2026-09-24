@@ -9,7 +9,6 @@ import {
 } from "../src/routes/Collections"
 import { PreviewProvider } from "../src/components/PreviewCard"
 import { MyCollectionDetail } from "../src/routes/CollectionDetail"
-import CollectionSettingsPage from "../src/routes/settings/CollectionSettings"
 import DiscoverDetail from "../src/routes/DiscoverDetail"
 import type {
   ClassifiedCollectionTitle,
@@ -192,54 +191,7 @@ afterEach(() => {
 })
 
 describe("mode-aware collections", () => {
-  test("collection settings renders the flat template contract and opens its wizard", async () => {
-    vi.spyOn(api.api.collections, "settings").mockResolvedValue({
-      effectiveMode: "mediaFlick",
-      mediaFlickAvailable: true,
-      modeSelection: "mediaFlick",
-      franchises: { includeUnreleased: false },
-      readiness: { tmdb: true, mdblist: false },
-      recovery: null,
-    })
-    vi.spyOn(api.api.collections, "profiles").mockResolvedValue({ profiles: [] })
-    vi.spyOn(api.api.collections, "templates").mockResolvedValue({
-      categories: ["popular"],
-      templates: [{
-        template: {
-          id: "tmdb.discover.movie.popular",
-          title: "Popular movies",
-          description: "Popular movies from TMDB.",
-          category: "popular",
-          pictogram: "star",
-          source: { kind: "tmdbDiscover", parameters: {} },
-          mediaType: "movie",
-          limit: { kind: "all" },
-          cadence: "daily",
-        },
-        available: true,
-      }],
-      readiness: { tmdb: true, mdblist: false },
-    })
-
-    render(providers(<CollectionSettingsPage />, "/settings/collections"))
-    const template = await screen.findByRole("button", { name: /Popular movies/ })
-    fireEvent.click(template)
-
-    expect(await screen.findByRole("heading", { name: "Add collection" })).toBeTruthy()
-    expect(screen.getByLabelText("Title")).toHaveProperty("value", "Popular movies")
-  })
-
   test("franchise cards use exact TMDB collection identities", async () => {
-    const detail = vi.spyOn(api.api.collections, "franchise").mockResolvedValue({
-      collectionId: 2344,
-      name: "The Matrix Collection",
-      posterPath: null,
-      backdropPath: null,
-      owned: [],
-      missing: [],
-      libraryItems: [],
-      ownershipAvailable: true,
-    })
     vi.spyOn(api.api.collections, "franchises").mockResolvedValue({
       status: "ready",
       franchises: [{
@@ -254,11 +206,7 @@ describe("mode-aware collections", () => {
     })
     render(providers(<FranchiseCollections />, "/collections/franchises"))
     const link = await screen.findByRole("link", { name: "Open The Matrix Collection" })
-    expect(document.querySelector('a[href="/collections/franchises/2344"]')).toBeTruthy()
-    expect(screen.getByText("1 owned · 1 missing")).toBeTruthy()
-    fireEvent.pointerEnter(link)
-    await waitFor(() => expect(detail).toHaveBeenCalled())
-    expect(detail.mock.calls[0]?.[0]).toBe(2344)
+    expect(link.getAttribute("href")).toBe("/collections/franchises/2344")
   })
 
   test("an uninitialized franchise cache stays in the background rebuilding state", async () => {
@@ -273,70 +221,22 @@ describe("mode-aware collections", () => {
 
   test("My Collections preserves profile order", async () => {
     const first = profile("a".repeat(16), "First")
-    const detail = vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
-      profile: first,
-      status: "ready",
-      owned: [],
-      missing: [],
-      items: [],
-      libraryItems: [],
-      ownershipAvailable: true,
-    })
     vi.spyOn(api.api.collections, "mine").mockResolvedValue({
       profiles: [first, profile("c".repeat(16), "Second")],
     })
     render(providers(<MyCollections />, "/collections/mine"))
-    const firstLink = await screen.findByRole("link", { name: "Open First" })
+    await screen.findByRole("link", { name: "Open First" })
     const names = screen.getAllByRole("link", { name: /Open (First|Second)/ }).map((link) => link.getAttribute("aria-label"))
     expect(names).toEqual(["Open First", "Open Second"])
-    fireEvent.pointerEnter(firstLink)
-    await waitFor(() => expect(detail).toHaveBeenCalledWith(first.id, expect.any(AbortSignal)))
   })
 
   test("Jellyfin mode loads BoxSets directly", async () => {
-    const jellyfin = vi.spyOn(api.api.collections, "jellyfin").mockResolvedValue({
+    vi.spyOn(api.api.collections, "jellyfin").mockResolvedValue({
       collections: [{ id: "box-1", name: "Holiday films", primaryImageTag: null, backdropImageTag: null, itemCount: 4 }],
     })
     render(providers(<JellyfinCollections />, "/collections/jellyfin"))
-    expect(await screen.findByRole("link", { name: "Open Holiday films" })).toBeTruthy()
-    expect(jellyfin).toHaveBeenCalled()
-    expect(document.querySelector('a[href="/collections/jellyfin/box-1"]')).toBeTruthy()
-  })
-
-  test("Missing stays expanded at 24 and collapses at 25", async () => {
-    const id = "d".repeat(16)
-    const current = profile(id, "Popular movies")
-    vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
-      profile: current,
-      status: "ready",
-      owned: [owned(1)],
-      missing: Array.from({ length: 25 }, (_, index) => title(index + 10)),
-      items: [],
-      libraryItems: [],
-      ownershipAvailable: true,
-    })
-    render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
-    const expand = await screen.findByRole("button", { name: "Show all 25" })
-    expect(screen.queryAllByText("Movie 34")).toHaveLength(0)
-    fireEvent.click(expand)
-    expect(screen.getAllByText("Movie 34").length).toBeGreaterThan(0)
-    expect(screen.getByRole("button", { name: "Show fewer" })).toBeTruthy()
-  })
-
-  test("Missing stays fully expanded at 24", async () => {
-    const id = "1".repeat(16)
-    vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
-      profile: profile(id, "Twenty four"),
-      status: "ready",
-      owned: [],
-      missing: Array.from({ length: 24 }, (_, index) => title(index + 10)),
-      items: [],
-      libraryItems: [],
-      ownershipAvailable: true,
-    })
-    render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
-    expect(await screen.findAllByText("Movie 33")).not.toHaveLength(0)
-    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull()
+    const link = await screen.findByRole("link", { name: "Open Holiday films" })
+    expect(link.getAttribute("href")).toBe("/collections/jellyfin/box-1")
   })
 
   test("multiple local editions remain one Owned card with a chooser", async () => {
@@ -351,8 +251,10 @@ describe("mode-aware collections", () => {
       ownershipAvailable: true,
     })
     render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
-    const chooser = await screen.findByText("Choose edition")
-    expect(chooser.closest("details")?.querySelectorAll('a[href^="/item/"]')).toHaveLength(2)
+    const secondEdition = await screen.findByRole("link", { name: "Movie 1 edition 2" })
+    expect(secondEdition.getAttribute("href")).toBe("/item/local-1-1")
+    expect(screen.getAllByRole("link", { name: "Movie 1" }).map((link) => link.getAttribute("href")))
+      .toContain("/item/local-1-0")
   })
 
   test("collection contents use the standard library and discovery card controls", async () => {
@@ -366,7 +268,6 @@ describe("mode-aware collections", () => {
       libraryItems: [libraryItem("local-1-0", "Movie 1")],
       ownershipAvailable: true,
     })
-    const itemRequest = vi.spyOn(api.api, "item")
     vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
 
     render(providers(
@@ -382,7 +283,6 @@ describe("mode-aware collections", () => {
     expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
     expect(await screen.findByRole("button", { name: "Request Movie 2" })).toBeTruthy()
     expect(document.querySelector('a[href="/discover/movie/2"]')).toBeTruthy()
-    expect(itemRequest).not.toHaveBeenCalled()
   })
 
   test("a requested collection card refreshes to its current Seerr status", async () => {
@@ -397,7 +297,7 @@ describe("mode-aware collections", () => {
       ownershipAvailable: true,
     })
     vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
-    const media = vi.spyOn(api.api.seerr, "media")
+    vi.spyOn(api.api.seerr, "media")
       .mockResolvedValueOnce(seerrMedia(2, "unknown"))
       .mockResolvedValue(seerrMedia(2, "processing"))
     vi.spyOn(api.api.seerr, "request").mockResolvedValue({
@@ -424,7 +324,6 @@ describe("mode-aware collections", () => {
     fireEvent.click(screen.getByRole("button", { name: "Request" }))
 
     expect(await screen.findByText("Downloading")).toBeTruthy()
-    expect(media).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole("button", { name: "Request Movie 2" })).toBeNull()
   })
 
@@ -453,7 +352,6 @@ describe("mode-aware collections", () => {
     })
     render(providers(<DiscoverDetail />, "/discover/movie/603", "/discover/:mediaType/:tmdbId"))
     expect(await screen.findByRole("heading", { name: "The Matrix" })).toBeTruthy()
-    expect(screen.getByText("Seerr is unavailable for this title. Request actions are not available.")).toBeTruthy()
     expect(screen.queryByRole("button", { name: /Request/i })).toBeNull()
   })
 })

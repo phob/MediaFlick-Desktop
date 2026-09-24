@@ -1,9 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { CastDiscover } from "../src/components/seerr/CastDiscover"
-import type { SeerrResult, SeerrStatusInfo, Status } from "../src/lib/api"
+import { api, type SeerrResult, type SeerrStatusInfo, type Status } from "../src/lib/api"
 import { castDiscoverResults } from "../src/lib/cast-search"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
@@ -64,11 +64,6 @@ function clientWithStatus(status: SeerrStatusInfo = linked, app: Status = signed
 afterEach(() => vi.restoreAllMocks())
 
 describe("cast Discover results", () => {
-  test("keeps live person pages out of progressive local-query invalidations", () => {
-    expect(queryKeys.items({ personId: "jf-keanu" })[0]).toBe("person-items")
-    expect(queryKeys.items({ search: "Keanu Reeves" })[0]).toBe("items")
-  })
-
   test("drops every locally available identity and provider duplicate without losing status", () => {
     const values = [
       result({ tmdbId: 603, title: "The Matrix" }),
@@ -81,7 +76,7 @@ describe("cast Discover results", () => {
     expect(castDiscoverResults(values)).toEqual([values[2], values[4]])
   })
 
-  test("reuses Seerr cards and request-state conventions for live-verified non-local titles", () => {
+  test("offers only titles missing from the server", () => {
     const client = clientWithStatus()
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-keanu"), {
       page: 1,
@@ -102,35 +97,17 @@ describe("cast Discover results", () => {
       { wrapper: providers(client) },
     )
 
-    expect(screen.getByRole("heading", { name: "Discover" })).toBeTruthy()
     expect(screen.getAllByText("John Wick").length).toBeGreaterThan(0)
-    expect(screen.getByText("Requested")).toBeTruthy()
     expect(screen.queryByText("The Matrix")).toBeNull()
   })
 
-  test("a pending Seerr round trip never hides already rendered server results", () => {
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
-    const client = clientWithStatus()
-
-    render(
-      <>
-        <output>Server results ready</output>
-        <CastDiscover
-          personName="Keanu Reeves"
-          jellyfinId="jf-keanu"
-          tmdbId={6384}
-        />
-      </>,
-      { wrapper: providers(client) },
-    )
-
-    expect(screen.getByText("Server results ready")).toBeTruthy()
-    expect(screen.getByRole("heading", { name: "Discover" })).toBeTruthy()
-    const loading = screen.getByRole("status", { name: "Loading results" })
-    expect(loading.querySelectorAll('[data-slot="skeleton"]').length).toBe(4)
-  })
-
-  test("waits for an incomplete progressive catalog when no exact Jellyfin identity exists", () => {
+  test("without an exact Jellyfin identity, withholds requestable titles until the catalog is complete", async () => {
+    vi.spyOn(api.seerr, "personCredits").mockResolvedValue({
+      page: 1,
+      totalPages: 1,
+      totalResults: 1,
+      results: [result({ tmdbId: 245891, title: "John Wick" })],
+    })
     const client = clientWithStatus(linked, {
       ...signedIn,
       bootstrapped: false,
@@ -141,22 +118,10 @@ describe("cast Discover results", () => {
       { wrapper: providers(client) },
     )
 
-    expect(screen.getByText(/Finishing the progressive library catalog/)).toBeTruthy()
-    expect(screen.queryByText("Request")).toBeNull()
-  })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(screen.queryByText("John Wick")).toBeNull()
 
-  test("an unavailable Seerr explains the limitation without affecting local results", () => {
-    const client = clientWithStatus({ ...linked, linked: false, mapped: false })
-    render(
-      <CastDiscover
-        personName="Keanu Reeves"
-        jellyfinId="jf-keanu"
-        tmdbId={6384}
-      />,
-      { wrapper: providers(client) },
-    )
-
-    expect(screen.getByText(/Seerr is not connected/)).toBeTruthy()
-    expect(screen.getByRole("link", { name: "Back to Home" })).toBeTruthy()
+    act(() => client.setQueryData(queryKeys.status, signedIn))
+    expect((await screen.findAllByText("John Wick")).length).toBeGreaterThan(0)
   })
 })

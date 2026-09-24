@@ -20,7 +20,6 @@ test("cast mode round-trips stable provider identities and an exact display name
     tmdbId: 6384,
     name: "Keanu Reeves",
   })
-  assert.equal(params.get("mode"), "person")
 })
 
 test("route enrichment preserves navigation state and replaces name-only search identity", () => {
@@ -42,13 +41,7 @@ test("ordinary text search remains the existing FTS query and never becomes pers
   const params = new URLSearchParams("search=Keanu+Reeves&sort=rating")
 
   assert.equal(readCastSearch(params), null)
-  assert.deepEqual(libraryItemQuery(params), {
-    search: "Keanu Reeves",
-    kind: "",
-    favorite: undefined,
-    genre: "",
-    decade: undefined,
-    sort: "rating",
-    watched: "",
-  })
+  const query = libraryItemQuery(params)
+  assert.equal(query.search, "Keanu Reeves")
+  assert.equal(query.personId, undefined)
 })

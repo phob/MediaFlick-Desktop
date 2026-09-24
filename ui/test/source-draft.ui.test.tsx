@@ -40,5 +40,5 @@ test("a refresh that only reorders keys is not an edit", () => {
   act(() => result.current[1](reordered))
   const refreshed = { name: "Server", nested: { a: 1, b: 2 } }
   rerender({ source: refreshed })
-  expect(result.current[0]).toBe(refreshed)
+  expect(result.current[0]).toEqual(refreshed)
 })

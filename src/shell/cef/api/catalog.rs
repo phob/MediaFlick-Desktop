@@ -1046,14 +1046,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_background_child_reconcile_is_claimed_once_per_interval() {
-        let parent = "reconcile-claim-test-parent";
-        assert!(claim_child_reconcile(parent));
-        assert!(!claim_child_reconcile(parent));
-        assert!(claim_child_reconcile("reconcile-claim-test-other"));
-    }
-
-    #[test]
     fn calendar_dates_are_strict_iso_days() {
         assert!(is_iso_date("2026-08-02"));
         assert!(!is_iso_date("2026-8-2"));

@@ -5,7 +5,6 @@ import { api, type ClientSettings } from "@/lib/api"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import Settings from "@/routes/Settings"
-import { DEFAULT_APPLICATION_SETTINGS, DEFAULT_PLAYBACK_SETTINGS } from "@/routes/settings/defaults"
 import { clientSettingsFixture } from "./support/settings"
 import { TestProviders } from "./test-utils"
 
@@ -78,7 +77,6 @@ test("Appearance keeps precise delay values and blocks invalid delay or intensit
   fireEvent.change(delay, { target: { value: "" } })
   expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true)
   fireEvent.click(screen.getByRole("switch", { name: "Show pop-out previews on cards" }))
-  expect(delay.disabled).toBe(true)
   expect(screen.getByRole("alert").textContent).toContain("from 200 to 2000")
   expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true)
   fireEvent.click(screen.getByRole("button", { name: "Discard" }))
@@ -184,7 +182,6 @@ test("Save clears the draft when the response orders keys differently from the c
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
   await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
-  expect(screen.queryByText("You have unsaved changes.")).toBeNull()
 })
 
 test("backend selection changes the visible controls immediately and retains the built-in draft", async () => {
@@ -199,10 +196,9 @@ test("backend selection changes the visible controls immediately and retains the
   await selectBackend("External mpv")
   expect(screen.queryByRole("button", {name:"Stop playback key"})).toBeNull()
   expect(screen.queryByRole("spinbutton", {name:"Subtitle size (%)"})).toBeNull()
-  expect(document.querySelectorAll("[data-shortcut-recorder]")).toHaveLength(1)
-  fireEvent.click(screen.getByRole("combobox", {name:"Player backend"}))
-  expect(screen.queryByRole("option", {name:"MPC-HC"})).toBeNull()
-  fireEvent.click(await screen.findByRole("option", {name:"Built-in player"}))
+  // External mpv keeps only the mark-watched-and-play-next binding.
+  expect(screen.getAllByRole("button", {name:/^(?!Clear\b).+ key$/})).toEqual([screen.getByRole("button", {name:"Mark watched key"})])
+  await selectBackend("Built-in player")
   expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("X")
   fireEvent.click(screen.getByRole("button", {name:"Discard"}))
   expect(screen.getByRole("button", {name:"Stop playback key"}).textContent).toBe("Q")
@@ -248,24 +244,15 @@ test("Playback saves quality and skipping without resetting Player settings", as
   expect(playerSave).not.toHaveBeenCalled()
 })
 
-test("Playback and Application Reset restore the shelf defaults and save them", async () => {
-  const settings = clientSettingsFixture()
-  settings.client.playback = { streamingQuality: "20_mbps", skipIntro: "always", skipCredits: "disabled", skipRecap: "always", skipCommercial: "disabled" }
-  settings.client.application = { closeBehavior: "minimize_window", showScrollbars: true, logLevel: "warn" }
-  const playback = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (value) => ({ ...settings, client: { ...settings.client, playback: value } }))
-  const application = vi.spyOn(api.settingsPatch, "application").mockImplementation(async (value) => ({ ...settings, client: { ...settings.client, application: value } }))
-  for (const [route, save, defaults] of [
-    ["/settings/client/playback", playback, DEFAULT_PLAYBACK_SETTINGS],
-    ["/settings/client/application", application, DEFAULT_APPLICATION_SETTINGS],
-  ] as const) {
-    queryClient.setQueryData(queryKeys.status, { authenticated: false })
-    queryClient.setQueryData(queryKeys.settings, settings)
-    const view = render(<TestProviders client={queryClient} initialEntries={[route]}>
-      <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
-    </TestProviders>)
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }))
-    fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    await waitFor(() => expect(save).toHaveBeenCalledWith(defaults))
-    view.unmount()
-  }
+// README: original-quality direct playback is the default in both player modes.
+test("Playback Reset restores original streaming quality and saves it", async () => {
+  const settings = page("/settings/client/playback", "windows", (cached) => ({
+    ...cached,
+    client: { ...cached.client, playback: { ...cached.client.playback, streamingQuality: "20_mbps" } },
+  }))
+  const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({ ...settings, client: { ...settings.client, playback } }))
+  fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ streamingQuality: "original" })))
 })

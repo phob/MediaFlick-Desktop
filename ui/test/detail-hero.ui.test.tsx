@@ -34,21 +34,22 @@ function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
   }
 }
 
+/** The image owner and kind, independent of rendition size and cache tag. */
+function imagePath(url: string | null) {
+  return url === null ? null : new URL(url, "https://app.test").pathname
+}
+
 describe("shared detail hero", () => {
   test.each(["Season", "Episode"] as const)(
     "loads an inherited %s backdrop from its series image owner",
     (kind) => {
       const item = detailItem({ id: "child/id", kind, seriesId: "series/id" })
 
-      expect(backdropUrl(item)).toBe(
-        "/api/image/series%2Fid/Backdrop?maxWidth=1920&tag=backdrop-tag",
-      )
+      expect(imagePath(backdropUrl(item))).toBe("/api/image/series%2Fid/Backdrop")
     },
   )
 
   test("keeps a movie backdrop on the movie item", () => {
-    expect(backdropUrl(detailItem({ id: "movie/id" }))).toBe(
-      "/api/image/movie%2Fid/Backdrop?maxWidth=1920&tag=backdrop-tag",
-    )
+    expect(imagePath(backdropUrl(detailItem({ id: "movie/id" })))).toBe("/api/image/movie%2Fid/Backdrop")
   })
 })

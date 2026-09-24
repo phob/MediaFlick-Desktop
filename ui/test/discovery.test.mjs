@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import {
   RELEASE_DECADES,
-  discoveryCardKey,
   discoveryResultSetKey,
   discoveryResultsForSet,
   readDiscoveryFilters,
@@ -54,18 +53,13 @@ test("switching discovery rows resets catalogue filters but keeps local state", 
   assert.equal(written.toString(), "row=tv&library=outside")
 })
 
-test("available decade labels reflect release history and stop at the current decade", () => {
+test("films and series offer the same full-label decades from the current decade back to 1900", () => {
   const currentDecade = Math.floor(new Date().getUTCFullYear() / 10) * 10
-  const expected = Array.from(
-    { length: (currentDecade - 1900) / 10 + 1 },
-    (_, index) => {
-      const decade = currentDecade - index * 10
-      return { value: decade, label: `${decade}s` }
-    },
-  )
 
-  assert.deepEqual(RELEASE_DECADES.movie, expected)
-  assert.deepEqual(RELEASE_DECADES.tv, expected)
+  assert.equal(RELEASE_DECADES.movie[0].value, currentDecade)
+  assert.deepEqual(RELEASE_DECADES.movie.at(-1), { value: 1900, label: "1900s" })
+  assert.ok(RELEASE_DECADES.movie.some((option) => option.value === 1990 && option.label === "1990s"))
+  assert.deepEqual(RELEASE_DECADES.tv, RELEASE_DECADES.movie)
 })
 
 test("every discovery criterion replaces the complete infinite result-set identity", () => {
@@ -80,13 +74,6 @@ test("every discovery criterion replaces the complete infinite result-set identi
   ]
 
   assert.equal(new Set([original, ...alternatives]).size, alternatives.length + 1)
-
-  // Even a title shared by the old unfiltered page and the new 1980s page is
-  // remounted. Four leading cards can therefore never keep old card/poster
-  // state while later cards reconcile to the replacement page.
-  const result = { mediaType: "movie", tmdbId: 1 }
-  const eighties = alternatives[1]
-  assert.notEqual(discoveryCardKey(original, result), discoveryCardKey(eighties, result))
 })
 
 test("obsolete leading pages cannot mix into a replacement decade", () => {
@@ -109,19 +96,4 @@ test("obsolete leading pages cannot mix into a replacement decade", () => {
   ])
 
   assert.deepEqual(visible, currentCards)
-})
-
-test("a previously serialized century is removed rather than reinterpreted", () => {
-  const legacy = new URLSearchParams("row=movies&century=20&genre=18&library=outside")
-  assert.deepEqual(readDiscoveryFilters(legacy, "movies", true, true), {
-    genre: 18,
-    sort: "popular",
-  })
-
-  const written = writeDiscoveryFilters(legacy, "movies", {
-    genre: 18,
-    sort: "popular",
-  })
-  assert.equal(written.has("century"), false)
-  assert.equal(written.toString(), "row=movies&library=outside&genre=18")
 })

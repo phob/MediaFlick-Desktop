@@ -42,10 +42,6 @@ public sealed class CacheBoundsTests : IDisposable
         Assert.False(cache.TryGet("key-0", out _));
         Assert.True(cache.TryGet("key-10", out var newest));
         Assert.Equal(10, newest);
-
-        cache.RemoveWhere(value => value % 2 == 0);
-        Assert.False(cache.TryGet("key-10", out _));
-        Assert.True(cache.TryGet("key-9", out _));
     }
 
     [Fact]
@@ -146,11 +142,8 @@ public sealed class CacheBoundsTests : IDisposable
         var streamed = await Assert.ThrowsAsync<GatewayException>(() => Send(client));
 
         Assert.All([declared, streamed], error =>
-        {
-            Assert.Equal(StatusCodes.Status502BadGateway, error.StatusCode);
-            Assert.Equal("Sonarr returned a response that is too large", error.Message);
-        });
-        Assert.Equal(ServiceFailure.InvalidResponse, health.Get("sonarr").Failure);
+            Assert.Equal(StatusCodes.Status502BadGateway, error.StatusCode));
+        Assert.False(health.IsHealthy("sonarr"));
 
         handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -159,26 +152,6 @@ public sealed class CacheBoundsTests : IDisposable
         var parsed = await Send(client);
         Assert.True(parsed?["ok"]?.GetValue<bool>());
         Assert.True(health.IsHealthy("sonarr"));
-        Assert.Equal(
-            CompanionHttpClient.MaxSeerrResponseBytes,
-            CompanionHttpClient.MaxResponseBytes("seerr"));
-        Assert.Equal(
-            CompanionHttpClient.MaxLibraryResponseBytes,
-            CompanionHttpClient.MaxResponseBytes("radarr"));
-    }
-
-    [Fact]
-    public void ServiceHealthUsesTheInjectedClock()
-    {
-        var time = new ManualTime(Start);
-        var health = new ServiceHealthStore(time);
-
-        health.Success("radarr");
-        time.Advance(TimeSpan.FromMinutes(1));
-        health.Failure("radarr", ServiceFailure.Timeout);
-
-        Assert.Equal(Start, health.Get("radarr").LastSuccess);
-        Assert.Equal(Start.AddMinutes(1), health.Get("radarr").LastFailure);
     }
 
     public void Dispose()

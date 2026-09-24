@@ -76,6 +76,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn allocated_identities_are_distinct_and_pass_profile_validation() {
+        let fixture: CollectionProfile =
+            serde_json::from_str(include_str!("../../fixtures/collections/profile-v1.json"))
+                .expect("profile fixture");
+        let profile = CollectionProfile {
+            id: allocate_profile_id(),
+            revision: allocate_revision_id(),
+            ..fixture
+        };
+        assert_eq!(profile.validate(), Ok(()));
+        assert_ne!(profile.id, allocate_profile_id());
+        assert_ne!(profile.revision, allocate_revision_id());
+    }
+
+    #[test]
     fn mdblist_id_and_url_have_one_identity() {
         assert_eq!(
             normalize_mdblist_list_id("alice/42-popular").expect("selector"),

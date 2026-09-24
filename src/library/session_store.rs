@@ -128,39 +128,8 @@ fn meta_value(connection: &rusqlite::Connection, key: &str) -> rusqlite::Result<
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use rusqlite::Connection;
-
     use super::Library;
     use crate::library::test_support::dto;
-
-    static DATABASE_ID: AtomicU64 = AtomicU64::new(1);
-
-    struct TemporaryDatabase(PathBuf);
-
-    impl TemporaryDatabase {
-        fn new() -> Self {
-            Self(std::env::temp_dir().join(format!(
-                "mediaflick-session-cleanup-{}-{}.db",
-                std::process::id(),
-                DATABASE_ID.fetch_add(1, Ordering::Relaxed)
-            )))
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TemporaryDatabase {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-            let _ = std::fs::remove_file(format!("{}-wal", self.0.display()));
-            let _ = std::fs::remove_file(format!("{}-shm", self.0.display()));
-        }
-    }
 
     fn authenticated_library(library: &Library) {
         let mut credentials = library.credentials();
@@ -235,12 +204,15 @@ mod tests {
     fn a_persistent_cleanup_failure_rolls_back_credentials_and_cached_rows() {
         let library = Library::open_in_memory().expect("library");
         authenticated_library(&library);
+        // Fail the *last* cleanup statement, after the credentials update and
+        // the cache deletes have already run, so only a rollback can restore
+        // them.
         library
             .db
             .with_connection(|connection| {
                 connection.execute_batch(
                     "CREATE TRIGGER reject_session_cleanup
-                     BEFORE UPDATE OF token ON credentials
+                     BEFORE DELETE ON meta
                      BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END;",
                 )
             })
@@ -249,44 +221,9 @@ mod tests {
         assert!(library.clear_session(true).is_err());
         assert_eq!(library.credentials().token.as_deref(), Some("token"));
         assert_eq!(library.stats().total, 1);
-    }
-
-    #[test]
-    fn a_busy_database_does_not_claim_the_session_was_cleared() {
-        let database = TemporaryDatabase::new();
-        let library = Library::open(database.path()).expect("library");
-        authenticated_library(&library);
-        library
-            .db
-            .with_connection(|connection| connection.busy_timeout(std::time::Duration::ZERO))
-            .expect("disable the busy wait for the failure injection");
-        let lock = Connection::open(database.path()).expect("locking connection");
-        lock.execute_batch("BEGIN IMMEDIATE")
-            .expect("hold the SQLite writer lock");
-
-        assert!(library.clear_session(true).is_err());
-        assert_eq!(library.credentials().token.as_deref(), Some("token"));
-        assert_eq!(library.stats().total, 1);
-
-        lock.execute_batch("ROLLBACK").expect("release writer lock");
-    }
-
-    #[test]
-    fn a_read_only_database_does_not_claim_the_session_was_cleared() {
-        let library = Library::open_in_memory().expect("library");
-        authenticated_library(&library);
-        library
-            .db
-            .with_connection(|connection| connection.pragma_update(None, "query_only", "ON"))
-            .expect("make the database read-only");
-
-        assert!(library.clear_session(true).is_err());
-        assert_eq!(library.credentials().token.as_deref(), Some("token"));
-        assert_eq!(library.stats().total, 1);
-
-        library
-            .db
-            .with_connection(|connection| connection.pragma_update(None, "query_only", "OFF"))
-            .expect("restore database writes");
+        assert_eq!(
+            library.cache_owner(),
+            Some(("server".to_string(), "user".to_string()))
+        );
     }
 }

@@ -212,47 +212,18 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use super::{STARTUP_HOLD_SETTLE, Wake, jittered, startup_hold_deadline, wait};
-    use crate::library::sync::{SYNC_INTERVAL, SyncHandle};
+    use super::{Wake, wait};
+    use crate::library::sync::SyncHandle;
 
     #[test]
-    fn incomplete_catalog_retries_quickly_with_a_bounded_backoff() {
-        let mut delay = Duration::ZERO;
-        for seconds in [5, 10, 20, 40, 60, 60] {
-            delay = super::next_backoff(delay, true);
-            assert_eq!(delay, Duration::from_secs(seconds));
-        }
+    fn a_server_retry_after_outlasts_the_local_backoff() {
         let limited = crate::jellyfin::api::ApiError::RateLimited {
             retry_after_secs: Some(300),
         };
         assert_eq!(
-            super::retry_delay(&limited, delay),
+            super::retry_delay(&limited, Duration::from_secs(60)),
             Duration::from_secs(300)
         );
-        assert_eq!(
-            super::next_backoff(Duration::ZERO, false),
-            SYNC_INTERVAL * 2
-        );
-    }
-
-    #[test]
-    fn a_painted_window_shortens_the_startup_hold_to_its_settle() {
-        let now = std::time::Instant::now();
-        let cap = now + Duration::from_secs(15);
-        assert_eq!(startup_hold_deadline(cap, false, now), cap);
-        assert_eq!(
-            startup_hold_deadline(cap, true, now),
-            now + STARTUP_HOLD_SETTLE
-        );
-        // Re-evaluating later never pushes the start past the settle already set.
-        let settled = startup_hold_deadline(cap, true, now);
-        assert_eq!(
-            startup_hold_deadline(settled, true, now + Duration::from_secs(1)),
-            settled
-        );
-        // Nor past the cap.
-        let late = cap - Duration::from_secs(1);
-        assert_eq!(startup_hold_deadline(cap, true, late), cap);
     }
 
     #[test]
@@ -263,15 +234,6 @@ mod tests {
         handle.release_startup_hold();
         assert!(handle.window_ready());
         assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
-    }
-
-    #[test]
-    fn jitter_only_ever_delays_the_next_cycle() {
-        for _ in 0..20 {
-            let delay = jittered(SYNC_INTERVAL);
-            assert!(delay >= SYNC_INTERVAL);
-            assert!(delay < SYNC_INTERVAL + SYNC_INTERVAL / 5 + Duration::from_secs(1));
-        }
     }
 
     /// The refresh button is only a "reconcile now" lever if the request

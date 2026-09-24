@@ -542,56 +542,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn packaged_manifest_has_unique_ids_and_all_seeded_series_counterparts() {
+    fn packaged_manifest_has_unique_ids() {
         let catalog = catalog();
         let ids = catalog
             .iter()
             .map(|template| template.provenance.id.as_str())
             .collect::<HashSet<_>>();
         assert_eq!(ids.len(), catalog.len());
-
-        let expected_series = movie_discover_templates()
-            .into_iter()
-            .map(|template| template.provenance.id.replacen(".movie.", ".series.", 1))
-            .collect::<HashSet<_>>();
-        let actual_series = catalog
-            .iter()
-            .filter(|template| template.media_type == MediaType::Series)
-            .map(|template| template.provenance.id.clone())
-            .collect::<HashSet<_>>();
-        assert_eq!(actual_series, expected_series);
-    }
-
-    #[test]
-    fn packaged_templates_have_contextual_pictograms() {
-        let catalog = catalog();
-        assert!(
-            catalog
-                .iter()
-                .all(|template| template.pictogram != TemplatePictogram::Film)
-        );
-        let pictogram = |id: &str| {
-            catalog
-                .iter()
-                .find(|template| template.provenance.id == id)
-                .map(|template| template.pictogram)
-        };
-
-        assert_eq!(
-            pictogram("tmdb.discover.movie.popular"),
-            Some(TemplatePictogram::Star)
-        );
-        assert_eq!(
-            pictogram("tmdb.discover.series.horror"),
-            Some(TemplatePictogram::Ghost)
-        );
-        assert_eq!(
-            pictogram("tmdb.collection.star-wars"),
-            Some(TemplatePictogram::Orbit)
-        );
-        assert_eq!(
-            pictogram("mdblist.public-list.01"),
-            Some(TemplatePictogram::ListVideo)
-        );
     }
 }

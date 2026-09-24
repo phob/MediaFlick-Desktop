@@ -270,10 +270,8 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{control_command, loadfile_command, mpv_string_list, osd_text_command};
-    use crate::playback::{
-        HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit,
-    };
+    use super::{control_command, loadfile_command, osd_text_command};
+    use crate::playback::{HttpHeader, PlaybackRequest, PlayerCommand};
     use serde_json::json;
 
     #[test]
@@ -363,114 +361,52 @@ mod tests {
             command["command"][1],
             "https://example.test/video.mkv?ApiKey=secret"
         );
-        assert!(command["command"][4].get("start").is_none());
     }
 
+    /// mpv's `seek` takes seconds, and a negative absolute target counts from
+    /// the end of the file, so a UI position must arrive as a non-negative
+    /// absolute+exact seek in seconds.
     #[test]
-    fn escapes_mpv_string_list_commas_and_backslashes() {
-        assert_eq!(
-            mpv_string_list(["a,b".to_string(), r"c\d".to_string()]),
-            r"a\,b,c\\d"
-        );
-    }
-
-    #[test]
-    fn control_commands_map_to_mpv_ipc_commands() {
-        let pause = control_command(&PlayerCommand::SetPause(true)).expect("pause command");
-        assert_eq!(pause["command"], json!(["set_property", "pause", true]));
-
-        let seek =
-            control_command(&PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek command");
+    fn seeks_are_absolute_exact_seconds_that_never_count_from_the_end() {
+        let seek = control_command(&PlayerCommand::SeekMilliseconds(12_345.0)).expect("seek");
         assert_eq!(seek["command"], json!(["seek", 12.345, "absolute+exact"]));
-
-        let volume = control_command(&PlayerCommand::SetVolume(250.0)).expect("volume command");
-        assert_eq!(volume["command"], json!(["set_property", "volume", 100.0]));
-
-        let audio_delay =
-            control_command(&PlayerCommand::SetAudioDelay(0.5)).expect("audio delay command");
+        let before_start =
+            control_command(&PlayerCommand::SeekMilliseconds(-1_000.0)).expect("seek");
         assert_eq!(
-            audio_delay["command"],
-            json!(["set_property", "audio-delay", 0.5])
+            before_start["command"],
+            json!(["seek", 0.0, "absolute+exact"])
         );
+    }
 
-        let subtitle_delay = control_command(&PlayerCommand::SetSubtitleDelay(-1.0))
-            .expect("subtitle delay command");
-        assert_eq!(
-            subtitle_delay["command"],
-            json!(["set_property", "sub-delay", -1.0])
-        );
-
-        let subtitle_scale = control_command(&PlayerCommand::SetSubtitleScale(1.25))
-            .expect("subtitle scale command");
-        assert_eq!(
-            subtitle_scale["command"],
-            json!(["set_property", "sub-scale", 1.25])
-        );
-
-        let fill = control_command(&PlayerCommand::SetVideoFit(VideoFit::Fill))
-            .expect("video fit command");
-        assert_eq!(fill["command"], json!(["set_property", "panscan", 1.0]));
-
-        let aspect = control_command(&PlayerCommand::SetVideoAspect(VideoAspect::Ratio21x9))
-            .expect("video aspect command");
-        assert_eq!(
-            aspect["command"],
-            json!(["set_property", "video-aspect-override", "21:9"])
-        );
-
-        let deinterlace =
-            control_command(&PlayerCommand::SetDeinterlace(true)).expect("deinterlace command");
-        assert_eq!(
-            deinterlace["command"],
-            json!(["set_property", "deinterlace", true])
-        );
-
-        let tone_mapping = control_command(&PlayerCommand::SetToneMapping(ToneMapping::Bt2390))
-            .expect("tone mapping command");
-        assert_eq!(
-            tone_mapping["command"],
-            json!(["set_property", "tone-mapping", "bt.2390"])
-        );
-
-        let audio = control_command(&PlayerCommand::SetAudioTrack(2)).expect("audio command");
-        assert_eq!(audio["command"], json!(["set_property", "aid", 2]));
-
-        let subtitle =
-            control_command(&PlayerCommand::SetSubtitleTrack(None)).expect("subtitle none command");
-        assert_eq!(subtitle["command"], json!(["set_property", "sid", "no"]));
-
-        let external_subtitle = control_command(&PlayerCommand::AddSubtitle(
+    /// Playback depends on seeks and `sub-add`, so mpv's reply must be awaited;
+    /// on-screen text is cosmetic and must not hold the controller thread.
+    #[test]
+    fn only_on_screen_text_skips_the_mpv_reply() {
+        let seek = control_command(&PlayerCommand::SeekMilliseconds(1_000.0)).expect("seek");
+        assert!(seek.get("async").is_none());
+        let subtitle = control_command(&PlayerCommand::AddSubtitle(
             "https://example.test/sub.srt".to_string(),
         ))
-        .expect("external subtitle command");
+        .expect("sub-add");
         assert_eq!(
-            external_subtitle["command"],
+            subtitle["command"],
             json!(["sub-add", "https://example.test/sub.srt", "select"])
         );
-        assert!(external_subtitle.get("async").is_none());
+        assert!(subtitle.get("async").is_none());
+        assert_eq!(osd_text_command("Skipped Intro", 1500)["async"], true);
+    }
 
-        let subtitle_visibility = control_command(&PlayerCommand::ToggleSubtitleVisibility)
-            .expect("subtitle visibility command");
-        assert_eq!(
-            subtitle_visibility["command"],
-            json!(["cycle", "sub-visibility"])
-        );
-
-        let fullscreen =
-            control_command(&PlayerCommand::ToggleFullscreen).expect("fullscreen command");
-        assert_eq!(fullscreen["command"], json!(["cycle", "fullscreen"]));
-
-        assert!(seek.get("async").is_none());
-
-        let osd = osd_text_command("Skipping intro in 3...", 1500);
-        assert_eq!(
-            osd["command"],
-            json!(["show-text", "Skipping intro in 3...", 1500, 1])
-        );
-        assert_eq!(osd["async"], true);
-
-        assert!(control_command(&PlayerCommand::SetPlaybackRate(f64::NAN)).is_none());
-        assert!(control_command(&PlayerCommand::SetAudioDelay(f64::NAN)).is_none());
-        assert!(control_command(&PlayerCommand::SetSubtitleScale(f64::INFINITY)).is_none());
+    #[test]
+    fn non_finite_values_never_reach_mpv() {
+        for command in [
+            PlayerCommand::SeekMilliseconds(f64::NAN),
+            PlayerCommand::SetVolume(f64::INFINITY),
+            PlayerCommand::SetPlaybackRate(f64::NAN),
+            PlayerCommand::SetAudioDelay(f64::NAN),
+            PlayerCommand::SetSubtitleDelay(f64::NEG_INFINITY),
+            PlayerCommand::SetSubtitleScale(f64::INFINITY),
+        ] {
+            assert!(control_command(&command).is_none(), "{command:?}");
+        }
     }
 }

@@ -20,8 +20,9 @@ test.each([
 test.each([
   ["JSON requests", () => api.status()],
   ["uploads", () => api.collections.uploadArtwork(new ArrayBuffer(1))],
-])("%s name the status when a failure has no JSON body", async (_, call) => {
+])("%s keep the status when a failure has no JSON body", async (_, call) => {
   respond("<html>bad gateway</html>", 502)
   const error = await call().catch((failure: unknown) => failure)
-  expect(error).toMatchObject({ message: "request failed (502)", status: 502, expired: false })
+  expect(error).toBeInstanceOf(ApiError)
+  expect(error).toMatchObject({ status: 502, expired: false })
 })

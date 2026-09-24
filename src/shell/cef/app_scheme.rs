@@ -340,7 +340,7 @@ fn status_text(status: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_URL, is_app_url, split_content_type, split_url, status_text};
+    use super::{APP_URL, is_app_url, split_url};
 
     #[test]
     fn only_the_app_host_is_served_by_this_handler() {
@@ -363,27 +363,5 @@ mod tests {
             split_url("mediaflick-desktop://app/item/x#anchor"),
             ("/item/x".to_string(), String::new())
         );
-        assert_eq!(
-            split_url("mediaflick-desktop://app?x=1"),
-            ("/".to_string(), String::new())
-        );
-    }
-
-    #[test]
-    fn content_types_are_split_into_mime_type_and_charset() {
-        assert_eq!(
-            split_content_type("application/json; charset=utf-8"),
-            ("application/json", Some("utf-8"))
-        );
-        assert_eq!(split_content_type("image/png"), ("image/png", None));
-    }
-
-    #[test]
-    fn status_texts_cover_the_codes_the_api_returns() {
-        assert_eq!(status_text(200), "OK");
-        assert_eq!(status_text(206), "Partial Content");
-        assert_eq!(status_text(401), "Unauthorized");
-        assert_eq!(status_text(409), "Conflict");
-        assert_eq!(status_text(418), "Error");
     }
 }

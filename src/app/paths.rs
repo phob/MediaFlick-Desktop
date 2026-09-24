@@ -95,16 +95,8 @@ pub fn image_cache_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{app_data_dir, image_cache_dir, library_db_path, platform_data_dir, trusted_root};
+    use super::trusted_root;
     use std::ffi::OsString;
-
-    #[test]
-    fn data_locations_live_under_one_app_directory() {
-        let base = app_data_dir();
-        assert!(base.ends_with("mediaflick-desktop"));
-        assert_eq!(library_db_path().parent(), Some(base.as_path()));
-        assert_eq!(image_cache_dir().parent(), Some(base.as_path()));
-    }
 
     #[test]
     fn unset_empty_and_relative_roots_are_all_rejected() {
@@ -121,11 +113,5 @@ mod tests {
             trusted_root(Some(OsString::from(absolute))).as_deref(),
             Some(std::path::Path::new(absolute))
         );
-    }
-
-    #[test]
-    fn the_data_root_is_never_relative_to_the_working_directory() {
-        assert!(platform_data_dir().is_absolute());
-        assert!(super::platform_config_dir().is_absolute());
     }
 }

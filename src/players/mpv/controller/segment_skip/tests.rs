@@ -1,20 +1,12 @@
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::playback::segments::{SegmentType, SkipSegment};
-use crate::preferences::SegmentSkipMode;
+use crate::players::mpv::ipc::MpvEvent;
+use crate::players::mpv::ipc::test_server::{COMMAND_CONNECTION, FakeMpv};
 
 use super::super::ControllerState;
 use super::super::test_support::controller_with_pending_load;
 use super::{build_segment_chapter_markers, merge_chapter_markers};
-
-fn add_prompt_credits_segment(state: &mut ControllerState) {
-    state.skip_segments = vec![SkipSegment {
-        segment_type: SegmentType::Outro,
-        start_ticks: 100_000_000,
-        end_ticks: 200_000_000,
-        triggered: false,
-    }];
-}
 
 #[test]
 fn segment_chapter_markers_bound_each_segment_and_drop_out_of_range() {
@@ -79,54 +71,73 @@ fn merge_chapter_markers_drops_marker_coinciding_with_embedded_chapter() {
     assert_eq!(merged, vec![json!({ "title": "Chapter", "time": 10.0 })]);
 }
 
-#[test]
-fn native_seek_event_records_prompt_segment_start_before_seeking_property() {
-    let mut state = controller_with_pending_load(None);
-    add_prompt_credits_segment(&mut state);
-    state.last_state.position_ticks = 150_000_000;
+const SESSION: u64 = 1;
 
-    state.handle_seek_event();
-    state.last_state.position_ticks = 155_000_000;
-    state.handle_seeking_property(true);
-
-    assert_eq!(state.seek_started_at_ticks, Some(150_000_000));
+fn mpv_event(name: &str, property: Option<&str>, data: Option<Value>) -> MpvEvent {
+    MpvEvent {
+        name: name.to_string(),
+        reason: None,
+        property: property.map(str::to_string),
+        data,
+        args: Vec::new(),
+        raw: json!({ "event": name }),
+    }
 }
 
-#[test]
-fn native_seek_waits_for_position_update_when_seeking_false_is_early() {
-    let mut state = controller_with_pending_load(None);
-    add_prompt_credits_segment(&mut state);
-    state.last_state.position_ticks = 150_000_000;
-
-    state.handle_seek_event();
-    state.handle_seeking_property(false);
-    assert_eq!(state.seek_started_at_ticks, Some(150_000_000));
-
-    state.maybe_accept_pending_native_seek(145_000_000);
-    assert_eq!(state.seek_started_at_ticks, None);
+fn time_pos(state: &mut ControllerState, seconds: f64) {
+    state.handle_session_event(
+        SESSION,
+        &mpv_event("property-change", Some("time-pos"), Some(json!(seconds))),
+    );
 }
 
-#[test]
-fn always_skip_starts_countdown_without_immediate_trigger() {
-    let mut state = controller_with_pending_load(None);
-    state.segment_skip_config.credits = SegmentSkipMode::Always;
-    add_prompt_credits_segment(&mut state);
-
-    state.update_skip_segment_state(150_000_000);
-
-    assert_eq!(state.segment_skip_state.pending_segment(), Some(0));
-    assert!(!state.skip_segments[0].triggered);
+fn credits_triggered(state: &ControllerState) -> bool {
+    state.publish_snapshot().skip_segments[0].triggered
 }
 
+/// The prompt reads "Seek to Skip Credits": a native forward seek inside the
+/// segment skips to its end, while rewinding inside it does not. mpv can report
+/// `seeking=false` before the new position, so the decision waits for it.
 #[test]
-fn always_skip_countdown_cancels_after_leaving_segment() {
+fn a_native_forward_seek_accepts_the_skip_prompt_and_a_rewind_does_not() {
+    let fake = FakeMpv::start(|command| {
+        vec![json!({ "request_id": command["request_id"].clone(), "error": "success" })]
+    });
+    let (worker, _events) = fake.connect();
     let mut state = controller_with_pending_load(None);
-    state.segment_skip_config.credits = SegmentSkipMode::Always;
-    add_prompt_credits_segment(&mut state);
+    state.ipc.worker = Some(worker);
+    state.ipc.active_id = Some(SESSION);
+    state.skip_segments = vec![SkipSegment {
+        segment_type: SegmentType::Outro,
+        start_ticks: 100_000_000,
+        end_ticks: 200_000_000,
+        triggered: false,
+    }];
+    let seeking = |value: bool| mpv_event("property-change", Some("seeking"), Some(json!(value)));
 
-    state.update_skip_segment_state(150_000_000);
-    state.update_skip_segment_state(250_000_000);
+    time_pos(&mut state, 15.0);
+    state.handle_session_event(SESSION, &mpv_event("seek", None, None));
+    time_pos(&mut state, 12.0);
+    assert!(
+        !credits_triggered(&state),
+        "a rewind inside credits is not a skip"
+    );
 
-    assert!(state.segment_skip_state.pending_segment().is_none());
-    assert!(!state.skip_segments[0].triggered);
+    state.handle_session_event(SESSION, &mpv_event("seek", None, None));
+    state.handle_session_event(SESSION, &seeking(false));
+    assert!(
+        !credits_triggered(&state),
+        "no decision before the new position"
+    );
+    time_pos(&mut state, 13.0);
+
+    assert!(credits_triggered(&state));
+    let seek = loop {
+        let command = fake.next_command_on(COMMAND_CONNECTION);
+        if command["command"][0] == "seek" {
+            break command["command"].clone();
+        }
+    };
+    assert_eq!(seek, json!(["seek", 20.0, "absolute+exact"]));
+    fake.finish(state.ipc.worker.take().expect("worker"));
 }

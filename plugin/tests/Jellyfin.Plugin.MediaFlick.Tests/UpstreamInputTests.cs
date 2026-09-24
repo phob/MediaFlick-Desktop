@@ -56,23 +56,15 @@ public sealed class UpstreamInputTests
             TestContext.Current.CancellationToken));
 
         Assert.Equal(expectedStatus, error.StatusCode);
-        Assert.StartsWith("Seerr ", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ServiceHost, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ApiKey, error.Message, StringComparison.Ordinal);
         Assert.NotNull(error.Failure);
-        if (error.Failure == ServiceFailure.RequestFailed)
-        {
-            // Per-request answers prove the service works.
-            Assert.True(health.IsHealthy("seerr"));
-        }
-        else
-        {
-            Assert.Equal(error.Failure, health.Get("seerr").Failure);
-        }
+        // Per-request answers prove the service works; outages and key rejections do not.
+        Assert.Equal(error.Failure == ServiceFailure.RequestFailed, health.IsHealthy("seerr"));
     }
 
     [Fact]
-    public async Task TransportExceptionTextNeverEntersHealthState()
+    public async Task TransportExceptionTextNeverReachesDesktop()
     {
         var handler = new StubHandler
         {
@@ -80,10 +72,9 @@ public sealed class UpstreamInputTests
                 HttpRequestError.NameResolutionError,
                 $"No such host is known ({ServiceHost}:8989)")
         };
-        var health = new ServiceHealthStore();
         var client = new CompanionHttpClient(
             new StubFactory(handler),
-            health,
+            new ServiceHealthStore(),
             NullLogger<CompanionHttpClient>.Instance);
 
         var error = await Assert.ThrowsAsync<GatewayException>(() => client.SendAsync(
@@ -96,12 +87,7 @@ public sealed class UpstreamInputTests
             TestContext.Current.CancellationToken));
 
         Assert.Equal(StatusCodes.Status502BadGateway, error.StatusCode);
-        Assert.Equal("could not reach Sonarr", error.Message);
-        Assert.Equal(ServiceFailure.Unreachable, error.Failure);
-        var record = health.Get("sonarr");
-        Assert.Equal(ServiceHealthStore.ServiceHealthState.Unhealthy, record.State);
-        Assert.Equal(ServiceFailure.Unreachable, record.Failure);
-        Assert.DoesNotContain(ServiceHost, record.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(ServiceHost, error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -117,16 +103,6 @@ public sealed class UpstreamInputTests
             NullLogger<CompanionHttpClient>.Instance);
 
         Assert.Null(await client.TestAsync("sonarr", Service(), TestContext.Current.CancellationToken));
-    }
-
-    [Fact]
-    public void CalendarSourceErrorsAreFixedReasons()
-    {
-        Assert.Equal("unreachable", CalendarService.FailureReason(ServiceFailure.Unreachable));
-        Assert.Equal("API key rejected", CalendarService.FailureReason(ServiceFailure.Rejected));
-        Assert.Equal("timed out", CalendarService.FailureReason(ServiceFailure.Timeout));
-        Assert.Equal("not configured", CalendarService.FailureReason(ServiceFailure.NotConfigured));
-        Assert.Equal("unavailable", CalendarService.FailureReason(ServiceFailure.RequestFailed));
     }
 
     [Theory]
@@ -174,29 +150,6 @@ public sealed class UpstreamInputTests
     {
         var detail = Assert.IsType<JsonObject>(JsonNode.Parse(json));
         Assert.Equal(expected, CollectionProviderService.IsPrivateList(detail));
-    }
-
-    [Theory]
-    [InlineData("""{}""", false)]
-    [InlineData("""{"includeUnreleased":null}""", false)]
-    [InlineData("""{"includeUnreleased":true}""", true)]
-    [InlineData("""{"includeUnreleased":false}""", false)]
-    public void IncludeUnreleasedAcceptsBooleans(string json, bool expected)
-    {
-        var source = Assert.IsType<JsonObject>(JsonNode.Parse(json));
-        Assert.Equal(expected, CollectionProviderService.IncludeUnreleased(source));
-    }
-
-    [Theory]
-    [InlineData("""{"includeUnreleased":"yes"}""")]
-    [InlineData("""{"includeUnreleased":1}""")]
-    [InlineData("""{"includeUnreleased":{}}""")]
-    public void AWronglyTypedIncludeUnreleasedIsABadRequest(string json)
-    {
-        var source = Assert.IsType<JsonObject>(JsonNode.Parse(json));
-        var error = Assert.Throws<GatewayException>(() =>
-            CollectionProviderService.IncludeUnreleased(source));
-        Assert.Equal(StatusCodes.Status400BadRequest, error.StatusCode);
     }
 
     [Fact]

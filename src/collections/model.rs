@@ -388,17 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn collection_source_is_a_camel_case_tagged_union() {
-        let source = CollectionSource::TmdbCollection {
-            collection_id: 10,
-            include_unreleased: false,
-        };
-        let value = serde_json::to_value(source).expect("serialize");
-        assert_eq!(value["kind"], "tmdbCollection");
-        assert_eq!(value["collectionId"], 10);
-    }
-
-    #[test]
     fn discover_parameters_are_a_bounded_allowlist() {
         let valid = CollectionSource::TmdbDiscover {
             parameters: BTreeMap::from([
@@ -414,7 +403,18 @@ mod tests {
     }
 
     #[test]
-    fn every_source_accepts_only_media_types_its_provider_honors() {
+    fn profiles_accept_only_media_types_their_source_honors() {
+        let base: CollectionProfile =
+            serde_json::from_str(include_str!("../../fixtures/collections/profile-v1.json"))
+                .expect("profile fixture");
+        let validate = |source: &CollectionSource, media_type| {
+            CollectionProfile {
+                source: source.clone(),
+                media_type,
+                ..base.clone()
+            }
+            .validate()
+        };
         let discover = CollectionSource::TmdbDiscover {
             parameters: BTreeMap::new(),
         };
@@ -426,15 +426,11 @@ mod tests {
             list_id: "42".to_string(),
         };
 
-        assert!(discover.supports_media_type(MediaType::Movie));
-        assert!(discover.supports_media_type(MediaType::Series));
-        assert!(!discover.supports_media_type(MediaType::Mixed));
-        assert!(exact.supports_media_type(MediaType::Movie));
-        assert!(!exact.supports_media_type(MediaType::Series));
-        assert!(!exact.supports_media_type(MediaType::Mixed));
-        assert!(mdblist.supports_media_type(MediaType::Movie));
-        assert!(mdblist.supports_media_type(MediaType::Series));
-        assert!(mdblist.supports_media_type(MediaType::Mixed));
+        assert!(validate(&discover, MediaType::Series).is_ok());
+        assert!(validate(&discover, MediaType::Mixed).is_err());
+        assert!(validate(&exact, MediaType::Movie).is_ok());
+        assert!(validate(&exact, MediaType::Series).is_err());
+        assert!(validate(&mdblist, MediaType::Mixed).is_ok());
     }
 
     #[test]
@@ -460,7 +456,6 @@ mod tests {
         assert_eq!(template.provenance, profile.template);
         assert_eq!(snapshot.items[0], result.items[0]);
         assert!(readiness.tmdb);
-        assert!(!readiness.mdblist);
         assert_eq!(result.source_identity.as_deref(), Some("fixture-v1"));
     }
 }

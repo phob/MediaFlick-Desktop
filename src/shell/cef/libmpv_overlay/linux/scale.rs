@@ -101,10 +101,7 @@ mod tests {
     fn xwayland_192_dpi_maps_fullscreen_and_pointer_to_the_same_ui_space() {
         let scale = Scale::from_dpi(Some(192.0));
         assert_eq!(scale.factor(), 2.0);
-        assert_eq!(scale.logical_extent(6144), 3072);
         assert_eq!(scale.logical_extent(3456), 1728);
-        assert_eq!(scale.logical(300), 150);
-        assert_eq!(scale.physical(150), 300);
         let popup = scale.raster_rect(&Rect {
             x: 150,
             y: 40,

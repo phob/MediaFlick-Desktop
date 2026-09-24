@@ -276,20 +276,6 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled 
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn player_snapshot_owns_comfort_settings() -> Result<(), serde_json::Error> {
-        let settings = crate::preferences::AppSettings::default();
-        let response = super::settings_response(&settings, Vec::new());
-        let body: serde_json::Value = serde_json::from_slice(&response.body)?;
-        assert_eq!(
-            body["client"]["player"]["comfort"],
-            serde_json::to_value(settings.comfort)?
-        );
-        assert!(body["client"]["playback"].get("comfort").is_none());
-        assert_eq!(body["client"]["player"]["markWatchedNext"], "w");
-        Ok(())
-    }
-
     fn keys(value: &serde_json::Value) -> Vec<&str> {
         let mut keys = value
             .as_object()

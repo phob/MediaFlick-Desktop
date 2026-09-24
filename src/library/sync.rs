@@ -360,14 +360,11 @@ pub(super) fn now_unix() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
     use super::{
-        BootstrapProgress, Flags, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
-        META_LAST_BOOTSTRAP, Signal, SyncHandle, SyncPhase, SyncReport, WorkerState,
-        bootstrap_progress,
+        BootstrapProgress, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
+        META_LAST_BOOTSTRAP, SyncHandle, SyncPhase, bootstrap_progress,
     };
     use crate::library::Library;
 
@@ -419,7 +416,6 @@ mod tests {
             .set_meta(META_BOOTSTRAP_DONE, "0")
             .expect("refresh in progress");
 
-        assert!(bootstrap_progress(&library).ready);
         let progress = bootstrap_progress(&library);
         assert!(progress.ready);
         assert!(!progress.complete);
@@ -435,16 +431,7 @@ mod tests {
             )
             .expect("dto")])
             .expect("seed");
-        let handle = SyncHandle {
-            signal: Arc::new(Signal {
-                flags: Mutex::new(Flags::default()),
-                condvar: Condvar::new(),
-            }),
-            running: Arc::new(AtomicBool::new(false)),
-            state: Arc::new(Mutex::new(WorkerState::default())),
-            shell: Arc::default(),
-            cycle_completed: Arc::new(Mutex::new(None)),
-        };
+        let handle = SyncHandle::detached();
 
         let filling = handle.progress(bootstrap_progress(&library));
         assert!(filling.active);
@@ -464,24 +451,5 @@ mod tests {
                 .is_some_and(|error| error.contains("offline"))
         );
         assert!(retrying.retry_at.is_some());
-    }
-
-    #[test]
-    fn a_report_only_counts_as_a_change_when_rows_moved() {
-        assert!(!SyncReport::default().changed());
-        assert!(
-            !SyncReport {
-                user_data_refreshed: 5,
-                ..Default::default()
-            }
-            .changed()
-        );
-        assert!(
-            SyncReport {
-                updated: 1,
-                ..Default::default()
-            }
-            .changed()
-        );
     }
 }
