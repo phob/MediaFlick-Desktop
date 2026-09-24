@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
-TARGET_ABI = "12.0.0.0"
+TARGET_ABI = "12.1.0.0"
 PLUGIN_NAME = "MediaFlick Companion"
 DESCRIPTION = (
     "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server."
