@@ -11,18 +11,23 @@ export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", "build/cargo-t
 list:
     @just --list --unsorted
 
-# Remove build artifacts
+# Remove build output, packages, and installed UI dependencies. Keeps local
+# configuration such as .env and the reusable CEF/libmpv caches outside the checkout.
 [group('maintenance')]
 [windows]
 clean:
-    if (Test-Path build) { Remove-Item -Recurse -Force build }
-    if (Test-Path target) { Remove-Item -Recurse -Force target }
+    foreach ($path in @('build', 'target', 'dist', 'release', 'TestResults', 'ui/node_modules', 'ui/dist', 'plugin/bin', '.bacon-locations')) { if (Test-Path $path) { Remove-Item -Recurse -Force $path } }
+    foreach ($dir in @(Get-ChildItem plugin -Directory -Recurse -Include bin, obj)) { if (Test-Path $dir.FullName) { Remove-Item -Recurse -Force $dir.FullName } }
+    foreach ($dir in @(Get-ChildItem -Directory -Recurse -Filter __pycache__)) { if (Test-Path $dir.FullName) { Remove-Item -Recurse -Force $dir.FullName } }
 
-# Remove build artifacts
+# Remove build output, packages, and installed UI dependencies. Keeps local
+# configuration such as .env and the reusable CEF/libmpv caches outside the checkout.
 [group('maintenance')]
 [unix]
 clean:
-    rm -rf build target
+    rm -rf build target dist release TestResults ui/node_modules ui/dist plugin/bin .bacon-locations
+    find plugin -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+    find . -path ./.git -prune -o -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # Build the UI bundle into ui/dist (cargo build does this too, via build.rs)
 [group('build')]
