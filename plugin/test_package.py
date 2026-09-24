@@ -29,7 +29,7 @@ class PackageTests(unittest.TestCase):
             archive = output / "mediaflick-companion_0.2.1.zip"
             self.assertEqual(release["checksum"], hashlib.md5(archive.read_bytes()).hexdigest())
             self.assertEqual(release["sourceUrl"], url)
-            self.assertEqual(release["targetAbi"], "12.0.0.0")
+            self.assertEqual(release["targetAbi"], "12.1.0.0")
             with zipfile.ZipFile(archive) as package:
                 self.assertEqual(set(package.namelist()), {"Jellyfin.Plugin.MediaFlick.dll", "meta.json", "LICENSE"})
                 meta = json.loads(package.read("meta.json"))
