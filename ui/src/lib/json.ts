@@ -38,3 +38,23 @@ export function jsonStringArray(value: JsonValue | undefined): string[] | null {
   }
   return result
 }
+
+/**
+ * Compares values as JSON would serialize them, ignoring object key order.
+ * The shell may send the same settings with keys in different orders, for
+ * example when one response passes through `serde_json::Value` and another
+ * serializes a struct directly.
+ */
+export function sameJson(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((entry, index) => sameJson(entry, right[index]))
+  }
+  const leftEntries = Object.entries(left).filter(([, value]) => value !== undefined)
+  const rightObject = right as Record<string, unknown>
+  const rightSize = Object.values(rightObject).filter((value) => value !== undefined).length
+  return leftEntries.length === rightSize
+    && leftEntries.every(([key, value]) => sameJson(value, rightObject[key]))
+}

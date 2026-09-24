@@ -2,12 +2,13 @@ import { useEffect } from "react"
 import type { QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import type { ClientSettings } from "@/lib/api"
+import { sameJson } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 
 /** Structural equality for small settings drafts. */
 export function same<T>(left: T, right: T) {
-  return JSON.stringify(left) === JSON.stringify(right)
+  return sameJson(left, right)
 }
 
 /** Stores the device settings the shell answered with and confirms the save. */
