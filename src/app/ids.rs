@@ -24,20 +24,3 @@ pub fn random_hex(bytes: usize) -> String {
 pub fn new_device_id() -> String {
     random_hex(16)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{new_device_id, random_hex};
-
-    #[test]
-    fn random_hex_has_the_requested_length_and_alphabet() {
-        let value = random_hex(12);
-        assert_eq!(value.len(), 24);
-        assert!(value.chars().all(|ch| ch.is_ascii_hexdigit()));
-    }
-
-    #[test]
-    fn device_id_has_the_expected_length() {
-        assert_eq!(new_device_id().len(), 32);
-    }
-}

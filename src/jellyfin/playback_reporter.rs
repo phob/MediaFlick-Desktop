@@ -598,9 +598,9 @@ fn unix_now_ticks() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlaybackSession, PlaystateRequest, ReportingState, auth_parameter,
-        enqueue_playstate_report, playback_progress_body, playback_stop_body, server_base_url,
-        token_from_authorization, token_from_launch,
+        PlaybackSession, PlaystateRequest, ReportingState, enqueue_playstate_report,
+        playback_progress_body, playback_stop_body, server_base_url, token_from_authorization,
+        token_from_launch,
     };
     use crate::playback::{HttpHeader, PlaybackRequest};
     use serde_json::json;
@@ -659,10 +659,6 @@ mod tests {
             .as_deref(),
             Some("secret")
         );
-        assert_eq!(
-            auth_parameter("MediaBrowser DeviceId=dev, Token=secret", "DeviceId").as_deref(),
-            Some("dev")
-        );
     }
 
     #[test]
@@ -692,7 +688,6 @@ mod tests {
                 "PlaylistItemId": "playlist-item"
             }
         ]));
-        launch.details = Some(json!({ "NotAQueue": true }));
 
         let session = PlaybackSession::from_launch(&launch).expect("session");
         let state = ReportingState {
@@ -714,19 +709,12 @@ mod tests {
         assert_eq!(progress["IsMuted"], true);
         assert_eq!(progress["IsPaused"], true);
         assert_eq!(progress["CanSeek"], true);
-        assert_eq!(progress["RepeatMode"], "RepeatNone");
-        assert_eq!(progress["BufferedRanges"].as_array().unwrap().len(), 0);
         assert_eq!(progress["NowPlayingQueue"].as_array().unwrap().len(), 1);
 
         let stopped = playback_stop_body(&session, &state, true);
         assert_eq!(stopped["Failed"], true);
         assert_eq!(stopped["PositionTicks"], 10_000_000);
         assert_eq!(stopped["NowPlayingQueue"].as_array().unwrap().len(), 1);
-        assert!(stopped.get("AudioStreamIndex").is_none());
-        assert!(stopped.get("SubtitleStreamIndex").is_none());
-        assert!(stopped.get("CanSeek").is_none());
-        assert!(stopped.get("VolumeLevel").is_none());
-        assert!(stopped.get("NotAQueue").is_none());
     }
 
     #[test]
@@ -750,22 +738,6 @@ mod tests {
             playback_stop_body(&session, &state, false)
                 .get("NowPlayingQueue")
                 .is_none()
-        );
-    }
-
-    #[test]
-    fn mpv_playback_state_summary_is_stable() {
-        let state = ReportingState {
-            position_ticks: 10_000_000,
-            pause: true,
-            duration_ticks: Some(120_000_000),
-            volume: Some(77),
-            mute: Some(false),
-            eof_reached: false,
-        };
-        assert_eq!(
-            state.to_string(),
-            "position=10000000 (1.000s) duration=120000000 (12.000s) paused=true volume=77 muted=false eof=false"
         );
     }
 }

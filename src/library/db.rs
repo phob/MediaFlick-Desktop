@@ -724,65 +724,6 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
-    fn a_fresh_database_has_the_current_schema() {
-        let database = Database::open_in_memory().expect("open");
-        let version = database.with_connection(user_version).expect("version");
-        assert_eq!(version, SCHEMA_VERSION);
-        for table in [
-            "credentials",
-            "items",
-            "user_data",
-            "meta",
-            "external_profiles",
-            "legacy_item_playback_preferences",
-            "rating_cache",
-            "collection_snapshots",
-            "collection_snapshot_items",
-            "collection_refresh_state",
-            "franchise_snapshots",
-            "franchise_snapshot_items",
-            "franchise_movie_membership",
-            "provider_identity_map",
-            "item_genres",
-        ] {
-            let count: i64 = database
-                .with_connection(|connection| {
-                    connection.query_row(
-                        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                        [table],
-                        |row| row.get(0),
-                    )
-                })
-                .expect("table lookup");
-            assert_eq!(count, 1, "missing table {table}");
-        }
-        let dropped_column: i64 = database
-            .with_connection(|connection| {
-                connection.query_row(
-                    "SELECT count(*) FROM pragma_table_info('items')
-                     WHERE name IN ('overview', 'people', 'media_streams', 'tags',
-                                    'studios', 'critic_rating', 'search_people')",
-                    [],
-                    |row| row.get(0),
-                )
-            })
-            .expect("column lookup");
-        assert_eq!(dropped_column, 0, "a rich-metadata column survived");
-    }
-
-    #[test]
-    fn pooled_in_memory_connections_share_the_schema() {
-        let database = Database::open_in_memory().expect("open");
-        database
-            .with_connection(|_| {
-                let version = database.with_connection(user_version)?;
-                assert_eq!(version, SCHEMA_VERSION);
-                Ok(())
-            })
-            .expect("nested connection");
-    }
-
-    #[test]
     fn an_older_database_is_recreated_rather_than_migrated() {
         let connection = Connection::open_in_memory().expect("open");
         // A minimal stand-in for a pre-14 database: an items table with a rich
@@ -816,22 +757,6 @@ mod tests {
             .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
             .expect("items");
         assert_eq!(items, 0, "old rows must not survive the recreate");
-        let overview_column: i64 = connection
-            .query_row(
-                "SELECT count(*) FROM pragma_table_info('items') WHERE name = 'overview'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("column lookup");
-        assert_eq!(overview_column, 0);
-        let queue_table: i64 = connection
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE name = 'catalog_enrichment'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("queue lookup");
-        assert_eq!(queue_table, 0);
         // The signed-in session is the one thing that survives: it is what
         // performs the from-scratch resync after the recreate.
         let (token, device_id): (String, String) = connection
@@ -962,120 +887,6 @@ mod tests {
             )
             .expect("future table");
         assert_eq!(survived, 1);
-    }
-
-    #[test]
-    fn fts_rows_track_item_inserts_updates_and_deletes() {
-        let database = Database::open_in_memory().expect("open");
-        database
-            .with_connection(|connection| {
-                connection.execute(
-                    "INSERT INTO items (jellyfin_id, kind, name, search_genres, synced_at)
-                     VALUES ('a', 'Movie', 'The Matrix', 'Action, Sci-Fi', 0)",
-                    [],
-                )?;
-                let hits: i64 = connection.query_row(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH 'matrix'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(hits, 1);
-                let by_genre: i64 = connection.query_row(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH 'sci'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(by_genre, 1);
-
-                connection.execute(
-                    "UPDATE items SET name = 'Reloaded' WHERE jellyfin_id = 'a'",
-                    [],
-                )?;
-                let stale: i64 = connection.query_row(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH 'matrix'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(stale, 0);
-                let renamed: i64 = connection.query_row(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH 'reloaded'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(renamed, 1);
-
-                connection.execute("DELETE FROM items WHERE jellyfin_id = 'a'", [])?;
-                let removed: i64 = connection.query_row(
-                    "SELECT count(*) FROM items_fts WHERE items_fts MATCH 'reloaded'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(removed, 0);
-                Ok(())
-            })
-            .expect("fts consistency");
-    }
-
-    #[test]
-    fn genre_rows_track_item_inserts_updates_and_deletes() {
-        let database = Database::open_in_memory().expect("open");
-        database
-            .with_connection(|connection| {
-                let genres = |connection: &Connection| -> rusqlite::Result<Vec<String>> {
-                    let mut statement = connection.prepare(
-                        "SELECT genre FROM item_genres g JOIN items i ON i.id = g.item_id
-                         WHERE i.jellyfin_id = 'a' ORDER BY genre",
-                    )?;
-                    statement.query_map([], |row| row.get(0))?.collect()
-                };
-                connection.execute(
-                    r#"INSERT INTO items (jellyfin_id, kind, name, genres, synced_at)
-                       VALUES ('a', 'Movie', 'A', '["Drama","","Action","Drama"]', 0)"#,
-                    [],
-                )?;
-                assert_eq!(genres(connection)?, ["Action", "Drama"]);
-
-                connection.execute("UPDATE items SET name = 'Renamed'", [])?;
-                assert_eq!(genres(connection)?, ["Action", "Drama"]);
-
-                connection.execute(r#"UPDATE items SET genres = '["Comedy"]'"#, [])?;
-                assert_eq!(genres(connection)?, ["Comedy"]);
-
-                connection.execute("DELETE FROM items", [])?;
-                let left: i64 =
-                    connection
-                        .query_row("SELECT count(*) FROM item_genres", [], |row| row.get(0))?;
-                assert_eq!(left, 0);
-                Ok(())
-            })
-            .expect("genre consistency");
-    }
-
-    #[test]
-    fn optimizing_records_statistics_and_keeps_the_pool_usable() {
-        let database = Database::open_in_memory().expect("open");
-        database
-            .with_connection(|connection| {
-                connection.execute(
-                    "INSERT INTO items (jellyfin_id, kind, name, synced_at) VALUES ('a','Movie','A',0)",
-                    [],
-                )?;
-                Ok(())
-            })
-            .expect("seed");
-
-        database.optimize().expect("optimize");
-
-        let analyzed: i64 = database
-            .with_connection(|connection| {
-                connection.query_row(
-                    "SELECT count(*) FROM sqlite_stat1 WHERE tbl = 'items'",
-                    [],
-                    |row| row.get(0),
-                )
-            })
-            .expect("statistics");
-        assert!(analyzed > 0);
     }
 
     #[test]

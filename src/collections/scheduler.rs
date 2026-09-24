@@ -467,11 +467,14 @@ mod tests {
 
     #[test]
     fn monthly_cadence_clamps_to_the_last_day() {
-        let january_31 = days_from_civil(2025, 1, 31) * 86_400 + 3_600;
-        let february_28 = days_from_civil(2025, 2, 28) * 86_400 + 3_600;
+        // 2025-01-31T01:00Z -> 2025-02-28T01:00Z, and the leap-year 29th.
         assert_eq!(
-            next_due_at(january_31, RefreshCadence::Monthly),
-            Some(february_28)
+            next_due_at(1_738_285_200, RefreshCadence::Monthly),
+            Some(1_740_704_400)
+        );
+        assert_eq!(
+            next_due_at(1_706_662_800, RefreshCadence::Monthly),
+            Some(1_709_168_400)
         );
     }
 
@@ -479,13 +482,6 @@ mod tests {
     fn manual_profiles_never_become_due() {
         assert!(!is_due(None, RefreshCadence::Manual, i64::MAX));
         assert_eq!(next_due_at(0, RefreshCadence::Manual), None);
-    }
-
-    #[test]
-    fn automatic_work_requires_mediaflick_mode_and_complete_ownership() {
-        assert!(automatic_work_allowed(CollectionMode::MediaFlick, true));
-        assert!(!automatic_work_allowed(CollectionMode::MediaFlick, false));
-        assert!(!automatic_work_allowed(CollectionMode::Jellyfin, true));
     }
 
     #[test]

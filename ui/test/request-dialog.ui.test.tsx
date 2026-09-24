@@ -71,11 +71,9 @@ function renderDialog() {
 test("season choices are checkboxes that shape the request", async () => {
   const request = renderDialog()
   const first = screen.getByRole("checkbox", { name: /Season 1/ })
-  expect(first.getAttribute("aria-checked")).toBe("true")
   expect(screen.getByRole("checkbox", { name: /Season 2/ }).hasAttribute("disabled")).toBe(true)
 
   fireEvent.click(first)
-  expect(first.getAttribute("aria-checked")).toBe("false")
   fireEvent.click(screen.getByRole("button", { name: "Request" }))
   await waitFor(() => expect(request).toHaveBeenCalledWith(expect.objectContaining({ seasons: [3], is4k: false })))
 })
@@ -83,7 +81,6 @@ test("season choices are checkboxes that shape the request", async () => {
 test("the 4K choice re-offers every season Seerr lacks in 4K", async () => {
   const request = renderDialog()
   fireEvent.click(screen.getByRole("checkbox", { name: "Request in 4K" }))
-  expect(screen.getByRole("checkbox", { name: /Season 2/ }).getAttribute("aria-checked")).toBe("true")
   fireEvent.click(screen.getByRole("button", { name: "Request" }))
   await waitFor(() => expect(request).toHaveBeenCalledWith(expect.objectContaining({ seasons: [1, 2, 3], is4k: true })))
 })

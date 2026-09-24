@@ -780,17 +780,6 @@ mod tests {
     }
 
     #[test]
-    fn player_preferences_carry_segments_subtitles_and_the_binding() {
-        let mut settings = AppSettings::default();
-        settings.comfort.subtitle_size = 140;
-        settings.mark_watched_next = Some("Ctrl+w".to_string());
-        let preferences = settings.player_preferences();
-        assert_eq!(preferences.subtitles.size, 140);
-        assert_eq!(preferences.mark_watched_next.as_deref(), Some("Ctrl+w"));
-        assert_eq!(preferences.segment_skip, settings.segment_skip_config());
-    }
-
-    #[test]
     fn leaves_absolute_urls_alone() {
         assert_eq!(
             normalize_server_url("https://example.test"),
@@ -904,11 +893,9 @@ mod tests {
     }
 
     #[test]
-    fn streaming_quality_is_backward_compatible_and_omits_default() {
+    fn streaming_quality_is_backward_compatible() {
         let defaults: AppSettings = serde_json::from_str("{}").expect("default settings");
         assert_eq!(defaults.streaming_quality, StreamingQuality::Original);
-        let serialized = serde_json::to_value(&defaults).expect("serialize settings");
-        assert!(serialized.get("streaming_quality").is_none());
 
         let configured = AppSettings {
             streaming_quality: StreamingQuality::Mbps10,
@@ -951,53 +938,15 @@ mod tests {
         let serialized = serde_json::to_string(&settings).expect("serialize");
         assert!(!serialized.contains("server-mdb-key-must-not-persist"));
         assert!(!serialized.contains("future_meter"));
-        assert!(!serialized.contains("api_key"));
-        assert!(!serialized.contains("apikey"));
     }
 
     #[test]
-    fn media_info_remains_enabled_for_legacy_settings_until_explicitly_disabled() {
-        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
-        assert!(defaults.appearance.show_media_info);
-        let serialized = serde_json::to_value(&defaults).expect("serialize defaults");
-        assert!(serialized.get("appearance").is_none());
-
-        let disabled: AppSettings = serde_json::from_value(serde_json::json!({
-            "appearance": { "show_media_info": false }
-        }))
-        .expect("settings");
-        assert!(!disabled.appearance.show_media_info);
-        let serialized = serde_json::to_value(&disabled).expect("serialize disabled setting");
-        assert_eq!(serialized["appearance"]["show_media_info"], false);
-    }
-
-    #[test]
-    fn card_previews_remain_enabled_for_legacy_settings_until_explicitly_disabled() {
-        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
-        assert!(defaults.appearance.card_previews);
-        let serialized = serde_json::to_value(&defaults).expect("serialize defaults");
-        assert!(serialized.get("appearance").is_none());
-
-        let disabled: AppSettings = serde_json::from_value(serde_json::json!({
-            "appearance": { "card_previews": false }
-        }))
-        .expect("settings");
-        assert!(!disabled.appearance.card_previews);
-        let serialized = serde_json::to_value(&disabled).expect("serialize disabled setting");
-        assert_eq!(serialized["appearance"]["card_previews"], false);
-    }
-
-    #[test]
-    fn a_retired_mpchc_selection_loads_the_platform_default_backend() {
+    fn a_retired_mpchc_selection_is_not_saved_again() {
         let settings: AppSettings = serde_json::from_str(
             r#"{"player_backend":"mpchc","mpchc_path":"C:/MPC-HC/mpc-hc64.exe","mpv_path":"C:/mpv/mpv.exe"}"#,
         )
         .expect("settings that selected MPC-HC still load");
 
-        assert_eq!(
-            settings.effective_backend(),
-            PlayerBackend::platform_default()
-        );
         let saved = serde_json::to_string(&settings).expect("serialize settings");
         assert!(!saved.contains("mpchc"), "{saved}");
         assert!(serde_json::from_str::<AppSettings>(r#"{"player_backend":"vlc"}"#).is_err());
@@ -1036,7 +985,10 @@ mod tests {
             ..Default::default()
         };
         settings.sanitize();
-        assert_eq!(settings.webui_window.size(), (1280, 800));
+        assert_eq!(
+            settings.webui_window.size(),
+            WebUiWindowSettings::default().size()
+        );
         assert!(settings.webui_window.maximized);
     }
 

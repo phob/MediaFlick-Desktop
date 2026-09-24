@@ -740,39 +740,118 @@ fn join_calendar(library: &Library, value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CompanionInfo, FAILED_PROBE_RETRY, ProbeState, SUCCESSFUL_PROBE_REUSE, join_calendar,
-    };
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::{CompanionInfo, CompanionSession, ProbeState, join_calendar};
     use crate::jellyfin::api::model::BaseItemDto;
+    use crate::jellyfin::session::Session;
     use crate::library::Library;
     use serde_json::json;
 
-    #[test]
-    fn concurrent_discovery_reuses_one_authenticated_response() {
-        use std::io::{BufRead, BufReader, Write};
-        use std::sync::{Arc, Barrier, mpsc};
-        use std::time::Duration;
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+    /// A signed-in Companion session whose server is `server_url`.
+    fn companion_at(server_url: String) -> (Arc<Session>, CompanionSession) {
         let library = Arc::new(Library::open_in_memory().expect("library"));
         let mut credentials = library.credentials();
-        credentials.server_url = Some(format!(
-            "http://{}",
-            listener.local_addr().expect("address")
-        ));
+        credentials.server_url = Some(server_url);
         credentials.server_id = Some("server".to_string());
         credentials.user_id = Some("user".to_string());
         credentials.token = Some("token".to_string());
         library.save_credentials(&credentials).expect("credentials");
-        let session = Arc::new(crate::jellyfin::session::Session::restore(
-            library.clone(),
-            Arc::default(),
+        let session = Arc::new(Session::restore(library.clone(), Arc::default()));
+        let companion = CompanionSession::new(session.clone(), library, Arc::default());
+        (session, companion)
+    }
+
+    /// Answers every request with the current scripted status and body, and
+    /// counts requests, until dropped.
+    struct ScriptedServer {
+        url: String,
+        response: Arc<Mutex<(u16, &'static str)>>,
+        requests: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl ScriptedServer {
+        fn start(status: u16, body: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+            listener
+                .set_nonblocking(true)
+                .expect("nonblocking listener");
+            let server = Self {
+                url: format!("http://{}", listener.local_addr().expect("address")),
+                response: Arc::new(Mutex::new((status, body))),
+                requests: Arc::default(),
+                stop: Arc::default(),
+            };
+            let (response, requests, stop) = (
+                server.response.clone(),
+                server.requests.clone(),
+                server.stop.clone(),
+            );
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    };
+                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                    let mut reader = BufReader::new(&mut stream);
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).is_ok_and(|read| read > 0) && line != "\r\n" {
+                        line.clear();
+                    }
+                    drop(reader);
+                    requests.fetch_add(1, Ordering::SeqCst);
+                    let (status, body) = *response.lock().expect("scripted response");
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status} Scripted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                }
+            });
+            server
+        }
+
+        fn respond(&self, status: u16, body: &'static str) {
+            *self.response.lock().expect("scripted response") = (status, body);
+        }
+
+        fn requests(&self) -> usize {
+            self.requests.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Drop for ScriptedServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Moves the last probe `by` into the past, as if that much time elapsed.
+    fn age_last_probe(companion: &CompanionSession, by: Duration) {
+        let state = companion.read();
+        companion.replace(ProbeState {
+            checked_at: state.checked_at.and_then(|at| at.checked_sub(by)),
+            ..state
+        });
+    }
+
+    #[test]
+    fn concurrent_discovery_reuses_one_authenticated_response() {
+        use std::sync::{Barrier, mpsc};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let (_session, companion) = companion_at(format!(
+            "http://{}",
+            listener.local_addr().expect("address")
         ));
-        let companion = Arc::new(super::CompanionSession::new(
-            session,
-            library,
-            Arc::default(),
-        ));
+        let companion = Arc::new(companion);
         let barrier = Arc::new(Barrier::new(3));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..2 {
@@ -821,24 +900,12 @@ mod tests {
 
     #[test]
     fn cached_collection_readiness_never_probes_and_clear_drops_capabilities() {
-        use std::sync::Arc;
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         listener.set_nonblocking(true).expect("nonblocking");
-        let library = Arc::new(Library::open_in_memory().expect("library"));
-        let mut credentials = library.credentials();
-        credentials.server_url = Some(format!(
+        let (_session, companion) = companion_at(format!(
             "http://{}",
             listener.local_addr().expect("address")
         ));
-        credentials.server_id = Some("server".to_string());
-        credentials.user_id = Some("user".to_string());
-        credentials.token = Some("token".to_string());
-        library.save_credentials(&credentials).expect("credentials");
-        let session = Arc::new(crate::jellyfin::session::Session::restore(
-            library.clone(),
-            Arc::default(),
-        ));
-        let companion = super::CompanionSession::new(session, library, Arc::default());
         assert_eq!(companion.cached_collection_readiness(), Default::default());
         companion.replace(ProbeState {
             info: Some(CompanionInfo {
@@ -876,36 +943,34 @@ mod tests {
     }
 
     #[test]
-    fn transient_probe_failures_are_retried_without_logging_out() {
-        let recent_failure = ProbeState {
-            checked: true,
-            error: Some("temporarily unavailable".to_string()),
-            checked_at: Some(std::time::Instant::now()),
-            ..ProbeState::default()
-        };
-        assert!(recent_failure.reusable());
+    fn failed_probes_are_retried_and_successes_refreshed_after_a_while() {
+        // Failure modes: a failure stays cached until logout, so Companion
+        // features remain off after a plugin restart; a failure or success is
+        // re-probed on every read; a transient failure signs the user out; a
+        // success is never refreshed, so a removed plugin still looks present.
+        const MUCH_LATER: Duration = Duration::from_secs(10 * 60);
+        let server = ScriptedServer::start(503, "");
+        let (session, companion) = companion_at(server.url.clone());
 
-        let expired_failure = ProbeState {
-            checked_at: Some(std::time::Instant::now() - FAILED_PROBE_RETRY),
-            ..recent_failure
-        };
-        assert!(!expired_failure.reusable());
-    }
+        assert!(companion.probe(false).is_err());
+        let requests = server.requests();
+        assert!(requests > 0);
+        let _ = companion.probe(false);
+        assert_eq!(server.requests(), requests);
+        assert!(session.is_authenticated());
 
-    #[test]
-    fn successful_probe_results_are_refreshed_periodically() {
-        let recent_success = ProbeState {
-            checked: true,
-            checked_at: Some(std::time::Instant::now()),
-            ..ProbeState::default()
-        };
-        assert!(recent_success.reusable());
+        server.respond(200, r#"{"apiVersion":1,"capabilities":["calendar"]}"#);
+        age_last_probe(&companion, MUCH_LATER);
+        assert!(companion.probe(false).expect("retried probe").is_some());
+        assert!(companion.supports("calendar"));
+        let requests = server.requests();
+        assert!(companion.probe(false).expect("reused probe").is_some());
+        assert_eq!(server.requests(), requests);
 
-        let expired_success = ProbeState {
-            checked_at: Some(std::time::Instant::now() - SUCCESSFUL_PROBE_REUSE),
-            ..recent_success
-        };
-        assert!(!expired_success.reusable());
+        server.respond(404, "");
+        age_last_probe(&companion, MUCH_LATER);
+        assert!(companion.probe(false).expect("refreshed probe").is_none());
+        assert!(!companion.supports("calendar"));
     }
 
     #[test]

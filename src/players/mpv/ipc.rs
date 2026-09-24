@@ -817,8 +817,8 @@ pub(super) mod test_server {
 
 #[cfg(test)]
 mod tests {
+    use super::IpcCommandFailure;
     use super::test_server::{COMMAND_CONNECTION, FakeMpv};
-    use super::{IpcCommandFailure, command_reply_result};
     use serde_json::json;
     use std::time::Duration;
 
@@ -898,58 +898,28 @@ mod tests {
         fake.finish(worker);
     }
 
+    /// The event connection polls with a two-second read timeout. A command
+    /// reply is bounded only by that command's own deadline, so a slow
+    /// `sub-add` of a remote subtitle is not mistaken for a dead mpv session.
     #[test]
-    fn command_replies_surface_mpv_rejections() {
-        assert!(command_reply_result(&json!({ "request_id": 42, "error": "success" }), 42).is_ok());
-        let error = command_reply_result(
-            &json!({ "request_id": 43, "error": "property unavailable" }),
-            43,
-        )
-        .expect_err("rejected command");
-        assert!(error.to_string().contains("property unavailable"));
-    }
+    fn a_command_reply_slower_than_the_event_poll_is_accepted_within_its_deadline() {
+        let fake = FakeMpv::start(|command| {
+            std::thread::sleep(Duration::from_millis(2_500));
+            vec![json!({ "request_id": command["request_id"].clone(), "error": "success" })]
+        });
+        let (worker, _events) = fake.connect();
 
-    #[cfg(unix)]
-    #[test]
-    fn unix_command_ipc_uses_per_command_read_timeout() {
-        use super::{connect_ipc, connect_ipc_for_commands, set_ipc_command_read_timeout};
-        use std::os::unix::net::UnixListener;
-
-        let path = crate::players::mpv::ipc::make_ipc_path();
-        let listener = UnixListener::bind(&path).expect("bind test IPC socket");
-
-        let command = connect_ipc_for_commands(&path).expect("connect command socket");
-        let (_command_peer, _) = listener.accept().expect("accept command socket");
-        assert_eq!(command.read_timeout().expect("command read timeout"), None);
-        assert_eq!(
-            command.write_timeout().expect("command write timeout"),
-            Some(Duration::from_secs(2))
+        let reply = worker.send_with_timeout(
+            json!({ "command": ["sub-add", "https://example.test/sub.srt", "select"], "request_id": 1 }),
+            Duration::from_secs(10),
         );
 
-        let subtitle_timeout = Duration::from_secs(30);
-        set_ipc_command_read_timeout(&command, subtitle_timeout)
-            .expect("set per-command read timeout");
-        assert_eq!(
-            command
-                .read_timeout()
-                .expect("updated command read timeout"),
-            Some(subtitle_timeout)
+        assert!(
+            reply.is_ok(),
+            "{:?}",
+            reply.err().map(|error| error.to_string())
         );
-
-        let event = connect_ipc(&path).expect("connect event socket");
-        let (_event_peer, _) = listener.accept().expect("accept event socket");
-        assert_eq!(
-            event.read_timeout().expect("event read timeout"),
-            Some(Duration::from_secs(2))
-        );
-        assert_eq!(
-            event.write_timeout().expect("event write timeout"),
-            Some(Duration::from_secs(2))
-        );
-
-        drop(event);
-        drop(command);
-        drop(listener);
-        let _ = std::fs::remove_file(path);
+        assert!(worker.is_writer_alive());
+        fake.finish(worker);
     }
 }

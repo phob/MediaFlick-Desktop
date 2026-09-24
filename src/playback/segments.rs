@@ -129,11 +129,6 @@ impl SegmentSkipState {
         self.pending_auto_skip = None;
     }
 
-    #[cfg(test)]
-    pub fn pending_segment(&self) -> Option<usize> {
-        self.pending_auto_skip.map(|pending| pending.segment_index)
-    }
-
     pub fn update(
         &mut self,
         segments: &[SkipSegment],
@@ -299,6 +294,36 @@ mod tests {
         );
         assert_eq!(
             state.tick(&segments, &config, 150, started + Duration::from_secs(3)),
+            Some(SegmentSkipAction::Skip(0))
+        );
+    }
+
+    /// Leaving the segment during the countdown cancels it: coming back starts
+    /// a fresh countdown instead of skipping on the abandoned deadline.
+    #[test]
+    fn leaving_the_segment_cancels_the_automatic_skip_countdown() {
+        let segments = vec![segment(SegmentType::Intro, 100, 200)];
+        let config = SegmentSkipConfig {
+            intro: SegmentSkipMode::Always,
+            ..SegmentSkipConfig::default()
+        };
+        let started = Instant::now();
+        let mut state = SegmentSkipState::default();
+        let countdown = Some(SegmentSkipAction::Countdown {
+            segment_index: 0,
+            remaining_seconds: 3,
+        });
+
+        assert_eq!(state.update(&segments, &config, 150, started), countdown);
+        let left = started + Duration::from_secs(1);
+        assert_eq!(state.update(&segments, &config, 250, left), None);
+        assert_eq!(state.tick(&segments, &config, 250, left), None);
+
+        let returned = started + Duration::from_secs(2);
+        assert_eq!(state.update(&segments, &config, 150, returned), countdown);
+        let old_deadline = started + Duration::from_secs(3);
+        assert_ne!(
+            state.tick(&segments, &config, 150, old_deadline),
             Some(SegmentSkipAction::Skip(0))
         );
     }

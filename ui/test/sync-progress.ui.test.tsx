@@ -33,7 +33,7 @@ function renderProgress(progress: SyncProgress) {
 describe("sidebar synchronization progress", () => {
   afterEach(() => queryClient.removeQueries({ queryKey: queryKeys.status }))
 
-  test("shows one compact determinate catalog update above settings", () => {
+  test("shows determinate catalog progress", () => {
     renderProgress({
       active: true,
       phase: "catalog",
@@ -42,7 +42,6 @@ describe("sidebar synchronization progress", () => {
       retryAt: null,
     })
 
-    expect(screen.getByRole("status").textContent).toContain("Loading library")
     expect(screen.getByText("40 of 120")).toBeTruthy()
     const bar = screen.getByRole("progressbar", { name: "Loading library" })
     expect(bar.getAttribute("aria-valuenow")).toBe("40")

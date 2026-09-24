@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { describe, expect, test } from "vitest"
 import { queryKeys } from "@/lib/query-client"
-import { itemSummary } from "./support/fixtures"
+import { itemSummary, requireElement } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -174,8 +174,13 @@ function renderHome(error: Error | null = null) {
   )
 }
 
+function shelf(title: string) {
+  const section = screen.getByRole("heading", { name: title }).closest("section")
+  return within(requireElement(section, `${title} shelf`))
+}
+
 describe("home latest shelves", () => {
-  test("renders cached shelves while billboard and live Next Up are pending", () => {
+  test("renders cached shelves in order with links to their full library views", () => {
     renderHome()
 
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
@@ -185,44 +190,38 @@ describe("home latest shelves", () => {
       "Latest Movies",
       "Latest Series",
     ])
-    expect(
-      screen.getByRole("heading", { name: "Recently Added Movies" }).closest("section")?.querySelector("a")
-        ?.getAttribute("href"),
-    ).toBe("/library?kind=Movie&sort=added")
-    expect(
-      screen.getByRole("heading", { name: "Latest Movies" }).closest("section")?.querySelector("a")
-        ?.getAttribute("href"),
-    ).toBe("/library?kind=Movie&sort=year")
-    expect(
-      screen.getByRole("heading", { name: "Latest Series" }).closest("section")?.querySelector("a")
-        ?.getAttribute("href"),
-    ).toBe("/library?kind=Series&sort=year")
+    expect(shelf("Recently Added Movies").getByRole("link", { name: "All" }).getAttribute("href"))
+      .toBe("/library?kind=Movie&sort=added")
+    expect(shelf("Latest Movies").getByRole("link", { name: "All" }).getAttribute("href"))
+      .toBe("/library?kind=Movie&sort=year")
+    expect(shelf("Latest Series").getByRole("link", { name: "All" }).getAttribute("href"))
+      .toBe("/library?kind=Series&sort=year")
   })
 
-  test("lists newly added episodes as landscape cards under the recently added movies", () => {
+  test("lists newly added episodes under the recently added movies", () => {
     renderHome()
 
-    const shows = screen.getByRole("heading", { name: "Recently Added Shows" }).closest("section")
-    const episode = shows?.querySelector("article")
-    expect(episode?.className).toContain("w-landscape-w")
-    expect(episode?.textContent).toContain("Severance · S1E2")
-    expect(episode?.querySelector("a")?.getAttribute("href")).toBe("/item/new-episode")
+    const episode = requireElement(
+      screen.getByRole("heading", { name: "Recently Added Shows" }).closest("section")?.querySelector("article") ?? null,
+      "recently added episode card",
+    )
+    expect(episode.textContent).toContain("Severance · S1E2")
+    expect(episode.querySelector("a")?.getAttribute("href")).toBe("/item/new-episode")
   })
 
   test("shows season starts, later episodes, and every movie release channel in one upcoming shelf", () => {
     renderHome()
 
-    const upcoming = screen.getByRole("heading", { name: "Upcoming" }).closest("section")
-    expect(upcoming?.textContent).toContain("NEW SEASONNorthstarS02E01")
-    expect(screen.getByText("NEW SEASON")).toBeTruthy()
-    expect(screen.getByText("S02E01")).toBeTruthy()
-    expect(upcoming?.textContent).toContain("Digital MovieDigital release")
-    expect(upcoming?.textContent).toContain("Cinema MovieCinema release")
-    expect(upcoming?.textContent).toContain("Physical MoviePhysical release")
-    expect(upcoming?.textContent).toContain("Third EpisodeNorthstar · S02E03")
-    expect(upcoming?.textContent).not.toContain("Second Episode")
-    expect(upcoming?.querySelector('img[src*="northstar/Backdrop"]')).toBeTruthy()
-    expect(upcoming?.querySelector("a")?.getAttribute("href")).toBe("/calendar")
+    const upcoming = shelf("Upcoming")
+    // A season premiere is one card for the series; same-day later episodes fold into it.
+    expect(upcoming.getByRole("link", { name: "Open Northstar" })).toBeTruthy()
+    expect(upcoming.getByText("NEW SEASON")).toBeTruthy()
+    expect(upcoming.queryByText("Second Episode")).toBeNull()
+    expect(upcoming.getByText("Third Episode")).toBeTruthy()
+    for (const channel of ["Digital release", "Cinema release", "Physical release"]) {
+      expect(upcoming.getByText(channel)).toBeTruthy()
+    }
+    expect(upcoming.getByRole("link", { name: "All" }).getAttribute("href")).toBe("/calendar")
   })
 
   test("keeps valid cached shelves visible when a background refresh fails", () => {

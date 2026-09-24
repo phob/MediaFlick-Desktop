@@ -545,24 +545,9 @@ mod tests {
 
     use serde_json::json;
 
-    use rusqlite::params_from_iter;
-
-    use super::{
-        ITEM_ID_CHUNK, ItemQuery, Library, cached_image_tag, civil_from_days, fts_match_expression,
-        page_sql,
-    };
+    use super::{ITEM_ID_CHUNK, ItemQuery, Library, civil_from_days};
     use crate::library::test_support::{dto, seeded};
     use crate::library::{ItemSort, TmdbCandidate, current_release_decade, release_decade_from_id};
-
-    #[test]
-    fn cached_image_tags_are_found_whatever_the_server_capitalised() {
-        let tags = json!({ "primary": "p", "THUMB": "t", "Logo": "l" });
-        assert_eq!(cached_image_tag(&tags, "Primary"), Some("p"));
-        assert_eq!(cached_image_tag(&tags, "Thumb"), Some("t"));
-        assert_eq!(cached_image_tag(&tags, "Logo"), Some("l"));
-        assert_eq!(cached_image_tag(&tags, "Banner"), None);
-        assert_eq!(cached_image_tag(&json!(null), "Logo"), None);
-    }
 
     #[test]
     fn stats_count_each_kind() {
@@ -683,7 +668,6 @@ mod tests {
                 },
             ]
         );
-        assert!(library.tmdb_candidates(&[]).expect("empty").is_empty());
     }
 
     #[test]
@@ -713,7 +697,6 @@ mod tests {
                 .len(),
             ITEM_ID_CHUNK + 1
         );
-        assert!(rows.iter().all(|row| row.overview.is_none()));
     }
 
     #[test]
@@ -844,6 +827,32 @@ mod tests {
     }
 
     #[test]
+    fn titles_without_a_server_sort_name_sort_by_their_name() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(r#"{"Id":"gamma","Name":"gamma","Type":"Movie"}"#),
+                dto(r#"{"Id":"beta","Name":"Beta","Type":"Movie"}"#),
+                dto(r#"{"Id":"alpha","Name":"Alpha","Type":"Movie","SortName":"alpha"}"#),
+            ])
+            .expect("seed");
+
+        let ids = library
+            .query(&ItemQuery {
+                kinds: vec!["Movie".to_string()],
+                sort: ItemSort::Name,
+                limit: 10,
+                ..Default::default()
+            })
+            .expect("query")
+            .items
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
     fn continue_watching_lists_partially_played_items() {
         let rows = seeded().continue_watching(10).expect("rows");
         assert_eq!(rows.len(), 1);
@@ -913,10 +922,31 @@ mod tests {
 
     #[test]
     fn children_returns_episodes_of_a_season_in_order() {
-        let rows = seeded().children("season1").expect("children");
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id, "e1");
-        assert_eq!(rows[1].id, "e2");
+        // Inserted against broadcast order, and with names that sort the
+        // other way, so neither row order nor a name sort can pass.
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[
+                dto(
+                    r#"{"Id":"e2","Name":"A Second","Type":"Episode","SeriesId":"s1",
+                        "ParentId":"season1","SeasonId":"season1",
+                        "IndexNumber":2,"ParentIndexNumber":1}"#,
+                ),
+                dto(
+                    r#"{"Id":"e1","Name":"Z First","Type":"Episode","SeriesId":"s1",
+                        "ParentId":"season1","SeasonId":"season1",
+                        "IndexNumber":1,"ParentIndexNumber":1}"#,
+                ),
+            ])
+            .expect("seed");
+
+        let ids = library
+            .children("season1")
+            .expect("children")
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["e1", "e2"]);
     }
 
     #[test]
@@ -936,30 +966,6 @@ mod tests {
             .expect("episode");
         assert_eq!(previous.id, "e1");
         assert!(library.previous_episode("e1").expect("previous").is_none());
-    }
-
-    #[test]
-    fn summary_rows_are_thin_and_carry_no_rich_metadata() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .upsert_page(&[dto(
-                r#"{"Id":"m1","Name":"Feature","Type":"Movie","MediaStreams":[
-                    {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":1608}],
-                    "Overview":"Synopsis","People":[{"Name":"Actor"}]}"#,
-            )])
-            .expect("seed");
-
-        let page = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                ..Default::default()
-            })
-            .expect("query");
-        let row = serde_json::to_value(&page.items[0]).expect("row json");
-        let row = row.as_object().expect("row object");
-        assert!(!row.contains_key("mediaStreams"));
-        assert!(!row.contains_key("overview"));
-        assert!(!row.contains_key("people"));
     }
 
     #[test]
@@ -987,12 +993,6 @@ mod tests {
             json!({ "tmdb": "603", "imdb": null, "tvdb": null })
         );
         assert!(wire.get("summary").is_none());
-        assert!(wire.get("overview").is_none());
-    }
-
-    #[test]
-    fn genres_are_deduplicated_across_items() {
-        assert_eq!(seeded().genres().expect("genres"), vec!["Action", "Drama"]);
     }
 
     #[test]
@@ -1025,6 +1025,9 @@ mod tests {
             .expect("action");
         assert_eq!(action.total, 1);
         assert_eq!(action.items[0].id, "b");
+
+        library.forget("b").expect("forget");
+        assert_eq!(library.genres().expect("genres"), vec!["Comedy"]);
     }
 
     #[test]
@@ -1043,51 +1046,55 @@ mod tests {
     }
 
     #[test]
-    fn single_kind_grid_pages_read_rows_in_index_order() {
+    fn typed_search_is_an_all_words_prefix_match_that_ignores_fts_syntax() {
         let library = seeded();
-        library.optimize().expect("statistics");
-        for sort in [
-            ItemSort::Name,
-            ItemSort::Year,
-            ItemSort::DateAdded,
-            ItemSort::CommunityRating,
-        ] {
-            let (sql, arguments) = page_sql(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                sort,
-                limit: 60,
+        let search = |text: &str| {
+            library.query(&ItemQuery {
+                search: Some(text.to_string()),
+                limit: 10,
                 ..Default::default()
-            });
-            let plan = library
-                .with_connection(|connection| {
-                    let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
-                    statement
-                        .query_map(params_from_iter(arguments.iter()), |row| {
-                            row.get::<_, String>(3)
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()
-                })
-                .expect("plan")
-                .join(" | ");
-            assert!(
-                !plan.contains("TEMP B-TREE"),
-                "{sort:?} sorts every row instead of reading an index: {plan}"
-            );
-        }
+            })
+        };
+
+        // Quotes, dashes, and operator words are text, not FTS syntax.
+        let matrix = search(r#"matr" -"#).expect("punctuation is not a syntax error");
+        assert_eq!(matrix.total, 1);
+        assert_eq!(matrix.items[0].id, "m1");
+        assert_eq!(search("matrix OR arrival").expect("operator word").total, 0);
+        // Every typed word must match, not any of them.
+        assert_eq!(search("the arriv").expect("two words").total, 0);
     }
 
     #[test]
-    fn search_expressions_are_prefix_matches_without_fts_operators() {
-        assert_eq!(
-            fts_match_expression("the matrix"),
-            Some("\"the\"* AND \"matrix\"*".to_string())
-        );
-        assert_eq!(
-            fts_match_expression("star OR \"wars\" -x"),
-            Some("\"star\"* AND \"OR\"* AND \"wars\"* AND \"x\"*".to_string())
-        );
-        assert_eq!(fts_match_expression("   "), None);
-        assert_eq!(fts_match_expression("***"), None);
+    fn search_follows_renamed_and_removed_items() {
+        let library = Library::open_in_memory().expect("library");
+        library
+            .upsert_page(&[dto(r#"{"Id":"a","Name":"The Matrix","Type":"Movie"}"#)])
+            .expect("seed");
+        library
+            .upsert_page(&[dto(r#"{"Id":"a","Name":"Reloaded","Type":"Movie"}"#)])
+            .expect("rename");
+        let total = |text: &str| {
+            library
+                .query(&ItemQuery {
+                    search: Some(text.to_string()),
+                    limit: 10,
+                    ..Default::default()
+                })
+                .expect("search")
+                .total
+        };
+        assert_eq!(total("matr"), 0, "the old name still matches");
+        assert_eq!(total("reloa"), 1);
+
+        // The next insert reuses the removed row id, so a leftover index
+        // entry would make the old name find the new title.
+        library.forget("a").expect("forget");
+        library
+            .upsert_page(&[dto(r#"{"Id":"b","Name":"Arrival","Type":"Movie"}"#)])
+            .expect("reuse");
+        assert_eq!(total("reloa"), 0, "a removed name still matches");
+        assert_eq!(total("arriv"), 1);
     }
 
     #[test]

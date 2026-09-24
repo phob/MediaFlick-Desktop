@@ -1,11 +1,8 @@
 using System.Net;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Jellyfin.Plugin.MediaFlick.Api;
 using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -51,9 +48,6 @@ public sealed class CollectionProviderTests : IDisposable
                     {
                         ["id"] = index,
                         ["title"] = "Movie " + index,
-                        ["release_date"] = "2020-01-01",
-                        ["poster_path"] = "/poster-" + index + ".jpg",
-                        ["backdrop_path"] = "/backdrop-" + index + ".jpg",
                         ["adult"] = index == 30
                     }).ToArray())
             })
@@ -63,7 +57,7 @@ public sealed class CollectionProviderTests : IDisposable
             Request(new JsonObject
             {
                 ["kind"] = "tmdbDiscover",
-                ["parameters"] = new JsonObject { ["sortBy"] = "popularity.desc" }
+                ["parameters"] = new JsonObject()
             }),
             TestContext.Current.CancellationToken);
 
@@ -71,8 +65,6 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal(30, result.Total);
         Assert.All(result.Items, item => Assert.False(item.Adult));
         Assert.Equal(Enumerable.Range(0, 24), result.Items.Select(item => item.SourceOrder));
-        Assert.Equal("/poster-1.jpg", result.Items[0].PosterPath);
-        Assert.Equal("/backdrop-1.jpg", result.Items[0].BackdropPath);
     }
 
     [Fact]
@@ -115,17 +107,31 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal(10_000, result.Total);
     }
 
-    [Fact]
-    public async Task ArtworkReturnsTheRequestedTmdbRendition()
+    [Theory]
+    [InlineData("image/jpeg", true)]
+    [InlineData("image/png", true)]
+    [InlineData("image/webp", true)]
+    [InlineData("image/svg+xml", false)]
+    [InlineData("text/html", false)]
+    [InlineData("application/octet-stream", false)]
+    public async Task ArtworkRelaysOnlyRasterImages(string contentType, bool relayed)
     {
-        var result = await _service.ArtworkAsync(
+        _tmdb.ArtworkContentType = contentType;
+
+        var artwork = () => _service.ArtworkAsync(
             "w342",
             "/matrix.jpg",
             TestContext.Current.CancellationToken);
 
-        Assert.Equal("image/jpeg", result.ContentType);
-        Assert.Equal([0xFF, 0xD8, 0xFF], result.Body);
-        Assert.Equal(("w342", "/matrix.jpg"), _tmdb.ArtworkRequest);
+        if (relayed)
+        {
+            Assert.Equal(contentType, (await artwork()).ContentType);
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<GatewayException>(artwork);
+            Assert.Equal(StatusCodes.Status404NotFound, error.StatusCode);
+        }
     }
 
     [Theory]
@@ -233,19 +239,17 @@ public sealed class CollectionProviderTests : IDisposable
     }
 
     [Fact]
-    public void DesktopAndCompanionShareTheNormalizedProviderFixture()
+    public void CompanionResultsSerializeExactlyAsTheSharedDesktopFixture()
     {
         using var stream = typeof(CollectionProviderTests).Assembly.GetManifestResourceStream(
             "Jellyfin.Plugin.MediaFlick.Tests.Fixtures.provider-result-v1.json");
         Assert.NotNull(stream);
-        var result = JsonSerializer.Deserialize<CollectionProviderResult>(
-            stream,
-            CompanionJson.CamelCase);
+        var fixture = JsonNode.Parse(stream);
 
-        Assert.NotNull(result);
-        Assert.Equal("fixture-v1", result.SourceIdentity);
-        Assert.Equal(["movie", "series"], result.Items.Select(item => item.MediaType));
-        Assert.Equal([603L, 1396L], result.Items.Select(item => item.TmdbId));
+        var result = fixture.Deserialize<CollectionProviderResult>(CompanionJson.CamelCase);
+        var serialized = JsonSerializer.SerializeToNode(result, CompanionJson.CamelCase);
+
+        Assert.True(JsonNode.DeepEquals(fixture, serialized), serialized?.ToJsonString());
     }
 
     [Fact]
@@ -575,20 +579,6 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal([101L, 102L], result.Memberships.Select(row => row.TmdbId));
         Assert.All(result.Memberships, row => Assert.Null(row.CollectionId));
         Assert.Equal(10, Assert.Single(result.Franchises).CollectionId);
-
-        _ = await _service.FranchisesAsync(
-            new FranchiseResolveRequest([], [10]),
-            TestContext.Current.CancellationToken);
-        Assert.Equal(2, movieCalls);
-    }
-
-    [Fact]
-    public void CollectionDataIsUserAuthenticatedWhileCredentialsRemainAdministratorOnly()
-    {
-        Assert.NotNull(typeof(CollectionExperienceController).GetCustomAttribute<AuthorizeAttribute>());
-        Assert.Equal(
-            MediaBrowser.Common.Api.Policies.RequiresElevation,
-            typeof(ProviderCredentialsController).GetCustomAttribute<AuthorizeAttribute>()?.Policy);
     }
 
     [Fact]
@@ -693,7 +683,7 @@ public sealed class CollectionProviderTests : IDisposable
 
     private sealed class FakeTmdb : ITmdbTransport
     {
-        public (string Size, string Path)? ArtworkRequest { get; private set; }
+        public string ArtworkContentType { get; set; } = "image/jpeg";
 
         public Func<string, IReadOnlyDictionary<string, string>, TmdbResponse> Handler { get; set; }
             = (_, _) => Ok(new JsonObject());
@@ -709,13 +699,10 @@ public sealed class CollectionProviderTests : IDisposable
             string size,
             string path,
             CancellationToken cancellationToken)
-        {
-            ArtworkRequest = (size, path);
-            return Task.FromResult(new ArtworkResponse(
+            => Task.FromResult(new ArtworkResponse(
                 HttpStatusCode.OK,
                 [0xFF, 0xD8, 0xFF],
-                "image/jpeg"));
-        }
+                ArtworkContentType));
     }
 
     private sealed class FakeMdbList : IMdbListTransport

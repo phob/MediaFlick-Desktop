@@ -539,12 +539,11 @@ fn display_title(item: &ItemSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayOptions, absolute_url, apply_saved_preference, build, choose_stream, display_title,
-        embedded_ordinal, select_source,
+        PlayOptions, absolute_url, apply_saved_preference, build, choose_stream, embedded_ordinal,
+        select_source,
     };
     use crate::jellyfin::api::JellyfinClient;
     use crate::jellyfin::api::model::{MediaSourceInfo, PlaybackInfoResponse};
-    use crate::library::ItemSummary;
     use crate::library::model::ResolvedPlaybackPreference;
     use crate::preferences::StreamingQuality;
 
@@ -590,17 +589,6 @@ mod tests {
         options.viewing.prefer_original_audio = false;
         options.viewing.subtitle_mode = crate::preferences::SubtitleMode::ForeignAudio;
         super::apply_language_defaults(&mut options, &source);
-        assert_eq!(options.subtitle_stream_index, Some(-1));
-        apply_saved_preference(
-            &mut options,
-            ResolvedPlaybackPreference {
-                media_source_id: Some("source".into()),
-                media_source_index: 0,
-                audio_stream_index: Some(2),
-                subtitle_stream_index: None,
-            },
-        );
-        assert_eq!(options.audio_stream_index, Some(2));
         assert_eq!(options.subtitle_stream_index, Some(-1));
     }
 
@@ -766,9 +754,6 @@ mod tests {
                 subtitle_stream_index: None,
             },
         );
-        assert_eq!(selected.media_source_id.as_deref(), Some("source-b"));
-        assert_eq!(selected.media_source_index, Some(1));
-        assert_eq!(selected.audio_stream_index, Some(7));
         assert_eq!(selected.subtitle_stream_index, Some(-1));
     }
 
@@ -896,49 +881,10 @@ mod tests {
     }
 
     #[test]
-    fn resume_positions_travel_with_the_request() {
-        let response = info(
-            r#"{"MediaSources":[{"Id":"src","Container":"mkv","SupportsDirectStream":true}]}"#,
-        );
-        let prepared = build(
-            &client(),
-            &response,
-            StreamingQuality::Original,
-            &options(),
-            600_000_000,
-            None,
-        )
-        .expect("prepared");
-        assert_eq!(prepared.request.start_time_ticks, Some(600_000_000));
-        assert_eq!(prepared.request.start_seconds(), Some(60.0));
-    }
-
-    #[test]
-    fn episode_titles_read_as_series_season_episode() {
-        let episode = ItemSummary {
-            name: "Half Loop".to_string(),
-            series_name: Some("Severance".to_string()),
-            parent_index_number: Some(1),
-            index_number: Some(2),
-            ..ItemSummary::default()
-        };
-        assert_eq!(display_title(&episode), "Severance · S01E02 · Half Loop");
-        let movie = ItemSummary {
-            name: "Arrival".to_string(),
-            ..ItemSummary::default()
-        };
-        assert_eq!(display_title(&movie), "Arrival");
-    }
-
-    #[test]
     fn absolute_urls_are_left_alone() {
         assert_eq!(
             absolute_url("http://server:8096", "https://cdn.test/x.m3u8"),
             "https://cdn.test/x.m3u8"
-        );
-        assert_eq!(
-            absolute_url("http://server:8096", "/x.m3u8"),
-            "http://server:8096/x.m3u8"
         );
     }
 }

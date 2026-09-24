@@ -153,9 +153,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn poster_type_comes_from_file_bytes() {
-        assert_eq!(image_extension(b"\x89PNG\r\n\x1a\nrest"), Some("png"));
-        assert_eq!(image_extension(b"\xff\xd8\xffrest"), Some("jpg"));
-        assert_eq!(image_extension(b"not an image"), None);
+    fn staged_posters_are_typed_by_their_bytes_and_bounded() -> io::Result<()> {
+        let directory = std::env::temp_dir().join(format!("mediaflick-artwork-{}", random_hex(8)));
+        let store = ArtworkStore::open(directory.clone())?;
+        let png: &[u8] = b"\x89PNG\r\n\x1a\nrest";
+        for (bytes, extension) in [
+            (png, "png"),
+            (&b"\xff\xd8\xffrest"[..], "jpg"),
+            (&b"RIFF\0\0\0\0WEBPrest"[..], "webp"),
+        ] {
+            let id = store.stage(bytes)?;
+            let path = store.path(&id).expect("staged poster resolves");
+            assert_eq!(
+                path.extension().and_then(|value| value.to_str()),
+                Some(extension)
+            );
+            assert_eq!(std::fs::read(path)?, bytes);
+        }
+        let oversized = [png, &vec![0; MAX_POSTER_BYTES]].concat();
+        for rejected in [
+            &b"<svg onload=alert(1)>"[..],
+            &b""[..],
+            oversized.as_slice(),
+        ] {
+            let error = store.stage(rejected).expect_err("rejected poster");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+        assert_eq!(store.path("../../settings"), None);
+        let _ = std::fs::remove_dir_all(directory);
+        Ok(())
     }
 }

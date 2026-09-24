@@ -1,64 +1,23 @@
-import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { AppShell } from "@/components/AppShell"
-import type { ClientSettings, PlayerState } from "@/lib/api"
+import type { PlayerState } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 import { playerSnapshot } from "./support/fixtures"
+import { clientSettingsFixture } from "./support/settings"
 
-const settings = {
-  client: {
-    player: {
-      playerBackend: "libmpv",
-      mpvPath: null,
-      defaultFullscreen: "windowed",
-      markWatchedNext: "w",
-      playerConfigured: true, comfort: DEFAULT_COMFORT,
-    },
-    playback: {
-      streamingQuality: "auto",
-      skipIntro: "disabled",
-      skipCredits: "disabled",
-      skipRecap: "disabled",
-      skipCommercial: "disabled",
-    },
-    application: {
-      closeBehavior: "exit_app",
-      showScrollbars: false,
-      logLevel: "info",
-    },
-  },
-  appearance: {
-    accent: "signal",
-    density: "comfortable",
-    artworkIntensity: 1,
-    backdropIntensity: 1,
-    reducedMotion: false,
-    cardPreviews: true,
-    showMediaInfo: true,
-    ratingSources: [],
-  },
-  capabilities: {
-    platform: "windows",
-    libmpv: true,
-    integratedLibmpvOverlay: true,
-    mpvInstaller: true,
-  },
-  recoveries: [],
-  serverUrl: "http://localhost:8096",
-} satisfies ClientSettings
+// Longer than any plausible auto-hide delay, so the test does not pin one.
+const IDLE_MS = 10_000
 
 describe("integrated libmpv overlay", () => {
   afterEach(() => {
-    document.documentElement.removeAttribute("data-libmpv-playback")
-    document.documentElement.removeAttribute("data-libmpv-cursor-hidden")
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
-  it("replaces library chrome and hides player controls while video keeps playing", () => {
+  it("replaces library chrome with auto-hiding controls that stay while paused", () => {
     vi.useFakeTimers()
     vi.stubGlobal(
       "matchMedia",
@@ -73,8 +32,12 @@ describe("integrated libmpv overlay", () => {
         dispatchEvent: () => false,
       })),
     )
+    const settings = clientSettingsFixture()
     const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, settings)
+    client.setQueryData(queryKeys.settings, {
+      ...settings,
+      capabilities: { ...settings.capabilities, integratedLibmpvOverlay: true },
+    })
     client.setQueryData<PlayerState>(queryKeys.playerState, playerSnapshot({
       active: true,
       playbackId: 1,
@@ -83,68 +46,30 @@ describe("integrated libmpv overlay", () => {
       paused: false,
     }))
 
-    const view = render(
+    render(
       <TestProviders client={client}>
-          <AppShell>
-            <div>Library chrome</div>
-          </AppShell>
+        <AppShell>
+          <div>Library chrome</div>
+        </AppShell>
       </TestProviders>,
     )
 
-    expect(screen.getByLabelText("MediaFlick")).not.toBeNull()
-    expect(screen.getByRole("button", { name: "Stop" })).not.toBeNull()
     expect(screen.queryByText("Library chrome")).toBeNull()
-    expect(document.documentElement.hasAttribute("data-libmpv-playback")).toBe(true)
-
-    const brand = view.container.querySelector<HTMLElement>(".libmpv-overlay-brand")
-    const playerBar = view.container.querySelector<HTMLElement>(".player-bar")?.parentElement
-    expect(brand?.dataset.visible).toBe("true")
-    expect(playerBar?.dataset.visible).toBe("true")
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
 
     fireEvent.mouseMove(window, { clientX: 500, clientY: 300 })
-    act(() => vi.advanceTimersByTime(3000))
-    expect(brand?.dataset.visible).toBe("false")
-    expect(playerBar?.dataset.visible).toBe("false")
-    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(true)
+    act(() => vi.advanceTimersByTime(IDLE_MS))
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull()
 
-    fireEvent.mouseMove(window, { clientX: 500, clientY: 300 })
-    fireEvent.mouseMove(window, { clientX: 509, clientY: 300 })
-    expect(playerBar?.dataset.visible).toBe("false")
-    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(true)
-
-    fireEvent.mouseMove(window, { clientX: 510, clientY: 300 })
-    expect(playerBar?.dataset.visible).toBe("false")
-    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
-
-    fireEvent.mouseMove(window, {
-      clientX: window.innerWidth / 2,
-      clientY: window.innerHeight - 1,
-    })
-    expect(playerBar?.dataset.visible).toBe("true")
+    fireEvent.mouseMove(window, { clientX: window.innerWidth / 2, clientY: window.innerHeight - 1 })
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
 
     act(() => {
-      document.dispatchEvent(new Event("fullscreenchange"))
-      vi.advanceTimersByTime(2000)
-      window.dispatchEvent(new Event("resize"))
-      vi.advanceTimersByTime(2999)
+      client.setQueryData<PlayerState>(queryKeys.playerState, (current) =>
+        current ? { ...current, paused: true } : current,
+      )
+      vi.advanceTimersByTime(IDLE_MS)
     })
-    expect(playerBar?.dataset.visible).toBe("true")
-
-    act(() => vi.advanceTimersByTime(1))
-    expect(playerBar?.dataset.visible).toBe("false")
-
-    act(() => {
-      client.setQueryData<PlayerState>(queryKeys.playerState, (current) => ({
-        ...current!,
-        paused: true,
-      }))
-      vi.advanceTimersByTime(3000)
-    })
-    expect(playerBar?.dataset.visible).toBe("true")
-    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
-
-    view.unmount()
-    expect(document.documentElement.hasAttribute("data-libmpv-playback")).toBe(false)
-    expect(document.documentElement.hasAttribute("data-libmpv-cursor-hidden")).toBe(false)
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
   })
 })

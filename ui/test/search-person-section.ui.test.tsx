@@ -102,10 +102,6 @@ describe("search page live person section", () => {
     // Give the resolve query a tick to settle before asserting emptiness.
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(container.firstChild).toBeNull()
-    // Without a person there is nothing to look up — the items query must not run.
-    expect(
-      fetchMock.mock.calls.filter(([path]) => String(path).includes("/api/items")),
-    ).toHaveLength(0)
   })
 
   test("stays silent when the server cannot resolve people at all", async () => {

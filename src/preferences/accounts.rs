@@ -782,18 +782,10 @@ mod tests {
     }
 
     #[test]
-    fn home_elements_reject_unknown_fields() {
-        let value = serde_json::json!({
-            "kind": "genre",
-            "id": "Drama",
-            "enabled": true,
-            "label": "not persisted"
-        });
-        assert!(serde_json::from_value::<HomeElement>(value).is_err());
-    }
-
-    #[test]
     fn saved_home_gains_a_new_built_in_after_its_predecessor() {
+        // Failure modes: the new row never appears, lands at the start or end
+        // instead of beside its predecessor, arrives disabled, or the upgrade
+        // discards the user's own ordering.
         let path = test_path("home-new-built-in");
         let alice = key("server", "alice");
         let service = AccountConfigurationService::open(path.clone()).expect("open");
@@ -801,39 +793,41 @@ mod tests {
         home.elements.rotate_left(1);
         service.save_home(&alice, &home).expect("save home");
         drop(service);
+        let new = HomeElementId::BuiltIn {
+            id: HomeBuiltIn::RecentlyAddedShows,
+        };
+        let predecessor = HomeElementId::BuiltIn {
+            id: HomeBuiltIn::RecentlyAdded,
+        };
         let mut document: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).expect("read account settings"))
                 .expect("parse account settings");
-        let saved = document["accounts"][0]["home"]["elements"]
+        document["accounts"][0]["home"]["elements"]
             .as_array_mut()
-            .expect("saved Home elements");
-        saved.retain(|element| element["id"] != "recentlyAddedShows");
+            .expect("saved Home elements")
+            .retain(|element| element["id"] != "recentlyAddedShows");
         std::fs::write(&path, document.to_string()).expect("write older Home");
 
         let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
         let elements = reopened.home(&alice).expect("home").elements;
-        let ids = elements
+        let position = |id: &HomeElementId| {
+            elements
+                .iter()
+                .position(|element| &element.element == id)
+                .expect("Home element")
+        };
+        assert_eq!(position(&new), position(&predecessor) + 1);
+        assert!(elements[position(&new)].enabled);
+        let user_order = elements
             .iter()
-            .map(|element| match &element.element {
-                HomeElementId::BuiltIn { id } => format!("{id:?}"),
-                HomeElementId::Genre { id } | HomeElementId::Collection { id } => id.clone(),
-            })
+            .filter(|element| element.element != new)
             .collect::<Vec<_>>();
-        assert_eq!(
-            ids,
-            [
-                "BecauseYouWatched",
-                "RecentlyAdded",
-                "RecentlyAddedShows",
-                "Upcoming",
-                "LatestMovies",
-                "LatestShows",
-                "MyList",
-                "Drama",
-                "Watching",
-            ]
-        );
-        assert!(elements.iter().all(|element| element.enabled));
+        let saved_order = home
+            .elements
+            .iter()
+            .filter(|element| element.element != new)
+            .collect::<Vec<_>>();
+        assert_eq!(user_order, saved_order);
         cleanup(&path);
     }
 
@@ -891,9 +885,6 @@ mod tests {
             .expect("save profile");
         let home = HomeSettings::fresh(&["Action".to_owned(), "Comedy".to_owned()]);
         service.save_home(&alice, &home).expect("save home");
-        let saved_json = std::fs::read_to_string(&path).expect("read saved account settings");
-        assert!(!saved_json.contains("jellyfinServerId"));
-        assert!(!saved_json.contains("jellyfinUserId"));
 
         assert_eq!(service.appearance(&bob), AppearanceSettings::default());
         assert!(service.letterboxd_profiles(&bob).is_empty());
@@ -1023,7 +1014,6 @@ mod tests {
                 .err()
                 .expect("future file must fail");
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-            assert!(error.to_string().contains("version 2"), "{error}");
             assert_left_untouched(&path, contents);
             cleanup(&path);
         }

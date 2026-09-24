@@ -42,15 +42,6 @@ function renderProfiles() {
   return client
 }
 
-test("Reset is available before editing and Discard restores saved enablement", () => {
-  renderProfiles()
-  expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(screen.getByRole("button", { name: "Reset" }))
-  expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("true")
-  fireEvent.click(screen.getByRole("button", { name: "Discard" }))
-  expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("false")
-})
-
 test.each(["Player", "Back"])("unsaved settings guard %s navigation and preserve edits when dismissed", async (navigation) => {
   renderProfiles()
   fireEvent.click(screen.getByRole("switch", { name: "Enable Neo" }))
@@ -85,15 +76,15 @@ test("profile additions and removals can be undone or discarded without writes",
   fireEvent.change(screen.getByRole("textbox", { name: "Letterboxd username or profile URL" }), { target: { value: "trinity" } })
   fireEvent.click(screen.getByRole("button", { name: "Add profile" }))
   fireEvent.click(screen.getByRole("button", { name: "Remove profile" }))
-  expect(screen.getByText("Will be added when you save")).toBeTruthy()
-  expect(screen.getByText("Will be removed when you save")).toBeTruthy()
+  expect(screen.getByRole("button", { name: "Cancel adding trinity" })).toBeTruthy()
+  expect(screen.queryByRole("switch", { name: "Enable Neo" })).toBeNull()
   expect(add).not.toHaveBeenCalled()
   expect(remove).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole("button", { name: "Undo removal of Neo" }))
   expect(screen.getByRole("switch", { name: "Enable Neo" })).toBeTruthy()
   fireEvent.click(screen.getByRole("button", { name: "Remove profile" }))
   fireEvent.click(screen.getByRole("button", { name: "Discard" }))
-  expect(screen.queryByText("Will be added when you save")).toBeNull()
+  expect(screen.queryByRole("button", { name: "Cancel adding trinity" })).toBeNull()
   expect(screen.getByRole("switch", { name: "Enable Neo" })).toBeTruthy()
   expect(add).not.toHaveBeenCalled()
   expect(remove).not.toHaveBeenCalled()

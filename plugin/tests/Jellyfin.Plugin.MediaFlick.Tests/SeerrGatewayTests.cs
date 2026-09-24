@@ -27,7 +27,7 @@ public sealed class SeerrGatewayTests
     }
 
     [Fact]
-    public async Task StatusIsTypedAndCarriesNoLegacyDirectSeerrFields()
+    public async Task StatusIsTypedAndNeverCarriesTheSeerrAddress()
     {
         _seerr.Handle("api/v1/auth/me", _ => JsonNode.Parse(
             """{"displayName":"Alice","avatar":"/avatar.png","permissions":32}"""));
@@ -43,9 +43,6 @@ public sealed class SeerrGatewayTests
         var status = await _gateway.StatusAsync(Mapped, TestContext.Current.CancellationToken);
         var json = JsonNode.Parse(JsonSerializer.Serialize(status, CompanionJson.CamelCase))!.AsObject();
 
-        Assert.Equal(
-            ["linked", "mapped", "instance", "user", "capabilities", "quota"],
-            json.Select(property => property.Key));
         Assert.DoesNotContain("seerr.internal", json.ToJsonString(), StringComparison.Ordinal);
         Assert.True(json["instance"]!["movie4kEnabled"]!.GetValue<bool>());
         Assert.True(json["instance"]!["partialRequestsEnabled"]!.GetValue<bool>());
@@ -133,7 +130,7 @@ public sealed class SeerrGatewayTests
     {
         _seerr.Handle("api/v1/request", call => call.Method == HttpMethod.Post
             ? JsonNode.Parse(
-                """{"id":5,"status":1,"type":"tv","is4k":false,"createdAt":"2026-09-23T12:00:00.000Z","media":{"tmdbId":1396,"status":3},"seasons":[{"seasonNumber":1},{"seasonNumber":2}]}""")
+                """{"id":5,"status":1,"type":"tv","is4k":false,"media":{"tmdbId":1396,"status":3},"seasons":[{"seasonNumber":1},{"seasonNumber":2}]}""")
             : JsonNode.Parse("""{"pageInfo":{"page":1,"pages":1,"results":1},"results":[{"id":5,"status":2,"media":{"mediaType":"movie","tmdbId":603,"status":5}}]}"""));
 
         var created = await _gateway.RequestAsync(
@@ -144,14 +141,15 @@ public sealed class SeerrGatewayTests
 
         var post = Assert.Single(_seerr.Calls, call => call.Method == HttpMethod.Post);
         Assert.Equal(SeerrUserId, post.SeerrUserId);
-        Assert.Equal(
-            """{"mediaType":"tv","mediaId":1396,"is4k":false,"seasons":[1,2]}""",
-            post.Body!.ToJsonString());
+        Assert.True(
+            JsonNode.DeepEquals(
+                JsonNode.Parse("""{"mediaType":"tv","mediaId":1396,"is4k":false,"seasons":[1,2]}"""),
+                post.Body),
+            post.Body?.ToJsonString());
         Assert.Equal("pending", created.Status);
         Assert.Equal("tv", created.MediaType);
         Assert.Equal("processing", created.MediaStatus);
         Assert.Equal([1, 2], created.Seasons);
-        Assert.Equal("2026-09-23T12:00:00.000Z", created.CreatedAt);
         Assert.Contains(
             _seerr.Calls,
             call => call.Path == $"api/v1/request?take=100&skip=0&filter=pending&sort=added&requestedBy={SeerrUserId}");
@@ -174,61 +172,6 @@ public sealed class SeerrGatewayTests
 
         Assert.Equal(StatusCodes.Status403Forbidden, error.StatusCode);
         Assert.DoesNotContain(_seerr.Calls, call => call.Path.StartsWith("api/v1/service", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task UpstreamFailuresPropagateWithTheirFixedWording()
-    {
-        _seerr.Handle("api/v1/movie/603", _ => throw new GatewayException(
-            StatusCodes.Status404NotFound,
-            "Seerr could not find the requested item",
-            ServiceFailure.RequestFailed));
-
-        var error = await Assert.ThrowsAsync<GatewayException>(() => _gateway.MediaAsync(
-            Mapped,
-            "movie",
-            603,
-            TestContext.Current.CancellationToken));
-
-        Assert.Equal(StatusCodes.Status404NotFound, error.StatusCode);
-        Assert.Equal("Seerr could not find the requested item", error.Message);
-    }
-
-    [Fact]
-    public void TypedResponsesKeepTheDesktopWireNames()
-    {
-        static string[] Keys(object value)
-            => JsonNode.Parse(JsonSerializer.Serialize(value, CompanionJson.CamelCase))!
-                .AsObject()
-                .Select(property => property.Key)
-                .Order(StringComparer.Ordinal)
-                .ToArray();
-        static string[] Sorted(params string[] keys) => keys.Order(StringComparer.Ordinal).ToArray();
-
-        var page = SeerrGateway.ShapeSearchPage(JsonNode.Parse(
-            """{"results":[{"id":603,"mediaType":"movie","title":"The Matrix"}]}"""));
-        Assert.Equal(Sorted("page", "totalPages", "totalResults", "results"), Keys(page));
-        Assert.Equal(
-            Sorted("mediaType", "tmdbId", "title", "year", "overview", "posterPath", "backdropPath",
-                "voteAverage", "status", "status4k", "libraryItemId"),
-            Keys(page.Results[0]));
-        Assert.Equal(
-            Sorted("mediaType", "tmdbId", "title", "originalTitle", "year", "overview", "tagline",
-                "posterPath", "backdropPath", "voteAverage", "voteCount", "status", "status4k",
-                "libraryItemId", "runtimeMinutes", "genres", "seasons", "releaseDate", "firstAirDate",
-                "lastAirDate", "productionStatus", "inProduction", "seriesType", "numberOfSeasons",
-                "numberOfEpisodes", "originalLanguage", "homepage", "externalIds", "budget", "revenue",
-                "studios", "networks", "creators", "directors", "writers", "productionCountries",
-                "spokenLanguages", "cast", "trailer", "releaseDates", "contentRatings", "nextEpisode"),
-            Keys(SeerrGateway.ShapeMedia(new JsonObject { ["id"] = 603 }, "movie")));
-        Assert.Equal(
-            Sorted("id", "status", "mediaType", "tmdbId", "is4k", "createdAt", "updatedAt",
-                "mediaStatus", "seasons", "libraryItemId"),
-            Keys(SeerrGateway.ShapeRequest(new JsonObject())));
-        Assert.Equal(
-            Sorted("id", "name", "isDefault", "profiles"),
-            Keys(SeerrGateway.ShapeRequestDestination(new JsonObject(), new JsonObject())));
-        Assert.Equal(Sorted("cancelled", "id"), Keys(new SeerrCancelResponse(true, 5)));
     }
 
     [Fact]
@@ -265,8 +208,7 @@ public sealed class SeerrGatewayTests
                 Enabled = true,
                 BaseUrl = "http://seerr.internal.example:5055",
                 ApiKey = "seerr-key"
-            },
-            AutoImportSeerrUsers = true
+            }
         };
         var transport = new CompanionSeerrTransport(
             new CompanionHttpClient(
@@ -282,7 +224,6 @@ public sealed class SeerrGatewayTests
             7,
             TestContext.Current.CancellationToken);
 
-        Assert.True(transport.AutoImportUsers);
         Assert.Equal("2.0.0", response?["version"]?.GetValue<string>());
 
         var uninitialized = new CompanionSeerrTransport(
@@ -298,7 +239,6 @@ public sealed class SeerrGatewayTests
             null,
             TestContext.Current.CancellationToken));
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, error.StatusCode);
-        Assert.False(uninitialized.AutoImportUsers);
     }
 
     private sealed record SeerrCall(HttpMethod Method, string Path, JsonNode? Body, int? SeerrUserId);

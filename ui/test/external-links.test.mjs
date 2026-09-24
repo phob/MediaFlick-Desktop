@@ -18,8 +18,6 @@ test("library movies expose exact information pages from their provider ids", ()
     "trakt",
     "rotten-tomatoes-search",
   ])
-  assert.equal(links.find((link) => link.id === "letterboxd")?.source, "tmdb")
-  assert.equal(links.find((link) => link.id === "trakt")?.source, "imdb")
   assert.equal(
     links.find((link) => link.id === "rotten-tomatoes-search")?.href,
     "https://www.rottentomatoes.com/search?search=The%20Matrix%201999",

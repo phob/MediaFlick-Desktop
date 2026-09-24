@@ -103,8 +103,9 @@ serialized through one shared refresh gate.
 
 Results are keyed back to each requested `itemId`, with normalized source
 identifiers, source update/fetch timestamps, `server_mdblist` origin, and stale
-metadata. Missing ratings are omitted without failing the batch. Unknown future
-MDBList sources survive under a bounded safe identifier.
+metadata. Missing ratings are omitted without failing the batch. Ratings from
+sources outside the fixed catalog are dropped, so no upstream source text is
+returned.
 
 ## Shared quota and cache behavior
 

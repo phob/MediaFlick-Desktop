@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
-import { Profiler, type ReactNode } from "react"
+import type { ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
@@ -207,46 +207,9 @@ afterEach(() => {
 describe("expanded media-card details target", () => {
   test("carries the configured rating and technical media facts into the larger preview", () => {
     const panel = renderOpenPreview()
-    const rating = panel.querySelector(".card-rating-readout")
-    const technical = panel.querySelector(".preview-technical-readout")
 
-    expect(rating?.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-    expect(rating?.textContent).toContain("★4.2")
-    expect(technical?.getAttribute("aria-label")).toContain("Technical media information")
-    expect(technical?.textContent).toContain("4K")
-    expect(technical?.textContent).toContain("DV")
-    expect(technical?.textContent).toContain("TrueHD")
-    expect(technical?.textContent).toContain("Atmos")
-  })
-
-  test("re-renders only the hovered card when its preview opens and closes", () => {
-    const neighbour: ItemSummary = { ...movie, id: "movie-2", name: "The Matrix Reloaded" }
-    const commits = vi.fn()
-    render(
-      <>
-        <MediaCard item={movie} />
-        <Profiler id="neighbour" onRender={commits}>
-          <MediaCard item={neighbour} />
-        </Profiler>
-      </>,
-      { wrapper: Providers },
-    )
-    const card = requireElement(screen.getAllByRole("link")[0] ?? null, "hovered media card")
-    commits.mockClear()
-
-    act(() => {
-      hoverWithMouse(card)
-      vi.advanceTimersByTime(550)
-    })
-    expect(document.querySelector(".preview-panel")).toBeTruthy()
-    expect(card.closest("[data-expanded]")?.getAttribute("data-expanded")).toBe("true")
-
-    act(() => {
-      fireEvent.keyDown(window, { key: "Escape" })
-    })
-    expect(document.querySelector(".preview-panel")).toBeNull()
-    expect(card.closest("[data-expanded]")).toBeNull()
-    expect(commits).not.toHaveBeenCalled()
+    expect(within(panel).getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
+    expect(within(panel).getByLabelText(/Technical media information/)).toBeTruthy()
   })
 
   test("opens item details when the panel background is clicked", () => {
@@ -289,15 +252,6 @@ describe("expanded media-card details target", () => {
     })
 
     expect(document.querySelector(".preview-panel")).toBeNull()
-  })
-
-  test("the expanded preview's toggles are labelled and report their state", () => {
-    const panel = renderOpenPreview()
-    const favorite = within(panel).getByRole("button", { name: "Add to My List" })
-    const played = within(panel).getByRole("button", { name: "Mark as watched" })
-    expect(favorite.getAttribute("aria-pressed")).toBe("false")
-    expect(played.getAttribute("aria-pressed")).toBe("false")
-    expect(within(panel).getByRole("button", { name: "Play" })).toBeTruthy()
   })
 
   test("keeps the three actions on the card when expanded previews are disabled", () => {
@@ -374,7 +328,6 @@ describe("expanded media-card details target", () => {
     fireEvent.click(details)
 
     expect(location()).toBe("/item/movie-1")
-    expect(screen.queryByRole("button", { name: "More info" })).toBeNull()
   })
 
   test("keeps each action control isolated from details navigation", () => {

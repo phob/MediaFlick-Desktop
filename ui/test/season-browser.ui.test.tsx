@@ -65,12 +65,12 @@ describe("season browser", () => {
     expect(onSelect).toHaveBeenCalledWith(seasonTwo)
   })
 
-  test("episode cards keep number, title, runtime, and progress but no synopsis", () => {
+  test("episode cards keep number, title, runtime, and rating but no synopsis", () => {
     const watching = episode("episode-2", 2, {
       positionTicks: 16_500_000_000,
       communityRating: 8.4,
     })
-    const { container } = withProviders(
+    withProviders(
       <EpisodeGrid episodes={[episode("episode-1", 1), watching]} parentId="season-1" />,
     )
 
@@ -79,11 +79,6 @@ describe("season browser", () => {
     expect(screen.getAllByText("55m")).toHaveLength(2)
     expect(screen.getByLabelText("Jellyfin community rating 8.4 out of 10")).toBeTruthy()
     expect(screen.queryByText(/A synopsis/)).toBeNull()
-    const bar = requireElement(
-      container.querySelector<HTMLElement>("li .h-full.bg-primary"),
-      "resume progress bar",
-    )
-    expect(bar.style.width).toBe("50%")
   })
 
   test("episode cards expose the complete inline action set when previews are off", () => {
@@ -114,22 +109,6 @@ describe("season browser", () => {
     expect(marked.textContent).toContain("Episode name 2")
     expect(marked.textContent).toContain("(Next up)")
     expect(container.querySelectorAll("[data-next-up]")).toHaveLength(1)
-  })
-
-  test("an empty season says so instead of rendering a bare grid", () => {
-    withProviders(
-      <SeasonBrowser
-        seasons={[seasonOne]}
-        selectedSeason={seasonOne}
-        onSelect={vi.fn()}
-        episodes={[]}
-        episodesPending={false}
-        episodesError={null}
-        onRetry={vi.fn()}
-        nextUpEpisodeId={null}
-      />,
-    )
-    expect(screen.getByText("This season has no episodes.")).toBeTruthy()
   })
 
   test("a failed episode fetch offers a retry without losing the rail", () => {

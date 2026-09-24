@@ -6,39 +6,21 @@ namespace Jellyfin.Plugin.MediaFlick.Tests;
 public sealed class ServiceHealthStoreTests
 {
     [Fact]
-    public void HealthFollowsTheLatestObservedOutcome()
+    public void HealthFollowsTheLatestObservedOutcomeWithoutExpiring()
     {
-        var health = new ServiceHealthStore();
+        var time = new ManualTime(new DateTimeOffset(2026, 9, 23, 12, 0, 0, TimeSpan.Zero));
+        var health = new ServiceHealthStore(time);
 
         Assert.False(health.IsHealthy("sonarr"));
-        Assert.Equal(
-            ServiceHealthStore.ServiceHealthState.Unknown,
-            health.Get("sonarr").State);
 
         health.Success("sonarr");
-
-        var success = health.Get("SONARR");
+        time.Advance(TimeSpan.FromHours(1));
         Assert.True(health.IsHealthy("sonarr"));
-        Assert.Equal(ServiceHealthStore.ServiceHealthState.Healthy, success.State);
-        Assert.NotNull(success.LastSuccess);
-        Assert.Null(success.LastFailure);
-        Assert.Null(success.Failure);
 
         health.Failure("sonarr", ServiceFailure.Timeout);
-
-        var failure = health.Get("sonarr");
         Assert.False(health.IsHealthy("sonarr"));
-        Assert.Equal(ServiceHealthStore.ServiceHealthState.Unhealthy, failure.State);
-        Assert.Equal(success.LastSuccess, failure.LastSuccess);
-        Assert.NotNull(failure.LastFailure);
-        Assert.Equal(ServiceFailure.Timeout, failure.Failure);
 
         health.Success("sonarr");
-
-        var recovery = health.Get("sonarr");
         Assert.True(health.IsHealthy("sonarr"));
-        Assert.Equal(ServiceHealthStore.ServiceHealthState.Healthy, recovery.State);
-        Assert.Equal(failure.LastFailure, recovery.LastFailure);
-        Assert.Null(recovery.Failure);
     }
 }

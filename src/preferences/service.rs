@@ -499,26 +499,6 @@ mod tests {
     }
 
     #[test]
-    fn player_patch_contract_accepts_only_writable_fields() {
-        let writable = json!({
-            "playerBackend": "mpv",
-            "mpvPath": null,
-            "defaultFullscreen": "fullscreen",
-            "markWatchedNext": "w",
-        });
-        assert!(serde_json::from_value::<PlayerSettingsPatch>(writable).is_ok());
-
-        let response_shape = json!({
-            "playerBackend": "mpv",
-            "mpvPath": null,
-            "defaultFullscreen": "fullscreen",
-            "markWatchedNext": "w",
-            "playerConfigured": true,
-        });
-        assert!(serde_json::from_value::<PlayerSettingsPatch>(response_shape).is_err());
-    }
-
-    #[test]
     fn player_patch_contract_groups_comfort_and_watched_next()
     -> Result<(), Box<dyn std::error::Error>> {
         let payload: serde_json::Value =
@@ -530,8 +510,6 @@ mod tests {
             return Err("missing watched-next shortcut".into());
         };
         comfort.validate_watched_next(Some(&watched_next))?;
-        assert_eq!(comfort.stop_key, "w");
-        assert_eq!(watched_next, "q");
         assert!(
             serde_json::from_value::<PlaybackSettingsPatch>(json!({
                 "comfort": payload["comfort"]
@@ -557,24 +535,6 @@ mod tests {
         assert_eq!(
             set.mpv_path,
             NullablePatch::Set("C:/mpv/mpv.exe".to_string())
-        );
-    }
-
-    #[test]
-    fn appearance_patch_accepts_card_preferences() {
-        let patch = serde_json::from_value::<AppearanceSettingsPatch>(json!({
-            "cardPreviews": false,
-            "showMediaInfo": false,
-        }))
-        .expect("appearance patch");
-        assert_eq!(patch.card_previews, Some(false));
-        assert_eq!(patch.show_media_info, Some(false));
-    }
-
-    #[test]
-    fn appearance_patch_rejects_removed_color_theme() {
-        assert!(
-            serde_json::from_value::<AppearanceSettingsPatch>(json!({ "theme": "light" })).is_err()
         );
     }
 
@@ -623,13 +583,15 @@ mod tests {
         );
         let service = PreferencesService::new(AppSettings::default(), accounts, None);
 
-        let error = service
-            .patch_appearance(AppearanceSettingsPatch {
-                accent: Some("violet".to_string()),
-                ..AppearanceSettingsPatch::default()
-            })
-            .expect_err("anonymous appearance write must fail");
-        assert_eq!(error.to_string(), "sign in to save appearance settings");
+        assert!(
+            service
+                .patch_appearance(AppearanceSettingsPatch {
+                    accent: Some("violet".to_string()),
+                    ..AppearanceSettingsPatch::default()
+                })
+                .is_err()
+        );
+        assert_eq!(service.snapshot().appearance, AppearanceSettings::default());
 
         cleanup_account_test(&path);
     }

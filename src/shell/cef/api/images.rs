@@ -174,10 +174,9 @@ mod tests {
 
     #[test]
     fn cache_keys_cannot_escape_the_cache_directory() {
-        let key = cache_key("../../etc/passwd", "Primary", "tag", 400);
-        assert!(!key.contains('/'));
-        assert!(!key.contains('.') || key.ends_with(".img"));
-        assert_eq!(key, "etcpasswd-Primary-tag-400.img");
+        let key = cache_key("../../etc/passwd", r"..\..\Primary", "tag", 400);
+        assert!(!key.contains(['/', '\\', ':']), "{key}");
+        assert!(!key.contains(".."), "{key}");
     }
 
     #[test]

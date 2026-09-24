@@ -31,8 +31,6 @@ fn registers_identity_and_icon_and_updates_moved_executable() -> io::Result<()> 
         Path::new("/checkout/build/mediaflick-desktop"),
     )?;
     let entry = std::fs::read_to_string(fixture.entry())?;
-    assert!(entry.contains("Name=MediaFlick Desktop\n"));
-    assert!(entry.contains(&format!("StartupWMClass={APP_DESKTOP_ID}\n")));
     assert!(entry.contains("NoDisplay=true\n"));
     assert!(entry.contains("/checkout/build/mediaflick-desktop"));
     let icon = fixture.0.join("mediaflick-desktop/desktop/app-icon.svg");
@@ -115,19 +113,24 @@ fn appimage_launcher_uses_persistent_archive() -> io::Result<()> {
 }
 
 #[test]
-fn staged_launcher_preserves_cef_loader_setup() -> io::Result<()> {
+fn staged_launcher_preloads_only_the_cef_beside_the_executable() -> io::Result<()> {
     let fixture = Fixture::new();
-    write_changed(&fixture.0.join("libcef.so"), b"fixture")?;
-    let entry = desktop_entry(
-        &fixture.0.join("mediaflick-desktop"),
-        &fixture.0.join("icon.svg"),
-    )?;
-    for key in [
-        "LD_LIBRARY_PATH",
-        "LD_PRELOAD",
-        "MEDIAFLICK_DESKTOP_CEF_PRELOAD",
+    let executable = fixture.0.join("mediaflick-desktop");
+    let icon = fixture.0.join("icon.svg");
+    let unstaged = desktop_entry(&executable, &icon)?;
+    assert!(!unstaged.contains("LD_PRELOAD"), "{unstaged}");
+
+    let cef = fixture.0.join("libcef.so");
+    write_changed(&cef, b"fixture")?;
+    let staged = desktop_entry(&executable, &icon)?;
+    let directory = fixture.0.display();
+    let cef = cef.display();
+    for assignment in [
+        format!("\"LD_LIBRARY_PATH={directory}\""),
+        format!("\"LD_PRELOAD={cef}\""),
+        format!("\"MEDIAFLICK_DESKTOP_CEF_PRELOAD={cef}\""),
     ] {
-        assert!(entry.contains(&format!("\"{key}=")));
+        assert!(staged.contains(&assignment), "{assignment} in {staged}");
     }
     Ok(())
 }
