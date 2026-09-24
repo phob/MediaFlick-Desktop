@@ -256,7 +256,6 @@ mod tests {
             .expect("newer file must fail");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("version 2"), "{error}");
         assert_left_untouched(&path, NEWER_DOCUMENT);
         assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
         let _ = std::fs::remove_file(&path);

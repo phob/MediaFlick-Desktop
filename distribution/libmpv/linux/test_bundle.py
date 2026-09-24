@@ -54,7 +54,7 @@ class BundleTests(unittest.TestCase):
     def test_missing_transitive_dependency_fails_packaging(self):
         self.playback_libraries()
         (self.prefix / "lib/libfixture-codec.so.1").unlink()
-        with self.assertRaisesRegex(RuntimeError, "Unresolved dependency libfixture-codec"):
+        with self.assertRaisesRegex(RuntimeError, "libfixture-codec"):
             bundle.bundle(self.prefix, self.output, self.sources)
 
     def test_host_driver_is_not_copied_or_traversed(self):

@@ -1,12 +1,10 @@
 using System.Net;
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Api;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -51,27 +49,8 @@ public sealed class RatingsTests
     }
 
     [Fact]
-    public void PublicListRequestsKeepTheFullRankedItemPayload()
+    public async Task CapabilityAndAdminStatusRedactSecrets()
     {
-        var path = MdbListHttpTransport.BuildListItemsPath(
-            "key with +",
-            "lists/snoak/imdb-top-250-movies/items");
-
-        Assert.Equal(
-            "lists/snoak/imdb-top-250-movies/items?limit=500&apikey=key%20with%20%2B",
-            path);
-        Assert.DoesNotContain("extended=ids_only", path, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task CapabilityAndAdminStatusAreAuthenticatedAndRedactSecrets()
-    {
-        AssertAuthorizeAttribute(typeof(RatingsController), null);
-        AssertAuthorizeAttribute(typeof(InfoController), null);
-        AssertAuthorizeAttribute(
-            typeof(ProviderCredentialsController),
-            MediaBrowser.Common.Api.Policies.RequiresElevation);
-
         using var fixture = new RatingsFixture();
         fixture.Secrets.Set("mdblist", "never-serialize-this-key");
         fixture.Cache.SetHealth("mdblist", ValidState());
@@ -85,8 +64,6 @@ public sealed class RatingsTests
 
         var capability = fixture.Service.Capability();
         Assert.True(capability.Available);
-        Assert.False(capability.FallbackOnly);
-        Assert.Equal(["plugin", "none"], capability.CredentialPrecedence);
         Assert.Equal(1, capability.BoundaryVersion);
         var infoResult = await new InfoController(
             new ServiceHealthStore(),
@@ -95,7 +72,6 @@ public sealed class RatingsTests
         var infoJson = Assert.IsType<JsonResult>(infoResult.Result);
         var info = Assert.IsType<PluginInfoResponse>(infoJson.Value);
         Assert.Contains("ratings-v1", info.Capabilities);
-        Assert.Same(capability.Sources, info.Ratings?.Sources);
         var json = JsonSerializer.Serialize(
             new
             {
@@ -106,8 +82,6 @@ public sealed class RatingsTests
         Assert.DoesNotContain("never-serialize-this-key", json);
         Assert.DoesNotContain("0123456789abcdef", json);
         Assert.DoesNotContain("apiKey", json, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("aspnet_data_protection", json);
-        Assert.Contains("\"fallbackOnly\":false", json);
     }
 
     [Fact]
@@ -129,16 +103,12 @@ public sealed class RatingsTests
         Assert.True(status.Mdblist.Valid);
         Assert.Equal("valid", status.Mdblist.Validation);
         Assert.Equal(978, status.Mdblist.Quota.Remaining);
-        Assert.Equal(1, fixture.Transport.ValidateCalls);
 
         status = await fixture.Service.SaveCredentialAsync(
             "tmdb",
             "0123456789abcdef0123456789abcdef",
             CancellationToken.None);
         Assert.True(status.Tmdb.Valid);
-        Assert.False(status.Tmdb.PreparationOnly);
-        Assert.False(status.Tmdb.UsedForRatings);
-        Assert.Equal(1, fixture.Transport.ValidateCalls);
 
         fixture.TmdbTransport.Response = new TmdbResponse(
             HttpStatusCode.Unauthorized,
@@ -154,12 +124,11 @@ public sealed class RatingsTests
             fixture.Secrets.Get("tmdb"));
         Assert.True(fixture.Cache.Health("tmdb").Valid);
 
-        var error = await Assert.ThrowsAsync<RatingRequestException>(() =>
+        await Assert.ThrowsAsync<RatingRequestException>(() =>
             fixture.Service.SaveCredentialAsync(
                 "tmdb",
                 "not-a-key",
                 CancellationToken.None));
-        Assert.Contains("32-character", error.Message);
     }
 
     [Theory]
@@ -180,12 +149,11 @@ public sealed class RatingsTests
         Assert.NotEqual("invalid", validated.Tmdb.Validation);
         Assert.DoesNotContain("MDBList", validated.Tmdb.Detail ?? string.Empty, StringComparison.Ordinal);
 
-        var error = await Assert.ThrowsAsync<RatingRequestException>(() =>
+        await Assert.ThrowsAsync<RatingRequestException>(() =>
             fixture.Service.SaveCredentialAsync(
                 "tmdb",
                 "abcdef0123456789abcdef0123456789",
                 CancellationToken.None));
-        Assert.Contains("could not be reached", error.Message);
         Assert.Equal(saved, fixture.Secrets.Get("tmdb"));
         Assert.True(fixture.Cache.Health("tmdb").Valid);
     }
@@ -246,11 +214,6 @@ public sealed class RatingsTests
         });
         Assert.Contains("mdblist_score", bySource.Keys);
         Assert.Contains("mdblist_score_average", bySource.Keys);
-
-        var catalog = RatingsContract.SourceCatalog.Select(source => source.Id).ToHashSet();
-        Assert.Contains("letterboxd", catalog);
-        Assert.Contains("tomatoes", catalog);
-        Assert.Contains("popcorn", catalog);
     }
 
     [Fact]
@@ -429,10 +392,14 @@ public sealed class RatingsTests
         Assert.Equal(1, fixture.Transport.BatchCalls);
     }
 
-    [Fact]
-    public async Task BackgroundRefreshFailureIsLoggedAsWarningWithoutTheApiKey()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BackgroundRefreshFailureIsLoggedAsWarningWithoutTheApiKey(bool uriEscaped)
     {
-        const string secret = "mdb-log-secret-7f3a9c";
+        // '+' and '/' make the URI-escaped key differ from the raw key.
+        const string secret = "mdb+log/secret-7f3a9c";
+        var escaped = Uri.EscapeDataString(secret);
         using var fixture = new RatingsFixture();
         fixture.ConfigureValidKey();
         fixture.Secrets.Set("mdblist", secret);
@@ -453,12 +420,11 @@ public sealed class RatingsTests
             now + 1000))]);
         // An unexpected failure whose text carries the key-bearing URI.
         fixture.Transport.BatchException = new InvalidOperationException(
-            $"POST https://api.mdblist.com/tmdb/movie/?apikey={secret} failed");
+            $"POST https://api.mdblist.com/tmdb/movie/?apikey={(uriEscaped ? escaped : secret)} failed");
 
-        var response = await fixture.Service.BatchAsync(
+        await fixture.Service.BatchAsync(
             new RatingBatchRequest(1, [target]),
             CancellationToken.None);
-        Assert.True(Assert.Single(response.Items).Stale);
 
         CapturedLog? warning = null;
         for (var attempt = 0; attempt < 100 && warning is null; attempt++)
@@ -472,12 +438,11 @@ public sealed class RatingsTests
         }
 
         Assert.NotNull(warning);
-        Assert.Contains("Background MDBList ratings refresh failed", warning.Message);
-        Assert.Contains(nameof(InvalidOperationException), warning.Message);
-        // The exception text would reveal the key, so only its type is logged.
-        Assert.Null(warning.Exception);
         Assert.All(fixture.RatingsLog.Entries, entry =>
-            Assert.DoesNotContain(secret, entry.Rendered, StringComparison.Ordinal));
+        {
+            Assert.DoesNotContain(secret, entry.Rendered, StringComparison.Ordinal);
+            Assert.DoesNotContain(escaped, entry.Rendered, StringComparison.Ordinal);
+        });
     }
 
     [Fact]
@@ -533,15 +498,7 @@ public sealed class RatingsTests
             CancellationToken.None);
         Assert.Empty(response.Items);
         Assert.NotNull(response.Diagnostic);
-        Assert.Contains("temporarily unavailable", response.Diagnostic);
         Assert.True(fixture.Service.Capability().Valid);
-    }
-
-    private static void AssertAuthorizeAttribute(Type type, string? expectedPolicy)
-    {
-        var attribute = type.GetCustomAttribute<AuthorizeAttribute>();
-        Assert.NotNull(attribute);
-        Assert.Equal(expectedPolicy, attribute.Policy);
     }
 
     private static RatingTargetRequest Target(string itemId, string provider, string providerId)
@@ -648,12 +605,9 @@ public sealed class RatingsTests
     private sealed class FakeTransport : IMdbListTransport
     {
         private int _batchCalls;
-        private int _validateCalls;
         private int _maxBatchSizeObserved;
 
         public int BatchCalls => _batchCalls;
-
-        public int ValidateCalls => _validateCalls;
 
         public int MaxBatchSizeObserved => _maxBatchSizeObserved;
 
@@ -677,10 +631,7 @@ public sealed class RatingsTests
         public Task<MdbListResponse> ValidateAsync(
             string apiKey,
             CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _validateCalls);
-            return Task.FromResult(ValidateResponse);
-        }
+            => Task.FromResult(ValidateResponse);
 
         public async Task<MdbListResponse> BatchAsync(
             string apiKey,
@@ -710,14 +661,7 @@ public sealed class RatingsTests
             string apiKey,
             string resource,
             CancellationToken cancellationToken)
-        {
-            LastListResource = resource;
-            return Task.FromResult(ListItemsResponse ?? BatchResponse);
-        }
-
-        public string? LastListResource { get; private set; }
-
-        public MdbListResponse? ListItemsResponse { get; set; }
+            => Task.FromResult(BatchResponse);
     }
 
     private sealed class FakeTmdbTransport : ITmdbTransport

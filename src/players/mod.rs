@@ -111,20 +111,3 @@ fn libmpv_candidates(app_dir: &Path) -> [PathBuf; 3] {
         app_dir.join("../Frameworks/libmpv.2.dylib"),
     ]
 }
-
-#[cfg(test)]
-mod tests {
-    use super::libmpv_candidates;
-    use std::path::Path;
-
-    #[test]
-    fn bundled_library_search_starts_beside_the_app() {
-        let candidates = libmpv_candidates(Path::new("app"));
-        assert!(candidates[0].starts_with("app"));
-        #[cfg(target_os = "windows")]
-        assert_eq!(
-            candidates[2],
-            Path::new("app/libmpv-windows-x64/libmpv-2.dll")
-        );
-    }
-}

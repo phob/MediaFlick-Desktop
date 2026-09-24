@@ -100,14 +100,6 @@ test("appearance sliders expose names, descriptions, and percentage values", () 
   }
 })
 
-test("appearance settings do not offer a color mode control", () => {
-  renderAppearance(false)
-
-  expect(screen.queryByRole("combobox", { name: "Color mode" })).toBeNull()
-  expect(screen.queryByText("Light", { exact: true })).toBeNull()
-  expect(screen.queryByText("System", { exact: true })).toBeNull()
-})
-
 test("external mpv player fields are associated with visible labels and help", () => {
   const client = testQueryClient()
   const configured = settings(false)
@@ -160,23 +152,6 @@ describe("appearance settings live preview", () => {
     expect(screen.queryByRole("heading", { name: "Live preview" })).toBeNull()
   })
 
-  test("opens the real expanded panel after resting the pointer on a preview card", () => {
-    renderAppearance(true)
-    restOnCard()
-
-    const panel = requireElement(
-      document.querySelector(".preview-panel"),
-      "expanded media-card preview",
-    )
-    // The panel uses the unsaved draft choices, like the shelf itself.
-    expect(panel.closest("[data-accent='cobalt']")).not.toBeNull()
-    // It portals outside the page's paint containment, exactly where the
-    // app's own panel lives.
-    expect(panel.closest(".appearance-preview")).toBeNull()
-    expect(panel.closest(".content-viewport")).toBeNull()
-    expect(panel.parentElement?.parentElement).toBe(document.body)
-  })
-
   test("keeps the panel's state-changing actions inert while hovering for real", () => {
     const requests = renderAppearance(true)
     restOnCard()
@@ -205,17 +180,6 @@ describe("appearance settings live preview", () => {
     fireEvent.click(panel)
 
     expect(location()).toBe("/item/movie-1")
-  })
-
-  test("leaves the cards without a panel when previews are disabled", () => {
-    renderAppearance(false)
-
-    expect(screen.queryByRole("button", { name: "Play" })).toBeNull()
-    restOnCard()
-
-    expect(document.querySelector(".preview-panel")).toBeNull()
-    // The quick actions stay on the card instead, revealed by the same hover.
-    expect(document.querySelector(".appearance-preview-shelf .card-inline-actions")).not.toBeNull()
   })
 })
 

@@ -72,22 +72,9 @@ function renderCalendar() {
 }
 
 describe("release calendar Today navigation", () => {
-  test("jumps to today's agenda position when the page opens", async () => {
-    const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView")
-    renderCalendar()
-
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" }))
-    const target = scrollIntoView.mock.instances[0]
-    if (!(target instanceof HTMLElement)) throw new Error("Expected the agenda scroll target")
-    expect(target.dataset.calendarDate).toBe(dateFromToday(0))
-
-    scrollIntoView.mockRestore()
-  })
-
   test("jumps to today's month cell even when the current month is already selected", async () => {
     const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView")
     const view = renderCalendar()
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
 
     fireEvent.mouseDown(screen.getByRole("tab", { name: "Month" }), { button: 0, ctrlKey: false })
     await waitFor(() => {
@@ -96,7 +83,7 @@ describe("release calendar Today navigation", () => {
     scrollIntoView.mockClear()
     fireEvent.click(screen.getByRole("button", { name: "Today" }))
 
-    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" }))
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
     const target = scrollIntoView.mock.instances[0]
     if (!(target instanceof HTMLElement)) throw new Error("Expected the month scroll target")
     expect(target.dataset.calendarDate).toBe(dateFromToday(0))

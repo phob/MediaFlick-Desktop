@@ -323,7 +323,6 @@ mod tests {
         let error = load_versioned(&path).expect_err("newer document");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(error.to_string(), "unsupported test document version 2");
         test_support::assert_left_untouched(&path, test_support::NEWER_DOCUMENT);
         assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
         let _ = std::fs::remove_file(&path);

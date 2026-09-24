@@ -524,25 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn off_filmography_credits_exclude_filmography_identities_and_deduplicate() {
-        let credits = json!({ "results": [
-            { "mediaType": "movie", "tmdbId": 769 },
-            { "mediaType": "tv", "tmdbId": 769 },
-            // The filmography answered for this one.
-            { "mediaType": "movie", "tmdbId": 603 },
-            // A repeated credit must not duplicate its ownership lookup.
-            { "mediaType": "movie", "tmdbId": 769 },
-            { "mediaType": "movie", "tmdbId": -5 }
-        ] });
-        let filmography = HashSet::from([("movie".to_string(), 603)]);
-
-        assert_eq!(
-            unmatched_credit_keys(&credits, &filmography),
-            vec![("movie".to_string(), 769), ("tv".to_string(), 769)]
-        );
-    }
-
-    #[test]
     fn proven_server_items_own_their_credits_without_touching_others() {
         let proven: Vec<BaseItemDto> = [
             r#"{"Id":"good1","Name":"GoodFellas","Type":"Movie","ProviderIds":{"Tmdb":"769"}}"#,

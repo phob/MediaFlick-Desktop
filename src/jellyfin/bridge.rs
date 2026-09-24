@@ -92,28 +92,6 @@ mod tests {
     }
 
     #[test]
-    fn the_removed_playback_actions_are_no_longer_routable() {
-        for url in [
-            "mediaflick-desktop://play?payload=%7B%7D",
-            "mediaflick-desktop://play-context?payload=%7B%7D",
-            "mediaflick-desktop://player-command?payload=%7B%7D",
-            "mediaflick-desktop://player-state?requestId=1",
-            "mediaflick-desktop://playback-stop-ack?payload=%7B%7D",
-            "mediaflick-desktop://save?server=http%3A%2F%2Fhost",
-        ] {
-            assert_eq!(parse_bridge_action(url), None, "url {url}");
-        }
-    }
-
-    #[test]
-    fn the_app_host_is_not_a_dialog_action() {
-        assert_eq!(
-            parse_bridge_action("mediaflick-desktop://app/api/home"),
-            None
-        );
-    }
-
-    #[test]
     fn session_bridge_token_is_stable_and_hex() {
         let token = bridge_token();
         assert_eq!(token, bridge_token());

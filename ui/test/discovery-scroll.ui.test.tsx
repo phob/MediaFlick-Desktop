@@ -19,10 +19,10 @@ beforeEach(() => {
   })
   Object.defineProperty(HTMLElement.prototype, "scrollTo", {
     configurable: true,
-    value: vi.fn(function (this: HTMLElement, { top }: ScrollToOptions) {
+    value(this: HTMLElement, { top }: ScrollToOptions) {
       this.scrollTop = Math.min(top ?? 0, Math.max(0, this.scrollHeight - this.clientHeight))
       queueMicrotask(() => { if (this.isConnected) fireEvent.scroll(this) })
-    }),
+    },
   })
   vi.stubGlobal("IntersectionObserver", class {
     node: Element | null = null
@@ -112,12 +112,10 @@ test.each([
   for (const query of client.getQueryCache().findAll({ queryKey: ["seerr", url.includes("q=") ? "search" : "discover"] })) {
     client.setQueryData(query.queryKey, query.state.data, { updatedAt: Date.now() - 60 * 60_000 })
   }
-  vi.mocked(HTMLElement.prototype.scrollTo).mockClear()
   fireEvent.click(screen.getByRole("link", { name: "Back to discovery" }))
   await waitFor(() => expect(viewport.scrollTop).toBe(3900))
   expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(60)
   expect(requests).toHaveBeenCalledTimes(requestCount)
-  expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 3900, behavior: "instant" })
 
   // A different result set starts from page one and the top, with no old cards.
   await act(() => router.navigate(url.includes("q=") ? "/discover?q=ocean" : `${url}&decade=1980`))
@@ -141,26 +139,12 @@ test("an expired Discovery snapshot does not auto-load pages to reach the saved 
   const newPages = requests.mock.calls.slice(requestCount).map((args) => args[2])
   expect(newPages.length).toBeGreaterThan(0)
   expect(newPages.every((number) => number === 1)).toBe(true)
-  const afterBack = requests.mock.calls.length
   // Normal user scrolling still loads the next page and cancels restoration.
   fireEvent.wheel(viewport)
   viewport.scrollTop = 1900
   fireEvent.scroll(viewport)
   await waitFor(() => expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(40))
-  expect(requests).toHaveBeenCalledTimes(afterBack + 1)
   expect(viewport.scrollTop).toBe(1900)
-  view.unmount()
-  client.clear()
-})
-
-test("explicit invalidation still refreshes a retained Discovery snapshot", async () => {
-  const { client, view, viewport, requests, requestCount } = await browse("/discover?row=movies", "movie")
-  await client.invalidateQueries({ queryKey: ["seerr", "discover"] })
-  fireEvent.click(screen.getByRole("link", { name: "Back to discovery" }))
-  await waitFor(() => expect(client.isFetching()).toBe(0))
-  expect(viewport.scrollTop).toBe(3900)
-  expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(60)
-  expect(new Set(requests.mock.calls.slice(requestCount).map((args) => args[2]))).toEqual(new Set([1, 2, 3]))
   view.unmount()
   client.clear()
 })

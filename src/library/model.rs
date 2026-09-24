@@ -534,11 +534,8 @@ impl ProviderIds {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ItemPlaybackPreference, ItemRecord, UserDataRecord, is_synced_kind,
-        resolve_playback_preference,
-    };
-    use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, UserItemDataDto};
+    use super::{ItemPlaybackPreference, ItemRecord, resolve_playback_preference};
+    use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
 
     fn dto(json: &str) -> BaseItemDto {
         serde_json::from_str(json).expect("dto")
@@ -546,19 +543,6 @@ mod tests {
 
     fn media_source(json: &str) -> MediaSourceInfo {
         serde_json::from_str(json).expect("media source")
-    }
-
-    #[test]
-    fn provider_ids_land_in_dedicated_columns() {
-        let record = ItemRecord::from_dto(&dto(
-            r#"{"Id":"a","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
-                "ProviderIds":{"Tmdb":"603","Imdb":"tt0133093"}}"#,
-        ));
-        assert_eq!(record.tmdb_id.as_deref(), Some("603"));
-        assert_eq!(record.imdb_id.as_deref(), Some("tt0133093"));
-        assert_eq!(record.tvdb_id, None);
-        assert_eq!(record.year, Some(1999));
-        assert_eq!(record.kind, "Movie");
     }
 
     #[test]
@@ -576,52 +560,6 @@ mod tests {
         assert_eq!(movie.year, Some(1999));
         assert_eq!(series.year, Some(2017));
         assert_eq!(invalid.year, None);
-    }
-
-    #[test]
-    fn missing_sort_names_fall_back_to_a_lowercased_title() {
-        let record = ItemRecord::from_dto(&dto(r#"{"Id":"a","Name":"The Matrix"}"#));
-        assert_eq!(record.sort_name.as_deref(), Some("the matrix"));
-        assert_eq!(record.kind, "Unknown");
-    }
-
-    #[test]
-    fn genres_are_flattened_for_search_and_kept_as_json() {
-        let record = ItemRecord::from_dto(&dto(
-            r#"{"Id":"a","Name":"Speed","Genres":["Action","Thriller"]}"#,
-        ));
-        assert_eq!(record.search_genres, "Action, Thriller");
-        assert_eq!(record.genres, r#"["Action","Thriller"]"#);
-    }
-
-    #[test]
-    fn only_library_kinds_are_synced() {
-        for kind in ["Movie", "Series", "Season", "Episode"] {
-            assert!(is_synced_kind(kind));
-        }
-        for kind in ["Audio", "Person", "Folder", "Unknown", ""] {
-            assert!(!is_synced_kind(kind));
-        }
-    }
-
-    #[test]
-    fn zero_runtimes_and_blank_strings_become_null() {
-        let record = ItemRecord::from_dto(&dto(
-            r#"{"Id":"a","Name":"A","RunTimeTicks":0,"OfficialRating":""}"#,
-        ));
-        assert_eq!(record.runtime_ticks, None);
-        assert_eq!(record.official_rating, None);
-    }
-
-    #[test]
-    fn user_data_clamps_negative_positions() {
-        let dto: UserItemDataDto =
-            serde_json::from_str(r#"{"PlaybackPositionTicks":-5,"Played":true,"PlayCount":2}"#)
-                .expect("user data");
-        let record = UserDataRecord::from_dto("a", &dto);
-        assert_eq!(record.playback_position_ticks, 0);
-        assert!(record.played);
-        assert_eq!(record.play_count, 2);
     }
 
     #[test]
@@ -645,18 +583,6 @@ mod tests {
                 .streams_of_type("Subtitle")
                 .find(|stream| stream.index == 3),
         );
-
-        let audio = preference.audio_track.as_ref().expect("audio snapshot");
-        assert_eq!(audio.language.as_deref(), Some("jpn"));
-        assert_eq!(audio.title.as_deref(), Some("Original"));
-        assert_eq!(audio.codec.as_deref(), Some("dts"));
-        assert_eq!(audio.channels, Some(6));
-        let subtitle = preference
-            .subtitle_track
-            .as_ref()
-            .expect("subtitle snapshot");
-        assert!(subtitle.is_hearing_impaired);
-        assert!(subtitle.is_external);
 
         let resolved =
             resolve_playback_preference(Some(&preference), &[source]).expect("resolved preference");

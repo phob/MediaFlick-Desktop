@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
-import { expect, test } from "vitest"
-import type { HomeSettingsResponse } from "../src/lib/api"
+import { afterEach, expect, test, vi } from "vitest"
+import { api, type HomeSettingsResponse } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import Settings from "../src/routes/Settings"
 import { testQueryClient } from "./test-query-client"
@@ -29,10 +29,13 @@ const settings: HomeSettingsResponse = {
   },
 }
 
-test("Home settings reserve a drop position while a shelf follows the pointer", () => {
+afterEach(() => vi.restoreAllMocks())
+
+test("dragging a Home shelf above another stages the new order until Save", async () => {
   const client = testQueryClient()
   client.setQueryData(queryKeys.status, { authenticated: true })
   client.setQueryData(queryKeys.homeSettings, settings)
+  const save = vi.spyOn(api, "saveHomeSettings").mockResolvedValue(settings)
 
   render(
     <TestProviders client={client} initialEntries={["/settings/home"]}>
@@ -41,19 +44,21 @@ test("Home settings reserve a drop position while a shelf follows the pointer", 
   )
 
   expect(screen.queryByText("Drama")).toBeNull()
-  const moveActionUp = screen.getByRole("button", { name: "Move Action up" })
-  expect((moveActionUp as HTMLButtonElement).disabled).toBe(false)
-  const actionHandle = screen.getByRole("button", { name: "Drag Action" })
-  const actionRow = actionHandle.closest(".rounded-lg")
-  const watchingRow = screen.getByText("Watching").closest(".rounded-lg")
-  if (!actionRow || !watchingRow) throw new Error("Home rows not found")
-  actionRow.getBoundingClientRect = () => ({ left: 20, top: 160, width: 500, height: 50, right: 520, bottom: 210, x: 20, y: 160, toJSON: () => ({}) })
+  // jsdom has no layout, so give the drop target a position above the pointer.
+  const watchingRow = screen.getByRole("button", { name: "Drag Watching" }).closest("[data-home-element-key]")
+  if (!watchingRow) throw new Error("Watching row not found")
   watchingRow.getBoundingClientRect = () => ({ left: 20, top: 100, width: 500, height: 50, right: 520, bottom: 150, x: 20, y: 100, toJSON: () => ({}) })
-  fireEvent.pointerDown(actionHandle, { button: 0, pointerId: 1, clientX: 30, clientY: 170 })
-  expect(screen.getByTestId("home-drag-preview")).toBeTruthy()
-  expect(screen.getByTestId("home-drop-placeholder").style.height).toBe("50px")
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Drag Action" }), { button: 0, pointerId: 1, clientX: 30, clientY: 170 })
   fireEvent.pointerMove(window, { pointerId: 1, clientX: 30, clientY: 90 })
-  expect(screen.getByTestId("home-drop-placeholder").nextElementSibling?.textContent).toContain("Watching")
   fireEvent.pointerUp(window, { pointerId: 1 })
-  expect((screen.getByRole("button", { name: "Move Action up" }) as HTMLButtonElement).disabled).toBe(true)
+  expect(save).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({
+    elements: [
+      { kind: "genre", id: "Action", enabled: true },
+      { kind: "builtIn", id: "watching", enabled: true },
+      { kind: "genre", id: "Drama", enabled: false },
+    ],
+  })))
 })

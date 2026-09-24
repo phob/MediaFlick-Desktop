@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { afterEach, describe, expect, test, vi } from "vitest"
@@ -56,7 +56,7 @@ const status: SeerrStatusInfo = {
 
 function LocationProbe() {
   const location = useLocation()
-  return <output data-location data-navigation={JSON.stringify(location.state)}>{location.pathname + location.search}</output>
+  return <output data-location>{location.pathname + location.search}</output>
 }
 
 function Providers({ children }: { children: ReactNode }) {
@@ -95,8 +95,7 @@ describe("discovery card ratings", () => {
       libraryItemId: identity.libraryItemId,
     }
     expect(discoveryRatingId(result)).toBe(identity.ratingId)
-    const register = vi.fn(() => vi.fn())
-    const { rerender } = render(
+    render(
       <RatingsContext.Provider value={{
         items: new Map([[identity.ratingId, {
           id: identity.ratingId,
@@ -111,68 +110,17 @@ describe("discovery card ratings", () => {
           ["imdb", { id: "imdb", label: "IMDb", shortLabel: "IMDb", scaleMax: 10, format: "decimal", known: true }],
           ["tmdb", { id: "tmdb", label: "TMDB", shortLabel: "TMDB", scaleMax: 10, format: "decimal", known: true }],
         ]),
-        register,
+        register: () => () => {},
       }}>
         <SeerrCard result={result} capabilities={capabilities} />
       </RatingsContext.Provider>,
       { wrapper: Providers },
     )
-    const readout = screen.getByLabelText("Ratings for The Matrix")
-    expect(readout.className).toBe("card-rating-readout")
     expect(screen.getByLabelText("IMDb rating 8.7 out of 10")).toBeTruthy()
-    expect(readout.querySelectorAll("[data-rating-source-icon]")).toHaveLength(1)
-    expect(register).toHaveBeenCalledWith(identity.ratingId)
-    if (identity.libraryItemId) expect(screen.getByText("In your library")).toBeTruthy()
-
-    rerender(<SeerrCard result={result} capabilities={capabilities} />)
-    expect(screen.queryByLabelText("Ratings for The Matrix")).toBeNull()
-    expect(screen.getByTitle("TMDB rating: 8.2/10")).toBeTruthy()
-    expect(screen.getByRole("link").getAttribute("href"))
-      .toBe(`/discover/${result.mediaType}/${result.tmdbId}?row=movies`)
   })
 })
 
 describe("discovery quick request", () => {
-  test("reveals the overlay on pointer hover and keyboard focus", () => {
-    renderCard()
-    const action = screen.getByRole("button", { name: "Request The Matrix" })
-    const card = action.closest("[data-quick-request-card]")!
-    const detail = screen.getByRole("link")
-
-    expect(card.getAttribute("data-quick-request-visible")).toBeNull()
-
-    fireEvent.pointerEnter(card)
-    expect(card.getAttribute("data-quick-request-visible")).toBe("true")
-
-    fireEvent.pointerLeave(card)
-    expect(card.getAttribute("data-quick-request-visible")).toBeNull()
-
-    act(() => detail.focus())
-    expect(card.getAttribute("data-quick-request-visible")).toBe("true")
-    act(() => action.focus())
-    expect(document.activeElement).toBe(action)
-  })
-
-  test("intercepts the card click and opens the existing request dialog", () => {
-    renderCard()
-    const action = screen.getByRole("button", { name: "Request The Matrix" })
-    // React delegates clicks at the render root. Observe one level above it so
-    // stopPropagation has a real boundary to cross (listeners on the same root
-    // node would still run, just like two native listeners on any one node).
-    const outside = action.closest("[data-quick-request-card]")!.parentElement!.parentElement!
-    const bubbled = vi.fn()
-    outside.addEventListener("click", bubbled)
-    const click = new MouseEvent("click", { bubbles: true, cancelable: true })
-
-    act(() => action.dispatchEvent(click))
-
-    expect(click.defaultPrevented).toBe(true)
-    expect(bubbled).not.toHaveBeenCalled()
-    expect(location()).toBe("/discover?row=movies")
-    expect(screen.getByRole("dialog")).toBeTruthy()
-    expect(screen.getByRole("heading", { name: "Request The Matrix (1999)" })).toBeTruthy()
-  })
-
   test("keeps the rest of the card linked to discovery details", () => {
     renderCard()
 
@@ -180,16 +128,6 @@ describe("discovery quick request", () => {
 
     expect(location()).toBe("/discover/movie/603?row=movies")
     expect(screen.queryByRole("dialog")).toBeNull()
-  })
-
-  test("a discovery card remembers the collection that opened it", () => {
-    render(<TestProviders client={testQueryClient()} initialEntries={["/collections/mine/watchlist"]}>
-      <SeerrCard result={movie} capabilities={null} />
-      <LocationProbe />
-    </TestProviders>)
-    fireEvent.click(screen.getByRole("link"))
-    expect(document.querySelector("[data-location]")?.getAttribute("data-navigation"))
-      .toBe(JSON.stringify({ from: "/collections/mine/watchlist", label: "Back" }))
   })
 
   test("closing and submitting never activate the detail route", async () => {

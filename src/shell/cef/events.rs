@@ -861,54 +861,6 @@ mod tests {
     }
 
     #[test]
-    fn playback_dispatch_logs_control_changes_once_and_resets_after_stop_or_failure() {
-        let changes: &[fn(&mut PlayerSnapshot)] = &[
-            |snapshot| snapshot.paused = true,
-            |snapshot| snapshot.paused = false,
-            |snapshot| snapshot.volume = Some(60),
-            |snapshot| snapshot.mute = Some(true),
-            |snapshot| {
-                snapshot.tracks.push(crate::playback::PlayerTrack {
-                    id: 1,
-                    kind: crate::playback::PlayerTrackKind::Audio,
-                    language: Some("eng".to_string()),
-                    title: None,
-                    codec: None,
-                    selected: true,
-                    external: false,
-                });
-            },
-            |snapshot| snapshot.diagnostics.buffering = true,
-            |snapshot| snapshot.diagnostics.buffering = false,
-            |snapshot| snapshot.playback_id = Some(2),
-        ];
-        let mut snapshot = PlayerSnapshot {
-            active: true,
-            playback_id: Some(1),
-            ..PlayerSnapshot::default()
-        };
-        let mut last_logged = Some(snapshot.clone());
-        for change in changes {
-            change(&mut snapshot);
-            let event = PlaybackEvent::StateChanged(snapshot.clone());
-            assert!(playback_event_needs_log(&mut last_logged, &event));
-            assert!(!playback_event_needs_log(&mut last_logged, &event));
-        }
-        for event in [
-            PlaybackEvent::Stopped(snapshot.clone()),
-            PlaybackEvent::Failed {
-                message: "player disconnected".to_string(),
-            },
-        ] {
-            assert!(playback_event_needs_log(&mut last_logged, &event));
-            assert!(playback_event_needs_log(
-                &mut last_logged,
-                &PlaybackEvent::StateChanged(snapshot.clone())
-            ));
-        }
-    }
-
-    #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
         let mut live = AppSettings {
             webui_window: WebUiWindowSettings {

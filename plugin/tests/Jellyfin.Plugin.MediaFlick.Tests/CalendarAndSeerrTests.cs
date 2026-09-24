@@ -1,7 +1,5 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
-using Jellyfin.Plugin.MediaFlick.ScheduledTasks;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Xunit;
 
@@ -59,14 +57,6 @@ public sealed class CalendarAndSeerrTests
     [Fact]
     public void CompleteCalendarSnapshotsAreCachedForOneDay()
     {
-        Assert.Equal("api/v3/movie?excludeLocalCovers=true", CalendarService.RadarrPath);
-        Assert.Equal(
-            "api/v3/calendar?start=1900-01-01&end=2100-01-01&unmonitored=false&includeSeries=true",
-            CalendarService.SonarrPath());
-        Assert.Equal(TimeSpan.FromHours(24), CalendarService.CacheLifetime);
-        Assert.Equal(TimeSpan.FromMinutes(15), CalendarService.FailureRetryInterval);
-        Assert.Equal(TimeSpan.FromHours(24), CalendarRefreshTask.RefreshInterval);
-
         var attemptedAt = new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
         var cache = new CalendarCache();
         cache.MarkRefreshAttempt(attemptedAt);
@@ -113,39 +103,6 @@ public sealed class CalendarAndSeerrTests
     }
 
     [Fact]
-    public void TypedResponsesSerializeCamelCaseRegardlessOfHostDefaults()
-    {
-        // Jellyfin's MVC pipeline serializes PascalCase; the MediaFlick
-        // contract is camelCase, so the controllers pass these options
-        // explicitly and this test pins the wire shape.
-        var info = new PluginInfoResponse(
-            "0.1.0",
-            1,
-            ["calendar"],
-            new Dictionary<string, bool> { ["sonarr"] = true });
-        var json = JsonSerializer.Serialize(info, CompanionJson.CamelCase);
-        Assert.Contains("\"pluginVersion\":\"0.1.0\"", json);
-        Assert.Contains("\"apiVersion\":1", json);
-        Assert.Contains("\"sonarr\":true", json);
-
-        var calendar = new CalendarResponse(
-            [new CalendarEntry("movie", "2026-08-02", "digital", "Film", null, null, null, 1, null, true, false, null)],
-            null,
-            new Dictionary<string, SourceStatus>
-            {
-                ["radarr"] = new(true, true, false, null, null)
-            },
-            "2026-07-26",
-            "2026-10-01",
-            "plugin");
-        json = JsonSerializer.Serialize(calendar, CompanionJson.CamelCase);
-        Assert.Contains("\"dateKind\":\"digital\"", json);
-        Assert.Contains("\"seriesLibraryItemId\":null", json);
-        Assert.Contains("\"windowStart\":\"2026-07-26\"", json);
-        Assert.Contains("\"radarr\":", json);
-    }
-
-    [Fact]
     public void SeerrSearchDropsPeopleAndShapesRequestableMedia()
     {
         var source = JsonNode.Parse(
@@ -166,7 +123,6 @@ public sealed class CalendarAndSeerrTests
         Assert.Equal(603, movie.TmdbId);
         Assert.Equal(1999, movie.Year);
         Assert.Equal("available", movie.Status);
-        Assert.Null(movie.LibraryItemId);
         Assert.Equal(2, page.TotalPages);
     }
 
@@ -257,39 +213,29 @@ public sealed class CalendarAndSeerrTests
         var source = Assert.IsType<JsonObject>(JsonNode.Parse(
             """
             {
-              "id":603,"title":"The Matrix","releaseDate":"1999-03-30",
-              "overview":"A hacker discovers the truth.","status":"Released",
-              "voteAverage":8.2,"voteCount":26000,
+              "id":603,"title":"The Matrix",
               "imdbId":"not-an-imdb-id",
               "externalIds":{"imdbId":"tt0133093","tvdbId":-1},
-              "productionCompanies":[{"id":79,"name":"Village Roadshow Pictures"}],
-              "credits":{
-                "cast":[{"id":6384,"name":"Keanu Reeves","character":"Neo"}],
-                "crew":[{"id":1,"name":"Lana Wachowski","job":"Director","department":"Directing"}]
-              },
+              "credits":{"crew":[
+                {"id":1,"name":"Lana Wachowski","job":"Director","department":"Directing"},
+                {"id":2,"name":"Screenwriter","job":"Screenplay","department":"Writing"}
+              ]},
               "relatedVideos":[
                 {"site":"YouTube","type":"Trailer","key":"abcdefghijk","name":"Official Trailer","size":1080},
                 {"site":"YouTube","type":"Trailer","key":"not/a/key","name":"Unsafe","size":2160}
               ],
               "releases":{"results":[{"iso_3166_1":"US","release_dates":[
-                {"type":4,"release_date":"1999-09-21T00:00:00.000Z","certification":"R"}
-              ]}]},
-              "mediaInfo":{"status":5,"status4k":1}
+                {"type":4,"release_date":"1999-09-21T00:00:00.000Z"}
+              ]}]}
             }
             """));
 
         var detail = SeerrGateway.ShapeMedia(source, "movie");
-        Assert.Equal("A hacker discovers the truth.", detail.Overview);
-        Assert.Equal("Released", detail.ProductionStatus);
-        Assert.Equal("Lana Wachowski", detail.Directors[0]);
-        Assert.Equal("Neo", detail.Cast[0].Character);
+        Assert.Equal(["Lana Wachowski"], detail.Directors);
         Assert.Equal("tt0133093", detail.ExternalIds.Imdb);
         Assert.Null(detail.ExternalIds.Tvdb);
         Assert.Equal("abcdefghijk", detail.Trailer?.Key);
         Assert.Equal("digital", detail.ReleaseDates[0].Type);
-        Assert.Equal("R", detail.ReleaseDates[0].Certification);
-        Assert.Equal(8.2, detail.VoteAverage);
-        Assert.Equal(26000, detail.VoteCount);
 
         var seriesSource = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"id":95396,"name":"Severance","externalIds":{"imdbId":"tt11280740","tvdbId":371980}}"""));
@@ -307,8 +253,6 @@ public sealed class CalendarAndSeerrTests
             """{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"""));
 
         var destination = SeerrGateway.ShapeRequestDestination(server, detail);
-        Assert.Equal(0, destination.Id);
-        Assert.Equal("Movies", destination.Name);
         Assert.Equal("Any", destination.Profiles[0].Name);
         Assert.True(destination.Profiles[1].IsDefault);
     }

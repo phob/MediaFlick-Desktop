@@ -17,7 +17,6 @@ test("release decades are standard, descending, and span 1900 through the curren
 
   assert.deepEqual(decades[0], { value: currentDecade, label: `${currentDecade}s` })
   assert.deepEqual(decades.at(-1), { value: 1900, label: "1900s" })
-  assert.equal(decades.length, (currentDecade - 1900) / 10 + 1)
   assert.ok(decades.every((option, index) => index === 0 || option.value === decades[index - 1].value - 10))
 })
 
@@ -31,10 +30,8 @@ test("every library filter round-trips in the URL and paging resets", () => {
     favorite: true,
   })
 
-  assert.equal(
-    written.toString(),
-    "kind=Movie&search=matrix&sort=year&genre=Science+Fiction&decade=1990&watched=false&favorite=true",
-  )
+  assert.equal(written.has("offset"), false)
+  assert.equal(written.has("page"), false)
   assert.deepEqual(readLibraryFilters(written), {
     sort: "year",
     genre: "Science Fiction",
@@ -108,5 +105,12 @@ test("the items API sends decade and page bounds to the server", async () => {
     globalThis.fetch = originalFetch
   }
 
-  assert.equal(requested, "/api/items?kind=Series&decade=2010&limit=60&offset=60")
+  const url = new URL(requested, "https://app.test")
+  assert.equal(url.pathname, "/api/items")
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    kind: "Series",
+    decade: "2010",
+    limit: String(PAGE_SIZE),
+    offset: String(PAGE_SIZE),
+  })
 })

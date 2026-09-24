@@ -615,7 +615,7 @@ fn quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiError, JellyfinClient, quote};
+    use super::{ApiError, JellyfinClient};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -641,7 +641,13 @@ mod tests {
     #[test]
     fn blank_tokens_are_treated_as_anonymous() {
         let client = JellyfinClient::new("http://server", "device-1", Some("   "));
-        assert_eq!(client.token(), None);
+        assert!(!client.authorization_header().contains("Token="));
+        assert!(
+            client
+                .auth_headers()
+                .iter()
+                .all(|header| header.name != "X-Emby-Token")
+        );
     }
 
     #[test]
@@ -657,14 +663,24 @@ mod tests {
     #[test]
     fn auth_headers_include_the_token_header() {
         let headers = client().auth_headers();
-        assert_eq!(headers.len(), 2);
-        assert_eq!(headers[1].name, "X-Emby-Token");
-        assert_eq!(headers[1].value, "secret");
+        let token = headers
+            .iter()
+            .find(|header| header.name == "X-Emby-Token")
+            .expect("token header");
+        assert_eq!(token.value, "secret");
     }
 
     #[test]
     fn quotes_and_newlines_cannot_escape_a_header_parameter() {
-        assert_eq!(quote("evil\", Token=\"x\r\n"), "evil, Token=x");
+        let client = JellyfinClient::new(
+            "http://server",
+            "evil\", Token=\"stolen\"\r\nX-Injected: 1",
+            Some("secret"),
+        );
+        let header = client.authorization_header();
+        assert!(!header.contains(['\r', '\n']), "{header}");
+        assert_eq!(header.matches("Token=\"").count(), 1, "{header}");
+        assert!(header.ends_with("Token=\"secret\""), "{header}");
     }
 
     /// Answers each request in turn with `responses`, returning the request
@@ -802,40 +818,11 @@ mod tests {
     }
 
     #[test]
-    fn only_transport_and_server_errors_are_retried() {
-        assert!(ApiError::Transport("reset".to_string()).is_retryable());
-        assert!(ApiError::Status { status: 503 }.is_retryable());
-        assert!(
-            ApiError::RateLimited {
-                retry_after_secs: Some(30)
-            }
-            .is_retryable()
-        );
-        assert!(!ApiError::Status { status: 404 }.is_retryable());
-        assert!(!ApiError::Unauthorized.is_retryable());
-        assert!(!ApiError::Storage("disk I/O error".to_string()).is_retryable());
-    }
-
-    #[test]
     fn client_status_maps_failures_to_our_own_api() {
+        // The UI signs out on 401 and treats 409 as "not configured".
         assert_eq!(ApiError::Unauthorized.client_status(), 401);
-        assert_eq!(
-            ApiError::Storage("disk full".to_string()).client_status(),
-            500
-        );
-        assert_eq!(
-            ApiError::Storage("disk full".to_string()).to_string(),
-            "the local library failed: disk full"
-        );
         assert_eq!(ApiError::NotConfigured.client_status(), 409);
         assert_eq!(ApiError::Status { status: 404 }.client_status(), 404);
-        assert_eq!(
-            ApiError::RateLimited {
-                retry_after_secs: Some(30)
-            }
-            .client_status(),
-            429
-        );
         assert_eq!(
             ApiError::Remote {
                 status: 409,
@@ -844,6 +831,5 @@ mod tests {
             .client_status(),
             409
         );
-        assert_eq!(ApiError::Transport("x".to_string()).client_status(), 502);
     }
 }

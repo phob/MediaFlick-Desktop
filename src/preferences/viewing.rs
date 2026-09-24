@@ -255,12 +255,13 @@ mod tests {
     #[test]
     fn older_settings_keep_their_bindings_and_gain_defaults() -> Result<(), serde_json::Error> {
         let comfort: PlayerComfort = serde_json::from_value(serde_json::json!({"pauseKey":"p"}))?;
-        assert_eq!(comfort.pause_key, "p");
-        assert_eq!(comfort.stop_key, "q");
-        assert_eq!(comfort.seek_back_key, "j");
-        assert_eq!(comfort.seek_forward_thirty_key, "UP");
-        let saved = serde_json::to_value(&comfort)?;
-        assert_eq!(serde_json::from_value::<PlayerComfort>(saved)?, comfort);
+        assert_eq!(
+            comfort,
+            PlayerComfort {
+                pause_key: "p".into(),
+                ..Default::default()
+            }
+        );
         Ok(())
     }
 }

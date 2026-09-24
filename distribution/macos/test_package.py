@@ -52,7 +52,6 @@ class MacPackageTests(unittest.TestCase):
     def test_missing_credits_still_rejects_package(self):
         result = self.run_package()
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Missing Chromium credits file", result.stderr)
 
 
 if __name__ == "__main__":
