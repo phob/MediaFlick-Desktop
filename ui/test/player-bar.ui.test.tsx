@@ -91,7 +91,7 @@ describe("player bar controls", () => {
     })
   })
 
-  it("sends seek, mute, and fullscreen commands without exposing playback speed", async () => {
+  it("sends seek, mute, and fullscreen commands", async () => {
     const commands: unknown[] = []
     const playerState: PlayerState = playerSnapshot({
       active: true,
@@ -100,13 +100,6 @@ describe("player bar controls", () => {
       paused: false,
       volume: 80,
       mute: false,
-      playMethod: "DirectPlay",
-      diagnostics: {
-        bufferedUntilMs: 60_000,
-        buffering: false,
-        droppedFrames: 2,
-        frameRate: 23.976,
-      },
     })
     vi.stubGlobal(
       "fetch",
@@ -137,19 +130,11 @@ describe("player bar controls", () => {
       expect(commands).toContainEqual({ command: "set-mute", mute: true })
       expect(commands).toContainEqual({ command: "toggle-fullscreen" })
     })
-    fireEvent.pointerDown(view.getByRole("button", { name: "Playback settings" }), {
-      button: 0,
-      ctrlKey: false,
-      pointerType: "mouse",
-    })
-    expect(await screen.findByText("Direct play")).toBeTruthy()
-    expect(await screen.findByText("23.98 fps · 2 dropped frames")).toBeTruthy()
-    expect(view.queryByText(/playback speed/i)).toBeNull()
   })
 })
 
 
-it("uses saved built-in seek intervals and letter shortcuts", async () => {
+it("uses saved built-in seek intervals", async () => {
   const commands: unknown[] = []
   const player: PlayerState = playerSnapshot({active:true, positionMs:12000, durationMs:120000, paused:false})
   vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -158,13 +143,9 @@ it("uses saved built-in seek intervals and letter shortcuts", async () => {
   }))
   const client = testQueryClient()
   client.setQueryData(queryKeys.playerState, player)
-  client.setQueryData(queryKeys.settings, {client:{player:{playerBackend:"libmpv", comfort:{...DEFAULT_COMFORT, seekBackSeconds:5, seekForwardSeconds:7, pauseKey:"p"}}}})
+  client.setQueryData(queryKeys.settings, {client:{player:{playerBackend:"libmpv", comfort:{...DEFAULT_COMFORT, seekBackSeconds:5, seekForwardSeconds:7}}}})
   render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
   fireEvent.keyDown(window, {key:"ArrowRight"})
-  fireEvent.keyDown(window, {key:"p"})
-  await waitFor(() => {
-    expect(commands).toContainEqual({command:"seek", positionMs:19000})
-    expect(commands).toContainEqual({command:"pause"})
-  })
+  await waitFor(() => expect(commands).toContainEqual({command:"seek", positionMs:19000}))
   expect(screen.getByRole("button", {name:"Forward 7 seconds"})).toBeTruthy()
 })

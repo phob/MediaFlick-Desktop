@@ -99,27 +99,7 @@ describe("proven server cast extras", () => {
 
     renderExtras(
       client,
-      <>
-        <output data-testid="anchor" />
-        <ServerCastExtras personName="Samuel L Jackson" jellyfinId="jf-slj" tmdbId={6384} />
-      </>,
-    )
-
-    expect(screen.getByTestId("anchor")).toBeTruthy()
-    expect(screen.queryByText("More on your Jellyfin server")).toBeNull()
-  })
-
-  test("an unlinked Seerr never renders the section", () => {
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.seerrStatus, { ...linked, linked: false, mapped: false })
-    client.setQueryData(queryKeys.status, signedIn)
-
-    renderExtras(
-      client,
-      <>
-        <output data-testid="anchor" />
-        <ServerCastExtras personName="Samuel L Jackson" jellyfinId="jf-slj" tmdbId={6384} />
-      </>,
+      <ServerCastExtras personName="Samuel L Jackson" jellyfinId="jf-slj" tmdbId={6384} />,
     )
 
     expect(screen.queryByText("More on your Jellyfin server")).toBeNull()

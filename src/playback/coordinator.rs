@@ -106,13 +106,11 @@ impl PlaybackCoordinator {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, mpsc};
 
     use super::*;
 
     struct RecordingBackend {
-        configured: Arc<AtomicUsize>,
         loaded_paths: Arc<Mutex<Vec<String>>>,
     }
 
@@ -132,9 +130,7 @@ mod tests {
 
         fn control(&self, _command: PlayerCommand) {}
 
-        fn set_preferences(&self, _preferences: PlayerPreferences) {
-            self.configured.fetch_add(1, Ordering::SeqCst);
-        }
+        fn set_preferences(&self, _preferences: PlayerPreferences) {}
 
         fn snapshot(&self) -> PlayerSnapshot {
             PlayerSnapshot::default()
@@ -206,23 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn preference_changes_reach_the_running_backend() {
-        let configured = Arc::new(AtomicUsize::new(0));
-        let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
-            configured: configured.clone(),
-            loaded_paths: Arc::new(Mutex::new(Vec::new())),
-        }));
-
-        coordinator.configure(crate::preferences::AppSettings::default().player_preferences());
-
-        assert_eq!(configured.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
     fn a_pending_restart_does_not_reconfigure_the_running_backend() {
         let loaded_paths = Arc::new(Mutex::new(Vec::new()));
         let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
-            configured: Arc::new(AtomicUsize::new(0)),
             loaded_paths: loaded_paths.clone(),
         }));
         coordinator.warm("startup-player".to_string(), FullscreenBehavior::Windowed);

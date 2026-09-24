@@ -556,26 +556,18 @@ mod resize_tests {
 
     #[test]
     fn fullscreen_commits_only_the_final_size_after_the_quiet_period() {
-        let now = Instant::now();
+        let quiet = ResizeState::QUIET;
+        let work_area = Instant::now();
         let mut state = ResizeState::new((4182, 2846));
-        assert_eq!(state.observe((6144, 3382), now), None);
+        assert_eq!(state.observe((6144, 3382), work_area), None);
+        let full = work_area + quiet / 2;
+        assert_eq!(state.observe((6144, 3456), full), None);
+        assert_eq!(state.observe((6144, 3456), full + quiet / 2), None);
         assert_eq!(
-            state.observe((6144, 3456), now + Duration::from_millis(194)),
-            None
-        );
-        assert_eq!(
-            state.observe((6144, 3456), now + Duration::from_millis(400)),
-            None
-        );
-        assert_eq!(state.committed, (4182, 2846));
-        assert_eq!(
-            state.observe((6144, 3456), now + Duration::from_millis(444)),
+            state.observe((6144, 3456), full + quiet),
             Some((6144, 3456))
         );
-        assert_eq!(
-            state.observe((6144, 3456), now + Duration::from_millis(800)),
-            None
-        );
+        assert_eq!(state.observe((6144, 3456), full + quiet * 2), None);
     }
 
     #[test]

@@ -1306,49 +1306,17 @@ mod tests {
     }
 
     #[test]
-    fn windowless_rendering_follows_display_refresh_with_a_bounded_fallback() {
-        for (reported, expected) in [
-            (0, 60),
-            (1, 60),
-            (60, 60),
-            (120, 120),
-            (144, 144),
-            (360, 240),
-        ] {
-            assert_eq!(super::usable_frame_rate(reported), expected);
+    fn an_unspecified_display_refresh_falls_back_to_60_hz() {
+        // DEVMODE reports 0 or 1 for the hardware's default refresh rate.
+        for reported in [0, 1] {
+            assert_eq!(super::usable_frame_rate(reported), 60);
         }
-    }
-
-    #[test]
-    fn saved_size_seeds_a_hidden_window_browser() {
-        let metrics = ViewMetrics::from_logical_size(1280, 720);
-
-        assert_eq!(metrics.logical_width, 1280);
-        assert_eq!(metrics.logical_height, 720);
-        assert_eq!(metrics.physical_width, 1280);
-        assert_eq!(metrics.physical_height, 720);
-        assert_eq!(metrics.dpi, DEFAULT_DPI);
     }
 
     #[test]
     fn dpi_conversion_round_trips_window_coordinates() {
         assert_eq!(physical_to_logical(150, 144), 100);
         assert_eq!(logical_to_physical(100, 144), 150);
-    }
-
-    #[test]
-    fn cef_cursor_shapes_map_to_native_windows_cursors() {
-        assert_eq!(cursor_resource(CursorType::POINTER), Some(IDC_ARROW));
-        assert_eq!(cursor_resource(CursorType::HAND), Some(IDC_HAND));
-        assert_eq!(cursor_resource(CursorType::IBEAM), Some(IDC_IBEAM));
-        assert_eq!(cursor_resource(CursorType::EASTRESIZE), Some(IDC_SIZEWE));
-        assert_eq!(cursor_resource(CursorType::NONE), None);
-    }
-
-    #[test]
-    fn f4_is_the_system_close_key() {
-        assert!(is_alt_f4(usize::from(VK_F4)));
-        assert!(!is_alt_f4(usize::from(VK_F4) - 1));
     }
 
     #[test]

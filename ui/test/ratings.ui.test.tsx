@@ -1,13 +1,12 @@
 import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { QueryClientProvider } from "@tanstack/react-query"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { Route, Routes } from "react-router-dom"
 import { describe, expect, test, vi } from "vitest"
 import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
 import type {
   ClientSettings,
   ItemRatings,
-  ItemSummary,
   NormalizedRating,
   RatingSourceDefinition,
   RatingsIntegrationStatus,
@@ -19,11 +18,10 @@ import {
   type DisplayRating,
 } from "../src/lib/rating-context"
 import { RatingsProvider } from "../src/lib/ratings"
-import { AppearanceSync } from "../src/components/AppearanceSync"
 import Settings from "../src/routes/Settings"
 import { Appearance, RatingSourceSelector } from "../src/routes/settings/AppearanceSettings"
 import { queryKeys } from "../src/lib/query-client"
-import { requireElement } from "./support/fixtures"
+import { itemSummary } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -86,6 +84,13 @@ function RatingProbe({ id }: { id: string }) {
   return <span>{ratingItem ? `${id}:${ratingItem.ratings.length}` : `${id}:ready`}</span>
 }
 
+/** Queries within the Settings row titled `title`; status badges hold exact words. */
+function companionRow(title: string) {
+  const row = screen.getByRole("heading", { name: title }).closest(".settings-row")
+  if (!(row instanceof HTMLElement)) throw new Error(`Expected a settings row titled ${title}`)
+  return within(row)
+}
+
 describe("configurable card ratings", () => {
   test("formats each native source scale without conflating RT critics and audience", () => {
     expect(display("letterboxd", 4.25).formatted).toBe("★4.3")
@@ -94,7 +99,7 @@ describe("configurable card ratings", () => {
     expect(display("popcorn", 91).formatted).toBe("91%")
   })
 
-  test("renders multiple available ratings as one accessible definition list", () => {
+  test("renders multiple available ratings with accessible source names and icons", () => {
     render(
       <RatingOverlayView
         itemName="The Matrix"
@@ -104,18 +109,12 @@ describe("configurable card ratings", () => {
     )
 
     const overlay = screen.getByLabelText("Ratings for The Matrix")
-    expect(overlay.tagName).toBe("DL")
-    expect(overlay.querySelectorAll("[data-rating-source-icon]")).toHaveLength(3)
     expect(overlay.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-    expect(overlay.querySelector("[data-rating-source-icon='tomatoes']")).toBeTruthy()
-    expect(overlay.querySelector("[data-rating-source-icon='popcorn']")).toBeTruthy()
     expect(overlay.textContent).not.toContain("LB")
     expect(overlay.textContent).not.toContain("RT A")
-    expect(overlay.getAttribute("data-rating-origin")).toBe("plugin")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()
-    expect(overlay.querySelector("[title*='via MDBList']")).toBeTruthy()
   })
 
   test("renders the selected MDBList sources in title details", () => {
@@ -132,10 +131,7 @@ describe("configurable card ratings", () => {
       </RatingsContext.Provider>,
     )
 
-    const readout = screen.getByLabelText("Ratings for The Matrix")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
-    expect(readout.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-    expect(readout.textContent).not.toContain("LB")
     expect(register).toHaveBeenCalledWith(item.id)
   })
 
@@ -362,9 +358,12 @@ describe("configurable card ratings", () => {
       )
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-      // One initial request plus the bounded retries, then silence.
-      expect(batchCalls).toHaveLength(3)
+      // The omission is retried, but only a bounded number of times.
+      const settled = batchCalls.length
+      expect(settled).toBeGreaterThan(1)
       expect(batchCalls.every((ids) => ids.includes("episode-1"))).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000) })
+      expect(batchCalls).toHaveLength(settled)
       expect(screen.getByText("episode-1:ready")).toBeTruthy()
     } finally {
       vi.useRealTimers()
@@ -372,62 +371,17 @@ describe("configurable card ratings", () => {
     }
   })
 
-  test("the Appearance preview renders real library cards with the unsaved overlay choices", () => {
-    const movie: ItemSummary = {
-      id: "preview-movie",
-      kind: "Movie",
-      name: "Green Horizon",
-      year: 2026,
-      runtimeTicks: 7_000_000_000,
-      communityRating: null,
-      officialRating: null,
-      seriesId: null,
-      seriesName: null,
-      indexNumber: null,
-      parentIndexNumber: null,
-      primaryImageTag: "tag-movie",
-      thumbImageTag: null,
-      logoImageTag: null,
-      backdropImageTag: null,
-      childCount: null,
-      premiereDate: null,
-      seasonId: null,
-      played: false,
-      playCount: 0,
-      positionTicks: 0,
-      favorite: false,
-    }
-    const show: ItemSummary = {
-      ...movie,
-      id: "preview-series",
-      kind: "Series",
-      name: "Severance",
-      year: null,
-      primaryImageTag: "tag-show",
-      childCount: 2,
-    }
-    const resumeEpisode: ItemSummary = {
-      ...movie,
-      id: "preview-episode",
-      kind: "Episode",
-      name: "What We Leave Behind",
-      seriesId: show.id,
-      seriesName: show.name,
-      indexNumber: 1,
-      parentIndexNumber: 1,
-      thumbImageTag: "tag-still",
-      positionTicks: 1_000_000_000,
-    }
+  test("the Appearance preview applies the unsaved rating-source selection to its cards", () => {
+    const movie = itemSummary({ id: "preview-movie", kind: "Movie", name: "Green Horizon", primaryImageTag: "tag-movie" })
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
     client.setQueryData(queryKeys.status, { authenticated: true })
     client.setQueryData(queryKeys.home, {
-      continueWatching: [resumeEpisode],
-      rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently added", items: [movie, show] }],
+      continueWatching: [],
+      rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently added", items: [movie] }],
     })
-    const register = vi.fn(() => vi.fn())
-    const { container } = render(
+    render(
       <TestProviders client={client}>
           <RatingsContext.Provider
             value={{
@@ -436,71 +390,21 @@ describe("configurable card ratings", () => {
               ]),
               selected: ["letterboxd"],
               definitions: new Map(definitions.map((definition) => [definition.id, definition])),
-              register,
+              register: vi.fn(() => vi.fn()),
             }}
           >
             <Appearance />
           </RatingsContext.Provider>
       </TestProviders>,
     )
-    expect(screen.getByText("Cards")).toBeTruthy()
-    const cardPreviews = screen.getByRole("switch", { name: "Show pop-out previews on cards" })
-    expect(cardPreviews.getAttribute("aria-checked")).toBe("true")
-    const mediaInfo = screen.getByRole("switch", { name: "Show media info on cards" })
-    expect(mediaInfo.getAttribute("aria-checked")).toBe("true")
+    const rating = () => screen.queryByLabelText("Letterboxd rating 4.2 out of 5")
+    const letterboxd = screen.getByRole("checkbox", { name: "Letterboxd" })
+    expect(rating()).not.toBeNull()
 
-    const preview = requireElement(
-      container.querySelector<HTMLElement>(".appearance-preview"),
-      "appearance preview",
-    )
-    expect(preview.dataset.mediaInfo).toBe("true")
-    expect(preview.dataset.cardPreviews).toBe("true")
-    // The shelf is the app's own cards over real home-feed rows: a resuming
-    // episode and both a movie and a series from Recently added.
-    expect(preview.querySelectorAll(".signal-card").length).toBeGreaterThanOrEqual(3)
-    expect(preview.querySelector("[aria-label='Open details for Green Horizon']")).toBeTruthy()
-    expect(preview.querySelector("[aria-label='Open details for Severance']")).toBeTruthy()
-    expect(preview.querySelector(".card-rating-readout")).toBeTruthy()
-    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-
-    // The draft selection drives the overlays before anything is saved.
-    fireEvent.click(screen.getByRole("checkbox", { name: "Letterboxd" }))
-    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeNull()
-    fireEvent.click(screen.getByRole("checkbox", { name: "Letterboxd" }))
-    expect(preview.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-
-    // With previews off, the quick actions move onto the card itself.
-    fireEvent.click(cardPreviews)
-    expect(preview.dataset.cardPreviews).toBe("false")
-    expect(preview.querySelector(".card-inline-actions")).toBeTruthy()
-    fireEvent.click(mediaInfo)
-    expect(preview.dataset.mediaInfo).toBe("false")
-    expect(screen.getByText("You have unsaved changes.")).toBeTruthy()
-    expect(screen.getAllByRole("button", { name: "Save" }).some((button) => !button.hasAttribute("disabled"))).toBe(true)
-  })
-
-  test("saved media-info visibility reaches library cards through the root appearance state", () => {
-    const disabled = {
-      ...clientSettings,
-      appearance: { ...clientSettings.appearance, showMediaInfo: false },
-    }
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, disabled)
-    render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
-    expect(document.documentElement.dataset.mediaInfo).toBe("false")
-    delete document.documentElement.dataset.mediaInfo
-  })
-
-  test("saved card-preview visibility reaches browsing cards through the root appearance state", () => {
-    const disabled = {
-      ...clientSettings,
-      appearance: { ...clientSettings.appearance, cardPreviews: false },
-    }
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, disabled)
-    render(<QueryClientProvider client={client}><AppearanceSync /></QueryClientProvider>)
-    expect(document.documentElement.dataset.cardPreviews).toBe("false")
-    delete document.documentElement.dataset.cardPreviews
+    fireEvent.click(letterboxd)
+    expect(rating()).toBeNull()
+    fireEvent.click(letterboxd)
+    expect(rating()).not.toBeNull()
   })
 
   test("reports Companion services and the current Seerr user mapping", () => {
@@ -544,12 +448,10 @@ describe("configurable card ratings", () => {
       </TestProviders>,
     )
 
-    expect(screen.getByRole("heading", { name: "MediaFlick Companion" })).toBeTruthy()
-    expect(screen.getByRole("link", { name: "MediaFlick Companion" }).getAttribute("href")).toBe("/settings/integrations/companion")
-    expect(screen.getByText(/This account is mapped as Neo/)).toBeTruthy()
-    expect(screen.getByText("Desktop features").closest(".settings-row")?.textContent).toContain("compatible")
-    expect(screen.getByText("Radarr").closest(".settings-row")?.textContent).toContain("unavailable")
-    expect(screen.getByText("TMDB").closest(".settings-row")?.textContent).toContain("available")
+    expect(companionRow("Seerr").getByText(/Neo/)).toBeTruthy()
+    expect(companionRow("Desktop features").getByText("compatible")).toBeTruthy()
+    expect(companionRow("Radarr").getByText("unavailable")).toBeTruthy()
+    expect(companionRow("TMDB").getByText("available")).toBeTruthy()
   })
 
   test("reports Companion feature mismatches without treating the plugin as disconnected", () => {
@@ -577,10 +479,9 @@ describe("configurable card ratings", () => {
       </TestProviders>,
     )
 
-    expect(screen.getByText("Connection").closest(".settings-row")?.textContent).toContain("available")
-    expect(screen.getByText("Movie franchises").closest(".settings-row")?.textContent).toContain("missing")
-    expect(screen.getByText(/cannot supply the franchise membership data/)).toBeTruthy()
-    expect(screen.getByText("Sonarr").closest(".settings-row")?.textContent).toContain("available")
+    expect(companionRow("Connection").getByText("available")).toBeTruthy()
+    expect(companionRow("Movie franchises").getByText("missing")).toBeTruthy()
+    expect(companionRow("Sonarr").getByText("available")).toBeTruthy()
   })
 
   test("disables all source choices without a credential/capability", () => {

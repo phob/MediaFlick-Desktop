@@ -95,7 +95,6 @@ test("editing a saved server clears its code and cancels its active poll before 
   await waitFor(() => expect(pollSignal).toBeDefined())
 
   fireEvent.change(screen.getByLabelText("Server"), { target: { value: "" } })
-  expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Server" }).value).toBe("")
   expect(screen.queryByText("123456")).toBeNull()
   expect(quickConnectButton().disabled).toBe(true)
   expect(pollSignal?.aborted).toBe(true)

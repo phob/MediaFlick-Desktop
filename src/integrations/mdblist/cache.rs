@@ -355,7 +355,7 @@ mod tests {
         let ids = (1..=600)
             .map(|id| format!("tmdb:movie:{id}"))
             .collect::<Vec<_>>();
-        assert_eq!(bounded_item_ids(&ids).len(), MAX_REQUEST_IDS);
+        assert_eq!(bounded_item_ids(&ids).len(), 500);
     }
 
     #[test]

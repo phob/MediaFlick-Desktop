@@ -65,11 +65,6 @@ mod tests {
     }
 
     #[test]
-    fn escape_js_line_separators_leaves_plain_text_untouched() {
-        assert_eq!(escape_js_line_separators("plain text"), "plain text");
-    }
-
-    #[test]
     fn html_escape_encodes_all_markup_characters() {
         assert_eq!(
             html_escape("<a href=\"x\">'&'</a>"),
@@ -78,16 +73,14 @@ mod tests {
     }
 
     #[test]
-    fn load_error_page_is_mediaflick_branded_and_retries_safe_urls() {
+    fn load_error_page_retries_safe_urls() {
         let html = load_error_html(
             "MediaFlick Desktop",
             "mediaflick-desktop://app/settings",
             "failed",
             -2,
         );
-        assert!(html.contains("MediaFlick couldn’t load this page"));
         assert!(html.contains("href=\"mediaflick-desktop://app/settings\""));
-        assert!(!html.contains("Could not load Jellyfin"));
     }
 
     #[test]

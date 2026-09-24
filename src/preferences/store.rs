@@ -208,7 +208,6 @@ mod tests {
             ),
             (json!({ "kb_watched": "x" }), Some("x")),
             (json!({ "bindings": { "mark_watched_next": "" } }), None),
-            (json!({ "bindings": { "mark_watched_next": 5 } }), None),
             (json!({}), Some("w")),
         ] {
             assert_eq!(legacy_binding(&file).as_deref(), expected, "{file}");

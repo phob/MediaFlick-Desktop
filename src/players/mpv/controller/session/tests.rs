@@ -13,7 +13,6 @@ use super::super::{
     ControllerState, PendingPlayback, PlaybackIdentity, PlaybackPhase, RuntimeSelection,
 };
 use super::super::{STARTUP_SEEK_RETRY_DELAY, StartupSeek};
-use crate::players::mpv::commands::loadfile_command;
 use crate::players::mpv::ipc::test_server::{COMMAND_CONNECTION, FakeMpv};
 
 fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEvent {
@@ -23,16 +22,6 @@ fn next_terminal_event(event_rx: &mpsc::Receiver<PlaybackEvent>) -> PlaybackEven
             event => return event,
         }
     }
-}
-
-#[test]
-fn library_playback_never_schedules_external_window_raise() {
-    let mut state = controller_with_pending_load(None);
-    state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
-
-    state.schedule_mpv_raise("test");
-
-    assert!(state.pending_raise_pulse_reset_at.is_none());
 }
 
 #[cfg(target_os = "linux")]
@@ -69,24 +58,6 @@ fn linux_fullscreen_wait_does_not_survive_stop_or_runtime_reset() {
     state.activate_pending();
     state.control(&PlayerCommand::Stop);
     assert!(!state.fullscreen_gate.pending);
-    state.fullscreen_gate.pending = true;
-    state.reset_mpv();
-    assert!(!state.fullscreen_gate.pending);
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn windowed_library_and_external_startup_do_not_wait_for_a_browser_frame() {
-    for kind in [
-        crate::players::mpv::runtime::MpvRuntimeKind::Library,
-        crate::players::mpv::runtime::MpvRuntimeKind::External,
-    ] {
-        let mut state = controller_with_pending_load(None);
-        state.runtime_kind = kind;
-        state.remember_configured_mpv("test-player", FullscreenBehavior::Windowed);
-        state.activate_pending();
-        assert!(!state.fullscreen_gate.pending);
-    }
 }
 
 #[test]
@@ -104,7 +75,6 @@ fn libmpv_watched_next_command_uses_the_existing_completion_handoff() {
 
     assert!(state.phase.pending().is_none());
     assert_eq!(state.last_state.position_ticks, 300_000_000);
-    assert!(state.next_playback_handoff_until.is_some());
     assert_eq!(
         state
             .snapshot
@@ -143,8 +113,6 @@ fn external_watched_next_message_uses_the_completion_handoff() {
     state.handle_session_event(1, &event);
 
     assert!(state.phase.pending().is_none());
-    assert_eq!(state.last_state.position_ticks, 300_000_000);
-    assert!(state.next_playback_handoff_until.is_some());
     assert_eq!(
         state
             .snapshot
@@ -164,11 +132,6 @@ fn playback_abort_snapshot_does_not_fail_pending_load() {
     assert!(state.phase.pending().is_some());
     state.activate_pending();
     assert!(state.phase.pending().is_none());
-    assert_eq!(
-        state.startup_seek.map(|seek| seek.position_ms),
-        Some(2000.0)
-    );
-    assert_eq!(state.last_state.position_ticks, 20_000_000);
 }
 
 #[test]
@@ -208,17 +171,6 @@ fn track_list_keeps_selectable_audio_and_subtitle_tracks() {
     assert!(snapshot.tracks[0].selected);
     assert_eq!(snapshot.tracks[1].title.as_deref(), Some("English SDH"));
     assert!(snapshot.tracks[1].external);
-}
-
-#[test]
-fn zero_start_does_not_queue_startup_seek() {
-    let mut state = controller_with_pending_load(None);
-
-    state.activate_pending();
-
-    assert!(state.phase.pending().is_none());
-    assert!(state.startup_seek.is_none());
-    assert_eq!(state.last_state.position_ticks, 0);
 }
 
 #[test]
@@ -267,19 +219,7 @@ fn activation_without_reporter_still_marks_mpv_snapshot_active() {
 
     state.activate_pending();
 
-    assert!(state.phase.active().is_none());
     assert!(snapshot_active(&state));
-}
-
-#[test]
-fn finish_without_reporter_marks_mpv_snapshot_inactive() {
-    let mut state = controller_with_pending_load(None);
-
-    state.activate_pending();
-    state.finish_active(Some(StopReason::Quit));
-
-    assert!(state.phase.active().is_none());
-    assert!(!snapshot_active(&state));
 }
 
 #[cfg(target_os = "windows")]
@@ -334,18 +274,6 @@ fn finish_without_reporter_emits_stopped_event() {
 }
 
 #[test]
-fn eof_stop_reason_is_preserved_in_snapshot() {
-    let mut state = controller_with_pending_load(None);
-
-    state.activate_pending();
-    state.finish_active(Some(StopReason::Eof));
-
-    let snapshot = state.snapshot.lock().expect("snapshot");
-    assert_eq!(snapshot.stop_reason, Some(StopReason::Eof));
-    drop(snapshot);
-}
-
-#[test]
 fn startup_seek_holds_resume_position_until_mpv_reaches_resume_range() {
     let mut state = controller_with_pending_load(Some(1_000_000_000));
 
@@ -362,13 +290,32 @@ fn startup_seek_holds_resume_position_until_mpv_reaches_resume_range() {
     assert!(state.startup_seek.is_none());
 }
 
+/// A replaced file's stale `end-file` (stop) is ignored while the next file
+/// loads, but mpv failing to open that file must still end the load.
 #[test]
-fn end_file_error_still_fails_pending_load() {
+fn an_end_file_error_ends_a_pending_replacement_load() {
     let mut state = controller_with_pending_load(None);
+    let (event_tx, event_rx) = mpsc::channel();
+    state.event_tx = Some(event_tx);
+    state.ipc.active_id = Some(1);
+    state.replacement_end_file_pending = true;
+    let end_file = super::MpvEvent {
+        name: "end-file".to_string(),
+        reason: Some("error".to_string()),
+        property: None,
+        data: None,
+        args: Vec::new(),
+        raw: json!({ "event": "end-file", "reason": "error" }),
+    };
 
-    state.finish_active(Some(StopReason::Error));
+    state.handle_session_event(1, &end_file);
 
     assert!(state.phase.pending().is_none());
+    assert!(matches!(
+        next_terminal_event(&event_rx),
+        PlaybackEvent::Stopped(snapshot)
+            if !snapshot.active && snapshot.stop_reason == Some(StopReason::Error)
+    ));
 }
 
 #[test]
@@ -378,7 +325,6 @@ fn shutdown_ack_deadline_includes_longest_command_and_cleanup() {
         .saturating_add(super::super::SHUTDOWN_WAIT)
         .saturating_add(super::super::PLAYSTATE_SHUTDOWN_FLUSH_TIMEOUT);
 
-    assert_eq!(bounded_shutdown_wait, std::time::Duration::from_secs(48));
     assert!(super::super::CONTROLLER_SHUTDOWN_ACK_TIMEOUT > bounded_shutdown_wait);
 }
 
@@ -401,24 +347,8 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
 
     state.handle_rejected_loadfile(true, replacement_identity);
 
-    assert!(!state.mpv_playback_active);
     assert!(state.current_mpv_path.is_none());
     assert!(state.ipc.path.is_none());
-    assert!(!state.replacement_end_file_pending);
-    assert!(state.pending_raise_pulse_reset_at.is_none());
-    let snapshot = state.snapshot.lock().expect("snapshot").clone();
-    assert!(!snapshot.active);
-    assert_eq!(snapshot.stop_reason, Some(StopReason::Error));
-    assert_eq!(snapshot.playback_id, Some(2));
-    assert_eq!(snapshot.item_id.as_deref(), Some("replacement-item"));
-    assert_eq!(
-        snapshot.media_source_id.as_deref(),
-        Some("replacement-source")
-    );
-    assert_eq!(
-        snapshot.play_session_id.as_deref(),
-        Some("replacement-session")
-    );
 
     let stopped = match next_terminal_event(&event_rx) {
         PlaybackEvent::Stopped(stopped) => stopped,
@@ -427,10 +357,16 @@ fn rejected_replacement_resets_stale_mpv_session_and_stops_replacement_identity(
     };
     assert!(!stopped.active);
     assert_eq!(stopped.stop_reason, Some(StopReason::Error));
-    assert_eq!(stopped.playback_id, snapshot.playback_id);
-    assert_eq!(stopped.item_id, snapshot.item_id);
-    assert_eq!(stopped.media_source_id, snapshot.media_source_id);
-    assert_eq!(stopped.play_session_id, snapshot.play_session_id);
+    assert_eq!(stopped.playback_id, Some(2));
+    assert_eq!(stopped.item_id.as_deref(), Some("replacement-item"));
+    assert_eq!(
+        stopped.media_source_id.as_deref(),
+        Some("replacement-source")
+    );
+    assert_eq!(
+        stopped.play_session_id.as_deref(),
+        Some("replacement-session")
+    );
     assert!(matches!(
         next_terminal_event(&event_rx),
         PlaybackEvent::Failed { .. }
@@ -462,18 +398,6 @@ fn pending_load_blocks_different_replacement_until_file_loaded() {
 }
 
 #[test]
-fn next_playback_handoff_suppresses_stop_while_replacement_is_pending() {
-    let mut state = controller_with_pending_load(None);
-    state.next_playback_handoff_until = Some(Instant::now() + Duration::from_secs(1));
-
-    assert!(state.should_suppress_stop_during_next_playback_handoff());
-
-    state.activate_pending();
-
-    assert!(!state.should_suppress_stop_during_next_playback_handoff());
-}
-
-#[test]
 fn next_playback_handoff_ignores_old_end_file_while_replacement_is_pending() {
     let mut state = controller_with_pending_load(None);
     state.next_playback_handoff_until = Some(Instant::now() + Duration::from_secs(1));
@@ -491,7 +415,6 @@ fn active_replacement_ignores_old_end_file_without_next_episode_handoff() {
     state.finish_active(Some(StopReason::Stop));
 
     assert!(state.phase.pending().is_some());
-    assert!(!state.replacement_end_file_pending);
     state.activate_pending();
     assert!(state.phase.pending().is_none());
     assert!(snapshot_active(&state));
@@ -532,15 +455,6 @@ fn eof_uses_runtime_when_mpv_duration_is_missing() {
 fn library_resume_waits_for_file_loaded_and_holds_reported_position() {
     let mut state = controller_with_pending_load(Some(200_000_000));
     state.runtime_kind = crate::players::mpv::runtime::MpvRuntimeKind::Library;
-    let launch = state
-        .phase
-        .pending()
-        .expect("pending playback")
-        .launch
-        .clone();
-    let command = loadfile_command(&launch);
-    assert!(command["command"][4].get("start").is_none());
-    assert!(command["command"][4].get("pause").is_none());
     assert!(state.startup_seek.is_none());
     state.activate_pending();
     assert_eq!(

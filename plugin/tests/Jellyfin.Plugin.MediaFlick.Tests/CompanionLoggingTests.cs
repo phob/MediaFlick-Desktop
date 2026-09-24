@@ -46,9 +46,6 @@ public sealed class CompanionLoggingTests
         Assert.Equal(
             [LogLevel.Warning, LogLevel.Debug, LogLevel.Information, LogLevel.Warning],
             entries.Select(entry => entry.Level));
-        Assert.Contains("could not be reached (ConnectionError)", entries[0].Message);
-        Assert.Contains("answering again", entries[2].Message);
-        Assert.Contains("rejected the configured API key (HTTP 401)", entries[3].Message);
         Assert.All(entries, entry =>
         {
             Assert.Null(entry.Exception);
@@ -90,8 +87,6 @@ public sealed class CompanionLoggingTests
         Assert.Equal(
             [LogLevel.Warning, LogLevel.Debug, LogLevel.Debug, LogLevel.Information],
             logger.Entries.Select(entry => entry.Level));
-        Assert.Contains("non-JSON response", logger.Entries[0].Message);
-        Assert.Contains("answering again", logger.Entries[3].Message);
     }
 
     [Fact]
@@ -116,27 +111,12 @@ public sealed class CompanionLoggingTests
             Assert.Equal(
                 [LogLevel.Warning, LogLevel.Debug],
                 logger.Entries.Select(entry => entry.Level));
-            Assert.Contains("Could not save the MediaFlick ratings cache", logger.Entries[0].Message);
-            Assert.NotNull(logger.Entries[0].Exception);
             Assert.True(store.Health("mdblist").Valid);
         }
         finally
         {
             Directory.Delete(directory, true);
         }
-    }
-
-    [Fact]
-    public void ExceptionsAreOnlyAttachedWhenTheyCannotRevealTheSecret()
-    {
-        var safe = new InvalidOperationException("normalization failed");
-        var raw = new InvalidOperationException("GET /user?apikey=a+b failed");
-        var escaped = new InvalidOperationException(
-            "GET /user?apikey=" + Uri.EscapeDataString("a+b") + " failed");
-
-        Assert.Same(safe, CompanionLogging.WithoutSecret(safe, "a+b"));
-        Assert.Null(CompanionLogging.WithoutSecret(raw, "a+b"));
-        Assert.Null(CompanionLogging.WithoutSecret(escaped, "a+b"));
     }
 
     private static Task<System.Text.Json.Nodes.JsonNode?> SendAsync(

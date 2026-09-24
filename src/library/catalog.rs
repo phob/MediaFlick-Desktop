@@ -751,19 +751,26 @@ mod tests {
     }
 
     #[test]
-    fn asking_for_no_tmdb_ids_costs_no_query() {
+    fn only_movies_series_seasons_and_episodes_enter_the_catalog() {
         let library = Library::open_in_memory().expect("library");
-        assert!(library.ids_by_tmdb("Movie", &[]).expect("empty").is_empty());
-    }
+        let changes = library
+            .ingest_page(&[
+                dto(r#"{"Id":"person","Name":"Keanu Reeves","Type":"Person"}"#),
+                dto(r#"{"Id":"folder","Name":"Movies","Type":"CollectionFolder"}"#),
+                dto(r#"{"Id":"song","Name":"Song","Type":"Audio"}"#),
+                dto(r#"{"Id":"untyped","Name":"Untyped"}"#),
+                dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie"}"#),
+            ])
+            .expect("ingest");
 
-    #[test]
-    fn upserts_are_idempotent() {
-        let library = seeded();
-        let before = library.stats();
-        library
-            .upsert_page(&[dto(r#"{"Id":"m1","Name":"The Matrix","Type":"Movie"}"#)])
-            .expect("re-upsert");
-        assert_eq!(library.stats(), before);
+        assert_eq!(changes.item_ids, ["m1"]);
+        assert_eq!(library.stats().total, 1);
+        for id in ["person", "folder", "song", "untyped"] {
+            assert!(
+                library.item(id).expect("query").is_none(),
+                "{id} was cached"
+            );
+        }
     }
 
     #[test]

@@ -28,10 +28,8 @@ describe("external information menu", () => {
     )
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "More info" }), { button: 0 })
-    const link = screen.getByRole("menuitem", { name: "Search Rotten Tomatoes" })
-    expect(link.getAttribute("href")).toBe(
-      "https://www.rottentomatoes.com/search?search=The%20Matrix%201999",
-    )
+    expect(screen.getByRole("menuitem", { name: "Search Rotten Tomatoes" })).toBeTruthy()
+    expect(screen.queryByRole("menuitem", { name: "View on Rotten Tomatoes" })).toBeNull()
   })
 
   test("hands library-title selections to the native opener", () => {

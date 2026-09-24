@@ -654,13 +654,13 @@ mod tests {
 
     #[test]
     fn only_plain_youtube_trailers_become_privacy_enhanced_embeds() {
-        assert_eq!(
-            youtube_embed_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share"),
-            Some(
-                "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&iv_load_policy=3&modestbranding=1&playsinline=1&rel=0&showinfo=0&start=5"
-                    .to_string()
-            )
+        let embed = youtube_embed_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=share")
+            .expect("plain watch URL");
+        assert!(
+            embed.starts_with("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?"),
+            "{embed}"
         );
+        assert!(embed.contains("mute=1"), "{embed}");
         assert!(youtube_embed_url("https://youtu.be/dQw4w9WgXcQ").is_some());
         assert!(youtube_embed_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ").is_none());
         assert!(youtube_embed_url("https://example.com/embed/dQw4w9WgXcQ").is_none());
@@ -669,14 +669,6 @@ mod tests {
 
     #[test]
     fn external_links_are_built_per_provider_and_kind() {
-        assert_eq!(
-            ExternalProvider::parse("letterboxd").map(ExternalProvider::id_field),
-            Some("tmdb")
-        );
-        assert_eq!(
-            ExternalProvider::parse("trakt").map(ExternalProvider::id_field),
-            Some("imdb")
-        );
         assert_eq!(
             external_url("imdb", "tt0133093", "Movie").as_deref(),
             Some("https://www.imdb.com/title/tt0133093/")

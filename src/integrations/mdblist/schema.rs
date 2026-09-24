@@ -232,15 +232,9 @@ mod tests {
             .into_iter()
             .map(|definition| definition["id"].as_str().expect("id").to_string())
             .collect::<HashSet<_>>();
-        for required in [
-            "letterboxd",
-            "tomatoes",
-            "popcorn",
-            "metacritic",
-            "metacriticuser",
-            "rogerebert",
-            "myanimelist",
-        ] {
+        // plugin/README.md: Letterboxd and separate Rotten Tomatoes critic and
+        // audience entries.
+        for required in ["letterboxd", "tomatoes", "popcorn"] {
             assert!(ids.contains(required), "missing {required}");
         }
     }

@@ -609,36 +609,21 @@ fn storage_error(error: &rusqlite::Error) -> ApiError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Duration;
 
-    use super::{
-        MAX_INCREMENTAL_PAGES, PAGE_SIZE, advance_watermark_with_ids, full_bootstrap_due,
-        is_incremental_candidate, is_newer, read_watermark_ids,
-    };
+    use super::PAGE_SIZE;
     use crate::jellyfin::api::ApiError;
-    use crate::jellyfin::api::model::BaseItemDto;
     use crate::jellyfin::session::Session;
     use crate::library::sync::{
         META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL, META_LAST_BOOTSTRAP,
-        META_LAST_IDENTITY_SWEEP, Trigger, bootstrap_progress, now_unix,
+        META_LAST_IDENTITY_SWEEP, META_WATERMARK, META_WATERMARK_IDS, Trigger, bootstrap_progress,
+        now_unix,
     };
     use crate::library::{Library, StoredCredentials};
-
-    fn items(dates: &[&str]) -> Vec<BaseItemDto> {
-        dates
-            .iter()
-            .enumerate()
-            .map(|(index, date)| {
-                serde_json::from_str(&format!(r#"{{"Id":"item{index}","DateCreated":"{date}"}}"#))
-                    .expect("dto")
-            })
-            .collect()
-    }
 
     fn receive_target(listener: &TcpListener) -> (TcpStream, String) {
         let (mut stream, _) = listener.accept().expect("accept");
@@ -771,6 +756,15 @@ mod tests {
         assert!(targets[0].contains("StartIndex=0"));
         assert!(targets[1].contains(&format!("StartIndex={PAGE_SIZE}")));
         assert!(targets[2].contains("SortOrder=Descending"));
+        // The index filters, sorts, and joins on these; without them the
+        // cache silently loses genres, provider matches, and name order.
+        for field in ["ProviderIds", "Genres", "SortName", "ParentId"] {
+            assert!(
+                targets[0].contains(field),
+                "{field} missing: {}",
+                targets[0]
+            );
+        }
         assert!(targets[..2].iter().all(|target| !target.contains("People")));
         assert!(
             targets[..2]
@@ -779,137 +773,159 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_incomplete_bootstrap_resumes_instead_of_resetting_its_progress() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .set_meta(META_BOOTSTRAP_OFFSET, "400")
-            .expect("offset");
-        library
-            .set_meta(META_BOOTSTRAP_TOTAL, "1250")
-            .expect("total");
-        library
-            .set_meta(META_BOOTSTRAP_DONE, "0")
-            .expect("incomplete");
-        assert!(!full_bootstrap_due(&library).expect("due"));
+    /// Answers one request per body, in order, returning the request targets.
+    fn serve(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        let server = thread::spawn(move || {
+            bodies
+                .into_iter()
+                .map(|body| {
+                    let (stream, target) = receive_target(&listener);
+                    send_json(stream, &body);
+                    target
+                })
+                .collect()
+        });
+        (url, server)
+    }
 
-        // Only an old pass which actually completed is eligible for the
-        // periodic reset.
-        library
-            .set_meta(META_BOOTSTRAP_DONE, "1")
-            .expect("complete");
-        library
-            .set_meta(META_LAST_BOOTSTRAP, "0")
-            .expect("old bootstrap");
-        assert!(full_bootstrap_due(&library).expect("due"));
+    const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
+
+    fn set_meta(library: &Library, key: &str, value: &str) {
+        library.set_meta(key, value).expect("meta");
+    }
+
+    /// A completed catalog whose daily re-page and hourly identity sweep
+    /// just ran, so a scheduled cycle only walks the incremental sweep.
+    fn settled_catalog(library: &Library) {
+        let now = now_unix().to_string();
+        set_meta(library, META_BOOTSTRAP_DONE, "1");
+        set_meta(library, META_LAST_BOOTSTRAP, &now);
+        set_meta(library, META_LAST_IDENTITY_SWEEP, &now);
+    }
+
+    #[test]
+    fn an_interrupted_catalog_resumes_and_a_stale_complete_one_repages() {
+        let (url, server) = serve(vec![
+            r#"{"Items":[],"TotalRecordCount":1250}"#.to_string(),
+            EMPTY_PAGE.to_string(),
+            EMPTY_PAGE.to_string(),
+            EMPTY_PAGE.to_string(),
+        ]);
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let session = authenticated_session(&library, &url);
+
+        // A fill interrupted at 400 of 1250 continues from 400.
+        set_meta(&library, META_BOOTSTRAP_OFFSET, "400");
+        set_meta(&library, META_BOOTSTRAP_TOTAL, "1250");
+        set_meta(&library, META_BOOTSTRAP_DONE, "0");
+        super::run_cycle(&library, &session, Trigger::Scheduled).expect("resumed cycle");
+        let resumed = bootstrap_progress(&library);
+        assert!(resumed.complete);
+        assert_eq!(resumed.processed, 400);
+
+        // A completed pass whose daily re-page is due starts over at zero.
+        set_meta(&library, META_LAST_BOOTSTRAP, "0");
+        set_meta(&library, META_LAST_IDENTITY_SWEEP, &now_unix().to_string());
+        super::run_cycle(&library, &session, Trigger::Scheduled).expect("re-page cycle");
+
+        let targets = server.join().expect("server");
+        assert!(targets[0].contains("StartIndex=400"), "{}", targets[0]);
+        assert!(
+            targets[1].contains("SortOrder=Descending"),
+            "{}",
+            targets[1]
+        );
+        assert!(targets[2].contains("StartIndex=0"), "{}", targets[2]);
+        assert!(targets[2].contains("SortOrder=Ascending"), "{}", targets[2]);
     }
 
     #[test]
     fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .set_meta(META_BOOTSTRAP_DONE, "1")
-            .expect("complete");
+        // Nothing listens here: a cycle that misreads the broken state as
+        // "never bootstrapped" fails on the network instead of on storage.
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let session = authenticated_session(&library, "http://127.0.0.1:9");
+        settled_catalog(&library);
         library
             .db
             .with_connection(|connection| connection.execute_batch("DROP TABLE meta"))
             .expect("break the sync state");
 
-        // Before, the failed read looked like "never bootstrapped".
         assert!(matches!(
-            full_bootstrap_due(&library),
+            super::run_cycle(&library, &session, Trigger::Requested),
             Err(ApiError::Storage(_))
         ));
-        assert!(matches!(
-            read_watermark_ids(&library),
-            Err(ApiError::Storage(_))
-        ));
-        let progress = bootstrap_progress(&library);
-        assert!(!progress.complete);
+        assert!(!bootstrap_progress(&library).complete);
     }
 
     #[test]
-    fn watermark_advances_to_the_newest_timestamp_seen() {
-        let mut watermark = Some("2024-01-01T00:00:00Z".to_string());
-        let mut ids = HashSet::new();
-        advance_watermark_with_ids(
-            &mut watermark,
-            &mut ids,
-            &items(&["2024-03-01T00:00:00Z", "2024-02-01T00:00:00Z"]),
+    fn the_incremental_sweep_ingests_only_items_past_the_watermark() {
+        let page = r#"{"Items":[
+            {"Id":"new","Name":"New","Type":"Movie","DateCreated":"2024-02-01T00:00:00Z"},
+            {"Id":"tied","Name":"Tied","Type":"Movie","DateCreated":"2024-01-01T00:00:00Z"},
+            {"Id":"known","Name":"Known","Type":"Movie","DateCreated":"2024-01-01T00:00:00Z"},
+            {"Id":"old","Name":"Old","Type":"Movie","DateCreated":"2023-12-01T00:00:00Z"}
+        ],"TotalRecordCount":4}"#;
+        let (url, server) = serve(vec![page.to_string(), page.to_string()]);
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let session = authenticated_session(&library, &url);
+        settled_catalog(&library);
+        set_meta(&library, META_WATERMARK, "2024-01-01T00:00:00Z");
+        set_meta(&library, META_WATERMARK_IDS, r#"["known"]"#);
+
+        let first = super::run_cycle(&library, &session, Trigger::Scheduled).expect("cycle");
+        // Newer than the watermark, or tied with it but never seen.
+        assert_eq!(first.updated, 2);
+        for id in ["new", "tied"] {
+            assert!(library.item(id).expect("query").is_some(), "{id} missed");
+        }
+        for id in ["known", "old"] {
+            assert!(library.item(id).expect("query").is_none(), "{id} re-read");
+        }
+
+        // The watermark moved to the newest item, so the same page is old news.
+        let second = super::run_cycle(&library, &session, Trigger::Scheduled).expect("cycle");
+        assert_eq!(second.updated, 0);
+
+        let targets = server.join().expect("server");
+        assert!(
+            targets
+                .iter()
+                .all(|target| target.contains("SortOrder=Descending"))
         );
-        assert_eq!(watermark.as_deref(), Some("2024-03-01T00:00:00Z"));
-        assert_eq!(ids, HashSet::from(["item0".to_string()]));
     }
 
+    /// Only an explicit ask may skip the identity sweep's hourly gate, which
+    /// is the only pass that notices a deletion on the server.
     #[test]
-    fn watermark_starts_from_the_first_timestamp_when_unset() {
-        let mut watermark = None;
-        advance_watermark_with_ids(
-            &mut watermark,
-            &mut HashSet::new(),
-            &items(&["2024-01-01T00:00:00Z"]),
-        );
-        assert_eq!(watermark.as_deref(), Some("2024-01-01T00:00:00Z"));
-    }
+    fn only_a_requested_cycle_reconciles_deletions_before_the_hourly_sweep() {
+        let (url, server) = serve(vec![
+            EMPTY_PAGE.to_string(),
+            EMPTY_PAGE.to_string(),
+            r#"{"Items":[{"Id":"kept"}],"TotalRecordCount":1}"#.to_string(),
+        ]);
+        let library = Arc::new(Library::open_in_memory().expect("library"));
+        let session = authenticated_session(&library, &url);
+        library
+            .ingest_page(&[
+                serde_json::from_str(r#"{"Id":"kept","Name":"Kept","Type":"Movie"}"#).expect("dto"),
+                serde_json::from_str(r#"{"Id":"gone","Name":"Gone","Type":"Movie"}"#).expect("dto"),
+            ])
+            .expect("seed");
+        settled_catalog(&library);
 
-    #[test]
-    fn watermark_ignores_items_without_a_timestamp() {
-        let mut watermark = Some("2024-01-01T00:00:00Z".to_string());
-        let undated: Vec<BaseItemDto> = vec![serde_json::from_str(r#"{"Id":"a"}"#).expect("dto")];
-        advance_watermark_with_ids(&mut watermark, &mut HashSet::new(), &undated);
-        assert_eq!(watermark.as_deref(), Some("2024-01-01T00:00:00Z"));
-    }
+        let scheduled = super::run_cycle(&library, &session, Trigger::Scheduled).expect("cycle");
+        assert_eq!(scheduled.deleted, 0);
+        assert!(library.item("gone").expect("query").is_some());
 
-    /// Regression: the sweep used to key on `DateLastSaved`, which servers
-    /// return empty. Every item then looked "not newer", so `take_while` cut
-    /// the first page to nothing and the cache silently stopped updating.
-    #[test]
-    fn watermark_ignores_date_last_saved() {
-        let mut watermark = None;
-        let saved_only: Vec<BaseItemDto> = vec![
-            serde_json::from_str(r#"{"Id":"a","DateLastSaved":"2024-05-01T00:00:00Z"}"#)
-                .expect("dto"),
-        ];
-        advance_watermark_with_ids(&mut watermark, &mut HashSet::new(), &saved_only);
-        assert_eq!(watermark, None);
-    }
+        let requested = super::run_cycle(&library, &session, Trigger::Requested).expect("cycle");
+        assert_eq!(requested.deleted, 1);
+        assert!(library.item("gone").expect("query").is_none());
+        assert!(library.item("kept").expect("query").is_some());
 
-    #[test]
-    fn the_watermark_cut_off_is_strict() {
-        assert!(is_newer(Some("2024-02-01"), Some("2024-01-01")));
-        assert!(!is_newer(Some("2024-01-01"), Some("2024-01-01")));
-        assert!(!is_newer(Some("2023-12-31"), Some("2024-01-01")));
-        assert!(is_newer(Some("2024-01-01"), None));
-        assert!(!is_newer(None, Some("2024-01-01")));
-    }
-
-    #[test]
-    fn an_unseen_id_tied_at_the_watermark_is_not_skipped() {
-        let tied = items(&["2024-01-01"]).remove(0);
-        assert!(is_incremental_candidate(
-            &tied,
-            Some("2024-01-01"),
-            &HashSet::new()
-        ));
-        assert!(!is_incremental_candidate(
-            &tied,
-            Some("2024-01-01"),
-            &HashSet::from([tied.id.clone()])
-        ));
-    }
-
-    /// Only an explicit ask may skip the identity sweep's hourly gate; letting
-    /// the timer skip it would re-page the whole library every ten minutes.
-    #[test]
-    fn only_a_requested_cycle_forces_the_identity_sweep() {
-        assert!(Trigger::Requested.forces_identity_sweep());
-        assert!(!Trigger::Scheduled.forces_identity_sweep());
-    }
-
-    #[test]
-    fn the_incremental_sweep_covers_a_full_library_but_stays_bounded() {
-        // Enough pages to walk a very large library in one cycle, few enough
-        // that a server which never reaches the watermark cannot spin forever.
-        assert_eq!(MAX_INCREMENTAL_PAGES as i64 * PAGE_SIZE, 20_000);
+        let targets = server.join().expect("server");
+        assert!(targets[2].contains("EnableImages=false"), "{}", targets[2]);
     }
 }

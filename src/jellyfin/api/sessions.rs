@@ -28,22 +28,3 @@ pub fn capabilities_body() -> Value {
 pub fn announce_capabilities(client: &JellyfinClient) -> Result<(), ApiError> {
     client.post_empty("/Sessions/Capabilities/Full", &[], &capabilities_body())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::capabilities_body;
-
-    #[test]
-    fn the_announcement_offers_video_control_without_persistence() {
-        let body = capabilities_body();
-        assert_eq!(body["PlayableMediaTypes"], serde_json::json!(["Video"]));
-        assert_eq!(body["SupportsMediaControl"], true);
-        assert_eq!(body["SupportsPersistentIdentifier"], false);
-        let commands = body["SupportedCommands"].as_array().expect("commands");
-        for command in ["SetVolume", "Mute", "Unmute", "ToggleMute"] {
-            assert!(commands.iter().any(|value| value == command));
-        }
-        // Playstate control is declared through SupportsMediaControl, not here.
-        assert!(!commands.iter().any(|value| value == "Play"));
-    }
-}

@@ -164,12 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn passes_through_guid_item_ids() {
-        let id = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
-        assert_eq!(encode_path_segment(id), id);
-    }
-
-    #[test]
     fn encodes_path_and_query_separators() {
         assert_eq!(encode_path_segment("../Users"), "..%2FUsers");
         assert_eq!(

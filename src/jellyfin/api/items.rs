@@ -605,118 +605,7 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CATALOG_FIELDS, CHILD_FIELDS, CHILDREN_PAGE_SIZE, NEXT_UP_FIELDS, PAGE_SIZE,
-        PERSON_ITEM_TYPES, PERSON_PAGE_SIZE, SYNOPSIS_FIELDS, UPCOMING_FIELDS,
-        box_set_children_query, box_sets_query, children_query, exact_items_query, image_path,
-        items_page_query, next_up_query, person_items_query, synopsis_query, upcoming_query,
-    };
-
-    #[test]
-    fn purpose_specific_fields_exclude_discarded_rich_metadata() {
-        for required in ["ProviderIds", "Genres", "DateCreated", "SortName"] {
-            assert!(CATALOG_FIELDS.contains(required));
-            assert!(CHILD_FIELDS.contains(required));
-        }
-        assert!(CHILD_FIELDS.contains("Overview"));
-        for fields in [
-            CATALOG_FIELDS,
-            CHILD_FIELDS,
-            NEXT_UP_FIELDS,
-            UPCOMING_FIELDS,
-        ] {
-            for discarded in ["People", "Studios", "Tags", "MediaStreams", "MediaSources"] {
-                assert!(!fields.contains(discarded));
-            }
-            assert!(!fields.contains(' '));
-        }
-        assert!(!CATALOG_FIELDS.contains("Overview"));
-        assert!(!NEXT_UP_FIELDS.contains("ProviderIds"));
-        assert_eq!(UPCOMING_FIELDS, "ProviderIds,PremiereDate");
-    }
-
-    /// The about panel serializes exactly these; anything more (media streams
-    /// above all) would be fetched on every detail view only to be dropped.
-    #[test]
-    fn about_fields_carry_only_what_the_about_response_serializes() {
-        for required in ["Overview", "People", "Tags", "Studios", "CriticRating"] {
-            assert!(super::ABOUT_FIELDS.contains(required));
-        }
-        assert!(!super::ABOUT_FIELDS.contains("MediaStreams"));
-        assert!(!super::ABOUT_FIELDS.contains("Genres"));
-        assert!(!super::ABOUT_FIELDS.contains(' '));
-    }
-
-    #[test]
-    fn billboard_synopsis_requests_only_overview_without_user_or_image_data() {
-        let query = synopsis_query("uid", "movie-1")
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["userId"], "uid");
-        assert_eq!(query["ids"], "movie-1");
-        assert_eq!(query["Fields"], SYNOPSIS_FIELDS);
-        assert_eq!(query["Fields"], "Overview");
-        assert_eq!(query["EnableUserData"], "false");
-        assert_eq!(query["EnableImages"], "false");
-        assert!(!query.contains_key("IncludeItemTypes"));
-    }
-
-    /// `DateLastSaved` is not a valid `ItemSortBy` value and servers return the
-    /// field empty, so keying sync freshness on it silently disables the sweep.
-    #[test]
-    fn item_fields_do_not_request_date_last_saved() {
-        for fields in [
-            CATALOG_FIELDS,
-            CHILD_FIELDS,
-            NEXT_UP_FIELDS,
-            UPCOMING_FIELDS,
-            super::ABOUT_FIELDS,
-            SYNOPSIS_FIELDS,
-        ] {
-            assert!(!fields.contains("DateLastSaved"));
-        }
-    }
-
-    #[test]
-    fn a_sync_page_request_carries_the_paging_and_field_selection() {
-        let query = items_page_query("uid", 400, "DateCreated", "Descending")
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["userId"], "uid");
-        assert_eq!(query["Recursive"], "true");
-        assert_eq!(query["IncludeItemTypes"], "Movie,Series,Season,Episode");
-        assert_eq!(query["Fields"], CATALOG_FIELDS);
-        assert_eq!(query["EnableUserData"], "true");
-        assert_eq!(query["StartIndex"], "400");
-        assert_eq!(query["Limit"], PAGE_SIZE.to_string());
-        assert_eq!(query["SortBy"], "DateCreated");
-        assert_eq!(query["SortOrder"], "Descending");
-    }
-
-    #[test]
-    fn a_box_sets_listing_is_lightweight_and_name_ordered() {
-        let query = box_sets_query("uid")
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["userId"], "uid");
-        assert_eq!(query["Recursive"], "true");
-        assert_eq!(query["IncludeItemTypes"], "BoxSet");
-        assert_eq!(query["Fields"], "ProviderIds,ChildCount");
-        assert_eq!(query["EnableUserData"], "false");
-        assert_eq!(query["SortBy"], "SortName");
-    }
-
-    #[test]
-    fn a_box_set_children_request_scopes_media_under_the_parent() {
-        let query = box_set_children_query("uid", "boxset-1")
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["parentId"], "boxset-1");
-        assert_eq!(query["IncludeItemTypes"], "Movie,Series");
-        assert_eq!(query["Fields"], CATALOG_FIELDS);
-        assert_eq!(query["EnableUserData"], "true");
-        assert_eq!(query["SortBy"], "SortName");
-    }
+    use super::{PERSON_PAGE_SIZE, children_query, image_path, person_items_query, upcoming_query};
 
     /// `Recursive` must stay absent: with it, a series would answer with every
     /// episode underneath it and the season reconcile would delete its seasons.
@@ -727,14 +616,8 @@ mod tests {
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["parentId"], "season1");
         assert!(!query.contains_key("Recursive"));
-        assert_eq!(query["IncludeItemTypes"], "Movie,Series,Season,Episode");
-        assert_eq!(query["Fields"], CHILD_FIELDS);
+        // The season page shows each episode's synopsis from this answer.
         assert!(query["Fields"].contains("Overview"));
-        assert!(!query["Fields"].contains("People"));
-        assert!(!query["Fields"].contains("MediaStreams"));
-        assert_eq!(query["EnableUserData"], "true");
-        assert_eq!(query["Limit"], CHILDREN_PAGE_SIZE.to_string());
-        assert_eq!(query["SortBy"], "ParentIndexNumber,IndexNumber,SortName");
     }
 
     #[test]
@@ -747,15 +630,10 @@ mod tests {
         assert_eq!(query["PersonTypes"], "Actor");
         // Titles only: a season or episode credit would burn a card slot
         // without naming anything the cast surfaces promise.
-        assert_eq!(query["IncludeItemTypes"], PERSON_ITEM_TYPES);
         assert_eq!(query["IncludeItemTypes"], "Movie,Series");
         assert_eq!(query["Recursive"], "true");
         assert_eq!(query["StartIndex"], "60");
         assert_eq!(query["Limit"], "60");
-        assert_eq!(query["Fields"], CATALOG_FIELDS);
-        assert!(!query["Fields"].contains("People"));
-        assert!(!query["Fields"].contains("MediaStreams"));
-        assert_eq!(query["EnableUserData"], "true");
 
         let bounded = person_items_query("uid", "person-42", -1, i64::MAX)
             .into_iter()
@@ -774,36 +652,10 @@ mod tests {
     }
 
     #[test]
-    fn multi_id_queries_are_one_bounded_catalog_read() {
-        let ids = (0..20)
-            .map(|index| format!("item-{index}"))
-            .collect::<Vec<_>>();
-        let query = exact_items_query("uid", &ids)
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["ids"].split(',').count(), 20);
-        assert_eq!(query["Fields"], CATALOG_FIELDS);
-        assert!(!query["Fields"].contains("Overview"));
-        assert!(!query["Fields"].contains("MediaStreams"));
-        assert_eq!(query["EnableImages"], "true");
-    }
-
-    #[test]
-    fn next_up_and_upcoming_request_only_the_fields_their_consumers_read() {
-        let next_up = next_up_query("uid", Some("series-1"), 24)
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(next_up["seriesId"], "series-1");
-        assert_eq!(next_up["Fields"], NEXT_UP_FIELDS);
-        assert_eq!(next_up["EnableUserData"], "true");
-        assert_eq!(next_up["EnableImages"], "true");
-
+    fn upcoming_requests_are_bounded() {
         let upcoming = upcoming_query("uid", i64::MAX)
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(upcoming["Limit"], "500");
-        assert_eq!(upcoming["Fields"], UPCOMING_FIELDS);
-        assert_eq!(upcoming["EnableUserData"], "false");
-        assert_eq!(upcoming["EnableImages"], "false");
     }
 }

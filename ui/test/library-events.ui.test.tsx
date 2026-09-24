@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query"
-import { render } from "@testing-library/react"
+import { act, render } from "@testing-library/react"
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { useLibraryMetadataBridge } from "../src/lib/library-events"
 import {
@@ -34,71 +34,47 @@ describe("native library change bridge", () => {
     return queryClient.getQueryCache().build(queryClient, { queryKey })
   }
 
-  test("invalidates one active batch including item and context ids", () => {
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+  function seed(...queryKeys: (readonly unknown[])[]) {
+    for (const queryKey of queryKeys) queryClient.setQueryData(queryKey, {})
+  }
+
+  function invalidated(queryKey: readonly unknown[]) {
+    return queryClient.getQueryState(queryKey)?.isInvalidated ?? false
+  }
+
+  function shellEvent(type: string, payload: { itemIds: string[]; contextIds?: string[] }) {
+    window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", { detail: { type, payload } }))
+  }
+
+  test("a committed batch refreshes watch state and changed items but keeps the billboard", () => {
+    seed(queryKeys.homeResume, queryKeys.item("series"), queryKeys.item("other"), queryKeys.billboard)
     render(<Bridge />)
 
-    window.dispatchEvent(
-      new CustomEvent("mediaflick-desktop-shell", {
-        detail: {
-          type: "library-changed",
-          payload: { itemIds: ["episode"], contextIds: ["season", "series"] },
-        },
-      }),
-    )
+    shellEvent("library-changed", { itemIds: ["episode"], contextIds: ["season", "series"] })
 
-    expect(invalidate).toHaveBeenCalledTimes(1)
-    const filters = invalidate.mock.calls[0]?.[0]
-    expect(filters?.refetchType).toBe("active")
-    expect(filters?.predicate?.(queryFor(queryKeys.homeResume))).toBe(true)
-    expect(filters?.predicate?.(queryFor(["item", "series"]))).toBe(true)
-    expect(filters?.predicate?.(queryFor(["item", "other"]))).toBe(false)
-    expect(filters?.predicate?.(queryFor(["status"]))).toBe(true)
-    expect(filters?.predicate?.(queryFor(["collections", "account", "mine", "profile"]))).toBe(true)
-    expect(filters?.predicate?.(queryFor(queryKeys.billboard))).toBe(false)
+    expect(invalidated(queryKeys.homeResume)).toBe(true)
+    expect(invalidated(queryKeys.item("series"))).toBe(true)
+    expect(invalidated(queryKeys.item("other"))).toBe(false)
+    expect(invalidated(queryKeys.billboard)).toBe(false)
   })
 
-  test("catalog bursts preserve live Next Up and flush their final aggregate state", () => {
+  test("catalog bursts never refresh live Next Up and flush their final aggregate state", () => {
     vi.useFakeTimers()
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
-    const bridge = render(<Bridge />)
-    const page = (id: string) => window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", {
-      detail: { type: "catalog-changed", payload: { itemIds: [id], contextIds: ["series"] } },
-    }))
-    page("first")
-    const first = invalidate.mock.calls[0]?.[0]?.predicate
-    expect(first?.(queryFor(queryKeys.home))).toBe(true)
-    expect(first?.(queryFor(queryKeys.homeResume))).toBe(false)
-    expect(first?.(queryFor(queryKeys.homeSettings))).toBe(false)
-    page("second")
-    const second = invalidate.mock.calls[1]?.[0]?.predicate
-    expect(second?.(queryFor(queryKeys.home))).toBe(false)
-    expect(second?.(queryFor(queryKeys.item("second")))).toBe(true)
-    expect(second?.(queryFor(queryKeys.children("series")))).toBe(true)
-    vi.advanceTimersByTime(1_000)
-    expect(invalidate).toHaveBeenCalledTimes(3)
-    const final = invalidate.mock.calls[2]?.[0]?.predicate
-    expect(final?.(queryFor(queryKeys.home))).toBe(true)
-    expect(final?.(queryFor(queryKeys.homeResume))).toBe(false)
-    page("third")
-    page("fourth")
-    bridge.unmount()
-    vi.advanceTimersByTime(1_000)
-    expect(invalidate).toHaveBeenCalledTimes(5)
-  })
-
-  test("sync completion refreshes live watch state once and consumes the trailing catalog refresh", () => {
-    vi.useFakeTimers()
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+    seed(queryKeys.home, queryKeys.homeResume, queryKeys.item("second"))
     render(<Bridge />)
-    for (const type of ["catalog-changed", "catalog-changed", "library-changed"]) {
-      window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", {
-        detail: { type, payload: { itemIds: [], contextIds: [] } },
-      }))
-    }
-    expect(invalidate.mock.calls[2]?.[0]?.predicate?.(queryFor(queryKeys.homeResume))).toBe(true)
-    vi.advanceTimersByTime(1_000)
-    expect(invalidate).toHaveBeenCalledTimes(3)
+
+    shellEvent("catalog-changed", { itemIds: ["first"], contextIds: ["series"] })
+    expect(invalidated(queryKeys.home)).toBe(true)
+    expect(invalidated(queryKeys.homeResume)).toBe(false)
+
+    seed(queryKeys.home)
+    shellEvent("catalog-changed", { itemIds: ["second"], contextIds: ["series"] })
+    expect(invalidated(queryKeys.item("second"))).toBe(true)
+    expect(invalidated(queryKeys.home)).toBe(false)
+
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(invalidated(queryKeys.home)).toBe(true)
+    expect(invalidated(queryKeys.homeResume)).toBe(false)
   })
 
   test("sustained bootstrap pages refresh aggregates at most once per second", () => {
@@ -118,25 +94,19 @@ describe("native library change bridge", () => {
   })
 
   test("user-state changes leave rich and technical item queries cached", () => {
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
-
-    invalidateMediaSurfaces(queryClient, "episode", "series")
-
-    const filters = invalidate.mock.calls.map(([filter]) => filter)
-    const filterFor = (queryKey: readonly unknown[]) =>
-      filters.find((filter) => JSON.stringify(filter?.queryKey) === JSON.stringify(queryKey))
-
-    expect(filterFor(queryKeys.item("episode"))?.exact).toBe(true)
-    expect(filterFor(queryKeys.children("series"))?.exact).toBe(true)
-    expect(filterFor(queryKeys.nextUp("series"))?.exact).toBe(true)
-    expect(filterFor(queryKeys.billboard)).toBeUndefined()
-    for (const untouched of [
+    const untouched = [
       queryKeys.itemAbout("episode"),
       queryKeys.itemSynopsis("episode"),
       queryKeys.media("episode"),
       queryKeys.trailer("episode"),
-    ]) {
-      expect(filterFor(untouched)).toBeUndefined()
-    }
+      queryKeys.billboard,
+    ]
+    const refreshed = [queryKeys.item("episode"), queryKeys.children("series"), queryKeys.nextUp("series")]
+    seed(...refreshed, ...untouched)
+
+    invalidateMediaSurfaces(queryClient, "episode", "series")
+
+    for (const queryKey of refreshed) expect(invalidated(queryKey)).toBe(true)
+    for (const queryKey of untouched) expect(invalidated(queryKey)).toBe(false)
   })
 })

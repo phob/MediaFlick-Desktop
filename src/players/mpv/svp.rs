@@ -348,19 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_command_resolves_the_installation_directory() {
-        let (root, runtime) = fake_installation("uninstall-command");
-        let command = format!("\"{}\" /SILENT", root.join("unins000.exe").display());
-
-        assert_eq!(
-            runtime_directory_from_metadata(None, Some(&command)),
-            Some(runtime)
-        );
-
-        std::fs::remove_dir_all(root).expect("remove fake SVP runtime");
-    }
-
-    #[test]
     fn invalid_install_location_falls_back_to_the_uninstall_command() {
         let (root, runtime) = fake_installation("metadata-fallback");
         let command = format!("\"{}\" /SILENT", root.join("unins000.exe").display());

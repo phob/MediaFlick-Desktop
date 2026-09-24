@@ -734,9 +734,13 @@ mod tests {
         let (seen_tx, seen) = mpsc::channel();
         handle.on_remote_command(Arc::new(move |command| {
             let _ = seen_tx.send(match command {
-                RemoteCommand::Play { scope, .. } => format!("play:{}", scope.user_id()),
-                RemoteCommand::Playstate { scope, .. } => format!("playstate:{}", scope.user_id()),
-                RemoteCommand::General { .. } => "general".to_string(),
+                RemoteCommand::Play { data, scope } => {
+                    format!("play:{}:{}", scope.user_id(), data["Command"])
+                }
+                RemoteCommand::Playstate { data, scope } => {
+                    format!("playstate:{}:{}", scope.user_id(), data["Command"])
+                }
+                RemoteCommand::General { data } => format!("general:{}", data["Command"]),
             });
         }));
         for kind in ["Play", "Playstate", "GeneralCommand"] {
@@ -745,7 +749,11 @@ mod tests {
 
         assert_eq!(
             seen.try_iter().collect::<Vec<_>>(),
-            ["play:alice", "playstate:alice", "general"]
+            [
+                r#"play:alice:"x""#,
+                r#"playstate:alice:"x""#,
+                r#"general:"x""#
+            ]
         );
     }
 
@@ -1008,26 +1016,6 @@ mod tests {
                 changed: vec!["a".to_string(), "b".to_string(), "c".to_string()],
                 removed: vec!["gone".to_string()],
             }
-        );
-    }
-
-    #[test]
-    fn remote_control_messages_are_routed_with_their_payloads() {
-        let play = parse_message(r#"{"MessageType":"Play","Data":{"ItemIds":["a"]}}"#);
-        assert_eq!(
-            play,
-            ServerMessage::Play(serde_json::json!({ "ItemIds": ["a"] }))
-        );
-        let playstate = parse_message(r#"{"MessageType":"Playstate","Data":{"Command":"Pause"}}"#);
-        assert_eq!(
-            playstate,
-            ServerMessage::Playstate(serde_json::json!({ "Command": "Pause" }))
-        );
-        let general =
-            parse_message(r#"{"MessageType":"GeneralCommand","Data":{"Name":"ToggleMute"}}"#);
-        assert_eq!(
-            general,
-            ServerMessage::GeneralCommand(serde_json::json!({ "Name": "ToggleMute" }))
         );
     }
 
