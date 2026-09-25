@@ -54,6 +54,65 @@ public sealed class CalendarAndSeerrTests
         Assert.All(entries, static entry => Assert.Equal(696506, entry.TmdbId));
     }
 
+    [Theory]
+    [InlineData("https://image.tmdb.org/t/p/original/ve72VxNqjGM69Uky4WTo2bK6rfq.jpg", "/ve72VxNqjGM69Uky4WTo2bK6rfq.jpg")]
+    [InlineData("http://image.tmdb.org/t/p/w500/abc_1-2.png", "/abc_1-2.png")]
+    [InlineData("https://artworks.thetvdb.com/banners/posters/73871-2.jpg", null)]
+    [InlineData("http://radarr:7878/MediaCover/1/poster.jpg", null)]
+    [InlineData("/MediaCover/1/poster.jpg", null)]
+    [InlineData("not a url", null)]
+    [InlineData("", null)]
+    [InlineData("https://image.tmdb.org/t/p/original/nested/abc.jpg", null)]
+    [InlineData("https://image.tmdb.org/t/p/original/abc.jpg?api_key=secret", null)]
+    [InlineData("https://image.tmdb.org/t/p/original/..", null)]
+    [InlineData("https://image.tmdb.org/t/p/original/a%20b.jpg", null)]
+    [InlineData("https://image.tmdb.org/abc.jpg", null)]
+    [InlineData("https://image.tmdb.org.evil.example/t/p/original/abc.jpg", null)]
+    public void CalendarPostersAreExposedOnlyAsTmdbArtworkPaths(string remoteUrl, string? expected)
+    {
+        var source = new JsonArray(new JsonObject
+        {
+            ["title"] = "Poster",
+            ["tmdbId"] = 1,
+            ["monitored"] = true,
+            ["hasFile"] = false,
+            ["digitalRelease"] = "2026-04-01T00:00:00Z",
+            ["images"] = new JsonArray(
+                new JsonObject { ["coverType"] = "fanart", ["remoteUrl"] = "https://image.tmdb.org/t/p/original/fanart.jpg" },
+                new JsonObject { ["coverType"] = "poster", ["url"] = "/MediaCover/1/poster.jpg", ["remoteUrl"] = remoteUrl })
+        });
+
+        Assert.Equal(expected, Assert.Single(CalendarService.ParseRadarr(source)).PosterPath);
+    }
+
+    [Fact]
+    public void CalendarEntriesWithoutAUsablePosterHaveNoPosterPath()
+    {
+        var radarr = JsonNode.Parse(
+            """
+            [
+              {"title":"No images","tmdbId":1,"monitored":true,"digitalRelease":"2026-04-01T00:00:00Z"},
+              {"title":"Null images","tmdbId":2,"monitored":true,"digitalRelease":"2026-04-01T00:00:00Z","images":null},
+              {"title":"Object images","tmdbId":3,"monitored":true,"digitalRelease":"2026-04-01T00:00:00Z","images":{"coverType":"poster"}},
+              {"title":"Fanart only","tmdbId":4,"monitored":true,"digitalRelease":"2026-04-01T00:00:00Z",
+               "images":[1,"poster",{"coverType":"fanart","remoteUrl":"https://image.tmdb.org/t/p/original/fanart.jpg"}]},
+              {"title":"Poster without remote","tmdbId":5,"monitored":true,"digitalRelease":"2026-04-01T00:00:00Z",
+               "images":[{"coverType":"poster","url":"/MediaCover/5/poster.jpg"}]}
+            ]
+            """);
+        var sonarr = JsonNode.Parse(
+            """
+            [{
+              "title":"Pilot","seasonNumber":1,"episodeNumber":1,"airDate":"2026-08-02","monitored":true,
+              "series":{"title":"Futurama","tvdbId":73871,
+                "images":[{"coverType":"poster","remoteUrl":"https://artworks.thetvdb.com/banners/posters/73871-2.jpg"}]}
+            }]
+            """);
+
+        Assert.All(CalendarService.ParseRadarr(radarr), static entry => Assert.Null(entry.PosterPath));
+        Assert.Null(Assert.Single(CalendarService.ParseSonarr(sonarr)).PosterPath);
+    }
+
     [Fact]
     public void CompleteCalendarSnapshotsAreCachedForOneDay()
     {

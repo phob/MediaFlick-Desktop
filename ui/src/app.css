@@ -754,6 +754,18 @@ html[data-libmpv-cursor-hidden] * {
   box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 55%, transparent);
 }
 
+/* The release timeline's today mark: the shelf rule turned upright, in the
+   accent, fading out down the poster so it never competes with the artwork. */
+.release-today-rule {
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    var(--primary) 0%,
+    color-mix(in srgb, var(--primary) 35%, transparent) 55%,
+    transparent 100%
+  );
+}
+
 /* ==========================================================================
    Cards
    ========================================================================== */
