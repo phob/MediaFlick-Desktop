@@ -616,8 +616,8 @@ fn quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ApiError, JellyfinClient};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::thread;
 
     #[test]
@@ -645,6 +645,27 @@ mod tests {
         assert!(header.ends_with("Token=\"secret\""), "{header}");
     }
 
+    /// One request read to its end: the request line, then its body. Closing
+    /// with unread bytes makes Windows reset the connection before the client
+    /// reads the response.
+    fn read_request(stream: &mut TcpStream) -> String {
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).expect("request line");
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).expect("header") == 0 || line == "\r\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().expect("content length");
+            }
+        }
+        reader.read_exact(&mut vec![0; length]).expect("body");
+        request_line.trim_end().to_string()
+    }
+
     /// Answers each request in turn with `responses`, returning the request
     /// lines it received.
     fn serve(responses: Vec<&'static str>) -> (String, thread::JoinHandle<Vec<String>>) {
@@ -655,14 +676,9 @@ mod tests {
                 .into_iter()
                 .map(|response| {
                     let (mut stream, _) = listener.accept().expect("accept");
-                    let mut request = [0_u8; 4_096];
-                    let read = stream.read(&mut request).expect("request");
+                    let request_line = read_request(&mut stream);
                     stream.write_all(response.as_bytes()).expect("response");
-                    String::from_utf8_lossy(&request[..read])
-                        .lines()
-                        .next()
-                        .unwrap_or_default()
-                        .to_string()
+                    request_line
                 })
                 .collect()
         });
@@ -724,8 +740,7 @@ mod tests {
         let address = listener.local_addr().expect("address");
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = [0_u8; 2_048];
-            let _ = stream.read(&mut request).expect("request");
+            read_request(&mut stream);
             write!(
                 stream,
                 "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 600\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -753,8 +768,7 @@ mod tests {
         let address = listener.local_addr().expect("address");
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = [0_u8; 2_048];
-            let _ = stream.read(&mut request).expect("request");
+            read_request(&mut stream);
             let body = r#"{"error":"Artwork not available"}"#;
             write!(
                 stream,
