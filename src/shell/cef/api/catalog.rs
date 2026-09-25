@@ -169,7 +169,7 @@ fn built_in_label(id: HomeBuiltIn) -> &'static str {
         HomeBuiltIn::BecauseYouWatched => "Because You Watched",
         HomeBuiltIn::RecentlyAdded => "Recently Added Movies",
         HomeBuiltIn::RecentlyAddedShows => "Recently Added Shows",
-        HomeBuiltIn::Upcoming => "Upcoming",
+        HomeBuiltIn::Upcoming => "Release Timeline",
         HomeBuiltIn::LatestMovies => "Latest Movies",
         HomeBuiltIn::LatestShows => "Latest Shows",
         HomeBuiltIn::MyList => "My List",
@@ -320,7 +320,7 @@ fn home(services: &Arc<Services>) -> Handled {
     })))
 }
 
-/// Watching and Upcoming are not generic shelves; Home assembles them separately.
+/// Watching and the release timeline are not generic shelves; Home assembles them separately.
 fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn) -> Option<Value> {
     let (row_id, title, items) = match id {
         HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return None,

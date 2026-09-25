@@ -331,7 +331,7 @@ export interface CalendarEntry {
   seriesTvdbId?: number | null
   monitored: boolean
   hasFile: boolean
-  posterUrl: string | null
+  posterPath?: string | null
   libraryItemId: string | null
   seriesLibraryItemId?: string | null
 }

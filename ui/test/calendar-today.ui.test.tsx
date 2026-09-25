@@ -44,7 +44,7 @@ function renderCalendar() {
         tvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
       },
     ],
