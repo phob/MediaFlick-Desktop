@@ -82,6 +82,36 @@ pub fn query_param(query: &str, key: &str) -> Option<String> {
     })
 }
 
+/// Drop every query parameter whose decoded name matches one of `keys` (ASCII
+/// case-insensitively). Other pairs and any fragment are kept byte-for-byte.
+pub fn remove_query_params(url: &str, keys: &[&str]) -> String {
+    let (without_fragment, fragment) = match url.split_once('#') {
+        Some((head, fragment)) => (head, Some(fragment)),
+        None => (url, None),
+    };
+    let Some((base, query)) = without_fragment.split_once('?') else {
+        return url.to_string();
+    };
+    let kept = query
+        .split('&')
+        .filter(|pair| {
+            let raw_key = pair.split_once('=').map_or(*pair, |(key, _)| key);
+            let key = percent_decode(raw_key);
+            !pair.is_empty() && !keys.iter().any(|removed| key.eq_ignore_ascii_case(removed))
+        })
+        .collect::<Vec<_>>();
+    let mut output = base.to_string();
+    if !kept.is_empty() {
+        output.push('?');
+        output.push_str(&kept.join("&"));
+    }
+    if let Some(fragment) = fragment {
+        output.push('#');
+        output.push_str(fragment);
+    }
+    output
+}
+
 /// Join a server base URL with an API path, collapsing the separating slash.
 pub fn join_url(base: &str, path: &str) -> String {
     format!(

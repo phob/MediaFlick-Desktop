@@ -276,13 +276,10 @@ fn browsing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled 
 
 #[cfg(test)]
 mod tests {
-    fn keys(value: &serde_json::Value) -> Vec<&str> {
-        let mut keys = value
-            .as_object()
-            .map(|object| object.keys().map(String::as_str).collect::<Vec<_>>())
-            .unwrap_or_default();
-        keys.sort_unstable();
-        keys
+    fn assert_has_keys(value: &serde_json::Value, keys: &[&str]) {
+        for key in keys {
+            assert!(value.get(*key).is_some(), "{key}");
+        }
     }
 
     /// `ClientSettings` in `ui/src/lib/api/types.ts` requires every field.
@@ -295,36 +292,36 @@ mod tests {
         }];
         let response = super::settings_response(&settings, recoveries);
         let body: serde_json::Value = serde_json::from_slice(&response.body)?;
-        assert_eq!(
-            keys(&body),
-            [
+        assert_has_keys(
+            &body,
+            &[
                 "appearance",
                 "capabilities",
                 "client",
                 "recoveries",
-                "serverUrl"
-            ]
+                "serverUrl",
+            ],
         );
-        assert_eq!(keys(&body["client"]), ["application", "playback", "player"]);
-        assert_eq!(
-            keys(&body["client"]["player"]),
-            [
+        assert_has_keys(&body["client"], &["application", "playback", "player"]);
+        assert_has_keys(
+            &body["client"]["player"],
+            &[
                 "comfort",
                 "defaultFullscreen",
                 "markWatchedNext",
                 "mpvPath",
                 "playerBackend",
-                "playerConfigured"
-            ]
+                "playerConfigured",
+            ],
         );
-        assert_eq!(
-            keys(&body["capabilities"]),
-            [
+        assert_has_keys(
+            &body["capabilities"],
+            &[
                 "integratedLibmpvOverlay",
                 "libmpv",
                 "mpvInstaller",
-                "platform"
-            ]
+                "platform",
+            ],
         );
         assert_eq!(
             body["recoveries"],

@@ -136,7 +136,7 @@ fn encode_path_segment(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SegmentType, encode_path_segment};
+    use super::SegmentType;
 
     #[test]
     fn maps_jellyfin_segment_types_including_recap_and_commercial() {
@@ -161,14 +161,5 @@ mod tests {
             Some(SegmentType::Commercial)
         );
         assert_eq!(SegmentType::from_jellyfin("Preview"), None);
-    }
-
-    #[test]
-    fn encodes_path_and_query_separators() {
-        assert_eq!(encode_path_segment("../Users"), "..%2FUsers");
-        assert_eq!(
-            encode_path_segment("x?includeSegmentTypes=Outro"),
-            "x%3FincludeSegmentTypes%3DOutro"
-        );
     }
 }

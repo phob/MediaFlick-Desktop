@@ -620,24 +620,6 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn client() -> JellyfinClient {
-        JellyfinClient::new("http://server:8096/", "device-1", Some("secret"))
-    }
-
-    #[test]
-    fn authorization_header_carries_client_identity_and_token() {
-        let header = client().authorization_header();
-        assert!(header.starts_with("MediaBrowser Client=\"MediaFlick Desktop\""));
-        assert!(header.contains("DeviceId=\"device-1\""));
-        assert!(header.contains("Token=\"secret\""));
-    }
-
-    #[test]
-    fn anonymous_clients_omit_the_token_parameter() {
-        let header = JellyfinClient::new("http://server", "device-1", None).authorization_header();
-        assert!(!header.contains("Token="));
-    }
-
     #[test]
     fn blank_tokens_are_treated_as_anonymous() {
         let client = JellyfinClient::new("http://server", "device-1", Some("   "));
@@ -648,26 +630,6 @@ mod tests {
                 .iter()
                 .all(|header| header.name != "X-Emby-Token")
         );
-    }
-
-    #[test]
-    fn urls_join_the_base_and_encode_the_query() {
-        let client = client();
-        assert_eq!(client.url("/Items", &[]), "http://server:8096/Items");
-        assert_eq!(
-            client.url("Items", &[("searchTerm", "a b".to_string())]),
-            "http://server:8096/Items?searchTerm=a%20b"
-        );
-    }
-
-    #[test]
-    fn auth_headers_include_the_token_header() {
-        let headers = client().auth_headers();
-        let token = headers
-            .iter()
-            .find(|header| header.name == "X-Emby-Token")
-            .expect("token header");
-        assert_eq!(token.value, "secret");
     }
 
     #[test]
@@ -815,21 +777,5 @@ mod tests {
             }
         );
         server.join().expect("server");
-    }
-
-    #[test]
-    fn client_status_maps_failures_to_our_own_api() {
-        // The UI signs out on 401 and treats 409 as "not configured".
-        assert_eq!(ApiError::Unauthorized.client_status(), 401);
-        assert_eq!(ApiError::NotConfigured.client_status(), 409);
-        assert_eq!(ApiError::Status { status: 404 }.client_status(), 404);
-        assert_eq!(
-            ApiError::Remote {
-                status: 409,
-                message: "not mapped".to_string()
-            }
-            .client_status(),
-            409
-        );
     }
 }

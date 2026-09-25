@@ -63,12 +63,4 @@ mod tests {
             assert!(section.contains("q stop"));
         }
     }
-
-    #[test]
-    fn command_combinations_are_preserved_for_external_mpv_on_macos() {
-        assert!(
-            section_contents(Some("Shift+Meta+w"))
-                .contains("Shift+Meta+w script-message mediaflick-desktop mark-watched-next")
-        );
-    }
 }

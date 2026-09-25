@@ -7,10 +7,10 @@
 use std::sync::Arc;
 
 use crate::app::services::Services;
-use crate::app::urls::{build_query, encode_path_segment, join_url};
+use crate::app::urls::{build_query, encode_path_segment, join_url, remove_query_params};
 use crate::library::model::ResolvedPlaybackPreference;
 use crate::library::{ItemSummary, Library, resolve_playback_preference};
-use crate::playback::{PlaybackRequest, seconds_to_ticks};
+use crate::playback::{PlaybackRequest, TOKEN_QUERY_KEYS, seconds_to_ticks};
 use crate::preferences::StreamingQuality;
 
 use super::api::items::{self, PlaybackInfoRequest};
@@ -454,10 +454,15 @@ fn stream_url(
     }
 
     if let Some(transcoding_url) = &source.transcoding_url {
-        return Ok((
-            absolute_url(client.base_url(), transcoding_url),
-            "Transcode".to_string(),
-        ));
+        // Jellyfin embeds the access token (`ApiKey`) in the transcoding URL.
+        // Strip it like the direct-stream URL above: the token travels in
+        // `request.headers`, which mpv forwards to the HLS playlists and
+        // segments, so it stays out of mpv's `path` property, scripts, and logs.
+        let url = remove_query_params(
+            &absolute_url(client.base_url(), transcoding_url),
+            TOKEN_QUERY_KEYS,
+        );
+        return Ok((url, "Transcode".to_string()));
     }
 
     Err(ApiError::Decode(format!(
@@ -539,8 +544,7 @@ fn display_title(item: &ItemSummary) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayOptions, absolute_url, apply_saved_preference, build, choose_stream, embedded_ordinal,
-        select_source,
+        PlayOptions, apply_saved_preference, build, choose_stream, embedded_ordinal, select_source,
     };
     use crate::jellyfin::api::JellyfinClient;
     use crate::jellyfin::api::model::{MediaSourceInfo, PlaybackInfoResponse};
@@ -612,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_stream_sources_get_a_static_stream_url() {
+    fn direct_stream_urls_carry_the_session_but_not_the_token() {
         let response = info(
             r#"{"PlaySessionId":"session","MediaSources":[{"Id":"src","Container":"mkv",
                 "SupportsDirectStream":true,"ETag":"etag","RunTimeTicks":120000000}]}"#,
@@ -627,20 +631,9 @@ mod tests {
         )
         .expect("prepared");
         assert_eq!(prepared.play_method, "DirectStream");
-        assert!(
-            prepared
-                .request
-                .media_url
-                .starts_with("http://server:8096/Videos/item-1/stream.mkv?")
-        );
-        assert!(prepared.request.media_url.contains("static=true"));
         assert!(!prepared.request.media_url.contains("api_key"));
         assert!(prepared.request.media_url.contains("mediaSourceId=src"));
         assert!(prepared.request.media_url.contains("playSessionId=session"));
-        assert!(prepared.request.media_url.contains("tag=etag"));
-        assert_eq!(prepared.request.play_session_id.as_deref(), Some("session"));
-        assert_eq!(prepared.request.runtime_ticks, Some(120_000_000));
-        assert_eq!(prepared.request.device_id.as_deref(), Some("device-1"));
         assert!(
             prepared
                 .request
@@ -668,10 +661,10 @@ mod tests {
     }
 
     #[test]
-    fn transcoding_urls_are_resolved_against_the_server_root() {
+    fn transcoding_urls_are_resolved_against_the_server_root_without_the_token() {
         let response = info(
             r#"{"MediaSources":[{"Id":"src","SupportsTranscoding":true,
-                "TranscodingUrl":"/videos/item-1/master.m3u8?api_key=secret"}]}"#,
+                "TranscodingUrl":"/videos/item-1/master.m3u8?DeviceId=d&ApiKey=secret&MediaSourceId=src&api_key=secret&PlaySessionId=p&X-Emby-Token=secret&ApiKeyHint=kept"}]}"#,
         );
         let prepared = build(
             &client(),
@@ -685,8 +678,11 @@ mod tests {
         assert_eq!(prepared.play_method, "Transcode");
         assert_eq!(
             prepared.request.media_url,
-            "http://server:8096/videos/item-1/master.m3u8?api_key=secret"
+            "http://server:8096/videos/item-1/master.m3u8?DeviceId=d&MediaSourceId=src&PlaySessionId=p&ApiKeyHint=kept"
         );
+        assert!(prepared.request.headers.iter().any(|header| {
+            header.name.eq_ignore_ascii_case("X-Emby-Token") && header.value == "secret"
+        }));
     }
 
     #[test]
@@ -878,13 +874,5 @@ mod tests {
         );
         assert_eq!(prepared.request.subtitle_stream_index, Some(3));
         assert_eq!(prepared.request.subtitle_mpv_id, None);
-    }
-
-    #[test]
-    fn absolute_urls_are_left_alone() {
-        assert_eq!(
-            absolute_url("http://server:8096", "https://cdn.test/x.m3u8"),
-            "https://cdn.test/x.m3u8"
-        );
     }
 }

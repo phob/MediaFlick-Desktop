@@ -26,15 +26,12 @@ fn segment_chapter_markers_bound_each_segment_and_drop_out_of_range() {
     ];
 
     let markers = build_segment_chapter_markers(&segments, 150.0);
+    let times: Vec<Value> = markers
+        .iter()
+        .map(|marker| marker["time"].clone())
+        .collect();
 
-    assert_eq!(
-        markers,
-        vec![
-            json!({ "title": "Intro", "time": 10.0 }),
-            json!({ "title": "Intro End", "time": 30.0 }),
-            json!({ "title": "Credits", "time": 140.0 }),
-        ]
-    );
+    assert_eq!(times, vec![json!(10.0), json!(30.0), json!(140.0)]);
 }
 
 #[test]

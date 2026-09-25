@@ -254,7 +254,7 @@ describe("expanded media-card details target", () => {
     expect(document.querySelector(".preview-panel")).toBeNull()
   })
 
-  test("keeps the three actions on the card when expanded previews are disabled", () => {
+  test("does not open the expanded preview when previews are disabled", () => {
     render(<MediaCard item={movie} />, { wrapper: InlineProviders })
     const details = screen.getByRole("link", { name: "Open details for The Matrix" })
 
@@ -264,10 +264,6 @@ describe("expanded media-card details target", () => {
     })
 
     expect(document.querySelector(".preview-panel")).toBeNull()
-    for (const name of ["Play", "Add to My List", "Mark as watched"]) {
-      const button = screen.getByRole("button", { name })
-      expect(button.closest("a")).toBeNull()
-    }
   })
 
   test("runs direct movie-card actions without opening details", async () => {

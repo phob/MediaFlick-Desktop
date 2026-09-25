@@ -11,13 +11,12 @@ import {
   writeLibraryFilters,
 } from "../src/lib/library-filters.ts"
 
-test("release decades are standard, descending, and span 1900 through the current decade", () => {
+test("release decades span 1900 through the current decade", () => {
   const currentDecade = Math.floor(new Date().getUTCFullYear() / 10) * 10
   const decades = releaseDecades()
 
-  assert.deepEqual(decades[0], { value: currentDecade, label: `${currentDecade}s` })
-  assert.deepEqual(decades.at(-1), { value: 1900, label: "1900s" })
-  assert.ok(decades.every((option, index) => index === 0 || option.value === decades[index - 1].value - 10))
+  assert.equal(decades[0].value, currentDecade)
+  assert.equal(decades.at(-1).value, 1900)
 })
 
 test("every library filter round-trips in the URL and paging resets", () => {

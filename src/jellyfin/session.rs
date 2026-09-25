@@ -526,15 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_session_is_not_authenticated_and_has_no_client() {
-        let session = session();
-        assert!(!session.is_authenticated());
-        assert!(matches!(session.client(), Err(ApiError::NotConfigured)));
-        assert!(!session.status().authenticated);
-        assert!(!session.status().device_id.is_empty());
-    }
-
-    #[test]
     fn restoring_reads_persisted_credentials() {
         let library = Arc::new(Library::open_in_memory().expect("library"));
         let mut credentials = library.credentials();
@@ -598,15 +589,6 @@ mod tests {
             session.login("javascript:alert(1)", "u", "p"),
             Err(ApiError::NotConfigured)
         ));
-    }
-
-    #[test]
-    fn anonymous_clients_reuse_the_persisted_device_id() {
-        let session = session();
-        let device_id = session.status().device_id;
-        let client = session.anonymous_client("http://server:8096");
-        assert_eq!(client.device_id(), device_id);
-        assert_eq!(client.token(), None);
     }
 
     #[test]

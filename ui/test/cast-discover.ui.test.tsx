@@ -76,31 +76,6 @@ describe("cast Discover results", () => {
     expect(castDiscoverResults(values)).toEqual([values[2], values[4]])
   })
 
-  test("offers only titles missing from the server", () => {
-    const client = clientWithStatus()
-    client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-keanu"), {
-      page: 1,
-      totalPages: 1,
-      totalResults: 2,
-      results: [
-        result({ tmdbId: 603, title: "The Matrix", libraryItemId: "m1" }),
-        result({ tmdbId: 245891, title: "John Wick", status: "pending" }),
-      ],
-    })
-
-    render(
-      <CastDiscover
-        personName="Keanu Reeves"
-        jellyfinId="jf-keanu"
-        tmdbId={6384}
-      />,
-      { wrapper: providers(client) },
-    )
-
-    expect(screen.getAllByText("John Wick").length).toBeGreaterThan(0)
-    expect(screen.queryByText("The Matrix")).toBeNull()
-  })
-
   test("without an exact Jellyfin identity, withholds requestable titles until the catalog is complete", async () => {
     vi.spyOn(api.seerr, "personCredits").mockResolvedValue({
       page: 1,

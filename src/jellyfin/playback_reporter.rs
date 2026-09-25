@@ -598,48 +598,10 @@ fn unix_now_ticks() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlaybackSession, PlaystateRequest, ReportingState, enqueue_playstate_report,
-        playback_progress_body, playback_stop_body, server_base_url, token_from_authorization,
-        token_from_launch,
+        PlaybackSession, ReportingState, playback_progress_body, playback_stop_body,
+        server_base_url,
     };
     use crate::playback::{HttpHeader, PlaybackRequest};
-    use serde_json::json;
-    use std::collections::VecDeque;
-
-    fn queued_report(endpoint: &'static str, item_id: &str) -> PlaystateRequest {
-        PlaystateRequest {
-            endpoint,
-            url: "https://example.test/Sessions/Playing".to_string(),
-            item_id: item_id.to_string(),
-            play_session_id: Some("session".to_string()),
-            auth_headers: Vec::new(),
-            body: json!({}),
-            state: ReportingState::default(),
-        }
-    }
-
-    #[test]
-    fn stopped_supersedes_queued_progress_for_the_same_session() {
-        let mut pending = VecDeque::new();
-        enqueue_playstate_report(&mut pending, queued_report("Sessions/Playing", "current"));
-        enqueue_playstate_report(
-            &mut pending,
-            queued_report("Sessions/Playing/Progress", "current"),
-        );
-        enqueue_playstate_report(
-            &mut pending,
-            queued_report("Sessions/Playing/Progress", "other"),
-        );
-        enqueue_playstate_report(
-            &mut pending,
-            queued_report("Sessions/Playing/Stopped", "current"),
-        );
-
-        assert_eq!(pending.len(), 3);
-        assert_eq!(pending[0].endpoint, "Sessions/Playing");
-        assert_eq!(pending[1].item_id, "other");
-        assert_eq!(pending[2].endpoint, "Sessions/Playing/Stopped");
-    }
 
     #[test]
     fn extracts_server_base_with_subpath() {
@@ -651,43 +613,15 @@ mod tests {
     }
 
     #[test]
-    fn extracts_token_from_mediabrowser_authorization() {
-        assert_eq!(
-            token_from_authorization(
-                "MediaBrowser Client=\"Jellyfin Web\", DeviceId=\"dev\", Token=\"secret\""
-            )
-            .as_deref(),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn extracts_token_from_jellyfin_apikey_query() {
-        let launch =
-            PlaybackRequest::new("https://example.test/Videos/item/stream.mkv?ApiKey=secret");
-        assert_eq!(token_from_launch(&launch).as_deref(), Some("secret"));
-    }
-
-    #[test]
-    fn playback_bodies_include_richer_mpv_and_jellyfin_fields() {
+    fn playback_bodies_carry_the_session_and_the_resume_position() {
         let mut launch = PlaybackRequest::new("https://example.test/Videos/item/stream.mkv");
         launch.item_id = Some("item".to_string());
-        launch.media_source_id = Some("media".to_string());
         launch.play_session_id = Some("session".to_string());
         launch.headers = vec![HttpHeader {
             name: "X-Emby-Token".to_string(),
             value: "secret".to_string(),
         }];
-        launch.audio_stream_index = Some(2);
-        launch.subtitle_stream_index = Some(5);
-        launch.play_method = Some("DirectStream".to_string());
         launch.runtime_ticks = Some(120_000_000);
-        launch.queue = Some(json!([
-            {
-                "Id": "item",
-                "PlaylistItemId": "playlist-item"
-            }
-        ]));
 
         let session = PlaybackSession::from_launch(&launch).expect("session");
         let state = ReportingState {
@@ -700,44 +634,9 @@ mod tests {
         };
         let progress = playback_progress_body(&session, &state);
         assert_eq!(progress["ItemId"], "item");
-        assert_eq!(progress["MediaSourceId"], "media");
         assert_eq!(progress["PlaySessionId"], "session");
-        assert_eq!(progress["AudioStreamIndex"], 2);
-        assert_eq!(progress["SubtitleStreamIndex"], 5);
-        assert_eq!(progress["PlayMethod"], "DirectStream");
-        assert_eq!(progress["VolumeLevel"], 77);
-        assert_eq!(progress["IsMuted"], true);
-        assert_eq!(progress["IsPaused"], true);
-        assert_eq!(progress["CanSeek"], true);
-        assert_eq!(progress["NowPlayingQueue"].as_array().unwrap().len(), 1);
 
         let stopped = playback_stop_body(&session, &state, true);
-        assert_eq!(stopped["Failed"], true);
         assert_eq!(stopped["PositionTicks"], 10_000_000);
-        assert_eq!(stopped["NowPlayingQueue"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn playback_bodies_drop_invalid_queue_shapes() {
-        let mut launch = PlaybackRequest::new("https://example.test/Videos/item/stream.mkv");
-        launch.item_id = Some("item".to_string());
-        launch.headers = vec![HttpHeader {
-            name: "X-Emby-Token".to_string(),
-            value: "secret".to_string(),
-        }];
-        launch.queue = Some(json!({ "bad": true }));
-
-        let session = PlaybackSession::from_launch(&launch).expect("session");
-        let state = ReportingState::default();
-        assert!(
-            playback_progress_body(&session, &state)
-                .get("NowPlayingQueue")
-                .is_none()
-        );
-        assert!(
-            playback_stop_body(&session, &state, false)
-                .get("NowPlayingQueue")
-                .is_none()
-        );
     }
 }

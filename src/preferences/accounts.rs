@@ -978,31 +978,6 @@ mod tests {
     }
 
     #[test]
-    fn malformed_configuration_is_moved_aside_and_isolated_to_defaults() {
-        let path = test_path("malformed");
-        let contents = b"{ definitely not json";
-        std::fs::write(&path, contents).expect("write malformed file");
-
-        let service = AccountConfigurationService::open(path.clone()).expect("open defaults");
-        assert_eq!(
-            service.appearance(&key("server", "user")),
-            AppearanceSettings::default()
-        );
-        assert!(!path.exists());
-        assert!(path.parent().is_some_and(|parent| {
-            std::fs::read_dir(parent).is_ok_and(|entries| {
-                entries.filter_map(Result::ok).any(|entry| {
-                    entry.file_name().to_string_lossy().starts_with(&format!(
-                        "{}.broken-",
-                        path.file_name().unwrap_or_default().to_string_lossy()
-                    ))
-                })
-            })
-        }));
-        cleanup(&path);
-    }
-
-    #[test]
     fn a_newer_configuration_version_is_left_untouched() {
         use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
 

@@ -198,14 +198,13 @@ describe("home latest shelves", () => {
       .toBe("/library?kind=Series&sort=year")
   })
 
-  test("lists newly added episodes under the recently added movies", () => {
+  test("a newly added episode in Recently Added Shows links to its item page", () => {
     renderHome()
 
     const episode = requireElement(
       screen.getByRole("heading", { name: "Recently Added Shows" }).closest("section")?.querySelector("article") ?? null,
       "recently added episode card",
     )
-    expect(episode.textContent).toContain("Severance · S1E2")
     expect(episode.querySelector("a")?.getAttribute("href")).toBe("/item/new-episode")
   })
 

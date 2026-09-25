@@ -65,7 +65,17 @@ If a backend or real Jellyfin session is unavailable, complete applicable automa
 
 ## Validation
 
-Choose checks that establish the changed behavior and cover the affected boundaries. Add a focused regression test for non-trivial behavior, preferably through the public or user-visible path. The standard component checks are:
+Choose checks that establish the changed behavior and cover the affected boundaries.
+
+When adding tests:
+
+- Prefer end-to-end tests as the only new tests. Verify complex behavior by driving the real user or caller path, such as the running app, a loopback Jellyfin or Companion server, or a real mpv runtime.
+- Every end-to-end test must end by producing a verifiable, repeatable artifact that a reviewer can inspect or regenerate, such as a log, screenshot, recording, or JSON report.
+- Never write unit tests after writing the code they cover. If a system must be tested in isolation, first write down every way it could fail (in the plan or PR description), then write the isolated tests for those failures, and only then write the code.
+- If no end-to-end path exists for the changed behavior, report that gap instead of substituting unit tests written after the code.
+- Existing unit, component, and Companion tests remain part of the checks below. Keep them passing and update them for contract changes, but do not expand them as a substitute for end-to-end coverage.
+
+The standard component checks are:
 
 | Affected area | Local checks |
 | --- | --- |

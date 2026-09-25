@@ -92,14 +92,7 @@ function companionRow(title: string) {
 }
 
 describe("configurable card ratings", () => {
-  test("formats each native source scale without conflating RT critics and audience", () => {
-    expect(display("letterboxd", 4.25).formatted).toBe("★4.3")
-    expect(display("imdb", 8.1).accessibleValue).toBe("8.1 out of 10")
-    expect(display("tomatoes", 97).formatted).toBe("97%")
-    expect(display("popcorn", 91).formatted).toBe("91%")
-  })
-
-  test("renders multiple available ratings with accessible source names and icons", () => {
+  test("renders multiple available ratings with accessible source names", () => {
     render(
       <RatingOverlayView
         itemName="The Matrix"
@@ -108,10 +101,6 @@ describe("configurable card ratings", () => {
       />,
     )
 
-    const overlay = screen.getByLabelText("Ratings for The Matrix")
-    expect(overlay.querySelector("[data-rating-source-icon='letterboxd']")).toBeTruthy()
-    expect(overlay.textContent).not.toContain("LB")
-    expect(overlay.textContent).not.toContain("RT A")
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()

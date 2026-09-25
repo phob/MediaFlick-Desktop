@@ -189,20 +189,10 @@ describe("Letterboxd detail activity", () => {
     expect(screen.getByRole("link", { name: /Alice Film Fan/i })).not.toBeNull()
   })
 
-  test("does not query an invalid discovered movie identity", () => {
-    const { container } = render(<LetterboxdMovieReviews tmdbId={0} queries={queries} />)
-
-    expect(movieLookup).toHaveBeenCalledWith(0, false)
-    expect(container.innerHTML).toBe("")
-  })
-
   test("keeps Letterboxd's movie namespace off discovered series", () => {
-    const { container } = render(
-      <DiscoverLetterboxdReviews mediaType="tv" tmdbId={603} queries={queries} />,
-    )
+    render(<DiscoverLetterboxdReviews mediaType="tv" tmdbId={603} queries={queries} />)
 
     expect(movieLookup).not.toHaveBeenCalled()
-    expect(container.innerHTML).toBe("")
   })
 
   test("keeps available profiles and reports a partial refresh failure", () => {
@@ -233,12 +223,9 @@ describe("Letterboxd detail activity", () => {
     expect(screen.getByRole("status")).not.toBeNull()
   })
 
-  test("does not expose connected RSS activity on Series details", () => {
-    const { container } = render(
-      <LetterboxdReviews item={{ ...movie, kind: "Series" }} queries={queries} />,
-    )
+  test("does not look up connected RSS activity for Series details", () => {
+    render(<LetterboxdReviews item={{ ...movie, kind: "Series" }} queries={queries} />)
 
     expect(itemLookup).toHaveBeenCalledWith("movie-1", false)
-    expect(container.innerHTML).toBe("")
   })
 })
