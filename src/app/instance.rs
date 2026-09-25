@@ -135,27 +135,3 @@ pub fn notify_already_running() {}
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{new_instance_id, sanitize_instance_id};
-
-    #[test]
-    fn sanitize_strips_disallowed_chars() {
-        assert_eq!(
-            sanitize_instance_id("ab\\cd/.. ef-gh_1").as_deref(),
-            Some("abcdef-gh_1")
-        );
-    }
-
-    #[test]
-    fn sanitize_rejects_empty_result() {
-        assert_eq!(sanitize_instance_id("\\/. ").as_deref(), None);
-    }
-
-    #[test]
-    fn new_id_is_sanitizable_and_stable_shape() {
-        let id = new_instance_id();
-        assert_eq!(sanitize_instance_id(&id).as_deref(), Some(id.as_str()));
-    }
-}

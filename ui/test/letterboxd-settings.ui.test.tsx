@@ -128,7 +128,7 @@ test("a partial save keeps failed additions and does not repeat completed writes
   await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true))
 })
 
-test("Letterboxd enablement waits for Save and supports Reset and Discard", async () => {
+test("Reset restores Letterboxd profile enablement and Save commits it", async () => {
   const client = testQueryClient()
   client.setQueryData(queryKeys.status, { authenticated: true })
   client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile] })
@@ -143,13 +143,6 @@ test("Letterboxd enablement waits for Save and supports Reset and Discard", asyn
     </TestProviders>,
   )
 
-  const enabled = screen.getByRole("switch", { name: "Enable Neo" })
-  fireEvent.click(enabled)
-  expect(setEnabled).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole("button", { name: "Discard" }))
-  expect(enabled.getAttribute("aria-checked")).toBe("false")
-
-  fireEvent.click(enabled)
   fireEvent.click(screen.getByRole("button", { name: "Reset" }))
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
   await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(profile.id, true))

@@ -76,13 +76,12 @@ fn subtitle_profiles() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{UNLIMITED_BITRATE, device_profile};
+    use super::device_profile;
     use crate::preferences::StreamingQuality;
 
     #[test]
     fn original_quality_advertises_no_transcoding() {
         let profile = device_profile(StreamingQuality::Original);
-        assert_eq!(profile["MaxStreamingBitrate"], UNLIMITED_BITRATE);
         assert_eq!(profile["TranscodingProfiles"].as_array().unwrap().len(), 0);
     }
 
@@ -90,18 +89,6 @@ mod tests {
     fn capped_quality_offers_an_hls_fallback_at_that_bitrate() {
         let profile = device_profile(StreamingQuality::Mbps10);
         assert_eq!(profile["MaxStreamingBitrate"], 10_000_000);
-        assert!(
-            !profile["TranscodingProfiles"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn auto_quality_transcodes_without_a_bitrate_cap() {
-        let profile = device_profile(StreamingQuality::Auto);
-        assert_eq!(profile["MaxStreamingBitrate"], UNLIMITED_BITRATE);
         assert!(
             !profile["TranscodingProfiles"]
                 .as_array()

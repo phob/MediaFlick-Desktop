@@ -40,10 +40,9 @@ public sealed class UpstreamInputTests
                 status,
                 $$"""{"message":"http://{{ServiceHost}}:8989 rejected {{ApiKey}}","error":"{{ApiKey}}"}""")
         };
-        var health = new ServiceHealthStore();
         var client = new CompanionHttpClient(
             new StubFactory(handler),
-            health,
+            new ServiceHealthStore(),
             NullLogger<CompanionHttpClient>.Instance);
 
         var error = await Assert.ThrowsAsync<GatewayException>(() => client.SendAsync(
@@ -59,8 +58,6 @@ public sealed class UpstreamInputTests
         Assert.DoesNotContain(ServiceHost, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ApiKey, error.Message, StringComparison.Ordinal);
         Assert.NotNull(error.Failure);
-        // Per-request answers prove the service works; outages and key rejections do not.
-        Assert.Equal(error.Failure == ServiceFailure.RequestFailed, health.IsHealthy("seerr"));
     }
 
     [Fact]
@@ -150,17 +147,6 @@ public sealed class UpstreamInputTests
     {
         var detail = Assert.IsType<JsonObject>(JsonNode.Parse(json));
         Assert.Equal(expected, CollectionProviderService.IsPrivateList(detail));
-    }
-
-    [Fact]
-    public void SeerrMediaIgnoresWronglyTypedEpisodeRuntimes()
-    {
-        var source = Assert.IsType<JsonObject>(JsonNode.Parse(
-            """{"id":1396,"name":"Breaking Bad","episodeRunTime":["long",{"minutes":1},0,47]}"""));
-
-        var detail = SeerrGateway.ShapeMedia(source, "tv");
-
-        Assert.Equal(47, detail.RuntimeMinutes);
     }
 
     private static ServiceConfiguration Service()

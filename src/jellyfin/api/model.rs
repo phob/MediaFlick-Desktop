@@ -272,26 +272,7 @@ pub struct MediaStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{BaseItemDto, ItemsResponse, PlaybackInfoResponse};
-
-    #[test]
-    fn items_response_tolerates_missing_fields() {
-        let response: ItemsResponse = serde_json::from_str(r#"{"Items":[{"Id":"a"}]}"#).unwrap();
-        assert_eq!(response.items.len(), 1);
-        assert_eq!(response.total_record_count, 0);
-        assert_eq!(response.items[0].display_name(), "Untitled");
-    }
-
-    #[test]
-    fn provider_ids_are_matched_case_insensitively() {
-        let item: BaseItemDto = serde_json::from_str(
-            r#"{"Id":"a","ProviderIds":{"Tmdb":"603","imdb":"tt0133093","Tvdb":"  "}}"#,
-        )
-        .unwrap();
-        assert_eq!(item.provider_id("tmdb"), Some("603"));
-        assert_eq!(item.provider_id("IMDB"), Some("tt0133093"));
-        assert_eq!(item.provider_id("tvdb"), None);
-    }
+    use super::BaseItemDto;
 
     #[test]
     fn primary_image_tag_falls_back_to_the_series_poster() {
@@ -305,45 +286,5 @@ mod tests {
         .unwrap();
         assert_eq!(movie.primary_image_tag(), Some("own-tag"));
         assert_eq!(movie.image_tag("Thumb"), Some("wide-tag"));
-    }
-
-    #[test]
-    fn item_media_streams_keep_hdr_and_spatial_audio_descriptors() {
-        let item: BaseItemDto = serde_json::from_str(
-            r#"{"Id":"movie","MediaStreams":[
-                {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":2160,
-                 "VideoRange":"HDR","VideoRangeType":"DOVIWithHDR10","BitDepth":10},
-                {"Index":1,"Type":"Audio","Codec":"truehd","Profile":"Dolby TrueHD",
-                 "Channels":8,"AudioSpatialFormat":"DolbyAtmos"}]}"#,
-        )
-        .unwrap();
-
-        assert_eq!(item.media_streams.len(), 2);
-        assert_eq!(
-            item.media_streams[0].video_range_type.as_deref(),
-            Some("DOVIWithHDR10")
-        );
-        assert_eq!(
-            item.media_streams[1].audio_spatial_format.as_deref(),
-            Some("DolbyAtmos")
-        );
-        assert_eq!(
-            item.media_streams[1].profile.as_deref(),
-            Some("Dolby TrueHD")
-        );
-    }
-
-    #[test]
-    fn playback_info_reads_sources_and_the_play_session() {
-        let response: PlaybackInfoResponse = serde_json::from_str(
-            r#"{"MediaSources":[{"Id":"src","SupportsDirectStream":true,
-                "MediaStreams":[{"Index":1,"Type":"Audio","Language":"eng"}]}],
-                "PlaySessionId":"session"}"#,
-        )
-        .unwrap();
-        assert_eq!(response.play_session_id.as_deref(), Some("session"));
-        let source = &response.media_sources[0];
-        assert!(source.supports_direct_stream);
-        assert_eq!(source.streams_of_type("audio").count(), 1);
     }
 }

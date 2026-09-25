@@ -210,7 +210,7 @@ mod tests {
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 
     #[test]
-    fn preferences_survive_database_recreation_and_item_absence() {
+    fn a_choice_for_an_item_absent_from_the_library_survives_reopen() {
         let path = std::env::temp_dir().join(format!(
             "mediaflick-playback-json-{}-{}.json",
             std::process::id(),

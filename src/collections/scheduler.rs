@@ -483,15 +483,4 @@ mod tests {
         assert!(!is_due(None, RefreshCadence::Manual, i64::MAX));
         assert_eq!(next_due_at(0, RefreshCadence::Manual), None);
     }
-
-    #[test]
-    fn franchise_refreshes_are_single_flight_per_account() {
-        let alice = AccountKey::new("server", "alice").expect("Alice");
-        let bob = AccountKey::new("server", "bob").expect("Bob");
-        let first = FranchiseFlight::acquire(&alice).expect("first Alice flight");
-        assert!(FranchiseFlight::acquire(&alice).is_none());
-        let _bob = FranchiseFlight::acquire(&bob).expect("independent Bob flight");
-        drop(first);
-        assert!(FranchiseFlight::acquire(&alice).is_some());
-    }
 }

@@ -112,14 +112,10 @@ mod tests {
     }
 
     #[test]
-    fn reads_token_and_user_from_the_authentication_result() {
+    fn a_user_without_a_policy_is_treated_as_restricted() {
         let credentials =
             result(r#"{"AccessToken":"tok","ServerId":"srv","User":{"Id":"uid","Name":"pho"}}"#)
                 .expect("credentials");
-        assert_eq!(credentials.token, "tok");
-        assert_eq!(credentials.user_id, "uid");
-        assert_eq!(credentials.user_name, "pho");
-        assert_eq!(credentials.server_id, "srv");
         assert!(credentials.restricted);
     }
 

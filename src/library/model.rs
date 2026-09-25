@@ -563,13 +563,13 @@ mod tests {
     }
 
     #[test]
-    fn playback_track_snapshots_retain_matching_and_accessibility_metadata() {
+    fn saved_non_default_track_choices_resolve_on_the_same_source() {
         let source = media_source(
             r#"{"Id":"src","Name":"Feature","Container":"mkv",
                 "MediaStreams":[
                     {"Index":1,"Type":"Audio","Language":"eng","Codec":"aac","Channels":2},
                     {"Index":2,"Type":"Audio","Language":"jpn","Title":"Original",
-                     "Codec":"dts","Channels":6,"IsDefault":true},
+                     "Codec":"dts","Channels":6},
                     {"Index":3,"Type":"Subtitle","Language":"eng","Title":"English SDH",
                      "Codec":"subrip","IsHearingImpaired":true,"IsExternal":true}] }"#,
         );

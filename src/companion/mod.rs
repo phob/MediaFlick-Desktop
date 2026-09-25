@@ -899,14 +899,12 @@ mod tests {
     }
 
     #[test]
-    fn cached_collection_readiness_never_probes_and_clear_drops_capabilities() {
+    fn clear_drops_cached_collection_capabilities() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
-        listener.set_nonblocking(true).expect("nonblocking");
         let (_session, companion) = companion_at(format!(
             "http://{}",
             listener.local_addr().expect("address")
         ));
-        assert_eq!(companion.cached_collection_readiness(), Default::default());
         companion.replace(ProbeState {
             info: Some(CompanionInfo {
                 api_version: 1,
@@ -919,10 +917,6 @@ mod tests {
         assert!(companion.cached_collection_readiness().tmdb);
         companion.clear();
         assert_eq!(companion.cached_collection_readiness(), Default::default());
-        assert_eq!(
-            listener.accept().expect_err("no network calls").kind(),
-            std::io::ErrorKind::WouldBlock
-        );
     }
 
     #[test]

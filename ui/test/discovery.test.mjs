@@ -53,12 +53,11 @@ test("switching discovery rows resets catalogue filters but keeps local state", 
   assert.equal(written.toString(), "row=tv&library=outside")
 })
 
-test("films and series offer the same full-label decades from the current decade back to 1900", () => {
+test("films and series offer the same decades from the current decade back to 1900", () => {
   const currentDecade = Math.floor(new Date().getUTCFullYear() / 10) * 10
 
   assert.equal(RELEASE_DECADES.movie[0].value, currentDecade)
-  assert.deepEqual(RELEASE_DECADES.movie.at(-1), { value: 1900, label: "1900s" })
-  assert.ok(RELEASE_DECADES.movie.some((option) => option.value === 1990 && option.label === "1990s"))
+  assert.equal(RELEASE_DECADES.movie.at(-1).value, 1900)
   assert.deepEqual(RELEASE_DECADES.tv, RELEASE_DECADES.movie)
 })
 

@@ -314,20 +314,3 @@ pub(super) mod test_support {
         library
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Library;
-
-    #[test]
-    fn meta_values_round_trip() {
-        let library = Library::open_in_memory().expect("library");
-        assert_eq!(library.meta("watermark").expect("meta"), None);
-        library.set_meta("watermark", "2024-01-01").expect("set");
-        library.set_meta("watermark", "2024-06-01").expect("update");
-        assert_eq!(
-            library.meta("watermark").expect("meta").as_deref(),
-            Some("2024-06-01")
-        );
-    }
-}

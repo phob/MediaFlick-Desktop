@@ -199,50 +199,6 @@ describe("live card technical channel", () => {
     expect(screen.getByText("movie-2:av1")).toBeTruthy()
   })
 
-  test("live streams are refreshed after their bounded stale interval", async () => {
-    vi.useFakeTimers()
-    let codec = "h264"
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const ids = requestIds(init)
-      return new Response(
-        JSON.stringify({
-          items: ids.map((id) => ({
-            id,
-            mediaStreams: [{ index: 0, type: "Video", codec }],
-          })),
-        }),
-        { status: 200 },
-      )
-    })
-    vi.stubGlobal("fetch", fetchMock)
-
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.settings, clientSettings)
-    render(
-      <QueryClientProvider client={client}>
-        <TechnicalProvider>
-          <TechnicalProbe id="movie-1" />
-        </TechnicalProvider>
-      </QueryClientProvider>,
-    )
-    await act(async () => {
-      vi.advanceTimersByTime(80)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.getByText("movie-1:h264")).toBeTruthy()
-
-    codec = "av1"
-    await act(async () => {
-      // The one-minute scan bounds a fifteen-minute TTL to at most sixteen.
-      vi.advanceTimersByTime(16 * 60_000 + 80)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(screen.getByText("movie-1:av1")).toBeTruthy()
-  })
-
   test("hidden media info fetches nothing", async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }))

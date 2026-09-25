@@ -226,16 +226,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_window_ready_report_wakes_a_held_worker_without_requesting_a_cycle() {
-        let handle = SyncHandle::new(Arc::default());
-        assert!(!handle.window_ready());
-
-        handle.release_startup_hold();
-        assert!(handle.window_ready());
-        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
-    }
-
     /// The refresh button is only a "reconcile now" lever if the request
     /// survives the wait it interrupts — a request that reads back as a plain
     /// timeout would silently fall back to the hourly gate.

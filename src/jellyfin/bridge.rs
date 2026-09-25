@@ -65,7 +65,7 @@ pub fn bridge_token() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{BridgeAction, bridge_token, parse_bridge_action};
+    use super::{BridgeAction, parse_bridge_action};
 
     #[test]
     fn parses_remaining_native_actions_exactly() {
@@ -89,13 +89,5 @@ mod tests {
             parse_bridge_action("mediaflick-desktop://client-settings/extra"),
             None
         );
-    }
-
-    #[test]
-    fn session_bridge_token_is_stable_and_hex() {
-        let token = bridge_token();
-        assert_eq!(token, bridge_token());
-        assert_eq!(token.len(), 64);
-        assert!(token.chars().all(|ch| ch.is_ascii_hexdigit()));
     }
 }

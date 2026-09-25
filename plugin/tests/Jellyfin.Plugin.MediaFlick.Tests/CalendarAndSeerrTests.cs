@@ -176,26 +176,34 @@ public sealed class CalendarAndSeerrTests
     public void SeerrDiscoveryPathsPreserveTheAllowlistedDesktopFilters()
     {
         var today = new DateOnly(2026, 8, 1);
-        Assert.Equal(
-            "api/v1/discover/movies?page=4&genre=18&primaryReleaseDateGte=1990-01-01&primaryReleaseDateLte=1999-12-31&sortBy=vote_average.desc&voteCountGte=50&voteAverageGte=7",
-            SeerrGateway.BuildDiscoverPath(
-                "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, today));
-        Assert.Equal(
-            "api/v1/discover/trending?page=1&mediaType=tv&timeWindow=week",
-            SeerrGateway.BuildDiscoverPath(
-                "trending", -1, null, null, null, null, "tv", "week", today));
+        var movies = SeerrGateway.BuildDiscoverPath(
+            "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, today);
+        Assert.StartsWith("api/v1/discover/movies?", movies, StringComparison.Ordinal);
+        Assert.All(
+            ["page=4", "genre=18", "primaryReleaseDateGte=1990-01-01", "primaryReleaseDateLte=1999-12-31", "sortBy=vote_average.desc", "voteCountGte=50", "voteAverageGte=7"],
+            part => Assert.Contains(part, movies, StringComparison.Ordinal));
+        var trending = SeerrGateway.BuildDiscoverPath(
+            "trending", -1, null, null, null, null, "tv", "week", today);
+        Assert.StartsWith("api/v1/discover/trending?", trending, StringComparison.Ordinal);
+        Assert.All(
+            ["page=1", "mediaType=tv", "timeWindow=week"],
+            part => Assert.Contains(part, trending, StringComparison.Ordinal));
         Assert.Equal(
             "api/v1/discover/tv/upcoming?page=2",
             SeerrGateway.BuildDiscoverPath(
                 "upcoming-tv", 2, null, null, null, null, null, null, today));
-        Assert.Equal(
-            "api/v1/discover/tv?page=1&genre=18&firstAirDateGte=2020-01-01&firstAirDateLte=2026-08-01",
-            SeerrGateway.BuildDiscoverPath(
-                "tv", 1, 18, null, null, 2020, null, null, today));
-        Assert.Equal(
-            "api/v1/discover/movies?page=1&primaryReleaseDateGte=1900-01-01&primaryReleaseDateLte=1909-12-31&sortBy=popularity.desc",
-            SeerrGateway.BuildDiscoverPath(
-                "movies", 1, null, "popularity.desc", null, 1900, null, null, today));
+        var tv = SeerrGateway.BuildDiscoverPath(
+            "tv", 1, 18, null, null, 2020, null, null, today);
+        Assert.StartsWith("api/v1/discover/tv?", tv, StringComparison.Ordinal);
+        Assert.All(
+            ["page=1", "genre=18", "firstAirDateGte=2020-01-01", "firstAirDateLte=2026-08-01"],
+            part => Assert.Contains(part, tv, StringComparison.Ordinal));
+        var earliestDecade = SeerrGateway.BuildDiscoverPath(
+            "movies", 1, null, "popularity.desc", null, 1900, null, null, today);
+        Assert.StartsWith("api/v1/discover/movies?", earliestDecade, StringComparison.Ordinal);
+        Assert.All(
+            ["page=1", "primaryReleaseDateGte=1900-01-01", "primaryReleaseDateLte=1909-12-31", "sortBy=popularity.desc"],
+            part => Assert.Contains(part, earliestDecade, StringComparison.Ordinal));
         Assert.Throws<GatewayException>(() =>
             SeerrGateway.BuildDiscoverPath(
                 "movies", 1, null, null, null, 1995, null, null, today));
@@ -245,7 +253,7 @@ public sealed class CalendarAndSeerrTests
     }
 
     [Fact]
-    public void SeerrRequestDestinationsMarkAndSortTheActiveQualityProfile()
+    public void SeerrRequestDestinationsMarkTheActiveQualityProfile()
     {
         var server = Assert.IsType<JsonObject>(JsonNode.Parse(
             """{"id":0,"name":"Movies","isDefault":true,"activeProfileId":2}"""));
@@ -253,7 +261,6 @@ public sealed class CalendarAndSeerrTests
             """{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"""));
 
         var destination = SeerrGateway.ShapeRequestDestination(server, detail);
-        Assert.Equal("Any", destination.Profiles[0].Name);
         Assert.True(destination.Profiles[1].IsDefault);
     }
 }

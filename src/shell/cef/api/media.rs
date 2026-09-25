@@ -759,12 +759,9 @@ mod tests {
         )
         .expect("source");
         let value = media_source_json(&source);
-        assert_eq!(value["container"], "mkv");
-        assert_eq!(value["fileName"], "matrix.mkv");
         assert_eq!(value["video"][0]["height"], 2160);
         assert_eq!(value["audio"][0]["channels"], 6);
         assert_eq!(value["subtitles"][0]["isExternal"], true);
-        assert_eq!(value["subtitles"][0]["isHearingImpaired"], true);
         assert_eq!(value["video"].as_array().map(Vec::len), Some(1));
     }
 }

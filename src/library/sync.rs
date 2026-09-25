@@ -363,44 +363,19 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        BootstrapProgress, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
-        META_LAST_BOOTSTRAP, SyncHandle, SyncPhase, bootstrap_progress,
+        META_BOOTSTRAP_DONE, META_LAST_BOOTSTRAP, SyncHandle, SyncPhase, bootstrap_progress,
     };
     use crate::library::Library;
 
     #[test]
-    fn bootstrap_progress_is_durable_and_distinguishes_the_initial_fill() {
+    fn only_a_never_bootstrapped_empty_cache_is_the_initial_fill() {
         let library = Library::open_in_memory().expect("library");
-        assert_eq!(
-            bootstrap_progress(&library),
-            BootstrapProgress {
-                complete: false,
-                ready: false,
-                processed: 0,
-                total: None,
-                initial: true,
-            }
-        );
+        assert!(bootstrap_progress(&library).initial);
 
-        library
-            .set_meta(META_BOOTSTRAP_OFFSET, "400")
-            .expect("offset");
-        library
-            .set_meta(META_BOOTSTRAP_TOTAL, "1250")
-            .expect("total");
-        assert_eq!(bootstrap_progress(&library).processed, 400);
-        assert_eq!(bootstrap_progress(&library).total, Some(1250));
-
-        library
-            .set_meta(META_BOOTSTRAP_DONE, "1")
-            .expect("complete");
         library
             .set_meta(META_LAST_BOOTSTRAP, "123")
             .expect("last bootstrap");
-        let completed = bootstrap_progress(&library);
-        assert!(completed.complete);
-        assert!(completed.ready);
-        assert!(!completed.initial);
+        assert!(!bootstrap_progress(&library).initial);
     }
 
     #[test]

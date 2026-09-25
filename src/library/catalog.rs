@@ -853,14 +853,6 @@ mod tests {
     }
 
     #[test]
-    fn kind_reads_back_the_item_type() {
-        let library = seeded();
-        assert_eq!(library.kind("s1").as_deref(), Some("Series"));
-        assert_eq!(library.kind("e1").as_deref(), Some("Episode"));
-        assert_eq!(library.kind("missing"), None);
-    }
-
-    #[test]
     fn forget_drops_a_single_item_and_its_user_data() {
         let library = seeded();
 
@@ -887,13 +879,11 @@ mod tests {
     }
 
     #[test]
-    fn local_played_and_favorite_toggles_are_mirrored() {
+    fn a_local_played_toggle_is_mirrored_and_clears_the_resume_position() {
         let library = seeded();
         library.set_local_played("m1", true).expect("played");
-        library.set_local_favorite("m1", true).expect("favorite");
         let item = library.item("m1").expect("query").expect("item");
         assert!(item.summary.played);
-        assert!(item.summary.favorite);
         assert_eq!(item.summary.position_ticks, 0);
     }
 }

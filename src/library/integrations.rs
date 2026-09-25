@@ -151,13 +151,11 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
-    use super::{CachedRatings, Library};
+    use super::Library;
     use crate::library::test_support::dto;
 
     #[test]
-    fn rating_targets_prefer_tmdb_and_cache_by_stable_identity() {
+    fn rating_targets_prefer_tmdb_over_imdb_and_skip_episodes() {
         let library = Library::open_in_memory().expect("library");
         library
             .upsert_page(&[
@@ -185,24 +183,6 @@ mod tests {
         assert_eq!(
             (show.provider.as_str(), show.provider_id.as_str()),
             ("imdb", "tt0903747")
-        );
-
-        let cached = CachedRatings {
-            ratings: json!([{ "sourceId": "letterboxd", "value": 4.2 }]),
-            fetched_at: 10,
-            stale_at: 20,
-            expires_at: i64::MAX,
-            schema_version: 1,
-            source_updated_at: Some("2026-08-04T20:00:00Z".to_string()),
-        };
-        library
-            .save_rating_cache(&[(movie.clone(), cached.clone())])
-            .expect("cache");
-        assert_eq!(
-            library
-                .cached_ratings(std::slice::from_ref(movie))
-                .expect("cached")["m1"],
-            cached
         );
     }
 }

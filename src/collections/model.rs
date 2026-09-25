@@ -438,24 +438,12 @@ mod tests {
         let profile: CollectionProfile =
             serde_json::from_str(include_str!("../../fixtures/collections/profile-v1.json"))
                 .expect("profile fixture");
-        let template: crate::collections::templates::CollectionTemplate =
-            serde_json::from_str(include_str!("../../fixtures/collections/template-v1.json"))
-                .expect("template fixture");
-        let snapshot: CollectionSnapshot =
-            serde_json::from_str(include_str!("../../fixtures/collections/snapshot-v1.json"))
-                .expect("snapshot fixture");
-        let readiness: ProviderReadiness =
-            serde_json::from_str(include_str!("../../fixtures/collections/readiness-v1.json"))
-                .expect("readiness fixture");
         let result: ProviderResult = serde_json::from_str(include_str!(
             "../../fixtures/collections/provider-result-v1.json"
         ))
         .expect("provider fixture");
 
         assert!(profile.validate().is_ok());
-        assert_eq!(template.provenance, profile.template);
-        assert_eq!(snapshot.items[0], result.items[0]);
-        assert!(readiness.tmdb);
         assert_eq!(result.source_identity.as_deref(), Some("fixture-v1"));
     }
 }

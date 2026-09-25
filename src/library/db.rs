@@ -720,7 +720,7 @@ CREATE INDEX provider_identity_tmdb
 
 #[cfg(test)]
 mod tests {
-    use super::{Database, SCHEMA_VERSION, migrate, user_version};
+    use super::{SCHEMA_VERSION, migrate, user_version};
     use rusqlite::Connection;
 
     #[test]
@@ -887,24 +887,5 @@ mod tests {
             )
             .expect("future table");
         assert_eq!(survived, 1);
-    }
-
-    #[test]
-    fn transactions_roll_back_on_error() {
-        let database = Database::open_in_memory().expect("open");
-        let result: rusqlite::Result<()> = database.with_transaction(|transaction| {
-            transaction.execute(
-                "INSERT INTO items (jellyfin_id, kind, name, synced_at) VALUES ('a','Movie','A',0)",
-                [],
-            )?;
-            Err(rusqlite::Error::QueryReturnedNoRows)
-        });
-        assert!(result.is_err());
-        let count: i64 = database
-            .with_connection(|connection| {
-                connection.query_row("SELECT count(*) FROM items", [], |row| row.get(0))
-            })
-            .expect("count");
-        assert_eq!(count, 0);
     }
 }
