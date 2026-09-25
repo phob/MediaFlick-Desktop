@@ -14,7 +14,7 @@ import { detailNavigationState } from "@/lib/navigation"
 const FILTERS = [
   { id: "all", label: "All" },
   { id: "pending", label: "Awaiting approval" },
-  { id: "processing", label: "Downloading" },
+  { id: "processing", label: "In progress" },
   { id: "available", label: "In your library" },
 ] as const
 
@@ -92,7 +92,7 @@ function RequestCard({ request }: { request: SeerrRequest }) {
             status={request.status}
             suppressUnknown={Boolean(request.libraryItemId) || request.mediaStatus !== "unknown"}
           />
-          {request.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={request.mediaStatus} />}
+          {request.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={request.mediaStatus} activity={request.mediaActivity} />}
         </div>
       </div>
 

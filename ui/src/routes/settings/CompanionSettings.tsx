@@ -9,8 +9,18 @@ const COMPANION_SERVICES: ReadonlyArray<{
   description: string
 }> = [
   { id: "seerr", name: "Seerr", description: "Discovery and requests for mapped Jellyfin users." },
-  { id: "sonarr", name: "Sonarr", description: "Upcoming episodes and download status." },
-  { id: "radarr", name: "Radarr", description: "Upcoming films and download status." },
+  {
+    id: "sonarr",
+    name: "Sonarr",
+    description:
+      "Upcoming episodes, and why a requested series is not available yet. Requests work without it; their status then reads Processing.",
+  },
+  {
+    id: "radarr",
+    name: "Radarr",
+    description:
+      "Upcoming films, and whether a requested film is in cinemas, unreleased, or being searched for. Requests work without it; their status then reads Processing.",
+  },
   { id: "mdblist", name: "MDBList", description: "Shared ratings and public list sources." },
   { id: "tmdb", name: "TMDB", description: "Movie franchises and collection metadata." },
 ]

@@ -1,0 +1,3 @@
+### Fixed
+
+- Requested movies and series no longer show "Downloading" in Discovery, title details, collections, and Requests just because they are in progress. They now show what is actually happening: "Downloading" only while a download is queued, "In cinemas" or "Unreleased" for movies waiting on a digital or physical release, "Awaiting episodes" for series waiting on the next episode, and "Searching" for released titles that have not downloaded yet. Without Radarr or Sonarr connected to the Companion, requests work as before and the badge reads "Processing"; hovering any of these badges explains what it means. Requires the updated Companion.
