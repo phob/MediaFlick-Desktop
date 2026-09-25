@@ -87,7 +87,10 @@ async function browse(url: string, mediaType: SeerrMediaType) {
     <StrictMode><QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider></StrictMode>,
   )
   const viewport = view.container.querySelector<HTMLElement>(".content-viewport")!
-  await screen.findByRole("link", { name: `${mediaType} title 0 2000 · ${mediaType === "movie" ? "Movie" : "Series"} View details` })
+  // Text queries, not name-filtered role queries: computing every card link's
+  // accessible name pushed this file past the timeout on CI runners.
+  const firstCard = (await screen.findByText(`${mediaType} title 0`)).closest("a")
+  expect(firstCard?.textContent).toBe(`${mediaType} title 02000 · ${mediaType === "movie" ? "Movie" : "Series"} View details`)
   for (const top of [1900, 3900]) {
     fireEvent.wheel(viewport)
     viewport.scrollTop = top
@@ -95,7 +98,7 @@ async function browse(url: string, mediaType: SeerrMediaType) {
     await waitFor(() => expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(top === 1900 ? 40 : 60))
   }
   const requestCount = requests.mock.calls.length
-  fireEvent.click(screen.getByRole("link", { name: new RegExp(`^${mediaType} title 45 `) }))
+  fireEvent.click(screen.getByText(`${mediaType} title 45`))
   await screen.findByRole("link", { name: "Back to discovery" })
   // Let inactive-query garbage collection run: gcTime: 0 lost all pages here.
   await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
