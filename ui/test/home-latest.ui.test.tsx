@@ -32,7 +32,7 @@ function renderHome(error: Error | null = null) {
       elements: [
         { kind: "builtIn", id: "recentlyAdded", enabled: true, label: "Recently Added Movies", available: true, category: "Built-in" },
         { kind: "builtIn", id: "recentlyAddedShows", enabled: true, label: "Recently Added Shows", available: true, category: "Built-in" },
-        { kind: "builtIn", id: "upcoming", enabled: true, label: "Upcoming", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "upcoming", enabled: true, label: "Release Timeline", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestMovies", enabled: true, label: "Latest Movies", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestShows", enabled: true, label: "Latest Shows", available: true, category: "Built-in" },
       ],
@@ -54,7 +54,7 @@ function renderHome(error: Error | null = null) {
   client.setQueryData(queryKeys.billboard, { items: [] })
   client.setQueryData(queryKeys.items({ favorite: true, sort: "added", limit: 24 }), { items: [] })
   client.setQueryData(queryKeys.genres, { genres: [] })
-  client.setQueryData(queryKeys.calendar(dateFromToday(0), dateFromToday(90)), {
+  client.setQueryData(queryKeys.calendar(dateFromToday(-30), dateFromToday(90)), {
     entries: [
       {
         kind: "episode",
@@ -70,7 +70,7 @@ function renderHome(error: Error | null = null) {
         seriesTvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
         seriesLibraryItemId: "northstar",
       },
@@ -88,7 +88,7 @@ function renderHome(error: Error | null = null) {
         seriesTvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
         seriesLibraryItemId: "northstar",
       },
@@ -104,7 +104,7 @@ function renderHome(error: Error | null = null) {
         tvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
       },
       {
@@ -121,7 +121,7 @@ function renderHome(error: Error | null = null) {
         seriesTvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
         seriesLibraryItemId: "northstar",
       },
@@ -137,7 +137,7 @@ function renderHome(error: Error | null = null) {
         tvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
       },
       {
@@ -152,13 +152,13 @@ function renderHome(error: Error | null = null) {
         tvdbId: null,
         monitored: true,
         hasFile: false,
-        posterUrl: null,
+        posterPath: null,
         libraryItemId: null,
       },
     ],
     refreshedAt: null,
     sources: {},
-    windowStart: dateFromToday(0),
+    windowStart: dateFromToday(-30),
     windowEnd: dateFromToday(90),
     provider: "plugin",
   })
@@ -186,7 +186,7 @@ describe("home latest shelves", () => {
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([
       "Recently Added Movies",
       "Recently Added Shows",
-      "Upcoming",
+      "Release Timeline",
       "Latest Movies",
       "Latest Series",
     ])
@@ -211,12 +211,14 @@ describe("home latest shelves", () => {
   test("shows season starts, later episodes, and every movie release channel in one upcoming shelf", () => {
     renderHome()
 
-    const upcoming = shelf("Upcoming")
+    const upcoming = shelf("Release Timeline")
     // A season premiere is one card for the series; same-day later episodes fold into it.
     expect(upcoming.getByRole("link", { name: "Open Northstar" })).toBeTruthy()
     expect(upcoming.getByText("NEW SEASON")).toBeTruthy()
     expect(upcoming.queryByText("Second Episode")).toBeNull()
-    expect(upcoming.getByText("Third Episode")).toBeTruthy()
+    // Episode names stay concealed while spoiler protection is on.
+    expect(upcoming.queryByText("Third Episode")).toBeNull()
+    expect(upcoming.getByText("S02E03")).toBeTruthy()
     for (const channel of ["Digital release", "Cinema release", "Physical release"]) {
       expect(upcoming.getByText(channel)).toBeTruthy()
     }

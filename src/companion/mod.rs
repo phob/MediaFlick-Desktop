@@ -409,7 +409,7 @@ impl CompanionSession {
                     "seriesTvdbId": Value::Null,
                     "monitored": true,
                     "hasFile": library_item_id.is_some(),
-                    "posterUrl": Value::Null,
+                    "posterPath": Value::Null,
                     "libraryItemId": library_item_id,
                     "seriesLibraryItemId": series_library_item_id,
                 }))

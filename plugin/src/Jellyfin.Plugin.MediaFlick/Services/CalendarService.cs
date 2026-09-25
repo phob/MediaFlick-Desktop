@@ -232,7 +232,7 @@ public sealed class CalendarService
                 JsonRead.Int32(episode, "tvdbId"),
                 JsonRead.Bool(episode, "monitored") ?? true,
                 JsonRead.Bool(episode, "hasFile") ?? false,
-                null,
+                TmdbPosterPath(series),
                 SeriesTmdbId: JsonRead.Int32(series, "tmdbId"),
                 SeriesTvdbId: JsonRead.Int32(series, "tvdbId")));
         }
@@ -252,6 +252,7 @@ public sealed class CalendarService
             .OfType<JsonObject>()
             .Where(static movie => JsonRead.Bool(movie, "monitored") ?? true))
         {
+            var posterPath = TmdbPosterPath(movie);
             foreach (var (property, kind) in new[]
             {
                 ("inCinemas", "cinema"),
@@ -277,11 +278,48 @@ public sealed class CalendarService
                     JsonRead.Int32(movie, "tvdbId"),
                     JsonRead.Bool(movie, "monitored") ?? true,
                     JsonRead.Bool(movie, "hasFile") ?? false,
-                    null));
+                    posterPath));
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The TMDB file path of an *arr item's poster, for Desktop to load through
+    /// the Companion's TMDB artwork proxy. Only a single-file image.tmdb.org
+    /// URL qualifies; Radarr's local MediaCover path and every other host are
+    /// dropped, so no service address reaches Desktop.
+    /// </summary>
+    internal static string? TmdbPosterPath(JsonObject? owner)
+    {
+        if (owner?["images"] is not JsonArray images)
+        {
+            return null;
+        }
+
+        var remote = images
+            .OfType<JsonObject>()
+            .Where(static image => JsonRead.String(image, "coverType") == "poster")
+            .Select(static image => JsonRead.String(image, "remoteUrl"))
+            .FirstOrDefault(static url => url is not null);
+        if (!Uri.TryCreate(remote, UriKind.Absolute, out var uri)
+            || uri.Scheme is not ("https" or "http")
+            || !uri.Host.Equals("image.tmdb.org", StringComparison.OrdinalIgnoreCase)
+            || uri.Query.Length > 0
+            || uri.Fragment.Length > 0)
+        {
+            return null;
+        }
+
+        var segments = uri.AbsolutePath.Split('/');
+        if (segments is not ["", "t", "p", _, var file])
+        {
+            return null;
+        }
+
+        var path = "/" + file;
+        return TmdbHttpTransport.SafeArtwork("original", path) ? path : null;
     }
 
     private static string? DateValue(JsonObject? value, params string[] names)

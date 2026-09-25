@@ -1,5 +1,5 @@
-import { Film, Settings2, Tv } from "lucide-react"
-import { useMemo, useState } from "react"
+import { Check, CircleAlert, Film, Settings2, Tv } from "lucide-react"
+import { Fragment, useMemo, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { Billboard } from "@/components/Billboard"
 import { MediaCard } from "@/components/MediaCard"
@@ -8,8 +8,8 @@ import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
+  api,
   imageUrl,
-  LANDSCAPE_WIDTH,
   type CalendarEntry,
   type HomeElement,
   type HomeRow,
@@ -18,9 +18,24 @@ import {
 import { detailNavigationState } from "@/lib/navigation"
 import { useBillboard, useHome, useHomeResume, useReleaseCalendar } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { useViewing } from "@/lib/viewing"
 
 const UPCOMING_DAYS = 90
+/** How far back the shelf looks for releases that should have arrived. */
+const RECENT_DAYS = 30
 const UPCOMING_LIMIT = 24
+/** The share of the shelf given to recent releases when both sides can fill it. */
+const RECENT_SHARE = 0.3
+
+type ReleaseStatus = "downloaded" | "missing"
+
+interface UpcomingShelfEntry {
+  entry: CalendarEntry
+  /** Dated before today. */
+  past: boolean
+  /** Set only for past releases; a future date has nothing to be missing yet. */
+  status: ReleaseStatus | null
+}
 
 function isoDate(date: Date) {
   const year = date.getFullYear()
@@ -30,8 +45,9 @@ function isoDate(date: Date) {
 }
 
 function upcomingWindow(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - RECENT_DAYS)
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + UPCOMING_DAYS)
-  return { start: isoDate(now), end: isoDate(end) }
+  return { start: isoDate(start), today: isoDate(now), end: isoDate(end) }
 }
 
 function upcomingIdentity(entry: CalendarEntry) {
@@ -43,32 +59,66 @@ function isSeasonPremiere(entry: CalendarEntry) {
   return entry.kind === "episode" && entry.episode === 1 && entry.season != null && entry.season > 0
 }
 
-function upcomingEntries(entries: CalendarEntry[]) {
+function seasonDay(entry: CalendarEntry) {
+  return `${upcomingIdentity(entry)}:${entry.season}:${entry.date}`
+}
+
+/**
+ * The Companion's file flags come from a daily snapshot, so a library match
+ * also counts: it shows a download that landed since the last refresh.
+ */
+function isDownloaded(entry: CalendarEntry) {
+  return entry.hasFile || entry.libraryItemId != null
+}
+
+function shelfKey(entry: CalendarEntry, past: boolean, premieres: Set<string>) {
+  // Same-day later episodes of a season premiere fold into its one card.
+  if (entry.kind === "episode" && premieres.has(seasonDay(entry))) return `${upcomingIdentity(entry)}:${entry.season}:premiere`
+  // A released movie is one card at its latest release, not one per channel.
+  if (entry.kind === "movie" && past) return `released:${upcomingIdentity(entry)}`
+  return `${entry.kind}:${entry.dateKind}:${entry.date}:${entry.tmdbId ?? entry.tvdbId ?? entry.title}`
+}
+
+function releaseStatus(entries: CalendarEntry[]): ReleaseStatus | null {
+  if (entries.every(isDownloaded)) return "downloaded"
+  return entries.some((entry) => entry.monitored && !isDownloaded(entry)) ? "missing" : null
+}
+
+/**
+ * Recent releases lead the shelf, oldest first, so it reads as one timeline
+ * into the upcoming dates. Each side takes its share and the other fills any
+ * slots it leaves empty.
+ */
+function upcomingEntries(entries: CalendarEntry[], today: string): UpcomingShelfEntry[] {
   const eligible = entries
     .filter((entry) => entry.kind === "episode" || entry.dateKind !== "air")
     .sort((left, right) => left.date.localeCompare(right.date))
-  const seasonPremieres = new Set(
-    eligible
-      .filter(isSeasonPremiere)
-      .map((entry) => `${upcomingIdentity(entry)}:${entry.season}:${entry.date}`),
-  )
-  const seen = new Set<string>()
-  const results: CalendarEntry[] = []
+  const premieres = new Set(eligible.filter(isSeasonPremiere).map(seasonDay))
+  const groups = new Map<string, CalendarEntry[]>()
   for (const entry of eligible) {
-    if (
-      entry.kind === "episode" &&
-      entry.episode !== 1 &&
-      seasonPremieres.has(`${upcomingIdentity(entry)}:${entry.season}:${entry.date}`)
-    ) continue
-    const key = isSeasonPremiere(entry)
-      ? `${upcomingIdentity(entry)}:${entry.season}:premiere`
-      : `${entry.kind}:${entry.dateKind}:${entry.date}:${entry.tmdbId ?? entry.tvdbId ?? entry.title}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    results.push(entry)
-    if (results.length === UPCOMING_LIMIT) break
+    const past = entry.date < today
+    // A cinema run is not a release anyone can have downloaded.
+    if (past && entry.kind === "movie" && entry.dateKind === "cinema") continue
+    const key = shelfKey(entry, past, premieres)
+    const group = groups.get(key)
+    if (group) group.push(entry)
+    else groups.set(key, [entry])
   }
-  return results
+
+  const past: UpcomingShelfEntry[] = []
+  const future: UpcomingShelfEntry[] = []
+  for (const group of groups.values()) {
+    const entry = group.find(isSeasonPremiere) ?? group[group.length - 1]
+    if (entry.date < today) past.push({ entry, past: true, status: releaseStatus(group) })
+    else future.push({ entry, past: false, status: null })
+  }
+  past.sort((left, right) => right.entry.date.localeCompare(left.entry.date))
+  future.sort((left, right) => left.entry.date.localeCompare(right.entry.date))
+
+  const recentTarget = Math.round(UPCOMING_LIMIT * RECENT_SHARE)
+  const futureCount = Math.min(future.length, UPCOMING_LIMIT - Math.min(past.length, recentTarget))
+  const pastCount = Math.min(past.length, UPCOMING_LIMIT - futureCount)
+  return [...past.slice(0, pastCount).reverse(), ...future.slice(0, futureCount)]
 }
 
 function upcomingDate(date: string) {
@@ -91,35 +141,52 @@ function movieReleaseLabel(entry: CalendarEntry) {
   }
 }
 
-function UpcomingCard({ entry }: { entry: CalendarEntry }) {
+const STATUS_LABELS: Record<ReleaseStatus, string> = {
+  downloaded: "Downloaded",
+  missing: "Missing",
+}
+
+function UpcomingCard({ entry, past, status }: UpcomingShelfEntry) {
   const location = useLocation()
+  const viewing = useViewing()
   const newSeason = isSeasonPremiere(entry)
   const itemId = entry.kind === "episode"
     ? newSeason ? entry.seriesLibraryItemId : entry.libraryItemId ?? entry.seriesLibraryItemId
     : entry.libraryItemId
-  const artworkOwner = entry.kind === "episode" ? entry.seriesLibraryItemId : entry.libraryItemId
-  const artwork = artworkOwner
-    ? [
-        imageUrl({ id: artworkOwner, primaryImageTag: null }, "Backdrop", LANDSCAPE_WIDTH, null),
-        imageUrl({ id: artworkOwner, primaryImageTag: null }, "Primary", LANDSCAPE_WIDTH, null),
-      ]
-    : []
+  // Episodes show their series' poster. A title not in the library yet falls
+  // back to the TMDB poster the Companion found for it.
+  const posterOwner = entry.kind === "episode" ? entry.seriesLibraryItemId : entry.libraryItemId
+  const posters = [
+    posterOwner ? imageUrl({ id: posterOwner, primaryImageTag: null }) : null,
+    api.collections.providerArtworkUrl(entry.posterPath),
+  ].filter((poster): poster is string => poster != null)
   const [imageIndex, setImageIndex] = useState(0)
-  const image = artwork[imageIndex]
-  const title = newSeason ? entry.seriesTitle ?? entry.title : entry.title
+  const image = posters[imageIndex]
+  const title = entry.kind === "episode" ? entry.seriesTitle ?? entry.title : entry.title
   const code = episodeCode(entry)
+  // As in the calendar, episode names stay hidden under spoiler protection:
+  // whether this user has watched an entry is not known here.
+  const episodeName = !newSeason && viewing.data?.spoilerProtection === false ? entry.title : null
   const subtitle = entry.kind === "episode"
-    ? newSeason ? code ?? entry.seriesTitle ?? "Episode" : [entry.seriesTitle, code].filter(Boolean).join(" · ")
+    ? [code, episodeName].filter(Boolean).join(" · ") || "Episode"
     : movieReleaseLabel(entry)
   const destination = itemId ? `/item/${encodeURIComponent(itemId)}` : "/calendar"
+  const statusLabel = status ? STATUS_LABELS[status] : null
+  const StatusIcon = status === "missing" ? CircleAlert : Check
+  const linkName = [title, entry.kind === "episode" && !newSeason ? code : null, statusLabel].filter(Boolean).join(", ")
 
   return (
-    <article className="signal-card group flex w-landscape-w shrink-0 snap-start flex-col gap-2">
-      <div className="media-frame relative h-landscape-h w-landscape-w overflow-hidden rounded-media bg-card ring-1 ring-hairline">
-        <Link to={destination} state={itemId ? detailNavigationState(location) : undefined} aria-label={`Open ${title}`} className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
-          {image ? <img src={image} alt="" decoding="async" onError={() => setImageIndex((current) => current + 1)} className="media-backdrop-image h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center px-4 text-center text-sm text-muted-foreground">{title}</span>}
-          <span className="data-label absolute top-0 right-0 z-[4] bg-primary px-2 py-1 leading-none text-primary-foreground">{upcomingDate(entry.date)}</span>
-          {newSeason && <span className="absolute bottom-0 left-1/2 z-[4] -translate-x-1/2 bg-primary px-4 py-2 text-sm font-semibold tracking-wide whitespace-nowrap text-primary-foreground">NEW SEASON</span>}
+    <article className="signal-card home-media-card group flex w-poster-w shrink-0 snap-start flex-col gap-2">
+      <div className="media-frame relative h-poster-h w-poster-w overflow-hidden rounded-media bg-card ring-1 ring-hairline">
+        <Link to={destination} state={itemId ? detailNavigationState(location) : undefined} aria-label={`Open ${linkName}`} className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+          {image ? <img src={image} alt="" decoding="async" onError={() => setImageIndex((current) => current + 1)} className="media-artwork-image h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">{title}</span>}
+          {statusLabel && (
+            <span title={statusLabel} className={cn("absolute top-0 left-0 z-[4] grid size-6 place-items-center", status === "missing" ? "bg-destructive text-white" : "bg-primary text-primary-foreground")}>
+              <StatusIcon className="size-3.5" aria-hidden />
+            </span>
+          )}
+          <span className={cn("data-label absolute top-0 right-0 z-[4] px-1.5 py-1 leading-none", past ? "bg-background/85 text-foreground" : "bg-primary text-primary-foreground")}>{upcomingDate(entry.date)}</span>
+          {newSeason && <span className="data-label absolute inset-x-0 bottom-0 z-[4] bg-primary py-1.5 text-center whitespace-nowrap text-primary-foreground">NEW SEASON</span>}
         </Link>
       </div>
       <Link to={destination} state={itemId ? detailNavigationState(location) : undefined} className="min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -130,11 +197,33 @@ function UpcomingCard({ entry }: { entry: CalendarEntry }) {
   )
 }
 
-function UpcomingRow({ entries }: { entries: CalendarEntry[] }) {
-  if (!entries.length) return null
+/**
+ * Today, drawn in the gap between the last released card and the first
+ * upcoming one. The negative margins give back the extra flex gap, so the
+ * cards keep their usual spacing and the mark sits centred between them.
+ */
+function TodayMark() {
   return (
-    <MediaRail title="Upcoming" viewAll="/calendar" itemCount={entries.length} resetKey={`${entries[0].kind}-${entries[0].date}`}>
-      {entries.map((entry, index) => <UpcomingCard key={`${entry.kind}-${entry.dateKind}-${entry.date}-${entry.tmdbId ?? entry.tvdbId ?? entry.title}-${index}`} entry={entry} />)}
+    <div role="separator" aria-orientation="vertical" aria-label="Today" className="-mx-[calc(var(--card-gap)/2)] flex h-poster-h w-0 shrink-0 flex-col items-center gap-1.5">
+      <span className="data-label leading-none text-primary [writing-mode:vertical-rl]">Today</span>
+      <span className="release-today-rule min-h-0 flex-1" />
+    </div>
+  )
+}
+
+function UpcomingRow({ entries }: { entries: UpcomingShelfEntry[] }) {
+  if (!entries.length) return null
+  const first = entries[0].entry
+  // Only a boundary inside the shelf is marked; at either end it would mark nothing.
+  const todayIndex = entries.findIndex((item) => !item.past)
+  return (
+    <MediaRail title="Release Timeline" viewAll="/calendar" itemCount={entries.length} resetKey={`${first.kind}-${first.date}`}>
+      {entries.map(({ entry, past, status }, index) => (
+        <Fragment key={`${entry.kind}-${entry.dateKind}-${entry.date}-${entry.tmdbId ?? entry.tvdbId ?? entry.title}-${index}`}>
+          {index > 0 && index === todayIndex && <TodayMark />}
+          <UpcomingCard entry={entry} past={past} status={status} />
+        </Fragment>
+      ))}
     </MediaRail>
   )
 }
@@ -212,7 +301,7 @@ export default function Home() {
   const billboard = useBillboard(billboardEnabled)
   const [releaseWindow] = useState(upcomingWindow)
   const calendar = useReleaseCalendar(releaseWindow.start, releaseWindow.end, Boolean(upcomingElement?.enabled))
-  const upcoming = useMemo(() => upcomingEntries(calendar.data?.entries ?? []), [calendar.data?.entries])
+  const upcoming = useMemo(() => upcomingEntries(calendar.data?.entries ?? [], releaseWindow.today), [calendar.data?.entries, releaseWindow.today])
 
   if (home.error && !home.data) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Could not load your home page" description={home.error.message} action={<Button variant="outline" onClick={() => void home.refetch()}>Try again</Button>} /></div>
   if (home.isPending || !configuration) return <HomeSkeleton />
