@@ -37,7 +37,7 @@ public sealed record CalendarEntry(
     int? TvdbId,
     bool Monitored,
     bool HasFile,
-    string? PosterUrl,
+    string? PosterPath,
     string? LibraryItemId = null,
     int? SeriesTmdbId = null,
     int? SeriesTvdbId = null,
