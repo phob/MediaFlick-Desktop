@@ -130,6 +130,36 @@ Older clients ignore the new capability data. Unsupported ratings boundary
 versions receive `409` with the supported range, while a plugin without a valid
 server key simply omits `ratings-v1` from the established capability list.
 
+## Seerr request activity
+
+Seerr reports one `processing` state for everything between an approved
+request and an imported file. For every Seerr result, title detail, season,
+and request in that state, the Companion adds an `activity` (`activity4k`, or
+`mediaActivity` on requests) that explains it:
+
+- `downloading` when Seerr's own download queue lists the title (or, for a
+  season, one of its episodes);
+- otherwise, from the configured Radarr: `searching` when the movie is
+  available, `in-cinemas` or `unreleased` while Radarr waits for a digital or
+  physical release;
+- or from the configured Sonarr, matched by TVDB id: `unreleased` when no
+  monitored episode has aired, `searching` when aired episodes are missing,
+  and `awaiting-episodes` when every aired episode is present and more are
+  scheduled.
+
+Each lookup is one fixed by-id request (`/api/v3/movie?tmdbId=` or
+`/api/v3/series?tvdbId=`), cached for five minutes in bounded memory, and
+bounded to a three-second budget per Seerr call. A failing service is skipped
+for a minute. The activity is null whenever those facts are unavailable, and a
+lookup failure never fails the Seerr response. The regular-quality Radarr and
+Sonarr file counts are not applied to 4K states.
+
+Radarr and Sonarr are optional here. Without them, requests work unchanged
+(Seerr hands them to its own download services), `downloading` still comes
+from Seerr's queue, and every other in-progress title has a null activity,
+which Desktop shows as "Processing" with a description saying the request is
+approved and on its way.
+
 ## Collection experience v1
 
 Authenticated Desktop clients use `collection-experience-v1` for normalized

@@ -40,6 +40,7 @@ public sealed class SeerrGateway
     private readonly ISeerrTransport _seerr;
     private readonly ILogger<SeerrGateway> _logger;
     private readonly TimeProvider _time;
+    private readonly ArrFactsLookup? _arr;
     private readonly ConcurrentDictionary<Guid, MappingRecord> _mappings = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _missing = new();
     private readonly SemaphoreSlim _lookupGate = new(1, 1);
@@ -47,11 +48,13 @@ public sealed class SeerrGateway
     internal SeerrGateway(
         ISeerrTransport seerr,
         ILogger<SeerrGateway> logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ArrFactsLookup? arr = null)
     {
         _seerr = seerr;
         _logger = logger;
         _time = timeProvider ?? TimeProvider.System;
+        _arr = arr;
     }
 
     public async Task<SeerrStatusResponse> StatusAsync(
@@ -141,7 +144,10 @@ public sealed class SeerrGateway
             null,
             user,
             cancellationToken).ConfigureAwait(false);
-        return ShapeSearchPage(response);
+        return ShapeSearchPage(
+            response,
+            await FactsAsync(Titles((response as JsonObject)?["results"]), cancellationToken)
+                .ConfigureAwait(false));
     }
 
     public async Task<SeerrPageResponse<SeerrResultResponse>> PersonCreditsAsync(
@@ -164,7 +170,9 @@ public sealed class SeerrGateway
                 StatusCodes.Status502BadGateway,
                 "Seerr returned credits for a different TMDB person");
         }
-        return ShapePersonCredits(credits);
+        return ShapePersonCredits(
+            credits,
+            await FactsAsync(Titles(credits?["cast"]), cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<SeerrPageResponse<SeerrResultResponse>> DiscoverAsync(
@@ -196,7 +204,10 @@ public sealed class SeerrGateway
             null,
             user,
             cancellationToken).ConfigureAwait(false);
-        return ShapeSearchPage(response);
+        return ShapeSearchPage(
+            response,
+            await FactsAsync(Titles((response as JsonObject)?["results"]), cancellationToken)
+                .ConfigureAwait(false));
     }
 
     internal static string BuildDiscoverPath(
@@ -353,7 +364,11 @@ public sealed class SeerrGateway
             null,
             user,
             cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
-        return ShapeMedia(response, type);
+        return ShapeMedia(
+            response,
+            type,
+            await FactsAsync([(type, response["mediaInfo"] as JsonObject)], cancellationToken)
+                .ConfigureAwait(false));
     }
 
     public async Task<SeerrRequestOptionsResponse> RequestOptionsAsync(
@@ -444,8 +459,10 @@ public sealed class SeerrGateway
             "api/v1/request",
             request,
             user,
-            cancellationToken).ConfigureAwait(false);
-        return ShapeRequest(response as JsonObject ?? new JsonObject());
+            cancellationToken).ConfigureAwait(false) as JsonObject ?? new JsonObject();
+        return ShapeRequest(
+            response,
+            await FactsAsync(RequestTitles([response]), cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<SeerrPageResponse<SeerrRequestResponse>> RequestsAsync(
@@ -472,7 +489,9 @@ public sealed class SeerrGateway
             user,
             cancellationToken).ConfigureAwait(false) as JsonObject;
         var pageInfo = response?["pageInfo"] as JsonObject;
-        var results = Objects(response?["results"]).Select(ShapeRequest).ToArray();
+        var requests = Objects(response?["results"]).ToArray();
+        var facts = await FactsAsync(RequestTitles(requests), cancellationToken).ConfigureAwait(false);
+        var results = requests.Select(request => ShapeRequest(request, facts)).ToArray();
         return new SeerrPageResponse<SeerrRequestResponse>(
             JsonRead.Int32(pageInfo, "page") ?? 1,
             JsonRead.Int32(pageInfo, "pages") ?? 1,
@@ -617,6 +636,45 @@ public sealed class SeerrGateway
         CancellationToken cancellationToken)
         => _seerr.SendAsync(method, path, body, seerrUserId, cancellationToken);
 
+    /// <summary>
+    /// Radarr and Sonarr facts for the processing titles among
+    /// <paramref name="titles"/>, which pair a media type with Seerr's media row.
+    /// </summary>
+    private async Task<ArrFacts> FactsAsync(
+        IEnumerable<(string? MediaType, JsonObject? MediaInfo)> titles,
+        CancellationToken cancellationToken)
+    {
+        if (_arr is null)
+        {
+            return ArrFacts.None;
+        }
+
+        var wanted = titles
+            .Where(static title => MediaActivity.NeedsFacts(title.MediaInfo))
+            .ToArray();
+        return await _arr.LookupAsync(
+            wanted
+                .Where(static title => title.MediaType == "movie")
+                .Select(static title => JsonRead.Int32(title.MediaInfo, "tmdbId") ?? 0),
+            wanted
+                .Where(static title => title.MediaType == "tv")
+                .Select(static title => JsonRead.Int32(title.MediaInfo, "tvdbId") ?? 0),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IEnumerable<(string? MediaType, JsonObject? MediaInfo)> Titles(JsonNode? results)
+        => Objects(results).Select(static result => (
+            JsonRead.String(result, "mediaType"),
+            result["mediaInfo"] as JsonObject));
+
+    private static IEnumerable<(string? MediaType, JsonObject? MediaInfo)> RequestTitles(
+        IEnumerable<JsonObject> requests)
+        => requests.Select(static request =>
+        {
+            var media = request["media"] as JsonObject;
+            return (JsonRead.String(request, "type") ?? JsonRead.String(media, "mediaType"), media);
+        });
+
     private async Task RequireAdvancedRequestAsync(
         int seerrUserId,
         CancellationToken cancellationToken)
@@ -636,12 +694,14 @@ public sealed class SeerrGateway
         }
     }
 
-    internal static SeerrPageResponse<SeerrResultResponse> ShapeSearchPage(JsonNode? node)
+    internal static SeerrPageResponse<SeerrResultResponse> ShapeSearchPage(
+        JsonNode? node,
+        ArrFacts? facts = null)
     {
         var page = node as JsonObject;
         var results = Objects(page?["results"])
             .Where(static result => JsonRead.String(result, "mediaType") is "movie" or "tv")
-            .Select(ShapeSearchResult)
+            .Select(result => ShapeSearchResult(result, facts ?? ArrFacts.None))
             .ToArray();
         return new SeerrPageResponse<SeerrResultResponse>(
             JsonRead.Int32(page, "page") ?? 1,
@@ -650,7 +710,9 @@ public sealed class SeerrGateway
             results);
     }
 
-    internal static SeerrPageResponse<SeerrResultResponse> ShapePersonCredits(JsonNode? node)
+    internal static SeerrPageResponse<SeerrResultResponse> ShapePersonCredits(
+        JsonNode? node,
+        ArrFacts? facts = null)
     {
         var results = Objects((node as JsonObject)?["cast"])
             .Where(static credit =>
@@ -666,9 +728,10 @@ public sealed class SeerrGateway
                 StringComparer.Ordinal)
             // Preserve request state when only a duplicate character row
             // happens to carry Seerr's mediaInfo object.
-            .Select(static group => ShapeSearchResult(
+            .Select(group => ShapeSearchResult(
                 group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
-                ?? group.First()))
+                ?? group.First(),
+                facts ?? ArrFacts.None))
             .ToArray();
         return new SeerrPageResponse<SeerrResultResponse>(
             1,
@@ -690,10 +753,12 @@ public sealed class SeerrGateway
                 Strings(genre.Genre["backdrops"]).ToArray()))
             .ToArray();
 
-    private static SeerrResultResponse ShapeSearchResult(JsonObject result)
+    private static SeerrResultResponse ShapeSearchResult(JsonObject result, ArrFacts facts)
     {
         var mediaInfo = result["mediaInfo"] as JsonObject;
         var mediaType = JsonRead.String(result, "mediaType") ?? string.Empty;
+        var status = JsonRead.Int32(mediaInfo, "status");
+        var status4k = JsonRead.Int32(mediaInfo, "status4k");
         return new SeerrResultResponse(
             mediaType,
             JsonRead.Int32(result, "id"),
@@ -705,8 +770,10 @@ public sealed class SeerrGateway
             JsonRead.String(result, "posterPath"),
             JsonRead.String(result, "backdropPath"),
             JsonRead.Number(result["voteAverage"]),
-            StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
-            StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1));
+            StatusName(status ?? 1),
+            StatusName(status4k ?? 1),
+            Activity: MediaActivity.Resolve(mediaType, mediaInfo, status, false, null, facts),
+            Activity4k: MediaActivity.Resolve(mediaType, mediaInfo, status4k, true, null, facts));
     }
 
     internal static SeerrRequestDestinationResponse ShapeRequestDestination(
@@ -732,10 +799,16 @@ public sealed class SeerrGateway
             profiles);
     }
 
-    internal static SeerrMediaDetailResponse ShapeMedia(JsonObject detail, string mediaType)
+    internal static SeerrMediaDetailResponse ShapeMedia(
+        JsonObject detail,
+        string mediaType,
+        ArrFacts? facts = null)
     {
         var movie = mediaType == "movie";
+        var arr = facts ?? ArrFacts.None;
         var mediaInfo = detail["mediaInfo"] as JsonObject;
+        var status = JsonRead.Int32(mediaInfo, "status");
+        var status4k = JsonRead.Int32(mediaInfo, "status4k");
         var knownSeasons = Objects(mediaInfo?["seasons"]).ToArray();
         var seasons = Objects(detail["seasons"])
             .Where(static season => (JsonRead.Int32(season, "seasonNumber") ?? 0) > 0)
@@ -744,13 +817,17 @@ public sealed class SeerrGateway
                 var number = JsonRead.Int32(season, "seasonNumber") ?? 0;
                 var known = knownSeasons.FirstOrDefault(
                     item => JsonRead.Int32(item, "seasonNumber") == number);
+                var seasonStatus = JsonRead.Int32(known, "status");
+                var seasonStatus4k = JsonRead.Int32(known, "status4k");
                 return new SeerrSeasonResponse(
                     number,
                     JsonRead.String(season, "name"),
                     JsonRead.Int32(season, "episodeCount") ?? 0,
                     JsonRead.String(season, "airDate"),
-                    StatusName(JsonRead.Int32(known, "status") ?? 1),
-                    StatusName(JsonRead.Int32(known, "status4k") ?? 1));
+                    StatusName(seasonStatus ?? 1),
+                    StatusName(seasonStatus4k ?? 1),
+                    MediaActivity.Resolve(mediaType, mediaInfo, seasonStatus, false, number, arr),
+                    MediaActivity.Resolve(mediaType, mediaInfo, seasonStatus4k, true, number, arr));
             })
             .ToArray();
         var runtime = JsonRead.Int32(detail, "runtime")
@@ -772,8 +849,8 @@ public sealed class SeerrGateway
             JsonRead.String(detail, "backdropPath"),
             JsonRead.Number(detail["voteAverage"]),
             JsonRead.Integer(detail["voteCount"]),
-            StatusName(JsonRead.Int32(mediaInfo, "status") ?? 1),
-            StatusName(JsonRead.Int32(mediaInfo, "status4k") ?? 1),
+            StatusName(status ?? 1),
+            StatusName(status4k ?? 1),
             null,
             runtime,
             Objects(detail["genres"])
@@ -807,7 +884,9 @@ public sealed class SeerrGateway
             ShapeTrailer(detail),
             ShapeReleaseDates(detail),
             ShapeContentRatings(detail),
-            ShapeNextEpisode(detail));
+            ShapeNextEpisode(detail),
+            MediaActivity.Resolve(mediaType, mediaInfo, status, false, null, arr),
+            MediaActivity.Resolve(mediaType, mediaInfo, status4k, true, null, arr));
     }
 
     internal static SeerrQuotaResponse? ShapeQuota(JsonNode? node)
@@ -959,24 +1038,33 @@ public sealed class SeerrGateway
                 JsonRead.Int32(episode, "episodeNumber"))
             : null;
 
-    internal static SeerrRequestResponse ShapeRequest(JsonObject request)
+    internal static SeerrRequestResponse ShapeRequest(JsonObject request, ArrFacts? facts = null)
     {
         var media = request["media"] as JsonObject;
         var is4k = IsTrue(request, "is4k");
+        var mediaType = JsonRead.String(request, "type")
+            ?? JsonRead.String(media, "mediaType")
+            ?? string.Empty;
+        var mediaStatus = JsonRead.Int32(media, is4k ? "status4k" : "status");
         return new SeerrRequestResponse(
             JsonRead.Int32(request, "id"),
             RequestStatusName(JsonRead.Int32(request, "status") ?? 0),
-            JsonRead.String(request, "type")
-                ?? JsonRead.String(media, "mediaType")
-                ?? string.Empty,
+            mediaType,
             JsonRead.Int32(media, "tmdbId"),
             is4k,
             JsonRead.String(request, "createdAt"),
             JsonRead.String(request, "updatedAt"),
-            StatusName(JsonRead.Int32(media, is4k ? "status4k" : "status") ?? 1),
+            StatusName(mediaStatus ?? 1),
             Objects(request["seasons"])
                 .Select(static season => JsonRead.Int32(season, "seasonNumber") ?? 0)
-                .ToArray());
+                .ToArray(),
+            MediaActivity: MediaActivity.Resolve(
+                mediaType,
+                media,
+                mediaStatus,
+                is4k,
+                null,
+                facts ?? ArrFacts.None));
     }
 
     private static SeerrCapabilitiesResponse Capabilities(ulong permissions, bool movie4k, bool tv4k)

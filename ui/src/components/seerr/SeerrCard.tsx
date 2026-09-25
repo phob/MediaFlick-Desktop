@@ -40,7 +40,7 @@ function Poster({ result }: { result: SeerrResult }) {
         {result.libraryItemId ? (
           <Badge>In your library</Badge>
         ) : (
-          <SeerrStatusBadge status={result.status} />
+          <SeerrStatusBadge status={result.status} activity={result.activity} />
         )}
       </div>
     </div>

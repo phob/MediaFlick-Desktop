@@ -52,6 +52,9 @@ public sealed record SeerrPageResponse<T>(
 /// <summary>
 /// One movie or series. Desktop fills <see cref="LibraryItemId"/> from its
 /// local catalog; the Companion always answers null.
+/// <see cref="Activity"/> explains a <c>processing</c> status: downloading,
+/// searching, in-cinemas, unreleased, or awaiting-episodes. It is null for
+/// every other status and whenever Radarr or Sonarr cannot say.
 /// </summary>
 public sealed record SeerrResultResponse(
     string MediaType,
@@ -64,7 +67,9 @@ public sealed record SeerrResultResponse(
     double? VoteAverage,
     string Status,
     string Status4k,
-    string? LibraryItemId = null);
+    string? LibraryItemId = null,
+    string? Activity = null,
+    string? Activity4k = null);
 
 public sealed record SeerrGenreResponse(int Id, string Name, IReadOnlyList<string> Backdrops);
 
@@ -74,7 +79,9 @@ public sealed record SeerrSeasonResponse(
     int EpisodeCount,
     string? AirDate,
     string Status,
-    string Status4k);
+    string Status4k,
+    string? Activity = null,
+    string? Activity4k = null);
 
 public sealed record SeerrExternalIdsResponse(string? Imdb, int? Tvdb);
 
@@ -144,7 +151,9 @@ public sealed record SeerrMediaDetailResponse(
     SeerrTrailerResponse? Trailer,
     IReadOnlyList<SeerrReleaseDateResponse> ReleaseDates,
     IReadOnlyList<SeerrContentRatingResponse> ContentRatings,
-    SeerrNextEpisodeResponse? NextEpisode);
+    SeerrNextEpisodeResponse? NextEpisode,
+    string? Activity = null,
+    string? Activity4k = null);
 
 public sealed record SeerrQualityProfileResponse(int Id, string Name, bool IsDefault);
 
@@ -167,6 +176,7 @@ public sealed record SeerrRequestResponse(
     string? UpdatedAt,
     string MediaStatus,
     IReadOnlyList<int> Seasons,
-    string? LibraryItemId = null);
+    string? LibraryItemId = null,
+    string? MediaActivity = null);
 
 public sealed record SeerrCancelResponse(bool Cancelled, int Id);

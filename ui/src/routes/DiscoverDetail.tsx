@@ -160,11 +160,11 @@ function Seasons({ detail }: { detail: SeerrMediaDetail }) {
               </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
-              <SeerrStatusBadge status={season.status} />
+              <SeerrStatusBadge status={season.status} activity={season.activity} />
               {season.status4k !== "unknown" && (
                 <span className="flex items-center gap-1">
                   <span className="data-label text-muted-foreground">4K</span>
-                  <SeerrStatusBadge status={season.status4k} />
+                  <SeerrStatusBadge status={season.status4k} activity={season.activity4k} />
                 </span>
               )}
             </div>
@@ -335,11 +335,11 @@ export default function DiscoverDetail() {
         genres={item.genres.map((genre) => ({ label: genre }))}
         status={
           <>
-            {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} />}
+            {item.libraryItemId ? <Badge>In your library</Badge> : <SeerrStatusBadge status={item.status} activity={item.activity} />}
             {item.status4k !== "unknown" && (
               <span className="flex items-center gap-1">
                 <span className="data-label text-muted-foreground">4K</span>
-                <SeerrStatusBadge status={item.status4k} />
+                <SeerrStatusBadge status={item.status4k} activity={item.activity4k} />
               </span>
             )}
           </>

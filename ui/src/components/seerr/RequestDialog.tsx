@@ -73,7 +73,10 @@ function SeasonPicker({
             />
             <span className="text-sm">{seasonLabel(season)}</span>
           </span>
-          <SeerrStatusBadge status={season[is4k ? "status4k" : "status"]} />
+          <SeerrStatusBadge
+            status={season[is4k ? "status4k" : "status"]}
+            activity={season[is4k ? "activity4k" : "activity"]}
+          />
         </Label>
       ))}
     </div>
