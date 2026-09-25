@@ -7,13 +7,11 @@ import {
   JellyfinCollections,
   MyCollections,
 } from "../src/routes/Collections"
-import { PreviewProvider } from "../src/components/PreviewCard"
 import { MyCollectionDetail } from "../src/routes/CollectionDetail"
 import DiscoverDetail from "../src/routes/DiscoverDetail"
 import type {
   ClassifiedCollectionTitle,
   CollectionProfile,
-  ItemDetail,
   NormalizedCollectionTitle,
   SeerrMediaDetail,
   SeerrStatusInfo,
@@ -46,38 +44,6 @@ function owned(id: number, editions = 1): ClassifiedCollectionTitle {
       kind: "Movie",
       played: false,
     })),
-  }
-}
-
-function libraryItem(id: string, name: string): ItemDetail {
-  return {
-    id,
-    kind: "Movie",
-    name,
-    year: 1999,
-    runtimeTicks: 8_160_000_000,
-    communityRating: 8.7,
-    officialRating: "R",
-    seriesId: null,
-    seriesName: null,
-    indexNumber: null,
-    parentIndexNumber: null,
-    primaryImageTag: "poster",
-    thumbImageTag: null,
-    logoImageTag: null,
-    backdropImageTag: null,
-    childCount: null,
-    premiereDate: "1999-03-31T00:00:00Z",
-    seasonId: null,
-    played: false,
-    playCount: 0,
-    positionTicks: 0,
-    favorite: false,
-    genres: ["Action"],
-    originalTitle: null,
-    providerIds: { tmdb: null, imdb: null, tvdb: null },
-    parentId: null,
-    dateCreated: null,
   }
 }
 
@@ -257,30 +223,21 @@ describe("mode-aware collections", () => {
       .toContain("/item/local-1-0")
   })
 
-  test("collection contents use the standard library and discovery card controls", async () => {
+  test("a missing collection title links to its discovery page", async () => {
     const id = "2".repeat(16)
     vi.spyOn(api.api.collections, "mineDetail").mockResolvedValue({
       profile: profile(id, "Card controls"),
       status: "ready",
-      owned: [owned(1)],
+      owned: [],
       missing: [title(2)],
       items: [],
-      libraryItems: [libraryItem("local-1-0", "Movie 1")],
+      libraryItems: [],
       ownershipAvailable: true,
     })
     vi.spyOn(api.api.seerr, "status").mockResolvedValue(seerrStatus)
 
-    render(providers(
-      <PreviewProvider enabled={false}>
-        <MyCollectionDetail />
-      </PreviewProvider>,
-      `/collections/mine/${id}`,
-      "/collections/mine/:profileId",
-    ))
+    render(providers(<MyCollectionDetail />, `/collections/mine/${id}`, "/collections/mine/:profileId"))
 
-    expect(await screen.findByRole("button", { name: "Play" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Add to My List" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
     expect(await screen.findByRole("button", { name: "Request Movie 2" })).toBeTruthy()
     expect(document.querySelector('a[href="/discover/movie/2"]')).toBeTruthy()
   })

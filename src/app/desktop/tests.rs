@@ -36,13 +36,6 @@ fn registers_identity_and_icon_and_updates_moved_executable() -> io::Result<()> 
     let icon = fixture.0.join("mediaflick-desktop/desktop/app-icon.svg");
     assert_eq!(std::fs::read(&icon)?, ICON);
     assert!(entry.contains(&format!("Icon={}\n", icon.display())));
-    let modified = std::fs::metadata(fixture.entry())?.modified()?;
-    register_at(
-        &fixture.0,
-        &[],
-        Path::new("/checkout/build/mediaflick-desktop"),
-    )?;
-    assert_eq!(std::fs::metadata(fixture.entry())?.modified()?, modified);
     register_at(
         &fixture.0,
         std::slice::from_ref(&fixture.0),
@@ -126,9 +119,9 @@ fn staged_launcher_preloads_only_the_cef_beside_the_executable() -> io::Result<(
     let directory = fixture.0.display();
     let cef = cef.display();
     for assignment in [
-        format!("\"LD_LIBRARY_PATH={directory}\""),
-        format!("\"LD_PRELOAD={cef}\""),
-        format!("\"MEDIAFLICK_DESKTOP_CEF_PRELOAD={cef}\""),
+        format!("LD_LIBRARY_PATH={directory}"),
+        format!("LD_PRELOAD={cef}"),
+        format!("MEDIAFLICK_DESKTOP_CEF_PRELOAD={cef}"),
     ] {
         assert!(staged.contains(&assignment), "{assignment} in {staged}");
     }

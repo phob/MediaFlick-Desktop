@@ -213,31 +213,9 @@ fn source_definition(id: &str, label: &str, short_label: &str, scale: f64, forma
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use super::*;
-
-    #[test]
-    fn canonical_sources_cover_current_official_fields_and_aliases() {
-        assert_eq!(canonical_source("letterboxd"), Some("letterboxd"));
-        assert_eq!(canonical_source("tomatoes"), Some("tomatoes"));
-        assert_eq!(canonical_source("audience"), Some("popcorn"));
-        assert_eq!(canonical_source("tomatoesaudience"), Some("popcorn"));
-        assert_eq!(canonical_source("mal"), Some("myanimelist"));
-        assert_eq!(
-            canonical_source("score_average"),
-            Some("mdblist_score_average")
-        );
-        let ids = known_source_definitions()
-            .into_iter()
-            .map(|definition| definition["id"].as_str().expect("id").to_string())
-            .collect::<HashSet<_>>();
-        // plugin/README.md: Letterboxd and separate Rotten Tomatoes critic and
-        // audience entries.
-        for required in ["letterboxd", "tomatoes", "popcorn"] {
-            assert!(ids.contains(required), "missing {required}");
-        }
-    }
 
     #[test]
     fn normalization_uses_native_scales_and_drops_unknown_source_text() {

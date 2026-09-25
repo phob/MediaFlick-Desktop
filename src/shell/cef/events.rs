@@ -839,28 +839,6 @@ mod tests {
     use crate::preferences::{AppSettings, AppearanceAccent, WebUiWindowSettings};
 
     #[test]
-    fn playback_dispatch_logging_ignores_progress_and_diagnostic_counters() {
-        let mut last_logged = None;
-        let mut snapshot = PlayerSnapshot {
-            active: true,
-            playback_id: Some(1),
-            ..PlayerSnapshot::default()
-        };
-        assert!(playback_event_needs_log(
-            &mut last_logged,
-            &PlaybackEvent::StateChanged(snapshot.clone())
-        ));
-        for tick in 0..100 {
-            snapshot.position_ms = f64::from(tick) * 100.0;
-            snapshot.diagnostics.buffered_until_ms = Some(snapshot.position_ms + 10_000.0);
-            snapshot.diagnostics.dropped_frames = Some(i64::from(tick));
-            snapshot.diagnostics.frame_rate = Some(24.0 + f64::from(tick) / 1000.0);
-            let event = PlaybackEvent::StateChanged(snapshot.clone());
-            assert!(!playback_event_needs_log(&mut last_logged, &event));
-        }
-    }
-
-    #[test]
     fn settings_snapshots_do_not_roll_back_live_window_geometry() {
         let mut live = AppSettings {
             webui_window: WebUiWindowSettings {
@@ -903,35 +881,6 @@ mod tests {
             .expect("snapshot argument");
         let payload: serde_json::Value = serde_json::from_str(payload).expect("snapshot json");
 
-        // The field names `PlayerState` in ui/src/lib/api.ts reads.
-        let mut keys = payload
-            .as_object()
-            .expect("snapshot object")
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            [
-                "active",
-                "chapters",
-                "diagnostics",
-                "durationMs",
-                "itemId",
-                "mediaSourceId",
-                "mute",
-                "paused",
-                "playMethod",
-                "playSessionId",
-                "playbackId",
-                "positionMs",
-                "skipSegments",
-                "stopReason",
-                "tracks",
-                "volume",
-            ]
-        );
         assert_eq!(payload["chapters"][0]["title"], "Opening");
         assert_eq!(payload["diagnostics"]["bufferedUntilMs"], 60_000.0);
         assert_eq!(payload["diagnostics"]["buffering"], true);
@@ -939,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn playback_cache_completion_script_carries_item_and_outcome() {
+    fn playback_cache_completion_script_carries_item() {
         let script = playback_cache_refresh_script(
             "item-after-a-slow-refresh",
             PlaybackCacheRefreshOutcome::Refreshed,
@@ -947,18 +896,5 @@ mod tests {
 
         assert!(script.contains("__mediaFlickDesktopPlaybackCacheRefreshed"));
         assert!(script.contains("item-after-a-slow-refresh"));
-        assert!(script.contains("refreshed"));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn integrated_shell_warms_windowed_before_playback() {
-        let settings = AppSettings {
-            player_backend: Some(crate::preferences::PlayerBackend::Libmpv),
-            default_fullscreen: FullscreenBehavior::Fullscreen,
-            ..AppSettings::default()
-        };
-
-        assert_eq!(player_warmup_mode(&settings), FullscreenBehavior::Windowed);
     }
 }

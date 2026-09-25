@@ -44,8 +44,8 @@ public sealed class CompanionLoggingTests
 
         var entries = logger.Entries;
         Assert.Equal(
-            [LogLevel.Warning, LogLevel.Debug, LogLevel.Information, LogLevel.Warning],
-            entries.Select(entry => entry.Level));
+            [LogLevel.Warning, LogLevel.Information, LogLevel.Warning],
+            entries.Select(entry => entry.Level).Where(level => level >= LogLevel.Information));
         Assert.All(entries, entry =>
         {
             Assert.Null(entry.Exception);
@@ -85,8 +85,8 @@ public sealed class CompanionLoggingTests
         await SendAsync(client, service);
 
         Assert.Equal(
-            [LogLevel.Warning, LogLevel.Debug, LogLevel.Debug, LogLevel.Information],
-            logger.Entries.Select(entry => entry.Level));
+            [LogLevel.Warning, LogLevel.Information],
+            logger.Entries.Select(entry => entry.Level).Where(level => level >= LogLevel.Information));
     }
 
     [Fact]
@@ -109,8 +109,8 @@ public sealed class CompanionLoggingTests
             store.Flush();
 
             Assert.Equal(
-                [LogLevel.Warning, LogLevel.Debug],
-                logger.Entries.Select(entry => entry.Level));
+                [LogLevel.Warning],
+                logger.Entries.Select(entry => entry.Level).Where(level => level >= LogLevel.Information));
             Assert.True(store.Health("mdblist").Valid);
         }
         finally

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Models;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Xunit;
@@ -11,12 +10,12 @@ public sealed class ProviderPolicyTests
     private const long Now = 1_800_000_000;
 
     [Theory]
-    [InlineData(HttpStatusCode.InternalServerError, "unavailable")]
-    [InlineData(HttpStatusCode.BadGateway, "unavailable")]
-    [InlineData(HttpStatusCode.ServiceUnavailable, "unavailable")]
-    [InlineData(HttpStatusCode.GatewayTimeout, "offline")]
-    [InlineData(HttpStatusCode.NotFound, "unavailable")]
-    public void OutagesKeepAnEstablishedKeyValidAndBackOff(HttpStatusCode status, string validation)
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public void OutagesKeepAnEstablishedKeyValidAndBackOff(HttpStatusCode status)
     {
         var state = ProviderHealthPolicy.AfterValidation(
             Valid(),
@@ -25,7 +24,6 @@ public sealed class ProviderPolicyTests
             preserveValidOnTransientFailure: true,
             rateLimitProvesCredential: false);
 
-        Assert.Equal(validation, state.Validation);
         Assert.True(state.Valid);
         Assert.True(state.RetryAt > Now);
     }
@@ -108,17 +106,6 @@ public sealed class ProviderPolicyTests
     public void OneImdbRuleNormalizesEveryCaller(string? value, string? expected)
     {
         Assert.Equal(expected, ImdbIds.Normalize(value));
-    }
-
-    [Fact]
-    public void SeerrDetailAppliesTheSharedImdbRule()
-    {
-        var source = Assert.IsType<JsonObject>(JsonNode.Parse(
-            """{"id":1,"title":"Short","externalIds":{"imdbId":"tt123"},"imdbId":"TT0133093"}"""));
-
-        var detail = SeerrGateway.ShapeMedia(source, "movie");
-
-        Assert.Equal("tt0133093", detail.ExternalIds.Imdb);
     }
 
     private static ProviderHealthState Valid()

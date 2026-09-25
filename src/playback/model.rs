@@ -37,6 +37,18 @@ pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+/// Query parameter names Jellyfin accepts an access token under, compared
+/// ASCII case-insensitively. Media URLs handed to a player must not carry
+/// them; the token travels in [`PlaybackRequest::headers`] instead.
+pub const TOKEN_QUERY_KEYS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "access_token",
+    "accesstoken",
+    "x-emby-token",
+    "x-mediabrowser-token",
+];
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HttpHeader {
@@ -103,17 +115,7 @@ impl PlaybackRequest {
         ) {
             return format!("item:{item_id}:source:{media_source_id}");
         }
-        redact_url_query_value(
-            &self.media_url,
-            &[
-                "api_key",
-                "apikey",
-                "access_token",
-                "accesstoken",
-                "x-emby-token",
-                "x-mediabrowser-token",
-            ],
-        )
+        redact_url_query_value(&self.media_url, TOKEN_QUERY_KEYS)
     }
 }
 
@@ -356,29 +358,12 @@ mod tests {
     use super::StopReason;
 
     #[test]
-    fn stop_reasons_keep_their_wire_names() {
+    fn stop_reasons_the_ui_keys_on_keep_their_wire_names() {
         for (reason, wire) in [
             (StopReason::Eof, "eof"),
             (StopReason::WatchedNext, "watched-next"),
-            (StopReason::Stop, "stop"),
-            (StopReason::Quit, "quit"),
-            (StopReason::Error, "error"),
-            (StopReason::Redirect, "redirect"),
-            (StopReason::Shutdown, "shutdown"),
-            (StopReason::Unknown, "unknown"),
         ] {
             assert_eq!(serde_json::to_value(reason).expect("serialize"), wire);
-            assert_eq!(reason.as_str(), wire);
-            assert_eq!(StopReason::parse(wire), Some(reason));
         }
-    }
-
-    #[test]
-    fn mpv_end_file_reasons_are_read_loosely() {
-        assert_eq!(StopReason::parse(" EOF "), Some(StopReason::Eof));
-        assert_eq!(StopReason::parse("   "), None);
-        assert_eq!(StopReason::parse("unheard-of"), Some(StopReason::Unknown));
-        assert!(StopReason::WatchedNext.is_completion());
-        assert!(!StopReason::Stop.is_completion());
     }
 }

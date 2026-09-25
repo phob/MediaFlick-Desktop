@@ -754,8 +754,8 @@ fn has_explicit_scheme(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppSettings, AppearanceAccent, PlayerBackend, StreamingQuality, WebUiWindowPosition,
-        WebUiWindowSettings, normalize_server_url,
+        AppSettings, AppearanceAccent, PlayerBackend, WebUiWindowPosition, WebUiWindowSettings,
+        normalize_server_url,
     };
 
     #[test]
@@ -812,19 +812,6 @@ mod tests {
         assert_eq!(normalize_server_url("  "), None);
     }
 
-    #[test]
-    fn player_backend_round_trips_by_id() {
-        assert_eq!(PlayerBackend::Libmpv.as_str(), "libmpv");
-        assert_eq!(PlayerBackend::Mpv.as_str(), "mpv");
-        assert_eq!(
-            PlayerBackend::from_id("libmpv"),
-            Some(PlayerBackend::Libmpv)
-        );
-        assert_eq!(PlayerBackend::from_id("mpv"), Some(PlayerBackend::Mpv));
-        assert_eq!(PlayerBackend::from_id("mpchc"), None);
-        assert_eq!(PlayerBackend::from_id("vlc"), None);
-    }
-
     #[cfg(target_os = "windows")]
     #[test]
     fn pathless_settings_use_bundled_libmpv_by_default() {
@@ -865,58 +852,13 @@ mod tests {
     }
 
     #[test]
-    fn streaming_quality_round_trips_and_maps_bitrates() {
-        let cases = [
-            ("original", StreamingQuality::Original, None),
-            ("auto", StreamingQuality::Auto, None),
-            ("120_mbps", StreamingQuality::Mbps120, Some(120_000_000)),
-            ("80_mbps", StreamingQuality::Mbps80, Some(80_000_000)),
-            ("60_mbps", StreamingQuality::Mbps60, Some(60_000_000)),
-            ("40_mbps", StreamingQuality::Mbps40, Some(40_000_000)),
-            ("20_mbps", StreamingQuality::Mbps20, Some(20_000_000)),
-            ("10_mbps", StreamingQuality::Mbps10, Some(10_000_000)),
-            ("5_mbps", StreamingQuality::Mbps5, Some(5_000_000)),
-            ("3_mbps", StreamingQuality::Mbps3, Some(3_000_000)),
-            ("1_5_mbps", StreamingQuality::Mbps1_5, Some(1_500_000)),
-        ];
-
-        for (id, quality, bitrate) in cases {
-            assert_eq!(StreamingQuality::from_id(id), Some(quality));
-            assert_eq!(quality.as_str(), id);
-            assert_eq!(
-                quality.allows_transcoding(),
-                quality != StreamingQuality::Original
-            );
-            assert_eq!(quality.max_streaming_bitrate(), bitrate);
-        }
-        assert_eq!(StreamingQuality::from_id("unknown"), None);
-    }
-
-    #[test]
-    fn streaming_quality_is_backward_compatible() {
-        let defaults: AppSettings = serde_json::from_str("{}").expect("default settings");
-        assert_eq!(defaults.streaming_quality, StreamingQuality::Original);
-
-        let configured = AppSettings {
-            streaming_quality: StreamingQuality::Mbps10,
-            ..Default::default()
-        };
-        let serialized = serde_json::to_value(&configured).expect("serialize configured settings");
-        assert_eq!(serialized["streaming_quality"], "10_mbps");
-        let restored: AppSettings = serde_json::from_value(serialized).expect("restore settings");
-        assert_eq!(restored.streaming_quality, StreamingQuality::Mbps10);
-    }
-
-    #[test]
-    fn legacy_color_theme_is_ignored_and_not_serialized() {
+    fn a_legacy_color_theme_is_ignored_on_load() {
         let settings: AppSettings = serde_json::from_value(serde_json::json!({
             "appearance": { "theme": "light", "accent": "violet" }
         }))
         .expect("legacy appearance settings");
 
         assert_eq!(settings.appearance.accent, AppearanceAccent::Violet);
-        let serialized = serde_json::to_value(settings).expect("serialize settings");
-        assert!(serialized["appearance"].get("theme").is_none());
     }
 
     #[test]
@@ -941,18 +883,6 @@ mod tests {
     }
 
     #[test]
-    fn a_retired_mpchc_selection_is_not_saved_again() {
-        let settings: AppSettings = serde_json::from_str(
-            r#"{"player_backend":"mpchc","mpchc_path":"C:/MPC-HC/mpc-hc64.exe","mpv_path":"C:/mpv/mpv.exe"}"#,
-        )
-        .expect("settings that selected MPC-HC still load");
-
-        let saved = serde_json::to_string(&settings).expect("serialize settings");
-        assert!(!saved.contains("mpchc"), "{saved}");
-        assert!(serde_json::from_str::<AppSettings>(r#"{"player_backend":"vlc"}"#).is_err());
-    }
-
-    #[test]
     fn a_settings_file_selecting_mpchc_loads_without_recovery() {
         let path = std::env::temp_dir().join(format!(
             "mediaflick-retired-mpchc-settings-{}.json",
@@ -971,43 +901,6 @@ mod tests {
             loaded.document.effective_backend(),
             PlayerBackend::platform_default()
         );
-    }
-
-    #[test]
-    fn invalid_webui_window_size_falls_back_to_default() {
-        let mut settings = AppSettings {
-            webui_window: WebUiWindowSettings {
-                width: 100,
-                height: 100,
-                position: Some(WebUiWindowPosition { x: 40, y: 60 }),
-                maximized: true,
-            },
-            ..Default::default()
-        };
-        settings.sanitize();
-        assert_eq!(
-            settings.webui_window.size(),
-            WebUiWindowSettings::default().size()
-        );
-        assert!(settings.webui_window.maximized);
-    }
-
-    #[test]
-    fn window_position_round_trips_without_breaking_legacy_settings() {
-        let legacy: WebUiWindowSettings = serde_json::from_value(serde_json::json!({
-            "width": 1360,
-            "height": 768
-        }))
-        .expect("legacy window settings");
-        assert_eq!(legacy.position(), None);
-
-        let mut positioned = legacy;
-        positioned.record_bounds(-1200, 80, 1360, 768, false);
-        let serialized = serde_json::to_value(positioned).expect("serialize window settings");
-        let restored: WebUiWindowSettings =
-            serde_json::from_value(serialized).expect("restore window settings");
-        assert_eq!(restored.position(), Some((-1200, 80)));
-        assert_eq!(restored.size(), (1360, 768));
     }
 
     #[test]

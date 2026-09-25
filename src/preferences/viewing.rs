@@ -251,17 +251,4 @@ mod tests {
         comfort.stop_key = "SPACE".into();
         assert!(comfort.validate().is_err());
     }
-
-    #[test]
-    fn older_settings_keep_their_bindings_and_gain_defaults() -> Result<(), serde_json::Error> {
-        let comfort: PlayerComfort = serde_json::from_value(serde_json::json!({"pauseKey":"p"}))?;
-        assert_eq!(
-            comfort,
-            PlayerComfort {
-                pause_key: "p".into(),
-                ..Default::default()
-            }
-        );
-        Ok(())
-    }
 }

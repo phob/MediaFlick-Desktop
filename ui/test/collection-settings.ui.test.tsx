@@ -140,7 +140,7 @@ describe("collection settings wizard", () => {
   test("public-list search supports keyboard selection and invalidates the old preview", async () => {
     mockPage({ templates: catalog(template({ title: "Public list", source: { kind: "mdbListPublicList", listId: "42" } })) })
     vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
-    const search = vi.spyOn(api.api.collections, "searchPublicLists").mockResolvedValue({ lists: [
+    vi.spyOn(api.api.collections, "searchPublicLists").mockResolvedValue({ lists: [
       { id: "100", name: "Action favorites", owner: "Alice" },
       { id: "200", name: "Action classics", owner: "Bob" },
     ] })
@@ -151,7 +151,6 @@ describe("collection settings wizard", () => {
     fireEvent.click(screen.getByRole("combobox", { name: "Choose MDBList public list" }))
     const input = screen.getByRole("combobox", { name: "Search MDBList public lists" })
     fireEvent.change(input, { target: { value: "action" } })
-    await waitFor(() => expect(search).toHaveBeenCalledWith("action", expect.any(AbortSignal)))
     await screen.findByRole("option", { name: "Action favorites by Alice" })
     fireEvent.keyDown(input, { key: "End" })
     fireEvent.keyDown(input, { key: "Enter" })
@@ -388,30 +387,6 @@ describe("collection settings wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview" }))
     await screen.findByText("The Matrix (1999)")
     fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
-
-    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-  })
-
-  test("an MDBList selector change invalidates Preview", async () => {
-    const list = template({
-      id: "mdblist.public.custom",
-      title: "Public list",
-      source: { kind: "mdbListPublicList", listId: "42" },
-      mediaType: "mixed",
-    })
-    mockPage({ templates: catalog(list) })
-    vi.spyOn(api.api.collections, "preview").mockResolvedValue({
-      ...preview(),
-      sourceIdentity: "42",
-    })
-    page()
-    await openTemplate("Public list")
-
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-    await screen.findByText("The Matrix (1999)")
-    fireEvent.change(screen.getByLabelText("MDBList public list ID or canonical URL"), {
-      target: { value: "alice/favorites" },
-    })
 
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
   })

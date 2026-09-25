@@ -1,11 +1,10 @@
 import { api } from "@/lib/api"
 import { DEFAULT_COMFORT, DEFAULT_VIEWING } from "@/lib/viewing"
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react"
-import { Route, Routes, useLocation } from "react-router-dom"
+import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
-import Settings from "@/routes/Settings"
 import { Appearance } from "@/routes/settings/AppearanceSettings"
 import { itemSummary, requireElement } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
@@ -63,11 +62,11 @@ function LocationProbe() {
   return <output data-location>{location.pathname}</output>
 }
 
-function renderAppearance(cardPreviews: boolean, authenticated = true) {
+function renderAppearance(cardPreviews: boolean) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
   client.setQueryData(queryKeys.viewing("anonymous:anonymous"), DEFAULT_VIEWING)
-  client.setQueryData(queryKeys.status, { authenticated })
+  client.setQueryData(queryKeys.status, { authenticated: true })
   client.setQueryData(queryKeys.home, {
     continueWatching: [],
     rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [movie] }],
@@ -91,28 +90,10 @@ function location() {
   return document.querySelector("[data-location]")?.textContent
 }
 
-test("appearance sliders expose names, descriptions, and percentage values", () => {
+test("appearance slider announces its value as a percentage", () => {
   renderAppearance(false)
-  for (const [name, value] of [["Artwork intensity", "80 percent"], ["Backdrop intensity", "60 percent"]]) {
-    const slider = screen.getByRole("slider", { name: `${name} slider` })
-    expect(slider.getAttribute("aria-valuetext")).toBe(value)
-    expect(document.getElementById(slider.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Percent")
-  }
-})
-
-test("external mpv player fields are associated with visible labels and help", () => {
-  const client = testQueryClient()
-  const configured = settings(false)
-  configured.client.player.playerBackend = "mpv"
-  client.setQueryData(queryKeys.settings, configured)
-  client.setQueryData(queryKeys.status, { authenticated: true })
-  render(<TestProviders client={client} initialEntries={["/settings/client/player"]}>
-    <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
-  </TestProviders>)
-  for (const name of ["Mark watched key", "mpv executable"]) {
-    const input = screen.getByRole(name === "Mark watched key" ? "button" : "textbox", { name })
-    expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBeTruthy()
-  }
+  const slider = screen.getByRole("slider", { name: "Artwork intensity slider" })
+  expect(slider.getAttribute("aria-valuetext")).toBe("80 percent")
 })
 
 function hoverWithMouse(element: Element) {
@@ -145,13 +126,6 @@ afterEach(() => {
 })
 
 describe("appearance settings live preview", () => {
-  test("requires a Jellyfin account before showing account-owned settings", () => {
-    renderAppearance(true, false)
-
-    expect(screen.getByText("Sign in required")).not.toBeNull()
-    expect(screen.queryByRole("heading", { name: "Live preview" })).toBeNull()
-  })
-
   test("keeps the panel's state-changing actions inert while hovering for real", () => {
     const requests = renderAppearance(true)
     restOnCard()

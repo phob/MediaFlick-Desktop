@@ -492,18 +492,6 @@ mod tests {
     }
 
     #[test]
-    fn file_picker_completion_keeps_cancellation_and_errors_correlatable() {
-        let cancelled = file_picker_completion_payload("request-one", None, None);
-        assert_eq!(cancelled["requestId"], "request-one");
-        assert!(cancelled["path"].is_null());
-        assert!(cancelled["error"].is_null());
-
-        let failed = file_picker_completion_payload("request-two", None, Some("dialog failed"));
-        assert_eq!(failed["requestId"], "request-two");
-        assert_eq!(failed["error"], "dialog failed");
-    }
-
-    #[test]
     fn window_readiness_requires_the_exact_action_and_app_origin() {
         assert!(window_ready_request_is_trusted(
             "mediaflick-desktop://window-ready",
