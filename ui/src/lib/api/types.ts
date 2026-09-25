@@ -554,6 +554,18 @@ export type SeerrStatus =
   | "available"
   | "blacklisted"
 
+/**
+ * Why a `processing` title is not available yet, from Seerr's download queue
+ * and the Companion's Radarr/Sonarr lookup. Absent or null when neither can
+ * say, including from Companions that predate the field.
+ */
+export type SeerrActivity =
+  | "downloading"
+  | "searching"
+  | "in-cinemas"
+  | "unreleased"
+  | "awaiting-episodes"
+
 /** Normalized request state returned by Companion's Seerr contract. */
 export type SeerrRequestStatus = "unknown" | "pending" | "approved" | "declined" | "failed"
 
@@ -573,6 +585,8 @@ export interface SeerrResult {
   voteAverage: number | null
   status: SeerrStatus
   status4k: SeerrStatus
+  activity?: SeerrActivity | null
+  activity4k?: SeerrActivity | null
   libraryItemId: string | null
   /** Watch state from the local catalog join, for owned movies. */
   played?: boolean
@@ -590,6 +604,8 @@ export interface SeerrSeason {
   airDate: string | null
   status: SeerrStatus
   status4k: SeerrStatus
+  activity?: SeerrActivity | null
+  activity4k?: SeerrActivity | null
 }
 
 interface SeerrCastMember {
@@ -681,6 +697,7 @@ export interface SeerrRequest {
   createdAt: string | null
   updatedAt: string | null
   mediaStatus: SeerrStatus
+  mediaActivity?: SeerrActivity | null
   seasons: number[]
   libraryItemId: string | null
 }

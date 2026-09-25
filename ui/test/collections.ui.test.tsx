@@ -280,7 +280,7 @@ describe("mode-aware collections", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Request Movie 2" }))
     fireEvent.click(screen.getByRole("button", { name: "Request" }))
 
-    expect(await screen.findByText("Downloading")).toBeTruthy()
+    expect(await screen.findByText("Processing")).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Request Movie 2" })).toBeNull()
   })
 
