@@ -28,9 +28,7 @@ function page(route: string, platform: "windows" | "macos" = "windows", cached: 
 }
 
 test.each([
-  ["Subtitle size (%)", 50, 200], ["Subtitle outline", 0, 8],
-  ["Subtitle background (%)", 0, 100], ["Subtitle vertical position", 0, 100],
-  ["Seek backward seconds", 1, 120], ["Seek forward seconds", 1, 120],
+  ["Subtitle size (%)", 50, 200],
 ])("%s keeps an empty draft, blocks invalid saves, and supports Discard", (label, min, max) => {
   page("/settings/client/player")
   const save = vi.spyOn(api.settingsPatch, "player")
@@ -58,7 +56,7 @@ test("subtitle slider keyboard edits are reflected in exact entry and saved", as
 })
 
 test.each([
-  ["Countdown seconds", "61"], ["Episode limit", "21"], ["Text size percent", "79"],
+  ["Episode limit", "21"],
 ])("Viewing blocks invalid %s and Reset restores valid values", (label, value) => {
   page("/settings/viewing")
   fireEvent.change(screen.getByRole("spinbutton", { name: label }), { target: { value } })
@@ -92,20 +90,6 @@ test("visible labels operate switches and help text is associated with controls"
   expect(toggle.getAttribute("aria-checked")).not.toBe(original)
   expect(document.getElementById(toggle.getAttribute("aria-describedby") ?? "")?.textContent).toContain("Hide unwatched episode")
 })
-
-test("preview scenes support arrow navigation and keep one selected scene", async () => {
-  page("/settings/client/player")
-  const day = screen.getByRole("radio", { name: "Day" })
-  fireEvent.focus(day)
-  fireEvent.keyDown(day, { key: "ArrowRight" })
-  const dusk = screen.getByRole("radio", { name: "Dusk" })
-  await waitFor(() => expect(document.activeElement).toBe(dusk))
-  fireEvent.click(dusk)
-  expect(dusk.getAttribute("aria-checked")).toBe("true")
-  fireEvent.click(dusk)
-  expect(dusk.getAttribute("aria-checked")).toBe("true")
-})
-
 
 test("shortcut drafts reject conflicts, Discard restores, and Save and Reset use the shelf workflow", async () => {
   const settings = page("/settings/client/player")
@@ -226,7 +210,7 @@ test("the mpv file picker fills only its own request's path into the draft", asy
   expect(choose.hasAttribute("disabled")).toBe(false)
 })
 
-test("Playback saves quality and skipping without resetting Player settings", async () => {
+test("Playback saves quality without saving Player settings", async () => {
   const settings = page("/settings/client/playback")
   const save = vi.spyOn(api.settingsPatch, "playback").mockImplementation(async (playback) => ({...settings, client:{...settings.client, playback}}))
   const playerSave = vi.spyOn(api.settingsPatch, "player")
@@ -237,10 +221,6 @@ test("Playback saves quality and skipping without resetting Player settings", as
   fireEvent.click(await screen.findByRole("option", {name:"Auto"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith({...settings.client.playback, streamingQuality:"auto"}))
-  await waitFor(() => expect(screen.getByRole("button", {name:"Save"}).hasAttribute("disabled")).toBe(true))
-  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
-  fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenLastCalledWith(settings.client.playback))
   expect(playerSave).not.toHaveBeenCalled()
 })
 

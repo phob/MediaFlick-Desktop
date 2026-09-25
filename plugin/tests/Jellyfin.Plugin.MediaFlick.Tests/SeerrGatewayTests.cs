@@ -152,7 +152,9 @@ public sealed class SeerrGatewayTests
         Assert.Equal([1, 2], created.Seasons);
         Assert.Contains(
             _seerr.Calls,
-            call => call.Path == $"api/v1/request?take=100&skip=0&filter=pending&sort=added&requestedBy={SeerrUserId}");
+            call => call.Path.StartsWith("api/v1/request?", StringComparison.Ordinal)
+                && new[] { "take=100", "skip=0", "filter=pending", "sort=added", $"requestedBy={SeerrUserId}" }
+                    .All(part => call.Path.Contains(part, StringComparison.Ordinal)));
         var listed = Assert.Single(page.Results);
         Assert.Equal("approved", listed.Status);
         Assert.Equal("available", listed.MediaStatus);

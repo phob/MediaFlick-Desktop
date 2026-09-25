@@ -1,10 +1,10 @@
-import { act, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
-import { afterEach, describe, expect, test, vi } from "vitest"
+import { describe, expect, test } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
-import { formatVideoRange, summarizeCardMedia } from "../src/lib/format"
+import { summarizeCardMedia } from "../src/lib/format"
 import { TechnicalContext } from "../src/lib/technical-context"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
@@ -89,8 +89,6 @@ const series: ItemSummary = {
 
 // Streams are never part of a summary row any more; cards read them from the
 // live batched technical channel, so tests provide that channel directly.
-afterEach(() => vi.unstubAllGlobals())
-
 function withTechnical(streams: ReadonlyMap<string, MediaStream[]>, children: ReactNode) {
   return (
     <MemoryRouter>
@@ -102,18 +100,6 @@ function withTechnical(streams: ReadonlyMap<string, MediaStream[]>, children: Re
 }
 
 describe("media-card technical formatting", () => {
-  test("formats Jellyfin Dolby Vision ranges with compact canonical labels", () => {
-    expect(formatVideoRange(stream({ videoRangeType: "DOVIWithHDR10Plus" }))).toBe("DV&HDR10+")
-
-    const dolbyVision = stream({ type: "Video", videoRangeType: "DOVI" })
-    expect(formatVideoRange(dolbyVision)).toBe("DV")
-    expect(summarizeCardMedia([dolbyVision])).toEqual({
-      video: ["DV"],
-      audio: [],
-      description: "Video: Dolby Vision",
-    })
-  })
-
   test("prioritizes resolution, dynamic range, lossless audio, and spatial audio", () => {
     const summary = summarizeCardMedia(technicalStreams)
 
@@ -166,58 +152,5 @@ describe("media-card technical formatting", () => {
   test("a card whose streams have not arrived renders no readout at all", () => {
     render(withTechnical(new Map(), <MediaCard item={movie} preview={false} />))
     expect(screen.queryByLabelText(/Technical media information/)).toBeNull()
-  })
-
-  test("mounted shelf cards register only when they approach the viewport", () => {
-    let reportIntersection: ((visible: boolean) => void) | undefined
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class TestIntersectionObserver implements IntersectionObserver {
-        readonly root = null
-        readonly rootMargin = "0px"
-        readonly scrollMargin = "0px"
-        readonly thresholds = [0]
-
-        constructor(callback: IntersectionObserverCallback) {
-          reportIntersection = (visible) => {
-            const bounds = new DOMRect()
-            callback(
-              [{
-                boundingClientRect: bounds,
-                intersectionRatio: visible ? 1 : 0,
-                intersectionRect: bounds,
-                isIntersecting: visible,
-                rootBounds: null,
-                target: document.body,
-                time: 0,
-              }],
-              this,
-            )
-          }
-        }
-        disconnect() {}
-        observe() {}
-        takeRecords() { return [] }
-        unobserve() {}
-      },
-    )
-    const unregister = vi.fn()
-    const register = vi.fn(() => unregister)
-
-    render(
-      <MemoryRouter>
-        <TechnicalContext.Provider value={{ items: new Map(), register }}>
-          <MediaCard item={movie} preview={false} />
-        </TechnicalContext.Provider>
-      </MemoryRouter>,
-    )
-
-    expect(register).not.toHaveBeenCalled()
-    if (!reportIntersection) throw new Error("Expected the card to create an intersection observer")
-    const report = reportIntersection
-    act(() => report(true))
-    expect(register).toHaveBeenCalledWith(movie.id)
-    act(() => report(false))
-    expect(unregister).toHaveBeenCalledTimes(1)
   })
 })

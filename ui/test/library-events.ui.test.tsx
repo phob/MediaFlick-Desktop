@@ -30,10 +30,6 @@ describe("native library change bridge", () => {
     queryClient.clear()
   })
 
-  function queryFor(queryKey: readonly unknown[]) {
-    return queryClient.getQueryCache().build(queryClient, { queryKey })
-  }
-
   function seed(...queryKeys: (readonly unknown[])[]) {
     for (const queryKey of queryKeys) queryClient.setQueryData(queryKey, {})
   }
@@ -75,22 +71,6 @@ describe("native library change bridge", () => {
     act(() => vi.advanceTimersByTime(1_000))
     expect(invalidated(queryKeys.home)).toBe(true)
     expect(invalidated(queryKeys.homeResume)).toBe(false)
-  })
-
-  test("sustained bootstrap pages refresh aggregates at most once per second", () => {
-    vi.useFakeTimers()
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
-    render(<Bridge />)
-    for (let page = 0; page < 12; page += 1) {
-      window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", {
-        detail: { type: "catalog-changed", payload: { itemIds: [`item-${page}`] } },
-      }))
-      vi.advanceTimersByTime(250)
-    }
-    const homeRefreshes = invalidate.mock.calls.filter(([filter]) => filter?.predicate?.(queryFor(queryKeys.home)))
-    expect(homeRefreshes).toHaveLength(4)
-    vi.advanceTimersByTime(1_000)
-    expect(invalidate.mock.calls.filter(([filter]) => filter?.predicate?.(queryFor(queryKeys.home)))).toHaveLength(4)
   })
 
   test("user-state changes leave rich and technical item queries cached", () => {

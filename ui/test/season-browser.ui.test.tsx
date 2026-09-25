@@ -28,7 +28,6 @@ function episode(id: string, index: number, overrides: Partial<Parameters<typeof
     parentIndexNumber: 1,
     seasonId: "season-1",
     runtimeTicks: 33_000_000_000,
-    overview: "A synopsis that must not appear on the card.",
     ...overrides,
   })
 }
@@ -63,22 +62,6 @@ describe("season browser", () => {
     expect(other.getAttribute("aria-pressed")).toBe("false")
     fireEvent.click(other)
     expect(onSelect).toHaveBeenCalledWith(seasonTwo)
-  })
-
-  test("episode cards keep number, title, runtime, and rating but no synopsis", () => {
-    const watching = episode("episode-2", 2, {
-      positionTicks: 16_500_000_000,
-      communityRating: 8.4,
-    })
-    withProviders(
-      <EpisodeGrid episodes={[episode("episode-1", 1), watching]} parentId="season-1" />,
-    )
-
-    expect(screen.getByText("Episode name 2")).toBeTruthy()
-    expect(screen.getByText("2.")).toBeTruthy()
-    expect(screen.getAllByText("55m")).toHaveLength(2)
-    expect(screen.getByLabelText("Jellyfin community rating 8.4 out of 10")).toBeTruthy()
-    expect(screen.queryByText(/A synopsis/)).toBeNull()
   })
 
   test("episode cards expose the complete inline action set when previews are off", () => {

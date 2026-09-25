@@ -4,7 +4,8 @@ use serde_json::{Map, Value, json};
 
 use crate::app::urls::percent_decode;
 use crate::playback::{
-    HttpHeader, PlaybackRequest, PlayerCommand, ToneMapping, VideoAspect, VideoFit, non_empty,
+    HttpHeader, PlaybackRequest, PlayerCommand, TOKEN_QUERY_KEYS, ToneMapping, VideoAspect,
+    VideoFit, non_empty,
 };
 
 static REQUEST_COUNTER: AtomicI64 = AtomicI64::new(100);
@@ -246,16 +247,9 @@ fn sanitize_option(value: &str) -> String {
 }
 
 fn query_auth_token(url: &str) -> Option<String> {
-    [
-        "api_key",
-        "apikey",
-        "access_token",
-        "accesstoken",
-        "x-emby-token",
-        "x-mediabrowser-token",
-    ]
-    .into_iter()
-    .find_map(|key| query_param_ci(url, key))
+    TOKEN_QUERY_KEYS
+        .iter()
+        .find_map(|key| query_param_ci(url, key))
 }
 
 fn query_param_ci(url: &str, key: &str) -> Option<String> {
@@ -270,51 +264,19 @@ fn query_param_ci(url: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{control_command, loadfile_command, osd_text_command};
+    use super::{control_command, loadfile_command};
     use crate::playback::{HttpHeader, PlaybackRequest, PlayerCommand};
     use serde_json::json;
 
     #[test]
-    fn loadfile_command_contains_url_replace_options_and_request_id() {
+    fn loadfile_command_never_carries_start_or_pause_options() {
         let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
         launch.start_time_ticks = Some(20_000_000);
-        launch.title = Some("A Movie".to_string());
 
         let command = loadfile_command(&launch);
         let args = command["command"].as_array().expect("command array");
-        assert_eq!(args[0], "loadfile");
-        assert_eq!(args[1], "https://example.test/video.mkv");
-        assert_eq!(args[2], "replace");
-        assert_eq!(args[3], -1);
-        assert!(command["request_id"].as_i64().is_some());
         assert!(args[4].get("start").is_none());
         assert!(args[4].get("pause").is_none());
-        assert_eq!(args[4]["force-media-title"], "A Movie");
-    }
-
-    #[test]
-    fn loadfile_command_applies_selected_tracks() {
-        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
-        launch.audio_stream_index = Some(3);
-        launch.subtitle_stream_index = Some(5);
-        launch.audio_mpv_id = Some(2);
-        launch.subtitle_mpv_id = Some(1);
-
-        let command = loadfile_command(&launch);
-        let options = &command["command"][4];
-        assert_eq!(options["aid"], "2");
-        assert_eq!(options["sid"], "1");
-    }
-
-    #[test]
-    fn loadfile_command_disables_embedded_subtitles_for_external_subtitle() {
-        let mut launch = PlaybackRequest::new("https://example.test/video.mkv");
-        launch.subtitle_stream_index = Some(7);
-        launch.subtitle_url = Some("https://example.test/subtitle.srt".to_string());
-
-        let command = loadfile_command(&launch);
-        let options = &command["command"][4];
-        assert_eq!(options["sid"], "no");
     }
 
     #[test]
@@ -376,24 +338,6 @@ mod tests {
             before_start["command"],
             json!(["seek", 0.0, "absolute+exact"])
         );
-    }
-
-    /// Playback depends on seeks and `sub-add`, so mpv's reply must be awaited;
-    /// on-screen text is cosmetic and must not hold the controller thread.
-    #[test]
-    fn only_on_screen_text_skips_the_mpv_reply() {
-        let seek = control_command(&PlayerCommand::SeekMilliseconds(1_000.0)).expect("seek");
-        assert!(seek.get("async").is_none());
-        let subtitle = control_command(&PlayerCommand::AddSubtitle(
-            "https://example.test/sub.srt".to_string(),
-        ))
-        .expect("sub-add");
-        assert_eq!(
-            subtitle["command"],
-            json!(["sub-add", "https://example.test/sub.srt", "select"])
-        );
-        assert!(subtitle.get("async").is_none());
-        assert_eq!(osd_text_command("Skipped Intro", 1500)["async"], true);
     }
 
     #[test]

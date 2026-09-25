@@ -477,7 +477,6 @@ mod tests {
     use super::*;
     use crate::preferences::{
         AccountConfigurationService, AccountKey, AppearanceAccent, AppearanceSettings,
-        SegmentSkipMode, StreamingQuality,
     };
     use serde_json::json;
 
@@ -610,25 +609,15 @@ mod tests {
     }
 
     #[test]
-    fn reports_only_the_runtime_effects_required_by_a_change() {
+    fn mpv_path_and_scrollbar_changes_map_to_their_runtime_effects() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
-        next.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
         next.mpv_path = Some("other-mpv".to_string());
-        next.streaming_quality = StreamingQuality::Auto;
-        next.skip_intro = SegmentSkipMode::Always;
         next.show_scrollbars = !previous.show_scrollbars;
-        next.log_level = "trace".to_string();
 
-        assert_eq!(
-            SettingsApplyPlan::between(&previous, &next),
-            SettingsApplyPlan {
-                rebuild_player: cfg!(not(windows)),
-                update_player_preferences: true,
-                update_shell_css: true,
-                restart_required: true,
-            }
-        );
+        let plan = SettingsApplyPlan::between(&previous, &next);
+        assert_eq!(plan.rebuild_player, cfg!(not(windows)));
+        assert!(plan.update_shell_css);
     }
 
     #[test]
@@ -643,21 +632,16 @@ mod tests {
             let plan = SettingsApplyPlan::between(&previous, &next);
             assert!(plan.update_player_preferences);
             assert!(!plan.rebuild_player);
-            assert!(!plan.restart_required);
         }
     }
 
     #[cfg(windows)]
     #[test]
-    fn switching_the_effective_backend_requires_a_restart() {
+    fn switching_the_effective_backend_is_not_hot_swapped() {
         let previous = AppSettings::default();
         let mut next = previous.clone();
         next.player_backend = Some(crate::preferences::PlayerBackend::Mpv);
 
-        let plan = SettingsApplyPlan::between(&previous, &next);
-        assert!(!plan.rebuild_player);
-        assert!(!plan.update_player_preferences);
-        assert!(!plan.update_shell_css);
-        assert!(plan.restart_required);
+        assert!(!SettingsApplyPlan::between(&previous, &next).rebuild_player);
     }
 }

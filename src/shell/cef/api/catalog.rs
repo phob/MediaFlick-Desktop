@@ -1054,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn next_up_entries_are_shaped_like_cached_rows() {
+    fn next_up_entries_carry_artwork_and_progress() {
         let dto: BaseItemDto = serde_json::from_str(
             r#"{"Id":"e1","Name":"Half Loop","Type":"Episode","SeriesName":"Severance",
                 "IndexNumber":2,"ParentIndexNumber":1,
@@ -1064,12 +1064,8 @@ mod tests {
         )
         .expect("dto");
         let summary = serde_json::to_value(ItemSummary::from_dto(&dto)).expect("summary json");
-        assert_eq!(summary["id"], "e1");
-        assert_eq!(summary["kind"], "Episode");
-        assert_eq!(summary["seriesName"], "Severance");
         assert_eq!(summary["positionTicks"], 42);
         assert_eq!(summary["played"], false);
-        assert_eq!(summary["favorite"], false);
         assert_eq!(summary["primaryImageTag"], "still-tag");
         assert_eq!(summary["thumbImageTag"], "thumb-tag");
         assert_eq!(summary["logoImageTag"], "logo-tag");

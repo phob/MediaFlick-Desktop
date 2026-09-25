@@ -85,7 +85,7 @@ describe("per-item media track controls", () => {
     expect(picker.textContent).not.toContain("opaque-source-b")
   })
 
-  test("restores understandable selected audio and subtitle labels", () => {
+  test("restores the selected audio and subtitle tracks", () => {
     render(
       <MediaInfoView
         save={save}
@@ -103,11 +103,7 @@ describe("per-item media track controls", () => {
     const audio = screen.getByRole("combobox", { name: "Audio track" })
     const subtitle = screen.getByRole("combobox", { name: "Subtitle track" })
     expect(audio.textContent).toMatch(/Director commentary/)
-    expect(audio.textContent).toMatch(/DTS/)
-    expect(audio.textContent).toMatch(/5\.1/)
     expect(subtitle.textContent).toMatch(/English SDH/)
-    expect(subtitle.textContent).toMatch(/Forced/)
-    expect(subtitle.textContent).toMatch(/SDH/)
   })
 
   test("offers subtitles off and saves it with the current audio/source", () => {

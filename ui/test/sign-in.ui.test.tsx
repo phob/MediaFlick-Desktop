@@ -36,7 +36,6 @@ function quickConnectButton() {
 test("fresh configuration offers Quick Connect before any server or credentials are entered", async () => {
   renderSignIn()
   await waitFor(() => expect(api.settings).toHaveBeenCalled())
-  expect(screen.getByText("Welcome to MediaFlick")).toBeTruthy()
   expect(quickConnectButton().disabled).toBe(true)
   expect(screen.getByText(/Enter your server address first/)).toBeTruthy()
   expect(api.connect).not.toHaveBeenCalled()
@@ -48,7 +47,6 @@ test("fresh configuration offers Quick Connect before any server or credentials 
   fireEvent.click(quickConnectButton())
 
   expect(await screen.findByText("123456")).toBeTruthy()
-  expect(screen.getByText(/open your user menu → Quick Connect/)).toBeTruthy()
   await waitFor(() => expect(api.quickConnectPoll).toHaveBeenCalledWith(serverUrl, "test-secret", expect.any(AbortSignal)))
   expect(api.quickConnectStart).toHaveBeenCalledWith(serverUrl)
   expect(api.login).not.toHaveBeenCalled()

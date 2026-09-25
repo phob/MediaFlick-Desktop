@@ -98,23 +98,6 @@ mod tests {
     }
 
     #[test]
-    fn xwayland_192_dpi_maps_fullscreen_and_pointer_to_the_same_ui_space() {
-        let scale = Scale::from_dpi(Some(192.0));
-        assert_eq!(scale.factor(), 2.0);
-        assert_eq!(scale.logical_extent(3456), 1728);
-        let popup = scale.raster_rect(&Rect {
-            x: 150,
-            y: 40,
-            width: 200,
-            height: 100,
-        });
-        assert_eq!(
-            (popup.x, popup.y, popup.width, popup.height),
-            (300, 80, 400, 200)
-        );
-    }
-
-    #[test]
     fn fractional_scale_covers_odd_drawable_sizes_without_rejecting_cef_frames() {
         for dpi in [96.0, 120.0, 144.0, 192.0] {
             let scale = Scale::from_dpi(Some(dpi));

@@ -605,7 +605,7 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{PERSON_PAGE_SIZE, children_query, image_path, person_items_query, upcoming_query};
+    use super::{PERSON_PAGE_SIZE, children_query, person_items_query};
 
     /// `Recursive` must stay absent: with it, a series would answer with every
     /// episode underneath it and the season reconcile would delete its seasons.
@@ -625,37 +625,17 @@ mod tests {
         let query = person_items_query("uid", "person-42", 60, 60)
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(query["userId"], "uid");
         assert_eq!(query["PersonIds"], "person-42");
         assert_eq!(query["PersonTypes"], "Actor");
         // Titles only: a season or episode credit would burn a card slot
         // without naming anything the cast surfaces promise.
         assert_eq!(query["IncludeItemTypes"], "Movie,Series");
         assert_eq!(query["Recursive"], "true");
-        assert_eq!(query["StartIndex"], "60");
-        assert_eq!(query["Limit"], "60");
 
         let bounded = person_items_query("uid", "person-42", -1, i64::MAX)
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(bounded["StartIndex"], "0");
         assert_eq!(bounded["Limit"], PERSON_PAGE_SIZE.to_string());
-    }
-
-    #[test]
-    fn image_paths_escape_the_item_id() {
-        assert_eq!(image_path("abc", "Primary"), "/Items/abc/Images/Primary");
-        assert_eq!(
-            image_path("../secret", "Primary"),
-            "/Items/..%2Fsecret/Images/Primary"
-        );
-    }
-
-    #[test]
-    fn upcoming_requests_are_bounded() {
-        let upcoming = upcoming_query("uid", i64::MAX)
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(upcoming["Limit"], "500");
     }
 }

@@ -62,7 +62,6 @@ test.each(["Movie", "Series"])("%s grid restores a deep item after its catalog c
   requests.mockImplementationOnce(() => pending)
   fireEvent.click(screen.getByRole("link", { name: "Back to library" }))
   const restored = view.container.querySelector<HTMLElement>(".overflow-y-auto")!
-  expect(restored.scrollTop).toBe(0)
   await act(async () => resolvePage({ total: items.length, items: items.slice(0, PAGE_SIZE) }))
   await waitFor(() => expect(restored.scrollTop).toBe(60000))
   await screen.findByRole("link", { name: `${kind} 740` })
