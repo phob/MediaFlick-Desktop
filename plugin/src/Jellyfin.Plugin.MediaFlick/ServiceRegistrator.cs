@@ -21,9 +21,13 @@ public sealed class ServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CalendarService>();
         serviceCollection.AddSingleton<ISeerrTransport>(serviceProvider =>
             new CompanionSeerrTransport(serviceProvider.GetRequiredService<CompanionHttpClient>()));
+        serviceCollection.AddSingleton(serviceProvider => new ArrFactsLookup(
+            new CompanionArrTransport(serviceProvider.GetRequiredService<CompanionHttpClient>()),
+            serviceProvider.GetRequiredService<ILogger<ArrFactsLookup>>()));
         serviceCollection.AddSingleton(serviceProvider => new SeerrGateway(
             serviceProvider.GetRequiredService<ISeerrTransport>(),
-            serviceProvider.GetRequiredService<ILogger<SeerrGateway>>()));
+            serviceProvider.GetRequiredService<ILogger<SeerrGateway>>(),
+            arr: serviceProvider.GetRequiredService<ArrFactsLookup>()));
         serviceCollection.AddSingleton<ProviderCacheStore>(serviceProvider =>
         {
             var dataPath = Plugin.Instance?.DataFolderPath
