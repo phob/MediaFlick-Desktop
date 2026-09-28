@@ -1,9 +1,20 @@
 // flick.media behaviour. The page is complete without it; this adds the
-// accent switch, scroll reveals, in-view video playback, the player and
-// Companion tabs, the gallery lightbox and release-aware download links.
+// accent switch, scroll reveals, in-view video playback, the hero's readouts,
+// the scroll walkthrough, the player and Companion tabs, the gallery lightbox
+// and release-aware download links.
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)")
 const root = document.documentElement
+
+// Replaces an element's text with a short entrance, so a changing title reads
+// as a change rather than a flicker.
+function swapText(element, text) {
+  if (!element || typeof text !== "string" || element.textContent === text) return
+  element.textContent = text
+  element.removeAttribute("data-swapped")
+  void element.offsetWidth
+  element.setAttribute("data-swapped", "")
+}
 
 /* ------------------------------------------------------------ accent */
 
@@ -41,18 +52,62 @@ const onScroll = () => chrome?.toggleAttribute("data-scrolled", scrollY > 8)
 addEventListener("scroll", onScroll, { passive: true })
 onScroll()
 
-const navLinks = [...document.querySelectorAll(".chrome-nav a[href^='#']")]
-const navTargets = navLinks.map((link) => document.querySelector(link.getAttribute("href"))).filter(Boolean)
-const navObserver = new IntersectionObserver(
+// The section crossing the middle of the viewport is current in the nav and
+// the spine; the nav's underline slides to it.
+const chromeNav = document.querySelector(".chrome-nav")
+const sectionLinks = [...document.querySelectorAll(".chrome-nav a[href^='#'], .spine a[href^='#']")]
+function setCurrentSection(id) {
+  for (const link of sectionLinks) link.toggleAttribute("aria-current", link.getAttribute("href") === `#${id}`)
+  const active = chromeNav?.querySelector(`a[href="#${id}"]`)
+  if (!chromeNav) return
+  if (active) {
+    chromeNav.style.setProperty("--ink-x", `${active.offsetLeft}px`)
+    chromeNav.style.setProperty("--ink-w", `${active.offsetWidth}px`)
+    chromeNav.setAttribute("data-ink", "")
+  } else {
+    chromeNav.removeAttribute("data-ink")
+  }
+}
+const sectionObserver = new IntersectionObserver(
   (entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue
-      for (const link of navLinks) link.toggleAttribute("aria-current", link.getAttribute("href") === `#${entry.target.id}`)
-    }
+    for (const entry of entries) if (entry.isIntersecting) setCurrentSection(entry.target.id)
   },
   { rootMargin: "-45% 0px -50% 0px" },
 )
-for (const target of navTargets) navObserver.observe(target)
+for (const section of document.querySelectorAll("main section[id]")) sectionObserver.observe(section)
+
+/* ------------------------------------------------------------ ticker */
+
+// The ticker runs at reading pace and speeds up with the scroll, easing back
+// once the page settles.
+const tickerTrack = document.querySelector(".ticker-track")
+if (tickerTrack && !reducedMotion.matches) {
+  let lastY = scrollY
+  let lastTime = performance.now()
+  let boost = 0
+  let running = false
+  const settle = () => {
+    const animation = tickerTrack.getAnimations()[0]
+    boost *= 0.9
+    if (animation) animation.playbackRate = 1 + boost
+    if (boost > 0.02) requestAnimationFrame(settle)
+    else running = false
+  }
+  addEventListener(
+    "scroll",
+    () => {
+      const now = performance.now()
+      boost = Math.min(6, (Math.abs(scrollY - lastY) / Math.max(1, now - lastTime)) * 1.6)
+      lastY = scrollY
+      lastTime = now
+      if (!running) {
+        running = true
+        requestAnimationFrame(settle)
+      }
+    },
+    { passive: true },
+  )
+}
 
 /* ------------------------------------------------------------ reveal */
 
@@ -108,6 +163,104 @@ function applyMotionPreference() {
 applyMotionPreference()
 reducedMotion.addEventListener("change", applyMotionPreference)
 for (const video of videos) videoObserver.observe(video)
+
+/* ------------------------------------------------------------ hero readouts */
+
+// The recording tours the library and then starts playback. The readouts
+// around the window follow it: library ones first, playback ones once the
+// film starts, and the window's title says which is which.
+const heroStage = document.querySelector("[data-hero-stage]")
+const heroVideo = document.querySelector("[data-hero]")
+if (heroStage && heroVideo) {
+  const heroTitle = heroStage.querySelector("[data-hero-title]")
+  const playAt = Number(heroVideo.dataset.playAt) || 0
+  const setPhase = (phase) => {
+    if (heroStage.dataset.phase === phase) return
+    heroStage.dataset.phase = phase
+    swapText(heroTitle, phase === "play" ? "MediaFlick · Now playing" : "MediaFlick · Home")
+  }
+  const follow = () => setPhase(heroVideo.currentTime >= playAt ? "play" : "browse")
+  if (reducedMotion.matches) {
+    setPhase("play")
+  } else {
+    setPhase("browse")
+    heroVideo.addEventListener("timeupdate", follow)
+    heroVideo.addEventListener("seeked", follow)
+    // If autoplay is refused, the poster stays on the tour; show the
+    // playback readouts anyway rather than an empty stage.
+    setTimeout(() => {
+      if (heroVideo.paused) setPhase("play")
+    }, 2500)
+  }
+  reducedMotion.addEventListener("change", () => {
+    if (reducedMotion.matches) setPhase("play")
+  })
+}
+
+/* ------------------------------------------------------------ walkthrough */
+
+// The Browse walkthrough: the window pins while the steps scroll past. The
+// step in the middle of the viewport is the frame the window shows, and the
+// window's title names it. The hover recording plays only while it is shown.
+const walk = document.querySelector("[data-walk]")
+if (walk) {
+  const steps = [...walk.querySelectorAll("[data-walk-step]")]
+  const frames = [...walk.querySelectorAll("[data-walk-frame]")]
+  const title = walk.querySelector("[data-walk-title]")
+  let inView = false
+
+  function syncVideos() {
+    for (const frame of frames) {
+      if (!(frame instanceof HTMLVideoElement)) continue
+      const show = frame.dataset.walkFrame === walk.dataset.walkActive
+      if (show && inView && !reducedMotion.matches) {
+        frame.play().catch(() => {
+          // Autoplay can be refused; the poster remains.
+        })
+      } else {
+        frame.pause()
+      }
+    }
+  }
+
+  function activate(name) {
+    if (walk.dataset.walkActive === name) return
+    walk.dataset.walkActive = name
+    for (const step of steps) step.classList.toggle("is-active", step.dataset.walkStep === name)
+    for (const frame of frames) frame.classList.toggle("is-active", frame.dataset.walkFrame === name)
+    const step = steps.find((candidate) => candidate.dataset.walkStep === name)
+    swapText(title, step?.dataset.walkTitle)
+    syncVideos()
+  }
+
+  const stepObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) if (entry.isIntersecting) activate(entry.target.dataset.walkStep)
+    },
+    { rootMargin: "-45% 0px -42% 0px" },
+  )
+  for (const step of steps) stepObserver.observe(step)
+  new IntersectionObserver(
+    ([entry]) => {
+      inView = entry.isIntersecting
+      syncVideos()
+    },
+    { threshold: 0.15 },
+  ).observe(walk)
+  reducedMotion.addEventListener("change", syncVideos)
+}
+
+/* ------------------------------------------------------------ tiles */
+
+// A light follows the pointer across the Details tiles.
+const bento = document.querySelector(".bento")
+bento?.addEventListener("pointermove", (event) => {
+  const tile = event.target instanceof Element ? event.target.closest(".tile") : null
+  if (!tile) return
+  const rect = tile.getBoundingClientRect()
+  tile.style.setProperty("--mx", `${event.clientX - rect.left}px`)
+  tile.style.setProperty("--my", `${event.clientY - rect.top}px`)
+})
 
 /* ------------------------------------------------------------ tabs */
 
@@ -274,17 +427,55 @@ if (gallery) {
 
   const lightbox = document.querySelector("[data-lightbox]")
   const lightboxImage = lightbox?.querySelector("[data-lightbox-image]")
-  for (const shot of gallery.querySelectorAll("[data-full]")) {
-    shot.addEventListener("click", () => {
-      if (!lightbox || !lightboxImage) return
-      lightboxImage.src = shot.dataset.full
-      lightboxImage.alt = shot.querySelector("img")?.alt ?? ""
-      lightbox.showModal()
+  // Where the browser supports it, the thumbnail grows into the lightbox and
+  // shrinks back into place on close. Elsewhere the dialog simply opens.
+  const morph = (thumbnail, change) => {
+    if (typeof document.startViewTransition !== "function" || reducedMotion.matches) {
+      change()
+      return
+    }
+    thumbnail.style.viewTransitionName = "shot"
+    lightboxImage.style.viewTransitionName = ""
+    const transition = document.startViewTransition(() => {
+      change()
+      thumbnail.style.viewTransitionName = ""
+      lightboxImage.style.viewTransitionName = lightbox.open ? "shot" : ""
+    })
+    transition.finished.finally(() => {
+      thumbnail.style.viewTransitionName = ""
+      lightboxImage.style.viewTransitionName = ""
     })
   }
-  // A click on the backdrop, outside the image, closes the dialog.
+  let openedFrom = null
+  for (const shot of gallery.querySelectorAll("[data-full]")) {
+    shot.addEventListener("click", async () => {
+      if (!lightbox || !lightboxImage) return
+      const thumbnail = shot.querySelector("img")
+      lightboxImage.src = shot.dataset.full
+      lightboxImage.alt = thumbnail?.alt ?? ""
+      await lightboxImage.decode().catch(() => {
+        // A failed decode still opens the dialog; the image shows its alt text.
+      })
+      openedFrom = thumbnail
+      morph(thumbnail, () => lightbox.showModal())
+    })
+  }
+  const closeLightbox = () => {
+    if (!lightbox?.open) return
+    if (openedFrom) morph(openedFrom, () => lightbox.close())
+    else lightbox.close()
+  }
+  // Escape, the close button and a click on the backdrop all morph back.
+  lightbox?.addEventListener("cancel", (event) => {
+    event.preventDefault()
+    closeLightbox()
+  })
+  lightbox?.querySelector("form")?.addEventListener("submit", (event) => {
+    event.preventDefault()
+    closeLightbox()
+  })
   lightbox?.addEventListener("click", (event) => {
-    if (event.target === lightbox) lightbox.close()
+    if (event.target === lightbox) closeLightbox()
   })
 }
 
