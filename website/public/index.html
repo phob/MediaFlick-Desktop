@@ -3,298 +3,581 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="MediaFlick Desktop is a Jellyfin client that hands playback to your external mpv process." />
+    <title>MediaFlick — Jellyfin, played by mpv</title>
+    <meta name="description" content="MediaFlick is a native desktop app for Jellyfin. It plays straight away with a built-in mpv player, or hands off to your own mpv with every shader, script and profile intact." />
     <meta name="theme-color" content="#070b09" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="MediaFlick Desktop" />
-    <meta property="og:description" content="A Jellyfin desktop client built for people who already have mpv set up the way they like it." />
+    <meta property="og:title" content="MediaFlick — Jellyfin, played by mpv" />
+    <meta property="og:description" content="A native Jellyfin desktop app. Built-in mpv playback, or your own mpv with every shader and script. Local search, playstate sync, segment skipping." />
     <meta property="og:url" content="https://flick.media/" />
+    <meta property="og:image" content="https://flick.media/media/home.webp" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://flick.media/" />
     <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/media/hero-poster.webp" as="image" />
     <link rel="stylesheet" href="/styles.css" />
-    <title>MediaFlick Desktop</title>
+    <script src="/site.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
-    <header class="site-chrome">
+    <header class="chrome" data-chrome>
       <div class="shell chrome-row">
         <a class="brand" href="#top" aria-label="MediaFlick home">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-          </span>
+          <img class="brand-icon" src="/app-icon.svg" alt="" width="30" height="30" />
           <span class="wordmark">Media<b>Flick</b></span>
         </a>
-        <nav aria-label="Main navigation">
-          <a href="#why">Why mpv</a>
-          <a href="#details">Features</a>
-          <a href="#setup">First run</a>
-          <a href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
+        <nav class="chrome-nav" aria-label="Main">
+          <a href="#players">Playback</a>
+          <a href="#library">Library</a>
+          <a href="#sync">Playstate</a>
+          <a href="#companion">Companion</a>
+          <a href="#gallery">Screens</a>
         </nav>
-        <a class="btn btn-primary chrome-download" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-          Get the app
-        </a>
+        <div class="chrome-actions">
+          <a class="icon-link" href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer" aria-label="MediaFlick on GitHub">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>
+          </a>
+          <a class="btn btn-primary btn-sm" href="#download">Download</a>
+        </div>
       </div>
     </header>
 
     <main id="main">
+      <!-- Hero -->
       <section class="hero" id="top">
-        <div class="shell hero-grid">
-          <div class="hero-copy">
-            <p class="kicker data-label">Featured</p>
-            <h1>Keep your<br />mpv setup.</h1>
-            <p class="hero-facts data-value" aria-label="Platforms and license">
-              <span>Windows</span><span class="slash" aria-hidden="true">/</span>
-              <span>Linux</span><span class="slash" aria-hidden="true">/</span>
-              <span>macOS</span><span class="slash" aria-hidden="true">/</span>
-              <span class="fact-accent">Open source</span>
-            </p>
-            <p class="hero-lede">
-              MediaFlick gives Jellyfin its own desktop library, then opens video in the
-              real mpv process on your machine. Your shaders, scripts, profiles, bindings
-              and <code>mpv.conf</code> still apply.
-            </p>
-            <div class="hero-actions">
-              <a class="btn btn-primary btn-lg" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-                Download latest release
-              </a>
-              <a class="btn btn-outline btn-lg" href="#why">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.25"/><path d="M12 11v5.5"/><path d="M12 7.6v.2"/></svg>
-                How it works
-              </a>
-            </div>
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="shell hero-copy">
+          <p class="eyebrow reveal"><span class="pulse" aria-hidden="true"></span>Jellyfin desktop client · Windows · Linux · macOS</p>
+          <h1 class="reveal">Your Jellyfin library,<br /><span class="accent-text">played by mpv.</span></h1>
+          <p class="lede reveal">
+            MediaFlick is a native desktop app for Jellyfin. It plays straight away with a
+            built-in mpv player, or hands off to your own mpv with every shader, script and
+            profile intact. Progress and watched state sync back to the server either way.
+          </p>
+          <div class="hero-actions reveal">
+            <a class="btn btn-primary btn-lg" href="#download" data-download-primary>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
+              <span data-download-label>Download MediaFlick</span>
+            </a>
+            <a class="btn btn-ghost btn-lg" href="#players">How playback works</a>
           </div>
+          <p class="hero-meta data reveal"><span data-release-version>Latest release</span><span aria-hidden="true">/</span>Free and open source<span aria-hidden="true">/</span>GPL-2.0</p>
+        </div>
 
-          <div class="hero-stage">
-            <div class="app-window" role="img" aria-label="Preview of the MediaFlick app: a shelf of continue-watching cards handing playback to external mpv">
-              <div class="app-chrome">
-                <span class="app-brand" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-                </span>
-                <span class="app-wordmark" aria-hidden="true">Media<b>Flick</b></span>
-                <span class="app-nav data-label" aria-hidden="true">Home</span>
-                <span class="app-nav data-label" aria-hidden="true">Library</span>
-                <span class="app-nav data-label" aria-hidden="true">Calendar</span>
-                <span class="app-server data-label" aria-hidden="true">Server</span>
-              </div>
-
-              <div class="app-shelf">
-                <div class="rail-head" aria-hidden="true">
-                  <span class="rail-marker"></span>
-                  <span class="rail-title data-label">Continue watching</span>
-                  <span class="rail-rule"></span>
-                </div>
-                <div class="shelf-track" aria-hidden="true">
-                  <figure class="poster-card">
-                    <span class="media-frame art-art1">
-                      <span class="poster-readout data-label"><b>★ 8.4</b> 2024 / 2H 12M</span>
-                      <span class="poster-progress"><i style="width: 64%"></i></span>
-                    </span>
-                    <figcaption>
-                      <strong>Night Drive</strong>
-                      <span class="data-label">64% · 51m left</span>
-                    </figcaption>
-                  </figure>
-                  <figure class="poster-card">
-                    <span class="media-frame art-art2">
-                      <span class="poster-readout data-label"><b>★ 7.9</b> 2023 / 9 EP</span>
-                      <span class="poster-progress"><i style="width: 22%"></i></span>
-                    </span>
-                    <figcaption>
-                      <strong>The Long Season</strong>
-                      <span class="data-label">S01E04 · 22%</span>
-                    </figcaption>
-                  </figure>
-                  <figure class="poster-card">
-                    <span class="media-frame art-art3">
-                      <span class="poster-readout data-label"><b>★ 8.8</b> 2025 / 1H 58M</span>
-                      <span class="poster-progress"><i style="width: 47%"></i></span>
-                    </span>
-                    <figcaption>
-                      <strong>Cold Orbit</strong>
-                      <span class="data-label">47% · 56m left</span>
-                    </figcaption>
-                  </figure>
-                  <figure class="poster-card">
-                    <span class="media-frame art-art4">
-                      <span class="poster-readout data-label"><b>★ 7.6</b> 2022 / 2H 04M</span>
-                      <span class="poster-progress"><i style="width: 81%"></i></span>
-                    </span>
-                    <figcaption>
-                      <strong>Paper Lanterns</strong>
-                      <span class="data-label">81% · 24m left</span>
-                    </figcaption>
-                  </figure>
-                </div>
-              </div>
-
-              <div class="app-status" aria-hidden="true">
-                <span class="status-id data-label">
-                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-                  Playing via mpv
-                </span>
-                <span class="status-track"><i style="width: 41%"></i></span>
-                <span class="data-label status-facts">Direct play · Original · 38.4 Mbps</span>
-              </div>
+        <div class="shell hero-stage reveal">
+          <figure class="screen screen-hero" data-tilt>
+            <div class="screen-bar" aria-hidden="true">
+              <span class="dots"><i></i><i></i><i></i></span>
+              <span class="data">MediaFlick · Home</span>
             </div>
-            <p class="stage-note data-label">Progress and watched state report back to Jellyfin while mpv plays.</p>
+            <video class="screen-media" data-autoplay autoplay muted loop playsinline preload="auto" poster="/media/hero-poster.webp" width="1600" height="900" aria-label="MediaFlick in use: the Home page, a hover card, a film's details page, then playback in the built-in player">
+              <source src="/media/hero.webm" type="video/webm" />
+              <source src="/media/hero.mp4" type="video/mp4" />
+            </video>
+            <span class="brackets" aria-hidden="true"></span>
+          </figure>
+
+          <div class="float-chip chip-a" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
+            <span><b>Direct play</b><small class="data">Original · 38.4 Mbps</small></span>
+          </div>
+          <div class="float-chip chip-b" aria-hidden="true">
+            <span class="sync-dot"></span>
+            <span><b>Resume point synced</b><small class="data">42:17 → Jellyfin</small></span>
+          </div>
+          <div class="float-chip chip-c" aria-hidden="true">
+            <span class="skip-ring"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" /></svg><b class="data">5</b></span>
+            <span><b>Skip intro</b><small class="data">Auto-skip in 5 s</small></span>
           </div>
         </div>
       </section>
 
-      <div class="shell">
-        <div class="fact-strip" aria-label="Key facts">
-          <p><span class="data-label fact-title">Real process</span><span>Not embedded libmpv — the executable you already use.</span></p>
-          <p><span class="data-label fact-title">Local index</span><span>SQLite mirror with full-text search.</span></p>
-          <p><span class="data-label fact-title">Original quality</span><span>Direct play by default; transcoding stays optional.</span></p>
+      <!-- Ticker -->
+      <div class="ticker" aria-label="Highlights">
+        <div class="ticker-track">
+          <ul class="ticker-list data">
+            <li>Built-in libmpv</li><li>External mpv</li><li>Local SQLite index</li><li>Full-text search</li><li>Direct play</li><li>1.5–120 Mbps limits</li><li>Resume sync</li><li>Intro &amp; credit skipping</li><li>Quick Connect</li><li>Spoiler protection</li><li>Release calendar</li><li>Seerr requests</li>
+          </ul>
+          <ul class="ticker-list data" aria-hidden="true">
+            <li>Built-in libmpv</li><li>External mpv</li><li>Local SQLite index</li><li>Full-text search</li><li>Direct play</li><li>1.5–120 Mbps limits</li><li>Resume sync</li><li>Intro &amp; credit skipping</li><li>Quick Connect</li><li>Spoiler protection</li><li>Release calendar</li><li>Seerr requests</li>
+          </ul>
         </div>
       </div>
 
-      <section class="section section-shell" id="why">
-        <div class="rail-head">
-          <span class="rail-marker"></span>
-          <p class="rail-title data-label">01 · Why external mpv?</p>
-          <span class="rail-rule"></span>
-        </div>
-        <div class="argument">
-          <h2>An embedded player is convenient. It is also not your player.</h2>
-          <p class="section-lede">
-            People who tune mpv depend on the parts around it. MediaFlick does not try to
-            reproduce that setup inside a web view — it launches the executable you already
-            use, with every flag and script intact.
-          </p>
-          <ul class="chip-row" aria-label="What carries over to mpv">
-            <li>SVP4</li>
-            <li>SDR → HDR</li>
-            <li>GLSL shaders</li>
-            <li>Lua scripts</li>
-            <li>Input bindings</li>
-          </ul>
-          <div class="config-sample">
-            <div class="config-title">
-              <span>~/.config/mpv/mpv.conf</span>
-              <span class="config-state">Unchanged</span>
+      <!-- 01 Playback -->
+      <section class="section" id="players">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">01 · Playback</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal">
+            <h2>It's mpv either way.</h2>
+            <p>
+              The built-in player is libmpv inside the app window, under MediaFlick's own
+              controls. Already tuned mpv to the last shader? Switch to external mpv and
+              MediaFlick launches the executable you use today.
+            </p>
+          </div>
+
+          <div class="player-switch reveal" data-switch>
+            <div class="segmented" role="tablist" aria-label="Player">
+              <button type="button" role="tab" id="tab-builtin" aria-controls="panel-builtin" aria-selected="true" data-switch-tab="builtin">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="currentColor" d="M10 9.2v5.6l4.6-2.8z"/></svg>
+                Built-in player
+              </button>
+              <button type="button" role="tab" id="tab-external" aria-controls="panel-external" aria-selected="false" data-switch-tab="external" tabindex="-1">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m5 8 4 4-4 4M11 16h8"/></svg>
+                External mpv
+              </button>
+              <span class="segmented-thumb" aria-hidden="true"></span>
             </div>
-            <pre><code>profile=gpu-hq
+
+            <div class="switch-panels">
+              <div class="switch-panel" role="tabpanel" id="panel-builtin" aria-labelledby="tab-builtin" data-switch-panel="builtin">
+                <figure class="screen">
+                  <video class="screen-media" data-autoplay muted loop playsinline preload="none" poster="/media/player-poster.webp" width="1280" height="720" aria-label="The built-in player: Caminandes playing under MediaFlick's controls">
+                    <source src="/media/player.webm" type="video/webm" />
+                    <source src="/media/player.mp4" type="video/mp4" />
+                  </video>
+                  <span class="brackets" aria-hidden="true"></span>
+                </figure>
+                <ul class="checklist">
+                  <li><b>Plays on first launch.</b> Windows releases and the Linux AppImage bundle libmpv. No player to install.</li>
+                  <li><b>One window.</b> Native video with MediaFlick's controls over it, including subtitle styling and a shortcut recorder.</li>
+                  <li><b>Original quality by default.</b> Or Jellyfin's automatic limit, or a fixed cap from 1.5 to 120 Mbps.</li>
+                </ul>
+              </div>
+
+              <div class="switch-panel" role="tabpanel" id="panel-external" aria-labelledby="tab-external" data-switch-panel="external" hidden>
+                <div class="handoff">
+                  <div class="terminal" aria-label="An unchanged mpv.conf">
+                    <div class="terminal-bar"><span class="data">~/.config/mpv/mpv.conf</span><span class="badge data">Unchanged</span></div>
+                    <pre class="data" data-typer><code>profile=gpu-hq
 vo=gpu-next
 glsl-shaders-append="~~/shaders/FSRCNNX_x2.glsl"
-input-conf="~~/input.conf"</code></pre>
+target-colorspace-hint=yes
+input-conf="~~/input.conf"
+script-opts-append=svp-enabled=yes</code></pre>
+                  </div>
+                  <svg class="handoff-diagram" viewBox="0 0 520 170" role="img" aria-label="MediaFlick hands the stream to mpv, and reports playback back to Jellyfin">
+                    <defs>
+                      <path id="wire-a" d="M120 60 H 250" />
+                      <path id="wire-b" d="M330 60 H 420" />
+                      <path id="wire-c" d="M462 90 C 462 150, 70 150, 70 90" />
+                    </defs>
+                    <use href="#wire-a" class="wire" />
+                    <use href="#wire-b" class="wire" />
+                    <use href="#wire-c" class="wire wire-back" />
+                    <g class="node">
+                      <rect x="20" y="30" width="100" height="60" rx="4" />
+                      <text x="70" y="58">MediaFlick</text>
+                      <text class="sub" x="70" y="74">library + UI</text>
+                    </g>
+                    <g class="node node-accent">
+                      <rect x="250" y="30" width="80" height="60" rx="4" />
+                      <text x="290" y="58">mpv</text>
+                      <text class="sub" x="290" y="74">your build</text>
+                    </g>
+                    <g class="node">
+                      <rect x="420" y="30" width="84" height="60" rx="4" />
+                      <text x="462" y="58">Jellyfin</text>
+                      <text class="sub" x="462" y="74">server</text>
+                    </g>
+                    <circle class="packet" r="4"><animateMotion dur="2.4s" repeatCount="indefinite"><mpath href="#wire-a" /></animateMotion></circle>
+                    <circle class="packet" r="4"><animateMotion dur="2.4s" begin="1.2s" repeatCount="indefinite"><mpath href="#wire-b" /></animateMotion></circle>
+                    <circle class="packet packet-back" r="4"><animateMotion dur="3.2s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#wire-c" /></animateMotion></circle>
+                    <text class="label" x="185" y="50">stream</text>
+                    <text class="label" x="375" y="50">IPC</text>
+                    <text class="label" x="266" y="162">progress · watched · resume</text>
+                  </svg>
+                </div>
+                <ul class="checklist">
+                  <li><b>Everything carries over.</b> SVP4, GLSL shaders, Lua scripts, HDR profiles and <code>input.conf</code> bindings apply as usual.</li>
+                  <li><b>Jellyfin still keeps count.</b> One persistent IPC connection reports start, progress, watched state and resume position.</li>
+                  <li><b>Easy on Windows.</b> Download mpv from inside the app. Linux and macOS use the system mpv they find.</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-shell" id="details">
-        <div class="rail-head">
-          <span class="rail-marker"></span>
-          <p class="rail-title data-label">02 · What the app handles</p>
-          <span class="rail-rule"></span>
-        </div>
-        <div class="detail-grid">
-          <article class="feature-card">
-            <h3>Library</h3>
-            <p>Titles, summaries, genres and cast are mirrored into SQLite. Search runs against the local index instead of waiting on a server round trip for every keystroke.</p>
-            <span class="data-label feature-meta">Background sync · Full-text search</span>
-          </article>
-          <article class="feature-card">
-            <h3>Playback</h3>
-            <p>Original-quality streams go straight to external mpv. For slower links, use Jellyfin's automatic limit or set a bitrate from 1.5 to 120 Mbps.</p>
-            <span class="data-label feature-meta">Built-in libmpv · External mpv · Track selection</span>
-          </article>
-          <article class="feature-card">
-            <h3>Playstate</h3>
-            <p>Playback start, progress, watched status and resume position report back to Jellyfin. Finishing a film in mpv updates the server for your other devices.</p>
-            <span class="data-label feature-meta">Progress reports · Resume points</span>
-          </article>
-          <article class="feature-card">
-            <h3>Extras</h3>
-            <p>A release calendar and collections in the app. The optional server companion adds Seerr requests, external ratings and richer collection data without sharing service keys.</p>
-            <span class="data-label feature-meta">Calendar · Collections · Companion plugin</span>
-          </article>
+      <!-- 02 Library -->
+      <section class="section" id="library">
+        <div class="shell split">
+          <div class="split-copy">
+            <div class="rail reveal"><span class="rail-mark"></span><p class="data">02 · Library</p><span class="rail-rule"></span></div>
+            <h2 class="reveal">Search that doesn't wait for the server.</h2>
+            <p class="reveal">
+              MediaFlick mirrors your libraries into a local SQLite database and keeps it
+              current in the background. Type-ahead search runs on your machine, across
+              titles, overviews, genres and cast, so a big library stays instant.
+            </p>
+            <div class="pipeline reveal" aria-hidden="true">
+              <span class="key data">t</span><span class="key data">h</span><span class="key data">e</span>
+              <svg class="pipe-arrow" viewBox="0 0 40 12"><path d="M0 6h36m-5-4 5 4-5 4" /></svg>
+              <span class="db">
+                <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.6" /><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6" /></svg>
+                <small class="data">library.db</small>
+              </span>
+              <svg class="pipe-arrow" viewBox="0 0 40 12"><path d="M0 6h36m-5-4 5 4-5 4" /></svg>
+              <span class="hits data">2 results</span>
+            </div>
+            <ul class="facts reveal">
+              <li><span class="data">Index</span>SQLite, full-text</li>
+              <li><span class="data">Sync</span>In the background</li>
+              <li><span class="data">Posters</span>Cached on disk</li>
+            </ul>
+          </div>
+          <figure class="screen split-media reveal">
+            <video class="screen-media" data-autoplay muted loop playsinline preload="none" poster="/media/search-poster.webp" width="1280" height="800" aria-label="Typing a search in the sidebar; results appear as you type">
+              <source src="/media/search.webm" type="video/webm" />
+              <source src="/media/search.mp4" type="video/mp4" />
+            </video>
+            <span class="brackets" aria-hidden="true"></span>
+          </figure>
         </div>
       </section>
 
-      <section class="section" id="setup">
-        <div class="section-shell setup-grid">
-          <div class="rail-head">
-            <span class="rail-marker"></span>
-            <p class="rail-title data-label">03 · First run</p>
-            <span class="rail-rule"></span>
+      <!-- 03 Browse -->
+      <section class="section" id="browse">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">03 · Browse</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal">
+            <h2>Made for looking at posters.</h2>
+            <p>
+              Home rows for Continue Watching, Next Up and everything new. Hover a card for
+              its details and actions. Open a title for cast, seasons, episodes and exactly
+              what's in the file.
+            </p>
           </div>
-          <div class="setup-copy">
-            <h2>Point it at Jellyfin.<br />Press play.</h2>
-            <ol>
-              <li>
-                <span class="data-label">01</span>
-                <div><strong>Sign in.</strong><p>Password or Jellyfin Quick Connect.</p></div>
-              </li>
-              <li>
-                <span class="data-label">02</span>
-                <div><strong>Index.</strong><p>MediaFlick mirrors the libraries on your account into a local SQLite cache.</p></div>
-              </li>
-              <li>
-                <span class="data-label">03</span>
-                <div><strong>Play.</strong><p>Pick a title. MediaFlick opens it in mpv and keeps Jellyfin updated.</p></div>
-              </li>
-            </ol>
-            <p class="platform-note data-value">Windows can download mpv from inside the app. Linux and macOS use a system installation.</p>
+          <div class="collage">
+            <figure class="screen collage-main reveal">
+              <video class="screen-media" data-autoplay muted loop playsinline preload="none" poster="/media/home-hover-poster.webp" width="1280" height="800" aria-label="Hovering a poster on Home opens a card with play, watchlist and rating actions">
+                <source src="/media/home-hover.webm" type="video/webm" />
+                <source src="/media/home-hover.mp4" type="video/mp4" />
+              </video>
+              <span class="brackets" aria-hidden="true"></span>
+              <figcaption class="data">Hover cards on every shelf</figcaption>
+            </figure>
+            <figure class="screen collage-side reveal">
+              <img src="/media/movie-detail-960.webp" srcset="/media/movie-detail-960.webp 960w, /media/movie-detail.webp 1600w" sizes="(min-width: 900px) 40vw, 90vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Details page for Night of the Living Dead, with resume, cast and media information" />
+              <span class="brackets" aria-hidden="true"></span>
+              <figcaption class="data">Films</figcaption>
+            </figure>
+            <figure class="screen collage-side reveal">
+              <img src="/media/series-detail-960.webp" srcset="/media/series-detail-960.webp 960w, /media/series-detail.webp 1600w" sizes="(min-width: 900px) 40vw, 90vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Series page for Pioneer One with its next episode and season browser" />
+              <span class="brackets" aria-hidden="true"></span>
+              <figcaption class="data">Series</figcaption>
+            </figure>
           </div>
         </div>
       </section>
 
-      <section class="section section-shell download">
-        <div class="download-copy">
-          <p class="kicker data-label">Open source · Releases on GitHub</p>
-          <h2>Your config took time.<br />Use it.</h2>
+      <!-- 04 Playstate -->
+      <section class="section" id="sync">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">04 · Playstate</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal">
+            <h2>Jellyfin always knows where you stopped.</h2>
+            <p>
+              Playing outside a browser usually means the server loses track. MediaFlick
+              reports playback start, progress, watched state and resume position while
+              you watch, so every other device picks up where you left off.
+            </p>
+          </div>
+
+          <div class="duo">
+            <article class="panel reveal">
+              <div class="sync-demo" aria-hidden="true">
+                <div class="sync-row">
+                  <span class="sync-label data">MediaFlick</span>
+                  <span class="bar"><i class="bar-fill"></i></span>
+                  <span class="sync-time data" data-sync-time>0:00</span>
+                </div>
+                <div class="sync-beam"><i></i><i></i><i></i></div>
+                <div class="sync-row">
+                  <span class="sync-label data">Jellyfin</span>
+                  <span class="bar"><i class="bar-fill bar-fill-lag"></i></span>
+                  <span class="sync-state data">Resume</span>
+                </div>
+              </div>
+              <h3>Progress, watched and resume</h3>
+              <p>Reported by both players. Finish a film on the desktop and your phone already shows it watched.</p>
+            </article>
+
+            <article class="panel reveal">
+              <div class="skip-demo" aria-hidden="true">
+                <div class="seek">
+                  <span class="seg seg-intro"></span>
+                  <span class="seg seg-recap"></span>
+                  <span class="seg seg-credits"></span>
+                  <span class="seek-head"></span>
+                </div>
+                <div class="seek-legend data"><span>Intro</span><span>Recap</span><span>Credits</span></div>
+                <span class="skip-button"><span class="skip-fill"></span><span class="skip-text">Skip intro</span></span>
+              </div>
+              <h3>Segment skipping</h3>
+              <p>Intros, recaps, credits and commercials, each set to prompt or auto-skip with a countdown. The seek bar marks every segment next to the file's chapters.</p>
+            </article>
+          </div>
+
+          <figure class="screen wide reveal">
+            <img src="/media/player-960.webp" srcset="/media/player-960.webp 960w, /media/player.webp 1600w" sizes="(min-width: 1200px) 1100px, 94vw" width="1600" height="900" loading="lazy" decoding="async" alt="The built-in player's controls: previous, rewind, pause, forward, next, stop, seek bar, time, volume, settings and fullscreen" />
+            <span class="brackets" aria-hidden="true"></span>
+            <figcaption class="data">Built-in player · Caminandes: Llama Drama (Blender Foundation, CC BY)</figcaption>
+          </figure>
         </div>
-        <a class="btn btn-primary btn-lg download-btn" href="https://github.com/phob/MediaFlick-Desktop/releases/latest">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-          Download MediaFlick
-        </a>
+      </section>
+
+      <!-- 05 Companion -->
+      <section class="section section-tint" id="companion">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">05 · Companion</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal">
+            <h2>Plug in your stack. Keep the keys on the server.</h2>
+            <p>
+              The optional MediaFlick Companion is a Jellyfin plugin. It brings Sonarr,
+              Radarr, Seerr, MDBList and TMDB into the app through typed, authenticated
+              calls. Service addresses and API keys never leave the server.
+            </p>
+          </div>
+
+          <div class="companion">
+            <svg class="topology reveal" viewBox="0 0 560 300" role="img" aria-label="MediaFlick Desktop talks only to Jellyfin. The Companion plugin inside Jellyfin holds the keys for Sonarr, Radarr, Seerr, MDBList and TMDB.">
+              <defs>
+                <path id="t-desk" d="M110 150 H 220" />
+                <path id="t-1" d="M340 150 C 390 150, 390 50, 440 50" />
+                <path id="t-2" d="M340 150 C 390 150, 390 100, 440 100" />
+                <path id="t-3" d="M340 150 H 440" />
+                <path id="t-4" d="M340 150 C 390 150, 390 200, 440 200" />
+                <path id="t-5" d="M340 150 C 390 150, 390 250, 440 250" />
+              </defs>
+              <use href="#t-desk" class="wire" />
+              <use href="#t-1" class="wire wire-dim" /><use href="#t-2" class="wire wire-dim" /><use href="#t-3" class="wire wire-dim" /><use href="#t-4" class="wire wire-dim" /><use href="#t-5" class="wire wire-dim" />
+              <g class="node"><rect x="10" y="118" width="100" height="64" rx="4" /><text x="60" y="146">Desktop</text><text class="sub" x="60" y="163">no keys</text></g>
+              <g class="node node-accent"><rect x="220" y="100" width="120" height="100" rx="4" /><text x="280" y="136">Jellyfin</text><text class="sub" x="280" y="153">+ Companion</text>
+                <g class="lock" transform="translate(270 162)"><rect x="0" y="9" width="20" height="15" rx="2" /><path d="M4 9V6a6 6 0 0 1 12 0v3" /></g>
+              </g>
+              <g class="service"><rect x="440" y="34" width="110" height="32" rx="3" /><text x="495" y="55">Sonarr</text></g>
+              <g class="service"><rect x="440" y="84" width="110" height="32" rx="3" /><text x="495" y="105">Radarr</text></g>
+              <g class="service"><rect x="440" y="134" width="110" height="32" rx="3" /><text x="495" y="155">Seerr</text></g>
+              <g class="service"><rect x="440" y="184" width="110" height="32" rx="3" /><text x="495" y="205">MDBList</text></g>
+              <g class="service"><rect x="440" y="234" width="110" height="32" rx="3" /><text x="495" y="255">TMDB</text></g>
+              <circle class="packet" r="4"><animateMotion dur="2s" repeatCount="indefinite"><mpath href="#t-desk" /></animateMotion></circle>
+              <circle class="packet packet-dim" r="3"><animateMotion dur="2.6s" begin="0.2s" repeatCount="indefinite"><mpath href="#t-1" /></animateMotion></circle>
+              <circle class="packet packet-dim" r="3"><animateMotion dur="2.6s" begin="0.9s" repeatCount="indefinite"><mpath href="#t-3" /></animateMotion></circle>
+              <circle class="packet packet-dim" r="3"><animateMotion dur="2.6s" begin="1.6s" repeatCount="indefinite"><mpath href="#t-5" /></animateMotion></circle>
+              <text class="label" x="165" y="140">typed API</text>
+            </svg>
+
+            <div class="showcase reveal" data-showcase>
+              <div class="showcase-tabs" role="tablist" aria-label="Companion features">
+                <button type="button" role="tab" aria-selected="true" aria-controls="show-timeline" id="st-timeline" data-show="timeline">Release Timeline</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="show-calendar" id="st-calendar" data-show="calendar" tabindex="-1">Calendar</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="show-discover" id="st-discover" data-show="discover" tabindex="-1">Discover</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="show-requests" id="st-requests" data-show="requests" tabindex="-1">Requests</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="show-ratings" id="st-ratings" data-show="ratings" tabindex="-1">Ratings</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="show-collections" id="st-collections" data-show="collections" tabindex="-1">Franchises</button>
+              </div>
+              <div class="showcase-progress" aria-hidden="true"><i data-showcase-progress></i></div>
+              <div class="showcase-stage">
+                <figure class="screen showcase-panel" role="tabpanel" id="show-timeline" aria-labelledby="st-timeline" data-show-panel="timeline">
+                  <img src="/media/timeline-960.webp" srcset="/media/timeline-960.webp 960w, /media/timeline.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Release Timeline shelf on Home: recent releases marked downloaded, then upcoming ones" />
+                  <figcaption><b>Release Timeline.</b> The last 30 days and what's coming, right on Home, each release marked downloaded or missing.</figcaption>
+                </figure>
+                <figure class="screen showcase-panel" role="tabpanel" id="show-calendar" aria-labelledby="st-calendar" data-show-panel="calendar" hidden>
+                  <img src="/media/calendar-960.webp" srcset="/media/calendar-960.webp 960w, /media/calendar.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Release calendar agenda with episodes and film releases, each marked ready or tracked" />
+                  <figcaption><b>Release calendar.</b> Agenda and month views of episodes and film releases. Works from Jellyfin alone; the Companion adds monitored and on-disk state.</figcaption>
+                </figure>
+                <figure class="screen showcase-panel" role="tabpanel" id="show-discover" aria-labelledby="st-discover" data-show-panel="discover" hidden>
+                  <img src="/media/discover-960.webp" srcset="/media/discover-960.webp 960w, /media/discover.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Discover page with trending films and series and their ratings" />
+                  <figcaption><b>Discover.</b> Trending, popular and upcoming titles from TMDB, with ratings and request status.</figcaption>
+                </figure>
+                <figure class="screen showcase-panel" role="tabpanel" id="show-requests" aria-labelledby="st-requests" data-show-panel="requests" hidden>
+                  <img src="/media/requests-960.webp" srcset="/media/requests-960.webp 960w, /media/requests.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Seerr requests with their approval and download status" />
+                  <figcaption><b>Seerr requests.</b> Request films and seasons, then follow them from approval into your library.</figcaption>
+                </figure>
+                <figure class="screen showcase-panel" role="tabpanel" id="show-ratings" aria-labelledby="st-ratings" data-show-panel="ratings" hidden>
+                  <img src="/media/rated-detail-960.webp" srcset="/media/rated-detail-960.webp 960w, /media/rated-detail.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="A film's details page with IMDb, Rotten Tomatoes and Letterboxd ratings" />
+                  <figcaption><b>External ratings.</b> MDBList ratings through a shared, quota-aware cache, so one administrator key serves everyone.</figcaption>
+                </figure>
+                <figure class="screen showcase-panel" role="tabpanel" id="show-collections" aria-labelledby="st-collections" data-show-panel="collections" hidden>
+                  <img src="/media/collections-960.webp" srcset="/media/collections-960.webp 960w, /media/collections.webp 1600w" sizes="(min-width: 1200px) 760px, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Movie franchises grid showing how many films of each collection you own" />
+                  <figcaption><b>Franchises and collections.</b> Exact TMDB franchises with owned and missing counts, plus template-built personal collections.</figcaption>
+                </figure>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 Details -->
+      <section class="section" id="details">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">06 · Details</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal">
+            <h2>The small things.</h2>
+            <p>Per-account viewing preferences and per-device controls, all behind Save, Reset and Discard.</p>
+          </div>
+          <div class="bento">
+            <article class="tile reveal">
+              <div class="pict pict-quick" aria-hidden="true">
+                <span class="code data"><i>4</i><i>8</i><i>1</i><i>9</i><i>2</i><i>7</i></span>
+              </div>
+              <h3>Quick Connect</h3>
+              <p>Sign in with a code approved on another device, or with a password.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-spoiler" aria-hidden="true">
+                <span class="thumb"></span><span class="lines"><i></i><i></i></span><span class="reveal-chip data">Reveal</span>
+              </div>
+              <h3>Spoiler protection</h3>
+              <p>Unwatched episode art, names and summaries stay hidden until you reveal them.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-quality" aria-hidden="true">
+                <span class="track"><i></i></span>
+                <span class="scale data"><span>1.5</span><span>Auto</span><span>120 Mbps</span></span>
+              </div>
+              <h3>Streaming quality</h3>
+              <p>Original by default. Automatic or a fixed cap when the connection needs it.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-keys" aria-hidden="true">
+                <kbd class="data">Space</kbd><kbd class="data">←</kbd><kbd class="data">→</kbd><kbd class="data key-w">W</kbd>
+              </div>
+              <h3>Your shortcuts</h3>
+              <p>Record a key for pause, mute, seek, fullscreen or mark-watched-and-next.</p>
+            </article>
+            <article class="tile tile-accent reveal">
+              <div class="pict pict-accent">
+                <div class="swatches" role="group" aria-label="Try an accent color on this page">
+                  <button type="button" class="swatch swatch-signal" data-accent-choice="signal" aria-pressed="true" aria-label="Signal green"></button>
+                  <button type="button" class="swatch swatch-cobalt" data-accent-choice="cobalt" aria-pressed="false" aria-label="Cobalt"></button>
+                  <button type="button" class="swatch swatch-amber" data-accent-choice="amber" aria-pressed="false" aria-label="Amber"></button>
+                  <button type="button" class="swatch swatch-violet" data-accent-choice="violet" aria-pressed="false" aria-label="Violet"></button>
+                </div>
+              </div>
+              <h3>Your accent</h3>
+              <p>Four accents and two densities. Try one: this page follows.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-next" aria-hidden="true">
+                <span class="next-card"><span class="ring"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" /></svg></span><span class="data">Next episode</span></span>
+              </div>
+              <h3>Next episode</h3>
+              <p>Off, a cancellable countdown or automatic, with an optional episode limit.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-update" aria-hidden="true">
+                <svg viewBox="0 0 48 48"><path class="arc" d="M38 24a14 14 0 1 1-4.1-9.9" /><path class="tip" d="M34 8v7h-7" /></svg>
+              </div>
+              <h3>Updates itself</h3>
+              <p>New releases install from inside the app on Windows.</p>
+            </article>
+            <article class="tile reveal">
+              <div class="pict pict-admin" aria-hidden="true">
+                <span class="menu data"><i>Client settings</i><i class="on">Open Jellyfin dashboard</i><i>About</i></span>
+              </div>
+              <h3>Admin stays in the browser</h3>
+              <p>Right-click for the Jellyfin dashboard. MediaFlick doesn't rebuild what already works.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- 07 Gallery -->
+      <section class="section" id="gallery">
+        <div class="shell">
+          <div class="rail reveal"><span class="rail-mark"></span><p class="data">07 · Screens</p><span class="rail-rule"></span></div>
+          <div class="section-head section-head-row reveal">
+            <h2>Look around.</h2>
+            <div class="gallery-nav">
+              <button type="button" class="icon-btn" data-gallery-prev aria-label="Previous screens"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg></button>
+              <button type="button" class="icon-btn" data-gallery-next aria-label="Next screens"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg></button>
+            </div>
+          </div>
+        </div>
+        <ul class="gallery" data-gallery>
+          <li><button type="button" class="shot" data-full="/media/home.webp"><img src="/media/home-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Home with the billboard and shelves" /><span class="data">Home</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/movies.webp"><img src="/media/movies-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Movies library grid with sort and filters" /><span class="data">Library</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/movie-detail.webp"><img src="/media/movie-detail-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Film details page" /><span class="data">Film details</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/series-detail.webp"><img src="/media/series-detail-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Series page with seasons and episodes" /><span class="data">Series</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/search.webp"><img src="/media/search-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Search results" /><span class="data">Search</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/home-full.webp"><img src="/media/home-full-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Home on a larger library with ratings on every card" /><span class="data">Home, full library</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/timeline.webp"><img src="/media/timeline-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Release Timeline shelf" /><span class="data">Release Timeline</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/calendar.webp"><img src="/media/calendar-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Release calendar" /><span class="data">Calendar</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/discover.webp"><img src="/media/discover-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Discover" /><span class="data">Discover</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/collections.webp"><img src="/media/collections-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Movie franchises" /><span class="data">Franchises</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/appearance.webp"><img src="/media/appearance-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Appearance settings with a live preview" /><span class="data">Appearance</span></button></li>
+          <li><button type="button" class="shot" data-full="/media/signin.webp"><img src="/media/signin-960.webp" width="960" height="600" loading="lazy" decoding="async" alt="Sign-in screen with Quick Connect" /><span class="data">Sign in</span></button></li>
+        </ul>
+        <dialog class="lightbox" data-lightbox aria-label="Screenshot">
+          <form method="dialog"><button class="icon-btn lightbox-close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></form>
+          <img data-lightbox-image alt="" />
+        </dialog>
+      </section>
+
+      <!-- Download -->
+      <section class="section download" id="download">
+        <div class="shell">
+          <div class="download-head reveal">
+            <img src="/app-icon.svg" alt="" width="88" height="88" class="download-icon" />
+            <h2>Get MediaFlick.</h2>
+            <p>Free, open source, and ready for your server. <span class="data" data-release-version>Latest release</span></p>
+          </div>
+          <div class="platforms">
+            <a class="platform reveal" href="https://github.com/phob/MediaFlick-Desktop/releases/latest" data-platform="windows" data-asset-suffix=".exe">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5.5 10 4.5v7H3zM11 4.3 21 3v8.5H11zM3 12.5h7v7L3 18.5zM11 12.5h10V21l-10-1.4z"/></svg>
+              <span class="platform-name">Windows</span>
+              <span class="data">Installer · x64</span>
+              <span class="platform-note">Built-in player included. Updates itself.</span>
+            </a>
+            <a class="platform reveal" href="https://github.com/phob/MediaFlick-Desktop/releases/latest" data-platform="linux" data-asset-suffix="linux-x86_64.AppImage">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2.5c-2.2 0-3.4 1.8-3.4 4.4 0 1.3.2 2.3-.5 3.5-.9 1.5-2.6 3.3-2.6 5.7 0 .6.1 1.1.3 1.5-.9.4-1.8 1-1.8 1.9 0 1.4 2.2 1.4 3.6 2 1.2.5 1.8.6 2.4-.3.4.2 1.2.3 2 .3s1.6-.1 2-.3c.6.9 1.2.8 2.4.3 1.4-.6 3.6-.6 3.6-2 0-.9-.9-1.5-1.8-1.9.2-.4.3-.9.3-1.5 0-2.4-1.7-4.2-2.6-5.7-.7-1.2-.5-2.2-.5-3.5 0-2.6-1.2-4.4-3.4-4.4Zm-1.3 4.2c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1Zm2.6 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1ZM12 9.4c.9 0 2 .6 2 1s-1.1 1.1-2 1.1-2-.7-2-1.1 1.1-1 2-1Z"/></svg>
+              <span class="platform-name">Linux</span>
+              <span class="data">AppImage · x86_64</span>
+              <span class="platform-note">Built-in player on X11 or XWayland.</span>
+            </a>
+            <a class="platform reveal" href="https://github.com/phob/MediaFlick-Desktop/releases/latest" data-platform="macos">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.5 2-3.6 2.1-3.7-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9s-2-.9-3.3-.8a4.9 4.9 0 0 0-4.1 2.5c-1.8 3.1-.5 7.6 1.2 10.1.8 1.2 1.8 2.6 3.1 2.5 1.3 0 1.7-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.2-1.2 3-2.4a10 10 0 0 0 1.4-2.8 4.4 4.4 0 0 1-2.6-4.3ZM14 5.2A4.3 4.3 0 0 0 15 2a4.4 4.4 0 0 0-2.9 1.5 4.1 4.1 0 0 0-1 3.1c1.1.1 2.2-.5 2.9-1.4Z"/></svg>
+              <span class="platform-name">macOS</span>
+              <span class="data">DMG · Apple silicon &amp; Intel</span>
+              <span class="platform-note">Uses the system mpv.</span>
+            </a>
+          </div>
+          <p class="download-more reveal">
+            Want the Companion? It installs as a Jellyfin plugin:
+            <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/plugin/README.md" rel="noreferrer">setup guide</a>.
+            Building from source? See
+            <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/BUILDING.md" rel="noreferrer">BUILDING.md</a>.
+          </p>
+        </div>
       </section>
     </main>
 
-    <footer class="site-footer">
-      <div class="shell footer-inner">
-        <a class="brand" href="#top">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
-          </span>
-          <span class="wordmark">Media<b>Flick</b></span>
-        </a>
-        <p class="footer-tag data-value">Made for Jellyfin users who care what plays the video.</p>
-        <div class="accent-switch" role="group" aria-label="Accent color, as in the app's appearance settings">
-          <span class="data-label accent-label">Accent</span>
-          <button type="button" data-accent-choice="signal" aria-pressed="true" aria-label="Signal green accent" class="accent-swatch accent-signal"></button>
-          <button type="button" data-accent-choice="cobalt" aria-pressed="false" aria-label="Cobalt accent" class="accent-swatch accent-cobalt"></button>
-          <button type="button" data-accent-choice="amber" aria-pressed="false" aria-label="Amber accent" class="accent-swatch accent-amber"></button>
-          <button type="button" data-accent-choice="violet" aria-pressed="false" aria-label="Violet accent" class="accent-swatch accent-violet"></button>
+    <footer class="footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="brand" href="#top">
+            <img class="brand-icon" src="/app-icon.svg" alt="" width="26" height="26" />
+            <span class="wordmark">Media<b>Flick</b></span>
+          </a>
+          <p class="footer-note">A Jellyfin client for people who care what plays the video. Not affiliated with the Jellyfin project.</p>
         </div>
-        <a class="footer-link data-label" href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/releases" rel="noreferrer">Releases</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/CHANGELOG.md" rel="noreferrer">Changelog</a>
+          <a href="https://github.com/phob/MediaFlick-Desktop/blob/main/LICENSE" rel="noreferrer">GPL-2.0-or-later</a>
+        </nav>
+        <p class="footer-credits">
+          Screens show Jellyfin's public demo server, with public-domain films and
+          <i>Caminandes</i> © Blender Foundation (CC BY), and a private server with the
+          Companion for calendar, requests, ratings and franchises. Poster art belongs to
+          its owners.
+        </p>
       </div>
     </footer>
-
-    <script>
-      (() => {
-        const root = document.documentElement
-        const choices = document.querySelectorAll("[data-accent-choice]")
-        const apply = (value) => {
-          if (value === "signal") delete root.dataset.accent
-          else root.dataset.accent = value
-          choices.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.accentChoice === value)))
-        }
-        try {
-          const saved = localStorage.getItem("mf-accent")
-          if (saved) apply(saved)
-        } catch {}
-        choices.forEach((b) =>
-          b.addEventListener("click", () => {
-            apply(b.dataset.accentChoice)
-            try { localStorage.setItem("mf-accent", b.dataset.accentChoice) } catch {}
-          }),
-        )
-      })()
-    </script>
   </body>
 </html>
