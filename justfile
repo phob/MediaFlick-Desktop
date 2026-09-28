@@ -57,6 +57,21 @@ plugin-deploy: plugin
 ui-dev:
     pnpm --dir ui dev
 
+# Capture website media from the staged app: `demo` server or a copy of your `home` profile
+[group('website')]
+website-capture profile *scenes:
+    node scripts/website/capture.mjs {{profile}} {{scenes}}
+
+# Encode captured media into website/public/media
+[group('website')]
+website-encode:
+    node scripts/website/encode.mjs
+
+# Check the website in headless Chrome with its production CSP
+[group('website')]
+website-check:
+    node scripts/website/check-site.mjs
+
 # Format the Rust crate
 [group('lint')]
 fmt:
