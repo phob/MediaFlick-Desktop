@@ -7,12 +7,43 @@ and loops in `public/media`.
 
 The page follows the app's "Signal" look, with tokens mirrored from
 `ui/src/app.css`. `site.js` is optional: without it the page is complete, but
-static. It adds scroll reveals, in-view video playback, tabs, the gallery
-lightbox, the accent swatches, and download links for the newest GitHub
-release. `public/_headers` sets a strict CSP. Scripts, styles, and media are
-same-origin only, and the only outside connection allowed is
-`https://api.github.com`. Don't add inline scripts, inline `style`
-attributes, or third-party assets.
+static. It adds scroll reveals, in-view video playback, the hero's readouts,
+the Browse walkthrough, tabs, the gallery lightbox, the accent swatches, and
+download links for the newest GitHub release. `public/_headers` sets a strict
+CSP. Scripts, styles, and media are same-origin only, and the only outside
+connection allowed is `https://api.github.com`. Don't add inline scripts,
+inline `style` attributes, or third-party assets.
+
+## Motion
+
+Every animation stands for something the app does, and each kind of element
+enters the way it is built:
+
+- **Hero.** The headline rises word by word. The readouts around the window
+  follow the recording: library ones while it tours Home and a details page,
+  playback ones once the film starts (`data-play-at` on the hero video is that
+  second; `just website-encode` prints it). The readouts drift at different
+  rates with the scroll, and the copy recedes as the window takes over.
+- **Reveals.** `data-reveal` on a `.reveal` element picks the entrance: `draw`
+  runs a rail out from its mark, `clip` wipes a heading up out of its
+  baseline, `lock` settles a screen and flashes the app's corner brackets
+  once, `wire` pops the Companion's services in along their wires.
+- **Browse walkthrough.** The app window pins while four steps scroll past.
+  The step in the middle of the viewport is the frame the window shows; its
+  title bar names it, and the hover recording plays only on the hover step.
+- **Tracking.** The nav's underline slides to the current section. From 1400px
+  wide, a spine on the left lists the sections and fills with the accent as
+  the page is read.
+- **Gallery.** Shots pan slightly as they cross the strip. Where the View
+  Transitions API exists, a thumbnail grows into the lightbox and shrinks back
+  on close.
+- **Small things.** The ticker speeds up with the scroll and settles again; a
+  light follows the pointer across the Details tiles.
+
+Scroll-linked motion uses CSS scroll-driven animations behind `@supports`, so
+browsers without them keep the same content with time-based motion only.
+`prefers-reduced-motion` disables all of it, including the view transition,
+and the walkthrough switches frames without a fade.
 
 ## Run locally
 
@@ -37,11 +68,18 @@ drives headless Chrome or Edge at a desktop and a phone viewport, and fails on:
 - console errors and CSP violations
 - missing or undecodable images and videos
 - horizontal overflow
-- a hero window below the fold
-- broken tabs, accent swatches, or lightbox
+- a hero window below the fold, or headline words and readouts that don't
+  follow the recording
+- a walkthrough step that doesn't take over the pinned window, name itself in
+  its title bar, or play the hover recording only on the hover step
+- a nav underline or spine that doesn't track the current section
+- broken tabs, accent swatches, or lightbox (open and close)
 
-It writes `build/website-check/report.json` plus full-page `desktop.png` and
-`mobile.png`.
+It writes `build/website-check/report.json`, full-page `desktop.png` and
+`mobile.png`, and one viewport screenshot per walkthrough step
+(`walk-<viewport>-<step>.png`). Headless Chrome may not start the hero
+recording at all; the report notes that under `hero.playback`, and the
+library-phase assertion is skipped in that case.
 
 ## Regenerate the screenshots and loops
 
@@ -61,7 +99,9 @@ Pass scene names to re-capture only those, for example
 `just website-capture demo player tour`. Raw captures and
 `report-<profile>.json` go to `build/website-capture/raw`;
 `build/website-capture/encode-report.json` lists every encoded file with its
-size and dimensions.
+size and dimensions, plus `heroPlayAt`, the second at which the hero recording
+cuts to playback. After re-encoding, copy that value to `data-play-at` on the
+hero video in `public/index.html`.
 
 How the capture works:
 
