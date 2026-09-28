@@ -165,7 +165,11 @@ for (const [kind, file] of Object.entries(encodeLoop(["-i", heroClip], "", "hero
 }
 
 const report = path.join(root, "build", "website-capture", "encode-report.json")
-await writeFile(report, JSON.stringify({ encodedAt: new Date().toISOString(), outputs }, null, 2))
+// The page's hero readouts switch from the library ones to the playback ones
+// at this second; it belongs in data-play-at on the hero video in index.html.
+const heroPlayAt = Math.round((duration(tourClip) - fade / 2) * 10) / 10
+await writeFile(report, JSON.stringify({ encodedAt: new Date().toISOString(), heroPlayAt, outputs }, null, 2))
+console.log(`hero playback starts at ${heroPlayAt}s; set data-play-at on the hero video in website/public/index.html`)
 const total = outputs.reduce((sum, output) => sum + output.bytes, 0)
 console.log(`${outputs.length} files, ${(total / 1024 / 1024).toFixed(1)} MiB → ${path.relative(root, outDir)}`)
 console.log(`report: ${path.relative(root, report)}`)

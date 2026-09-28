@@ -5,12 +5,14 @@
 // Serves website/public with the Content-Security-Policy from its _headers
 // file, drives headless Chrome (or Edge) over CDP at a desktop and a phone
 // viewport, and exercises the page: scrolling every section into view, the
-// player switch, the Companion tabs, the accent swatches and the gallery
-// lightbox. It fails on console errors, CSP violations, missing assets,
-// horizontal overflow or broken interactions.
+// hero's readouts, the Browse walkthrough step by step, the player switch,
+// the Companion tabs, the accent swatches and the gallery lightbox. It fails
+// on console errors, CSP violations, missing assets, horizontal overflow or
+// broken interactions.
 //
-// The output directory (default build/website-check) receives report.json
-// and full-page screenshots, desktop.png and mobile.png.
+// The output directory (default build/website-check) receives report.json,
+// full-page screenshots (desktop.png and mobile.png) and one viewport
+// screenshot per walkthrough step (walk-<viewport>-<step>.png).
 
 import { createServer } from "node:http"
 import { readFile, stat, mkdir, writeFile, rm } from "node:fs/promises"
@@ -131,6 +133,31 @@ try {
     const heroTop = await page.evaluate(`document.querySelector(".screen-hero").getBoundingClientRect().top`)
     if (name === "desktop" && heroTop > metrics.height - 120) fail(name, `hero window starts at ${Math.round(heroTop)}px, below the fold`)
 
+    // The headline's words have risen and the readouts follow the recording:
+    // the library ones while it tours, the playback ones once the film starts.
+    const hero = await page.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const stage = document.querySelector("[data-hero-stage]")
+      const video = document.querySelector("[data-hero]")
+      const words = [...document.querySelectorAll("h1 .w")]
+      await wait(1200)
+      const risen = words.every((word) => getComputedStyle(word).opacity === "1" && getComputedStyle(word).translate === "none")
+      const browse = { phase: stage.dataset.phase, title: stage.querySelector("[data-hero-title]").textContent, playChip: getComputedStyle(stage.querySelector(".chip-play")).opacity, browseChip: getComputedStyle(stage.querySelector(".chip-browse")).opacity }
+      video.currentTime = Number(video.dataset.playAt) + 0.5
+      await wait(1600)
+      const play = { phase: stage.dataset.phase, title: stage.querySelector("[data-hero-title]").textContent, playChip: getComputedStyle(stage.querySelector(".chip-play")).opacity, browseChip: getComputedStyle(stage.querySelector(".chip-browse")).opacity }
+      video.currentTime = 0
+      // Headless Chrome may never start the recording; a pending play() is
+      // recorded as such rather than waited for.
+      const playback = await Promise.race([video.play().then(() => "playing", (error) => String(error)), wait(1500).then(() => "pending")])
+      return { risen, playing: !video.paused, playback, readyState: video.readyState, browse, play }
+    })()`)
+    if (!hero.risen) fail(name, "headline words did not rise into place")
+    if (hero.playing) {
+      if (hero.browse.phase !== "browse" || hero.browse.browseChip !== "1" || hero.browse.playChip !== "0") fail(name, `hero readouts did not follow the library tour: ${JSON.stringify(hero.browse)}`)
+    }
+    if (hero.play.phase !== "play" || hero.play.playChip !== "1" || hero.play.browseChip !== "0" || !hero.play.title.includes("Now playing")) fail(name, `hero readouts did not follow playback: ${JSON.stringify(hero.play)}`)
+
     // Walk the page so every reveal, lazy image and in-view video fires.
     const height = await page.evaluate("document.documentElement.scrollHeight")
     for (let y = 0; y < height; y += Math.round(metrics.height * 0.6)) {
@@ -147,7 +174,7 @@ try {
       const overflow = document.documentElement.scrollWidth - innerWidth
       return { hidden, brokenImages, overflow, csp: window.__cspViolations }
     })()`)
-    if (state.hidden.length) fail(name, `${state.hidden.length} sections never revealed`)
+    if (state.hidden.length) fail(name, `${state.hidden.length} sections never revealed: ${state.hidden.join(", ")}`)
     if (state.brokenImages.length) fail(name, `images failed: ${state.brokenImages.join(", ")}`)
 
     // Every media URL the page references must decode, loaded or not yet.
@@ -171,6 +198,74 @@ try {
     if (state.overflow > 1) fail(name, `page overflows horizontally by ${state.overflow}px`)
     if (state.csp.length) fail(name, `CSP violations: ${state.csp.join("; ")}`)
 
+    // The walkthrough: bring each step to the middle of the viewport and
+    // expect the pinned window to show that step's frame, name it in its
+    // title bar, and play the hover recording only on the hover step. A
+    // screenshot of each step is kept as the artifact.
+    await mkdir(outDir, { recursive: true })
+    const walkthrough = []
+    const stepNames = await page.evaluate(`[...document.querySelectorAll("[data-walk-step]")].map((step) => step.dataset.walkStep)`)
+    for (const step of stepNames) {
+      const result = await page.evaluate(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+        const walk = document.querySelector("[data-walk]")
+        const step = walk.querySelector('[data-walk-step="${step}"]')
+        const rect = step.getBoundingClientRect()
+        // Where a reader would stop: the step in the middle beside the window,
+        // or, on a phone, its text just under the pinned window.
+        const stage = walk.querySelector(".walk-stage")
+        const pinnedBottom = parseFloat(getComputedStyle(stage).top) + stage.offsetHeight
+        const stacked = ${metrics.mobile}
+        scrollTo({ top: scrollY + rect.top - (stacked ? pinnedBottom + 8 : innerHeight / 2 - rect.height / 2), behavior: "instant" })
+        await wait(1000)
+        const frame = walk.querySelector('[data-walk-frame="${step}"]')
+        const stageRect = stage.getBoundingClientRect()
+        const others = [...walk.querySelectorAll(".walk-frame")].filter((candidate) => candidate !== frame).map((candidate) => getComputedStyle(candidate).opacity)
+        return {
+          active: walk.dataset.walkActive,
+          frameOpacity: getComputedStyle(frame).opacity,
+          othersHidden: others.every((opacity) => opacity === "0"),
+          title: walk.querySelector("[data-walk-title]").textContent,
+          expectedTitle: step.dataset.walkTitle,
+          stepLit: getComputedStyle(step).opacity === "1",
+          stagePinned: stageRect.top >= 0 && stageRect.bottom <= innerHeight + 1,
+          videoPlaying: !walk.querySelector("video").paused,
+        }
+      })()`)
+      const { data } = await page.send("Page.captureScreenshot", { format: "png" })
+      const shot = path.join(outDir, `walk-${name}-${step}.png`)
+      await writeFile(shot, Buffer.from(data, "base64"))
+      walkthrough.push({ step, ...result, screenshot: path.relative(root, shot) })
+      if (result.active !== step) fail(name, `walkthrough step ${step} did not become active (active: ${result.active})`)
+      if (result.frameOpacity !== "1" || !result.othersHidden) fail(name, `walkthrough window does not show the ${step} frame alone`)
+      if (result.title !== result.expectedTitle) fail(name, `walkthrough title is "${result.title}" on step ${step}`)
+      if (!result.stepLit) fail(name, `walkthrough step ${step} is not highlighted`)
+      if (!result.stagePinned) fail(name, `walkthrough window is not pinned in view on step ${step}`)
+      if (result.videoPlaying !== (step === "hover")) fail(name, `hover recording ${result.videoPlaying ? "plays" : "does not play"} on step ${step}`)
+    }
+
+    // The current section is tracked in the nav's sliding underline and, on
+    // wide screens, in the spine.
+    const tracking = await page.evaluate(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const target = document.querySelector("#companion")
+      scrollTo({ top: target.offsetTop + innerHeight * 0.3, behavior: "instant" })
+      await wait(500)
+      const nav = document.querySelector(".chrome-nav")
+      const spine = document.querySelector(".spine")
+      return {
+        navVisible: getComputedStyle(nav).display !== "none",
+        navCurrent: nav.querySelector("a[aria-current]")?.getAttribute("href"),
+        ink: nav.hasAttribute("data-ink") && getComputedStyle(nav.querySelector(".nav-ink")).opacity === "1",
+        inkWidth: parseFloat(nav.style.getPropertyValue("--ink-w")) || 0,
+        spineVisible: getComputedStyle(spine).display !== "none",
+        spineCurrent: spine.querySelector("a[aria-current]")?.dataset.name,
+        spineFill: getComputedStyle(spine.querySelector(".spine-line i")).scale,
+      }
+    })()`)
+    if (tracking.navVisible && (tracking.navCurrent !== "#companion" || !tracking.ink || tracking.inkWidth <= 0)) fail(name, `nav did not track the Companion section: ${JSON.stringify(tracking)}`)
+    if (metrics.width >= 1400 && (!tracking.spineVisible || tracking.spineCurrent !== "Companion")) fail(name, `spine did not track the Companion section: ${JSON.stringify(tracking)}`)
+
     // Interactions, through the page's own controls.
     const interactions = await page.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -187,18 +282,23 @@ try {
       const after = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim()
       document.querySelector('[data-accent-choice="signal"]').click()
       results.accent = before !== after && after === "#ffbd4a"
+      // Opening morphs the thumbnail into the dialog where view transitions
+      // exist; closing through the dialog's own button morphs it back.
       document.querySelector("[data-full]").click()
-      await wait(300)
+      await wait(900)
       const image = document.querySelector("[data-lightbox-image]")
       await image.decode().catch(() => {})
-      results.lightbox = document.querySelector("[data-lightbox]").open && image.naturalWidth > 0
-      document.querySelector("[data-lightbox]").close()
+      const lightbox = document.querySelector("[data-lightbox]")
+      results.lightbox = lightbox.open && image.naturalWidth > 0
+      lightbox.querySelector(".lightbox-close").click()
+      await wait(900)
+      results.lightboxClosed = !lightbox.open
       const videos = [...document.querySelectorAll("video")]
       await Promise.all(videos.map((video) => (video.readyState >= 1 ? null : (video.preload = "metadata", video.load(), new Promise((resolve) => { video.onloadedmetadata = resolve; video.onerror = resolve; setTimeout(resolve, 4000) })))))
       results.videos = videos.map((video) => ({ src: video.currentSrc, ok: video.readyState >= 1 && video.videoWidth > 0 }))
       return results
     })()`)
-    for (const key of ["playerSwitch", "showcaseTabs", "accent", "lightbox"]) {
+    for (const key of ["playerSwitch", "showcaseTabs", "accent", "lightbox", "lightboxClosed"]) {
       if (!interactions[key]) fail(name, `${key} did not work`)
     }
     for (const video of interactions.videos) if (!video.ok) fail(name, `video did not load: ${video.src}`)
@@ -218,7 +318,7 @@ try {
     await writeFile(shot, Buffer.from(data, "base64"))
 
     for (const problem of problems) fail(name, problem)
-    report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, interactions, screenshot: path.relative(root, shot) }
+    report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, hero, walkthrough, tracking, interactions, screenshot: path.relative(root, shot) }
   }
   report.notFound = [...new Set(requests.filter((entry) => entry.status === 404).map((entry) => entry.path))]
   for (const missing of report.notFound) report.failures.push(`404: ${missing}`)

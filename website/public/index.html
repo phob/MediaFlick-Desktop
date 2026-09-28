@@ -33,6 +33,7 @@
           <a href="#sync">Playstate</a>
           <a href="#companion">Companion</a>
           <a href="#gallery">Screens</a>
+          <i class="nav-ink" aria-hidden="true"></i>
         </nav>
         <div class="chrome-actions">
           <a class="icon-link" href="https://github.com/phob/MediaFlick-Desktop" rel="noreferrer" aria-label="MediaFlick on GitHub">
@@ -43,13 +44,28 @@
       </div>
     </header>
 
+    <!-- Wide screens get a spine: the page's sections as a rail that fills as you read. -->
+    <nav class="spine" aria-label="Sections">
+      <span class="spine-line" aria-hidden="true"><i></i></span>
+      <a class="data" href="#players" data-name="Playback">01</a>
+      <a class="data" href="#library" data-name="Library">02</a>
+      <a class="data" href="#browse" data-name="Browse">03</a>
+      <a class="data" href="#sync" data-name="Playstate">04</a>
+      <a class="data" href="#companion" data-name="Companion">05</a>
+      <a class="data" href="#details" data-name="Details">06</a>
+      <a class="data" href="#gallery" data-name="Screens">07</a>
+    </nav>
+
     <main id="main">
       <!-- Hero -->
       <section class="hero" id="top">
         <div class="hero-glow" aria-hidden="true"></div>
         <div class="shell hero-copy">
           <p class="eyebrow reveal"><span class="pulse" aria-hidden="true"></span>Jellyfin desktop client · Windows · Linux · macOS</p>
-          <h1 class="reveal">Your Jellyfin library,<br /><span class="accent-text">played by mpv.</span></h1>
+          <h1 class="reveal" data-reveal="words">
+            <span class="line"><span class="w">Your</span> <span class="w">Jellyfin</span> <span class="w">library,</span></span>
+            <span class="line accent-text"><span class="w">played</span> <span class="w">by</span> <span class="w">mpv.</span></span>
+          </h1>
           <p class="lede reveal">
             MediaFlick is a native desktop app for Jellyfin. It plays straight away with a
             built-in mpv player, or hands off to your own mpv with every shader, script and
@@ -65,28 +81,38 @@
           <p class="hero-meta data reveal"><span data-release-version>Latest release</span><span aria-hidden="true">/</span>Free and open source<span aria-hidden="true">/</span>GPL-2.0</p>
         </div>
 
-        <div class="shell hero-stage reveal">
+        <div class="shell hero-stage reveal" data-hero-stage>
           <figure class="screen screen-hero" data-tilt>
             <div class="screen-bar" aria-hidden="true">
               <span class="dots"><i></i><i></i><i></i></span>
-              <span class="data">MediaFlick · Home</span>
+              <span class="data" data-hero-title>MediaFlick · Home</span>
             </div>
-            <video class="screen-media" data-autoplay autoplay muted loop playsinline preload="auto" poster="/media/hero-poster.webp" width="1600" height="900" aria-label="MediaFlick in use: the Home page, a hover card, a film's details page, then playback in the built-in player">
+            <!-- data-play-at is the second at which the recording cuts from the library tour to playback (see website/README.md). -->
+            <video class="screen-media" data-autoplay data-hero data-play-at="11.4" autoplay muted loop playsinline preload="auto" poster="/media/hero-poster.webp" width="1600" height="900" aria-label="MediaFlick in use: the Home page, a hover card, a film's details page, then playback in the built-in player">
               <source src="/media/hero.webm" type="video/webm" />
               <source src="/media/hero.mp4" type="video/mp4" />
             </video>
             <span class="brackets" aria-hidden="true"></span>
           </figure>
 
-          <div class="float-chip chip-a" aria-hidden="true">
+          <!-- Readouts follow the recording: the library ones while it browses, the playback ones once the film starts. -->
+          <div class="float-chip chip-browse chip-d" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.6" fill="none" stroke="currentColor" stroke-width="2" /><path fill="none" stroke="currentColor" stroke-width="2" d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6" /></svg>
+            <span><b>Local index</b><small class="data">1,284 titles · up to date</small></span>
+          </div>
+          <div class="float-chip chip-browse chip-e" aria-hidden="true">
+            <span class="sync-dot"></span>
+            <span><b>Hover card</b><small class="data">Play · Watchlist · Rate</small></span>
+          </div>
+          <div class="float-chip chip-play chip-a" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8.5 5.9v12.2c0 .9 1 1.5 1.8 1L20 13a1.15 1.15 0 0 0 0-2L10.3 4.9c-.8-.5-1.8.1-1.8 1Z"/></svg>
             <span><b>Direct play</b><small class="data">Original · 38.4 Mbps</small></span>
           </div>
-          <div class="float-chip chip-b" aria-hidden="true">
+          <div class="float-chip chip-play chip-b" aria-hidden="true">
             <span class="sync-dot"></span>
             <span><b>Resume point synced</b><small class="data">42:17 → Jellyfin</small></span>
           </div>
-          <div class="float-chip chip-c" aria-hidden="true">
+          <div class="float-chip chip-play chip-c" aria-hidden="true">
             <span class="skip-ring"><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" /></svg><b class="data">5</b></span>
             <span><b>Skip intro</b><small class="data">Auto-skip in 5 s</small></span>
           </div>
@@ -108,8 +134,8 @@
       <!-- 01 Playback -->
       <section class="section" id="players">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">01 · Playback</p><span class="rail-rule"></span></div>
-          <div class="section-head reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">01 · Playback</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal" data-reveal="clip">
             <h2>It's mpv either way.</h2>
             <p>
               The built-in player is libmpv inside the app window, under MediaFlick's own
@@ -205,8 +231,8 @@ script-opts-append=svp-enabled=yes</code></pre>
       <section class="section" id="library">
         <div class="shell split">
           <div class="split-copy">
-            <div class="rail reveal"><span class="rail-mark"></span><p class="data">02 · Library</p><span class="rail-rule"></span></div>
-            <h2 class="reveal">Search that doesn't wait for the server.</h2>
+            <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">02 · Library</p><span class="rail-rule"></span></div>
+            <div class="reveal" data-reveal="clip"><h2>Search that doesn't wait for the server.</h2></div>
             <p class="reveal">
               MediaFlick mirrors your libraries into a local SQLite database and keeps it
               current in the background. Type-ahead search runs on your machine, across
@@ -228,7 +254,7 @@ script-opts-append=svp-enabled=yes</code></pre>
               <li><span class="data">Posters</span>Cached on disk</li>
             </ul>
           </div>
-          <figure class="screen split-media reveal">
+          <figure class="screen split-media reveal" data-reveal="lock">
             <video class="screen-media" data-autoplay muted loop playsinline preload="none" poster="/media/search-poster.webp" width="1280" height="800" aria-label="Typing a search in the sidebar; results appear as you type">
               <source src="/media/search.webm" type="video/webm" />
               <source src="/media/search.mp4" type="video/mp4" />
@@ -238,46 +264,69 @@ script-opts-append=svp-enabled=yes</code></pre>
         </div>
       </section>
 
-      <!-- 03 Browse -->
-      <section class="section" id="browse">
+      <!-- 03 Browse: one path through the app, told by scrolling. The window pins
+           while each step scrolls past and swaps what it shows. -->
+      <section class="section walk" id="browse">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">03 · Browse</p><span class="rail-rule"></span></div>
-          <div class="section-head reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">03 · Browse</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal" data-reveal="clip">
             <h2>Made for looking at posters.</h2>
             <p>
               Home rows for Continue Watching, Next Up and everything new. Hover a card for
               its details and actions. Open a title for cast, seasons, episodes and exactly
-              what's in the file.
+              what's in the file. Scroll to walk through it.
             </p>
           </div>
-          <div class="collage">
-            <figure class="screen collage-main reveal">
-              <video class="screen-media" data-autoplay muted loop playsinline preload="none" poster="/media/home-hover-poster.webp" width="1280" height="800" aria-label="Hovering a poster on Home opens a card with play, watchlist and rating actions">
-                <source src="/media/home-hover.webm" type="video/webm" />
-                <source src="/media/home-hover.mp4" type="video/mp4" />
-              </video>
+        </div>
+        <div class="shell walk-body" data-walk data-walk-active="home">
+          <div class="walk-stage reveal" data-reveal="lock">
+            <figure class="screen screen-walk">
+              <div class="screen-bar" aria-hidden="true">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="data" data-walk-title>MediaFlick · Home</span>
+              </div>
+              <div class="walk-frames">
+                <img class="walk-frame is-active" data-walk-frame="home" src="/media/home-960.webp" srcset="/media/home-960.webp 960w, /media/home.webp 1600w" sizes="(min-width: 900px) 58vw, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Home with the billboard, Continue Watching and the latest additions" />
+                <video class="walk-frame" data-walk-frame="hover" muted loop playsinline preload="none" poster="/media/home-hover-poster.webp" width="1280" height="800" aria-label="Hovering a poster on Home opens a card with play, watchlist and rating actions">
+                  <source src="/media/home-hover.webm" type="video/webm" />
+                  <source src="/media/home-hover.mp4" type="video/mp4" />
+                </video>
+                <img class="walk-frame" data-walk-frame="film" src="/media/movie-detail-960.webp" srcset="/media/movie-detail-960.webp 960w, /media/movie-detail.webp 1600w" sizes="(min-width: 900px) 58vw, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Details page for Night of the Living Dead, with resume, cast and media information" />
+                <img class="walk-frame" data-walk-frame="series" src="/media/series-detail-960.webp" srcset="/media/series-detail-960.webp 960w, /media/series-detail.webp 1600w" sizes="(min-width: 900px) 58vw, 94vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Series page for Pioneer One with its next episode and season browser" />
+              </div>
               <span class="brackets" aria-hidden="true"></span>
-              <figcaption class="data">Hover cards on every shelf</figcaption>
-            </figure>
-            <figure class="screen collage-side reveal">
-              <img src="/media/movie-detail-960.webp" srcset="/media/movie-detail-960.webp 960w, /media/movie-detail.webp 1600w" sizes="(min-width: 900px) 40vw, 90vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Details page for Night of the Living Dead, with resume, cast and media information" />
-              <span class="brackets" aria-hidden="true"></span>
-              <figcaption class="data">Films</figcaption>
-            </figure>
-            <figure class="screen collage-side reveal">
-              <img src="/media/series-detail-960.webp" srcset="/media/series-detail-960.webp 960w, /media/series-detail.webp 1600w" sizes="(min-width: 900px) 40vw, 90vw" width="1600" height="1000" loading="lazy" decoding="async" alt="Series page for Pioneer One with its next episode and season browser" />
-              <span class="brackets" aria-hidden="true"></span>
-              <figcaption class="data">Series</figcaption>
             </figure>
           </div>
+          <ol class="walk-steps">
+            <li class="walk-step is-active" data-walk-step="home" data-walk-title="MediaFlick · Home">
+              <span class="data">Step 01</span>
+              <h3>Land on Home.</h3>
+              <p>A billboard for what's new, then shelves for Continue Watching, Next Up and every library, laid out for posters rather than lists.</p>
+            </li>
+            <li class="walk-step" data-walk-step="hover" data-walk-title="MediaFlick · Home · Hover card">
+              <span class="data">Step 02</span>
+              <h3>Hover a card.</h3>
+              <p>Play, watchlist, rating and the synopsis appear over the shelf. Nothing to click into, nothing to back out of.</p>
+            </li>
+            <li class="walk-step" data-walk-step="film" data-walk-title="MediaFlick · Night of the Living Dead">
+              <span class="data">Step 03</span>
+              <h3>Open a film.</h3>
+              <p>Resume where you were, browse the cast, and see exactly what's in the file: container, codecs, bitrate, audio and subtitle tracks.</p>
+            </li>
+            <li class="walk-step" data-walk-step="series" data-walk-title="MediaFlick · Pioneer One">
+              <span class="data">Step 04</span>
+              <h3>Or a series.</h3>
+              <p>The next episode up top, seasons and episodes below, and unwatched episodes kept spoiler-free until you reveal them.</p>
+            </li>
+          </ol>
         </div>
       </section>
 
       <!-- 04 Playstate -->
       <section class="section" id="sync">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">04 · Playstate</p><span class="rail-rule"></span></div>
-          <div class="section-head reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">04 · Playstate</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal" data-reveal="clip">
             <h2>Jellyfin always knows where you stopped.</h2>
             <p>
               Playing outside a browser usually means the server loses track. MediaFlick
@@ -321,7 +370,7 @@ script-opts-append=svp-enabled=yes</code></pre>
             </article>
           </div>
 
-          <figure class="screen wide reveal">
+          <figure class="screen wide reveal" data-reveal="lock">
             <img src="/media/player-960.webp" srcset="/media/player-960.webp 960w, /media/player.webp 1600w" sizes="(min-width: 1200px) 1100px, 94vw" width="1600" height="900" loading="lazy" decoding="async" alt="The built-in player's controls: previous, rewind, pause, forward, next, stop, seek bar, time, volume, settings and fullscreen" />
             <span class="brackets" aria-hidden="true"></span>
             <figcaption class="data">Built-in player · Caminandes: Llama Drama (Blender Foundation, CC BY)</figcaption>
@@ -332,8 +381,8 @@ script-opts-append=svp-enabled=yes</code></pre>
       <!-- 05 Companion -->
       <section class="section section-tint" id="companion">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">05 · Companion</p><span class="rail-rule"></span></div>
-          <div class="section-head reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">05 · Companion</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal" data-reveal="clip">
             <h2>Plug in your stack. Keep the keys on the server.</h2>
             <p>
               The optional MediaFlick Companion is a Jellyfin plugin. It brings Sonarr,
@@ -343,7 +392,7 @@ script-opts-append=svp-enabled=yes</code></pre>
           </div>
 
           <div class="companion">
-            <svg class="topology reveal" viewBox="0 0 560 300" role="img" aria-label="MediaFlick Desktop talks only to Jellyfin. The Companion plugin inside Jellyfin holds the keys for Sonarr, Radarr, Seerr, MDBList and TMDB.">
+            <svg class="topology reveal" data-reveal="wire" viewBox="0 0 560 300" role="img" aria-label="MediaFlick Desktop talks only to Jellyfin. The Companion plugin inside Jellyfin holds the keys for Sonarr, Radarr, Seerr, MDBList and TMDB.">
               <defs>
                 <path id="t-desk" d="M110 150 H 220" />
                 <path id="t-1" d="M340 150 C 390 150, 390 50, 440 50" />
@@ -414,8 +463,8 @@ script-opts-append=svp-enabled=yes</code></pre>
       <!-- 06 Details -->
       <section class="section" id="details">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">06 · Details</p><span class="rail-rule"></span></div>
-          <div class="section-head reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">06 · Details</p><span class="rail-rule"></span></div>
+          <div class="section-head reveal" data-reveal="clip">
             <h2>The small things.</h2>
             <p>Per-account viewing preferences and per-device controls, all behind Save, Reset and Discard.</p>
           </div>
@@ -489,8 +538,8 @@ script-opts-append=svp-enabled=yes</code></pre>
       <!-- 07 Gallery -->
       <section class="section" id="gallery">
         <div class="shell">
-          <div class="rail reveal"><span class="rail-mark"></span><p class="data">07 · Screens</p><span class="rail-rule"></span></div>
-          <div class="section-head section-head-row reveal">
+          <div class="rail reveal" data-reveal="draw"><span class="rail-mark"></span><p class="data">07 · Screens</p><span class="rail-rule"></span></div>
+          <div class="section-head section-head-row reveal" data-reveal="clip">
             <h2>Look around.</h2>
             <div class="gallery-nav">
               <button type="button" class="icon-btn" data-gallery-prev aria-label="Previous screens"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg></button>
@@ -521,7 +570,7 @@ script-opts-append=svp-enabled=yes</code></pre>
       <!-- Download -->
       <section class="section download" id="download">
         <div class="shell">
-          <div class="download-head reveal">
+          <div class="download-head reveal" data-reveal="clip">
             <img src="/app-icon.svg" alt="" width="88" height="88" class="download-icon" />
             <h2>Get MediaFlick.</h2>
             <p>Free, open source, and ready for your server. <span class="data" data-release-version>Latest release</span></p>

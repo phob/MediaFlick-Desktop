@@ -41,6 +41,18 @@
   initial-value: 5;
   inherits: false;
 }
+/* The hero readouts combine two motions on one translate: a time-based bob
+   and a scroll-linked drift. Each is a registered length so both can animate. */
+@property --bob {
+  syntax: "<length>";
+  initial-value: 0px;
+  inherits: false;
+}
+@property --drift {
+  syntax: "<length>";
+  initial-value: 0px;
+  inherits: false;
+}
 
 *,
 *::before,
@@ -186,7 +198,7 @@ code {
 .brand-icon { border-radius: 7px; }
 .wordmark { font-weight: 600; font-size: 1.08rem; letter-spacing: -0.01em; }
 .wordmark b { color: var(--primary); font-weight: 600; }
-.chrome-nav { display: flex; gap: 0.2rem; margin-inline: auto; }
+.chrome-nav { position: relative; display: flex; gap: 0.2rem; margin-inline: auto; }
 .chrome-nav a {
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius);
@@ -197,12 +209,102 @@ code {
 }
 .chrome-nav a:hover { color: var(--foreground); background: rgb(255 255 255 / 4%); }
 .chrome-nav a[aria-current="true"] { color: var(--foreground); }
+/* The current section's underline slides between links instead of jumping. */
+.nav-ink {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: var(--ink-w, 0px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+  box-shadow: 0 0 12px var(--primary);
+  opacity: 0;
+  translate: var(--ink-x, 0px) 0;
+  transition: translate 420ms var(--ease-out), width 420ms var(--ease-out), opacity 240ms ease;
+}
+.chrome-nav[data-ink] .nav-ink { opacity: 1; }
 .chrome-actions { display: flex; align-items: center; gap: 0.6rem; }
 
 @media (max-width: 860px) {
   .chrome-nav { display: none; }
   .chrome-actions { margin-left: auto; }
 }
+
+/* ------------------------------------------------------------------ spine */
+
+/* A fixed rail of section numbers on wide screens. The line fills with the
+   accent as the page is read; the current section shows its name. */
+.spine {
+  position: fixed;
+  top: 50%;
+  left: clamp(1.2rem, 2.5vw, 2.5rem);
+  z-index: 40;
+  display: none;
+  grid-template-columns: auto;
+  gap: 1.25rem;
+  padding-left: 1.1rem;
+  translate: 0 -50%;
+}
+@media (min-width: 1400px) {
+  .spine { display: grid; }
+}
+.spine-line {
+  position: absolute;
+  top: 0.4rem;
+  bottom: 0.4rem;
+  left: 0;
+  width: 1px;
+  background: var(--hairline);
+}
+.spine-line i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary) 30%, transparent), var(--primary));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 60%, transparent);
+  transform-origin: top;
+  scale: 1 0;
+}
+@supports (animation-timeline: scroll()) {
+  .spine-line i { animation: grow linear both; animation-timeline: scroll(root); }
+}
+.spine a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.62rem;
+  text-decoration: none;
+  transition: color 240ms ease;
+}
+.spine a::before {
+  position: absolute;
+  top: 50%;
+  left: -1.1rem;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border);
+  translate: -2px -50%;
+  transition: background-color 240ms ease, box-shadow 240ms ease, scale 320ms var(--ease-out);
+  content: "";
+}
+.spine a::after {
+  overflow: hidden;
+  max-width: 0;
+  color: var(--foreground);
+  font-size: 0.6rem;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width 420ms var(--ease-out), opacity 300ms ease;
+  content: attr(data-name);
+}
+.spine a:hover,
+.spine a[aria-current="true"] { color: var(--primary); }
+.spine a[aria-current="true"]::before { background: var(--primary); box-shadow: 0 0 10px var(--primary); scale: 1.5; }
+.spine a:hover::after,
+.spine a[aria-current="true"]::after { max-width: 8rem; opacity: 1; }
 
 /* ------------------------------------------------------------------- hero */
 
@@ -267,9 +369,27 @@ code {
   line-height: 0.98;
   letter-spacing: -0.045em;
 }
+/* Each line clips its words so they can rise into place one after another. */
+.hero h1 .line { display: block; overflow: hidden; margin-bottom: -0.12em; padding: 0.04em 0.1em 0.12em; }
+.hero h1 .w { display: inline-block; }
+.hero h1 .line:nth-child(2) .w { --l: 3; }
+.hero h1 .w:nth-child(1) { --i: 0; }
+.hero h1 .w:nth-child(2) { --i: 1; }
+.hero h1 .w:nth-child(3) { --i: 2; }
 .accent-text {
   color: var(--primary);
   text-shadow: 0 0 60px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+/* The copy recedes as the window takes over the viewport. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .hero-copy {
+      animation: recede linear both;
+      animation-timeline: view();
+      animation-range: exit 0% exit 90%;
+    }
+  }
 }
 .lede {
   max-width: 62ch;
@@ -372,7 +492,8 @@ code {
   to { transform: perspective(1800px) rotateX(0deg) scale(1); }
 }
 
-/* Floating readouts around the hero window. */
+/* Floating readouts around the hero window. They bob on their own clock and
+   drift at different rates with the scroll, which gives the stage depth. */
 .float-chip {
   position: absolute;
   z-index: 4;
@@ -387,14 +508,37 @@ code {
   box-shadow: 0 18px 50px -18px rgb(0 0 0 / 80%);
   font-size: 0.88rem;
   line-height: 1.25;
+  pointer-events: none;
+  translate: 0 calc(var(--bob) + var(--drift));
   animation: bob 7s ease-in-out infinite;
+  transition: opacity 500ms var(--ease-out), scale 700ms var(--ease-out);
+  transition-delay: var(--chip-in, 0ms);
 }
 .float-chip b { display: block; font-weight: 600; }
 .float-chip small { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.62rem; }
 .float-chip > svg { width: 1.9rem; height: 1.9rem; padding: 0.45rem; border-radius: var(--radius); background: var(--primary); color: var(--primary-foreground); }
 .chip-a { top: 18%; left: -1%; }
-.chip-b { top: 46%; right: -2%; animation-delay: -2.4s; }
-.chip-c { bottom: 6%; left: 6%; animation-delay: -4.6s; }
+.chip-b { top: 46%; right: -2%; --chip-in: 320ms; animation-delay: -2.4s; }
+.chip-c { bottom: 6%; left: 6%; --chip-in: 640ms; animation-delay: -4.6s; }
+.chip-d { top: 14%; right: -1%; animation-delay: -1.2s; }
+.chip-e { bottom: 16%; left: -1%; --chip-in: 320ms; animation-delay: -3.5s; }
+
+/* With scripts, the stage knows which part of the recording is playing and
+   shows only the readouts that belong to it. */
+[data-phase="browse"] .chip-play,
+[data-phase="play"] .chip-browse { opacity: 0; scale: 0.92; transition-delay: 0ms; }
+
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .float-chip { animation: bob 7s ease-in-out infinite, drift linear both; animation-timeline: auto, scroll(root); animation-range: normal, 0 110vh; }
+    .chip-a, .chip-e { --drift-to: -90px; }
+    .chip-b, .chip-d { --drift-to: 50px; }
+    .chip-c { --drift-to: -40px; }
+  }
+}
+
+/* The screen bar's title changes with what the window shows. */
+[data-swapped] { animation: text-in 420ms var(--ease-out); }
 
 .sync-dot { position: relative; width: 12px; height: 12px; margin: 0 0.4rem; border-radius: 50%; background: var(--primary); }
 .sync-dot::after { position: absolute; inset: 0; border-radius: 50%; background: var(--primary); content: ""; animation: ping 1.8s var(--ease-out) infinite; }
@@ -410,6 +554,10 @@ code {
   .skip-ring b::after { font-size: 0.8rem; content: counter(countdown); }
 }
 
+@media (max-width: 1320px) {
+  .chip-a, .chip-e { left: 0.5rem; }
+  .chip-b, .chip-d { right: 0.5rem; }
+}
 @media (max-width: 900px) {
   .float-chip { display: none; }
 }
@@ -667,16 +815,68 @@ code {
 .facts li { display: grid; gap: 0.3rem; padding: 0.9rem 1rem; background: var(--background); font-size: 0.92rem; }
 .facts .data { color: var(--primary); font-size: 0.62rem; }
 
-/* ----------------------------------------------------------------- browse */
+/* ------------------------------------------------------- browse walkthrough */
 
-.collage {
+/* The window sticks while the steps scroll past it. Each step, once it
+   reaches the middle of the viewport, becomes the frame the window shows. */
+.walk-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: 1.2rem;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  align-items: start;
 }
-.collage-main { grid-row: span 2; align-self: center; }
-.collage-side img { aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
+.walk-stage { position: sticky; top: calc(64px + clamp(1rem, 5vh, 3.5rem)); }
+.walk-frames { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: #050806; }
+.walk-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  opacity: 0;
+  scale: 1.04;
+  transition: opacity 600ms var(--ease-out), scale 1100ms var(--ease-out);
+}
+.walk-frame.is-active { z-index: 1; opacity: 1; scale: 1; }
+
+.walk-steps { margin: 0; padding: 0; list-style: none; }
+.walk-step {
+  position: relative;
+  display: grid;
+  gap: 0.6rem;
+  align-content: center;
+  min-height: 64vh;
+  padding: 3rem 0 3rem 1.6rem;
+  opacity: 0.32;
+  transition: opacity 500ms ease;
+}
+.walk-step.is-active { opacity: 1; }
+.walk-step:first-child { min-height: 52vh; padding-top: 0; }
+.walk-step:last-child { min-height: 52vh; padding-bottom: 0; }
+.walk-step::before,
+.walk-step::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  content: "";
+}
+.walk-step::before { background: var(--hairline); }
+.walk-step::after { background: var(--primary); box-shadow: 0 0 12px var(--primary); transform-origin: top; scale: 1 0; }
+.walk-step.is-active::after { transition: scale 600ms var(--ease-out); scale: 1 1; }
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    /* The line fills as the step crosses the middle of the viewport. */
+    .walk-step::after { animation: grow linear both; animation-timeline: view(); animation-range: cover 25% cover 65%; }
+    .walk-step.is-active::after { transition: none; }
+  }
+}
+.walk-step .data { color: var(--primary); font-size: 0.66rem; }
+.walk-step h3 { font-size: clamp(1.45rem, 2.4vw, 1.95rem); letter-spacing: -0.02em; }
+.walk-step p { max-width: 42ch; color: var(--muted); font-size: 1.02rem; }
 
 /* --------------------------------------------------------------- playstate */
 
@@ -807,9 +1007,11 @@ code {
 
 .bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
 .tile {
+  position: relative;
   display: grid;
   grid-template-rows: auto auto 1fr;
   gap: 0.5rem;
+  overflow: hidden;
   padding: 1.1rem 1.1rem 1.3rem;
   border: 1px solid var(--hairline);
   border-radius: 8px;
@@ -817,6 +1019,18 @@ code {
   transition: border-color 200ms ease, translate 200ms var(--ease-out);
 }
 .tile:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--hairline)); translate: 0 -2px; }
+/* A soft light follows the pointer across the tile. */
+.tile::before {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(240px circle at var(--mx, 50%) var(--my, 0%), color-mix(in srgb, var(--primary) 13%, transparent), transparent 70%);
+  opacity: 0;
+  transition: opacity 320ms ease;
+  content: "";
+  pointer-events: none;
+}
+.tile:hover::before { opacity: 1; }
+.tile > * { position: relative; }
 .tile h3 { margin-top: 0.4rem; font-size: 1.05rem; letter-spacing: -0.01em; }
 .tile p { color: var(--muted); font-size: 0.92rem; line-height: 1.5; }
 .pict {
@@ -987,6 +1201,12 @@ code {
 }
 .shot:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--edge)); translate: 0 -3px; }
 .shot img { width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; }
+/* Each shot pans slightly as it crosses the strip, so the row has depth. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .shot img { scale: 1.1; animation: pan linear both; animation-timeline: view(inline); }
+  }
+}
 .shot span {
   position: absolute;
   left: 0.7rem;
@@ -1015,6 +1235,15 @@ code {
 .lightbox img { width: 100%; height: auto; max-height: 92vh; object-fit: contain; border-radius: 8px; }
 .lightbox-close { position: absolute; top: -0.9rem; right: -0.9rem; z-index: 1; background: var(--card); }
 
+/* With view transitions, the thumbnail itself grows into the lightbox and
+   shrinks back on close; the dialog's own entrance would fight that. */
+:root:active-view-transition .lightbox[open] { animation: none; }
+::view-transition-group(shot) { animation-duration: 460ms; animation-timing-function: var(--ease-out); }
+::view-transition-old(shot),
+::view-transition-new(shot) { height: 100%; object-fit: cover; animation-duration: 200ms; }
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 300ms; }
+
 /* --------------------------------------------------------------- download */
 
 .download { position: relative; overflow: hidden; text-align: center; }
@@ -1027,7 +1256,7 @@ code {
   z-index: -1;
 }
 .download-head { display: grid; justify-items: center; gap: 1rem; }
-.download-icon { width: 88px; height: 88px; filter: drop-shadow(0 20px 40px color-mix(in srgb, var(--primary) 25%, transparent)); animation: bob 6s ease-in-out infinite; }
+.download-icon { width: 88px; height: 88px; filter: drop-shadow(0 20px 40px color-mix(in srgb, var(--primary) 25%, transparent)); translate: 0 var(--bob); animation: bob 6s ease-in-out infinite; }
 .download-head h2 { font-size: clamp(2.4rem, 6vw, 4.2rem); letter-spacing: -0.04em; }
 .download-head p { color: var(--muted); font-size: 1.08rem; }
 .download-head p .data { display: inline-block; margin-left: 0.4rem; color: var(--primary); }
@@ -1091,9 +1320,14 @@ code {
 @media (max-width: 900px) {
   .split,
   .switch-panel,
-  .collage,
+  .walk-body,
   .duo { grid-template-columns: 1fr; }
-  .collage-main { grid-row: auto; }
+  /* The window pins under the chrome and the steps read beneath it. */
+  .walk-body { gap: 1.5rem; }
+  .walk-stage { top: 64px; z-index: 2; padding-bottom: 1rem; background: linear-gradient(180deg, var(--background) 88%, transparent); }
+  .walk-step { align-content: start; min-height: 46vh; padding-block: 1.5rem 2rem; }
+  .walk-step:first-child,
+  .walk-step:last-child { min-height: 40vh; }
   .platforms { grid-template-columns: 1fr; }
   .section-head-row { align-items: start; }
 }
@@ -1110,7 +1344,12 @@ code {
 /* ------------------------------------------------------------- reveal */
 
 /* Hidden only when scripts run, so a page without JavaScript is complete. A
-   late fallback reveals everything if the observer never fires. */
+   late fallback reveals everything if the observer never fires.
+
+   Elements enter the way they are built: blocks rise, rails draw from their
+   mark, headings wipe up out of their baseline, words rise one by one, screens
+   lock on with the app's corner brackets, and the topology's services pop in
+   along their wires. */
 @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
   .reveal:not(.is-visible) {
     opacity: 0;
@@ -1121,12 +1360,60 @@ code {
     transition: opacity 700ms var(--ease-out), translate 800ms var(--ease-out);
     transition-delay: var(--reveal-delay, 0ms);
   }
+
+  /* draw: the rule extends from the mark, then the label follows. */
+  .reveal[data-reveal="draw"]:not(.is-visible) { opacity: 1; translate: 0 0; }
+  .reveal[data-reveal="draw"] .rail-rule { transform-origin: left; transition: scale 1000ms var(--ease-out) 100ms; }
+  .reveal[data-reveal="draw"] .rail-mark { transition: opacity 400ms ease, box-shadow 700ms ease 300ms; }
+  .reveal[data-reveal="draw"] p { transition: opacity 500ms ease 220ms, translate 600ms var(--ease-out) 220ms; }
+  .reveal[data-reveal="draw"]:not(.is-visible) .rail-rule { scale: 0 1; }
+  .reveal[data-reveal="draw"]:not(.is-visible) .rail-mark { opacity: 0; box-shadow: none; }
+  .reveal[data-reveal="draw"]:not(.is-visible) p { opacity: 0; translate: -10px 0; }
+
+  /* clip: the heading wipes up; whatever sits with it fades in after. The
+     clip sits on the heading, not the observed wrapper: a clipped box does
+     not intersect the viewport as far as the observer is concerned. */
+  .reveal[data-reveal="clip"]:not(.is-visible) { opacity: 1; translate: 0 0; }
+  .reveal[data-reveal="clip"] > h2 {
+    clip-path: inset(-0.25em -0.1em -0.25em -0.1em);
+    transition: clip-path 900ms var(--ease-out), translate 900ms var(--ease-out);
+  }
+  .reveal[data-reveal="clip"]:not(.is-visible) > h2 {
+    clip-path: inset(-0.25em -0.1em 100% -0.1em);
+    translate: 0 0.35em;
+  }
+  .reveal[data-reveal="clip"] > :not(h2) { transition: opacity 700ms var(--ease-out) 250ms, translate 800ms var(--ease-out) 250ms; }
+  .reveal[data-reveal="clip"]:not(.is-visible) > :not(h2) { opacity: 0; translate: 0 20px; }
+
+  /* words: each word rises out of its line, left to right, line by line. */
+  .reveal[data-reveal="words"]:not(.is-visible) { opacity: 1; translate: 0 0; }
+  .reveal[data-reveal="words"] .w { transition: translate 1000ms var(--ease-out), opacity 600ms ease; transition-delay: calc((var(--l, 0) + var(--i, 0)) * 85ms); }
+  .reveal[data-reveal="words"]:not(.is-visible) .w { translate: 0 115%; opacity: 0; }
+
+  /* lock: the screen settles from slightly large and the brackets flash once. */
+  .reveal[data-reveal="lock"] { transition: opacity 800ms var(--ease-out), translate 900ms var(--ease-out), scale 1100ms var(--ease-out); }
+  .reveal[data-reveal="lock"]:not(.is-visible) { translate: 0 24px; scale: 0.97; }
+  .reveal[data-reveal="lock"].is-visible .brackets { animation: lock-on 1300ms var(--ease-out) 350ms; }
+
+  /* wire: the services arrive one after another along their wires. */
+  .reveal[data-reveal="wire"] .service { transition: opacity 500ms ease, translate 700ms var(--ease-out); }
+  .reveal[data-reveal="wire"] .service:nth-of-type(2) { transition-delay: 90ms; }
+  .reveal[data-reveal="wire"] .service:nth-of-type(3) { transition-delay: 180ms; }
+  .reveal[data-reveal="wire"] .service:nth-of-type(4) { transition-delay: 270ms; }
+  .reveal[data-reveal="wire"] .service:nth-of-type(5) { transition-delay: 360ms; }
+  .reveal[data-reveal="wire"]:not(.is-visible) .service { opacity: 0; translate: -24px 0; }
 }
 
 /* --------------------------------------------------------------- motion */
 
 @keyframes ping { 0% { opacity: 0.7; scale: 1; } 100% { opacity: 0; scale: 3; } }
-@keyframes bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -10px; } }
+@keyframes bob { 0%, 100% { --bob: 0px; } 50% { --bob: -10px; } }
+@keyframes drift { to { --drift: var(--drift-to, 0px); } }
+@keyframes recede { to { opacity: 0; translate: 0 -48px; scale: 0.96; } }
+@keyframes grow { from { scale: 1 0; } to { scale: 1 1; } }
+@keyframes pan { from { translate: -4.5% 0; } to { translate: 4.5% 0; } }
+@keyframes text-in { from { opacity: 0; translate: 0 7px; } }
+@keyframes lock-on { 0% { opacity: 0; scale: 1.08; } 22% { opacity: 1; scale: 1; } 68% { opacity: 1; scale: 1; } 100% { opacity: 0; scale: 1.02; } }
 @keyframes drain { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 94.3; } }
 @keyframes count { from { --countdown: 5; } to { --countdown: 0; } }
 @keyframes marquee { to { transform: translateX(-50%); } }
@@ -1158,4 +1445,13 @@ code {
   }
   .ticker-track { animation: none; }
   .packet { display: none; }
+  .spine-line i,
+  .walk-step::after { animation: none; }
+  .spine-line i { scale: 1 1; opacity: 0.35; }
+  .walk-frame,
+  .walk-step,
+  .float-chip { transition: none; }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
 }
