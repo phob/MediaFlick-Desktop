@@ -23,22 +23,29 @@ pub struct LoadedDocument<T> {
 /// Loads one app-owned JSON document. A malformed primary is preserved under
 /// a timestamped name. A valid backup is restored before the caller sees the
 /// document, so the next save still starts from known-good bytes.
+///
+/// A well-formed JSON object that this build's schema rejects is not damage:
+/// it is almost always the work of another app version, one that added a
+/// setting or a new value for one. It is rejected and left byte-for-byte in
+/// place, never moved aside, replaced by its backup or reset to defaults.
 pub fn load_with_recovery<T>(path: &Path) -> io::Result<Option<LoadedDocument<T>>>
 where
     T: DeserializeOwned + Default,
 {
     match read_document(path)? {
-        Some(bytes) => parse_or_recover(path, &bytes),
+        Some(bytes) => parse_or_recover(path, &bytes, is_json_object(&bytes)),
         None => Ok(None),
     }
 }
 
 /// Loads a JSON document that records its format in a top-level `version`.
 /// The version is read leniently before the strict parse: a document from
-/// another app version (typically one that adds fields) is rejected and left
-/// byte-for-byte in place, never moved aside or replaced by its backup. A
-/// document without a readable numeric version is damaged and goes through
-/// the normal recovery path.
+/// another app version is rejected and left byte-for-byte in place, never
+/// moved aside or replaced by its backup. That holds for a different version
+/// number and equally for the supported number with content this build's
+/// schema rejects, which is how an older build sees a newer one that added a
+/// value without changing the version. A document without a readable numeric
+/// version is damaged and goes through the normal recovery path.
 pub fn load_versioned_with_recovery<T>(
     path: &Path,
     supported_version: u32,
@@ -50,7 +57,8 @@ where
     let Some(bytes) = read_document(path)? else {
         return Ok(None);
     };
-    if let Some(version) = declared_version(&bytes)
+    let declared = declared_version(&bytes);
+    if let Some(version) = declared
         && version != u64::from(supported_version)
     {
         return Err(io::Error::new(
@@ -58,7 +66,7 @@ where
             format!("unsupported {document_name} version {version}"),
         ));
     }
-    parse_or_recover(path, &bytes)
+    parse_or_recover(path, &bytes, declared.is_some())
 }
 
 fn read_document(path: &Path) -> io::Result<Option<Vec<u8>>> {
@@ -76,7 +84,17 @@ fn declared_version(bytes: &[u8]) -> Option<u64> {
         .as_u64()
 }
 
-fn parse_or_recover<T>(path: &Path, bytes: &[u8]) -> io::Result<Option<LoadedDocument<T>>>
+fn is_json_object(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes).is_ok_and(|value| value.is_object())
+}
+
+/// `intact` says the bytes are a well-formed document in a supported format,
+/// so a schema error means another app version wrote them, not damage.
+fn parse_or_recover<T>(
+    path: &Path,
+    bytes: &[u8],
+    intact: bool,
+) -> io::Result<Option<LoadedDocument<T>>>
 where
     T: DeserializeOwned + Default,
 {
@@ -85,6 +103,17 @@ where
             document,
             recovery: None,
         })),
+        Err(primary_error) if intact => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} was written by a different MediaFlick version and was left unchanged: \
+                 {primary_error}",
+                path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned()
+                )
+            ),
+        )),
         Err(primary_error) => recover_from_backup(path, &primary_error),
     }
 }
@@ -306,27 +335,34 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_version_is_rejected_before_recovery_can_touch_it() {
-        let path = test_path();
-        save_with_backup(&path, &VersionedDocument::default()).expect("first save");
-        save_with_backup(
-            &path,
-            &VersionedDocument {
-                version: 1,
-                value: 2,
-            },
-        )
-        .expect("second");
-        let backup = std::fs::read(backup_path(&path)).expect("backup");
-        std::fs::write(&path, test_support::NEWER_DOCUMENT).expect("newer primary");
+    fn another_versions_document_is_rejected_before_recovery_can_touch_it() {
+        // A different version number, and the supported number with content
+        // this schema rejects: what an older build sees of a newer one.
+        for foreign in [
+            test_support::NEWER_DOCUMENT,
+            br#"{"version":1,"value":5,"unknown":true}"#,
+        ] {
+            let path = test_path();
+            save_with_backup(&path, &VersionedDocument::default()).expect("first save");
+            save_with_backup(
+                &path,
+                &VersionedDocument {
+                    version: 1,
+                    value: 2,
+                },
+            )
+            .expect("second");
+            let backup = std::fs::read(backup_path(&path)).expect("backup");
+            std::fs::write(&path, foreign).expect("foreign primary");
 
-        let error = load_versioned(&path).expect_err("newer document");
+            let error = load_versioned(&path).expect_err("foreign document");
 
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        test_support::assert_left_untouched(&path, test_support::NEWER_DOCUMENT);
-        assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(backup_path(&path));
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            test_support::assert_left_untouched(&path, foreign);
+            assert_eq!(std::fs::read(backup_path(&path)).expect("backup"), backup);
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(backup_path(&path));
+        }
     }
 
     #[test]
@@ -335,7 +371,6 @@ mod tests {
             &b"{\"version\":2"[..],
             br#"{"value":5}"#,
             br#"{"version":"2","value":5}"#,
-            br#"{"version":1,"value":5,"unknown":true}"#,
         ] {
             let path = test_path();
             save_with_backup(

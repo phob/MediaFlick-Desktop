@@ -252,15 +252,16 @@ if (walk) {
 
 /* ------------------------------------------------------------ tiles */
 
-// A light follows the pointer across the Details tiles.
-const bento = document.querySelector(".bento")
-bento?.addEventListener("pointermove", (event) => {
-  const tile = event.target instanceof Element ? event.target.closest(".tile") : null
-  if (!tile) return
-  const rect = tile.getBoundingClientRect()
-  tile.style.setProperty("--mx", `${event.clientX - rect.left}px`)
-  tile.style.setProperty("--my", `${event.clientY - rect.top}px`)
-})
+// A light follows the pointer across the tiles in Highlights and Details.
+for (const bento of document.querySelectorAll(".bento")) {
+  bento.addEventListener("pointermove", (event) => {
+    const tile = event.target instanceof Element ? event.target.closest(".tile") : null
+    if (!tile) return
+    const rect = tile.getBoundingClientRect()
+    tile.style.setProperty("--mx", `${event.clientX - rect.left}px`)
+    tile.style.setProperty("--my", `${event.clientY - rect.top}px`)
+  })
+}
 
 /* ------------------------------------------------------------ tabs */
 

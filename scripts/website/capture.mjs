@@ -128,7 +128,9 @@ async function still(name) {
 }
 
 // Screencast frames arrive only when the page repaints, each stamped with its
-// own time, so the encoder turns them into a variable-duration sequence.
+// own time, so the encoder turns them into a variable-duration sequence. An
+// action may return `{ from }`, a wall-clock second before which the encoder
+// drops the recording.
 async function record(name, action, { tail = 800 } = {}) {
   const dir = path.join(rawDir, name)
   await rm(dir, { recursive: true, force: true })
@@ -145,14 +147,14 @@ async function record(name, action, { tail = 800 } = {}) {
   await app.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1 })
   const started = Date.now() / 1000
   await sleep(300)
-  await action()
+  const from = (await action())?.from
   await sleep(tail)
   const stopped = Date.now() / 1000
   await app.send("Page.stopScreencast")
   off()
   await Promise.all(writes)
   if (frames.length < 2) throw new Error(`screencast for ${name} produced ${frames.length} frames`)
-  await writeFile(path.join(dir, "frames.json"), JSON.stringify({ started, stopped, frames }, null, 2))
+  await writeFile(path.join(dir, "frames.json"), JSON.stringify({ started, stopped, from, frames }, null, 2))
   return dir
 }
 
@@ -264,11 +266,20 @@ const demoScenes = {
     await app.waitFor(`!!document.querySelector(${JSON.stringify(card)})`)
     await app.evaluate(`document.querySelector(${JSON.stringify(card)}).scrollIntoView({ block: "center" }), true`)
     await settled(900)
+    // The loop starts and ends with the card open, so its first frame (what a
+    // paused or not-yet-playing video shows) is the hover card, and the loop
+    // joins without a jump. In between the pointer leaves and comes back.
     const recording = await record("home-hover", async () => {
-      await sleep(500)
+      await app.hover(card)
+      await sleep(1300)
+      const from = Date.now() / 1000
+      await sleep(2400)
+      await park()
+      await sleep(1000)
       await app.hover(card)
       await sleep(2600)
-    })
+      return { from }
+    }, { tail: 0 })
     return { still: await still("home-hover"), recording }
   },
   async movies() {
@@ -446,14 +457,16 @@ const homeScenes = {
     return { still: await still("timeline") }
   },
   // Companion ratings (IMDb, Rotten Tomatoes, Letterboxd and friends) on the
-  // details page of the newest film.
+  // details page of the newest film whose card already shows them; a brand
+  // new release may not have any ratings yet.
   async "rated-detail"() {
     await go("/")
     const href = await app.waitFor(`(() => {
       const heading = [...document.querySelectorAll("h2, h3")].find((element) => element.textContent.trim() === "Recently Added Movies")
       const section = heading?.closest("section") ?? heading?.parentElement?.parentElement
-      return section?.querySelector("article.signal-card a[href^='/item/']")?.getAttribute("href")
-    })()`)
+      const rated = [...(section?.querySelectorAll("article.signal-card") ?? [])].find((card) => (card.querySelector(".card-rating-readout")?.querySelectorAll("dd").length ?? 0) >= 3)
+      return rated?.querySelector("a[href^='/item/']")?.getAttribute("href")
+    })()`, { timeout: 30000 })
     await go(href)
     await park()
     await settled(2000)
