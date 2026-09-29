@@ -376,6 +376,7 @@ code {
 .hero h1 .w:nth-child(1) { --i: 0; }
 .hero h1 .w:nth-child(2) { --i: 1; }
 .hero h1 .w:nth-child(3) { --i: 2; }
+.hero h1 .w:nth-child(4) { --i: 3; }
 .accent-text {
   color: var(--primary);
   text-shadow: 0 0 60px color-mix(in srgb, var(--primary) 35%, transparent);
@@ -1168,6 +1169,185 @@ code {
 .pict-admin i { padding: 0.45rem 0.55rem; border-radius: 3px; color: var(--muted); font-style: normal; }
 .pict-admin i.on { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); animation: highlight 3s ease-in-out infinite; }
 
+/* ------------------------------------------------------------- highlights */
+
+/* What sets MediaFlick apart. Same tiles as Details, larger, with
+   a tag that says whether the Companion is needed. Each pictogram acts out
+   the feature: a request moves through its states, a franchise's gaps ask to
+   be filled, the timeline's "today" marker pulses between past and next. */
+.feature-grid { margin-top: 0; }
+.feature-wide { grid-column: span 2; }
+.feature { grid-template-rows: auto auto auto 1fr; }
+.feature .pict { height: 150px; }
+.feature h3 { margin-top: 0.1rem; font-size: 1.2rem; line-height: 1.25; }
+.feature p a { color: var(--foreground); text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); text-underline-offset: 3px; }
+.section-head p b { color: var(--foreground); font-weight: 600; }
+.feature-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+.feature-tag::before { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); content: ""; }
+.feature-tag[data-needs="companion"] { color: var(--primary); }
+.feature-tag[data-needs="companion"]::before { background: var(--primary); box-shadow: 0 0 8px var(--primary); }
+
+/* Poster stand-ins share one gradient so the pictograms read as artwork. */
+.pict-status .poster,
+.pict-franchise .posters i {
+  border-radius: var(--radius-media);
+  background: linear-gradient(160deg, #2f5d48, #0d2419 55%, #6b3d1f);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+
+.pict-status { grid-template-columns: auto minmax(0, 15rem); gap: 1rem; justify-content: center; }
+.pict-status .poster { width: 4.2rem; height: 6.2rem; }
+.pict-status .status-card { display: grid; gap: 0.7rem; }
+.status-title { display: grid; gap: 0.35rem; }
+.status-title i { height: 7px; border-radius: 2px; background: rgb(255 255 255 / 16%); }
+.status-title i:last-child { width: 55%; background: rgb(255 255 255 / 9%); }
+.states { display: grid; font-size: 0.62rem; }
+.states b {
+  grid-area: 1 / 1;
+  justify-self: start;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-media);
+  background: rgb(255 255 255 / 6%);
+  font-weight: 500;
+  opacity: 0;
+  animation: state 8s var(--ease-out) infinite;
+}
+.states b:nth-child(2) { animation-delay: 2s; }
+.states b:nth-child(3) { animation-delay: 4s; }
+.states b.done { border-color: transparent; background: var(--primary); color: var(--primary-foreground); animation-delay: 6s; }
+.status-bar { height: 4px; overflow: hidden; border-radius: 2px; background: rgb(255 255 255 / 8%); }
+.status-bar i { display: block; width: 0; height: 100%; background: var(--primary); box-shadow: 0 0 10px var(--primary); animation: download 8s linear infinite; }
+
+.pict-franchise { gap: 0.8rem; align-content: center; }
+.pict-franchise .posters { display: flex; gap: 0.45rem; }
+.pict-franchise .posters i { width: 2.6rem; height: 3.9rem; }
+.pict-franchise .posters i.miss {
+  border: 1px dashed color-mix(in srgb, var(--muted) 70%, transparent);
+  background: transparent;
+  box-shadow: none;
+  animation: gap 4s ease-in-out infinite;
+}
+.pict-franchise .posters i.miss:last-child { animation-delay: 0.3s; }
+.franchise-row { display: flex; align-items: center; gap: 0.9rem; color: var(--muted); font-size: 0.58rem; }
+.franchise-row .ask {
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-media);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
+  animation: highlight 4s ease-in-out infinite;
+}
+
+.pict-timeline { gap: 0.8rem; align-content: center; padding-inline: 1.2rem; }
+.timeline { position: relative; display: flex; align-items: center; justify-content: space-between; width: 100%; }
+.timeline::before { position: absolute; inset: 50% 0 auto; height: 1px; background: var(--border); content: ""; }
+.timeline i { position: relative; width: 12px; height: 12px; border-radius: 50%; }
+.timeline .got { background: var(--primary); box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 70%, transparent); }
+.timeline .gap { border: 1px dashed var(--foreground); background: var(--background); animation: gap 4s ease-in-out infinite; }
+.timeline .soon { border: 1.5px solid color-mix(in srgb, var(--primary) 60%, transparent); background: var(--background); }
+.timeline .today {
+  position: relative;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-media);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.52rem;
+}
+.timeline .today::after { position: absolute; inset: 0; border-radius: inherit; box-shadow: 0 0 0 1px var(--foreground); content: ""; animation: ping 2.4s var(--ease-out) infinite; }
+.timeline-legend { display: flex; justify-content: space-between; width: 100%; color: var(--muted); font-size: 0.52rem; }
+
+.pict-seasons { gap: 0.9rem; align-content: center; }
+.seasons { display: flex; gap: 0.35rem; }
+.seasons i {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 1.7rem;
+  border-radius: var(--radius-media);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--foreground);
+  font-style: normal;
+  font-size: 0.58rem;
+}
+.seasons i.miss { border: 1px dashed color-mix(in srgb, var(--muted) 70%, transparent); background: transparent; color: var(--muted); animation: gap 5s ease-in-out infinite; }
+.season-ask {
+  position: relative;
+  overflow: hidden;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  font-size: 0.56rem;
+}
+.season-ask span:last-child { position: relative; }
+.season-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, var(--primary) 26%, transparent); animation: skipfill 5s linear infinite; }
+
+.pict-lists { gap: 0.55rem; align-content: center; padding-inline: 1.1rem; }
+.list-row { display: grid; grid-template-columns: 4.6rem 1fr 1.4rem; align-items: center; gap: 0.6rem; width: 100%; }
+.list-row b { color: var(--foreground); font-size: 0.52rem; font-weight: 500; }
+.list-row small { justify-self: end; color: var(--primary); font-size: 0.56rem; }
+.meter { height: 5px; overflow: hidden; border-radius: 3px; background: rgb(255 255 255 / 8%); }
+.meter i { display: block; width: var(--to); height: 100%; border-radius: inherit; background: var(--primary); animation: meter 6s var(--ease-out) infinite; }
+.list-row:nth-child(1) .meter i { --to: 58%; }
+.list-row:nth-child(2) .meter i { --to: 82%; animation-delay: 0.25s; }
+.list-row:nth-child(3) .meter i { --to: 36%; animation-delay: 0.5s; }
+
+.pict-letterboxd { grid-template-columns: auto 1fr; gap: 0.9rem; padding-inline: 1.2rem; place-items: center start; }
+.pict-letterboxd .avatar {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6b3d1f, #2f5d48);
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 3px color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.review { display: grid; gap: 0.35rem; width: 100%; }
+.review > .data { color: var(--muted); font-size: 0.52rem; }
+/* Muted stars with lit ones drawn over them, wiped in to four and a half. */
+.stars { position: relative; justify-self: start; color: rgb(255 255 255 / 14%); font-size: 1rem; letter-spacing: 0.1em; line-height: 1; }
+.stars::after {
+  position: absolute;
+  inset: 0;
+  color: var(--primary);
+  clip-path: inset(0 100% 0 0);
+  content: attr(data-stars);
+  animation: stars 5s var(--ease-out) infinite;
+}
+.review .lines { display: grid; gap: 0.35rem; }
+.review .lines i { height: 6px; border-radius: 2px; background: rgb(255 255 255 / 12%); }
+.review .lines i:last-child { width: 70%; }
+
+.pict-search .pipeline { margin: 0; justify-content: center; }
+
+.pict-mpv { gap: 0.9rem; align-content: center; }
+.mini-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 3%);
+  font-size: 0.6rem;
+}
+.mini-switch span { position: relative; padding: 0.45rem 0.9rem; text-align: center; }
+.mini-thumb {
+  position: absolute;
+  inset: 3px auto 3px 3px;
+  width: calc(50% - 3px);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent);
+  animation: toggle 6s var(--ease-out) infinite;
+}
+.mpv-notes { display: flex; gap: 1rem; color: var(--muted); font-size: 0.52rem; }
+
 /* ---------------------------------------------------------------- gallery */
 
 .gallery {
@@ -1334,6 +1514,8 @@ code {
 
 @media (max-width: 560px) {
   .bento { grid-template-columns: 1fr; }
+  .feature-wide { grid-column: auto; }
+  .pict-search .pipeline { transform: scale(0.85); }
   .facts { grid-template-columns: 1fr; }
   .footer-grid { grid-template-columns: 1fr; }
   .segmented button { padding-inline: 0.8rem; font-size: 0.86rem; }
@@ -1433,6 +1615,12 @@ code {
 @keyframes spin { from { rotate: 0deg; } to { rotate: 360deg; } }
 @keyframes highlight { 0%, 100% { background: color-mix(in srgb, var(--primary) 16%, transparent); } 50% { background: color-mix(in srgb, var(--primary) 30%, transparent); } }
 @keyframes reveal-fallback { to { opacity: 1; translate: 0 0; } }
+@keyframes state { 0% { opacity: 0; translate: 0 6px; } 4%, 23% { opacity: 1; translate: 0 0; } 27%, 100% { opacity: 0; translate: 0 -6px; } }
+@keyframes download { 0%, 50% { width: 0; } 74%, 100% { width: 100%; } }
+@keyframes gap { 0%, 100% { border-color: color-mix(in srgb, var(--muted) 70%, transparent); } 50% { border-color: var(--primary); box-shadow: 0 0 12px -2px var(--primary); } }
+@keyframes meter { 0% { width: 0; } 30%, 100% { width: var(--to); } }
+@keyframes stars { 0%, 10% { clip-path: inset(0 100% 0 0); } 45%, 90% { clip-path: inset(0 10% 0 0); } 100% { clip-path: inset(0 100% 0 0); } }
+@keyframes toggle { 0%, 40% { translate: 0 0; } 50%, 90% { translate: 100% 0; } 100% { translate: 0 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -1451,6 +1639,12 @@ code {
   .walk-frame,
   .walk-step,
   .float-chip { transition: none; }
+  /* The pictograms rest on their end state: the request in the library, the
+     review at four and a half stars. */
+  .states b,
+  .stars::after { animation: none; }
+  .states b.done { opacity: 1; }
+  .stars::after { clip-path: inset(0 10% 0 0); }
   ::view-transition-group(*),
   ::view-transition-old(*),
   ::view-transition-new(*) { animation: none !important; }
