@@ -64,13 +64,16 @@ async function frameList(dir, frames, name) {
 }
 
 // Screencast frames carry wall-clock timestamps; the last frame is held until
-// the recording stopped.
+// the recording stopped. A `from` mark cuts everything before it, and the
+// frame on screen at that moment becomes the first.
 async function screencastList(name) {
   const dir = path.join(rawDir, name)
-  const { stopped, frames } = JSON.parse(await readFile(path.join(dir, "frames.json"), "utf8"))
+  const { stopped, from, frames: all } = JSON.parse(await readFile(path.join(dir, "frames.json"), "utf8"))
+  const start = typeof from === "number" ? from : -Infinity
+  const frames = all.filter((frame, index) => (all[index + 1]?.time ?? stopped) > start)
   const timed = frames.map((frame, index) => ({
     file: frame.file,
-    duration: Math.max(1 / 60, (frames[index + 1]?.time ?? stopped) - frame.time),
+    duration: Math.max(1 / 60, (frames[index + 1]?.time ?? stopped) - Math.max(frame.time, start)),
   }))
   return frameList(dir, timed, name)
 }
