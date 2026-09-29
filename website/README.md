@@ -5,6 +5,13 @@ build step and does not share dependencies with the desktop UI:
 `public/index.html`, `public/styles.css`, `public/site.js`, and the screenshots
 and loops in `public/media`.
 
+The page leads with what sets MediaFlick apart: the **Highlights** section
+comes straight after the hero, then the Companion, and only then the features
+any Jellyfin app has (playback, browsing, playstate). Keep that order when
+adding features. Describe what MediaFlick does rather than what other clients
+lack; nobody can vouch for every client. Highlight cards say whether they need
+the Companion.
+
 The page follows the app's "Signal" look, with tokens mirrored from
 `ui/src/app.css`. `site.js` is optional: without it the page is complete, but
 static. It adds scroll reveals, in-view video playback, the hero's readouts,
@@ -31,6 +38,12 @@ enters the way it is built:
 - **Browse walkthrough.** The app window pins while four steps scroll past.
   The step in the middle of the viewport is the frame the window shows; its
   title bar names it, and the hover recording plays only on the hover step.
+  That recording starts and ends with the card open, so its first frame (the
+  poster, and what a paused video shows) is the hover card.
+- **Highlights.** Each card's pictogram acts the feature out: a request steps
+  from Requested to In your library, a franchise's gaps ask to be filled, the
+  timeline's Today marker pulses, a review fills its stars. Under reduced
+  motion they rest on their end state.
 - **Tracking.** The nav's underline slides to the current section. From 1400px
   wide, a spine on the left lists the sections and fills with the accent as
   the page is read.
@@ -72,6 +85,8 @@ drives headless Chrome or Edge at a desktop and a phone viewport, and fails on:
   follow the recording
 - a walkthrough step that doesn't take over the pinned window, name itself in
   its title bar, or play the hover recording only on the hover step
+- a Highlights section that isn't first after the hero, a Companion section
+  after the playback sections, or a Highlights card without its tag
 - a nav underline or spine that doesn't track the current section
 - broken tabs, accent swatches, or lightbox (open and close)
 

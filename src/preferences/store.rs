@@ -8,11 +8,19 @@ use super::json_file::{RecoveryNotice, load_with_recovery, save_with_backup};
 
 static SETTINGS_TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DEVICE_RECOVERY: std::sync::Mutex<Option<RecoveryNotice>> = std::sync::Mutex::new(None);
+/// Why the settings file could not be read, while this process runs on
+/// defaults instead. Saving then would replace the user's settings (often
+/// those of a newer app version) with those defaults, so saves are refused.
+static DEVICE_FILE_HELD: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 impl AppSettings {
     pub fn load() -> Self {
         let path = config_file_path();
-        match load_with_recovery::<Self>(&path) {
+        let loaded = load_with_recovery::<Self>(&path);
+        if let Ok(mut held) = DEVICE_FILE_HELD.lock() {
+            *held = loaded.as_ref().err().map(ToString::to_string);
+        }
+        match loaded {
             Ok(Some(loaded)) => {
                 if let Ok(mut recovery) = DEVICE_RECOVERY.lock() {
                     *recovery = loaded.recovery;
@@ -23,13 +31,26 @@ impl AppSettings {
             }
             Ok(None) => load_legacy_settings(),
             Err(error) => {
-                tracing::warn!("failed to read {}: {error}", path.display());
+                tracing::warn!(
+                    "failed to read {}; using defaults and leaving the file unchanged: {error}",
+                    path.display()
+                );
                 Self::default()
             }
         }
     }
 
     pub fn save(&self) -> io::Result<()> {
+        let held = DEVICE_FILE_HELD
+            .lock()
+            .map_err(|_| io::Error::other("settings state is unavailable"))?
+            .clone();
+        if let Some(reason) = held {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("not overwriting settings.json that could not be read: {reason}"),
+            ));
+        }
         let settings = device_settings(self);
 
         let path = config_file_path();

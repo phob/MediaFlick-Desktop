@@ -4,9 +4,10 @@
 //
 // Serves website/public with the Content-Security-Policy from its _headers
 // file, drives headless Chrome (or Edge) over CDP at a desktop and a phone
-// viewport, and exercises the page: scrolling every section into view, the
-// hero's readouts, the Browse walkthrough step by step, the player switch,
-// the Companion tabs, the accent swatches and the gallery lightbox. It fails
+// viewport, and exercises the page: the section order (Highlights and the
+// Companion before the standard features), scrolling every section into
+// view, the hero's readouts, the Browse walkthrough step by step, the player
+// switch, the Companion tabs, the accent swatches and the gallery lightbox. It fails
 // on console errors, CSP violations, missing assets, horizontal overflow or
 // broken interactions.
 //
@@ -175,6 +176,23 @@ try {
       return { hidden, brokenImages, overflow, csp: window.__cspViolations }
     })()`)
     if (state.hidden.length) fail(name, `${state.hidden.length} sections never revealed: ${state.hidden.join(", ")}`)
+
+    // What sets the app apart comes first: Highlights straight after the
+    // hero, then the Companion, and only then the standard features.
+    const order = await page.evaluate(`(() => {
+      const sections = [...document.querySelectorAll("main > section[id]")].map((section) => section.id)
+      const cards = [...document.querySelectorAll("#highlights .feature")].map((card) => ({
+        title: card.querySelector("h3")?.textContent ?? "",
+        tag: card.querySelector(".feature-tag")?.textContent ?? "",
+        height: card.getBoundingClientRect().height,
+      }))
+      return { sections, cards }
+    })()`)
+    const at = (id) => order.sections.indexOf(id)
+    if (order.sections[1] !== "highlights") fail(name, `the first section after the hero is ${order.sections[1]}, not highlights`)
+    if (!(at("highlights") < at("companion") && at("companion") < at("players") && at("companion") < at("sync"))) fail(name, `sections are out of order: ${order.sections.join(", ")}`)
+    if (order.cards.length < 6) fail(name, `Highlights lists ${order.cards.length} features`)
+    for (const card of order.cards) if (!card.tag || !card.title || card.height < 200) fail(name, `Highlights card is incomplete: ${JSON.stringify(card)}`)
     if (state.brokenImages.length) fail(name, `images failed: ${state.brokenImages.join(", ")}`)
 
     // Every media URL the page references must decode, loaded or not yet.
@@ -318,7 +336,7 @@ try {
     await writeFile(shot, Buffer.from(data, "base64"))
 
     for (const problem of problems) fail(name, problem)
-    report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, hero, walkthrough, tracking, interactions, screenshot: path.relative(root, shot) }
+    report.viewports[name] = { ...metrics, heroTop: Math.round(heroTop), pageHeight: fullHeight, imagesChecked: assets.checked, hero, order, walkthrough, tracking, interactions, screenshot: path.relative(root, shot) }
   }
   report.notFound = [...new Set(requests.filter((entry) => entry.status === 404).map((entry) => entry.path))]
   for (const missing of report.notFound) report.failures.push(`404: ${missing}`)
