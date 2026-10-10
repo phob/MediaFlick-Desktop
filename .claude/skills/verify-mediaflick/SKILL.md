@@ -123,7 +123,7 @@ Shipped drives. All seven are proven on Linux; the first three were also proven 
 - `sign-in` (needs `--url https://demo.jellyfin.org/stable`): prefill, Quick Connect code (never approved), user menu, sign-out from Home, remembered server.
 - `home-library`: billboard ticks, shelf arrows, a card from Home, sort, a decade filter and its chip, an empty search, Favorites. Read-only.
 - `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
-- `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Reset + Save, the Delete local account data dialog (cancelled).
+- `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Restore defaults + Save, the Delete local account data dialog (cancelled).
 
 Re-run all of them:
 

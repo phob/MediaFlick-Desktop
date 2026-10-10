@@ -147,7 +147,7 @@ test("preview delay shares the preview toggle's Save, Reset, and Discard workflo
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({previewDelayMs:850, textScale:125})))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
-  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  fireEvent.click(screen.getByRole("button", {name:"Restore defaults"}))
   expect(input.value).toBe("550")
   fireEvent.click(screen.getByRole("button", {name:"Discard"}))
   expect(input.value).toBe("850")

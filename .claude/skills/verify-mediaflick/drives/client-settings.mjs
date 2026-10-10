@@ -1,6 +1,6 @@
 // The Client settings shelves beyond Show scrollbars: the Player shelf for
 // each backend, a range alert, the leave-without-saving guard, a Playback
-// select, restart notices, the live scrollbar style, Reset + Save, and the
+// select, restart notices, the live scrollbar style, Restore defaults + Save, and the
 // Delete local account data dialog (cancelled). Device-local; the demo server
 // only provides the sign-in. Never presses Installation help or Choose mpv
 // executable.
@@ -77,10 +77,10 @@ export default async function clientSettings(ctx) {
   await ctx.until(async () => !(await scrollbarStyle(ctx)), "the scrollbar style to go without a restart")
   await ctx.screenshot("04-saved")
 
-  // Reset loads defaults into the draft; Save then drops the keys.
-  await ctx.press({ role: "button", name: "Reset" })
+  // Restore defaults loads defaults into the draft; Save then drops the keys.
+  await ctx.press({ role: "button", name: "Restore defaults" })
   await ctx.press({ role: "button", name: "Save" })
-  await ctx.until(() => !("show_scrollbars" in (ctx.readConfig("settings.json") ?? {})), "Reset + Save to drop show_scrollbars")
+  await ctx.until(() => !("show_scrollbars" in (ctx.readConfig("settings.json") ?? {})), "Restore defaults + Save to drop show_scrollbars")
   await ctx.until(() => scrollbarStyle(ctx), "the scrollbar style to return")
 
   // Typing DELETE only enables the button; the wipe needs the dialog's action.
