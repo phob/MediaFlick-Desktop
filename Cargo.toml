@@ -53,7 +53,7 @@ unimplemented = "deny"
 unwrap_used = "deny"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-sevenz-rust2 = { version = "0.22", default-features = false, features = ["util"] }
+sevenz-rust2 = { version = "0.23", default-features = false, features = ["util"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
