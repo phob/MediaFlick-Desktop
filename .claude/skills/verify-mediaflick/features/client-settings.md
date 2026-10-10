@@ -16,7 +16,7 @@ The Client group in Settings holds this device's Player, Playback and Applicatio
 ## How to get to it (user POV)
 
 - Signed in: sidebar `Settings` → lands on `Player` (`/settings/client/player`) → `Settings navigation` links `Player`, `Playback`, `Application`. The same navigation lists the Account group (`Viewing`, `Home`, `Appearance`, `Collections`) and Integrations (`MediaFlick Companion`, `Letterboxd`), which this file does not cover.
-- Signed out there is no visible entry; see Gotchas.
+- Signed out: the sign-in screen's `Player and app settings` link. *Proven by `labels`.*
 
 ## Driving it with ctx (just verify)
 
@@ -45,7 +45,7 @@ Preconditions:
 - `role="status"` gets no accessible name from its content, so read the save bar text with `ctx.app.evaluate('document.querySelector(".settings-save-bar [role=status]")?.textContent')`.
 - The `Settings saved` toast sits over the save bar's buttons for about 4 s. `ctx.press` waits it out; a hand-rolled click would hit the toast.
 - End a drive with the shelf saved or discarded. A dirty draft holds the window on `window.close()`, and teardown has to force the exit.
-- Signed out, the app keeps these shelves reachable by URL (`/settings/client/*`), but the sign-in screen has no link to them. That is not a user path; sign in first.
+- Signed out, Settings navigation shows `Back to sign in` above the shelf list, and the sidebar user menu still reads `Signed in`; leave through `Back to sign in`.
 - Never press `Installation help` (opens the user's default browser on the visible desktop), `Install mpv` on Windows (downloads and installs mpv into the profile), `Choose mpv executable` (opens a native file dialog on the private display that no drive can answer), or the dialog's `Delete local account data` (wipes the profile's account and signs out mid-drive).
 - `Show scrollbars` is also passed to CEF at launch, but the saved value and the style element are the proof, not what the page's scrollbars look like.
 - `Restore defaults` only loads defaults into the draft; it still needs `Save`.
