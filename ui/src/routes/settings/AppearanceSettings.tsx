@@ -454,7 +454,7 @@ export function Appearance() {
         <SettingsRow
           controlId="artwork-intensity"
           title="Artwork intensity"
-          description="Percent of the original artwork intensity."
+          description="Brightness of posters, episode stills, and cover art, as a percent of the original."
         >
           <SettingsNumberField
             id="artwork-intensity"
@@ -470,7 +470,7 @@ export function Appearance() {
         <SettingsRow
           controlId="backdrop-intensity"
           title="Backdrop intensity"
-          description="Percent of the original artwork intensity."
+          description="Brightness of the wide background images behind the Home billboard and detail pages, as a percent of the original."
         >
           <SettingsNumberField
             id="backdrop-intensity"
