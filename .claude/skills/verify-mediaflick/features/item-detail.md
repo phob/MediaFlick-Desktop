@@ -36,7 +36,7 @@ Preconditions:
 
 - Other demo users leave progress, so the primary button is `Play` or `Resume` depending on the day; accept both.
 - Never press `Play`, `Resume`, `From start`, `Play SxEy`, or an episode card's `Play`/`Resume`. Playback starts real audio and video: on Linux through the system `libmpv.so.2`, the default Built-in player. The private display does not hide audio on Windows.
-- Never toggle favorites or watched on the shared demo account, including the episode cards' My List and watched controls; the change is visible to everyone.
+- Never toggle favorites or watched on the shared demo account, including the episode cards' favorites and watched controls; the change is visible to everyone.
 - Never change the Media panel's `Media source`, `Audio track` or `Subtitle track` selects: each change saves a playback preference.
 - Opening `More info` is safe; its items open the user's default browser on the visible desktop. Never press them.
 - The quality picker is absent on series pages. A season link never shows a season page; it redirects to the series with `?season=`.

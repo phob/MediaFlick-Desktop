@@ -202,7 +202,7 @@ function DesktopFilters({
 
         <DropdownMenuSub>
           <DropdownMenuSubTrigger className="min-h-9">
-            <span>My List</span>
+            <span>Favorites</span>
             <span className="ml-auto text-xs text-muted-foreground">
               {value.favorite ? "Only" : "Any"}
             </span>
@@ -216,7 +216,7 @@ function DesktopFilters({
                 All titles
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="favorite" className="min-h-9">
-                <Heart aria-hidden="true" /> In My List
+                <Heart aria-hidden="true" /> Favorites only
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
@@ -341,12 +341,12 @@ function TouchFilters({
           </TouchGroup>
 
           <TouchGroup
-            label="My List"
+            label="Favorites"
             value={value.favorite ? "favorite" : ANY}
             onValueChange={(favorite) => onChange({ favorite: favorite === "favorite" })}
           >
             <TouchChoice value={ANY}>All titles</TouchChoice>
-            <TouchChoice value="favorite">In My List</TouchChoice>
+            <TouchChoice value="favorite">Favorites only</TouchChoice>
           </TouchGroup>
         </div>
         <SheetFooter className="flex-row border-t">
@@ -386,7 +386,7 @@ function ActiveFilters({
       label: value.watched === "true" ? "Watched" : "Unwatched",
       patch: { watched: "" },
     } : null,
-    value.favorite ? { key: "favorite", label: "In My List", patch: { favorite: false } } : null,
+    value.favorite ? { key: "favorite", label: "Favorites", patch: { favorite: false } } : null,
   ]
   const chips = candidates.filter((chip) => chip !== null)
 
