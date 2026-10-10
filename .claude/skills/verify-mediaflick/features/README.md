@@ -41,6 +41,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 - Account settings (Viewing, Home, Appearance, Collections) and the Letterboxd integration: reachable after sign-in in `Settings navigation` under Account and Integrations, same save-bar workflow as client settings. Not yet mapped.
 - Collections (Movie Franchises, My Collections, Jellyfin Collections): the sidebar entry depends on the collection mode; the demo server has no BoxSets.
-- Releases (`/calendar`), Discover and Requests, ratings, the Release Timeline shelf, Companion settings: need a server with the MediaFlick Companion and Seerr. Not drivable against the demo server.
+- Releases (`/calendar`), Discover and Requests, ratings, the Releases shelf on Home, Companion settings: need a server with the MediaFlick Companion and Seerr. Not drivable against the demo server.
 - Playback (built-in libmpv and external mpv): starts real audio. Out of scope until a muted or loopback-media path exists. On Linux the Built-in player is the default and loads the system `libmpv.so.2`; `just build` does not stage libmpv.
 - The update banner (GitHub release check): never press its install action; it downloads and runs an installer.

@@ -169,7 +169,7 @@ fn built_in_label(id: HomeBuiltIn) -> &'static str {
         HomeBuiltIn::BecauseYouWatched => "Because You Watched",
         HomeBuiltIn::RecentlyAdded => "Recently Added Movies",
         HomeBuiltIn::RecentlyAddedShows => "Recently Added Shows",
-        HomeBuiltIn::Upcoming => "Release Timeline",
+        HomeBuiltIn::Upcoming => "Releases",
         HomeBuiltIn::LatestMovies => "Latest Movies",
         HomeBuiltIn::LatestShows => "Latest Shows",
         HomeBuiltIn::MyList => "Favorites",
