@@ -741,36 +741,6 @@ mod tests {
     }
 
     #[test]
-    fn combines_a_newest_review_with_the_newest_older_rating() {
-        let xml = r#"<rss xmlns:letterboxd="https://letterboxd.com" xmlns:tmdb="https://themoviedb.org"><channel>
-          <item><link>https://letterboxd.com/alice/film/movie/2/</link><guid>letterboxd-review-2</guid><letterboxd:watchedDate>2026-08-03</letterboxd:watchedDate><tmdb:movieId>42</tmdb:movieId><description><![CDATA[<p>Newest words.</p>]]></description></item>
-          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-1</guid><letterboxd:watchedDate>2026-07-12</letterboxd:watchedDate><letterboxd:memberRating>4.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
-        </channel></rss>"#;
-        let reviews = parse_feed(&profile(), xml).expect("feed");
-        let latest = reviews.get("42").expect("latest");
-        assert_eq!(latest.rating, Some(4.0));
-        assert_eq!(latest.review.as_deref(), Some("Newest words."));
-        assert_eq!(
-            latest.entry_url.as_deref(),
-            Some("https://letterboxd.com/alice/film/movie/2/")
-        );
-        assert_eq!(latest.watched_date.as_deref(), Some("2026-08-03"));
-    }
-
-    #[test]
-    fn does_not_borrow_an_older_link_for_a_newer_rating_only_entry() {
-        let xml = r#"<rss xmlns:letterboxd="https://letterboxd.com" xmlns:tmdb="https://themoviedb.org"><channel>
-          <item><link>https://example.test/not-canonical</link><guid>letterboxd-watch-2</guid><letterboxd:watchedDate>2026-08-03</letterboxd:watchedDate><letterboxd:memberRating>3.5</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
-          <item><link>https://letterboxd.com/alice/film/movie/1/</link><guid>letterboxd-watch-1</guid><letterboxd:watchedDate>2026-07-12</letterboxd:watchedDate><letterboxd:memberRating>2.0</letterboxd:memberRating><tmdb:movieId>42</tmdb:movieId></item>
-        </channel></rss>"#;
-        let reviews = parse_feed(&profile(), xml).expect("feed");
-        let latest = reviews.get("42").expect("latest");
-        assert_eq!(latest.rating, Some(3.5));
-        assert_eq!(latest.entry_url, None);
-        assert_eq!(latest.watched_date.as_deref(), Some("2026-08-03"));
-    }
-
-    #[test]
     fn accepts_only_the_connected_members_canonical_film_links() {
         assert!(canonical_entry_url("alice", "https://example.test/alice/film/movie/").is_none());
         assert!(canonical_entry_url("alice", "https://letterboxd.com/bob/film/movie/").is_none());

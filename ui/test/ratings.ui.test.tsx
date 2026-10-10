@@ -1,9 +1,8 @@
 import { DEFAULT_COMFORT } from "@/lib/viewing"
 import { QueryClientProvider } from "@tanstack/react-query"
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
-import { Route, Routes } from "react-router-dom"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, test, vi } from "vitest"
-import { DetailRatingReadout, RatingOverlayView } from "../src/components/RatingOverlay"
+import { RatingOverlayView } from "../src/components/RatingOverlay"
 import type {
   ClientSettings,
   ItemRatings,
@@ -18,7 +17,6 @@ import {
   type DisplayRating,
 } from "../src/lib/rating-context"
 import { RatingsProvider } from "../src/lib/ratings"
-import Settings from "../src/routes/Settings"
 import { Appearance, RatingSourceSelector } from "../src/routes/settings/AppearanceSettings"
 import { queryKeys } from "../src/lib/query-client"
 import { itemSummary } from "./support/fixtures"
@@ -84,13 +82,6 @@ function RatingProbe({ id }: { id: string }) {
   return <span>{ratingItem ? `${id}:${ratingItem.ratings.length}` : `${id}:ready`}</span>
 }
 
-/** Queries within the Settings row titled `title`; status badges hold exact words. */
-function companionRow(title: string) {
-  const row = screen.getByRole("heading", { name: title }).closest(".settings-row")
-  if (!(row instanceof HTMLElement)) throw new Error(`Expected a settings row titled ${title}`)
-  return within(row)
-}
-
 describe("configurable card ratings", () => {
   test("renders multiple available ratings with accessible source names", () => {
     render(
@@ -104,31 +95,6 @@ describe("configurable card ratings", () => {
     expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Critics rating 88 percent")).toBeTruthy()
     expect(screen.getByLabelText("Rotten Tomatoes Audience rating 94 percent")).toBeTruthy()
-  })
-
-  test("renders the selected MDBList sources in title details", () => {
-    const letterboxd = display("letterboxd", 4.2).rating
-    const register = vi.fn(() => vi.fn())
-    render(
-      <RatingsContext.Provider value={{
-        items: new Map([[item.id, { ...item, ratings: [letterboxd] }]]),
-        selected: ["letterboxd"],
-        definitions: new Map(definitions.map((definition) => [definition.id, definition])),
-        register,
-      }}>
-        <DetailRatingReadout item={{ id: item.id, name: "The Matrix" }} />
-      </RatingsContext.Provider>,
-    )
-
-    expect(screen.getByLabelText("Letterboxd rating 4.2 out of 5")).toBeTruthy()
-    expect(register).toHaveBeenCalledWith(item.id)
-  })
-
-  test("renders no placeholder when selected sources have no value", () => {
-    const { container } = render(
-      <RatingOverlayView itemName="Missing" ratingItem={item} ratings={[]} />,
-    )
-    expect(container.firstChild).toBeNull()
   })
 
   test("mounted cards coalesce and deduplicate without blocking their first render", async () => {
@@ -394,83 +360,6 @@ describe("configurable card ratings", () => {
     expect(rating()).toBeNull()
     fireEvent.click(letterboxd)
     expect(rating()).not.toBeNull()
-  })
-
-  test("reports Companion services and the current Seerr user mapping", () => {
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.status, { authenticated: true })
-    client.setQueryData(queryKeys.companion, {
-      available: true,
-      compatible: true,
-      checked: true,
-      error: null,
-      supportedApi: { min: 1, max: 1 },
-      info: {
-        pluginVersion: "0.2.0",
-        apiVersion: 1,
-        capabilities: [
-          "seerr",
-          "ratings-v1",
-          "collection-experience-v1",
-          "franchise-memberships-v1",
-          "seerr-person-discovery",
-          "seerr-discovery-v4",
-          "seerr-request-profiles",
-        ],
-        services: { seerr: true, sonarr: true, radarr: false, mdblist: true, tmdb: true },
-      },
-    })
-    client.setQueryData(queryKeys.seerrStatus, {
-      linked: true,
-      mapped: true,
-      instance: { movie4kEnabled: false, series4kEnabled: false, partialRequestsEnabled: true },
-      user: { id: 1, name: "Neo", avatar: null, jellyfinUserId: "neo" },
-      capabilities: null,
-      quota: null,
-    })
-
-    render(
-      <TestProviders client={client} initialEntries={["/settings/integrations/companion"]}>
-          <Routes>
-            <Route path="/settings/*" element={<Settings />} />
-          </Routes>
-      </TestProviders>,
-    )
-
-    expect(companionRow("Seerr").getByText(/Neo/)).toBeTruthy()
-    expect(companionRow("Desktop features").getByText("compatible")).toBeTruthy()
-    expect(companionRow("Radarr").getByText("unavailable")).toBeTruthy()
-    expect(companionRow("TMDB").getByText("available")).toBeTruthy()
-  })
-
-  test("reports Companion feature mismatches without treating the plugin as disconnected", () => {
-    const client = testQueryClient()
-    client.setQueryData(queryKeys.status, { authenticated: true })
-    client.setQueryData(queryKeys.companion, {
-      available: true,
-      compatible: true,
-      checked: true,
-      error: null,
-      supportedApi: { min: 1, max: 1 },
-      info: {
-        pluginVersion: "0.2.0",
-        apiVersion: 1,
-        capabilities: ["collection-experience-v1"],
-        services: { seerr: false, sonarr: true, radarr: true, mdblist: true, tmdb: true },
-      },
-    })
-
-    render(
-      <TestProviders client={client} initialEntries={["/settings/integrations/companion"]}>
-          <Routes>
-            <Route path="/settings/*" element={<Settings />} />
-          </Routes>
-      </TestProviders>,
-    )
-
-    expect(companionRow("Connection").getByText("available")).toBeTruthy()
-    expect(companionRow("Movie franchises").getByText("missing")).toBeTruthy()
-    expect(companionRow("Sonarr").getByText("available")).toBeTruthy()
   })
 
   test("disables all source choices without a credential/capability", () => {

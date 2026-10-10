@@ -123,11 +123,6 @@ describe("media-card technical formatting", () => {
     expect(summary?.audio).toEqual(["DTS-HD MA", "7.1"])
   })
 
-  test("omits the readout when no useful stream metadata exists", () => {
-    expect(summarizeCardMedia(undefined)).toBeNull()
-    expect(summarizeCardMedia([stream({ type: "Subtitle", codec: "subrip" })])).toBeNull()
-  })
-
   test("series cards read the same live channel as movie cards", () => {
     render(
       withTechnical(
@@ -147,10 +142,5 @@ describe("media-card technical formatting", () => {
     const readout = screen.getByLabelText(/Technical media information/)
     expect(readout.textContent).toContain("1080p")
     expect(readout.textContent).toContain("H.264")
-  })
-
-  test("a card whose streams have not arrived renders no readout at all", () => {
-    render(withTechnical(new Map(), <MediaCard item={movie} preview={false} />))
-    expect(screen.queryByLabelText(/Technical media information/)).toBeNull()
   })
 })

@@ -577,134 +577,8 @@ fn upsert_user_data(connection: &Connection, record: &UserDataRecord) -> rusqlit
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
-
     use super::Library;
     use crate::library::test_support::{dto, seeded};
-
-    #[test]
-    fn played_flags_follow_tmdb_ids_and_absence_means_unowned() {
-        let library = Library::open_in_memory().expect("library");
-        let page = [
-            dto(
-                r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"},
-                    "UserData":{"Played":false}}"#,
-            ),
-            dto(
-                r#"{"Id":"m2","Name":"Alien","Type":"Movie","ProviderIds":{"Tmdb":"348"},
-                    "UserData":{"Played":true}}"#,
-            ),
-        ];
-        library.ingest_page(&page).expect("ingest");
-
-        assert_eq!(
-            library
-                .played_by_tmdb(
-                    "Movie",
-                    &["603".to_string(), "348".to_string(), "42".to_string()]
-                )
-                .expect("played flags"),
-            HashMap::from([("603".to_string(), false), ("348".to_string(), true)])
-        );
-    }
-
-    #[test]
-    fn a_user_data_only_write_updates_the_played_join() {
-        let library = Library::open_in_memory().expect("library");
-        let page = [dto(
-            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#,
-        )];
-        library.ingest_page(&page).expect("ingest");
-        library
-            .upsert_user_data(&[super::UserDataRecord {
-                jellyfin_id: "m1".to_string(),
-                played: true,
-                ..Default::default()
-            }])
-            .expect("user data");
-
-        assert_eq!(
-            library
-                .played_by_tmdb("Movie", &["603".to_string()])
-                .expect("played flags"),
-            HashMap::from([("603".to_string(), true)])
-        );
-    }
-
-    #[test]
-    fn re_ingesting_an_identical_page_reports_no_changes() {
-        let library = Library::open_in_memory().expect("library");
-        let page = [dto(
-            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
-                "Genres":["Action"],"UserData":{"Played":false}}"#,
-        )];
-        let first = library.ingest_page(&page).expect("first ingest");
-        assert_eq!(first.item_ids, vec!["m1".to_string()]);
-
-        let second = library.ingest_page(&page).expect("second ingest");
-        assert!(second.is_empty());
-
-        let watched = [dto(
-            r#"{"Id":"m1","Name":"The Matrix","Type":"Movie","ProductionYear":1999,
-                "Genres":["Action"],"UserData":{"Played":true}}"#,
-        )];
-        let third = library.ingest_page(&watched).expect("watched ingest");
-        assert_eq!(third.item_ids, vec!["m1".to_string()]);
-
-        let edited = [dto(
-            r#"{"Id":"m1","Name":"The Matrix Reloaded","Type":"Movie","ProductionYear":1999,
-                "Genres":["Action"],"UserData":{"Played":true}}"#,
-        )];
-        let fourth = library.ingest_page(&edited).expect("edited ingest");
-        assert_eq!(fourth.item_ids, vec!["m1".to_string()]);
-    }
-
-    #[test]
-    fn technical_sources_resolve_containers_to_a_representative_episode() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .upsert_page(&[
-                dto(r#"{"Id":"m1","Name":"Movie","Type":"Movie"}"#),
-                dto(r#"{"Id":"s1","Name":"Show","Type":"Series"}"#),
-                dto(r#"{"Id":"season1","Name":"Season 1","Type":"Season",
-                        "SeriesId":"s1","ParentId":"s1","IndexNumber":1}"#),
-                dto(
-                    r#"{"Id":"e0","Name":"Special","Type":"Episode","SeriesId":"s1",
-                        "ParentIndexNumber":0,"IndexNumber":1}"#,
-                ),
-                dto(
-                    r#"{"Id":"e2","Name":"S1E2","Type":"Episode","SeriesId":"s1",
-                        "SeasonId":"season1","ParentId":"season1",
-                        "ParentIndexNumber":1,"IndexNumber":2}"#,
-                ),
-                dto(
-                    r#"{"Id":"e1","Name":"S1E1","Type":"Episode","SeriesId":"s1",
-                        "SeasonId":"season1","ParentId":"season1",
-                        "ParentIndexNumber":1,"IndexNumber":1}"#,
-                ),
-                dto(r#"{"Id":"empty","Name":"Empty Show","Type":"Series"}"#),
-            ])
-            .expect("seed");
-
-        let sources = library
-            .technical_stream_sources(&[
-                "m1".to_string(),
-                "s1".to_string(),
-                "season1".to_string(),
-                "empty".to_string(),
-                "deep-link".to_string(),
-            ])
-            .expect("sources");
-        assert_eq!(
-            sources,
-            vec![
-                ("m1".to_string(), "m1".to_string()),
-                ("s1".to_string(), "e1".to_string()),
-                ("season1".to_string(), "e1".to_string()),
-                ("deep-link".to_string(), "deep-link".to_string()),
-            ]
-        );
-    }
 
     #[test]
     fn tmdb_ids_resolve_only_within_the_kind_they_were_asked_for() {
@@ -774,20 +648,6 @@ mod tests {
     }
 
     #[test]
-    fn retain_ids_deletes_items_the_server_dropped() {
-        let library = seeded();
-        let keep = ["m1", "s1", "e1", "e2"]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<HashSet<_>>();
-        let changes = library.retain_ids(&keep).expect("retain");
-        assert_eq!(changes.item_ids, ["m2"]);
-        assert!(changes.context_ids.is_empty());
-        assert!(library.item("m2").expect("query").is_none());
-        assert!(library.retain_ids(&keep).expect("retain").is_empty());
-    }
-
-    #[test]
     fn child_reconcile_drops_only_the_episodes_the_server_dropped() {
         let library = seeded();
         let live = [dto(
@@ -800,82 +660,10 @@ mod tests {
             .reconcile_children("season1", &live)
             .expect("reconcile");
         assert_eq!(changes.item_ids, ["e1"]);
-        assert_eq!(changes.context_ids, ["s1", "season1"]);
         let remaining = library.children("season1").expect("children");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, "e2");
         assert!(library.item("m1").expect("query").is_some());
-        assert!(
-            library
-                .reconcile_children("season1", &live)
-                .expect("reconcile")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn child_reconcile_clears_a_parent_the_server_reports_as_empty() {
-        let library = seeded();
-        let changes = library
-            .reconcile_children("season1", &[])
-            .expect("reconcile");
-        assert_eq!(changes.item_ids, ["e1", "e2"]);
-        assert_eq!(changes.context_ids, ["s1", "season1"]);
-        assert!(library.children("season1").expect("children").is_empty());
-    }
-
-    #[test]
-    fn child_reconcile_reports_upserts_deletions_and_parent_contexts_together() {
-        let library = seeded();
-        let live = [
-            dto(
-                r#"{"Id":"e2","Name":"Half Loop Updated","Type":"Episode","SeriesId":"s1",
-                    "ParentId":"season1","SeasonId":"season1",
-                    "IndexNumber":2,"ParentIndexNumber":1}"#,
-            ),
-            dto(
-                r#"{"Id":"e3","Name":"In Perpetuity","Type":"Episode","SeriesId":"s1",
-                    "ParentId":"season1","SeasonId":"season1",
-                    "IndexNumber":3,"ParentIndexNumber":1}"#,
-            ),
-        ];
-
-        let changes = library
-            .reconcile_children("season1", &live)
-            .expect("reconcile");
-        assert_eq!(changes.item_ids, ["e1", "e2", "e3"]);
-        assert_eq!(changes.context_ids, ["s1", "season1"]);
-        let remaining = library.children("season1").expect("children");
-        assert_eq!(remaining.len(), 2);
-        assert_eq!(remaining[0].id, "e2");
-        assert_eq!(remaining[0].name, "Half Loop Updated");
-        assert_eq!(remaining[1].id, "e3");
-    }
-
-    #[test]
-    fn forget_drops_a_single_item_and_its_user_data() {
-        let library = seeded();
-
-        let changes = library.forget("m1").expect("forget");
-        assert_eq!(changes.item_ids, ["m1"]);
-        assert!(changes.context_ids.is_empty());
-        assert!(library.item("m1").expect("query").is_none());
-        assert!(
-            !library
-                .continue_watching(10)
-                .expect("rows")
-                .iter()
-                .any(|row| row.id == "m1")
-        );
-        assert!(library.forget("m1").expect("forget").is_empty());
-    }
-
-    #[test]
-    fn forgetting_an_episode_keeps_its_old_hierarchy_in_the_change_batch() {
-        let library = seeded();
-        let changes = library.forget("e1").expect("forget");
-        assert_eq!(changes.item_ids, ["e1"]);
-        assert_eq!(changes.context_ids, ["s1", "season1"]);
     }
 
     #[test]

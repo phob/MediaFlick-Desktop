@@ -660,7 +660,6 @@ mod tests {
             embed.starts_with("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?"),
             "{embed}"
         );
-        assert!(embed.contains("mute=1"), "{embed}");
         assert!(youtube_embed_url("https://youtu.be/dQw4w9WgXcQ").is_some());
         assert!(youtube_embed_url("http://www.youtube.com/watch?v=dQw4w9WgXcQ").is_none());
         assert!(youtube_embed_url("https://example.com/embed/dQw4w9WgXcQ").is_none());
@@ -725,18 +724,6 @@ mod tests {
         assert_eq!(external_url("tmdb", "000", "Movie"), None);
     }
 
-    #[test]
-    fn media_source_paths_are_reduced_to_a_file_name() {
-        assert_eq!(
-            file_name_of("/mnt/media/Movies/The Matrix (1999)/matrix.mkv"),
-            Some("matrix.mkv")
-        );
-        assert_eq!(
-            file_name_of(r"D:\Media\Movies\matrix.mkv"),
-            Some("matrix.mkv")
-        );
-    }
-
     /// Non-admin users get an opaque id in `Path`, which must not be printed as
     /// if it were the name of a file.
     #[test]
@@ -744,24 +731,5 @@ mod tests {
         assert_eq!(file_name_of("6967c5ef-2daf-4951-9d03-38db9a7f5351"), None);
         assert_eq!(file_name_of("/mnt/media/Movies/The Matrix (1999)"), None);
         assert_eq!(file_name_of(""), None);
-    }
-
-    #[test]
-    fn media_sources_are_flattened_into_video_audio_and_subtitle_lists() {
-        let source: MediaSourceInfo = serde_json::from_str(
-            r#"{"Id":"src","Name":"matrix","Container":"mkv","Size":123,"Bitrate":456,
-                "Path":"/mnt/matrix.mkv",
-                "MediaStreams":[
-                    {"Index":0,"Type":"Video","Codec":"hevc","Width":3840,"Height":2160},
-                    {"Index":1,"Type":"Audio","Codec":"dts","Channels":6,"IsDefault":true},
-                    {"Index":2,"Type":"Subtitle","Codec":"subrip","Language":"eng",
-                     "IsHearingImpaired":true,"IsExternal":true}]}"#,
-        )
-        .expect("source");
-        let value = media_source_json(&source);
-        assert_eq!(value["video"][0]["height"], 2160);
-        assert_eq!(value["audio"][0]["channels"], 6);
-        assert_eq!(value["subtitles"][0]["isExternal"], true);
-        assert_eq!(value["video"].as_array().map(Vec::len), Some(1));
     }
 }

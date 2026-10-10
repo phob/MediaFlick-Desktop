@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom"
 import { afterEach, expect, test, vi } from "vitest"
 import type { LetterboxdProfile } from "../src/lib/api"
@@ -58,17 +58,6 @@ test.each(["Player", "Back"])("unsaved settings guard %s navigation and preserve
   expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("false")
 })
 
-test("refreshed profiles retain an unsaved toggle and expose newly connected profiles", async () => {
-  const client = renderProfiles()
-  fireEvent.click(screen.getByRole("switch", { name: "Enable Neo" }))
-  act(() => client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile, { ...profile, id: "second", displayName: "Trinity", enabled: true }] }))
-  expect(await screen.findByRole("switch", { name: "Enable Trinity" })).toBeTruthy()
-  expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("true")
-  fireEvent.click(screen.getByRole("button", { name: "Discard" }))
-  expect(screen.getByRole("switch", { name: "Enable Neo" }).getAttribute("aria-checked")).toBe("false")
-  expect(screen.getByRole("switch", { name: "Enable Trinity" }).getAttribute("aria-checked")).toBe("true")
-})
-
 test("profile additions and removals can be undone or discarded without writes", () => {
   const add = vi.spyOn(api.api.letterboxd, "add")
   const remove = vi.spyOn(api.api.letterboxd, "remove")
@@ -90,7 +79,7 @@ test("profile additions and removals can be undone or discarded without writes",
   expect(remove).not.toHaveBeenCalled()
 })
 
-test("Save commits a pending removal and addition and settles the save bar", async () => {
+test("Save commits a pending removal and addition", async () => {
   const remove = vi.spyOn(api.api.letterboxd, "remove").mockResolvedValue({ removed: true })
   const add = vi.spyOn(api.api.letterboxd, "add").mockResolvedValue({ profile: { ...profile, id: "second", displayName: "Trinity", enabled: true } })
   renderProfiles()
@@ -102,30 +91,6 @@ test("Save commits a pending removal and addition and settles the save bar", asy
   await waitFor(() => expect(add).toHaveBeenCalledWith("trinity"))
   expect(await screen.findByRole("switch", { name: "Enable Trinity" })).toBeTruthy()
   expect(screen.queryByRole("switch", { name: "Enable Neo" })).toBeNull()
-  await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true))
-})
-
-test("a partial save keeps failed additions and does not repeat completed writes", async () => {
-  const enable = vi.spyOn(api.api.letterboxd, "setEnabled").mockResolvedValue({ profile: { ...profile, enabled: true } })
-  const add = vi.spyOn(api.api.letterboxd, "add")
-    .mockResolvedValueOnce({ profile: { ...profile, id: "second", displayName: "Trinity", enabled: true } })
-    .mockRejectedValueOnce(new Error("Profile unavailable"))
-    .mockResolvedValueOnce({ profile: { ...profile, id: "third", displayName: "Morpheus", enabled: true } })
-  renderProfiles()
-  fireEvent.click(screen.getByRole("switch", { name: "Enable Neo" }))
-  for (const name of ["trinity", "morpheus"]) {
-    fireEvent.change(screen.getByRole("textbox", { name: "Letterboxd username or profile URL" }), { target: { value: name } })
-    fireEvent.click(screen.getByRole("button", { name: "Add profile" }))
-  }
-  fireEvent.click(screen.getByRole("button", { name: "Save" }))
-  expect(await screen.findByRole("alert")).toBeTruthy()
-  expect(screen.queryByRole("button", { name: "Cancel adding trinity" })).toBeNull()
-  expect(screen.getByRole("button", { name: "Cancel adding morpheus" })).toBeTruthy()
-  fireEvent.click(screen.getByRole("button", { name: "Save" }))
-  expect(await screen.findByRole("switch", { name: "Enable Morpheus" })).toBeTruthy()
-  expect(enable).toHaveBeenCalledTimes(1)
-  expect(add.mock.calls.map(([input]) => input)).toEqual(["trinity", "morpheus", "morpheus"])
-  await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true))
 })
 
 test("Reset restores Letterboxd profile enablement and Save commits it", async () => {

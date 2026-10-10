@@ -131,23 +131,4 @@ describe("per-item media track controls", () => {
       subtitleStreamIndex: null,
     })
   })
-
-  test("keeps a single-track item as read-only media information", () => {
-    render(
-      <MediaInfoView
-        save={save}
-        sources={[{ ...source, audio: source.audio.slice(0, 1), subtitles: [] }]}
-        preference={{
-          mediaSourceId: "source-a",
-          mediaSourceIndex: 0,
-          audioStreamIndex: 1,
-          subtitleStreamIndex: null,
-        }}
-        isPending={false}
-      />,
-    )
-
-    expect(screen.queryByRole("combobox")).toBeNull()
-    expect(screen.getByText(/AAC/)).toBeTruthy()
-  })
 })

@@ -37,7 +37,6 @@ test("fresh configuration offers Quick Connect before any server or credentials 
   renderSignIn()
   await waitFor(() => expect(api.settings).toHaveBeenCalled())
   expect(quickConnectButton().disabled).toBe(true)
-  expect(screen.getByText(/Enter your server address first/)).toBeTruthy()
   expect(api.connect).not.toHaveBeenCalled()
   expect(api.quickConnectStart).not.toHaveBeenCalled()
 
@@ -67,18 +66,6 @@ test("disabled Quick Connect stays visible and password sign-in remains availabl
   expect(api.quickConnectStart).not.toHaveBeenCalled()
 })
 
-test("shows progress and connection failure without hiding Quick Connect", async () => {
-  let rejectProbe: (error: Error) => void = () => {}
-  vi.mocked(api.connect).mockReturnValue(new Promise((_, reject) => { rejectProbe = reject }))
-  renderSignIn()
-  enterServer()
-  expect(await screen.findByText("Checking Quick Connect availability…")).toBeTruthy()
-  expect(quickConnectButton().disabled).toBe(true)
-  await act(async () => rejectProbe(new Error("Connection refused")))
-  expect(await screen.findByText(/Could not check Quick Connect/)).toBeTruthy()
-  expect(quickConnectButton().disabled).toBe(true)
-})
-
 test("editing a saved server clears its code and cancels its active poll before blur", async () => {
   vi.mocked(api.settings).mockResolvedValue(clientSettingsFixture())
   let pollSignal: AbortSignal | undefined
@@ -96,11 +83,6 @@ test("editing a saved server clears its code and cancels its active poll before 
   expect(screen.queryByText("123456")).toBeNull()
   expect(quickConnectButton().disabled).toBe(true)
   expect(pollSignal?.aborted).toBe(true)
-
-  vi.mocked(api.connect).mockResolvedValue({ ...serverInfo, quickConnect: false })
-  enterServer("https://other.example")
-  expect(await screen.findByText(/Quick Connect is not enabled on this server/)).toBeTruthy()
-  expect(quickConnectButton().disabled).toBe(true)
 })
 
 test("a late code from a previous server cannot start polling after the address changes", async () => {

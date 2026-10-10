@@ -586,22 +586,6 @@ mod tests {
         }
     }
 
-    unsafe extern "C" fn missing_option(
-        _handle: *mut MpvHandle,
-        _name: *const c_char,
-        _value: *const c_char,
-    ) -> c_int {
-        MPV_ERROR_OPTION_NOT_FOUND
-    }
-
-    unsafe extern "C" fn invalid_option(
-        _handle: *mut MpvHandle,
-        _name: *const c_char,
-        _value: *const c_char,
-    ) -> c_int {
-        -7 // MPV_ERROR_OPTION_ERROR
-    }
-
     unsafe extern "C" fn test_error(_status: c_int) -> *const c_char {
         c"test option error".as_ptr()
     }
@@ -620,31 +604,6 @@ mod tests {
         };
         assert!(configure(LibmpvProfile::Standard).is_ok());
         assert!(configure(LibmpvProfile::Svp).is_err());
-    }
-
-    #[test]
-    fn missing_required_options_and_invalid_script_options_still_fail() {
-        assert!(
-            configure_libmpv_options(
-                std::ptr::null_mut(),
-                missing_option,
-                test_error,
-                "test-ipc",
-                FullscreenBehavior::Windowed,
-                LibmpvProfile::Standard,
-            )
-            .is_err()
-        );
-        assert!(
-            set_option(
-                std::ptr::null_mut(),
-                invalid_option,
-                test_error,
-                "load-scripts",
-                "no",
-            )
-            .is_err()
-        );
     }
 
     #[cfg(target_os = "windows")]

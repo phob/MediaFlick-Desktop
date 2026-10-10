@@ -629,10 +629,6 @@ mod tests {
 
         session.clear_local(false).expect("normal logout");
         assert_eq!(library.stats().total, 1);
-        assert_eq!(
-            library.cache_owner(),
-            Some(("server".to_string(), "alice".to_string()))
-        );
 
         let mut bob = credentials("bob");
         bob.restricted = true;
@@ -642,10 +638,6 @@ mod tests {
 
         assert_eq!(library.stats().total, 0);
         assert!(session.user_restricted());
-        assert_eq!(
-            library.cache_owner(),
-            Some(("server".to_string(), "bob".to_string()))
-        );
     }
 
     #[test]

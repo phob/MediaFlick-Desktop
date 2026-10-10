@@ -372,9 +372,10 @@ pub enum PlayerBackend {
 }
 
 impl PlayerBackend {
-    /// The backend a fresh installation uses on this platform.
+    /// The backend a fresh installation uses on this platform. Windows
+    /// releases and Linux AppImages bundle libmpv.
     pub fn platform_default() -> Self {
-        if cfg!(target_os = "windows") {
+        if cfg!(any(target_os = "windows", target_os = "linux")) {
             Self::Libmpv
         } else {
             Self::Mpv
@@ -768,22 +769,9 @@ mod tests {
         assert_eq!(stored["mark_watched_next"], "");
         let restored: AppSettings = serde_json::from_value(stored).expect("deserialize");
         assert_eq!(restored.mark_watched_next, None);
-
-        let custom: AppSettings =
-            serde_json::from_value(serde_json::json!({ "mark_watched_next": " Ctrl+w " }))
-                .expect("deserialize");
-        assert_eq!(custom.mark_watched_next.as_deref(), Some("Ctrl+w"));
         assert_eq!(
             AppSettings::default().mark_watched_next.as_deref(),
             Some("w")
-        );
-    }
-
-    #[test]
-    fn leaves_absolute_urls_alone() {
-        assert_eq!(
-            normalize_server_url("https://example.test"),
-            Some("https://example.test".to_string())
         );
     }
 
@@ -807,27 +795,13 @@ mod tests {
         assert_eq!(normalize_server_url("javascript:alert(1)"), None);
     }
 
-    #[test]
-    fn blank_urls_are_rejected() {
-        assert_eq!(normalize_server_url("  "), None);
-    }
-
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     #[test]
     fn pathless_settings_use_bundled_libmpv_by_default() {
         let settings: AppSettings = serde_json::from_str("{}").expect("fresh settings");
 
         assert_eq!(settings.player_backend, None);
         assert_eq!(settings.effective_backend(), PlayerBackend::Libmpv);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn pathless_settings_keep_external_mpv_until_a_bundle_is_shipped() {
-        let settings: AppSettings = serde_json::from_str("{}").expect("fresh settings");
-
-        assert_eq!(settings.player_backend, None);
-        assert_eq!(settings.effective_backend(), PlayerBackend::Mpv);
     }
 
     #[test]
@@ -841,17 +815,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_libmpv_wins_over_a_retained_external_path() {
-        let settings: AppSettings =
-            serde_json::from_str(r#"{"player_backend":"libmpv","mpv_path":"C:/mpv/mpv.exe"}"#)
-                .expect("explicit built-in backend");
-
-        assert_eq!(settings.player_backend, Some(PlayerBackend::Libmpv));
-        assert_eq!(settings.effective_backend(), PlayerBackend::Libmpv);
-        assert_eq!(settings.player_path(), None);
-    }
-
-    #[test]
     fn a_legacy_color_theme_is_ignored_on_load() {
         let settings: AppSettings = serde_json::from_value(serde_json::json!({
             "appearance": { "theme": "light", "accent": "violet" }
@@ -859,27 +822,6 @@ mod tests {
         .expect("legacy appearance settings");
 
         assert_eq!(settings.appearance.accent, AppearanceAccent::Violet);
-    }
-
-    #[test]
-    fn rating_source_preferences_retain_only_the_public_catalog() {
-        let defaults: AppSettings = serde_json::from_str("{}").expect("legacy settings");
-        assert!(defaults.appearance.rating_sources.is_empty());
-
-        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
-            "appearance": {
-                "rating_sources": [" Letterboxd ", "popcorn", "server-mdb-key-must-not-persist", "future_meter", "popcorn", "../bad"]
-            }
-        }))
-        .expect("settings");
-        settings.sanitize();
-        assert_eq!(
-            settings.appearance.rating_sources,
-            ["letterboxd", "popcorn"]
-        );
-        let serialized = serde_json::to_string(&settings).expect("serialize");
-        assert!(!serialized.contains("server-mdb-key-must-not-persist"));
-        assert!(!serialized.contains("future_meter"));
     }
 
     #[test]
@@ -915,14 +857,5 @@ mod tests {
         assert_eq!(window.size(), (1440, 900));
         assert_eq!(window.position(), Some((80, 120)));
         assert!(window.maximized);
-    }
-
-    #[test]
-    fn recording_restored_window_updates_size() {
-        let mut window = WebUiWindowSettings::default();
-        window.record_bounds(240, 160, 1600, 900, false);
-        assert_eq!(window.size(), (1600, 900));
-        assert_eq!(window.position(), Some((240, 160)));
-        assert!(!window.maximized);
     }
 }

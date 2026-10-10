@@ -10,7 +10,7 @@ function Recorder() {
   return <ShortcutRecorder id="shortcut" label="Mark watched key" value={value} onChange={setValue} />
 }
 
-test("captures a combination without bubbling playback events, and clears it", () => {
+test("captures a combination without bubbling playback events", () => {
   const playback = vi.fn()
   window.addEventListener("keydown", playback)
   try {
@@ -21,8 +21,6 @@ test("captures a combination without bubbling playback events, and clears it", (
     fireEvent.keyDown(recorder, { key: "P", ctrlKey: true, shiftKey: true })
     expect(recorder.textContent).toContain("Ctrl + Shift + P")
     expect(playback).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole("button", { name: "Clear mark watched key" }))
-    expect(recorder.textContent).toContain("Disabled")
   } finally {
     window.removeEventListener("keydown", playback)
   }

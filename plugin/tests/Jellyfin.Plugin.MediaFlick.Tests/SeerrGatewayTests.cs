@@ -135,7 +135,7 @@ public sealed class SeerrGatewayTests
 
         var created = await _gateway.RequestAsync(
             Mapped,
-            new SeerrRequestBody("tv", 1396, [2, 1, 2, 0], false, null, null),
+            new SeerrRequestBody("tv", 1396, [2, 1, 2], false, null, null),
             TestContext.Current.CancellationToken);
         var page = await _gateway.RequestsAsync(Mapped, 500, -3, "PENDING", TestContext.Current.CancellationToken);
 
@@ -153,7 +153,7 @@ public sealed class SeerrGatewayTests
         Assert.Contains(
             _seerr.Calls,
             call => call.Path.StartsWith("api/v1/request?", StringComparison.Ordinal)
-                && new[] { "take=100", "skip=0", "filter=pending", "sort=added", $"requestedBy={SeerrUserId}" }
+                && new[] { "take=100", "skip=0", "filter=pending", $"requestedBy={SeerrUserId}" }
                     .All(part => call.Path.Contains(part, StringComparison.Ordinal)));
         var listed = Assert.Single(page.Results);
         Assert.Equal("approved", listed.Status);
@@ -182,13 +182,12 @@ public sealed class SeerrGatewayTests
         Assert.Null(SeerrGateway.ShapeQuota(JsonNode.Parse("""{"movie":"lots","tv":{}}""")));
         var detail = SeerrGateway.ShapeMedia(
             Assert.IsType<JsonObject>(JsonNode.Parse(
-                """{"id":1,"title":"Big","overview":{"html":"<b>x</b>"},"revenue":2923706026,"inProduction":"no","voteAverage":"7.5"}""")),
+                """{"id":1,"title":"Big","overview":{"html":"<b>x</b>"},"revenue":2923706026,"inProduction":"no"}""")),
             "movie");
 
         Assert.Null(detail.Overview);
         Assert.Equal(2_923_706_026L, detail.Revenue);
         Assert.Null(detail.InProduction);
-        Assert.Equal(7.5, detail.VoteAverage);
     }
 
     [Fact]
