@@ -115,7 +115,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All seven are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there:
+Shipped drives. All eight are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there:
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
@@ -124,16 +124,17 @@ Shipped drives. All seven are proven on Linux; the first three were also proven 
 - `home-library`: billboard ticks, shelf arrows, a card from Home, sort, a decade filter and its chip, an empty search, Favorites. Read-only.
 - `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
 - `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Restore defaults + Save, the Delete local account data dialog (cancelled).
+- `labels`: the sign-in screen's Player and app settings link and Back to sign in, the save bar's Restore defaults and muted disabled Save, Favorites, the watched and favorites toggles on a movie and on episode cards, Countdown seconds gating, and the Releases startup option (opened, never chosen). Read-only.
 
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings', 'labels') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library item-detail client-settings; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library item-detail client-settings labels; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
@@ -179,7 +180,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 ## Platform status
 
 - **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the four newer drives have not run there.
-- **Linux: proven.** All seven shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
+- **Linux: proven.** All eight shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).
@@ -196,7 +197,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 - Sidebar search commits 200 ms after typing with a replacing navigation. Wait for `/library?search=` before pressing a result.
 - `role="status"` regions have no accessible name; read their text with `ctx.app.evaluate`.
 - After sign-out `document.title` keeps the last page's title. Identify the sign-in screen by its `Server` textbox.
-- The sign-in screen has no link to Settings. Device settings are reachable signed out only by URL; drives sign in first.
+- Signed out, the sign-in screen's `Player and app settings` link opens Player settings, and Settings navigation shows `Back to sign in`. Account-owned shelves still need sign-in.
 - CDP attach retries 3 times: loopback connects on this machine occasionally fail with a bare `ErrorEvent`. A failed attach means the app never served CDP; read `app.log`.
 - If every step takes seconds instead of milliseconds, the environment is stalling, not the drive. One observed run had an app whose CDP port stopped accepting connections. Let the drive timeout fail it, run `just verify-doctor` (check its loopback line) and re-run. Do not raise timeouts to paper over it.
 - The Windows wrapper runs through `pwsh -File` with no parameter binding, so pass session options after the drive (`just verify browse --run-id x`), never `--` before them.
