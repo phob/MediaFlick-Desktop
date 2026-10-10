@@ -116,10 +116,16 @@ export default function ViewingSettings() {
             ]}
           />
         </SettingsRow>
-        <SettingsRow controlId="settings-countdown-seconds" title="Countdown seconds">
+        <SettingsRow
+          controlId="settings-countdown-seconds"
+          title="Countdown seconds"
+          description="Used when Next episode is set to Ask with countdown."
+        >
           <SettingsNumberField
             id="settings-countdown-seconds"
+            aria-describedby="settings-countdown-seconds-help"
             label="Countdown seconds"
+            disabled={draft.nextEpisode !== "ask"}
             min={3}
             max={60}
             value={draft.countdownSeconds}
@@ -238,7 +244,7 @@ export default function ViewingSettings() {
         <SettingsRow
           controlId="settings-remember-library-filters"
           title="Remember library filters"
-          description="Keep separate sort and filters for Movies and Series."
+          description="Movies and Series each reopen with the sort and filters you last used there. Search results and Favorites are not affected."
         >
           <Switch
             id="settings-remember-library-filters"
@@ -248,9 +254,14 @@ export default function ViewingSettings() {
             onCheckedChange={(value) => update("rememberFilters", value)}
           />
         </SettingsRow>
-        <SettingsRow controlId="settings-hide-watched-by-default" title="Hide watched by default">
+        <SettingsRow
+          controlId="settings-hide-watched-by-default"
+          title="Hide watched by default"
+          description="Movies and Series open showing only unwatched titles. Change the Watch status filter to see the rest. Remembered library filters take priority."
+        >
           <Switch
             id="settings-hide-watched-by-default"
+            aria-describedby="settings-hide-watched-by-default-help"
             aria-label="Hide watched by default"
             checked={draft.hideWatched}
             onCheckedChange={(value) => update("hideWatched", value)}

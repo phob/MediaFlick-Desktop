@@ -143,7 +143,7 @@ function GeneralSettings({ draft, onChange }: {
       <SettingsRow
         controlId="collection-mode"
         title="Mode"
-        description="MediaFlick adds Movie Franchises and My Collections. Jellyfin shows server BoxSets directly."
+        description="MediaFlick adds Movie Franchises and My Collections. Jellyfin shows the collections set up on your Jellyfin server."
       >
         <SelectField
           id="collection-mode"
@@ -494,7 +494,7 @@ function CollectionWizard({
           <DialogTitle>{profileId ? "Edit collection" : "Add collection"}</DialogTitle>
           <DialogDescription>Saving a new collection previews it first. Changing a result option clears the current preview.</DialogDescription>
         </DialogHeader>
-        {!providerAvailable && <p className="rounded-md border p-3 text-sm text-muted-foreground">The provider is unavailable. Presentation and cadence changes can still be saved; result options are read-only.</p>}
+        {!providerAvailable && <p className="rounded-md border p-3 text-sm text-muted-foreground">{providerLabel(draft)} is not available on your server, so the result options are locked. You can still change and save the title, poster, and refresh schedule. Ask your server administrator to enable {providerLabel(draft)} in MediaFlick Companion.</p>}
         <div className="grid gap-4 md:grid-cols-2">
           <div className="flex flex-col gap-2">
             <Label htmlFor="collection-title">Title</Label>
