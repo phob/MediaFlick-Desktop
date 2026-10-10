@@ -380,11 +380,13 @@ function PreviewPanel({
               {item.officialRating}
             </span>
           )}
-          {facts.map((fact) => (
+          {facts.map((fact, index) => (
             <span key={fact} className="flex items-center gap-2 text-foreground/75">
-              <span className="text-primary/45" aria-hidden>
-                /
-              </span>
+              {(index > 0 || item.officialRating) && (
+                <span className="text-primary/45" aria-hidden>
+                  /
+                </span>
+              )}
               {fact}
             </span>
           ))}
