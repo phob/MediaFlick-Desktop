@@ -100,7 +100,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `hover(target)` | Park the pointer, then move onto the target (fires `pointerenter`; the sidebar expands on it). |
 | `park()` | Move the pointer to the top-right corner, collapsing hover-opened UI. |
 | `key(name, { code, keyCode, modifiers })` | One key press. |
-| `state(target)` | AX state: `checked`, `pressed`, `expanded`, `disabled`, `selected`, `value` (tristate tokens become booleans). |
+| `state(target, { timeout, nth })` | Wait for exactly one rendered match, as `find` does, then return its AX state: `checked`, `pressed`, `expanded`, `disabled`, `selected`, `value` (tristate tokens become booleans). |
 | `exists(target)`, `count(target)` | Rendered matches right now. |
 | `until(exprOrFn, description, timeout)` | Poll a page expression or Node function until truthy; logs `saw <description>`. Never use fixed sleeps for state. |
 | `check(condition, message)` | Fail, or log `ok: message`. |
