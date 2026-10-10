@@ -227,12 +227,13 @@ function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId:
       <Button
         variant="secondary"
         size="sm"
+        aria-pressed={episode.played}
         onClick={() =>
           setPlayed.mutate({ id: episode.id, played: !episode.played, context: parentId })
         }
       >
         <Check className="size-3" />
-        {episode.played ? "Unwatch" : "Watched"}
+        {episode.played ? "Mark unwatched" : "Mark watched"}
       </Button>
     </div>
   )

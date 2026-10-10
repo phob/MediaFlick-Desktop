@@ -265,7 +265,7 @@ describe("expanded media-card details target", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }))
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }))
-    fireEvent.click(screen.getByRole("button", { name: "Mark as watched" }))
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }))
 
     await waitFor(() => expect(requests).toHaveLength(3))
     expect(requests).toEqual(expect.arrayContaining([
@@ -281,7 +281,7 @@ describe("expanded media-card details target", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }))
     fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }))
-    fireEvent.click(screen.getByRole("button", { name: "Mark as watched" }))
+    fireEvent.click(screen.getByRole("button", { name: "Mark watched" }))
 
     expect(mutations.play).toHaveBeenCalledWith({ id: "movie-1", resume: false })
     expect(mutations.favorite).toHaveBeenCalledWith({ id: "movie-1", favorite: true })

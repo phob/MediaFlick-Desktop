@@ -119,7 +119,7 @@ describe("appearance settings live preview", () => {
     )
     fireEvent.click(within(panel).getByRole("button", { name: "Play" }))
     fireEvent.click(within(panel).getByRole("button", { name: "Add to favorites" }))
-    fireEvent.click(within(panel).getByRole("button", { name: "Mark as watched" }))
+    fireEvent.click(within(panel).getByRole("button", { name: "Mark watched" }))
 
     expect(requests.some((path) => path.includes("/api/play"))).toBe(false)
     expect(requests.some((path) => path.includes("/favorite"))).toBe(false)
