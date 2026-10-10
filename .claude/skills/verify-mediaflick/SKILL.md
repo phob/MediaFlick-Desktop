@@ -13,7 +13,7 @@ How it works:
   - Windows (`scripts/isolate-windows.ps1`): a new desktop `MediaFlick.Verify.<pid>.<tick>`, never switched to, and a kill-on-close job.
   - Linux (`scripts/isolate-linux.sh`): a private Xvfb display chosen with `-displayfd`. `WAYLAND_DISPLAY` is unset, `XDG_RUNTIME_DIR` is private, the session bus is private or absent, and the run gets its own session and process group.
 - `session.mjs` refuses to launch anything until `platform.mjs` has confirmed that isolation from inside it. On Windows a child process reports its own desktop, which must differ from the visible input desktop. On Linux, `DISPLAY` must belong to the wrapper's Xvfb, with no Wayland and the private runtime dir.
-- The disposable profile is `<os tmp>/mediaflick-verify-<run-id>-<session-pid>-<random>`. On Windows the app gets `APPDATA`, `LOCALAPPDATA` and `TEMP` inside it. On Linux it gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `TMPDIR` inside it. The app resolves its directories from exactly these variables (`src/app/paths.rs`). Its single-instance gate is keyed by `instance.json` in that config dir, so a verify run never collides with the user's own MediaFlick, which can keep running.
+- The disposable profile is `<os tmp>/mediaflick-verify-<run-id>-<session-pid>-<random>`. On Windows the app gets `APPDATA`, `LOCALAPPDATA` and `TEMP` inside it. On Linux it gets `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside it, and the wrapper's private runtime dir as `TMPDIR`. Chromium's singleton socket and mpv's IPC socket live in `TMPDIR`, and a Unix socket path may not exceed 107 bytes; inside the profile it would. The app resolves its directories from exactly these variables (`src/app/paths.rs`). Its single-instance gate is keyed by `instance.json` in that config dir, so a verify run never collides with the user's own MediaFlick, which can keep running.
 - The user's real `accounts.json`, `settings.json`, `collections.json`, `playback-preferences.json`, `pending-deletions.json`, `instance.json` and `library.db` are never opened for writing. The session fingerprints their size and mtime before and after (`guard.json`) and fails the run if they changed while no user instance was running.
 
 Drive scripts, the harness and the session are platform-neutral Node. Only the two wrappers and `scripts/platform.mjs` (isolation check, process listing, tree kill, app environment) are per-OS.
@@ -94,7 +94,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | Helper | Use |
 |---|---|
 | `find(target, { timeout, nth })` | Wait for exactly one rendered match; more than one is an error unless `nth` is given. Returns `{ backendNodeId, properties, rect }`. |
-| `press(target)` | Scroll into view, hit-test, click the centre with the real mouse. A covered target first gets about 0.9 s to settle; then the pointer is parked and it is tested again. Fails if still covered. Fails on disabled elements. |
+| `press(target)` | Scroll into view, wait until the target holds still, hit-test, click the centre with the real mouse. A toast over it is waited out (up to about 9 s). Any other cover first gets about 0.9 s to settle; then the pointer is parked and it is tested again. Fails if still covered. Fails on disabled elements. |
 | `fill(target, text)` | Click into a text field, select all, type `text` (`Input.insertText`). |
 | `choose({ name }, option)` | Open a Radix Select (role `combobox`, named by its `label`) and pick the option by name. |
 | `hover(target)` | Park the pointer, then move onto the target (fires `pointerenter`; the sidebar expands on it). |
@@ -115,20 +115,26 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives, all proven on Windows:
+Shipped drives. All seven are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there:
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
 - `browse`: sign-in, Home, Movies, search, movie and series detail, sign-out. Read-only against the demo server.
+- `sign-in` (needs `--url https://demo.jellyfin.org/stable`): prefill, Quick Connect code (never approved), user menu, sign-out from Home, remembered server.
+- `home-library`: billboard ticks, shelf arrows, a card from Home, sort, a decade filter and its chip, an empty search, Favorites. Read-only.
+- `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
+- `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Reset + Save, the Delete local account data dialog (cancelled).
 
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library item-detail client-settings; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
 ## Evidence
@@ -160,7 +166,7 @@ Normal runs clean up themselves:
 3. A sweep that stops any remaining process whose command line names this run's profile. CEF helpers carry `--user-data-dir=<profile>…`, and the random profile path is unique to the run.
 4. The profile directory is removed.
 
-Then the Windows wrapper terminates its job and closes the desktop. The Linux wrapper stops its process group and its Xvfb, which also drops any X client.
+Then the Windows wrapper terminates its job and closes the desktop. The Linux wrapper stops its process group and its Xvfb, which also drops any X client, and removes its work dir `<os tmp>/mediaflick-xvfb.*` (Xvfb's display pipe and the private runtime dir). That name deliberately lacks the `mediaflick-verify-` profile prefix, so doctor and cleanup never mistake a live run's work dir for a leftover profile.
 
 The hard timeout is proven. A run whose app stalled was terminated with its job at `MEDIAFLICK_VERIFY_HARD_TIMEOUT`; no process survived, and the profile was left for cleanup. After an interrupted run (killed terminal, hard timeout), `just verify-doctor` lists LEFTOVER profiles and the run as `INTERRUPTED`. Then:
 
@@ -172,26 +178,18 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Platform status
 
-- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives.
-- **Linux: not verified end to end.** Proven in WSL Arch without Xvfb or a Linux build:
-  - the wrapper's syntax and its refusal paths (no Xvfb, nesting);
-  - `platform.mjs`: process listing from `/proc`, the parent-PID tree kill, the isolation check refusing a missing wrapper and a forged claim, the XDG environment;
-  - `doctor.mjs`.
+- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the four newer drives have not run there.
+- **Linux: proven.** All seven shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
-  Never run:
-  - Xvfb startup through `-displayfd`;
-  - CEF rendering and CDP screenshots under Xvfb;
-  - `dbus-run-session`;
-  - `window.close()` and the group kill on Linux;
-  - the `LD_LIBRARY_PATH`/`LD_PRELOAD` launch outside `just run`;
-  - any shipped drive.
-
-  First run on Linux: `just verify smoke`, then read `doctor.json` and `failure.*` if it fails.
+  Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).
 
 ## Gotchas
 
-- **Audio is not isolated on Windows.** The private desktop hides windows and input, not sound. Never press Play, Resume, From start, or an episode's play button. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server.
+- **Audio is not isolated on Windows.** The private desktop hides windows and input, not sound. Never press Play, Resume, From start, or an episode's play button. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (the session log shows `Failed to connect to PipeWire`), but Play still starts real playback through the system libmpv, so the rule holds there too.
+- **Linux stderr noise is expected.** The private session bus activates `xdg-desktop-portal`, which logs `Choosing gtk.portal … as a last-resort fallback` and `Failed to connect to PipeWire`; `A connection to the bus can't be made` follows teardown. None of it affects the run. `steps.log` and `result.json` are the result.
+- **Linux sockets need a short `TMPDIR`.** CEF dies with `SIGTRAP` (`Socket path too long` in `cef.log`) when its singleton socket path passes 107 bytes, and the libmpv shell falls back after 20 s with `path must be shorter than SUN_LEN` in `app.log` when mpv's IPC socket does. `session.mjs` refuses to launch when the wrapper's runtime dir is too long for them; run from a shorter `TMPDIR`.
+- **A drive that ends with an unsaved settings draft exits forced.** The draft guard holds the window on `window.close()`, so teardown stops the app after 20 s (`exit: forced`). Save or Discard before the drive returns.
 - **External links reach the visible desktop.** `More info` menu items, `Installation help` and the update banner's release page open the user's default browser. Never press them.
 - **Never press the update banner's install action** (it downloads and runs an installer), `Install mpv`, or `Choose mpv executable` (a native file dialog nobody can answer on the private desktop).
 - The sidebar expands under the pointer and overlays content off Home. `press` waits for it to settle and parks the pointer when a target stays covered. To use the sidebar's search off Home, `hover({ css: '[data-sidebar="sidebar"]' })` first.
