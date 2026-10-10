@@ -28,7 +28,9 @@ if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || (( timeout_s < 1 || timeout_s > 3600 )); 
   exit 2
 fi
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/mediaflick-verify-xvfb.XXXXXX")"
+# Not "mediaflick-verify-…": that prefix marks disposable profiles, which
+# verify-cleanup removes when no live session owns them.
+work="$(mktemp -d "${TMPDIR:-/tmp}/mediaflick-xvfb.XXXXXX")"
 xvfb_pid=""
 child=""
 cleanup() {
@@ -66,6 +68,8 @@ export XDG_SESSION_TYPE=x11
 unset WAYLAND_DISPLAY WAYLAND_SOCKET XAUTHORITY DBUS_SESSION_BUS_ADDRESS PULSE_SERVER PIPEWIRE_REMOTE
 # The user's runtime dir holds their Wayland, PipeWire and Pulse sockets; a
 # private one keeps the app off the user's screen and speakers by default.
+# session.mjs also makes it the app's TMPDIR: its path is short enough for the
+# Unix sockets Chromium and mpv create there (107-byte limit).
 mkdir -m 700 "$work/runtime"
 export XDG_RUNTIME_DIR="$work/runtime"
 
