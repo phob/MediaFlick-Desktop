@@ -194,6 +194,30 @@ run-non-debug *args: stop-running-app non-debug
 run-non-debug *args: stop-running-app non-debug
     cef_lib="$PWD/build/libcef.so"; export LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; if [ -f "$cef_lib" ]; then export MEDIAFLICK_DESKTOP_CEF_PRELOAD="$cef_lib"; export LD_PRELOAD="$cef_lib${LD_PRELOAD:+ $LD_PRELOAD}"; fi; build/mediaflick-desktop {{args}}
 
+# See .claude/skills/verify-mediaflick/SKILL.md. Example: just verify application-settings
+# Drive the staged app on a private desktop with a disposable profile; evidence in build/verify/<run-id>
+[group('test')]
+[windows]
+verify drive *args: build
+    & "$PSHOME/pwsh.exe" -NoLogo -NoProfile -File .claude/skills/verify-mediaflick/scripts/isolate-windows.ps1 node .claude/skills/verify-mediaflick/scripts/session.mjs {{drive}} {{args}}
+
+# See .claude/skills/verify-mediaflick/SKILL.md. Example: just verify application-settings
+# Drive the staged app on a private Xvfb display with a disposable profile; evidence in build/verify/<run-id>
+[group('test')]
+[linux]
+verify drive *args: build
+    bash .claude/skills/verify-mediaflick/scripts/isolate-linux.sh node .claude/skills/verify-mediaflick/scripts/session.mjs {{drive}} {{args}}
+
+# Read-only preflight for `just verify`: build staleness, prerequisites, leftovers, last result
+[group('test')]
+verify-doctor:
+    node .claude/skills/verify-mediaflick/scripts/doctor.mjs
+
+# Stop processes and remove profiles left behind by interrupted `just verify` runs (never evidence)
+[group('test')]
+verify-cleanup:
+    node .claude/skills/verify-mediaflick/scripts/cleanup.mjs
+
 # Run the external mpv binary that will be wired into playback later
 [group('run')]
 [windows]
