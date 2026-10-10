@@ -1,4 +1,4 @@
-import { Heart, Play, ThumbsUp } from "lucide-react"
+import { Check, Heart, Play } from "lucide-react"
 import type { MouseEvent } from "react"
 import type { ItemSummary } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -40,9 +40,8 @@ const VARIANTS = {
 } satisfies Record<ItemActionVariant, Record<string, string>>
 
 /**
- * Play, favorites, and watched for one title. Jellyfin has no separate "liked";
- * watched is the nearest real state, and the thumb is how the row is read at a
- * glance. The toggles report their state through `aria-pressed`.
+ * Play, favorites, and watched for one title. Each toggle is named for what it
+ * will do and reports the current state through `aria-pressed`.
  */
 export function ItemActionButtons({
   item,
@@ -68,7 +67,7 @@ export function ItemActionButtons({
     action()
   }
   const favoriteLabel = item.favorite ? "Remove from favorites" : "Add to favorites"
-  const playedLabel = item.played ? "Mark as unwatched" : "Mark as watched"
+  const playedLabel = item.played ? "Mark unwatched" : "Mark watched"
   return (
     <>
       {play && (
@@ -113,7 +112,7 @@ export function ItemActionButtons({
           item.played ? styles.playedOn : styles.off,
         )}
       >
-        <ThumbsUp className={cn(styles.icon, item.played && "fill-current")} />
+        <Check className={styles.icon} />
       </button>
     </>
   )

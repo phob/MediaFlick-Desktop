@@ -73,7 +73,7 @@ describe("season browser", () => {
 
     expect(screen.getByRole("button", { name: "Play" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Add to favorites" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Mark watched" })).toBeTruthy()
   })
 
   test("the next-up episode carries the accent marker", () => {
