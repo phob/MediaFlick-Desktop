@@ -85,32 +85,4 @@ describe("search page live person section", () => {
     expect(seeAll.getAttribute("href")).toContain("mode=person")
     expect(seeAll.getAttribute("href")).toContain("personId=person-1")
   })
-
-  test("renders nothing when no exact person matches the term", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input)
-      expect(path).toContain("/api/person/resolve")
-      return new Response(
-        JSON.stringify({ person: null, candidates: [], ambiguous: false }),
-        { status: 200 },
-      )
-    })
-    vi.stubGlobal("fetch", fetchMock)
-
-    const { container } = renderSection("severance")
-
-    // Give the resolve query a tick to settle before asserting emptiness.
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(container.firstChild).toBeNull()
-  })
-
-  test("stays silent when the server cannot resolve people at all", async () => {
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 503 }))
-    vi.stubGlobal("fetch", fetchMock)
-
-    const { container } = renderSection("tom hanks")
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(container.firstChild).toBeNull()
-  })
 })

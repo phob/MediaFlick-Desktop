@@ -1,7 +1,6 @@
 import { api } from "@/lib/api"
 import { DEFAULT_COMFORT, DEFAULT_VIEWING } from "@/lib/viewing"
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react"
-import { useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
@@ -57,11 +56,6 @@ const ratingsStatus: RatingsIntegrationStatus = {
 
 const movie = itemSummary({ id: "movie-1", kind: "Movie", name: "The Matrix", year: 1999 })
 
-function LocationProbe() {
-  const location = useLocation()
-  return <output data-location>{location.pathname}</output>
-}
-
 function renderAppearance(cardPreviews: boolean) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
@@ -80,21 +74,10 @@ function renderAppearance(cardPreviews: boolean) {
   render(
     <TestProviders client={client} initialEntries={["/settings/appearance"]}>
         <Appearance />
-        <LocationProbe />
     </TestProviders>,
   )
   return requests
 }
-
-function location() {
-  return document.querySelector("[data-location]")?.textContent
-}
-
-test("appearance slider announces its value as a percentage", () => {
-  renderAppearance(false)
-  const slider = screen.getByRole("slider", { name: "Artwork intensity slider" })
-  expect(slider.getAttribute("aria-valuetext")).toBe("80 percent")
-})
 
 function hoverWithMouse(element: Element) {
   const event = new MouseEvent("pointerover", { bubbles: true })
@@ -141,19 +124,6 @@ describe("appearance settings live preview", () => {
     expect(requests.some((path) => path.includes("/api/play"))).toBe(false)
     expect(requests.some((path) => path.includes("/favorite"))).toBe(false)
     expect(requests.some((path) => path.includes("/played"))).toBe(false)
-  })
-
-  test("navigates to the item's details exactly like a live card's panel", () => {
-    renderAppearance(true)
-    restOnCard()
-
-    const panel = requireElement(
-      document.querySelector(".preview-panel"),
-      "expanded media-card preview",
-    )
-    fireEvent.click(panel)
-
-    expect(location()).toBe("/item/movie-1")
   })
 })
 

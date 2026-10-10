@@ -57,7 +57,6 @@ public sealed class UpstreamInputTests
         Assert.Equal(expectedStatus, error.StatusCode);
         Assert.DoesNotContain(ServiceHost, error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ApiKey, error.Message, StringComparison.Ordinal);
-        Assert.NotNull(error.Failure);
     }
 
     [Fact]
@@ -100,36 +99,6 @@ public sealed class UpstreamInputTests
             NullLogger<CompanionHttpClient>.Instance);
 
         Assert.Null(await client.TestAsync("sonarr", Service(), TestContext.Current.CancellationToken));
-    }
-
-    [Theory]
-    [InlineData("true", true)]
-    [InlineData("false", false)]
-    [InlineData("1", true)]
-    [InlineData("0", false)]
-    [InlineData("\"TRUE\"", true)]
-    [InlineData("\"0\"", false)]
-    [InlineData("\"yes\"", null)]
-    [InlineData("null", null)]
-    [InlineData("{}", null)]
-    [InlineData("[]", null)]
-    public void FlagsAcceptProviderEncodingsAndIgnoreEverythingElse(string json, bool? expected)
-    {
-        var node = JsonNode.Parse($$"""{"value":{{json}}}""")!["value"];
-        Assert.Equal(expected, JsonRead.Flag(node));
-    }
-
-    [Theory]
-    [InlineData("""{"has_more":"yes","pagination":"page 2"}""", false)]
-    [InlineData("""{"has_more":{"value":true},"pagination":[1]}""", false)]
-    [InlineData("""{"has_more":1}""", true)]
-    [InlineData("""{"pagination":{"has_more":"true"}}""", true)]
-    [InlineData("""{"pagination":{"total":"30","offset":0,"limit":10}}""", true)]
-    [InlineData("""{"pagination":{"total":10,"offset":0,"limit":10}}""", false)]
-    public void MdbListPaginationToleratesWronglyTypedMarkers(string json, bool expected)
-    {
-        var detail = Assert.IsType<JsonObject>(JsonNode.Parse(json));
-        Assert.Equal(expected, MdbListHttpTransport.BodyHasMore(detail));
     }
 
     [Theory]

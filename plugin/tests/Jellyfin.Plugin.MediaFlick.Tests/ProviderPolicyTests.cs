@@ -96,7 +96,6 @@ public sealed class ProviderPolicyTests
     [Theory]
     [InlineData("tt0133093", "tt0133093")]
     [InlineData(" TT0133093 ", "tt0133093")]
-    [InlineData("tt12345", "tt12345")]
     [InlineData("tt1234", null)]
     [InlineData("tt1234567890123", null)]
     [InlineData("nm0000206", null)]

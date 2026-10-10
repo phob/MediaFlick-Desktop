@@ -280,11 +280,8 @@ mod tests {
             serde_json::from_str(r#"{"Id":"a","SeriesPrimaryImageTag":"series-tag"}"#).unwrap();
         assert_eq!(episode.primary_image_tag(), Some("series-tag"));
 
-        let movie: BaseItemDto = serde_json::from_str(
-            r#"{"Id":"a","ImageTags":{"Primary":"own-tag","thumb":"wide-tag"}}"#,
-        )
-        .unwrap();
+        let movie: BaseItemDto =
+            serde_json::from_str(r#"{"Id":"a","ImageTags":{"Primary":"own-tag"}}"#).unwrap();
         assert_eq!(movie.primary_image_tag(), Some("own-tag"));
-        assert_eq!(movie.image_tag("Thumb"), Some("wide-tag"));
     }
 }

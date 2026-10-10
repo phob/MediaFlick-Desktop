@@ -116,9 +116,9 @@ VapourSynth support. For unpackaged Linux developer builds, install mpv 0.41 or
 newer with client API major 2, gpu-next, and X11 Vulkan/EGL backends (the runtime
 SONAME is `libmpv.so.2`), plus working X11 and Vulkan or EGL/OpenGL drivers, using
 your distribution's package manager. MediaFlick
-loads it dynamically, so headers and link-time libmpv configuration are not required. Select Built-in player in Settings → Player,
-save, and restart. Wayland sessions need XWayland and a
-valid `DISPLAY`. External mpv remains the Linux default. See
+loads it dynamically, so headers and link-time libmpv configuration are not required. Built-in player
+is the Linux default; without a usable libmpv, select External mpv in Settings → Player. Wayland sessions need XWayland and a
+valid `DISPLAY`. See
 [the Linux integration notes](docs/libmpv-integration.md#integrated-linux-rendering).
 
 An opt-in runtime test can load a local video through libmpv and its IPC server:

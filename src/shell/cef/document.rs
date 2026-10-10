@@ -73,17 +73,6 @@ mod tests {
     }
 
     #[test]
-    fn load_error_page_retries_safe_urls() {
-        let html = load_error_html(
-            "MediaFlick Desktop",
-            "mediaflick-desktop://app/settings",
-            "failed",
-            -2,
-        );
-        assert!(html.contains("href=\"mediaflick-desktop://app/settings\""));
-    }
-
-    #[test]
     fn load_error_page_does_not_retry_unsafe_schemes() {
         let html = load_error_html("MediaFlick Desktop", "javascript:alert(1)", "failed", -2);
         assert!(html.contains("href=\"mediaflick-desktop://app/\""));

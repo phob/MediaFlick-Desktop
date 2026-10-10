@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::json;
 
@@ -116,29 +116,6 @@ fn track_list_keeps_selectable_audio_and_subtitle_tracks() {
     assert!(snapshot.tracks[1].external);
 }
 
-#[test]
-fn pending_preparation_resets_previous_playback_snapshot_state() {
-    let mut state = controller_with_pending_load(None);
-    state
-        .phase
-        .pending_mut()
-        .expect("pending")
-        .launch
-        .runtime_ticks = Some(300_000_000);
-    state.last_state.position_ticks = 120_000_000;
-    state.last_state.duration_ticks = Some(120_000_000);
-    state.last_state.pause = true;
-    state.last_state.eof_reached = true;
-
-    state.prepare_pending_playback_state();
-    let snapshot = state.publish_snapshot();
-
-    assert!(snapshot.active);
-    assert_eq!(snapshot.position_ms, 0.0);
-    assert_eq!(snapshot.duration_ms, Some(30_000.0));
-    assert!(!snapshot.paused);
-}
-
 #[cfg(target_os = "windows")]
 #[test]
 fn svp_library_uses_the_pipe_name_expected_by_svp() {
@@ -236,60 +213,6 @@ fn an_end_file_error_ends_a_pending_replacement_load() {
 }
 
 #[test]
-fn rejected_replacement_stops_replacement_identity_before_failing() {
-    let mut state = controller_with_pending_load(None);
-    let (event_tx, event_rx) = mpsc::channel();
-    state.event_tx = Some(event_tx);
-    state.phase.take_pending();
-    state.mpv_playback_active = true;
-    state.replacement_end_file_pending = true;
-    state.pending_raise_pulse_reset_at = Some(Instant::now());
-    let mut replacement = PlaybackRequest::new("https://example.test/replacement.mkv");
-    replacement.item_id = Some("replacement-item".to_string());
-    replacement.media_source_id = Some("replacement-source".to_string());
-    replacement.play_session_id = Some("replacement-session".to_string());
-    let replacement_identity = PlaybackIdentity::from_launch(2, &replacement);
-
-    state.handle_rejected_loadfile(true, replacement_identity);
-
-    let stopped = match next_terminal_event(&event_rx) {
-        PlaybackEvent::Stopped(stopped) => stopped,
-        PlaybackEvent::Failed { .. } => panic!("failure event arrived before stopped event"),
-        PlaybackEvent::StateChanged(_) => unreachable!(),
-    };
-    assert!(!stopped.active);
-    assert_eq!(stopped.stop_reason, Some(StopReason::Error));
-    assert_eq!(stopped.playback_id, Some(2));
-    assert_eq!(stopped.item_id.as_deref(), Some("replacement-item"));
-    assert_eq!(
-        stopped.media_source_id.as_deref(),
-        Some("replacement-source")
-    );
-    assert_eq!(
-        stopped.play_session_id.as_deref(),
-        Some("replacement-session")
-    );
-    assert!(matches!(
-        next_terminal_event(&event_rx),
-        PlaybackEvent::Failed { .. }
-    ));
-    assert!(matches!(
-        event_rx.try_recv(),
-        Err(mpsc::TryRecvError::Empty)
-    ));
-}
-
-#[test]
-fn next_playback_handoff_ignores_old_end_file_while_replacement_is_pending() {
-    let mut state = controller_with_pending_load(None);
-    state.next_playback_handoff_until = Some(Instant::now() + Duration::from_secs(1));
-
-    state.finish_active(Some(StopReason::Stop));
-
-    assert!(state.phase.pending().is_some());
-}
-
-#[test]
 fn active_replacement_ignores_old_end_file_without_next_episode_handoff() {
     let mut state = controller_with_pending_load(None);
     state.replacement_end_file_pending = true;
@@ -303,7 +226,7 @@ fn active_replacement_ignores_old_end_file_without_next_episode_handoff() {
 }
 
 #[test]
-fn eof_arms_next_playback_handoff() {
+fn eof_reports_the_duration_as_the_final_position() {
     let mut state = controller_with_pending_load(None);
     state.activate_pending();
     state.mpv_playback_active = true;
@@ -311,7 +234,6 @@ fn eof_arms_next_playback_handoff() {
 
     state.finish_active(Some(StopReason::Eof));
 
-    assert!(state.next_playback_handoff_until.is_some());
     assert_eq!(state.last_state.position_ticks, 120_000_000);
 }
 

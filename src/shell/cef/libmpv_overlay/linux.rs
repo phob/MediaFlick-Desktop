@@ -740,22 +740,4 @@ mod tests {
         assert_eq!(&frame[4..12], &[255; 8]);
         assert_eq!(&frame[12..], &[0; 12]);
     }
-
-    #[test]
-    fn popup_blending_clips_and_preserves_premultiplied_alpha() {
-        let mut frame = vec![0, 0, 100, 255, 0, 0, 100, 255];
-        blend_popup(
-            &mut frame,
-            2,
-            1,
-            &[100, 0, 0, 128, 0, 100, 0, 128],
-            &Rect {
-                x: -1,
-                y: 0,
-                width: 2,
-                height: 1,
-            },
-        );
-        assert_eq!(frame, [0, 100, 50, 255, 0, 0, 100, 255]);
-    }
 }

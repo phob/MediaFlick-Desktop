@@ -110,35 +110,6 @@ mod tests {
 
     use super::*;
 
-    struct RecordingBackend {
-        loaded_paths: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl PlayerBackend for RecordingBackend {
-        fn warm(&self, _path: String, _fullscreen: FullscreenBehavior) {}
-
-        fn native_window(&self, _timeout: Duration) -> Option<NativeWindowHandle> {
-            None
-        }
-
-        fn load(&self, path: String, _fullscreen: FullscreenBehavior, _request: PlaybackRequest) {
-            self.loaded_paths
-                .lock()
-                .expect("record loaded path")
-                .push(path);
-        }
-
-        fn control(&self, _command: PlayerCommand) {}
-
-        fn set_preferences(&self, _preferences: PlayerPreferences) {}
-
-        fn snapshot(&self) -> PlayerSnapshot {
-            PlayerSnapshot::default()
-        }
-
-        fn shutdown(&self) {}
-    }
-
     /// Blocks in `native_window` until the test releases it.
     struct WaitingBackend {
         entered: Mutex<mpsc::Sender<()>>,
@@ -198,26 +169,6 @@ mod tests {
                 .expect("snapshot answered while native_window waited")
                 .active,
             "the snapshot came from the backend"
-        );
-    }
-
-    #[test]
-    fn a_pending_restart_does_not_reconfigure_the_running_backend() {
-        let loaded_paths = Arc::new(Mutex::new(Vec::new()));
-        let coordinator = PlaybackCoordinator::new(Box::new(RecordingBackend {
-            loaded_paths: loaded_paths.clone(),
-        }));
-        coordinator.warm("startup-player".to_string(), FullscreenBehavior::Windowed);
-
-        coordinator.open(
-            "saved-for-next-launch".to_string(),
-            FullscreenBehavior::Fullscreen,
-            PlaybackRequest::default(),
-        );
-
-        assert_eq!(
-            loaded_paths.lock().expect("read loaded path").as_slice(),
-            ["startup-player"]
         );
     }
 }

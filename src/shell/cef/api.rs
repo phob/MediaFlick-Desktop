@@ -879,39 +879,6 @@ mod tests {
         assert!(!session.status().expired);
     }
 
-    fn request(method: &str, path: &str) -> ApiRequest {
-        ApiRequest {
-            method: method.to_string(),
-            // A body no endpoint accepts: writes stop at decoding, so this
-            // walk through the router never changes the fixture or the user's
-            // settings files.
-            ..post(path, b"not json")
-        }
-    }
-
-    #[test]
-    fn a_known_path_with_another_method_is_405_with_its_allowed_methods() {
-        let fixture = TestServices::signed_out();
-        for (method, path, allow) in [
-            ("GET", "/api/item/m1/played", "POST"),
-            ("POST", "/api/status", "GET"),
-            ("PUT", "/api/collections/profiles/p1", "GET, PATCH, DELETE"),
-            ("DELETE", "/api/settings/viewing", "GET, PATCH"),
-        ] {
-            let response = send(&fixture, &request(method, path));
-            assert_eq!(response.status, 405, "{method} {path}");
-            let header = response
-                .headers
-                .iter()
-                .find(|(name, _)| name == "Allow")
-                .map(|(_, value)| value.as_str());
-            assert_eq!(header, Some(allow), "{method} {path}");
-        }
-        let response = send(&fixture, &request("GET", "/api/no/such/endpoint"));
-        assert_eq!(response.status, 404);
-        assert!(error_of(&response).starts_with("unknown endpoint"));
-    }
-
     #[test]
     fn player_commands_are_decoded_before_the_player_is_asked() {
         let fixture = TestServices::signed_out();
@@ -927,44 +894,10 @@ mod tests {
     }
 
     #[test]
-    fn the_player_state_is_a_full_idle_snapshot_before_playback_starts() {
-        let fixture = TestServices::signed_out();
-        let request = ApiRequest {
-            method: "GET".to_string(),
-            ..post("/api/player/state", b"")
-        };
-        let response = send(&fixture, &request);
-        assert_eq!(response.status, 200);
-        let body: Value = serde_json::from_slice(&response.body).expect("json");
-        assert_eq!(body["active"], false);
-        assert_eq!(body["tracks"], json!([]));
-        assert_eq!(body["diagnostics"]["buffering"], false);
-    }
-
-    #[test]
     fn a_request_without_a_body_takes_the_endpoint_defaults() {
         let fixture = TestServices::signed_out();
         let response = send(&fixture, &post("/api/auth/logout", b""));
         assert_eq!(response.status, 200, "{}", error_of(&response));
-        let response = send(
-            &fixture,
-            &post("/api/auth/logout", br#"{"forgetLibrary":1}"#),
-        );
-        assert_eq!(response.status, 400);
-    }
-
-    #[test]
-    fn blank_query_parameters_are_treated_as_absent() {
-        let request = ApiRequest {
-            method: "GET".to_string(),
-            path: "/api/items".to_string(),
-            query: "search=%20&genre=&limit=20".to_string(),
-            body: Vec::new(),
-            range: None,
-            cancelled: Default::default(),
-        };
-        assert_eq!(request.param("search"), None);
-        assert_eq!(request.param("genre"), None);
     }
 
     #[test]

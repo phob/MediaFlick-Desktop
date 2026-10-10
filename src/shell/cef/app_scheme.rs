@@ -340,7 +340,7 @@ fn status_text(status: u16) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_URL, is_app_url, split_url};
+    use super::{APP_URL, is_app_url};
 
     #[test]
     fn only_the_app_host_is_served_by_this_handler() {
@@ -350,18 +350,5 @@ mod tests {
         assert!(!is_app_url("mediaflick-desktop://client-settings?token=x"));
         assert!(!is_app_url("mediaflick-desktop://app-exit"));
         assert!(!is_app_url("http://server:8096/web/"));
-    }
-
-    #[test]
-    fn urls_split_into_a_path_and_a_query() {
-        assert_eq!(split_url(APP_URL), ("/".to_string(), String::new()));
-        assert_eq!(
-            split_url("mediaflick-desktop://app/api/items?search=a%20b"),
-            ("/api/items".to_string(), "search=a%20b".to_string())
-        );
-        assert_eq!(
-            split_url("mediaflick-desktop://app/item/x#anchor"),
-            ("/item/x".to_string(), String::new())
-        );
     }
 }

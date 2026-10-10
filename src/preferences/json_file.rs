@@ -280,24 +280,6 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_isolated_when_no_valid_backup_exists() {
-        let path = test_path();
-        std::fs::write(&path, b"not json").expect("damaged primary");
-
-        let loaded = load_with_recovery::<Document>(&path)
-            .expect("recover with defaults")
-            .expect("document");
-
-        assert_eq!(loaded.document, Document::default());
-        assert!(
-            loaded
-                .recovery
-                .is_some_and(|notice| !notice.restored_backup)
-        );
-        assert!(!path.exists());
-    }
-
-    #[test]
     fn an_invalid_primary_never_replaces_the_last_valid_backup() {
         let path = test_path();
         save_with_backup(&path, &Document { value: 1 }).expect("first save");

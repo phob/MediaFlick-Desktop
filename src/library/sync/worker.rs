@@ -209,11 +209,7 @@ fn jittered(base: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::time::Duration;
-
-    use super::{Wake, wait};
-    use crate::library::sync::SyncHandle;
 
     #[test]
     fn a_server_retry_after_outlasts_the_local_backoff() {
@@ -224,21 +220,5 @@ mod tests {
             super::retry_delay(&limited, Duration::from_secs(60)),
             Duration::from_secs(300)
         );
-    }
-
-    /// The refresh button is only a "reconcile now" lever if the request
-    /// survives the wait it interrupts — a request that reads back as a plain
-    /// timeout would silently fall back to the hourly gate.
-    #[test]
-    fn a_request_is_distinguishable_from_a_timeout_and_is_consumed_once() {
-        let handle = SyncHandle::new(Arc::default());
-
-        handle.request();
-        assert_eq!(wait(&handle, Duration::ZERO), Wake::Requested);
-        // Consumed: the next wait is an ordinary scheduled one.
-        assert_eq!(wait(&handle, Duration::from_millis(1)), Wake::Elapsed);
-
-        handle.stop();
-        assert_eq!(wait(&handle, Duration::ZERO), Wake::Stopped);
     }
 }

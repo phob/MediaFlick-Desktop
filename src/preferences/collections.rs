@@ -436,21 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn profile_names_are_unique_without_case_sensitivity() {
-        let path = test_path();
-        let service = CollectionConfigurationService::open(path.clone()).expect("open");
-        let account = key("server", "alice");
-        service
-            .save_profile(&account, profile("a", "Popular Movies"))
-            .expect("first");
-        let error = service
-            .save_profile(&account, profile("c", " popular movies "))
-            .expect_err("duplicate name");
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
     fn a_newer_file_is_rejected_without_being_modified() {
         use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
 

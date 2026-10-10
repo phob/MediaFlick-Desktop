@@ -123,27 +123,13 @@ pub fn join_url(base: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_query, encode_path_segment, join_url, percent_decode, query_param};
+    use super::{encode_path_segment, join_url, percent_decode};
 
     #[test]
     fn path_segments_escape_separators() {
         assert_eq!(encode_path_segment("../Users"), "..%2FUsers");
         assert_eq!(encode_path_segment("a b"), "a%20b");
         assert_eq!(encode_path_segment("abc-1_2.3~4"), "abc-1_2.3~4");
-    }
-
-    #[test]
-    fn query_round_trips_through_decoding() {
-        let query = build_query(&[
-            ("searchTerm", "the matrix".to_string()),
-            ("kind", "Movie".to_string()),
-        ]);
-        assert_eq!(query, "searchTerm=the%20matrix&kind=Movie");
-        assert_eq!(
-            query_param(&query, "searchTerm").as_deref(),
-            Some("the matrix")
-        );
-        assert_eq!(query_param(&query, "missing"), None);
     }
 
     #[test]

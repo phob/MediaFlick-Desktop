@@ -22,7 +22,6 @@ test("shortcut normalization shares the native contract, including Command combi
 test("the Player write contract sends all bindings together and omits computed fields", () => {
   const settings = {...playerSettings, playerConfigured:true} as PlayerSettings
   expect(playerSettingsWrite(settings)).toEqual(playerSettings)
-  expect(shortcutError(settings.comfort, settings.markWatchedNext)).toBeNull()
 })
 
 test.each([

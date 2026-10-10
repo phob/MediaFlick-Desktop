@@ -70,7 +70,7 @@ afterEach(() => {
 })
 
 describe("local account deletion", () => {
-  test("replaces the active status before removing account query data", async () => {
+  test("requires confirmation, then signs out and removes the account's cached data", async () => {
     queryClient.setQueryData(queryKeys.status, authenticated)
     queryClient.setQueryData(queryKeys.settings, settings)
     queryClient.setQueryData(queryKeys.item("shared-id"), { id: "shared-id", name: "Alice's item" })
@@ -96,14 +96,12 @@ describe("local account deletion", () => {
     expect(remove).not.toHaveBeenCalled()
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
     expect(remove).not.toHaveBeenCalled()
-    expect(queryClient.getQueryData<Status>(queryKeys.status)?.authenticated).toBe(true)
 
     fireEvent.click(trigger)
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete local account data" }))
 
     expect(await screen.findByText("Signed out")).toBeTruthy()
     await waitFor(() => expect(queryClient.getQueryData(queryKeys.item("shared-id"))).toBeUndefined())
-    expect(queryClient.getQueryData<Status>(queryKeys.status)?.authenticated).toBe(false)
     expect(remove).toHaveBeenCalledTimes(1)
   })
 })

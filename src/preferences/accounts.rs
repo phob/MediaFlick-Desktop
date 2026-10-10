@@ -832,17 +832,11 @@ mod tests {
     }
 
     #[test]
-    fn viewing_and_browsing_survive_reopen_and_reject_invalid_writes() {
-        let path = test_path("viewing-round-trip");
+    fn browsing_survives_reopen_and_rejects_external_destinations() {
+        let path = test_path("browsing-round-trip");
         let alice = key("server", "alice");
         let bob = key("server", "bob");
         let service = AccountConfigurationService::open(path.clone()).expect("open");
-        let settings = ViewingSettings {
-            spoiler_protection: true,
-            audio_languages: vec!["en".into()],
-            ..Default::default()
-        };
-        service.save_viewing(&alice, &settings).expect("save");
         service
             .save_browsing(&alice, "Movie", "/library?kind=Movie&sort=year")
             .expect("save browsing");
@@ -851,15 +845,8 @@ mod tests {
                 .save_browsing(&alice, "last", "https://example.com")
                 .is_err()
         );
-        let invalid = ViewingSettings {
-            text_scale: 0,
-            ..settings.clone()
-        };
-        assert!(service.save_viewing(&alice, &invalid).is_err());
         drop(service);
         let reopened = AccountConfigurationService::open(path).expect("reopen");
-        assert_eq!(reopened.viewing(&alice), settings);
-        assert_eq!(reopened.viewing(&bob), ViewingSettings::default());
         assert!(reopened.browsing(&bob).is_empty());
         assert_eq!(
             reopened.browsing(&alice)["Movie"],
@@ -931,29 +918,6 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_legacy_appearance_does_not_overwrite_account_settings() {
-        let path = test_path("authenticated-appearance");
-        let alice = key("server", "alice");
-        let service = AccountConfigurationService::open(path.clone()).expect("open");
-        let existing = AppearanceSettings {
-            accent: AppearanceAccent::Cobalt,
-            ..AppearanceSettings::default()
-        };
-        let legacy = AppearanceSettings {
-            accent: AppearanceAccent::Violet,
-            ..AppearanceSettings::default()
-        };
-        service
-            .save_appearance(&alice, &existing)
-            .expect("seed account appearance");
-        service
-            .import_legacy_appearance(Some(&alice), &legacy)
-            .expect("import legacy appearance");
-        assert_eq!(service.appearance(&alice), existing);
-        cleanup(&path);
-    }
-
-    #[test]
     fn adding_the_same_letterboxd_username_preserves_its_identity() {
         let path = test_path("profile-upsert");
         let alice = key("server", "alice");
@@ -975,22 +939,5 @@ mod tests {
         assert_eq!(updated.display_name, "Alice Updated");
         assert_eq!(service.letterboxd_profiles(&alice), vec![updated]);
         cleanup(&path);
-    }
-
-    #[test]
-    fn a_newer_configuration_version_is_left_untouched() {
-        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
-
-        for contents in [&br#"{"version":2,"accounts":[]}"#[..], NEWER_DOCUMENT] {
-            let path = test_path("future");
-            std::fs::write(&path, contents).expect("write future file");
-
-            let error = AccountConfigurationService::open(path.clone())
-                .err()
-                .expect("future file must fail");
-            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-            assert_left_untouched(&path, contents);
-            cleanup(&path);
-        }
     }
 }

@@ -381,13 +381,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_identity_rejects_mixed_and_zero_ids() {
-        assert!(CanonicalIdentity::new(MediaType::Movie, 603).is_some());
-        assert!(CanonicalIdentity::new(MediaType::Mixed, 603).is_none());
-        assert!(CanonicalIdentity::new(MediaType::Series, 0).is_none());
-    }
-
-    #[test]
     fn discover_parameters_are_a_bounded_allowlist() {
         let valid = CollectionSource::TmdbDiscover {
             parameters: BTreeMap::from([

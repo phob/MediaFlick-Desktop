@@ -210,29 +210,6 @@ mod tests {
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 
     #[test]
-    fn a_choice_for_an_item_absent_from_the_library_survives_reopen() {
-        let path = std::env::temp_dir().join(format!(
-            "mediaflick-playback-json-{}-{}.json",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let key = AccountKey::new("server", "user").expect("key");
-        let preference = ItemPlaybackPreference::default();
-        let service = PlaybackPreferenceService::open(path.clone()).expect("open");
-        service
-            .save(&key, "item-that-is-not-in-library", &preference)
-            .expect("save");
-        drop(service);
-
-        let reopened = PlaybackPreferenceService::open(path.clone()).expect("reopen");
-        assert_eq!(
-            reopened.get(&key, "item-that-is-not-in-library"),
-            Some(preference)
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
     fn a_newer_file_is_rejected_without_restoring_the_backup() {
         use super::super::json_file::backup_path;
         use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};

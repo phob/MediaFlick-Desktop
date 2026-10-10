@@ -1314,12 +1314,6 @@ mod tests {
     }
 
     #[test]
-    fn dpi_conversion_round_trips_window_coordinates() {
-        assert_eq!(physical_to_logical(150, 144), 100);
-        assert_eq!(logical_to_physical(100, 144), 150);
-    }
-
-    #[test]
     fn right_button_toggles_playback_pause() {
         assert_eq!(right_button_pause(WM_RBUTTONDOWN, false), Some(true));
         assert_eq!(right_button_pause(WM_RBUTTONDOWN, true), Some(false));

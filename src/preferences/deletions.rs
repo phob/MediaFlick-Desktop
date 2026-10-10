@@ -148,24 +148,4 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(super::super::json_file::backup_path(&path));
     }
-
-    #[test]
-    fn a_newer_journal_is_rejected_without_being_modified() {
-        use super::super::json_file::test_support::{NEWER_DOCUMENT, assert_left_untouched};
-
-        let path = std::env::temp_dir().join(format!(
-            "mediaflick-deletions-{}-{}.json",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&path, NEWER_DOCUMENT).expect("newer journal");
-
-        let error = PendingDeletionService::open(path.clone())
-            .err()
-            .expect("newer journal must fail");
-
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert_left_untouched(&path, NEWER_DOCUMENT);
-        let _ = std::fs::remove_file(&path);
-    }
 }

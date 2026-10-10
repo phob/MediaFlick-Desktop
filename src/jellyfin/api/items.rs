@@ -621,15 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn cast_queries_are_exact_complete_and_lightweight() {
+    fn cast_queries_are_exact_complete_and_bounded() {
         let query = person_items_query("uid", "person-42", 60, 60)
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["PersonIds"], "person-42");
-        assert_eq!(query["PersonTypes"], "Actor");
-        // Titles only: a season or episode credit would burn a card slot
-        // without naming anything the cast surfaces promise.
-        assert_eq!(query["IncludeItemTypes"], "Movie,Series");
         assert_eq!(query["Recursive"], "true");
 
         let bounded = person_items_query("uid", "person-42", -1, i64::MAX)

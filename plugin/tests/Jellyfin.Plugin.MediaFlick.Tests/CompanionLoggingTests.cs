@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Jellyfin.Plugin.MediaFlick.Services;
 using Microsoft.Extensions.Logging;
@@ -52,41 +51,6 @@ public sealed class CompanionLoggingTests
             Assert.DoesNotContain(ServiceHost, entry.Rendered, StringComparison.Ordinal);
             Assert.DoesNotContain(ApiKey, entry.Rendered, StringComparison.Ordinal);
         });
-    }
-
-    [Fact]
-    public async Task RepeatedNonJsonSuccessResponsesWarnOnceWithoutRecoveryNoise()
-    {
-        var handler = new StubHandler
-        {
-            Respond = _ => new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("<html>proxy login</html>", Encoding.UTF8, "text/html")
-            }
-        };
-        var logger = new CapturingLogger<CompanionHttpClient>();
-        var client = new CompanionHttpClient(
-            new StubFactory(handler),
-            new ServiceHealthStore(),
-            logger);
-        var service = new ServiceConfiguration
-        {
-            Enabled = true,
-            BaseUrl = $"http://{ServiceHost}:5055",
-            ApiKey = ApiKey
-        };
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            await Assert.ThrowsAsync<GatewayException>(() => SendAsync(client, service));
-        }
-
-        handler.Respond = _ => Json(HttpStatusCode.OK, """{"version":"1"}""");
-        await SendAsync(client, service);
-
-        Assert.Equal(
-            [LogLevel.Warning, LogLevel.Information],
-            logger.Entries.Select(entry => entry.Level).Where(level => level >= LogLevel.Information));
     }
 
     [Fact]

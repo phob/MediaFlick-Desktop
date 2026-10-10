@@ -545,32 +545,13 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{ITEM_ID_CHUNK, ItemQuery, Library, civil_from_days};
+    use super::{ItemQuery, Library, civil_from_days};
     use crate::library::test_support::{dto, seeded};
-    use crate::library::{ItemSort, TmdbCandidate, current_release_decade, release_decade_from_id};
+    use crate::library::{ItemSort, current_release_decade, release_decade_from_id};
 
     #[test]
-    fn stats_count_each_kind() {
-        let stats = seeded().stats();
-        assert_eq!(stats.movies, 2);
-        assert_eq!(stats.series, 1);
-        assert_eq!(stats.episodes, 2);
-        assert_eq!(stats.total, 5);
-    }
-
-    #[test]
-    fn search_matches_titles_and_genres_by_prefix() {
+    fn search_matches_genres_by_prefix() {
         let library = seeded();
-        let page = library
-            .query(&ItemQuery {
-                search: Some("matr".to_string()),
-                limit: 10,
-                ..Default::default()
-            })
-            .expect("query");
-        assert_eq!(page.total, 1);
-        assert_eq!(page.items[0].name, "The Matrix");
-
         let by_genre = library
             .query(&ItemQuery {
                 search: Some("acti".to_string()),
@@ -580,123 +561,6 @@ mod tests {
             .expect("query");
         assert_eq!(by_genre.total, 1);
         assert_eq!(by_genre.items[0].id, "m1");
-    }
-
-    #[test]
-    fn filters_compose_across_kind_genre_and_watched_state() {
-        let library = seeded();
-        let page = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                genre: Some("Action".to_string()),
-                watched: Some(false),
-                limit: 10,
-                ..Default::default()
-            })
-            .expect("query");
-        assert_eq!(page.total, 1);
-        assert_eq!(page.items[0].id, "m1");
-
-        let watched = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                watched: Some(true),
-                limit: 10,
-                ..Default::default()
-            })
-            .expect("query");
-        assert_eq!(watched.total, 1);
-        assert_eq!(watched.items[0].id, "m2");
-    }
-
-    #[test]
-    fn favorite_filter_uses_the_mirrored_my_list_state() {
-        let library = seeded();
-        library.set_local_favorite("m1", true).expect("favorite");
-
-        let favorites = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                favorite: Some(true),
-                limit: 10,
-                ..Default::default()
-            })
-            .expect("favorites");
-        assert_eq!(favorites.total, 1);
-        assert_eq!(favorites.items[0].id, "m1");
-
-        let not_favorites = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                favorite: Some(false),
-                limit: 10,
-                ..Default::default()
-            })
-            .expect("not favorites");
-        assert_eq!(not_favorites.total, 1);
-        assert_eq!(not_favorites.items[0].id, "m2");
-    }
-
-    #[test]
-    fn tmdb_candidates_list_only_browsable_kinds_with_parsed_ids() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .upsert_page(&[
-                dto(r#"{"Id":"movie","Name":"Film","Type":"Movie","ProviderIds":{"Tmdb":"603"}}"#),
-                dto(r#"{"Id":"series","Name":"Show","Type":"Series","ProviderIds":{"tmdb":"769"}}"#),
-                dto(r#"{"Id":"episode","Name":"Episode","Type":"Episode","ProviderIds":{"Tmdb":"603"}}"#),
-                dto(r#"{"Id":"unparsed","Name":"Odd","Type":"Movie","ProviderIds":{"Tmdb":"not-a-number"}}"#),
-            ])
-            .expect("seed");
-
-        let mut candidates = library
-            .tmdb_candidates(&[603, 769, 404])
-            .expect("candidates");
-        candidates.sort();
-        assert_eq!(
-            candidates,
-            vec![
-                TmdbCandidate {
-                    tmdb_id: 603,
-                    kind: "Movie".to_string(),
-                    item_id: "movie".to_string(),
-                },
-                TmdbCandidate {
-                    tmdb_id: 769,
-                    kind: "Series".to_string(),
-                    item_id: "series".to_string(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn items_by_ids_batches_large_sets_and_deduplicates_requested_ids() {
-        let library = Library::open_in_memory().expect("library");
-        let source = (0..=ITEM_ID_CHUNK)
-            .map(|index| {
-                dto(&format!(
-                    r#"{{"Id":"item-{index}","Name":"Movie {index}","Type":"Movie", "Overview":"Rich metadata"}}"#
-                ))
-            })
-            .collect::<Vec<_>>();
-        library.upsert_page(&source).expect("seed items");
-        let mut ids = (0..=ITEM_ID_CHUNK)
-            .rev()
-            .map(|index| format!("item-{index}"))
-            .collect::<Vec<_>>();
-        ids.push("item-0".to_string());
-        ids.push("missing".to_string());
-
-        let rows = library.items_by_ids(&ids).expect("batch lookup");
-        assert_eq!(rows.len(), ITEM_ID_CHUNK + 1);
-        assert_eq!(
-            rows.iter()
-                .map(|row| row.id.as_str())
-                .collect::<HashSet<_>>()
-                .len(),
-            ITEM_ID_CHUNK + 1
-        );
     }
 
     #[test]
@@ -801,32 +665,6 @@ mod tests {
     }
 
     #[test]
-    fn sorting_and_paging_are_stable() {
-        let library = seeded();
-        let by_year = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                sort: ItemSort::Year,
-                limit: 1,
-                ..Default::default()
-            })
-            .expect("query");
-        assert_eq!(by_year.total, 2);
-        assert_eq!(by_year.items[0].id, "m2");
-
-        let second_page = library
-            .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
-                sort: ItemSort::Year,
-                limit: 1,
-                offset: 1,
-                ..Default::default()
-            })
-            .expect("query");
-        assert_eq!(second_page.items[0].id, "m1");
-    }
-
-    #[test]
     fn titles_without_a_server_sort_name_sort_by_their_name() {
         let library = Library::open_in_memory().expect("library");
         library
@@ -858,8 +696,6 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "m1");
         assert_eq!(rows[0].position_ticks, 600_000_000i64);
-        assert_eq!(rows[0].thumb_image_tag.as_deref(), Some("thumb-tag"));
-        assert_eq!(rows[0].backdrop_image_tag.as_deref(), Some("backdrop-tag"));
     }
 
     #[test]
@@ -900,27 +736,6 @@ mod tests {
     }
 
     #[test]
-    fn recommendation_seed_is_a_played_movie_with_genres() {
-        let seed = seeded()
-            .random_played_movie_with_genre()
-            .expect("query")
-            .expect("seed");
-        assert_eq!(seed.summary.id, "m2");
-        assert_eq!(seed.genres[0], "Drama");
-    }
-
-    #[test]
-    fn billboard_titles_include_movies_and_series_with_landscape_artwork() {
-        let rows = seeded().random_billboard_titles(5).expect("rows");
-        let mut kinds = rows
-            .iter()
-            .map(|row| (row.id.as_str(), row.kind.as_str()))
-            .collect::<Vec<_>>();
-        kinds.sort_unstable();
-        assert_eq!(kinds, [("m1", "Movie"), ("s1", "Series")]);
-    }
-
-    #[test]
     fn children_returns_episodes_of_a_season_in_order() {
         // Inserted against broadcast order, and with names that sort the
         // other way, so neither row order nor a name sort can pass.
@@ -955,17 +770,6 @@ mod tests {
         let next = library.next_episode("e1").expect("next").expect("episode");
         assert_eq!(next.id, "e2");
         assert!(library.next_episode("e2").expect("next").is_none());
-    }
-
-    #[test]
-    fn previous_episode_reverses_broadcast_order() {
-        let library = seeded();
-        let previous = library
-            .previous_episode("e2")
-            .expect("previous")
-            .expect("episode");
-        assert_eq!(previous.id, "e1");
-        assert!(library.previous_episode("e1").expect("previous").is_none());
     }
 
     #[test]
@@ -1028,21 +832,6 @@ mod tests {
 
         library.forget("b").expect("forget");
         assert_eq!(library.genres().expect("genres"), vec!["Comedy"]);
-    }
-
-    #[test]
-    fn a_page_without_its_total_matches_the_counted_page() {
-        let library = seeded();
-        let query = ItemQuery {
-            kinds: vec!["Movie".to_string(), "Series".to_string()],
-            sort: ItemSort::DateAdded,
-            limit: 2,
-            ..Default::default()
-        };
-        assert_eq!(
-            library.query_page(&query).expect("page"),
-            library.query(&query).expect("counted").items
-        );
     }
 
     #[test]

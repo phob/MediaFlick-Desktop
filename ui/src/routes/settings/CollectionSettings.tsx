@@ -8,7 +8,6 @@ import CollectionTemplatePictogram from "@/components/CollectionTemplatePictogra
 import SaveBar from "@/components/SettingsSaveBar"
 import SettingsNumberField from "@/components/SettingsNumberField"
 import PublicListCombobox from "@/components/PublicListCombobox"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -50,6 +49,7 @@ import {
 } from "@/lib/queries"
 import {
   PageTitle,
+  PendingRow,
   RecoveryNotice,
   Section,
   SelectField,
@@ -110,7 +110,9 @@ function resultSignature(profile: CollectionProfileDraft) {
 type CollectionSettingsDraft = {
   modeSelection: CollectionSettings["effectiveMode"]
   includeUnreleased: boolean
+  /** Saved order, including profiles staged for deletion. */
   profileIds: string[]
+  deletedProfileIds: string[]
 }
 
 const GENERAL_DESCRIPTION = "Choose which collection experience this account sees."
@@ -175,35 +177,28 @@ function GeneralSettings({ draft, onChange }: {
   )
 }
 
-function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
+function ConfiguredProfiles({ profileIds, deletedProfileIds, onProfileIdsChange, onDeletedProfileIdsChange, onEdit }: {
   profileIds: string[]
+  deletedProfileIds: string[]
   onProfileIdsChange: (profileIds: string[]) => void
+  onDeletedProfileIdsChange: (deletedProfileIds: string[]) => void
   onEdit: (profile: CollectionProfile) => void
 }) {
-  const cache = useQueryClient()
-  const { data: status } = useStatus()
-  const account = accountKey(status)
   const query = useCollectionProfiles()
   const settings = useCollectionSettings()
   const byId = new Map(query.data?.profiles.map((profile) => [profile.id, profile]))
   const profiles = profileIds.map((id) => byId.get(id)).filter((profile): profile is CollectionProfile => Boolean(profile))
+  const kept = profiles.filter((profile) => !deletedProfileIds.includes(profile.id))
   const disabled = !settings.data
+  // Swap within the kept profiles; staged deletions keep their slots until Save removes them.
   const reorder = (from: number, to: number) => {
-    if (to < 0 || to >= profiles.length) return
+    if (to < 0 || to >= kept.length) return
     const next = [...profileIds]
-    ;[next[from], next[to]] = [next[to], next[from]]
+    const a = next.indexOf(kept[from].id)
+    const b = next.indexOf(kept[to].id)
+    ;[next[a], next[b]] = [next[b], next[a]]
     onProfileIdsChange(next)
   }
-  const remove = useMutation({
-    mutationFn: (profile: CollectionProfile) => api.collections.deleteProfile(profile.id),
-    onSuccess: (_, profile) => {
-      void cache.invalidateQueries({ queryKey: ["collections", account] })
-      void cache.invalidateQueries({ queryKey: queryKeys.homeSettings })
-      void cache.invalidateQueries({ queryKey: queryKeys.home })
-      toast.success(`${profile.title} deleted`)
-    },
-    onError: (error: Error) => toast.error(error.message),
-  })
   return (
     <Section title="Configured My Collections" description="Order, edit, or remove the collections saved for this account.">
       {query.isError ? (
@@ -213,7 +208,22 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
         </div>
       ) : !profiles.length ? (
         <p className="text-sm text-muted-foreground">No collections are configured.</p>
-      ) : profiles.map((profile, index) => (
+      ) : profiles.map((profile) => deletedProfileIds.includes(profile.id) ? (
+        <PendingRow
+          key={profile.id}
+          title={profile.title}
+          note="Will be deleted when you save"
+          action={(
+            <Button
+              variant="outline"
+              aria-label={`Undo deletion of ${profile.title}`}
+              onClick={() => onDeletedProfileIdsChange(deletedProfileIds.filter((id) => id !== profile.id))}
+            >
+              Undo
+            </Button>
+          )}
+        />
+      ) : (
         <div key={profile.id} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
           <div className="min-w-0 flex-1">
             <div className="truncate font-medium">{profile.title}</div>
@@ -225,24 +235,10 @@ function ConfiguredProfiles({ profileIds, onProfileIdsChange, onEdit }: {
             {query.data?.errors?.[profile.id] && <p className="mt-1 text-xs text-destructive">{query.data.errors[profile.id]}</p>}
           </div>
           <div className="flex gap-1">
-            <Button size="icon" variant="ghost" disabled={disabled || index === 0} aria-label={`Move ${profile.title} up`} onClick={() => reorder(index, index - 1)}><ArrowUp /></Button>
-            <Button size="icon" variant="ghost" disabled={disabled || index === profiles.length - 1} aria-label={`Move ${profile.title} down`} onClick={() => reorder(index, index + 1)}><ArrowDown /></Button>
+            <Button size="icon" variant="ghost" disabled={disabled || kept.indexOf(profile) === 0} aria-label={`Move ${profile.title} up`} onClick={() => reorder(kept.indexOf(profile), kept.indexOf(profile) - 1)}><ArrowUp /></Button>
+            <Button size="icon" variant="ghost" disabled={disabled || kept.indexOf(profile) === kept.length - 1} aria-label={`Move ${profile.title} down`} onClick={() => reorder(kept.indexOf(profile), kept.indexOf(profile) + 1)}><ArrowDown /></Button>
             <Button size="icon" variant="ghost" disabled={disabled || Boolean(query.data?.errors?.[profile.id])} aria-label={`Edit ${profile.title}`} onClick={() => onEdit(profile)}><Pencil /></Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="icon" variant="ghost" disabled={disabled || remove.isPending} aria-label={`Delete ${profile.title}`}><Trash2 /></Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete “{profile.title}”?</AlertDialogTitle>
-                  <AlertDialogDescription>Its saved results will be removed from this device.</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="destructive" disabled={disabled || remove.isPending} onClick={() => remove.mutate(profile)}>Delete collection</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button size="icon" variant="ghost" disabled={disabled} aria-label={`Delete ${profile.title}`} onClick={() => onDeletedProfileIdsChange([...deletedProfileIds, profile.id])}><Trash2 /></Button>
           </div>
         </div>
       ))}
@@ -667,24 +663,33 @@ export default function CollectionSettingsPage() {
     modeSelection: settings.data.modeSelection ?? settings.data.effectiveMode,
     includeUnreleased: settings.data.franchises.includeUnreleased,
     profileIds: profiles.data.profiles.map((profile) => profile.id),
+    deletedProfileIds: [],
   }) : null, [profiles.data, settings.data])
   const [draft, setDraft, , acceptSaved] = useSourceDraft(savedDraft, account)
   const save = useMutation({
     mutationFn: async (value: CollectionSettingsDraft) => {
+      const savedIds = savedDraft?.profileIds ?? []
+      const kept = (ids: string[]) => ids.filter((id) => !value.deletedProfileIds.includes(id))
+      // Skip deletions that an earlier, partly failed save already completed.
+      const deletions = value.deletedProfileIds.filter((id) => savedIds.includes(id))
+      for (const id of deletions) await api.collections.deleteProfile(id)
       const nextSettings = await api.collections.patchSettings({
         modeSelection: value.modeSelection,
         includeUnreleased: value.includeUnreleased,
       })
-      const nextProfiles = savedDraft && !sameJson(value.profileIds, savedDraft.profileIds)
-        ? await api.collections.reorderProfiles(value.profileIds)
-        : profiles.data
+      const order = kept(value.profileIds)
+      const nextProfiles = !sameJson(order, kept(savedIds))
+        ? await api.collections.reorderProfiles(order)
+        : deletions.length ? await api.collections.profiles() : profiles.data
       return { settings: nextSettings, profiles: nextProfiles }
     },
     onSuccess: ({ settings: nextSettings, profiles: nextProfiles }, submitted) => {
       acceptSaved({
         modeSelection: nextSettings.modeSelection ?? nextSettings.effectiveMode,
         includeUnreleased: nextSettings.franchises.includeUnreleased,
-        profileIds: nextProfiles?.profiles.map((profile) => profile.id) ?? submitted.profileIds,
+        profileIds: nextProfiles?.profiles.map((profile) => profile.id)
+          ?? submitted.profileIds.filter((id) => !submitted.deletedProfileIds.includes(id)),
+        deletedProfileIds: [],
       }, submitted)
       cache.setQueryData(queryKeys.collectionSettings(account), nextSettings)
       if (nextProfiles) cache.setQueryData(queryKeys.collectionProfiles(account), nextProfiles)
@@ -693,6 +698,9 @@ export default function CollectionSettingsPage() {
       toast.success("Collection settings saved")
     },
     onError: (error: Error) => toast.error(error.message),
+    onSettled: (_data, _error, submitted) => {
+      if (submitted.deletedProfileIds.length) void cache.invalidateQueries({ queryKey: ["collections", account] })
+    },
   })
 
   useEffect(() => {
@@ -749,7 +757,9 @@ export default function CollectionSettingsPage() {
       <GeneralSettings draft={draft} onChange={setDraft} />
       <ConfiguredProfiles
         profileIds={draft?.profileIds ?? []}
+        deletedProfileIds={draft?.deletedProfileIds ?? []}
         onProfileIdsChange={(profileIds) => { if (draft) setDraft({ ...draft, profileIds }) }}
+        onDeletedProfileIdsChange={(deletedProfileIds) => { if (draft) setDraft({ ...draft, deletedProfileIds }) }}
         onEdit={edit}
       />
       {templates.data ? (

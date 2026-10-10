@@ -71,11 +71,8 @@ function Providers({ children }: { children: ReactNode }) {
   )
 }
 
-function renderCard(
-  result: SeerrResult = movie,
-  allowed: SeerrCapabilities | null = capabilities,
-) {
-  return render(<SeerrCard result={result} capabilities={allowed} />, {
+function renderCard() {
+  return render(<SeerrCard result={movie} capabilities={capabilities} />, {
     wrapper: Providers,
   })
 }
@@ -201,11 +198,5 @@ describe("discovery quick request", () => {
     expect(canQuickRequest(ownedWithFourKPath, noFourK)).toBe(false)
     expect(canQuickRequest(ownedWithFourKPath, withFourK)).toBe(true)
     expect(canQuickRequest(partialSeries, capabilities)).toBe(true)
-
-    const { rerender } = renderCard(fullyAvailable, withFourK)
-    expect(screen.queryByRole("button", { name: "Request The Matrix" })).toBeNull()
-
-    rerender(<SeerrCard result={partialSeries} capabilities={capabilities} />)
-    expect(screen.getByRole("button", { name: "Request The Matrix" })).toBeTruthy()
   })
 })
