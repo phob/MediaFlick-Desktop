@@ -230,7 +230,7 @@ export default function ViewingSettings() {
               { value: "home", label: "Home" },
               { value: "movies", label: "Movies" },
               { value: "series", label: "Series" },
-              { value: "calendar", label: "Calendar" },
+              { value: "calendar", label: "Releases" },
               { value: "last", label: "Last browsing page" },
             ]}
           />

@@ -217,7 +217,7 @@ function UpcomingRow({ entries }: { entries: UpcomingShelfEntry[] }) {
   // Only a boundary inside the shelf is marked; at either end it would mark nothing.
   const todayIndex = entries.findIndex((item) => !item.past)
   return (
-    <MediaRail title="Release Timeline" viewAll="/calendar" itemCount={entries.length} resetKey={`${first.kind}-${first.date}`}>
+    <MediaRail title="Releases" viewAll="/calendar" itemCount={entries.length} resetKey={`${first.kind}-${first.date}`}>
       {entries.map(({ entry, past, status }, index) => (
         <Fragment key={`${entry.kind}-${entry.dateKind}-${entry.date}-${entry.tmdbId ?? entry.tvdbId ?? entry.title}-${index}`}>
           {index > 0 && index === todayIndex && <TodayMark />}

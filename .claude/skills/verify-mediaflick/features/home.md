@@ -1,6 +1,6 @@
 # Home
 
-Home opens after sign-in: a rotating billboard of featured or in-progress titles, then horizontal shelves of poster cards that open the detail page. The shelves follow the account's Home settings: Watching (or Continue Watching and Next Up), Because you watched <title>, Recently Added Movies, Recently Added Shows, Latest Movies, Latest Shows, Favorites and genre shelves by default, plus Release Timeline (needs the Companion) and My Collections (MediaFlick collection mode, off by default).
+Home opens after sign-in: a rotating billboard of featured or in-progress titles, then horizontal shelves of poster cards that open the detail page. The shelves follow the account's Home settings: Watching (or Continue Watching and Next Up), Because you watched <title>, Recently Added Movies, Recently Added Shows, Latest Movies, Latest Shows, Favorites and genre shelves by default, plus Releases (needs the Companion) and My Collections (MediaFlick collection mode, off by default).
 
 ## Sub-features
 
@@ -33,6 +33,6 @@ Preconditions:
 - Shelf titles and contents on the demo server change with other users' activity (`Because you watched …` comes and goes); assert structure (sections, cards), not specific titles, unless the title is static library content.
 - On Home the sidebar is pinned open and pushes content aside. Everywhere else it collapses to icons and overlays content when hovered. Leaving Home therefore slides the content left; `ctx.press` waits for the target to hold still.
 - Resting the pointer on a poster card opens a portalled preview panel after a delay (550 ms by default, configurable, or off). The panel adds a second `Open details for <title>` link; park the pointer before name lookups and screenshots.
-- Release Timeline cards are named `Open <title>[, S01E02][, Downloaded|Missing]`, not `Open details for …`, and open `/calendar` for titles not in the library.
+- Releases shelf cards are named `Open <title>[, S01E02][, Downloaded|Missing]`, not `Open details for …`, and open `/calendar` for titles not in the library.
 - The empty and error states cannot be reached on the shared demo account without changing its Home settings. Not verified.
 - Never press the billboard's `Play`/`Resume` (audio), or the favorites toggle on the shared demo account.

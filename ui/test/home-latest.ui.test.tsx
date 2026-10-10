@@ -32,7 +32,7 @@ function renderHome(error: Error | null = null) {
       elements: [
         { kind: "builtIn", id: "recentlyAdded", enabled: true, label: "Recently Added Movies", available: true, category: "Built-in" },
         { kind: "builtIn", id: "recentlyAddedShows", enabled: true, label: "Recently Added Shows", available: true, category: "Built-in" },
-        { kind: "builtIn", id: "upcoming", enabled: true, label: "Release Timeline", available: true, category: "Built-in" },
+        { kind: "builtIn", id: "upcoming", enabled: true, label: "Releases", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestMovies", enabled: true, label: "Latest Movies", available: true, category: "Built-in" },
         { kind: "builtIn", id: "latestShows", enabled: true, label: "Latest Shows", available: true, category: "Built-in" },
       ],
@@ -191,10 +191,10 @@ describe("home latest shelves", () => {
       .toBe("/library?kind=Series&sort=year")
   })
 
-  test("conceals upcoming episode names on the Release Timeline", () => {
+  test("conceals upcoming episode names on the Releases shelf", () => {
     renderHome()
 
-    const upcoming = shelf("Release Timeline")
+    const upcoming = shelf("Releases")
     // Episode names stay concealed while spoiler protection is on.
     expect(upcoming.queryByText("Third Episode")).toBeNull()
     expect(upcoming.getByText("S02E03")).toBeTruthy()
