@@ -54,7 +54,14 @@ export default async function browse(ctx) {
   await ctx.find({ role: "heading", name: SERIES })
   await ctx.find({ role: "list", name: "Seasons" }, { timeout: 30000 })
   await ctx.find({ role: "heading", name: "Episodes" })
-  await ctx.until(async () => (await ctx.snapshot("04-series-detail")).match(/button '(Play|Resume) S\d+E\d+'/), "the series Play/Resume SxEy button")
+  // Episode title links are named "<n>.<name>" (no space).
+  await ctx.until(async () => /link '\d+\./.test(await ctx.snapshot("04-series-detail")), "the episode list")
+  // The primary Play/Resume SxEy button exists only while the shared demo
+  // account has a Next Up episode for the series (other users change that),
+  // and it loads after the episode list.
+  const primaryAction = async () => (await ctx.snapshot("04-series-detail")).match(/button '((?:Play|Resume) S\d+E\d+)'/)?.[1]
+  const primary = await ctx.until(primaryAction, "the series Play/Resume SxEy button", 5000).catch(() => null)
+  ctx.step(primary ? `series primary action: ${primary}` : "series primary action: none (no Next Up episode for the demo user)")
   await ctx.screenshot("04-series-detail")
 
   // Sign out from the user menu (no confirmation dialog). The trigger is named

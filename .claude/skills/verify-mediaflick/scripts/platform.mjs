@@ -56,7 +56,10 @@ export function appEnvironment(profile) {
       XDG_DATA_HOME: dataRoot,
       XDG_CACHE_HOME: path.join(profile, "cache"),
       XDG_STATE_HOME: path.join(profile, "state"),
-      TMPDIR: path.join(profile, "tmp"),
+      // Chromium's singleton socket and mpv's IPC socket go to TMPDIR, and a
+      // Unix socket path may not exceed 107 bytes; a profile path is too long.
+      // The wrapper's private runtime dir is short, per run, and removed with it.
+      TMPDIR: process.env.XDG_RUNTIME_DIR,
     })
     // Same loader setup as `just run` on Linux.
     const cef = path.join(buildDir, "libcef.so")
@@ -68,7 +71,7 @@ export function appEnvironment(profile) {
   }
   // Settings come from the profile, not from a developer's shell.
   for (const name of ["MEDIAFLICK_DESKTOP_REMOTE_DEBUGGING_PORT", "MEDIAFLICK_DESKTOP_LOG_FILE", "MEDIAFLICK_DESKTOP_LOG_LEVEL", "JELLYFIN_URL"]) delete env[name]
-  const dirs = Object.values(isWindows ? { configRoot, dataRoot, temp: env.TEMP } : { configRoot, dataRoot, home: env.HOME, cache: env.XDG_CACHE_HOME, state: env.XDG_STATE_HOME, tmp: env.TMPDIR })
+  const dirs = Object.values(isWindows ? { configRoot, dataRoot, temp: env.TEMP } : { configRoot, dataRoot, home: env.HOME, cache: env.XDG_CACHE_HOME, state: env.XDG_STATE_HOME })
   return {
     env,
     dirs,
@@ -113,7 +116,7 @@ export function assertIsolated() {
   if (!display) throw new Error("not started by isolate-linux.sh; run `just verify <drive>`")
   if (process.env.DISPLAY !== display) throw new Error(`DISPLAY is ${process.env.DISPLAY}, expected ${display}`)
   if (process.env.WAYLAND_DISPLAY) throw new Error("WAYLAND_DISPLAY is set; the app would open on the user's Wayland session")
-  if (!process.env.XDG_RUNTIME_DIR?.includes("mediaflick-verify-xvfb.")) throw new Error(`XDG_RUNTIME_DIR ${process.env.XDG_RUNTIME_DIR} is not the wrapper's private runtime dir`)
+  if (!process.env.XDG_RUNTIME_DIR?.includes("mediaflick-xvfb.")) throw new Error(`XDG_RUNTIME_DIR ${process.env.XDG_RUNTIME_DIR} is not the wrapper's private runtime dir`)
   const xvfb = Number(process.env.MEDIAFLICK_VERIFY_XVFB_PID)
   let xvfbExe = ""
   try {
@@ -136,9 +139,18 @@ export function listProcesses() {
   for (const entry of readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue
     try {
-      const cmd = readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0").filter(Boolean).join(" ")
+      const argv = readFileSync(`/proc/${entry}/cmdline`, "utf8").split("\0").filter(Boolean)
+      const cmd = argv.join(" ")
       const stat = readFileSync(`/proc/${entry}/stat`, "utf8")
-      const name = stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")"))
+      // The stat comm field is cut to 15 characters ("mediaflick-desk"), so
+      // name the process by its executable, then argv[0], then comm.
+      let name = ""
+      try {
+        name = path.basename(readlinkSync(`/proc/${entry}/exe`)).replace(/ \(deleted\)$/, "")
+      } catch {
+        name = path.basename(argv[0] ?? "")
+      }
+      if (!name) name = stat.slice(stat.indexOf("(") + 1, stat.lastIndexOf(")"))
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
       rows.push({ pid: Number(entry), ppid, name, cmd })
     } catch {
