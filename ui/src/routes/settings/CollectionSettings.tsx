@@ -640,6 +640,7 @@ function CollectionWizard({
           onSave={save}
           onDiscard={() => { cancelPoster(); onOpenChange(false) }}
           onReset={reset}
+          resetLabel="Undo changes"
         />
       </DialogContent>
     </Dialog>
