@@ -58,7 +58,7 @@ test("invalid URL filter enums do not become API filters", () => {
   })
 })
 
-test("search, global My List, and mixed Home genre links span kinds", () => {
+test("search, global Favorites, and mixed Home genre links span kinds", () => {
   assert.equal(libraryKind(new URLSearchParams("search=matrix")), "")
   assert.equal(libraryKind(new URLSearchParams("favorite=true")), "")
   assert.equal(libraryKind(new URLSearchParams("kind=Series&favorite=true")), "Series")

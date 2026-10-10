@@ -1,12 +1,12 @@
 # Library and search
 
-The library shows a virtualized grid of poster cards for Movies, Series or Favorites (titled My List), with sort and filter controls. Typing in the sidebar search shows matching titles in the same grid; an exact person match adds a "Featuring <name>" section below it.
+The library shows a virtualized grid of poster cards for Movies, Series or Favorites, with sort and filter controls. Typing in the sidebar search shows matching titles in the same grid; an exact person match adds a "Featuring <name>" section below it.
 
 ## Sub-features
 
 - `library-kind` opens Movies, Series or Favorites from the sidebar.
 - `library-sort` sorts by name, year, recently added or rating.
-- `library-filter` filters by genre, release decade, watch status and My List, with removable chips.
+- `library-filter` filters by genre, release decade, watch status and favorites, with removable chips.
 - `library-search` searches from the sidebar after a short debounce.
 - `library-empty` shows `Nothing to show` with a reason.
 
@@ -28,9 +28,9 @@ Preconditions:
 - **Open a result.** Wait for the search route first, then `ctx.press({ role: "link", name: "Open details for Night of the Living Dead" })`. *Proven by `browse`, `item-detail`.*
 - **No match.** Searching `zzqqxx` shows `Nothing to show` and `Nothing matches “zzqqxx”.` *Proven by `home-library`.*
 - **Sort.** `ctx.choose({ name: "Sort by" }, "Sort: Year")`; the URL gains `sort=year` and `filters=true` as a new history entry (`name`, `year`, `added`, `rating`). *Proven by `home-library`.*
-- **Filters.** `{ role: "button", name: "Filters" }` (name gains `, N active`) opens a menu whose accessible name is the trigger's (`Filters`), with the visible label `Filter library`. Its sub-menu triggers are menuitems named with their current value: `Genre Any`, `Release decade Any`, `Watch status Any watch status`, `My List Any`, then `Clear all filters`. Options are `menuitemradio`s such as `1960s`; picking one adds `decade=1960` to the URL. Escape closes the menu. *Proven by `home-library` for Release decade.*
-- **Chips.** Active filters sit in `{ role: "group", name: "Active filters" }`, each a button `Remove <label> filter` (`Remove Released: 1960s filter`, `Remove In My List filter`), followed by `Clear all`. Removing the last chip removes the group and keeps the sort. *Proven by `home-library`.*
-- **Favorites.** `ctx.press({ role: "link", name: "Favorites" })` lands on `/library?favorite=true` with `{ role: "heading", name: "My List" }`, `Filters, 1 active` and the chip `Remove In My List filter`. *Proven by `home-library`.*
+- **Filters.** `{ role: "button", name: "Filters" }` (name gains `, N active`) opens a menu whose accessible name is the trigger's (`Filters`), with the visible label `Filter library`. Its sub-menu triggers are menuitems named with their current value: `Genre Any`, `Release decade Any`, `Watch status Any watch status`, `Favorites Any`, then `Clear all filters`. Options are `menuitemradio`s such as `1960s`; picking one adds `decade=1960` to the URL. Escape closes the menu. *Proven by `home-library` for Release decade.*
+- **Chips.** Active filters sit in `{ role: "group", name: "Active filters" }`, each a button `Remove <label> filter` (`Remove Released: 1960s filter`, `Remove Favorites filter`), followed by `Clear all`. Removing the last chip removes the group and keeps the sort. *Proven by `home-library`.*
+- **Favorites.** `ctx.press({ role: "link", name: "Favorites" })` lands on `/library?favorite=true` with `{ role: "heading", name: "Favorites" }`, `Filters, 1 active` and the chip `Remove Favorites filter`. *Proven by `home-library`.*
 - **Proof.** `05-filtered.png`, `06-empty-search.png` and `07-favorites.png` from `home-library`, and the search steps in `browse`'s `steps.log`.
 
 ## Gotchas

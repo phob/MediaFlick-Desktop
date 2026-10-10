@@ -118,7 +118,7 @@ describe("appearance settings live preview", () => {
       "expanded media-card preview",
     )
     fireEvent.click(within(panel).getByRole("button", { name: "Play" }))
-    fireEvent.click(within(panel).getByRole("button", { name: "Add to My List" }))
+    fireEvent.click(within(panel).getByRole("button", { name: "Add to favorites" }))
     fireEvent.click(within(panel).getByRole("button", { name: "Mark as watched" }))
 
     expect(requests.some((path) => path.includes("/api/play"))).toBe(false)

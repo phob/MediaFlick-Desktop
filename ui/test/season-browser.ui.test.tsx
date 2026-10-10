@@ -72,7 +72,7 @@ describe("season browser", () => {
     )
 
     expect(screen.getByRole("button", { name: "Play" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Add to My List" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Add to favorites" })).toBeTruthy()
     expect(screen.getByRole("button", { name: "Mark as watched" })).toBeTruthy()
   })
 

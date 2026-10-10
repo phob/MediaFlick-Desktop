@@ -82,7 +82,7 @@ describe("consolidated library filters", () => {
     expect(state().decade).toBe("1990")
     fireEvent.click(screen.getByRole("radio", { name: "Unwatched" }))
     expect(state().watched).toBe("false")
-    fireEvent.click(screen.getByRole("radio", { name: "In My List" }))
+    fireEvent.click(screen.getByRole("radio", { name: "Favorites only" }))
     expect(state().favorite).toBe(true)
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }))

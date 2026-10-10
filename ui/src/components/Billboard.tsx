@@ -1,4 +1,4 @@
-import { Check, Info, Play, Plus, Star } from "lucide-react"
+import { Heart, Info, Play, Star } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { Button } from "@/components/ui/button"
@@ -646,12 +646,12 @@ function BillboardCopy({
             "border-foreground/25 bg-background/50 backdrop-blur-sm hover:border-primary/60 hover:bg-background/70 hover:text-primary",
             summary.favorite && "border-primary/70 text-primary",
           )}
-          aria-label={summary.favorite ? "Remove from My List" : "Add to My List"}
+          aria-label={summary.favorite ? "Remove from favorites" : "Add to favorites"}
           aria-pressed={summary.favorite}
           disabled={setFavorite.isPending}
           onClick={() => setFavorite.mutate({ id: summary.id, favorite: !summary.favorite })}
         >
-          {summary.favorite ? <Check className="size-5" /> : <Plus className="size-5" />}
+          <Heart className={cn("size-5", summary.favorite && "fill-current")} />
         </Button>
       </div>
       </div>

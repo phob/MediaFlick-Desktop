@@ -264,7 +264,7 @@ describe("expanded media-card details target", () => {
     render(<MediaCard item={movie} />, { wrapper: InlineProviders })
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }))
-    fireEvent.click(screen.getByRole("button", { name: "Add to My List" }))
+    fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }))
     fireEvent.click(screen.getByRole("button", { name: "Mark as watched" }))
 
     await waitFor(() => expect(requests).toHaveLength(3))
@@ -280,7 +280,7 @@ describe("expanded media-card details target", () => {
     renderOpenPreview()
 
     fireEvent.click(screen.getByRole("button", { name: "Play" }))
-    fireEvent.click(screen.getByRole("button", { name: "Add to My List" }))
+    fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }))
     fireEvent.click(screen.getByRole("button", { name: "Mark as watched" }))
 
     expect(mutations.play).toHaveBeenCalledWith({ id: "movie-1", resume: false })
