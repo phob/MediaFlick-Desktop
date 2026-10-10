@@ -19,7 +19,7 @@ export default function SettingsSaveBar({ dirty, saving, saveDisabled, onSave, o
         <span role="status">{restartMessage ?? (dirty ? "You have unsaved changes." : "")}</span>
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}><Undo2 /> Reset</Button>
+        <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}><Undo2 /> Restore defaults</Button>
         <Button variant="outline" size="sm" onClick={onDiscard} disabled={saving || !dirty}>Discard</Button>
         <Button size="sm" onClick={onSave} disabled={saving || saveDisabled || !dirty}><Save /> {saving ? "Saving…" : "Save"}</Button>
       </div>
