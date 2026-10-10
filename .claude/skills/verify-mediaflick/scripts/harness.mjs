@@ -124,7 +124,9 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
     const { object: covering } = await app.send("DOM.resolveNode", { backendNodeId: hit })
     const { result } = await app.send("Runtime.callFunctionOn", {
       objectId: target.objectId,
-      functionDeclaration: "function (hit) { return this === hit || this.contains(hit) ? true : (hit.closest('a,button,[role]')?.outerHTML ?? hit.outerHTML).slice(0, 160) }",
+      // A Sonner toast is reported as such: it covers the bottom-right corner
+      // (the settings Save button) for a few seconds, then leaves on its own.
+      functionDeclaration: "function (hit) { if (this === hit || this.contains(hit)) return true; const toast = hit.closest('[data-sonner-toast]'); return toast ? `toast: ${toast.textContent.trim().slice(0, 80)}` : (hit.closest('a,button,[role]')?.outerHTML ?? hit.outerHTML).slice(0, 160) }",
       arguments: [{ objectId: covering.objectId }],
       returnByValue: true,
     })
@@ -140,25 +142,45 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
   }
 
   // Scrolls the element into view and returns a point the pointer really hits.
-  // A covered target first gets time to settle (transitions end, the expanding
-  // sidebar finishes); only then is the pointer parked, because moving it away
-  // also closes hover-opened UI such as the sidebar. React may re-mount the
-  // element meanwhile; a detached node is found again rather than reported.
+  // The element must hold still first: leaving Home turns the pinned sidebar
+  // into a collapsed overlay and slides the content left, and a click at the
+  // old position lands on nothing. A toast covering it is waited out. Any
+  // other covered target first gets time to settle (transitions end, the
+  // expanding sidebar finishes); only then is the pointer parked, because
+  // moving it away also closes hover-opened UI such as the sidebar. React may
+  // re-mount the element meanwhile; a detached node is found again rather
+  // than reported.
   async function reach(target, options) {
     let covered = 0
-    for (let attempt = 0; attempt < 16; attempt++) {
+    let moving = 0
+    let toasted = 0
+    let previous = null
+    for (let attempt = 0; attempt < 80; attempt++) {
       const element = await find(target, options)
       try {
         await app.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: element.backendNodeId })
         const rect = (await box(element.backendNodeId)) ?? element.rect
+        const still = previous && Math.abs(previous.x - rect.x) < 1 && Math.abs(previous.y - rect.y) < 1
+        previous = rect
+        if (!still) {
+          if (++moving === 30) throw new Error(`${describe(target)} kept moving`)
+          await sleep(100)
+          continue
+        }
         const hit = await hitTest(element.backendNodeId, rect.x, rect.y)
         if (hit === true) return { element, rect }
+        if (typeof hit === "string" && hit.startsWith("toast: ")) {
+          if (++toasted === 30) throw new Error(`${describe(target)} is covered by ${hit}`)
+          await sleep(300)
+          continue
+        }
         covered++
         if (covered === 12) throw new Error(`${describe(target)} is covered by ${hit}`)
         if (covered === 6) await park()
         else await sleep(150)
       } catch (error) {
         if (!/detached|No node|Could not find node/i.test(error.message)) throw error
+        previous = null
         await sleep(200)
       }
     }
