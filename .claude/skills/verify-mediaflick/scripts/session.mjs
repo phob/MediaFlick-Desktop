@@ -24,6 +24,7 @@ import {
   buildDir,
   exe,
   isAppProcess,
+  isLinux,
   killPids,
   listProcesses,
   profileParent,
@@ -86,6 +87,12 @@ const guardBefore = fingerprint()
 // --- Disposable profile. ---
 const profile = path.join(profileParent, profileName(runId, process.pid, randomBytes(3).toString("hex")))
 const { env, dirs, configDir, dataDir } = appEnvironment(profile)
+// Sockets in TMPDIR must fit the 107-byte Unix path limit: CEF dies with
+// SIGTRAP on a long SingletonSocket path, and the libmpv shell cannot reach
+// mpv's IPC socket (mediaflick-desktop-<pid>-<nanos>-<n>.sock, about 55 bytes).
+if (isLinux && Buffer.byteLength(env.TMPDIR ?? "") + 56 > 107) {
+  throw new Error(`TMPDIR ${env.TMPDIR} is too long for the app's Unix sockets; run from a shorter TMPDIR`)
+}
 for (const dir of dirs) mkdirSync(dir, { recursive: true })
 mkdirSync(configDir, { recursive: true })
 mkdirSync(dataDir, { recursive: true })
