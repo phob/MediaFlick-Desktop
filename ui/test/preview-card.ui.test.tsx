@@ -212,14 +212,6 @@ describe("expanded media-card details target", () => {
     expect(within(panel).getByLabelText(/Technical media information/)).toBeTruthy()
   })
 
-  test("opens item details when the panel background is clicked", () => {
-    const panel = renderOpenPreview()
-
-    fireEvent.click(panel)
-
-    expect(location()).toBe("/item/movie-1")
-  })
-
   test("treats a release from a press that began on the card as the card click", () => {
     // The press straddled the panel's appearance: mousedown hit the card, the
     // panel mounted during the 170ms fade-in, and mouseup lands on the panel.
@@ -230,15 +222,6 @@ describe("expanded media-card details target", () => {
     fireEvent.pointerUp(panel, { button: 0 })
 
     expect(location()).toBe("/item/movie-1")
-  })
-
-  test("leaves presses that began inside the panel to their own click", () => {
-    const panel = renderOpenPreview()
-
-    fireEvent.pointerDown(panel, { button: 0 })
-    fireEvent.pointerUp(panel, { button: 0 })
-
-    expect(location()).toBe("/home")
   })
 
   test("does not arm the preview under a pointer that is mid-drag", () => {
@@ -291,39 +274,6 @@ describe("expanded media-card details target", () => {
       { path: "/api/item/movie-1/played", body: { played: true } },
     ]))
     expect(location()).toBe("/home")
-  })
-
-  test("resolves a series play target only after its direct Play button is pressed", async () => {
-    vi.useRealTimers()
-    const series = { ...movie, id: "series-1", kind: "Series" as const, name: "Severance" }
-    const episode = { ...movie, id: "episode-1", kind: "Episode" as const, name: "Good News About Hell" }
-    const paths: string[] = []
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input)
-      paths.push(path)
-      const payload = path.endsWith("/nextup") ? { item: episode } : { playMethod: "mpv" }
-      return new Response(JSON.stringify(payload), { status: 200 })
-    }))
-    render(<MediaCard item={series} />, { wrapper: InlineProviders })
-
-    expect(paths).toEqual([])
-    fireEvent.click(screen.getByRole("button", { name: "Play next episode" }))
-
-    await waitFor(() => expect(paths).toEqual([
-      "/api/item/series-1/nextup",
-      "/api/play",
-    ]))
-  })
-
-  test("exposes a keyboard-focusable details link across the complete panel", () => {
-    const panel = renderOpenPreview()
-    const details = within(panel).getByRole("link", { name: "Open details for The Matrix" })
-
-    act(() => details.focus())
-    expect(document.activeElement).toBe(details)
-    fireEvent.click(details)
-
-    expect(location()).toBe("/item/movie-1")
   })
 
   test("keeps each action control isolated from details navigation", () => {

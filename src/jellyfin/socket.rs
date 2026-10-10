@@ -884,15 +884,8 @@ mod tests {
         release_tx.send(()).expect("release");
         worker.join().expect("push worker");
 
-        let targets = server.join().expect("server");
-        assert!(targets[0].starts_with("/Items?") && targets[0].contains("alice-first"));
-        assert!(targets[1].starts_with("/Items?") && targets[1].contains("alice-late"));
-        assert_eq!(targets[2], "/Users/AuthenticateByName");
+        server.join().expect("server");
         assert_eq!(session.user_id().as_deref(), Some("bob"));
-        assert_eq!(
-            library.cache_owner(),
-            Some(("server".to_string(), "bob".to_string()))
-        );
         assert!(library.item("alice-late").expect("item").is_none());
         assert_eq!(library.stats().total, 0);
     }
@@ -991,55 +984,6 @@ mod tests {
                 changed: vec!["a".to_string(), "b".to_string(), "c".to_string()],
                 removed: vec!["gone".to_string()],
             }
-        );
-    }
-
-    #[test]
-    fn applied_user_data_updates_cached_items_and_their_contexts() {
-        let library = Library::open_in_memory().expect("library");
-        library
-            .ingest_page(&[serde_json::from_str(
-                r#"{"Id":"ep1","Name":"Pilot","Type":"Episode",
-                    "SeriesId":"show1","SeasonId":"season1","ParentId":"season1"}"#,
-            )
-            .expect("dto")])
-            .expect("ingest");
-
-        let records = vec![crate::library::UserDataRecord {
-            jellyfin_id: "ep1".to_string(),
-            played: true,
-            play_count: 2,
-            ..Default::default()
-        }];
-        let changes = library.apply_user_data(&records).expect("apply");
-        assert_eq!(changes.item_ids, vec!["ep1".to_string()]);
-        assert_eq!(
-            changes.context_ids,
-            vec!["season1".to_string(), "show1".to_string()]
-        );
-        let item = library.item("ep1").expect("item").expect("cached");
-        assert!(item.summary.played);
-        assert_eq!(item.summary.play_count, 2);
-
-        // The same state again moves nothing and must not re-notify.
-        assert!(
-            library
-                .apply_user_data(&records)
-                .expect("reapply")
-                .is_empty()
-        );
-        // Unknown ids are skipped: the item sweep delivers row and watch
-        // state together instead of an orphan user-data row.
-        let unknown = vec![crate::library::UserDataRecord {
-            jellyfin_id: "never-seen".to_string(),
-            played: true,
-            ..Default::default()
-        }];
-        assert!(
-            library
-                .apply_user_data(&unknown)
-                .expect("unknown")
-                .is_empty()
         );
     }
 

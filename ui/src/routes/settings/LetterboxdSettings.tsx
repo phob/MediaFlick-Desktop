@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, CheckCircle2, ExternalLink, RefreshCw, Trash2 } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import SaveBar from "@/components/SettingsSaveBar"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,7 @@ import { api, type LetterboxdProfile, type Status } from "@/lib/api"
 import { accountKey, letterboxdProfilesQueryOptions, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { same } from "./helpers"
-import { PageTitle, Section, SettingsError, SettingsLoading, SignInRequired } from "./shared"
+import { PageTitle, PendingRow, Section, SettingsError, SettingsLoading, SignInRequired } from "./shared"
 
 type PendingChanges = { enabled: Record<string, boolean>; additions: string[]; removals: string[] }
 
@@ -53,18 +53,6 @@ function ProfileCard({
         <Button size="icon-sm" variant="ghost" aria-label="Open profile" onClick={onOpen}><ExternalLink /></Button>
         <Button size="icon-sm" variant="ghost" aria-label="Remove profile" onClick={onRemove}><Trash2 /></Button>
       </div>
-    </div>
-  )
-}
-
-function PendingRow({ title, note, action }: { title: string; note: string; action: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md border p-3">
-      <div className="min-w-0">
-        <p className="break-all">{title}</p>
-        <p className="text-sm text-muted-foreground">{note}</p>
-      </div>
-      {action}
     </div>
   )
 }

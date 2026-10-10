@@ -105,6 +105,19 @@ export function Section({ title, description, children }: { title: string; descr
   )
 }
 
+/** A staged addition or removal that takes effect when the shelf is saved. */
+export function PendingRow({ title, note, action }: { title: string; note: string; action: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+      <div className="min-w-0">
+        <p className="break-all">{title}</p>
+        <p className="text-sm text-muted-foreground">{note}</p>
+      </div>
+      {action}
+    </div>
+  )
+}
+
 export function PageTitle({ title }: { title: string }) {
   return (
     <header className="settings-page-title">

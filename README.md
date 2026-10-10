@@ -7,7 +7,7 @@
 <p align="center"><b>Jellyfin playback that works immediately and still respects a serious mpv setup.</b></p>
 
 <p align="center">
-  A bundled libmpv player is the Windows default, so playback needs no separate install. Power users can switch
+  A bundled libmpv player is the default on Windows and Linux, so playback needs no separate install. Power users can switch
   to their own external <code>mpv</code> process for SVP4, custom shaders, HDR profiles, and their full
   <code>mpv.conf</code>. Watched state and resume points sync straight back to the server in either mode.
 </p>
@@ -20,7 +20,7 @@
 
 ## Why this exists, and why it's different
 
-Most people should not have to install or configure a player before watching something. MediaFlick therefore ships a focused libmpv runtime on Windows and uses it by default. It opens video in a dedicated native player window while the app keeps Jellyfin progress, resume position, and watched state synchronized.
+Most people should not have to install or configure a player before watching something. MediaFlick therefore ships a focused libmpv runtime on Windows and in the Linux AppImage and uses it by default. It opens video in a dedicated native player window while the app keeps Jellyfin progress, resume position, and watched state synchronized.
 
 That convenience does not replace the original power-user path. Select **External mpv** and MediaFlick hands the stream to the executable you configured. Your `mpv.conf`, scripts, shaders, SVP4 pipeline, HDR profiles, and input bindings continue to apply. Original-quality direct playback remains the default in both modes, with optional automatic or bitrate-limited Jellyfin transcoding for slower connections.
 
@@ -114,5 +114,5 @@ MediaFlick keeps device settings in `settings.json` and account-owned intent in
 collection posters live beside those app-owned files. They are not a supported
 manual-editing interface; use Settings so writes, backups, and validation stay
 atomic. `library.db` stores the active Jellyfin session alongside rebuildable
-catalog and collection results. Recreating the database signs the account out
-without removing its preferences or posters.
+catalog and collection results. Recreating the database keeps the account signed
+in and leaves its preferences and posters untouched.

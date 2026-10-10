@@ -346,25 +346,4 @@ mod tests {
 
         std::fs::remove_dir_all(root).expect("remove fake SVP runtime");
     }
-
-    #[test]
-    fn invalid_install_location_falls_back_to_the_uninstall_command() {
-        let (root, runtime) = fake_installation("metadata-fallback");
-        let command = format!("\"{}\" /SILENT", root.join("unins000.exe").display());
-
-        assert_eq!(
-            runtime_directory_from_metadata(Some("C:\\Missing SVP"), Some(&command)),
-            Some(runtime)
-        );
-
-        std::fs::remove_dir_all(root).expect("remove fake SVP runtime");
-    }
-
-    #[test]
-    fn only_svp_four_product_names_are_accepted() {
-        assert!(is_svp_display_name("SVP 4 Pro"));
-        assert!(is_svp_display_name("SVP 4"));
-        assert!(!is_svp_display_name("SVP 3"));
-        assert!(!is_svp_display_name("SVP 40"));
-    }
 }

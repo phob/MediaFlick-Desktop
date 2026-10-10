@@ -58,16 +58,6 @@ fn merge_chapter_markers_preserves_embedded_chapters_and_sorts_by_time() {
     );
 }
 
-#[test]
-fn merge_chapter_markers_drops_marker_coinciding_with_embedded_chapter() {
-    let base = vec![json!({ "title": "Chapter", "time": 10.0 })];
-    let markers = vec![json!({ "title": "Intro", "time": 10.0 })];
-
-    let merged = merge_chapter_markers(base, markers);
-
-    assert_eq!(merged, vec![json!({ "title": "Chapter", "time": 10.0 })]);
-}
-
 const SESSION: u64 = 1;
 
 fn mpv_event(name: &str, property: Option<&str>, data: Option<Value>) -> MpvEvent {

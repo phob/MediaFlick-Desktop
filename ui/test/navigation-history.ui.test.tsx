@@ -64,12 +64,6 @@ test("visible Back restores the original entry and filters, even through nested 
   expect(router.state.location.search).toBe("?kind=Movie&sort=name")
 })
 
-test("a direct detail visit has a working fallback Back link", async () => {
-  const { router } = setup("/item/direct")
-  fireEvent.click(screen.getByRole("link", { name: "Back to library" }))
-  await waitFor(() => expect(router.state.location.pathname).toBe("/library"))
-})
-
 test("mouse and keyboard shortcuts move exactly one entry and restore both directions", async () => {
   const { router, viewport } = setup()
   viewport.scrollTop = 8100

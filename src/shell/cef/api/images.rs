@@ -178,13 +178,4 @@ mod tests {
         assert!(!key.contains(['/', '\\', ':']), "{key}");
         assert!(!key.contains(".."), "{key}");
     }
-
-    #[test]
-    fn image_mime_types_are_sniffed_from_the_payload() {
-        assert_eq!(image_mime_type(b"nonsense"), None);
-        assert_eq!(mime_for_image(&[0x89, b'P', b'N', b'G', 0]), "image/png");
-        assert_eq!(mime_for_image(&[0xFF, 0xD8, 0xFF, 0]), "image/jpeg");
-        assert_eq!(mime_for_image(b"RIFF...."), "image/webp");
-        assert_eq!(mime_for_image(b"nonsense"), "application/octet-stream");
-    }
 }

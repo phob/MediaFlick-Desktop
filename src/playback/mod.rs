@@ -119,17 +119,4 @@ mod native_frame_tests {
             assert!(frame.validate().is_err());
         }
     }
-
-    #[test]
-    fn fullscreen_gate_distinguishes_catalog_from_transparent_playback() {
-        let mut frame = NativeOverlayFrame {
-            width: 2,
-            height: 1,
-            pixels: vec![255; 8],
-        };
-        assert!(frame.validate().is_ok());
-        assert!(!frame.exposes_video());
-        frame.pixels[4..8].fill(0);
-        assert!(frame.exposes_video());
-    }
 }

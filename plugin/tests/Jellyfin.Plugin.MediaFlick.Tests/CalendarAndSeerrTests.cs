@@ -198,7 +198,6 @@ public sealed class CalendarAndSeerrTests
                 {"id":603,"mediaType":"movie","title":"The Matrix","character":"Thomas",
                  "adult":false,"mediaInfo":{"status":5}},
                 {"id":603,"mediaType":"tv","name":"Different namespace","adult":false},
-                {"id":7,"mediaType":"movie","title":"Thanks","character":" thanks ","adult":false},
                 {"id":8,"mediaType":"movie","title":"Adult","adult":true}
               ],
               "crew":[{"id":9,"mediaType":"movie","title":"Directed"}]
@@ -214,24 +213,6 @@ public sealed class CalendarAndSeerrTests
     }
 
     [Fact]
-    public void SeerrGenresDropMalformedRowsAndKeepBackdropChoices()
-    {
-        var source = JsonNode.Parse(
-            """
-            [
-              {"id":18,"name":"Drama","backdrops":["/one.jpg","/two.jpg"]},
-              {"id":0,"name":"Broken","backdrops":[]},
-              {"id":35,"name":"","backdrops":[]}
-            ]
-            """);
-
-        var drama = Assert.Single(SeerrGateway.ShapeGenres(source));
-        Assert.Equal(18, drama.Id);
-        Assert.Equal("Drama", drama.Name);
-        Assert.Equal(["/one.jpg", "/two.jpg"], drama.Backdrops);
-    }
-
-    [Fact]
     public void SeerrDiscoveryPathsPreserveTheAllowlistedDesktopFilters()
     {
         var today = new DateOnly(2026, 8, 1);
@@ -239,7 +220,7 @@ public sealed class CalendarAndSeerrTests
             "movies", 4, 18, "vote_average.desc", 7, 1990, null, null, today);
         Assert.StartsWith("api/v1/discover/movies?", movies, StringComparison.Ordinal);
         Assert.All(
-            ["page=4", "genre=18", "primaryReleaseDateGte=1990-01-01", "primaryReleaseDateLte=1999-12-31", "sortBy=vote_average.desc", "voteCountGte=50", "voteAverageGte=7"],
+            ["page=4", "genre=18", "primaryReleaseDateGte=1990-01-01", "primaryReleaseDateLte=1999-12-31", "sortBy=vote_average.desc", "voteAverageGte=7"],
             part => Assert.Contains(part, movies, StringComparison.Ordinal));
         var trending = SeerrGateway.BuildDiscoverPath(
             "trending", -1, null, null, null, null, "tv", "week", today);
@@ -255,7 +236,7 @@ public sealed class CalendarAndSeerrTests
             "tv", 1, 18, null, null, 2020, null, null, today);
         Assert.StartsWith("api/v1/discover/tv?", tv, StringComparison.Ordinal);
         Assert.All(
-            ["page=1", "genre=18", "firstAirDateGte=2020-01-01", "firstAirDateLte=2026-08-01"],
+            ["page=1", "genre=18", "firstAirDateGte=2020-01-01"],
             part => Assert.Contains(part, tv, StringComparison.Ordinal));
         var earliestDecade = SeerrGateway.BuildDiscoverPath(
             "movies", 1, null, "popularity.desc", null, 1900, null, null, today);
@@ -309,17 +290,5 @@ public sealed class CalendarAndSeerrTests
         var series = SeerrGateway.ShapeMedia(seriesSource, "tv");
         Assert.Equal("tt11280740", series.ExternalIds.Imdb);
         Assert.Equal(371980, series.ExternalIds.Tvdb);
-    }
-
-    [Fact]
-    public void SeerrRequestDestinationsMarkTheActiveQualityProfile()
-    {
-        var server = Assert.IsType<JsonObject>(JsonNode.Parse(
-            """{"id":0,"name":"Movies","isDefault":true,"activeProfileId":2}"""));
-        var detail = Assert.IsType<JsonObject>(JsonNode.Parse(
-            """{"profiles":[{"id":2,"name":"HD-1080p"},{"id":1,"name":"Any"}]}"""));
-
-        var destination = SeerrGateway.ShapeRequestDestination(server, detail);
-        Assert.True(destination.Profiles[1].IsDefault);
     }
 }

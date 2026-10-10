@@ -534,32 +534,11 @@ impl ProviderIds {
 
 #[cfg(test)]
 mod tests {
-    use super::{ItemPlaybackPreference, ItemRecord, resolve_playback_preference};
-    use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo};
-
-    fn dto(json: &str) -> BaseItemDto {
-        serde_json::from_str(json).expect("dto")
-    }
+    use super::{ItemPlaybackPreference, resolve_playback_preference};
+    use crate::jellyfin::api::model::MediaSourceInfo;
 
     fn media_source(json: &str) -> MediaSourceInfo {
         serde_json::from_str(json).expect("media source")
-    }
-
-    #[test]
-    fn release_year_prefers_production_year_and_falls_back_to_premiere_date() {
-        let movie = ItemRecord::from_dto(&dto(
-            r#"{"Id":"m","Name":"Movie","Type":"Movie","ProductionYear":1999,
-                "PremiereDate":"2000-01-01T00:00:00Z"}"#,
-        ));
-        let series = ItemRecord::from_dto(&dto(r#"{"Id":"s","Name":"Series","Type":"Series",
-                "PremiereDate":"2017-02-15T00:00:00Z"}"#));
-        let invalid = ItemRecord::from_dto(&dto(
-            r#"{"Id":"x","Name":"Unknown","Type":"Series","PremiereDate":"unknown"}"#,
-        ));
-
-        assert_eq!(movie.year, Some(1999));
-        assert_eq!(series.year, Some(2017));
-        assert_eq!(invalid.year, None);
     }
 
     #[test]

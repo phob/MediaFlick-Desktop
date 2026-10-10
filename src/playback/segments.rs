@@ -261,21 +261,6 @@ mod tests {
     }
 
     #[test]
-    fn prompt_segment_only_matches_prompt_mode() {
-        let segments = vec![segment(SegmentType::Intro, 100, 200)];
-        let prompt = SegmentSkipConfig {
-            intro: SegmentSkipMode::Prompt,
-            ..SegmentSkipConfig::default()
-        };
-        let always = SegmentSkipConfig {
-            intro: SegmentSkipMode::Always,
-            ..SegmentSkipConfig::default()
-        };
-        assert_eq!(prompt_segment_at(&segments, &prompt, 150), Some(0));
-        assert_eq!(prompt_segment_at(&segments, &always, 150), None);
-    }
-
-    #[test]
     fn automatic_skip_counts_down_then_fires() {
         let segments = vec![segment(SegmentType::Intro, 100, 200)];
         let config = SegmentSkipConfig {

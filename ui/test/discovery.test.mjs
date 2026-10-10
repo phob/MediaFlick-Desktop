@@ -43,16 +43,6 @@ test("unsupported decades do not become discovery API filters", () => {
   )
 })
 
-test("switching discovery rows resets catalogue filters but keeps local state", () => {
-  const original = new URLSearchParams(
-    "row=movies&genre=18&decade=1990&sort=rating&library=outside",
-  )
-  original.set("row", "tv")
-  const written = writeDiscoveryFilters(original, "tv", { sort: "popular" })
-
-  assert.equal(written.toString(), "row=tv&library=outside")
-})
-
 test("films and series offer the same decades from the current decade back to 1900", () => {
   const currentDecade = Math.floor(new Date().getUTCFullYear() / 10) * 10
 

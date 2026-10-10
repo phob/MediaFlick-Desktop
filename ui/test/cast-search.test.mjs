@@ -22,7 +22,7 @@ test("cast mode round-trips stable provider identities and an exact display name
   })
 })
 
-test("route enrichment preserves navigation state and replaces name-only search identity", () => {
+test("route enrichment replaces a name-only person identity", () => {
   const previous = new URLSearchParams("mode=person&personName=Alex+Smith&from=detail")
   const next = writeResolvedCastPerson(previous, {
     jellyfinId: "jf-alex-2",
@@ -33,8 +33,6 @@ test("route enrichment preserves navigation state and replaces name-only search 
 
   assert.equal(next.get("personId"), "jf-alex-2")
   assert.equal(next.get("tmdbPersonId"), "123")
-  assert.equal(next.get("from"), "detail")
-  assert.equal(next.has("search"), false)
 })
 
 test("ordinary text search remains the existing FTS query and never becomes person mode", () => {

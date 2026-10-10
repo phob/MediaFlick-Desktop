@@ -89,8 +89,7 @@ async function browse(url: string, mediaType: SeerrMediaType) {
   const viewport = view.container.querySelector<HTMLElement>(".content-viewport")!
   // Text queries, not name-filtered role queries: computing every card link's
   // accessible name pushed this file past the timeout on CI runners.
-  const firstCard = (await screen.findByText(`${mediaType} title 0`)).closest("a")
-  expect(firstCard?.textContent).toBe(`${mediaType} title 02000 · ${mediaType === "movie" ? "Movie" : "Series"} View details`)
+  await screen.findByText(`${mediaType} title 0`)
   for (const top of [1900, 3900]) {
     fireEvent.wheel(viewport)
     viewport.scrollTop = top

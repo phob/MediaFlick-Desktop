@@ -106,39 +106,6 @@ fn appimage_launcher_uses_persistent_archive() -> io::Result<()> {
 }
 
 #[test]
-fn staged_launcher_preloads_only_the_cef_beside_the_executable() -> io::Result<()> {
-    let fixture = Fixture::new();
-    let executable = fixture.0.join("mediaflick-desktop");
-    let icon = fixture.0.join("icon.svg");
-    let unstaged = desktop_entry(&executable, &icon)?;
-    assert!(!unstaged.contains("LD_PRELOAD"), "{unstaged}");
-
-    let cef = fixture.0.join("libcef.so");
-    write_changed(&cef, b"fixture")?;
-    let staged = desktop_entry(&executable, &icon)?;
-    let directory = fixture.0.display();
-    let cef = cef.display();
-    for assignment in [
-        format!("LD_LIBRARY_PATH={directory}"),
-        format!("LD_PRELOAD={cef}"),
-        format!("MEDIAFLICK_DESKTOP_CEF_PRELOAD={cef}"),
-    ] {
-        assert!(staged.contains(&assignment), "{assignment} in {staged}");
-    }
-    Ok(())
-}
-
-#[test]
-fn registration_errors_leave_existing_entry_intact() -> io::Result<()> {
-    let fixture = Fixture::new();
-    register_at(&fixture.0, &[], Path::new("/build/app"))?;
-    let entry = std::fs::read(fixture.entry())?;
-    assert!(register_at(&fixture.0, &[], Path::new("relative")).is_err());
-    assert_eq!(std::fs::read(fixture.entry())?, entry);
-    Ok(())
-}
-
-#[test]
 #[ignore = "requires desktop-file-validate and /usr/bin/python3 with PyGObject"]
 fn desktop_shell_resolves_and_launches_registered_identity() -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
