@@ -1,4 +1,6 @@
+import { Settings2 } from "lucide-react"
 import { useState } from "react"
+import { Link } from "react-router-dom"
 import appIcon from "../../../distribution/app-icon.png?inline"
 import { Button } from "@/components/ui/button"
 import {
@@ -162,6 +164,12 @@ export default function SignIn() {
           )}
         </CardContent>
       </Card>
+      <Button asChild variant="link" className="mx-auto text-muted-foreground hover:text-foreground">
+        <Link to="/settings/client/player">
+          <Settings2 />
+          Player and app settings
+        </Link>
+      </Button>
       </div>
     </div>
   )
