@@ -103,10 +103,8 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
   }
 
   // Current state properties (checked, expanded, value, ...) of an element.
-  async function state(target) {
-    const [node] = await axQuery(target)
-    if (!node) throw new Error(`no element ${describe(target)}`)
-    return props(node)
+  async function state(target, options) {
+    return (await find(target, options)).properties
   }
 
   async function mouseAt(x, y) {
