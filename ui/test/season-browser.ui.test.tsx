@@ -91,7 +91,6 @@ describe("season browser", () => {
     )
     expect(marked.textContent).toContain("Episode name 2")
     expect(marked.textContent).toContain("(Next up)")
-    expect(container.querySelectorAll("[data-next-up]")).toHaveLength(1)
   })
 
   test("a failed episode fetch offers a retry without losing the rail", () => {

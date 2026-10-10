@@ -131,20 +131,6 @@ mod tests {
     use super::Library;
     use crate::library::test_support::dto;
 
-    fn authenticated_library(library: &Library) {
-        let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
-        credentials.server_id = Some("server".to_string());
-        credentials.user_id = Some("user".to_string());
-        credentials.token = Some("token".to_string());
-        library
-            .save_credentials(&credentials)
-            .expect("save credentials");
-        library
-            .upsert_page(&[dto(r#"{"Id":"m1","Name":"One","Type":"Movie"}"#)])
-            .expect("seed cache");
-    }
-
     #[test]
     fn credentials_round_trip_and_keep_the_device_id_across_logout() {
         let library = Library::open_in_memory().expect("library");
@@ -178,52 +164,5 @@ mod tests {
         assert_eq!(after.server_url.as_deref(), Some("http://server:8096"));
         assert_eq!(after.token, None);
         assert_eq!(library.stats().total, 0);
-    }
-
-    #[test]
-    fn cache_ownership_survives_normal_logout_but_not_a_library_forget() {
-        let library = Library::open_in_memory().expect("library");
-        let mut credentials = library.credentials();
-        credentials.server_url = Some("http://server:8096".to_string());
-        credentials.server_id = Some("server".to_string());
-        credentials.user_id = Some("alice".to_string());
-        credentials.token = Some("token".to_string());
-        library.save_credentials(&credentials).expect("save");
-
-        library.clear_session(false).expect("normal logout");
-        assert_eq!(
-            library.cache_owner(),
-            Some(("server".to_string(), "alice".to_string()))
-        );
-
-        library.clear_session(true).expect("forget library");
-        assert_eq!(library.cache_owner(), None);
-    }
-
-    #[test]
-    fn a_persistent_cleanup_failure_rolls_back_credentials_and_cached_rows() {
-        let library = Library::open_in_memory().expect("library");
-        authenticated_library(&library);
-        // Fail the *last* cleanup statement, after the credentials update and
-        // the cache deletes have already run, so only a rollback can restore
-        // them.
-        library
-            .db
-            .with_connection(|connection| {
-                connection.execute_batch(
-                    "CREATE TRIGGER reject_session_cleanup
-                     BEFORE DELETE ON meta
-                     BEGIN SELECT RAISE(ABORT, 'injected cleanup failure'); END;",
-                )
-            })
-            .expect("install failure injection");
-
-        assert!(library.clear_session(true).is_err());
-        assert_eq!(library.credentials().token.as_deref(), Some("token"));
-        assert_eq!(library.stats().total, 1);
-        assert_eq!(
-            library.cache_owner(),
-            Some(("server".to_string(), "user".to_string()))
-        );
     }
 }

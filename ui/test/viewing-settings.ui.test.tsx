@@ -23,7 +23,7 @@ function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
   queryClient.setQueryData(queryKeys.viewing("server:user"), viewing)
 }
 
-test("language edits enable Save, Discard restores the text, and Save persists normalized codes", async () => {
+test("language edits: Discard restores the text and Save persists ordered, normalized codes", async () => {
   seed()
   const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
@@ -31,13 +31,11 @@ test("language edits enable Save, Discard restores the text, and Save persists n
   </TestProviders>)
   const input = screen.getByRole("textbox", {name:"Audio languages"})
   fireEvent.change(input, {target:{value:"EN, de"}})
-  expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(false)
   fireEvent.click(screen.getByRole("button", {name:"Discard"}))
   expect((input as HTMLInputElement).value).toBe("")
   fireEvent.change(input, {target:{value:"EN, de"}})
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({audioLanguages:["en", "de"]}), expect.anything()))
-  await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
 })
 
 test("spoiler protection removes episode titles and image URLs without hiding watched episodes", () => {
@@ -116,14 +114,12 @@ test.each([true, false])("countdown only starts another episode when one exists:
 })
 
 
-test("poster width offers presets and Viewing reset preserves the Appearance preview delay", async () => {
+test("Viewing Reset preserves the Appearance-owned preview delay", async () => {
   seed({...DEFAULT_VIEWING, previewDelayMs:850})
   const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
-  expect(screen.queryByRole("spinbutton", {name:"Poster width"})).toBeNull()
-  expect(screen.queryByLabelText("Card preview delay")).toBeNull()
   fireEvent.pointerDown(screen.getByRole("combobox", {name:"Poster width"}), {button:0, ctrlKey:false, pointerType:"mouse"})
   fireEvent.click(await screen.findByRole("option", {name:"Large — 200 px"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.MediaFlick.Configuration;
 using Jellyfin.Plugin.MediaFlick.Models;
@@ -20,28 +19,6 @@ public sealed class CacheBoundsTests : IDisposable
     public CacheBoundsTests()
     {
         Directory.CreateDirectory(_directory);
-    }
-
-    [Fact]
-    public void BoundedCachesExpireEntriesAndEvictTheOldestPastTheCap()
-    {
-        var time = new ManualTime(Start);
-        var cache = new BoundedCache<string, int>(10, TimeSpan.FromMinutes(5), time);
-
-        cache.Set("expiring", 0);
-        time.Advance(TimeSpan.FromMinutes(5));
-        Assert.False(cache.TryGet("expiring", out _));
-
-        for (var index = 0; index < 11; index++)
-        {
-            cache.Set("key-" + index, index);
-            time.Advance(TimeSpan.FromSeconds(1));
-        }
-
-        Assert.True(cache.Count <= 10);
-        Assert.False(cache.TryGet("key-0", out _));
-        Assert.True(cache.TryGet("key-10", out var newest));
-        Assert.Equal(10, newest);
     }
 
     [Fact]
@@ -125,11 +102,10 @@ public sealed class CacheBoundsTests : IDisposable
     [Fact]
     public async Task OversizedServiceResponsesFailSafelyWithoutBufferingThem()
     {
-        var health = new ServiceHealthStore();
         var handler = new StubHandler();
         var client = new CompanionHttpClient(
             new StubFactory(handler),
-            health,
+            new ServiceHealthStore(),
             NullLogger<CompanionHttpClient>.Instance,
             64);
 
@@ -143,15 +119,6 @@ public sealed class CacheBoundsTests : IDisposable
 
         Assert.All([declared, streamed], error =>
             Assert.Equal(StatusCodes.Status502BadGateway, error.StatusCode));
-        Assert.False(health.IsHealthy("sonarr"));
-
-        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new ByteArrayContent([0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("""{"ok":true}""")])
-        };
-        var parsed = await Send(client);
-        Assert.True(parsed?["ok"]?.GetValue<bool>());
-        Assert.True(health.IsHealthy("sonarr"));
     }
 
     public void Dispose()

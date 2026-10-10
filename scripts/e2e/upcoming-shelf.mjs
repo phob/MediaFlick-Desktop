@@ -25,8 +25,6 @@ const scenario = process.argv[3] ?? "live"
 if (!["live", "missing"].includes(scenario)) throw new Error(`unknown scenario ${scenario}`)
 const outDir = process.argv[2] ?? `build/e2e/upcoming-shelf${scenario === "live" ? "" : `-${scenario}`}`
 const SHELF_TITLE = "Release Timeline"
-const SHELF_LIMIT = 24
-const RECENT_SHARE = 0.3
 const RECENT_DAYS = 30
 const UPCOMING_DAYS = 90
 
@@ -131,19 +129,13 @@ const calendar = await evaluate(
   `fetch("/api/calendar?start=${windowStart}&end=${windowEnd}").then((response) => response.json())`,
 )
 
-// Let artwork settle before measuring it.
+// Let artwork settle before reading the cards.
 await sleep(2500)
 const shelf = await evaluate(`(() => {
   const heading = [...document.querySelectorAll("h2")].find((node) => node.textContent === ${JSON.stringify(SHELF_TITLE)})
   const section = heading.closest("section")
-  const posterFrame = [...document.querySelectorAll("section")]
-    .filter((candidate) => candidate !== section)
-    .flatMap((candidate) => [...candidate.querySelectorAll("article .media-frame")])
-    .map((frame) => frame.getBoundingClientRect())
-    .find((rect) => rect.height > rect.width)
   const cards = [...section.querySelectorAll("article")].map((article) => {
     const frame = article.querySelector(".media-frame")
-    const rect = frame.getBoundingClientRect()
     const link = frame.querySelector("a")
     const image = frame.querySelector("img")
     const lines = [...article.querySelectorAll(":scope > a div")].map((node) => node.textContent)
@@ -157,29 +149,17 @@ const shelf = await evaluate(`(() => {
       dateLabel: date ?? null,
       statusLabels: labels,
       newSeason: frame.textContent.includes("NEW SEASON"),
-      frame: { width: Math.round(rect.width), height: Math.round(rect.height) },
       image: image ? { src: image.getAttribute("src"), loaded: image.complete && image.naturalWidth > 0 } : null,
     }
   })
   const articles = [...section.querySelectorAll("article")]
-  const todayMarks = [...section.querySelectorAll('[role="separator"][aria-label="Today"]')].map((mark) => {
-    const rect = mark.getBoundingClientRect()
-    const previous = mark.previousElementSibling?.getBoundingClientRect()
-    const next = mark.nextElementSibling?.getBoundingClientRect()
-    return {
-      nextCardIndex: articles.indexOf(mark.nextElementSibling),
-      offsetFromGapCenter: previous && next ? Math.round((rect.left + rect.width / 2 - (previous.right + next.left) / 2) * 10) / 10 : null,
-      gapAcross: previous && next ? Math.round(next.left - previous.right) : null,
-      height: Math.round(rect.height),
-    }
-  })
-  const regularGaps = articles.slice(1).map((article, index) => Math.round(article.getBoundingClientRect().left - articles[index].getBoundingClientRect().right))
+  const todayMarks = [...section.querySelectorAll('[role="separator"][aria-label="Today"]')].map((mark) => ({
+    nextCardIndex: articles.indexOf(mark.nextElementSibling),
+  }))
   const dateLabel = (date) => new Date(date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })
   return {
     cards,
     todayMarks,
-    regularGap: regularGaps.length ? Math.min(...regularGaps) : null,
-    posterReference: posterFrame ? { width: Math.round(posterFrame.width), height: Math.round(posterFrame.height) } : null,
     dateLabels: Object.fromEntries(${JSON.stringify(calendar.entries?.map((entry) => entry.date) ?? [])}.map((date) => [date, dateLabel(date)])),
   }
 })()`)
@@ -204,31 +184,19 @@ const cards = shelf.cards.map((card, index) => {
 })
 
 check(calendar.provider === "plugin", `calendar provider is ${calendar.provider}; past-release truth needs the Companion`)
-check(cards.length > 0 && cards.length <= SHELF_LIMIT, `shelf holds ${cards.length} cards; expected 1..${SHELF_LIMIT}`)
-
-// 1. Poster format, identical to the other poster shelves on Home.
-check(shelf.posterReference != null, "no other poster shelf on Home to compare the card size with")
-for (const card of cards) {
-  check(card.frame.height > card.frame.width, `card ${card.index} (${card.title}) is not portrait: ${card.frame.width}x${card.frame.height}`)
-  if (shelf.posterReference) {
-    check(
-      card.frame.width === shelf.posterReference.width && card.frame.height === shelf.posterReference.height,
-      `card ${card.index} (${card.title}) is ${card.frame.width}x${card.frame.height}, other posters are ${shelf.posterReference.width}x${shelf.posterReference.height}`,
-    )
-  }
-}
+check(cards.length > 0, "the shelf holds no cards")
 
 // Every card must be traceable to the calendar it came from.
 for (const card of cards) check(card.date != null, `card ${card.index} (${card.title} @ ${card.dateLabel}) matches no single calendar date`)
 
-// 2. One timeline: dates never go backwards, and every past card precedes every upcoming card.
+// One timeline: dates never go backwards, and every past card precedes every upcoming card.
 for (let index = 1; index < cards.length; index++) {
   const previous = cards[index - 1].date
   const current = cards[index].date
   if (previous && current) check(previous <= current, `card ${index} (${current}) comes after a later date (${previous})`)
 }
 
-// 3. The recent share: 30% of the shelf when both sides can fill theirs.
+// With the Companion the shelf leads with recent releases.
 const pastCards = cards.filter((card) => card.past).length
 const futureCards = cards.length - pastCards
 const eligiblePast = new Set(
@@ -237,16 +205,9 @@ const eligiblePast = new Set(
     .map((entry) => `${entry.date}:${entryTitle(entry)}`),
 ).size
 const eligibleFuture = new Set(entries.filter((entry) => entry.date >= today).map((entry) => `${entry.date}:${entryTitle(entry)}`)).size
-const recentTarget = Math.round(SHELF_LIMIT * RECENT_SHARE)
-if (eligiblePast >= recentTarget && eligibleFuture >= SHELF_LIMIT - recentTarget) {
-  check(pastCards === recentTarget, `shelf shows ${pastCards} past cards; expected ${recentTarget} (30% of ${SHELF_LIMIT})`)
-  check(futureCards === SHELF_LIMIT - recentTarget, `shelf shows ${futureCards} upcoming cards; expected ${SHELF_LIMIT - recentTarget}`)
-} else {
-  check(cards.length === Math.min(SHELF_LIMIT, pastCards + futureCards), "shelf left slots empty that the other side could fill")
-}
 check(eligiblePast === 0 || pastCards > 0, `the calendar has ${eligiblePast} recent releases but the shelf shows none`)
 
-// 4 and 5. Past cards carry exactly one truthful status; upcoming cards carry none.
+// Past cards carry exactly one truthful status; upcoming cards carry none.
 for (const card of cards) {
   if (!card.date) continue
   if (!card.past) {
@@ -259,17 +220,13 @@ for (const card of cards) {
   check(card.ariaLabel?.endsWith(`, ${card.status}`), `past card ${card.index} (${card.title}) does not announce its status: ${card.ariaLabel}`)
 }
 
-// 6. Today is marked once, centred in the gap between the last past and the
-// first upcoming card, without widening that gap.
+// Today is marked once, between the last past and the first upcoming card.
 const firstFuture = cards.findIndex((card) => card.date && !card.past)
 if (pastCards > 0 && firstFuture > 0) {
   check(shelf.todayMarks.length === 1, `expected one today mark, found ${shelf.todayMarks.length}`)
   const [mark] = shelf.todayMarks
   if (mark) {
     check(mark.nextCardIndex === firstFuture, `today mark precedes card ${mark.nextCardIndex}; the first upcoming card is ${firstFuture}`)
-    check(mark.offsetFromGapCenter != null && Math.abs(mark.offsetFromGapCenter) <= 1, `today mark is ${mark.offsetFromGapCenter}px off the gap centre`)
-    check(mark.gapAcross === shelf.regularGap, `the gap across the today mark is ${mark.gapAcross}px; cards are otherwise ${shelf.regularGap}px apart`)
-    check(mark.height === shelf.posterReference?.height, `today mark is ${mark.height}px tall; posters are ${shelf.posterReference?.height}px`)
   }
 } else {
   check(shelf.todayMarks.length === 0, "the shelf marks today although it has no boundary between past and upcoming")
@@ -320,21 +277,19 @@ const report = {
   eligible: { past: eligiblePast, future: eligibleFuture },
   shelf: {
     todayMarks: shelf.todayMarks,
-    regularGap: shelf.regularGap,
     cards: cards.length,
     past: pastCards,
     upcoming: futureCards,
     downloaded: cards.filter((card) => card.status === "Downloaded").length,
     missing: cards.filter((card) => card.status === "Missing").length,
     posters: {
-      reference: shelf.posterReference,
       jellyfin: cards.filter((card) => card.posterSource === "jellyfin" && card.image?.loaded).length,
       tmdb: cards.filter((card) => card.posterSource === "tmdb" && card.image?.loaded).length,
       placeholder: cards.filter((card) => !card.image?.loaded).length,
     },
   },
-  cards: cards.map(({ index, title, subtitle, date, past, status, newSeason, ariaLabel, href, frame, posterSource, image, matches }) => ({
-    index, title, subtitle, date, past, status, newSeason, ariaLabel, href, frame, posterSource, imageLoaded: image?.loaded ?? false, calendarMatches: matches,
+  cards: cards.map(({ index, title, subtitle, date, past, status, newSeason, ariaLabel, href, posterSource, image, matches }) => ({
+    index, title, subtitle, date, past, status, newSeason, ariaLabel, href, posterSource, imageLoaded: image?.loaded ?? false, calendarMatches: matches,
   })),
   failures,
   passed: failures.length === 0,

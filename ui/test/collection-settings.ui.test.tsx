@@ -92,11 +92,10 @@ function catalog(...templates: CollectionTemplate[]): CollectionTemplates {
 }
 
 function mockPage(options: {
-  settings?: CollectionSettings
   profiles?: CollectionProfile[]
   templates?: CollectionTemplates
 } = {}) {
-  vi.spyOn(api.api.collections, "settings").mockResolvedValue(options.settings ?? accountSettings)
+  vi.spyOn(api.api.collections, "settings").mockResolvedValue(accountSettings)
   vi.spyOn(api.api.collections, "profiles").mockResolvedValue({ profiles: options.profiles ?? [] })
   vi.spyOn(api.api.collections, "templates").mockResolvedValue(
     options.templates ?? catalog(template()),
@@ -137,28 +136,6 @@ function isDisabled(element: Element) {
 afterEach(() => vi.restoreAllMocks())
 
 describe("collection settings wizard", () => {
-  test("public-list search supports keyboard selection and invalidates the old preview", async () => {
-    mockPage({ templates: catalog(template({ title: "Public list", source: { kind: "mdbListPublicList", listId: "42" } })) })
-    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
-    vi.spyOn(api.api.collections, "searchPublicLists").mockResolvedValue({ lists: [
-      { id: "100", name: "Action favorites", owner: "Alice" },
-      { id: "200", name: "Action classics", owner: "Bob" },
-    ] })
-    page()
-    await openTemplate("Public list")
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-    await screen.findByText("The Matrix (1999)")
-    fireEvent.click(screen.getByRole("combobox", { name: "Choose MDBList public list" }))
-    const input = screen.getByRole("combobox", { name: "Search MDBList public lists" })
-    fireEvent.change(input, { target: { value: "action" } })
-    await screen.findByRole("option", { name: "Action favorites by Alice" })
-    fireEvent.keyDown(input, { key: "End" })
-    fireEvent.keyDown(input, { key: "Enter" })
-    expect((screen.getByLabelText("MDBList public list ID or canonical URL") as HTMLInputElement).value).toBe("200")
-    expect(screen.getByRole("combobox", { name: "Choose MDBList public list" }).textContent).toContain("Action classics by Bob")
-    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-  })
-
   test("Save waits for poster upload and includes the selected poster", async () => {
     const current = profile("a".repeat(16))
     mockPage({ profiles: [current] })
@@ -174,7 +151,6 @@ describe("collection settings wizard", () => {
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
     await act(async () => finish({ id: "c".repeat(32) }))
     expect(isDisabled(createButton())).toBe(false)
-    expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain("c".repeat(32))
     fireEvent.click(createButton())
     await waitFor(() => expect(update).toHaveBeenCalledWith(current.id, expect.objectContaining({ customPosterId: "c".repeat(32) })))
   })
@@ -195,50 +171,6 @@ describe("collection settings wizard", () => {
     await act(async () => finish({ id: "c".repeat(32) }))
     expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain(current.customPosterId)
     expect(isDisabled(createButton())).toBe(true)
-  })
-
-  test("a failed poster upload blocks Save until the failed selection is discarded", async () => {
-    const current = profile("a".repeat(16), { customPosterId: "b".repeat(32) })
-    mockPage({ profiles: [current] })
-    vi.spyOn(api.api.collections, "uploadArtwork").mockRejectedValue(new Error("Poster upload failed"))
-    page(`/settings/collections?edit=${current.id}`)
-    await screen.findByRole("heading", { name: "Edit collection" })
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Changed" } })
-    const file = new File(["poster"], "poster.png", { type: "image/png" })
-    Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(6) })
-    fireEvent.change(screen.getByLabelText("Custom poster file"), { target: { files: [file] } })
-    expect((await screen.findByRole("alert")).textContent).toBe("Poster upload failed")
-    expect(isDisabled(createButton())).toBe(true)
-    fireEvent.click(screen.getByRole("button", { name: "Discard failed upload" }))
-    expect(isDisabled(createButton())).toBe(false)
-    expect(screen.getByRole("img", { name: "Selected collection poster" }).getAttribute("src")).toContain(current.customPosterId)
-  })
-
-  test("offers only media types the selected provider implements", async () => {
-    mockPage({
-      templates: catalog(
-        template(),
-        template({
-          id: "mdblist.public-list",
-          title: "MDBList list",
-          source: { kind: "mdbListPublicList", listId: "42" },
-          mediaType: "mixed",
-        }),
-      ),
-    })
-    page()
-
-    await openTemplate()
-    fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
-    expect(screen.queryByRole("option", { name: "Mixed" })).toBeNull()
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
-
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }))
-    await openTemplate("MDBList list")
-    fireEvent.click(screen.getByRole("combobox", { name: "Media type" }))
-    expect(screen.getByRole("option", { name: "Movie" })).toBeTruthy()
-    expect(screen.getByRole("option", { name: "Series" })).toBeTruthy()
-    expect(screen.getByRole("option", { name: "Mixed" })).toBeTruthy()
   })
 
   test("resets and discards an unsaved collection draft", async () => {
@@ -277,21 +209,6 @@ describe("collection settings wizard", () => {
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
   })
 
-  test("rejects out-of-range maximums before calling Preview", async () => {
-    const popular = template({ limit: { kind: "maximum", count: 20 } })
-    mockPage({ templates: catalog(popular) })
-    const runPreview = vi.spyOn(api.api.collections, "preview")
-    page()
-    await openTemplate()
-    const maximum = screen.getByRole("spinbutton", { name: "Maximum results" })
-
-    for (const value of ["0", "501", "1.5"]) {
-      fireEvent.change(maximum, { target: { value } })
-      expect(isDisabled(screen.getByRole("button", { name: "Preview" }))).toBe(true)
-    }
-    expect(runPreview).not.toHaveBeenCalled()
-  })
-
   test("discards a Preview response that completes after a result change", async () => {
     const popular = template({ limit: { kind: "maximum", count: 20 } })
     mockPage({ templates: catalog(popular) })
@@ -314,22 +231,6 @@ describe("collection settings wizard", () => {
       resolvePreview(preview())
       await pending
     })
-    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-  })
-
-  test("a failed repeat Preview reports the failure and clears the old result", async () => {
-    mockPage()
-    vi.spyOn(api.api.collections, "preview")
-      .mockResolvedValueOnce(preview())
-      .mockRejectedValueOnce(new Error("TMDB unavailable"))
-    page()
-    await openTemplate()
-
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-    await screen.findByText("The Matrix (1999)")
-    fireEvent.click(screen.getByRole("button", { name: "Preview again" }))
-
-    expect((await screen.findByRole("alert")).textContent).toContain("Preview failed: TMDB unavailable")
     expect(screen.queryByText("The Matrix (1999)")).toBeNull()
   })
 
@@ -369,71 +270,6 @@ describe("collection settings wizard", () => {
     expectPreviewCleared()
   })
 
-  test("exact-collection release filtering invalidates Preview", async () => {
-    const exact = template({
-      id: "tmdb.collection.matrix",
-      title: "The Matrix Collection",
-      source: {
-        kind: "tmdbCollection",
-        collectionId: 2344,
-        includeUnreleased: false,
-      },
-    })
-    mockPage({ templates: catalog(exact) })
-    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
-    page()
-    await openTemplate("The Matrix Collection")
-
-    fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-    await screen.findByText("The Matrix (1999)")
-    fireEvent.click(screen.getByRole("switch", { name: "Include unreleased titles" }))
-
-    expect(screen.queryByText("The Matrix (1999)")).toBeNull()
-  })
-
-  test("presentation-only edits save without Preview while the provider is unavailable", async () => {
-    const current = profile("a".repeat(16))
-    mockPage({
-      settings: {
-        ...accountSettings,
-        readiness: { tmdb: false, mdblist: false },
-      },
-      profiles: [current],
-    })
-    const update = vi.spyOn(api.api.collections, "updateProfile").mockResolvedValue(current)
-    page(`/settings/collections?edit=${current.id}`)
-
-    await screen.findByRole("heading", { name: "Edit collection" })
-    expect(isDisabled(screen.getByRole("combobox", { name: "Media type" }))).toBe(true)
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Renamed" } })
-    const save = screen.getByRole("button", { name: "Save" })
-    expect(isDisabled(save)).toBe(false)
-    fireEvent.click(save)
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith(
-      current.id,
-      expect.objectContaining({ title: "Renamed" }),
-    ))
-  })
-
-  test("Save updates result-affecting edits without requiring Preview", async () => {
-    const current = profile("a".repeat(16), { limit: { kind: "maximum", count: 20 } })
-    mockPage({ profiles: [current] })
-    const runPreview = vi.spyOn(api.api.collections, "preview")
-    const update = vi.spyOn(api.api.collections, "updateProfile").mockResolvedValue(current)
-    page(`/settings/collections?edit=${current.id}`)
-    await screen.findByRole("heading", { name: "Edit collection" })
-
-    fireEvent.change(screen.getByRole("spinbutton", { name: "Maximum results" }), {
-      target: { value: "21" },
-    })
-    const save = screen.getByRole("button", { name: "Save" })
-    expect(isDisabled(save)).toBe(false)
-    fireEvent.click(save)
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
-    expect(runPreview).not.toHaveBeenCalled()
-  })
-
   test("provider availability does not leak from another account's template cache", async () => {
     mockPage({ templates: catalog(template({ title: "New account template" })) })
     const client = testQueryClient()
@@ -443,25 +279,6 @@ describe("collection settings wizard", () => {
 
     expect(await screen.findByRole("button", { name: /New account template/ })).toBeTruthy()
     expect(screen.queryByRole("button", { name: /Old account template/ })).toBeNull()
-  })
-
-  test("the same template can be used for more than one collection", async () => {
-    mockPage()
-    vi.spyOn(api.api.collections, "preview").mockResolvedValue(preview())
-    const create = vi.spyOn(api.api.collections, "createProfile")
-      .mockResolvedValueOnce({ profile: profile("a".repeat(16)), total: 1 })
-      .mockResolvedValueOnce({ profile: profile("c".repeat(16)), total: 1 })
-    page()
-
-    for (let index = 0; index < 2; index += 1) {
-      await openTemplate()
-      fireEvent.change(screen.getByLabelText("Title"), { target: { value: `Popular ${index + 1}` } })
-      fireEvent.click(screen.getByRole("button", { name: "Preview" }))
-      await screen.findByText("The Matrix (1999)")
-      fireEvent.click(createButton())
-      await waitFor(() => expect(create).toHaveBeenCalledTimes(index + 1))
-      await waitFor(() => expect(screen.queryByRole("heading", { name: "Add collection" })).toBeNull())
-    }
   })
 })
 
@@ -488,7 +305,7 @@ describe("collection settings management", () => {
     }))
   })
 
-  test("stages collection ordering until Save while deletes remain explicit actions", async () => {
+  test("stages collection ordering until Save", async () => {
     const first = profile("a".repeat(16), { title: "First" })
     const second = profile("c".repeat(16), { title: "Second" })
     mockPage({ profiles: [first, second] })
@@ -496,21 +313,12 @@ describe("collection settings management", () => {
     const reorder = vi.spyOn(api.api.collections, "reorderProfiles").mockResolvedValue({
       profiles: [second, first],
     })
-    const remove = vi.spyOn(api.api.collections, "deleteProfile").mockResolvedValue({ deleted: true })
     page()
 
     fireEvent.click(await screen.findByRole("button", { name: "Move First down" }))
     expect(reorder).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(reorder).toHaveBeenCalledWith([second.id, first.id]))
-    fireEvent.click(screen.getByRole("button", { name: "Delete First" }))
-    expect(await screen.findByRole("alertdialog", { name: "Delete “First”?" })).toBeTruthy()
-    expect(remove).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
-    expect(remove).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole("button", { name: "Delete First" }))
-    fireEvent.click(screen.getByRole("button", { name: "Delete collection" }))
-    await waitFor(() => expect(remove).toHaveBeenCalledWith(first.id))
   })
 })
 

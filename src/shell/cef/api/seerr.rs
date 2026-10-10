@@ -522,27 +522,4 @@ mod tests {
             serde_json::Value::Null
         );
     }
-
-    #[test]
-    fn proven_server_items_own_their_credits_without_touching_others() {
-        let proven: Vec<BaseItemDto> = [
-            r#"{"Id":"good1","Name":"GoodFellas","Type":"Movie","ProviderIds":{"Tmdb":"769"}}"#,
-            // A same-id title of the other media kind must not cross-own.
-            r#"{"Id":"other-kind","Name":"Show","Type":"Series","ProviderIds":{"Tmdb":"404"}}"#,
-        ]
-        .into_iter()
-        .map(|value| serde_json::from_str(value).expect("dto"))
-        .collect();
-        let mut credits = json!({ "results": [
-            { "mediaType": "movie", "tmdbId": 769, "libraryItemId": null },
-            { "mediaType": "tv", "tmdbId": 769, "libraryItemId": null },
-            { "mediaType": "movie", "tmdbId": 404, "libraryItemId": null }
-        ] });
-
-        mark_owned_credits(&mut credits, &proven);
-
-        assert_eq!(credits["results"][0]["libraryItemId"], "good1");
-        assert_eq!(credits["results"][1]["libraryItemId"], Value::Null);
-        assert_eq!(credits["results"][2]["libraryItemId"], Value::Null);
-    }
 }

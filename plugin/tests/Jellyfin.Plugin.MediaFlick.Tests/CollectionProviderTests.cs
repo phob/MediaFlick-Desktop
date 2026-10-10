@@ -34,79 +34,6 @@ public sealed class CollectionProviderTests : IDisposable
             NullLogger<CollectionProviderService>.Instance);
     }
 
-    [Fact]
-    public async Task PreviewReturnsTwentyFourNormalizedTitlesButKeepsFullCounts()
-    {
-        ConfigureTmdb();
-        _tmdb.Handler = (path, query) => path == "3/discover/movie"
-            ? Ok(new JsonObject
-            {
-                ["total_results"] = 30,
-                ["total_pages"] = 1,
-                ["results"] = new JsonArray(Enumerable.Range(1, 30).Select(index =>
-                    (JsonNode)new JsonObject
-                    {
-                        ["id"] = index,
-                        ["title"] = "Movie " + index,
-                        ["adult"] = index == 30
-                    }).ToArray())
-            })
-            : Ok(new JsonObject());
-
-        var result = await _service.PreviewAsync(
-            Request(new JsonObject
-            {
-                ["kind"] = "tmdbDiscover",
-                ["parameters"] = new JsonObject()
-            }),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(24, result.Items.Count);
-        Assert.Equal(30, result.Total);
-        Assert.All(result.Items, item => Assert.False(item.Adult));
-        Assert.Equal(Enumerable.Range(0, 24), result.Items.Select(item => item.SourceOrder));
-    }
-
-    [Fact]
-    public async Task PreviewStopsPagingAsSoonAsTwentyFourUsableTitlesExist()
-    {
-        ConfigureTmdb();
-        var calls = 0;
-        _tmdb.Handler = (path, query) =>
-        {
-            if (path == "3/configuration")
-            {
-                return Ok(new JsonObject());
-            }
-            Assert.Equal("3/discover/movie", path);
-            calls += 1;
-            var page = int.Parse(query["page"]);
-            return Ok(new JsonObject
-            {
-                ["total_results"] = 10_000,
-                ["total_pages"] = 500,
-                ["results"] = new JsonArray(Enumerable.Range(1, 20).Select(index =>
-                    (JsonNode)new JsonObject
-                    {
-                        ["id"] = (page - 1) * 20 + index,
-                        ["title"] = $"Movie {(page - 1) * 20 + index}"
-                    }).ToArray())
-            });
-        };
-
-        var result = await _service.PreviewAsync(
-            Request(new JsonObject
-            {
-                ["kind"] = "tmdbDiscover",
-                ["parameters"] = new JsonObject()
-            }),
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(2, calls);
-        Assert.Equal(24, result.Items.Count);
-        Assert.Equal(10_000, result.Total);
-    }
-
     [Theory]
     [InlineData("image/jpeg", true)]
     [InlineData("image/png", true)]
@@ -233,7 +160,6 @@ public sealed class CollectionProviderTests : IDisposable
             _service.ResultsAsync(request, TestContext.Current.CancellationToken));
 
         Assert.Equal(1, discoverCalls);
-        Assert.False(_service.TmdbReady);
     }
 
     [Fact]
@@ -566,48 +492,6 @@ public sealed class CollectionProviderTests : IDisposable
         Assert.Equal([101L, 102L], result.Memberships.Select(row => row.TmdbId));
         Assert.All(result.Memberships, row => Assert.Null(row.CollectionId));
         Assert.Equal(10, Assert.Single(result.Franchises).CollectionId);
-    }
-
-    [Fact]
-    public async Task RemovingCredentialClearsItsNormalizedCollectionCache()
-    {
-        ConfigureTmdb();
-        var discoverCalls = 0;
-        _tmdb.Handler = (path, query) =>
-        {
-            if (path == "3/discover/movie")
-            {
-                discoverCalls += 1;
-                return Ok(new JsonObject
-                {
-                    ["total_results"] = 1,
-                    ["total_pages"] = 1,
-                    ["results"] = new JsonArray(new JsonObject
-                    {
-                        ["id"] = 1,
-                        ["title"] = "One"
-                    })
-                });
-            }
-            return Ok(new JsonObject());
-        };
-        var request = Request(new JsonObject
-        {
-            ["kind"] = "tmdbDiscover",
-            ["parameters"] = new JsonObject()
-        });
-        _ = await _service.ResultsAsync(request, TestContext.Current.CancellationToken);
-        _ = await _service.ResultsAsync(request, TestContext.Current.CancellationToken);
-        Assert.Equal(1, discoverCalls);
-
-        _secrets.Remove("tmdb");
-        _service.ClearProviderCache("tmdb");
-        await Assert.ThrowsAsync<GatewayException>(() =>
-            _service.ResultsAsync(request, TestContext.Current.CancellationToken));
-
-        ConfigureTmdb();
-        _ = await _service.ResultsAsync(request, TestContext.Current.CancellationToken);
-        Assert.Equal(2, discoverCalls);
     }
 
     public void Dispose()

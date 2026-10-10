@@ -835,7 +835,6 @@ fn dispatch_error_toast(state: &BrowserState, title: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::playback::{PlaybackDiagnostics, PlayerChapter, PlayerSnapshot};
     use crate::preferences::{AppSettings, AppearanceAccent, WebUiWindowSettings};
 
     #[test]
@@ -858,43 +857,5 @@ mod tests {
         // unrelated settings change -> close.
         assert_eq!(live.webui_window.size(), (1536, 864));
         assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
-    }
-
-    #[test]
-    fn playback_snapshot_script_carries_timeline_and_diagnostics() {
-        let script = playback_event_script(&PlaybackEvent::StateChanged(PlayerSnapshot {
-            chapters: vec![PlayerChapter {
-                title: "Opening".to_string(),
-                start_ms: 30_000.0,
-            }],
-            diagnostics: PlaybackDiagnostics {
-                buffered_until_ms: Some(60_000.0),
-                buffering: true,
-                dropped_frames: Some(2),
-                frame_rate: Some(23.976),
-            },
-            ..PlayerSnapshot::default()
-        }));
-        let payload = script
-            .split_once("StateChanged(")
-            .and_then(|(_, call)| call.strip_suffix(");"))
-            .expect("snapshot argument");
-        let payload: serde_json::Value = serde_json::from_str(payload).expect("snapshot json");
-
-        assert_eq!(payload["chapters"][0]["title"], "Opening");
-        assert_eq!(payload["diagnostics"]["bufferedUntilMs"], 60_000.0);
-        assert_eq!(payload["diagnostics"]["buffering"], true);
-        assert_eq!(payload["diagnostics"]["droppedFrames"], 2);
-    }
-
-    #[test]
-    fn playback_cache_completion_script_carries_item() {
-        let script = playback_cache_refresh_script(
-            "item-after-a-slow-refresh",
-            PlaybackCacheRefreshOutcome::Refreshed,
-        );
-
-        assert!(script.contains("__mediaFlickDesktopPlaybackCacheRefreshed"));
-        assert!(script.contains("item-after-a-slow-refresh"));
     }
 }

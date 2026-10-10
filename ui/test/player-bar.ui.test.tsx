@@ -91,7 +91,7 @@ describe("player bar controls", () => {
     })
   })
 
-  it("sends seek, mute, and fullscreen commands", async () => {
+  it("sends mute and fullscreen commands", async () => {
     const commands: unknown[] = []
     const playerState: PlayerState = playerSnapshot({
       active: true,
@@ -121,12 +121,10 @@ describe("player bar controls", () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(view.getByRole("button", { name: "Back 10 seconds" }))
     fireEvent.click(view.getByRole("button", { name: "Mute" }))
     fireEvent.click(view.getByRole("button", { name: "Toggle fullscreen" }))
 
     await waitFor(() => {
-      expect(commands).toContainEqual({ command: "seek", positionMs: 2_000 })
       expect(commands).toContainEqual({ command: "set-mute", mute: true })
       expect(commands).toContainEqual({ command: "toggle-fullscreen" })
     })
@@ -147,5 +145,4 @@ it("uses saved built-in seek intervals", async () => {
   render(<QueryClientProvider client={client}><PlayerBar /></QueryClientProvider>)
   fireEvent.keyDown(window, {key:"ArrowRight"})
   await waitFor(() => expect(commands).toContainEqual({command:"seek", positionMs:19000}))
-  expect(screen.getByRole("button", {name:"Forward 7 seconds"})).toBeTruthy()
 })

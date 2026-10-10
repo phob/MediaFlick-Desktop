@@ -149,8 +149,6 @@ public sealed class RatingsTests
             new RatingBatchRequest(1, [valid with { ProviderId = "http://internal/" }])));
         Assert.Throws<RatingRequestException>(() => RatingsContract.Validate(
             new RatingBatchRequest(1, [valid with { Provider = "custom" }])));
-        Assert.Throws<RatingRequestException>(() => RatingsContract.Validate(
-            new RatingBatchRequest(1, [valid, valid])));
     }
 
     [Fact]

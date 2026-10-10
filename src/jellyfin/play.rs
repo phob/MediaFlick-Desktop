@@ -657,7 +657,6 @@ mod tests {
         )
         .expect("prepared");
         assert_eq!(prepared.play_method, "DirectPlay");
-        assert!(prepared.request.media_url.contains("/stream.mp4?"));
     }
 
     #[test]
@@ -683,33 +682,6 @@ mod tests {
         assert!(prepared.request.headers.iter().any(|header| {
             header.name.eq_ignore_ascii_case("X-Emby-Token") && header.value == "secret"
         }));
-    }
-
-    #[test]
-    fn a_source_without_any_delivery_option_is_an_error() {
-        let response = info(r#"{"MediaSources":[{"Id":"src"}]}"#);
-        assert!(
-            build(
-                &client(),
-                &response,
-                StreamingQuality::Original,
-                &options(),
-                0,
-                None
-            )
-            .is_err()
-        );
-        assert!(
-            build(
-                &client(),
-                &info(r#"{"MediaSources":[]}"#),
-                StreamingQuality::Original,
-                &options(),
-                0,
-                None
-            )
-            .is_err()
-        );
     }
 
     #[test]

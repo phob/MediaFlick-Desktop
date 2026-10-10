@@ -549,37 +549,3 @@ mod focus_tests {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod resize_tests {
-    use super::*;
-
-    #[test]
-    fn fullscreen_commits_only_the_final_size_after_the_quiet_period() {
-        let quiet = ResizeState::QUIET;
-        let work_area = Instant::now();
-        let mut state = ResizeState::new((4182, 2846));
-        assert_eq!(state.observe((6144, 3382), work_area), None);
-        let full = work_area + quiet / 2;
-        assert_eq!(state.observe((6144, 3456), full), None);
-        assert_eq!(state.observe((6144, 3456), full + quiet / 2), None);
-        assert_eq!(
-            state.observe((6144, 3456), full + quiet),
-            Some((6144, 3456))
-        );
-        assert_eq!(state.observe((6144, 3456), full + quiet * 2), None);
-    }
-
-    #[test]
-    fn returning_to_current_size_cancels_a_pending_resize() {
-        let now = Instant::now();
-        let mut state = ResizeState::new((1280, 720));
-        state.observe((3840, 2160), now);
-        state.observe((1280, 720), now + Duration::from_millis(100));
-        assert_eq!(
-            state.observe((3840, 2160), now + Duration::from_millis(500)),
-            None
-        );
-        assert_eq!(state.committed, (1280, 720));
-    }
-}

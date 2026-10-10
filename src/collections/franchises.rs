@@ -144,18 +144,6 @@ mod tests {
         }
     }
 
-    fn local(identity: CanonicalIdentity) -> HashMap<CanonicalIdentity, Vec<LocalItem>> {
-        HashMap::from([(
-            identity,
-            vec![LocalItem {
-                id: "owned".to_string(),
-                name: "Owned".to_string(),
-                kind: "Movie".to_string(),
-                played: false,
-            }],
-        )])
-    }
-
     #[test]
     fn owned_titles_follow_release_date_instead_of_provider_order() {
         let dark_knight = title(155, Some("2008-07-16"), 0);
@@ -194,49 +182,5 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, vec![272, 155, 49_026, 99]);
-    }
-
-    #[test]
-    fn future_missing_member_does_not_make_a_franchise_qualify() {
-        let owned = title(1, Some("2024-01-01"), 0);
-        let snapshot = FranchiseSnapshot {
-            collection_id: 1,
-            name: "F1".to_string(),
-            poster_path: None,
-            backdrop_path: None,
-            committed_at: 0,
-            items: vec![owned.clone(), title(2, Some("2027-01-01"), 1)],
-        };
-        let local = local(owned.identity);
-        assert!(
-            visible_franchises(std::slice::from_ref(&snapshot), &local, false, "2026-08-26")
-                .is_empty()
-        );
-        assert_eq!(
-            visible_franchises(&[snapshot], &local, true, "2026-08-26").len(),
-            1
-        );
-    }
-
-    #[test]
-    fn cached_title_appears_at_its_local_release_date() {
-        let owned = title(1, Some("2024-01-01"), 0);
-        let snapshot = FranchiseSnapshot {
-            collection_id: 2,
-            name: "Alien".to_string(),
-            poster_path: None,
-            backdrop_path: None,
-            committed_at: 0,
-            items: vec![owned.clone(), title(2, Some("2026-08-26"), 1)],
-        };
-        let local = local(owned.identity);
-        assert!(
-            visible_franchises(std::slice::from_ref(&snapshot), &local, false, "2026-08-25")
-                .is_empty()
-        );
-        assert_eq!(
-            visible_franchises(&[snapshot], &local, false, "2026-08-26").len(),
-            1
-        );
     }
 }

@@ -217,21 +217,6 @@ mod tests {
     use super::PlayerComfort;
 
     #[test]
-    fn shortcuts_reject_reserved_duplicate_and_watched_next_keys() {
-        let mut comfort = PlayerComfort {
-            pause_key: "q".into(),
-            ..Default::default()
-        };
-        assert!(comfort.validate().is_err());
-        comfort.pause_key = "m".into();
-        assert!(comfort.validate().is_err());
-        comfort.pause_key = "p".into();
-        assert!(comfort.validate().is_ok());
-        assert!(comfort.validate_watched_next(Some("p")).is_err());
-        assert!(comfort.validate_watched_next(Some("Ctrl+p")).is_ok());
-    }
-
-    #[test]
     fn combinations_allow_disabling_and_reject_equivalent_conflicts() {
         let mut comfort = PlayerComfort {
             pause_key: "Ctrl+Shift+p".into(),

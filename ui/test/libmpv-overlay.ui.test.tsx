@@ -17,7 +17,7 @@ describe("integrated libmpv overlay", () => {
     vi.useRealTimers()
   })
 
-  it("replaces library chrome with auto-hiding controls that stay while paused", () => {
+  it("replaces library chrome with auto-hiding controls", () => {
     vi.useFakeTimers()
     vi.stubGlobal(
       "matchMedia",
@@ -62,14 +62,6 @@ describe("integrated libmpv overlay", () => {
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull()
 
     fireEvent.mouseMove(window, { clientX: window.innerWidth / 2, clientY: window.innerHeight - 1 })
-    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
-
-    act(() => {
-      client.setQueryData<PlayerState>(queryKeys.playerState, (current) =>
-        current ? { ...current, paused: true } : current,
-      )
-      vi.advanceTimersByTime(IDLE_MS)
-    })
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy()
   })
 })

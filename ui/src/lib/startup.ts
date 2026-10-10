@@ -31,8 +31,3 @@ export function windowRevealed() {
 export function markWindowRevealed() {
   revealed = true
 }
-
-/** Test hook: treat the next startup as a fresh, still-hidden window. */
-export function resetWindowRevealForTests() {
-  revealed = false
-}
