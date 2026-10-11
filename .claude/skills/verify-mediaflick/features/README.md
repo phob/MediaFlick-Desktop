@@ -36,7 +36,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Home](./home.md): billboard, shelves of poster cards, arrows, cards to detail, and the empty states. Proven by `browse`, `home-library` and `home-settings`; the load-error state is not reachable on the demo server.
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort, filters and chips, sidebar search, the empty result. Proven by `browse`, `home-library` and `library-filters`.
 - [Library loading and the retry screen](./bootstrap-retry.md): the startup cover after sign-in, the retry screen when the first catalog page fails (reason, next attempt, Retry now, Sign out), and the window on relaunch. Proven by `bootstrap-retry` with a failing loopback proxy.
-- [Item detail](./item-detail.md): movie, series and episode pages, More info, seasons, episodes, breadcrumbs, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail` and `labels`; toggles need a server you own.
+- [Item detail](./item-detail.md): movie, series and episode pages, the Cast and Crew rails, More info, seasons, episodes, breadcrumbs, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail`, `detail-crew` and `labels`; toggles need a server you own.
 
 ## Unmapped surfaces
 
