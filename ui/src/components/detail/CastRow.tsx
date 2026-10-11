@@ -1,4 +1,4 @@
-import { DetailCastRail } from "@/components/detail/DetailPrimitives"
+import { DetailPeopleRail } from "@/components/detail/DetailPrimitives"
 import { personImageUrl, type Person } from "@/lib/api"
 import { castSearchPath } from "@/lib/cast-search"
 import { castOf } from "@/lib/credits"
@@ -16,5 +16,5 @@ export function CastRow({ people }: { people: Person[] }) {
       to: castSearchPath({ jellyfinId: person.id, name }),
     }
   })
-  return <DetailCastRail entries={entries} />
+  return <DetailPeopleRail heading="Cast" entries={entries} />
 }

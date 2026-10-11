@@ -37,7 +37,7 @@ describe("cast click navigation", () => {
   test("Jellyfin cast links enter exact person mode with keyboard-usable semantics", () => {
     render(<CastRow people={[jellyfinPerson]} />, { wrapper })
 
-    const link = screen.getByRole("link", { name: "Find titles featuring Keanu Reeves" })
+    const link = screen.getByRole("link", { name: "Find titles with Keanu Reeves" })
     expect(link.getAttribute("href")).toContain("mode=person")
     fireEvent.click(link)
 
@@ -52,7 +52,7 @@ describe("cast click navigation", () => {
     }
     render(<Cast detail={detail} />, { wrapper })
 
-    fireEvent.click(screen.getByRole("link", { name: "Find titles featuring Keanu Reeves" }))
+    fireEvent.click(screen.getByRole("link", { name: "Find titles with Keanu Reeves" }))
 
     expect(currentParams().get("tmdbPersonId")).toBe("6384")
     expect(currentParams().get("personName")).toBe("Keanu Reeves")

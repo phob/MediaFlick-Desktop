@@ -28,7 +28,7 @@ export default async function itemDetail(ctx) {
   ctx.check((await ctx.exists({ role: "button", name: "Mark watched" })) || (await ctx.exists({ role: "button", name: "Mark unwatched" })), "the watched toggle")
   const movie = await ctx.snapshot("01-movie")
   ctx.step(`headings: ${JSON.stringify([...movie.matchAll(/heading '([^']+)'/g)].map((match) => match[1]))}`)
-  ctx.step(`cast links: ${[...movie.matchAll(/link 'Find titles featuring /g)].length}`)
+  ctx.step(`cast links: ${[...movie.matchAll(/link 'Find titles with /g)].length}`)
   await ctx.screenshot("01-movie")
   // Opening the menu is safe; its items open the user's browser.
   await ctx.press({ role: "button", name: "More info" })
