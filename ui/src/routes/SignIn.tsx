@@ -1,6 +1,7 @@
-import { Settings2 } from "lucide-react"
-import { useState } from "react"
+import { Check, Copy, Settings2 } from "lucide-react"
+import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { toast } from "sonner"
 import appIcon from "../../../distribution/app-icon.png?inline"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,6 +20,10 @@ import {
   useServerInfo,
   useSettings,
 } from "@/lib/queries"
+import { looksLikeServerAddress } from "@/lib/server-address"
+
+const PROBE_DEBOUNCE_MS = 400
+const COPIED_FEEDBACK_MS = 2000
 
 export default function SignIn() {
   const settings = useSettings()
@@ -32,11 +37,20 @@ export default function SignIn() {
 
   const serverValue = server ?? settings.data?.serverUrl ?? ""
   const serverAddress = serverValue.trim()
-  // Probing only on blur keeps a half-typed address from being dialled on
-  // every keystroke.
-  const [probed, setProbed] = useState<string | null>(null)
-  const probeTarget = probed ?? (server === null ? settings.data?.serverUrl ?? "" : "")
+  const addressComplete = looksLikeServerAddress(serverAddress)
+  // The last address the user settled on, by pausing on a complete-looking
+  // address or by leaving the field. It probes only while the field still holds it.
+  const [settled, setSettled] = useState("")
+  const probeTarget = server === null
+    ? settings.data?.serverUrl ?? ""
+    : settled === serverAddress ? settled : ""
   const info = useServerInfo(probeTarget)
+
+  useEffect(() => {
+    if (!addressComplete) return
+    const timer = window.setTimeout(() => setSettled(serverAddress), PROBE_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [addressComplete, serverAddress])
 
   const quickConnect = useQuickConnectStart()
   const poll = useQuickConnectPoll(quickConnect.data)
@@ -45,9 +59,9 @@ export default function SignIn() {
   const quickConnectAvailable = Boolean(serverAddress && info.data?.quickConnect)
   let quickConnectHelp = "Enter your server address first to use Quick Connect without a password."
   if (serverAddress) {
-    if (!probeTarget) {
-      quickConnectHelp = "Leave the Server field to check Quick Connect availability."
-    } else if (info.isPending) {
+    if (!probeTarget && !addressComplete) {
+      quickConnectHelp = "Finish the server address to check Quick Connect availability."
+    } else if (!probeTarget || info.isPending) {
       quickConnectHelp = "Checking Quick Connect availability…"
     } else if (info.error) {
       quickConnectHelp = "Could not check Quick Connect. Check your server address and connection."
@@ -89,15 +103,12 @@ export default function SignIn() {
                 onChange={(event) => {
                   setServer(event.target.value)
                   if (event.target.value.trim() === serverAddress) return
-                  setProbed("")
                   // Stop displaying and polling a code as soon as its server changes.
                   quickConnect.reset()
                 }}
-                onBlur={(event) => {
-                  const next = event.target.value.trim()
-                  if (next === probed) return
-                  setProbed(next)
-                }}
+                // An address the completeness check does not recognize, such as a
+                // single-label LAN host, is still probed once the user moves on.
+                onBlur={() => setSettled(serverAddress)}
                 placeholder="https://jellyfin.example.com"
                 autoComplete="url"
                 className="h-11 border-edge bg-field"
@@ -110,7 +121,10 @@ export default function SignIn() {
               {quickConnect.data ? (
                 <div className="flex flex-col items-center gap-1">
                   <p className="text-sm text-muted-foreground">In Jellyfin, open your user menu → Quick Connect and enter:</p>
-                  <p className="text-2xl font-medium tracking-[0.3em]">{quickConnect.data.code}</p>
+                  <div className="relative">
+                    <p className="text-2xl font-medium tracking-[0.3em]">{quickConnect.data.code}</p>
+                    <CopyCodeButton code={quickConnect.data.code} />
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {poll.data?.authenticated ? "Approved — signing in…" : "Waiting for approval…"}
                   </p>
@@ -172,5 +186,35 @@ export default function SignIn() {
       </Button>
       </div>
     </div>
+  )
+}
+
+// The page disables text selection, so the code needs its own way to the clipboard.
+function CopyCodeButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const Icon = copied ? Check : Copy
+  return (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost"
+      aria-label={copied ? "Copied" : "Copy code"}
+      className="absolute top-1/2 left-full ml-1 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        navigator.clipboard.writeText(code).then(
+          () => setCopied(true),
+          () => toast.error("Could not copy the code"),
+        )
+      }}
+    >
+      <Icon />
+    </Button>
   )
 }
