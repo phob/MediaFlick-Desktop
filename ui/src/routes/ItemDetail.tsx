@@ -2,7 +2,7 @@ import { useState } from "react"
 import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { Layers } from "lucide-react"
 import { Navigate, useLocation, useParams, useSearchParams, Link } from "react-router-dom"
-import { CastRow } from "@/components/detail/CastRow"
+import { CastRow, CrewRow } from "@/components/detail/CastRow"
 import { DetailActions } from "@/components/detail/DetailActions"
 import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHero } from "@/components/detail/DetailHero"
@@ -188,9 +188,10 @@ export default function ItemDetail() {
         />
       )}
 
-      {/* Cast is live-only; the row appears when the fetch lands and simply
-          stays absent when the server cannot be reached. */}
+      {/* Credits are live-only; the rows appear when the fetch lands and
+          simply stay absent when the server cannot be reached. */}
       <CastRow people={hidden ? [] : about.data?.people ?? []} />
+      <CrewRow people={hidden ? [] : about.data?.people ?? []} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <DetailFacts item={item} about={hidden ? undefined : about.data} />

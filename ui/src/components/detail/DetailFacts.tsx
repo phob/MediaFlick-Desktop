@@ -2,24 +2,21 @@ import type { ReactNode } from "react"
 import { DetailFact, DetailFactPanel } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
 import type { ItemAbout, ItemDetail } from "@/lib/api"
-import { crewOf } from "@/lib/credits"
 import { formatDate } from "@/lib/format"
 
 /**
- * Everything about the item that is not artwork, playback, or a synopsis:
- * credits, studios, dates, and the tags the library was imported with.
- * Credits, studios, and tags come from the live `about` record; the dates and
+ * Everything about the item that is not artwork, playback, credits, or a
+ * synopsis: studios, dates, and the tags the library was imported with.
+ * Studios and tags come from the live `about` record; the dates and
  * play count are on the cached row and stand alone when the server is away.
  */
 export function DetailFacts({ item, about }: { item: ItemDetail; about?: ItemAbout }) {
-  const crew = crewOf(about?.people ?? [])
   const studios = about?.studios ?? []
   const tags = about?.tags ?? []
   const premiere = formatDate(item.premiereDate)
   const added = formatDate(item.dateCreated)
 
   const facts: { label: string; value: ReactNode }[] = [
-    ...crew.map((group) => ({ label: group.job, value: group.names.join(", ") })),
     studios.length ? { label: "Studio", value: studios.join(", ") } : null,
     premiere ? { label: "Premiered", value: premiere } : null,
     added ? { label: "Added", value: added } : null,
