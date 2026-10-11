@@ -126,7 +126,7 @@ Shipped drives. All eleven are proven on Linux; the first three were also proven
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
 - `browse`: sign-in, Home, Movies, search, movie and series detail, sign-out. Read-only against the demo server.
-- `sign-in` (needs `--url https://demo.jellyfin.org/stable`): prefill, Quick Connect code (never approved), user menu, sign-out from Home, remembered server.
+- `sign-in` (needs `--url https://demo.jellyfin.org/stable`): prefill, the Quick Connect probe while the Server field keeps focus, the code (never approved) and its copy button with a clipboard readback, user menu, sign-out from Home, remembered server.
 - `home-library`: billboard ticks, shelf arrows, a card from Home, sort, a decade filter and its chip, an empty search, Favorites. Read-only.
 - `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
 - `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Restore defaults + Save, the Delete local account data dialog (cancelled).
