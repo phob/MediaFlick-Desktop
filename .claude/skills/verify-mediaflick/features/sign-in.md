@@ -16,6 +16,7 @@ A signed-out user connects MediaFlick to a Jellyfin server with a server address
 - Launch MediaFlick with a fresh profile: the sign-in screen is the whole window.
 - Sidebar → user menu (avatar, user name and server host at the bottom) → `Sign out`.
 - A server that rejects the stored token also returns the app to the sign-in screen (`/api/status` reports `expired: true`).
+- A server that accepts the sign-in but cannot deliver the library leads to the retry screen, which also has `Sign out`; see [Library loading and the retry screen](./bootstrap-retry.md).
 
 ## Driving it with ctx (just verify)
 

@@ -6,6 +6,7 @@ import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import Settings from "../src/routes/Settings"
 import { testQueryClient } from "./test-query-client"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const profile: LetterboxdProfile = {
@@ -30,7 +31,7 @@ function NavigationProbe() {
 
 function renderProfiles() {
   const client = testQueryClient()
-  client.setQueryData(queryKeys.status, { authenticated: true, userId: "account-1" })
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: true, userId: "account-1" }))
   client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile] })
   vi.spyOn(api.api.letterboxd, "profiles").mockImplementation(async () => ({
     profiles: client.getQueryData<{ profiles: LetterboxdProfile[] }>(queryKeys.letterboxdProfiles)?.profiles ?? [],
@@ -95,7 +96,7 @@ test("Save commits a pending removal and addition", async () => {
 
 test("Reset restores Letterboxd profile enablement and Save commits it", async () => {
   const client = testQueryClient()
-  client.setQueryData(queryKeys.status, { authenticated: true })
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
   client.setQueryData(queryKeys.letterboxdProfiles, { profiles: [profile] })
   vi.spyOn(api.api.letterboxd, "profiles").mockResolvedValue({ profiles: [{ ...profile, enabled: true }] })
   const setEnabled = vi.spyOn(api.api.letterboxd, "setEnabled").mockResolvedValue({

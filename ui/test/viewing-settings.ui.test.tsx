@@ -10,7 +10,7 @@ import { ViewingSync } from "@/components/ViewingSync"
 import Library from "@/routes/Library"
 import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
-import { itemSummary, playerSnapshot } from "./support/fixtures"
+import { appStatus, itemSummary, playerSnapshot } from "./support/fixtures"
 
 const queryClient = createQueryClient()
 
@@ -19,7 +19,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); queryClient.clear() 
 function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
   queryClient.setQueryDefaults(["status"], {staleTime:Infinity})
   queryClient.setQueryDefaults(["viewing"], {staleTime:Infinity})
-  queryClient.setQueryData(queryKeys.status, {authenticated:true, serverUrl:"server", userId:"user"})
+  queryClient.setQueryData(queryKeys.status, appStatus({authenticated:true, serverUrl:"server", userId:"user"}))
   queryClient.setQueryData(queryKeys.viewing("server:user"), viewing)
 }
 

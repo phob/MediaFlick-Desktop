@@ -23,7 +23,7 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::play::{self, PlayOptions};
 use crate::jellyfin::session::{SessionScope, SessionStatus};
 use crate::library::model::technical_media_streams_json;
-use crate::library::sync::{BootstrapProgress, SyncProgress};
+use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
     ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats,
     resolve_playback_preference, sync,
@@ -419,26 +419,23 @@ struct AppStatus {
     library: LibraryStats,
     syncing: bool,
     last_sync: Option<String>,
-    bootstrapped: bool,
-    library_ready: bool,
-    bootstrap: BootstrapProgress,
+    bootstrap: Bootstrap,
     sync_progress: SyncProgress,
     companion: CompanionStatus,
 }
 
 fn app_status(services: &Services) -> AppStatus {
-    let progress = services
-        .sync
-        .progress(sync::bootstrap_progress(&services.library));
+    let sync = services.sync.status(
+        sync::bootstrap_progress(&services.library),
+        services.session.generation(),
+    );
     AppStatus {
         session: services.session.status(),
         library: services.library.stats(),
         syncing: services.sync.is_running(),
         last_sync: services.library.meta("sync.completed_at").ok().flatten(),
-        bootstrapped: progress.catalog.complete,
-        library_ready: progress.catalog.ready,
-        bootstrap: progress.catalog.clone(),
-        sync_progress: progress,
+        bootstrap: sync.bootstrap,
+        sync_progress: sync.progress,
         companion: services.companion.status(),
     }
 }
@@ -474,8 +471,9 @@ fn startup(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     };
     let status = app_status(services);
     let authenticated = status.session.authenticated;
-    let home =
-        authenticated && status.library_ready && request.param("home").as_deref() == Some("1");
+    let home = authenticated
+        && status.bootstrap == Bootstrap::Ready
+        && request.param("home").as_deref() == Some("1");
     let account_part = |path: &str| {
         if authenticated {
             part(path)
@@ -613,13 +611,11 @@ mod tests {
         for key in [
             "authenticated",
             "bootstrap",
-            "bootstrapped",
             "companion",
             "deviceId",
             "expired",
             "lastSync",
             "library",
-            "libraryReady",
             "serverName",
             "serverUrl",
             "syncProgress",

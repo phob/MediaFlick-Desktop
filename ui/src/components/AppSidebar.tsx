@@ -56,6 +56,7 @@ import {
   useStatus,
   useSyncProgress,
 } from "@/lib/queries"
+import { SYNC_FAILURES } from "@/lib/sync-failure"
 
 const NAV = [
   { title: "Home", to: "/", icon: House },
@@ -139,9 +140,8 @@ export function LibrarySyncProgress() {
   if (!progress) return null
 
   const catalog = progress.catalog
-  const error = progress.error
-  const retryAt = progress.retryAt
-  const isRetrying = progress.phase === "retrying"
+  const retry = progress.retry
+  const isRetrying = retry !== null
   const phase = isRetrying
     ? "Synchronization paused"
     : progress.phase === "catalog"
@@ -149,12 +149,10 @@ export function LibrarySyncProgress() {
       : "Refreshing library"
   const current = catalog.processed
   const total = catalog.total
-  const determinate = progress.phase === "catalog"
-  const retryLabel = retryAt
-    ? `Retry scheduled for ${new Date(retryAt * 1_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-    : "Retry scheduled automatically"
-  const detail = isRetrying
-    ? retryLabel
+  const determinate = !isRetrying && progress.phase === "catalog"
+  const error = retry ? SYNC_FAILURES[retry.reason].title : null
+  const detail = retry
+    ? `Retry scheduled for ${new Date(retry.retryAt * 1_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
     : determinate && total != null && total > 0
       ? `${Math.min(current, total).toLocaleString()} of ${total.toLocaleString()}`
       : "Working in the background"

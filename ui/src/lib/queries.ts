@@ -59,13 +59,13 @@ function reportError(client: QueryClient) {
  * with every committed page, so they are left out here: a poll during a sync
  * then keeps the same `data` reference and does not re-render the observers.
  */
-export type SessionStatus = Omit<Status, "library" | "lastSync" | "bootstrap" | "syncProgress"> & {
+export type SessionStatus = Omit<Status, "library" | "lastSync" | "syncProgress"> & {
   catalogComplete: boolean
 }
 
 export function sessionStatus(status: Status): SessionStatus {
-  const { library: _library, lastSync: _lastSync, bootstrap, syncProgress: _syncProgress, ...session } = status
-  return { ...session, catalogComplete: Boolean(bootstrap?.complete ?? status.bootstrapped) }
+  const { library: _library, lastSync: _lastSync, syncProgress, ...session } = status
+  return { ...session, catalogComplete: syncProgress.catalog.complete }
 }
 
 function selectSyncProgress(status: Status) {
@@ -79,9 +79,9 @@ export function useStatus() {
 /**
  * The status pulse. Every observer with an interval runs its own timer, so
  * only the root mounts this one. A new account is gated only until its first
- * catalog page commits. Keep a slower status pulse while background phases are
- * active so the compact sidebar indicator advances without invalidating media
- * queries per item.
+ * catalog page commits, and the retry screen waits for the same page. Keep a
+ * slower status pulse while background phases are active so the compact
+ * sidebar indicator advances without invalidating media queries per item.
  */
 export function useStatusPulse() {
   return useQuery({
@@ -90,7 +90,7 @@ export function useStatusPulse() {
     select: sessionStatus,
     refetchInterval: (query) => {
       const status = query.state.data
-      if (status?.authenticated && !(status.libraryReady ?? status.bootstrapped)) return 500
+      if (status?.authenticated && status.bootstrap.state !== "ready") return 500
       return status?.authenticated && status.syncProgress?.active ? 2_000 : false
     },
   })
