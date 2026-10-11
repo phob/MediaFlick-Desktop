@@ -29,6 +29,7 @@ impl LibmpvOverlaySurface {
     pub(super) fn select(
         _settings: &AppSettings,
         _playback: Arc<PlaybackCoordinator>,
+        _state: super::BrowserState,
     ) -> Option<Rc<Self>> {
         None
     }

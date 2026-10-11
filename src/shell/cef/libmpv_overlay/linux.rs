@@ -15,7 +15,7 @@ use x11rb::protocol::{Event, xproto::*};
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
 use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
-use crate::shell::cef::app_scheme;
+use crate::shell::cef::{BrowserState, app_scheme, request_main_window_close};
 use scale::Scale;
 use window::OverlayWindow;
 
@@ -52,6 +52,7 @@ struct Geometry {
 }
 
 pub(crate) struct LibmpvOverlaySurface {
+    state: BrowserState,
     playback: Arc<PlaybackCoordinator>,
     window: RefCell<Option<OverlayWindow>>,
     browser: RefCell<Option<Browser>>,
@@ -72,15 +73,17 @@ pub(crate) struct LibmpvOverlaySurface {
 }
 
 impl LibmpvOverlaySurface {
-    pub(crate) fn select(
+    pub(in crate::shell::cef) fn select(
         settings: &AppSettings,
         playback: Arc<PlaybackCoordinator>,
+        state: BrowserState,
     ) -> Option<Rc<Self>> {
         if !is_configured(settings) {
             return None;
         }
         let (width, height) = settings.webui_window.size();
         Some(Rc::new(Self {
+            state,
             playback,
             window: RefCell::new(None),
             browser: RefCell::new(None),
@@ -271,10 +274,27 @@ impl LibmpvOverlaySurface {
         }
     }
 
+    /// The user's close request. Leaves the overlay running when the window
+    /// minimizes or the page keeps it open.
+    fn request_close(&self) {
+        let browser = self.browser.borrow().clone();
+        request_main_window_close(Some(&self.state), browser, || {
+            if let Some(window) = self.window.borrow().as_ref()
+                && let Err(error) = window.iconify()
+            {
+                tracing::warn!(target: "cef.osr", "failed to minimize the Linux window: {error}");
+            }
+        });
+    }
+
+    /// Closes after the window or its composition failed; nothing may cancel it.
     fn close(&self) {
         if !self.closing.replace(true)
             && let Some(host) = self.browser_host()
         {
+            if let Ok(mut state) = self.state.lock() {
+                state.force_close_requested = true;
+            }
             host.close_browser(1);
         }
     }
@@ -339,7 +359,10 @@ impl LibmpvOverlaySurface {
         if self.closing.get() {
             return false;
         }
-        if crate::players::mpv::take_window_close_request() || self.sync_geometry().is_err() {
+        if crate::players::mpv::take_window_close_request() {
+            self.request_close();
+        }
+        if self.sync_geometry().is_err() {
             self.close();
             return false;
         }
@@ -408,7 +431,7 @@ impl LibmpvOverlaySurface {
                     .as_ref()
                     .is_some_and(|w| e.data.as_data32()[0] == w.delete);
                 if close {
-                    self.close();
+                    self.request_close();
                 }
             }
             _ => {}
@@ -512,7 +535,7 @@ impl LibmpvOverlaySurface {
         };
         if e.state.contains(KeyButMask::MOD1) && symbols.0 == 0xffc1 {
             if !up {
-                self.close();
+                self.request_close();
             }
             return;
         }

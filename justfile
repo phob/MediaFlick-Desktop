@@ -206,6 +206,7 @@ verify drive *args: build
 [group('test')]
 [linux]
 verify drive *args: build
+    cargo build --example verify-wm-close
     bash .claude/skills/verify-mediaflick/scripts/isolate-linux.sh node .claude/skills/verify-mediaflick/scripts/session.mjs {{drive}} {{args}}
 
 # Read-only preflight for `just verify`: build staleness, prerequisites, leftovers, last result

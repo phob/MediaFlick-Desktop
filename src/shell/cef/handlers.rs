@@ -28,6 +28,10 @@ wrap_client! {
             Some(JellyfinKeyboardHandler::new(self.state.clone()))
         }
 
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            Some(JellyfinJsdialogHandler::new(self.state.clone()))
+        }
+
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
             Some(JellyfinLifeSpanHandler::new(
                 self.state.clone(),
@@ -47,6 +51,40 @@ wrap_client! {
             self.overlay_surface
                 .as_ref()
                 .and_then(|surface| surface.render_handler())
+        }
+    }
+}
+
+wrap_jsdialog_handler! {
+    struct JellyfinJsdialogHandler {
+        state: BrowserState,
+    }
+
+    impl JsdialogHandler {
+        // CEF has no visible beforeunload dialog for the windowless browser,
+        // and the page's renderer blocks until one is answered. Cancel the
+        // unload and let the page ask with its own dialog; leaving then calls
+        // window.close(). A forced close (exit for an update, or a vanished
+        // native window) proceeds without asking.
+        fn on_before_unload_dialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            _message_text: Option<&CefString>,
+            is_reload: i32,
+            callback: Option<&mut JsdialogCallback>,
+        ) -> i32 {
+            let forced = self
+                .state
+                .lock()
+                .is_ok_and(|state| state.force_close_requested);
+            tracing::info!(target: "app", forced, is_reload, "page asked to confirm leaving");
+            if let Some(callback) = callback {
+                callback.cont(i32::from(forced), None);
+            }
+            if !forced {
+                dispatch_shell_event(&self.state, "window-close-blocked", json!({}));
+            }
+            1
         }
     }
 }
