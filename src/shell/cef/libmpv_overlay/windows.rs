@@ -28,20 +28,20 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowThreadProcessId, HHOOK, HTCLIENT, HWND_TOP, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS,
     IDC_HAND, IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
     IDC_SIZEWE, IDC_WAIT, IsIconic, IsWindow, IsZoomed, LoadCursorW, MSG, PostMessageW,
-    RegisterClassW, SW_MAXIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetCursor, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow, UnhookWindowsHookEx,
-    WH_CALLWNDPROCRET, WH_GETMESSAGE, WM_APP, WM_CHAR, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN,
-    WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCREATE,
-    WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS,
-    WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
-    WNDCLASSW, WS_CHILD, WS_VISIBLE, XBUTTON1, XBUTTON2,
+    RegisterClassW, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SetCursor, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow,
+    UnhookWindowsHookEx, WH_CALLWNDPROCRET, WH_GETMESSAGE, WM_APP, WM_CHAR, WM_CLOSE,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCCREATE, WM_NCDESTROY, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP,
+    WM_SETCURSOR, WM_SETFOCUS, WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDBLCLK,
+    WM_XBUTTONDOWN, WM_XBUTTONUP, WNDCLASSW, WS_CHILD, WS_VISIBLE, XBUTTON1, XBUTTON2,
 };
 use windows_sys::core::PCWSTR;
 
 use crate::playback::{NativeWindowHandle, PlaybackCoordinator, PlayerCommand};
 use crate::preferences::{AppSettings, PlayerBackend, WebUiWindowSettings};
-use crate::shell::cef::app_scheme;
+use crate::shell::cef::{BrowserState, app_scheme, request_main_window_close};
 
 use self::compositor::Compositor;
 
@@ -112,6 +112,7 @@ impl Default for HostCloseHooks {
 }
 
 pub(crate) struct LibmpvOverlaySurface {
+    state: BrowserState,
     playback: Arc<PlaybackCoordinator>,
     host: Cell<HWND>,
     input: Cell<HWND>,
@@ -130,15 +131,17 @@ pub(crate) struct LibmpvOverlaySurface {
 }
 
 impl LibmpvOverlaySurface {
-    pub(crate) fn select(
+    pub(in crate::shell::cef) fn select(
         settings: &AppSettings,
         playback: Arc<PlaybackCoordinator>,
+        state: BrowserState,
     ) -> Option<Rc<Self>> {
         if !is_configured(settings) {
             return None;
         }
         let (width, height) = settings.webui_window.size();
         Some(Rc::new(Self {
+            state,
             playback,
             host: Cell::new(null_mut()),
             input: Cell::new(null_mut()),
@@ -374,9 +377,23 @@ impl LibmpvOverlaySurface {
         true
     }
 
+    /// The user's close request. Leaves the overlay running when the window
+    /// minimizes or the page keeps it open.
+    fn request_close(&self) {
+        let browser = self.browser.borrow().clone();
+        request_main_window_close(Some(&self.state), browser, || {
+            // SAFETY: Win32 validates the window handle and fails the call for a stale one; no Rust memory is involved.
+            unsafe { ShowWindow(self.host.get(), SW_MINIMIZE) };
+        });
+    }
+
+    /// Closes after the native window vanished; nothing may cancel it.
     fn close_browser(&self) {
         if self.closing.replace(true) {
             return;
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.force_close_requested = true;
         }
         self.with_browser_host(|browser_host| browser_host.close_browser(1));
     }
@@ -836,7 +853,7 @@ fn dispatch_window_message(
     match message {
         WM_ERASEBKGND => Some(1),
         WM_HOST_CLOSE_REQUESTED => {
-            surface.close_browser();
+            surface.request_close();
             Some(0)
         }
         WM_SETCURSOR if low_word(lparam) == HTCLIENT => {
