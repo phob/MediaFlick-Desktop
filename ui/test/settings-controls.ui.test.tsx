@@ -5,6 +5,7 @@ import { api, type ClientSettings } from "@/lib/api"
 import { createQueryClient, queryKeys } from "@/lib/query-client"
 import { DEFAULT_VIEWING } from "@/lib/viewing"
 import Settings from "@/routes/Settings"
+import { appStatus } from "./support/fixtures"
 import { clientSettingsFixture } from "./support/settings"
 import { TestProviders } from "./test-utils"
 
@@ -16,7 +17,7 @@ function page(route: string, platform: "windows" | "macos" = "windows", cached: 
   const settings = clientSettingsFixture()
   settings.capabilities.platform = platform
   if (platform === "macos") { settings.capabilities.libmpv = false; settings.client.player.playerBackend = "mpv" }
-  queryClient.setQueryData(queryKeys.status, { authenticated: true, serverUrl: "https://jellyfin.example", userId: "user", libraryReady: true })
+  queryClient.setQueryData(queryKeys.status, appStatus({ authenticated: true, serverUrl: "https://jellyfin.example", userId: "user" }))
   queryClient.setQueryData(queryKeys.settings, cached(settings))
   queryClient.setQueryData(queryKeys.viewing("https://jellyfin.example:user"), { ...DEFAULT_VIEWING })
   queryClient.setQueryData(queryKeys.home, { rows: [], continueWatching: [] })

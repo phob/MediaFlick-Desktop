@@ -68,6 +68,8 @@ pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapProgress {
     pub complete: bool,
+    /// Reported as [`Bootstrap::Ready`], the one readiness signal the UI reads.
+    #[serde(skip)]
     pub ready: bool,
     pub processed: i64,
     pub total: Option<i64>,
@@ -181,16 +183,70 @@ pub(super) struct Flags {
 pub enum SyncPhase {
     Catalog,
     Reconciling,
-    Retrying,
     #[default]
     Complete,
 }
 
-#[derive(Debug, Clone, Default)]
+/// Why a cycle failed, in the categories a person can act on. The UI words
+/// them; raw transport and decoder text stays in the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncFailure {
+    /// No connection: DNS, TLS, refused, reset, or timed out.
+    Unreachable,
+    /// The server answered, but not with a usable page.
+    Server,
+    /// The local library database failed.
+    Storage,
+}
+
+impl SyncFailure {
+    fn of(error: &ApiError) -> Self {
+        match error {
+            ApiError::Transport(_) => Self::Unreachable,
+            ApiError::Storage(_) => Self::Storage,
+            ApiError::Unauthorized
+            | ApiError::Status { .. }
+            | ApiError::RateLimited { .. }
+            | ApiError::Remote { .. }
+            | ApiError::Decode(_)
+            | ApiError::NotConfigured
+            | ApiError::Cancelled => Self::Server,
+        }
+    }
+}
+
+/// A failed cycle and when the worker tries again on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Retry {
+    pub reason: SyncFailure,
+    pub retry_at: i64,
+}
+
+/// What the shell gates on after sign-in: Home needs a usable catalog. Until
+/// then the catalog is loading, or its last attempt failed and a retry is due.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum Bootstrap {
+    Loading,
+    Retrying(Retry),
+    Ready,
+}
+
+/// The last failure outlives the next attempt, so a person retrying sees the
+/// reason until a page arrives. It belongs to the session generation it
+/// failed under; a sign-out or account switch leaves it behind.
+#[derive(Debug, Clone, Copy)]
+struct Failure {
+    generation: u64,
+    retry: Retry,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub(super) struct WorkerState {
     phase: SyncPhase,
-    error: Option<String>,
-    retry_at: Option<i64>,
+    failure: Option<Failure>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,8 +255,15 @@ pub struct SyncProgress {
     pub active: bool,
     pub phase: SyncPhase,
     pub catalog: BootstrapProgress,
-    pub error: Option<String>,
-    pub retry_at: Option<i64>,
+    /// Set while the worker waits out a failure.
+    pub retry: Option<Retry>,
+}
+
+/// `SyncHandle::status`: the sidebar's progress and the shell's gate, read
+/// from one snapshot of the worker.
+pub struct SyncStatus {
+    pub progress: SyncProgress,
+    pub bootstrap: Bootstrap,
 }
 
 /// Runs after a cycle that changed what the library holds.
@@ -301,44 +364,60 @@ impl SyncHandle {
         self.running.load(Ordering::Relaxed)
     }
 
-    pub fn progress(&self, catalog: BootstrapProgress) -> SyncProgress {
-        let state = self
-            .state
-            .lock()
-            .map(|state| state.clone())
-            .unwrap_or_default();
-        let active = self.is_running() || !catalog.complete;
-        let phase = if state.phase == SyncPhase::Retrying && active {
-            SyncPhase::Retrying
-        } else if self.is_running() {
+    /// `generation` is the current session's; failures from another are not
+    /// reported.
+    pub fn status(&self, catalog: BootstrapProgress, generation: u64) -> SyncStatus {
+        let state = self.state.lock().map(|state| *state).unwrap_or_default();
+        let retry = state
+            .failure
+            .filter(|failure| failure.generation == generation)
+            .map(|failure| failure.retry);
+        let running = self.is_running();
+        let active = running || !catalog.complete;
+        let phase = if running {
             state.phase
         } else if !catalog.complete {
             SyncPhase::Catalog
         } else {
             SyncPhase::Complete
         };
-        SyncProgress {
-            active,
-            phase,
-            catalog,
-            error: state.error,
-            retry_at: state.retry_at,
+        let bootstrap = if catalog.ready {
+            Bootstrap::Ready
+        } else {
+            retry.map_or(Bootstrap::Loading, Bootstrap::Retrying)
+        };
+        SyncStatus {
+            progress: SyncProgress {
+                active,
+                phase,
+                catalog,
+                retry: retry.filter(|_| active && !running),
+            },
+            bootstrap,
         }
     }
 
     pub(super) fn set_phase(&self, phase: SyncPhase) {
         if let Ok(mut state) = self.state.lock() {
             state.phase = phase;
-            state.error = None;
-            state.retry_at = None;
         }
     }
 
-    pub(super) fn set_retry(&self, error: &ApiError, delay: Duration) {
+    pub(super) fn set_retry(&self, error: &ApiError, delay: Duration, generation: u64) {
         if let Ok(mut state) = self.state.lock() {
-            state.phase = SyncPhase::Retrying;
-            state.error = Some(error.to_string());
-            state.retry_at = Some(now_unix() as i64 + delay.as_secs() as i64);
+            state.failure = Some(Failure {
+                generation,
+                retry: Retry {
+                    reason: SyncFailure::of(error),
+                    retry_at: now_unix() as i64 + delay.as_secs() as i64,
+                },
+            });
+        }
+    }
+
+    pub(super) fn clear_failure(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.failure = None;
         }
     }
 

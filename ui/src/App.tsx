@@ -2,6 +2,7 @@ import { ViewingContext, useViewing } from "@/lib/viewing"
 import { ViewingSync } from "@/components/ViewingSync"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
+import { BootstrapRetry } from "@/components/BootstrapRetry"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { SeerrGate } from "@/components/seerr/SeerrGate"
 import { WindowTitleSync } from "@/components/WindowTitleSync"
@@ -36,15 +37,14 @@ export default function App() {
   const settings = useSettings()
   const viewing = useViewing()
   const location = useLocation()
-  const waitingForLibrary = Boolean(
-    status?.authenticated && !(status.libraryReady ?? status.bootstrapped),
-  )
+  const bootstrap = status?.authenticated ? status.bootstrap : null
+  const catalogLoading = bootstrap?.state === "loading"
   // Device-owned player and application configuration remain available from
   // the sign-in screen. Account-owned settings explain that sign-in is needed.
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
   const showingHome = location.pathname === "/"
   const showShell = Boolean(status?.authenticated || showingSettings)
-  const initialHomeEnabled = Boolean(status?.authenticated && !waitingForLibrary && showingHome)
+  const initialHomeEnabled = bootstrap?.state === "ready" && showingHome
   // Prime the two SQLite-backed home queries before the startup cover leaves.
   // Home observes the same keys, so React Query deduplicates these reads.
   const initialHome = useHome(initialHomeEnabled)
@@ -52,7 +52,7 @@ export default function App() {
   const ready = startupScreenReady({
     statusPending: isPending,
     settingsPending: settings.isPending,
-    waitingForLibrary,
+    catalogLoading,
     showingSettings,
     initialHomeEnabled,
     homePending: initialHome.isPending,
@@ -61,8 +61,10 @@ export default function App() {
 
   return (
     <ViewingContext value={viewing.data ?? null}>
-      {isPending || (waitingForLibrary && !showingSettings) ? (
+      {isPending || (catalogLoading && !showingSettings) ? (
         <div className="h-full bg-background" aria-hidden />
+      ) : bootstrap?.state === "retrying" && !showingSettings ? (
+        <BootstrapRetry retry={bootstrap} attempting={Boolean(status?.syncing)} />
       ) : !showShell ? (
         // One gate for the whole app: the Rust session is the source of truth,
         // and `/api/status` re-reports it after the server rejects a stored

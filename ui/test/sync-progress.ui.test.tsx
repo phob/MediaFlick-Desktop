@@ -10,14 +10,13 @@ const queryClient = createQueryClient()
 
 const catalog = {
   complete: true,
-  ready: true,
   processed: 120,
   total: 120,
   initial: false,
 }
 
 function status(progress: SyncProgress): Status {
-  return appStatus({ authenticated: true, libraryReady: true, syncProgress: progress })
+  return appStatus({ authenticated: true, syncProgress: progress })
 }
 
 function renderProgress(progress: SyncProgress) {
@@ -37,8 +36,7 @@ describe("sidebar synchronization progress", () => {
       active: true,
       phase: "catalog",
       catalog: { ...catalog, complete: false, processed: 40 },
-      error: null,
-      retryAt: null,
+      retry: null,
     })
 
     const bar = screen.getByRole("progressbar", { name: "Loading library" })

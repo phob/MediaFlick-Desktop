@@ -10,7 +10,6 @@ const status = appStatus({
   authenticated: true,
   serverUrl: "https://jellyfin.example",
   userId: "user-1",
-  libraryReady: true,
 })
 
 function startup(overrides: Partial<StartupResponse> = {}): StartupResponse {

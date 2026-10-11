@@ -27,6 +27,7 @@ import {
   isLinux,
   killPids,
   listProcesses,
+  mainWindowShown,
   profileParent,
   realProfileDirs,
   root,
@@ -167,7 +168,7 @@ async function launch() {
   return port
 }
 
-async function doctor(port) {
+async function doctor(port, file = "doctor.json") {
   const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()
   const href = await app.evaluate("location.href")
   await app.waitFor("document.readyState === 'complete' && !!document.querySelector('#root')?.childElementCount", { timeout: 30000 })
@@ -181,7 +182,7 @@ async function doctor(port) {
     profile: { root: profile, configDir, dataDir, files: readdirSync(configDir) },
     processes: processes.map(({ pid, ppid, name }) => ({ pid, ppid, name })),
   }
-  writeJson("doctor.json", report)
+  writeJson(file, report)
   const problems = []
   if (!href.startsWith("mediaflick-desktop://app")) problems.push(`CDP page is ${href}, not the app`)
   if (status.status !== 200) problems.push(`/api/status answered ${status.status}`)
@@ -203,19 +204,20 @@ function gitHead() {
 
 // Closes the window the way the app's own close path does, so save-on-exit
 // runs, then falls back to stopping exactly the processes this run started.
-async function teardown() {
-  if (!child) return
+// Returns how the app exited and any process that outlived it.
+async function closeApp() {
+  let exit
   if (child.exitCode === null && child.signalCode === null && app) {
     log("closing the app window")
     // A stalled CDP link must not hold teardown; the exit wait covers it.
     await within(app.evaluate("window.close(), true").catch(() => {}), 5000, () => {})
     const closed = await within(child.exited.then(() => true), 20000, () => false)
-    result.exit = closed ? "coordinated" : "forced"
+    exit = closed ? "coordinated" : "forced"
   } else {
-    result.exit = child.exitCode === null && child.signalCode === null ? "forced" : "exited-early"
+    exit = child.exitCode === null && child.signalCode === null ? "forced" : "exited-early"
   }
   app?.close()
-  if (result.exit === "forced") {
+  if (exit === "forced") {
     log(`app did not exit; stopping pid ${child.pid} and its children`)
     killPids([child.pid], { tree: true })
   }
@@ -230,7 +232,25 @@ async function teardown() {
     await sleep(500)
   }
   const left = ours()
-  if (left.length) result.leftovers = left.map(({ pid, name }) => ({ pid, name }))
+  return { exit, leftovers: left.map(({ pid, name }) => ({ pid, name })) }
+}
+
+async function teardown() {
+  if (!child) return
+  const { exit, leftovers } = await closeApp()
+  result.exit = exit
+  if (leftovers.length) result.leftovers = leftovers
+}
+
+// A drive's `ctx.relaunch()`: the same profile, a new process. The single
+// instance gate would hand a second launch to a surviving process, so the
+// first one must be gone entirely.
+async function relaunch() {
+  const { exit, leftovers } = await closeApp()
+  if (exit !== "coordinated" || leftovers.length) throw new Error(`relaunch: the app exited ${exit}${leftovers.length ? ` and left ${JSON.stringify(leftovers)}` : ""}`)
+  log(`relaunching on the same profile (exit: ${exit})`)
+  await doctor(await launch(), "doctor-relaunch.json")
+  return app
 }
 
 async function failureEvidence(harness) {
@@ -255,7 +275,7 @@ let harness
 try {
   const port = await launch()
   await doctor(port)
-  harness = createHarness({ app, child, evidence, configDir, dataDir, log })
+  harness = createHarness({ app, currentChild: () => child, evidence, configDir, dataDir, log, relaunchApp: relaunch, windowShown: () => mainWindowShown(child.pid) })
   const drive = (await import(pathToFileURL(drivePath).href)).default
   if (typeof drive !== "function") throw new Error(`${result.drive} must export a default async function (ctx)`)
   log(`drive ${result.drive}`)
@@ -270,6 +290,7 @@ try {
   await failureEvidence(harness)
 } finally {
   await teardown()
+  await harness?.dispose()
   collectProfile()
   const guardAfter = fingerprint()
   const changed = Object.keys(guardBefore).filter((file) => JSON.stringify(guardBefore[file]) !== JSON.stringify(guardAfter[file]))

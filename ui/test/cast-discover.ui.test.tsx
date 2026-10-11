@@ -23,11 +23,7 @@ const linked: SeerrStatusInfo = {
   quota: null,
 }
 
-const signedIn: Status = appStatus({
-  authenticated: true,
-  bootstrapped: true,
-  bootstrap: { complete: true, ready: true, processed: 100, total: 100, initial: false },
-})
+const signedIn: Status = appStatus({ authenticated: true })
 
 function result(patch: Partial<SeerrResult>): SeerrResult {
   return {
@@ -85,8 +81,12 @@ describe("cast Discover results", () => {
     })
     const client = clientWithStatus(linked, {
       ...signedIn,
-      bootstrapped: false,
-      bootstrap: { complete: false, ready: true, processed: 200, total: 1000, initial: true },
+      syncProgress: {
+        active: true,
+        phase: "catalog",
+        catalog: { complete: false, processed: 200, total: 1000, initial: true },
+        retry: null,
+      },
     })
     render(
       <CastDiscover personName="Keanu Reeves" jellyfinId={null} tmdbId={6384} />,

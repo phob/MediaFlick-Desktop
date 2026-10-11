@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import type { ClientSettings, RatingsIntegrationStatus } from "@/lib/api"
 import { queryKeys } from "@/lib/query-client"
 import { Appearance } from "@/routes/settings/AppearanceSettings"
-import { itemSummary, requireElement } from "./support/fixtures"
+import { appStatus, itemSummary, requireElement } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -60,7 +60,7 @@ function renderAppearance(cardPreviews: boolean) {
   const client = testQueryClient()
   client.setQueryData(queryKeys.settings, settings(cardPreviews))
   client.setQueryData(queryKeys.viewing("anonymous:anonymous"), DEFAULT_VIEWING)
-  client.setQueryData(queryKeys.status, { authenticated: true })
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
   client.setQueryData(queryKeys.home, {
     continueWatching: [],
     rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently Added", items: [movie] }],

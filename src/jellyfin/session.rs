@@ -126,6 +126,12 @@ impl Session {
         AccountKey::new(state.server_id?, state.user_id?)
     }
 
+    /// Changes on every sign-in, sign-out and account switch, so work started
+    /// under one session can tell it no longer applies.
+    pub fn generation(&self) -> u64 {
+        self.read().generation
+    }
+
     pub fn is_authenticated(&self) -> bool {
         let state = self.read();
         !state.expired

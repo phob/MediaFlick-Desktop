@@ -79,11 +79,13 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
         handle.running.store(normal_due, Ordering::Relaxed);
 
         if normal_due {
+            let generation = session.generation();
             let outcome = run_cycle_inner(library, session, trigger, Some(handle));
             trigger = Trigger::Scheduled;
             let delay = match outcome {
                 Ok(report) => {
                     backoff = Duration::ZERO;
+                    handle.clear_failure();
                     if report.changed() {
                         tracing::info!(
                             target: "library.sync",
@@ -121,7 +123,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                         ),
                     );
                     let delay = retry_delay(&error, jittered(backoff));
-                    handle.set_retry(&error, delay);
+                    handle.set_retry(&error, delay, generation);
                     delay
                 }
             };
