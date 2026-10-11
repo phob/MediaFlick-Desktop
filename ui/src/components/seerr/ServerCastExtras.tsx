@@ -31,12 +31,12 @@ export function ServerCastExtras({
   return (
     <section
       className="flex flex-col gap-4 pt-8"
-      aria-label={`More server titles featuring ${personName}`}
+      aria-label={`More server titles with ${personName}`}
     >
       <div>
         <h2 className="section-title">More on your Jellyfin server</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Titles featuring {personName} that your server has, found through their complete cast credits.
+          Titles with {personName} that your server has, found through their complete credits.
         </p>
       </div>
       <div className="flex flex-wrap gap-[var(--card-gap)]">

@@ -1,6 +1,6 @@
 # Library and search
 
-The library shows a virtualized grid of poster cards for Movies, Series or Favorites, with sort and filter controls. Typing in the sidebar search shows matching titles in the same grid; an exact person match adds a "Featuring <name>" section below it.
+The library shows a virtualized grid of poster cards for Movies, Series or Favorites, with sort and filter controls. Typing in the sidebar search shows matching titles in the same grid; an exact person match adds a "With <name>" section below it.
 
 ## Sub-features
 
@@ -41,5 +41,5 @@ Preconditions:
 - `Night of the Living Dead` also appears in the Movies grid; a press before the search commits can open it from the wrong page.
 - The sidebar stays expanded over the grid while the pointer rests on it, which it does after `ctx.fill` into the search field; focus alone does not hold it open. `ctx.press` waits, then parks the pointer if a card is still covered.
 - The collapsed sidebar's `Search` icon is a plain link to `/library` (the Movies view), and an invisible group label covers it. Pointing at the sidebar expands it into the search field first, so the field is the pointer path.
-- People never appear in the grid. An exact Jellyfin person match adds a `Titles featuring <name>` section below it; with a linked Companion, a `Not in your library` section follows. Source-only; the demo server has no Companion.
+- People never appear in the grid. An exact Jellyfin person match adds a `Titles with <name>` section (headed `With <name>`) below it; with a linked Companion, a `Not in your library` section follows. Source-only; the demo server has no Companion.
 - The library defaults to `kind=Movie` when no `kind`, `search` or `favorite` is given. Plain Movies and Series views can also apply remembered filters or "hide watched" without showing them in the URL; both preferences are off in a fresh profile.
