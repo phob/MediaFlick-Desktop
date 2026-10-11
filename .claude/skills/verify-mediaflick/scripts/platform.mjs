@@ -171,6 +171,21 @@ export function sendWindowClose(watchMs) {
   return JSON.parse(execFileSync(tool, ["io.github.phob.MediaFlickDesktop", String(watchMs)], { encoding: "utf8" }))
 }
 
+// Whether the app's main window is shown to the user. The native window starts
+// hidden and the UI's first ready report reveals it, so a UI that never
+// reports ready leaves a running app with no window.
+export function mainWindowShown(pid) {
+  if (isWindows) {
+    // .NET reports a MainWindowHandle only for a visible top-level window.
+    return pwsh(`(Get-Process -Id ${Number(pid)}).MainWindowHandle -ne 0`).trim() === "True"
+  }
+  // The private display holds only this run's app, so its WM_CLASS finds it.
+  const tree = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8" })
+  const id = tree.match(/^\s*(0x[0-9a-f]+) .*\("io\.github\.phob\.MediaFlickDesktop" /m)?.[1]
+  if (!id) throw new Error("no MediaFlick window on the display")
+  return /Map State: IsViewable/.test(execFileSync("xwininfo", ["-id", id], { encoding: "utf8" }))
+}
+
 export const isAppProcess = (row) => /^mediaflick-desktop(\.exe)?$/i.test(row.name)
 
 // Stops exactly the given PIDs and, with tree, the processes they started.

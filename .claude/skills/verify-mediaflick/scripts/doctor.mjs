@@ -52,6 +52,7 @@ if (isWindows) {
     if (!found) problems.push(`${tool} is required for the Xvfb wrapper`)
   }
   line("dbus-run-session", which("dbus-run-session") || "missing (optional: the app then runs with no session bus)")
+  line("xwininfo", which("xwininfo") || "missing (optional: only ctx.windowShown() needs it)")
   if (existsSync(exe) && !existsSync(path.join(buildDir, "libcef.so"))) problems.push("build/libcef.so is missing; run `just build`")
 }
 

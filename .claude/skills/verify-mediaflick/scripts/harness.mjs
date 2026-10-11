@@ -7,11 +7,15 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } fro
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
 import { sendWindowClose } from "./platform.mjs"
+import { startProxy } from "./proxy.mjs"
 
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
 const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded", "selected", "invalid", "required", "readonly"]
 
-export function createHarness({ app, child, evidence, configDir, dataDir, log }) {
+export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown }) {
+  // Replaced by `relaunch`; every helper reads the current app.
+  let app = firstApp
+  const proxies = []
   const step = (text) => log(text)
 
   function check(condition, message) {
@@ -307,14 +311,32 @@ export function createHarness({ app, child, evidence, configDir, dataDir, log })
   // Resolves to { code, signal } once the app exits, or null after `timeout`.
   async function appExit(timeout) {
     let timer
-    const exit = await Promise.race([child.exited, new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout) })])
+    const exit = await Promise.race([currentChild().exited, new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout) })])
     clearTimeout(timer)
     log(exit ? `app exited (code ${exit.code}, signal ${exit.signal})` : `app still running after ${timeout} ms`)
     return exit
   }
 
+  // Closes the app through its own close path and starts it again on the same
+  // profile, as a user quitting and reopening MediaFlick.
+  async function relaunch() {
+    app = await relaunchApp()
+  }
+
+  async function proxy({ upstream, fail }) {
+    const started = await startProxy({ upstream, fail, log })
+    proxies.push(started)
+    return started
+  }
+
+  async function dispose() {
+    await Promise.all(proxies.map((started) => started.close()))
+  }
+
   return {
-    app,
+    get app() {
+      return app
+    },
     evidence,
     configDir,
     dataDir,
@@ -343,6 +365,10 @@ export function createHarness({ app, child, evidence, configDir, dataDir, log })
     signIn,
     wmClose,
     appExit,
+    relaunch,
+    windowShown,
+    proxy,
+    dispose,
     sleep,
   }
 }
