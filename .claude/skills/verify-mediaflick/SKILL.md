@@ -125,6 +125,8 @@ Shipped drives. All seven are proven on Linux; the first three were also proven 
 - `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
 - `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Reset + Save, the Delete local account data dialog (cancelled).
 
+Timings: `perf-sign-in` times sign-in to Home against the demo server (read-only) and writes `metrics.json`. Run it at least five times, then summarise the runs with `node .claude/skills/verify-mediaflick/scripts/perf-summary.mjs <out.json> <run-id>...`, which also reads the per-request `queue_ms` and `handler_ms` from `app.log`.
+
 Re-run all of them:
 
 ```powershell

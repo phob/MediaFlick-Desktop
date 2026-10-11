@@ -6,6 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use cef::*;
 
@@ -127,6 +128,7 @@ wrap_scheme_handler_factory! {
                 api_request,
                 cancelled,
                 Arc::new(Mutex::new(ResponseState::default())),
+                Instant::now(),
             ))
         }
     }
@@ -170,6 +172,7 @@ wrap_resource_handler! {
         request: ApiRequest,
         cancelled: Arc<AtomicBool>,
         state: Arc<Mutex<ResponseState>>,
+        created: Instant,
     }
 
     impl ResourceHandler {
@@ -191,14 +194,18 @@ wrap_resource_handler! {
             debug_assert_eq!(currently_on(ThreadId::UI), 0);
             debug_assert_eq!(currently_on(ThreadId::IO), 0);
 
+            let started = Instant::now();
             let response = api::handle(&self.request);
-            if response.status >= 400 {
+            if self.request.path.starts_with("/api/") || response.status >= 400 {
                 tracing::debug!(
                     target: "app.scheme",
                     method = %self.request.method,
                     path = %self.request.path,
                     status = response.status,
-                    "app request failed"
+                    queue_ms = started.duration_since(self.created).as_millis(),
+                    handler_ms = started.elapsed().as_millis(),
+                    thread = ?std::thread::current().id(),
+                    "app request served"
                 );
             }
             if let Ok(mut state) = self.state.lock() {
