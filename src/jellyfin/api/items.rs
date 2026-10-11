@@ -308,7 +308,6 @@ fn person_items_query(
         user_query(user_id),
         ("Recursive", "true".to_string()),
         ("PersonIds", person_id.to_string()),
-        ("PersonTypes", "Actor".to_string()),
         ("IncludeItemTypes", PERSON_ITEM_TYPES.to_string()),
         // Cards need the lightweight catalog shape, not a broad People or
         // MediaStreams fetch per page.
@@ -322,7 +321,8 @@ fn person_items_query(
     ]
 }
 
-/// Every visible library item Jellyfin associates with one exact actor id.
+/// Every visible library item Jellyfin credits one exact person on, as cast or
+/// crew.
 ///
 /// Cast is not cached locally at all: names can be ambiguous, while Jellyfin's
 /// `PersonIds` relation is exact and complete immediately.

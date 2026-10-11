@@ -755,7 +755,7 @@ const ITEM_ABOUT_CREW_LIMIT: usize = 24;
 const ITEM_ABOUT_CREW_PER_JOB_LIMIT: usize = 6;
 
 fn is_cast_credit(person: &BaseItemPerson) -> bool {
-    person.person_type.as_deref() == Some("Actor")
+    matches!(person.person_type.as_deref(), Some("Actor" | "GuestStar"))
         || (person.person_type.is_none()
             && person
                 .role
