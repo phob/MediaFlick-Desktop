@@ -1,6 +1,6 @@
 # Home
 
-Home opens after sign-in: a rotating billboard of featured or in-progress titles, then horizontal shelves of poster cards that open the detail page. The shelves follow the account's Home settings: Watching (or Continue Watching and Next Up), Because you watched <title>, Recently Added Movies, Recently Added Shows, Latest Movies, Latest Shows, Favorites and genre shelves by default, plus Releases (needs the Companion) and My Collections (MediaFlick collection mode, off by default).
+Home opens after sign-in: a rotating billboard of featured or in-progress titles, then horizontal shelves of poster cards that open the detail page. The shelves follow the account's Home settings, stored locally in `accounts.json`. The default order is Watching (or Continue Watching and Next Up), Because you watched <title>, Recently Added Movies, Recently Added Shows, Releases, Latest Movies, Latest Shows, Favorites, then genre shelves; the first six genres are on, the rest off (`src/preferences/accounts.rs`). Releases is on by default but renders only when the Companion's calendar has entries. In MediaFlick collection mode each collection can become its own shelf, titled with its name and off by default. A shelf with no items is not rendered.
 
 ## Sub-features
 
@@ -26,7 +26,8 @@ Preconditions:
 - **Billboard.** Its title is `h1#billboard-title` (screen-reader-only once a logo loads). `Details` is a link; the favorites toggle is `Add to favorites` / `Remove from favorites` with `aria-pressed`. Slide ticks are buttons named `Show <title>`, with `aria-current` on the shown one; pressing one changes the `h1` text. *Proven by `home-library`.*
 - **Shelf arrows.** Buttons `Previous <shelf title>` and `Next <shelf title>`, disabled at the edges and shown on hover. Hover `Next`, press it, and `Previous` enables. *Proven by `home-library`.*
 - **All links.** An `All` link sits in the shelf's `section`, named by its text. Watching, Continue Watching, Next Up, Recently Added Shows and Because you watched have none. *Observed by `home-library`*; scope the lookup to the section.
-- **Proof.** `01-home.png` and `01-home.ax.txt` show the shelves; `02-billboard.png` and `03-shelf-scrolled.png` show the billboard tick and arrows.
+- **Empty states.** Home settings are local (`accounts.json`), so a drive may change them. In Settings → `Home` (the second `Home` link, in `Settings navigation`), uncheck `Show billboard` and every `Show <shelf>` except `Show Releases` and Save: Home shows `{ role: "heading", name: "No titles available" }` with links `Browse movies` and `Browse series` (the demo server has no Companion, so Releases renders nothing). Uncheck `Show Releases` too: `No shelves enabled`, whose `Configure Home` link opens `/settings/home`. End with `Restore defaults` and Save. *Proven by `home-settings`.* `Could not load your home page` (`Try again`) needs a failed home request with no cached data; not verified.
+- **Proof.** `01-home.png` and `01-home.ax.txt` show the shelves; `02-billboard.png` and `03-shelf-scrolled.png` show the billboard tick and arrows; `02-no-titles.png` and `03-no-shelves.png` from `home-settings` show the empty states.
 
 ## Gotchas
 
@@ -34,5 +35,4 @@ Preconditions:
 - On Home the sidebar is pinned open and pushes content aside. Everywhere else it collapses to icons and overlays content when hovered. Leaving Home therefore slides the content left; `ctx.press` waits for the target to hold still.
 - Resting the pointer on a poster card opens a portalled preview panel after a delay (550 ms by default, configurable, or off). The panel adds a second `Open details for <title>` link; park the pointer before name lookups and screenshots.
 - Releases shelf cards are named `Open <title>[, S01E02][, Downloaded|Missing]`, not `Open details for …`, and open `/calendar` for titles not in the library.
-- The empty and error states cannot be reached on the shared demo account without changing its Home settings. Not verified.
 - Never press the billboard's `Play`/`Resume` (audio), or the favorites toggle on the shared demo account.
