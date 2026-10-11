@@ -160,6 +160,17 @@ export function listProcesses() {
   return rows
 }
 
+// Asks the app's top-level window to close the way a window manager does
+// (Linux: WM_PROTOCOLS/WM_DELETE_WINDOW from examples/verify-wm-close.rs,
+// which `just verify` builds), then listens `watchMs` for the window's
+// request to be minimized. Returns { window, iconifyRequested }.
+export function sendWindowClose(watchMs) {
+  if (!isLinux) throw new Error("wmClose is implemented for Linux only")
+  const tool = path.resolve(root, process.env.CARGO_TARGET_DIR ?? "build/cargo-target", "debug", "examples", "verify-wm-close")
+  if (!existsSync(tool)) throw new Error(`${tool} is missing; \`just verify\` builds it`)
+  return JSON.parse(execFileSync(tool, ["io.github.phob.MediaFlickDesktop", String(watchMs)], { encoding: "utf8" }))
+}
+
 export const isAppProcess = (row) => /^mediaflick-desktop(\.exe)?$/i.test(row.name)
 
 // Stops exactly the given PIDs and, with tree, the processes they started.
