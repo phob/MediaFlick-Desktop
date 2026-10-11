@@ -6,7 +6,7 @@ describe("home startup cover", () => {
     const readiness = {
       statusPending: false,
       settingsPending: false,
-      waitingForLibrary: false,
+      catalogLoading: false,
       showingSettings: false,
       initialHomeEnabled: true,
       homePending: true,

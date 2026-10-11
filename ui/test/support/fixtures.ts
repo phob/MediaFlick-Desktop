@@ -49,7 +49,7 @@ export function itemDetail(
 /** An idle player snapshot, as the shell sends when nothing is playing. */
 /** A signed-out `/api/status` with an empty, fully synced library and no Companion. */
 export function appStatus(overrides: Partial<Status> = {}): Status {
-  const catalog = { complete: true, ready: true, processed: 0, total: 0, initial: false }
+  const catalog = { complete: true, processed: 0, total: 0, initial: false }
   return {
     authenticated: false,
     expired: false,
@@ -61,10 +61,8 @@ export function appStatus(overrides: Partial<Status> = {}): Status {
     library: { movies: 0, series: 0, seasons: 0, episodes: 0, total: 0 },
     syncing: false,
     lastSync: null,
-    bootstrapped: true,
-    libraryReady: true,
-    bootstrap: catalog,
-    syncProgress: { active: false, phase: "complete", catalog, error: null, retryAt: null },
+    bootstrap: { state: "ready" },
+    syncProgress: { active: false, phase: "complete", catalog, retry: null },
     companion: {
       available: false,
       compatible: false,

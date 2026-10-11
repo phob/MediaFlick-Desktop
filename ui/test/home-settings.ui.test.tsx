@@ -5,6 +5,7 @@ import { api, type HomeSettingsResponse } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import Settings from "../src/routes/Settings"
 import { testQueryClient } from "./test-query-client"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const settings: HomeSettingsResponse = {
@@ -33,7 +34,7 @@ afterEach(() => vi.restoreAllMocks())
 
 test("dragging a Home shelf above another stages the new order until Save", async () => {
   const client = testQueryClient()
-  client.setQueryData(queryKeys.status, { authenticated: true })
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
   client.setQueryData(queryKeys.homeSettings, settings)
   const save = vi.spyOn(api, "saveHomeSettings").mockResolvedValue(settings)
 

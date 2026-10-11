@@ -19,7 +19,7 @@ import {
 import { RatingsProvider } from "../src/lib/ratings"
 import { Appearance, RatingSourceSelector } from "../src/routes/settings/AppearanceSettings"
 import { queryKeys } from "../src/lib/query-client"
-import { itemSummary } from "./support/fixtures"
+import { appStatus, itemSummary } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 import { TestProviders } from "./test-utils"
 
@@ -116,7 +116,7 @@ describe("configurable card ratings", () => {
     vi.stubGlobal("fetch", fetchMock)
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
-    client.setQueryData(queryKeys.status, { authenticated: true })
+    client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
     try {
       render(
@@ -331,7 +331,7 @@ describe("configurable card ratings", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
     client.setQueryData(queryKeys.ratingsStatus, integrationStatus)
-    client.setQueryData(queryKeys.status, { authenticated: true })
+    client.setQueryData(queryKeys.status, appStatus({ authenticated: true }))
     client.setQueryData(queryKeys.home, {
       continueWatching: [],
       rows: [{ kind: "builtIn", id: "recentlyAdded", title: "Recently added", items: [movie] }],

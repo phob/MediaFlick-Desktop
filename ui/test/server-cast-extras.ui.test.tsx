@@ -22,11 +22,7 @@ const linked: SeerrStatusInfo = {
   quota: null,
 }
 
-const signedIn: Status = appStatus({
-  authenticated: true,
-  bootstrapped: true,
-  bootstrap: { complete: true, ready: true, processed: 100, total: 100, initial: false },
-})
+const signedIn: Status = appStatus({ authenticated: true })
 
 function summary(id: string, name: string): ItemSummary {
   return {
