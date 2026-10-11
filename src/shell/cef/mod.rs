@@ -290,13 +290,29 @@ fn save_webui_window_settings(state: Option<&BrowserState>) {
     }
 }
 
-fn should_minimize_instead_of_close(state: Option<&BrowserState>) -> bool {
-    state
+/// Handles the user's request to close the main window (its close button,
+/// Alt+F4, or mpv's CLOSE_WIN). Minimizes when Close behavior says so;
+/// otherwise asks the page, whose unsaved-settings guard may keep it open.
+/// Returns whether the window may close now.
+fn request_main_window_close(
+    state: Option<&BrowserState>,
+    browser: Option<Browser>,
+    minimize: impl FnOnce(),
+) -> bool {
+    let minimize_instead = state
         .and_then(|state| state.lock().ok())
         .is_some_and(|state| {
             !state.force_close_requested
                 && state.settings.close_behavior == CloseBehavior::MinimizeWindow
-        })
+        });
+    if minimize_instead {
+        minimize();
+        tracing::info!(target: "app", "close request minimized the window");
+        return false;
+    }
+    browser
+        .and_then(|browser| browser.host())
+        .is_none_or(|host| host.try_close_browser() != 0)
 }
 
 struct BrowserStateInner {

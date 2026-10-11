@@ -211,6 +211,26 @@ impl OverlayWindow {
         self.conn.flush().map_err(io::Error::other)
     }
 
+    /// Asks the window manager to minimize the window (ICCCM WM_CHANGE_STATE).
+    pub fn iconify(&self) -> io::Result<()> {
+        const ICONIC_STATE: u32 = 3;
+        let event = ClientMessageEvent::new(
+            32,
+            self.parent,
+            atom(&self.conn, b"WM_CHANGE_STATE")?,
+            [ICONIC_STATE, 0, 0, 0, 0],
+        );
+        self.conn
+            .send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
+            .map_err(io::Error::other)?;
+        self.conn.flush().map_err(io::Error::other)
+    }
+
     /// Treat the native frame, video child, and browser input child as one
     /// focus scope. X11 emits FocusOut during transfers between these windows
     /// and during grabs even though the application still owns keyboard focus.
