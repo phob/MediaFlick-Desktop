@@ -16,7 +16,7 @@ import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews
 import {
   DetailBackdrop,
   DetailBackLink,
-  DetailCastRail,
+  DetailPeopleRail,
   DetailFact,
   DetailFactPanel,
   DetailPageSkeleton,
@@ -128,7 +128,7 @@ function contentRating(detail: SeerrMediaDetail, releases: SeerrReleaseDate[]) {
 }
 
 export function Cast({ detail }: { detail: Pick<SeerrMediaDetail, "cast"> }) {
-  return <DetailCastRail entries={detail.cast.map((person) => ({
+  return <DetailPeopleRail heading="Cast" entries={detail.cast.map((person) => ({
     key: `${person.id}-${person.name}`,
     name: person.name,
     role: person.character,
