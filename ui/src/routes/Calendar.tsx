@@ -316,7 +316,7 @@ export default function Calendar() {
   return (
     <div ref={calendarRoot} className="flex min-h-full min-w-0 flex-col">
       <PageHeader
-        eyebrow="Release calendar"
+        eyebrow="Releases"
         title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
         contentClassName={view === "agenda" ? "max-w-6xl" : undefined}
         actions={

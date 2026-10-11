@@ -1,7 +1,7 @@
 // Home and the library against Jellyfin's public demo server, read-only:
 // billboard ticks, shelf arrows, a card from Home, Movies sort, a decade
-// filter and its chip, an empty search, and Favorites (titled My List). Never
-// presses Play/Resume or a My List toggle: the demo account is shared.
+// filter and its chip, an empty search, and Favorites. Never presses
+// Play/Resume or a favorites toggle: the demo account is shared.
 //   just verify home-library
 const DEMO = "https://demo.jellyfin.org/stable"
 const CARD = { css: 'a[aria-label^="Open details for"]' }
@@ -24,7 +24,7 @@ export default async function homeLibrary(ctx) {
   const first = await billboardTitle(ctx)
   if (first) {
     await ctx.find({ role: "link", name: "Details" })
-    ctx.check((await ctx.exists({ role: "button", name: "Add to My List" })) || (await ctx.exists({ role: "button", name: "Remove from My List" })), "the billboard My List toggle")
+    ctx.check((await ctx.exists({ role: "button", name: "Add to favorites" })) || (await ctx.exists({ role: "button", name: "Remove from favorites" })), "the billboard favorites toggle")
     const other = [...home.matchAll(/button 'Show ([^']+)'/g)].map((match) => match[1]).find((title) => title !== first)
     if (other) {
       await ctx.press({ role: "button", name: `Show ${other}` })
@@ -92,14 +92,14 @@ export default async function homeLibrary(ctx) {
   ctx.check((await pageText(ctx)).includes("Nothing matches “zzqqxx”."), "the empty reason names the term")
   await ctx.screenshot("06-empty-search")
 
-  // Favorites is the My List view: a filter, so it shows as a chip.
+  // Favorites is a filter, so it shows as a chip.
   await ctx.park()
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.press({ role: "link", name: "Favorites" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?favorite=true", "the Favorites route")
-  await ctx.find({ role: "heading", name: "My List" })
+  await ctx.find({ role: "heading", name: "Favorites" })
   await ctx.find({ role: "button", name: "Filters, 1 active" })
-  await ctx.find({ role: "button", name: "Remove In My List filter" })
+  await ctx.find({ role: "button", name: "Remove Favorites filter" })
   await ctx.park()
   await ctx.screenshot("07-favorites")
 }

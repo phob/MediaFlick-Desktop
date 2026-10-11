@@ -203,7 +203,7 @@ export default function Library({ components }: LibraryProps = {}) {
     : search
       ? `Results for “${search}”`
       : globalFavoritesView
-        ? "My List"
+        ? "Favorites"
         : kind === "Series"
           ? "Series"
           : kind === "Movie"

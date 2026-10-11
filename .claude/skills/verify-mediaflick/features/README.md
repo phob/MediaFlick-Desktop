@@ -32,15 +32,15 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 ## Features
 
 - [Sign in and sign out](./sign-in.md): server address, username and password, `--url` prefill, Quick Connect, the user menu, sign-out. Proven by `smoke`, `browse`, `sign-in`; the error path needs a server you own.
-- [Client settings](./client-settings.md): Player, Playback and Application shelves with Save, Discard, Reset and restart notices, the leave-without-saving guard, and the Delete local account data dialog. Proven by `application-settings` and `client-settings`.
+- [Client settings](./client-settings.md): Player, Playback and Application shelves with Save, Discard, Restore defaults and restart notices, the leave-without-saving guard, and the Delete local account data dialog. Proven by `application-settings` and `client-settings`.
 - [Home](./home.md): billboard, shelves of poster cards, arrows, cards to detail. Proven by `browse` and `home-library`; the empty states are not reachable on the demo account.
-- [Library and search](./library-search.md): Movies, Series and Favorites (My List) from the sidebar, sort, filters and chips, sidebar search, the empty result. Proven by `browse` and `home-library`.
+- [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort, filters and chips, sidebar search, the empty result. Proven by `browse` and `home-library`.
 - [Item detail](./item-detail.md): movie, series and episode pages, More info, seasons, episodes, breadcrumbs, favorite and watched toggles. Read-only parts proven by `browse` and `item-detail`; toggles need a server you own.
 
 ## Unmapped surfaces
 
 - Account settings (Viewing, Home, Appearance, Collections) and the Letterboxd integration: reachable after sign-in in `Settings navigation` under Account and Integrations, same save-bar workflow as client settings. Not yet mapped.
 - Collections (Movie Franchises, My Collections, Jellyfin Collections): the sidebar entry depends on the collection mode; the demo server has no BoxSets.
-- Releases (`/calendar`), Discover and Requests, ratings, the Release Timeline shelf, Companion settings: need a server with the MediaFlick Companion and Seerr. Not drivable against the demo server.
+- Releases (`/calendar`), Discover and Requests, ratings, the Releases shelf on Home, Companion settings: need a server with the MediaFlick Companion and Seerr. Not drivable against the demo server.
 - Playback (built-in libmpv and external mpv): starts real audio. Out of scope until a muted or loopback-media path exists. On Linux the Built-in player is the default and loads the system `libmpv.so.2`; `just build` does not stage libmpv.
 - The update banner (GitHub release check): never press its install action; it downloads and runs an installer.

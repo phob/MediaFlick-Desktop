@@ -152,10 +152,11 @@ export function DetailActions({
           variant="secondary"
           size="lg"
           className="hover:text-primary"
+          aria-pressed={item.played}
           onClick={() => setPlayed.mutate({ id: item.id, played: !item.played })}
         >
           <Check className="size-4" />
-          {item.played ? "Watched" : "Mark watched"}
+          {item.played ? "Mark unwatched" : "Mark watched"}
         </Button>
         <Button
           variant="secondary"
