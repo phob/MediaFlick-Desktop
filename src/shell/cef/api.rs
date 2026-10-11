@@ -1,7 +1,8 @@
 //! The JSON API and static assets served on `mediaflick-desktop://app/`.
 //!
-//! Handlers run on a CEF background thread (never the UI or IO thread), so
-//! blocking SQLite and HTTP calls are safe here.
+//! Handlers run on a CEF background thread or one of the app scheme's network
+//! workers, chosen by their [`Lane`] (never the UI or IO thread), so blocking
+//! SQLite and HTTP calls are safe here.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -245,108 +246,108 @@ mod shell;
 /// Every endpoint the modules below serve, by method and path shape (`*` is
 /// one segment). The modules own the handlers; this table answers what they
 /// cannot: which methods a known path accepts, for a 405 and its `Allow`
-/// header.
-const ENDPOINTS: &[(&str, &str)] = &[
-    ("GET", "status"),
-    ("GET", "startup"),
-    ("GET", "companion/info"),
-    ("POST", "companion/probe"),
-    ("GET", "settings"),
-    ("PATCH", "settings/client/player"),
-    ("PATCH", "settings/client/playback"),
-    ("PATCH", "settings/client/application"),
-    ("PATCH", "settings/appearance"),
-    ("GET", "settings/viewing"),
-    ("PATCH", "settings/viewing"),
-    ("GET", "settings/browsing"),
-    ("PATCH", "settings/browsing"),
-    ("GET", "settings/home"),
-    ("PATCH", "settings/home"),
-    ("GET", "integrations/ratings"),
-    ("POST", "ratings/batch"),
-    ("GET", "collections"),
-    ("GET", "collections/mine"),
-    ("GET", "collections/mine/*"),
-    ("GET", "collections/franchises"),
-    ("GET", "collections/franchises/*"),
-    ("GET", "collections/jellyfin"),
-    ("GET", "collections/jellyfin/*"),
-    ("DELETE", "collections/local-account"),
-    ("GET", "collections/movie/*"),
-    ("GET", "collections/title/*/*"),
-    ("GET", "collections/settings"),
-    ("PATCH", "collections/settings"),
-    ("POST", "collections/settings/reprobe"),
-    ("GET", "collections/templates"),
-    ("POST", "collections/mdblist/search"),
-    ("POST", "collections/mdblist/validate"),
-    ("GET", "collections/provider-artwork"),
-    ("POST", "collections/artwork"),
-    ("GET", "collections/artwork/*"),
-    ("POST", "collections/preview"),
-    ("GET", "collections/profiles"),
-    ("POST", "collections/profiles"),
-    ("PUT", "collections/profiles/order"),
-    ("GET", "collections/profiles/*"),
-    ("PATCH", "collections/profiles/*"),
-    ("DELETE", "collections/profiles/*"),
-    ("POST", "collections/profiles/*/refresh"),
-    ("POST", "shell/window/ready"),
-    ("POST", "shell/file-picker"),
-    ("POST", "shell/mpv/install"),
-    ("POST", "shell/mpv/help"),
-    ("GET", "integrations/letterboxd"),
-    ("POST", "integrations/letterboxd"),
-    ("PATCH", "integrations/letterboxd/*"),
-    ("DELETE", "integrations/letterboxd/*"),
-    ("POST", "integrations/letterboxd/*/refresh"),
-    ("POST", "integrations/letterboxd/*/open"),
-    ("GET", "letterboxd/movie/*"),
-    ("GET", "item/*/letterboxd"),
-    ("POST", "auth/connect"),
-    ("POST", "auth/login"),
-    ("POST", "auth/quickconnect/start"),
-    ("POST", "auth/quickconnect/poll"),
-    ("POST", "auth/logout"),
-    ("GET", "seerr/status"),
-    ("GET", "seerr/search"),
-    ("GET", "seerr/person/*/credits"),
-    ("GET", "seerr/discover/*"),
-    ("GET", "seerr/genres/*"),
-    ("GET", "seerr/media/*/*"),
-    ("GET", "seerr/request-options/*"),
-    ("POST", "seerr/request"),
-    ("GET", "seerr/requests"),
-    ("DELETE", "seerr/request/*"),
-    ("GET", "seerr/image/*/*"),
-    ("GET", "calendar"),
-    ("GET", "home"),
-    ("GET", "home/resume"),
-    ("GET", "billboard"),
-    ("GET", "items"),
-    ("GET", "genres"),
-    ("GET", "person/resolve"),
-    ("GET", "item/*"),
-    ("GET", "item/*/synopsis"),
-    ("GET", "item/*/about"),
-    ("GET", "item/*/children"),
-    ("POST", "technical/batch"),
-    ("GET", "item/*/media"),
-    ("PATCH", "item/*/playback-preference"),
-    ("GET", "item/*/trailer"),
-    ("GET", "item/*/nextup"),
-    ("POST", "item/*/external"),
-    ("POST", "item/*/played"),
-    ("POST", "item/*/favorite"),
-    ("GET", "trailer/*/stream"),
-    ("GET", "image/*/*"),
-    ("POST", "play"),
-    ("POST", "play/next"),
-    ("POST", "play/previous"),
-    ("POST", "play/neighbors"),
-    ("GET", "player/state"),
-    ("POST", "player/command"),
-    ("POST", "sync"),
+/// header, and which [`Lane`] a request runs on.
+const ENDPOINTS: &[(&str, &str, Lane)] = &[
+    ("GET", "status", Lane::Local),
+    ("GET", "startup", Lane::Local),
+    ("GET", "companion/info", Lane::Local),
+    ("POST", "companion/probe", Lane::Remote),
+    ("GET", "settings", Lane::Local),
+    ("PATCH", "settings/client/player", Lane::Local),
+    ("PATCH", "settings/client/playback", Lane::Local),
+    ("PATCH", "settings/client/application", Lane::Local),
+    ("PATCH", "settings/appearance", Lane::Local),
+    ("GET", "settings/viewing", Lane::Local),
+    ("PATCH", "settings/viewing", Lane::Local),
+    ("GET", "settings/browsing", Lane::Local),
+    ("PATCH", "settings/browsing", Lane::Local),
+    ("GET", "settings/home", Lane::Local),
+    ("PATCH", "settings/home", Lane::Local),
+    ("GET", "integrations/ratings", Lane::Local),
+    ("POST", "ratings/batch", Lane::Remote),
+    ("GET", "collections", Lane::Local),
+    ("GET", "collections/mine", Lane::Local),
+    ("GET", "collections/mine/*", Lane::Local),
+    ("GET", "collections/franchises", Lane::Local),
+    ("GET", "collections/franchises/*", Lane::Local),
+    ("GET", "collections/jellyfin", Lane::Remote),
+    ("GET", "collections/jellyfin/*", Lane::Remote),
+    ("DELETE", "collections/local-account", Lane::Local),
+    ("GET", "collections/movie/*", Lane::Local),
+    ("GET", "collections/title/*/*", Lane::Local),
+    ("GET", "collections/settings", Lane::Local),
+    ("PATCH", "collections/settings", Lane::Local),
+    ("POST", "collections/settings/reprobe", Lane::Remote),
+    ("GET", "collections/templates", Lane::Local),
+    ("POST", "collections/mdblist/search", Lane::Remote),
+    ("POST", "collections/mdblist/validate", Lane::Remote),
+    ("GET", "collections/provider-artwork", Lane::Remote),
+    ("POST", "collections/artwork", Lane::Local),
+    ("GET", "collections/artwork/*", Lane::Local),
+    ("POST", "collections/preview", Lane::Remote),
+    ("GET", "collections/profiles", Lane::Local),
+    ("POST", "collections/profiles", Lane::Local),
+    ("PUT", "collections/profiles/order", Lane::Local),
+    ("GET", "collections/profiles/*", Lane::Local),
+    ("PATCH", "collections/profiles/*", Lane::Local),
+    ("DELETE", "collections/profiles/*", Lane::Local),
+    ("POST", "collections/profiles/*/refresh", Lane::Remote),
+    ("POST", "shell/window/ready", Lane::Local),
+    ("POST", "shell/file-picker", Lane::Local),
+    ("POST", "shell/mpv/install", Lane::Local),
+    ("POST", "shell/mpv/help", Lane::Local),
+    ("GET", "integrations/letterboxd", Lane::Local),
+    ("POST", "integrations/letterboxd", Lane::Remote),
+    ("PATCH", "integrations/letterboxd/*", Lane::Local),
+    ("DELETE", "integrations/letterboxd/*", Lane::Local),
+    ("POST", "integrations/letterboxd/*/refresh", Lane::Remote),
+    ("POST", "integrations/letterboxd/*/open", Lane::Local),
+    ("GET", "letterboxd/movie/*", Lane::Local),
+    ("GET", "item/*/letterboxd", Lane::Local),
+    ("POST", "auth/connect", Lane::Remote),
+    ("POST", "auth/login", Lane::Remote),
+    ("POST", "auth/quickconnect/start", Lane::Remote),
+    ("POST", "auth/quickconnect/poll", Lane::Remote),
+    ("POST", "auth/logout", Lane::Remote),
+    ("GET", "seerr/status", Lane::Remote),
+    ("GET", "seerr/search", Lane::Remote),
+    ("GET", "seerr/person/*/credits", Lane::Remote),
+    ("GET", "seerr/discover/*", Lane::Remote),
+    ("GET", "seerr/genres/*", Lane::Remote),
+    ("GET", "seerr/media/*/*", Lane::Remote),
+    ("GET", "seerr/request-options/*", Lane::Remote),
+    ("POST", "seerr/request", Lane::Remote),
+    ("GET", "seerr/requests", Lane::Remote),
+    ("DELETE", "seerr/request/*", Lane::Remote),
+    ("GET", "seerr/image/*/*", Lane::Remote),
+    ("GET", "calendar", Lane::Remote),
+    ("GET", "home", Lane::Local),
+    ("GET", "home/resume", Lane::Remote),
+    ("GET", "billboard", Lane::Local),
+    ("GET", "items", Lane::Local),
+    ("GET", "genres", Lane::Local),
+    ("GET", "person/resolve", Lane::Remote),
+    ("GET", "item/*", Lane::Local),
+    ("GET", "item/*/synopsis", Lane::Remote),
+    ("GET", "item/*/about", Lane::Remote),
+    ("GET", "item/*/children", Lane::Remote),
+    ("POST", "technical/batch", Lane::Remote),
+    ("GET", "item/*/media", Lane::Remote),
+    ("PATCH", "item/*/playback-preference", Lane::Remote),
+    ("GET", "item/*/trailer", Lane::Remote),
+    ("GET", "item/*/nextup", Lane::Remote),
+    ("POST", "item/*/external", Lane::Local),
+    ("POST", "item/*/played", Lane::Remote),
+    ("POST", "item/*/favorite", Lane::Remote),
+    ("GET", "trailer/*/stream", Lane::Remote),
+    ("GET", "image/*/*", Lane::Remote),
+    ("POST", "play", Lane::Local),
+    ("POST", "play/next", Lane::Local),
+    ("POST", "play/previous", Lane::Local),
+    ("POST", "play/neighbors", Lane::Local),
+    ("GET", "player/state", Lane::Local),
+    ("POST", "player/command", Lane::Local),
+    ("POST", "sync", Lane::Local),
 ];
 
 fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
@@ -356,6 +357,33 @@ fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
             .iter()
             .zip(segments)
             .all(|(part, segment)| *part == "*" || part == segment)
+}
+
+/// Where the app scheme runs a request's handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    /// Answered from local state: assets, settings, SQLite, cached probes.
+    /// Runs inline on the CEF thread that opened the request. Playback and
+    /// the endpoints that open the system browser stay here too, so they keep
+    /// the thread context they were written for.
+    Local,
+    /// Normally waits on Jellyfin, the Companion or another remote service.
+    /// Runs on the app's bounded network workers, so slow servers never hold
+    /// the browser-process threads that local requests are served from.
+    Remote,
+}
+
+/// The lane for a request. Static assets, the shell fallback and unknown
+/// endpoints are [`Lane::Local`].
+pub fn lane(request: &ApiRequest) -> Lane {
+    let Some(api_path) = request.path.strip_prefix("/api/") else {
+        return Lane::Local;
+    };
+    let segments = api_path.split('/').collect::<Vec<_>>();
+    ENDPOINTS
+        .iter()
+        .find(|(method, pattern, _)| request.is(method) && endpoint_matches(pattern, &segments))
+        .map_or(Lane::Local, |(_, _, lane)| *lane)
 }
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
@@ -381,8 +409,8 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
 fn unrouted(path: &str, segments: &[&str]) -> ApiResponse {
     let allowed = ENDPOINTS
         .iter()
-        .filter(|(_, pattern)| endpoint_matches(pattern, segments))
-        .map(|(method, _)| *method)
+        .filter(|(_, pattern, _)| endpoint_matches(pattern, segments))
+        .map(|(method, _, _)| *method)
         .collect::<Vec<_>>();
     if allowed.is_empty() {
         return ApiResponse::error(404, format!("unknown endpoint /api/{path}"));

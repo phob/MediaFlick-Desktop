@@ -5,12 +5,12 @@
 //! port and no jellyfin-web involved.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Instant;
 
 use cef::*;
 
-use super::api::{self, ApiRequest, ApiResponse};
+use super::api::{self, ApiRequest, ApiResponse, Lane};
 
 pub const APP_SCHEME: &str = "mediaflick-desktop";
 pub const APP_HOST: &str = "app";
@@ -115,18 +115,16 @@ wrap_scheme_handler_factory! {
             let request = request?;
             let url = CefString::from(&request.url()).to_string();
             let (path, query) = split_url(&url);
-            let cancelled = Arc::new(AtomicBool::new(false));
             let api_request = ApiRequest {
                 method: CefString::from(&request.method()).to_string(),
                 path,
                 query,
                 body: read_post_body(request),
                 range: request_header(request, "Range"),
-                cancelled: cancelled.clone(),
+                cancelled: Arc::new(AtomicBool::new(false)),
             };
             Some(AppResourceHandler::new(
-                api_request,
-                cancelled,
+                Arc::new(api_request),
                 Arc::new(Mutex::new(ResponseState::default())),
                 Instant::now(),
             ))
@@ -167,54 +165,144 @@ impl ResponseHead {
     }
 }
 
+/// Runs the handler and stores its response for `response_headers` and `read`.
+fn serve(request: &ApiRequest, state: &Mutex<ResponseState>, created: Instant) {
+    let started = Instant::now();
+    let response = api::handle(request);
+    if request.path.starts_with("/api/") || response.status >= 400 {
+        tracing::debug!(
+            target: "app.scheme",
+            method = %request.method,
+            path = %request.path,
+            status = response.status,
+            queue_ms = started.duration_since(created).as_millis(),
+            handler_ms = started.elapsed().as_millis(),
+            thread = ?std::thread::current().id(),
+            "app request served"
+        );
+    }
+    if let Ok(mut state) = state.lock() {
+        state.response = Some(response);
+        state.offset = 0;
+    }
+}
+
+/// Network workers for [`Lane::Remote`]. Chromium had 16 of its
+/// browser-process workers blocked in these handlers during sign-in before
+/// they moved here, so a server sees the same concurrency as before, and a
+/// fast library scroll still cannot open a connection per poster.
+const REMOTE_WORKERS: usize = 16;
+
+/// A [`Lane::Remote`] request waiting for a network worker.
+struct RemoteJob {
+    request: Arc<ApiRequest>,
+    state: Arc<Mutex<ResponseState>>,
+    created: Instant,
+    callback: Callback,
+}
+
+impl RemoteJob {
+    fn run(self) {
+        // The page gave up while this waited behind other server calls.
+        if self.request.cancelled.load(Ordering::Relaxed) {
+            self.callback.cancel();
+            return;
+        }
+        serve(&self.request, &self.state, self.created);
+        self.callback.cont();
+    }
+}
+
+/// The network workers' queue, started on first use. `None` when not one
+/// worker could start; remote requests are then served inline.
+fn remote_jobs() -> Option<&'static mpsc::Sender<RemoteJob>> {
+    static JOBS: OnceLock<Option<mpsc::Sender<RemoteJob>>> = OnceLock::new();
+    JOBS.get_or_init(start_remote_workers).as_ref()
+}
+
+fn start_remote_workers() -> Option<mpsc::Sender<RemoteJob>> {
+    let (sender, receiver) = mpsc::channel();
+    let receiver = Arc::new(Mutex::new(receiver));
+    let mut started = 0;
+    for index in 0..REMOTE_WORKERS {
+        let receiver = receiver.clone();
+        match std::thread::Builder::new()
+            .name(format!("app-remote-{index}"))
+            .spawn(move || remote_worker(&receiver))
+        {
+            Ok(_) => started += 1,
+            Err(error) => {
+                tracing::warn!(target: "app.scheme", "could not start a network worker: {error}");
+            }
+        }
+    }
+    (started > 0).then_some(sender)
+}
+
+fn remote_worker(jobs: &Mutex<mpsc::Receiver<RemoteJob>>) {
+    loop {
+        // One idle worker waits in `recv`; the others wait for the lock.
+        let job = match jobs.lock() {
+            Ok(jobs) => jobs.recv(),
+            Err(_) => return,
+        };
+        let Ok(job) = job else {
+            return;
+        };
+        job.run();
+    }
+}
+
 wrap_resource_handler! {
     struct AppResourceHandler {
-        request: ApiRequest,
-        cancelled: Arc<AtomicBool>,
+        request: Arc<ApiRequest>,
         state: Arc<Mutex<ResponseState>>,
         created: Instant,
     }
 
     impl ResourceHandler {
-        // CEF raises this on its IO thread while `open` may still be blocked
-        // in a handler on a background thread; the shared flag is the only
-        // channel through which that handler can notice.
+        // CEF raises this on its IO thread while the handler may still be
+        // running on a CEF background thread or a network worker; the shared
+        // flag is the only channel through which that handler can notice.
         fn cancel(&self) {
-            self.cancelled.store(true, Ordering::Relaxed);
+            self.request.cancelled.store(true, Ordering::Relaxed);
         }
 
         fn open(
             &self,
             _request: Option<&mut Request>,
             handle_request: Option<&mut i32>,
-            _callback: Option<&mut Callback>,
+            callback: Option<&mut Callback>,
         ) -> i32 {
+            let Some(handle_request) = handle_request else {
+                return 0;
+            };
+            // CEF calls this on Chromium's shared browser-process workers. A
+            // server call here holds one of them, and local requests queue
+            // behind it, so remote handlers answer later through the callback.
+            if api::lane(&self.request) == Lane::Remote
+                && let (Some(jobs), Some(callback)) = (remote_jobs(), callback)
+            {
+                let job = RemoteJob {
+                    request: self.request.clone(),
+                    state: self.state.clone(),
+                    created: self.created,
+                    callback: callback.clone(),
+                };
+                // A send fails only once every worker has exited; the request
+                // is then served inline below.
+                if jobs.send(job).is_ok() {
+                    *handle_request = 0;
+                    return 1;
+                }
+            }
+
             // CEF calls this on a background thread, which is what makes the
-            // blocking SQLite and Jellyfin calls in the handlers safe.
+            // blocking SQLite calls in local handlers safe.
             debug_assert_eq!(currently_on(ThreadId::UI), 0);
             debug_assert_eq!(currently_on(ThreadId::IO), 0);
-
-            let started = Instant::now();
-            let response = api::handle(&self.request);
-            if self.request.path.starts_with("/api/") || response.status >= 400 {
-                tracing::debug!(
-                    target: "app.scheme",
-                    method = %self.request.method,
-                    path = %self.request.path,
-                    status = response.status,
-                    queue_ms = started.duration_since(self.created).as_millis(),
-                    handler_ms = started.elapsed().as_millis(),
-                    thread = ?std::thread::current().id(),
-                    "app request served"
-                );
-            }
-            if let Ok(mut state) = self.state.lock() {
-                state.response = Some(response);
-                state.offset = 0;
-            }
-            if let Some(handle_request) = handle_request {
-                *handle_request = 1;
-            }
+            serve(&self.request, &self.state, self.created);
+            *handle_request = 1;
             1
         }
 
