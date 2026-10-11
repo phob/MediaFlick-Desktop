@@ -270,7 +270,6 @@ interface LibraryStats {
 
 interface BootstrapProgress {
   complete: boolean
-  ready: boolean
   processed: number
   total: number | null
   initial: boolean
@@ -289,9 +288,7 @@ export interface Status {
   library: LibraryStats
   syncing: boolean
   lastSync: string | null
-  bootstrapped: boolean
-  libraryReady: boolean
-  bootstrap: BootstrapProgress
+  bootstrap: Bootstrap
   syncProgress: SyncProgress
   companion: CompanionStatus
 }
@@ -1035,14 +1032,33 @@ export interface SeerrDiscoverFilters {
   timeWindow?: SeerrTrendingWindow
 }
 
-type SyncPhase = "catalog" | "reconciling" | "retrying" | "complete"
+type SyncPhase = "catalog" | "reconciling" | "complete"
+
+/** Why a sync cycle failed (`SyncFailure`, `src/library/sync.rs`). */
+export type SyncFailure = "unreachable" | "server" | "storage"
+
+/** A failed cycle and when the worker tries again, in Unix seconds. */
+export interface SyncRetry {
+  reason: SyncFailure
+  retryAt: number
+}
+
+/**
+ * What the shell gates on after sign-in (`Bootstrap`, `src/library/sync.rs`):
+ * Home needs a usable catalog. A retry outlives the next attempt, so it stays
+ * while `Status.syncing` reports that attempt running.
+ */
+export type Bootstrap =
+  | { state: "loading" }
+  | ({ state: "retrying" } & SyncRetry)
+  | { state: "ready" }
 
 export interface SyncProgress {
   active: boolean
   phase: SyncPhase
   catalog: BootstrapProgress
-  error: string | null
-  retryAt: number | null
+  /** Set while the worker waits out a failure. */
+  retry: SyncRetry | null
 }
 
 export interface SeerrGenre {

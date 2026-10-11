@@ -13,6 +13,7 @@ import type {
 import * as api from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
+import { appStatus } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const accountSettings: CollectionSettings = {
@@ -106,12 +107,12 @@ function page(
   initialEntry = "/settings/collections",
   client = testQueryClient(),
 ) {
-  client.setQueryData(queryKeys.status, {
+  client.setQueryData(queryKeys.status, appStatus({
     authenticated: true,
     serverUrl: "https://jellyfin.example",
     userId: "user-1",
     userName: "Neo",
-  })
+  }))
   const providers = ({ children }: { children: ReactNode }) => (
     <TestProviders client={client} initialEntries={[initialEntry]}>
         <Routes><Route path="*" element={children} /></Routes>
@@ -324,7 +325,7 @@ describe("collection settings management", () => {
 
 test("signed-out users see the sign-in prompt instead of being redirected away", () => {
   const client = testQueryClient()
-  client.setQueryData(queryKeys.status, { authenticated: false })
+  client.setQueryData(queryKeys.status, appStatus({ authenticated: false }))
   render(
     <TestProviders client={client} initialEntries={["/settings/collections"]}>
       <Routes>
