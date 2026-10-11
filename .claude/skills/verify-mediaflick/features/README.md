@@ -35,6 +35,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Client settings](./client-settings.md): Player, Playback and Application shelves with Save, Discard, Restore defaults and restart notices, the leave-without-saving guard, the Delete local account data dialog, and what closing the window does (Close behavior and the leave guard on a window close). Proven by `application-settings`, `client-settings`, `close-minimize` and `close-guard`.
 - [Home](./home.md): billboard, shelves of poster cards, arrows, cards to detail. Proven by `browse` and `home-library`; the empty states are not reachable on the demo account.
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort, filters and chips, sidebar search, the empty result. Proven by `browse` and `home-library`.
+- [Library loading and the retry screen](./bootstrap-retry.md): the startup cover after sign-in, the retry screen when the first catalog page fails (reason, next attempt, Retry now, Sign out), and the window on relaunch. Proven by `bootstrap-retry` with a failing loopback proxy.
 - [Item detail](./item-detail.md): movie, series and episode pages, More info, seasons, episodes, breadcrumbs, favorite and watched toggles. Read-only parts proven by `browse` and `item-detail`; toggles need a server you own.
 
 ## Unmapped surfaces

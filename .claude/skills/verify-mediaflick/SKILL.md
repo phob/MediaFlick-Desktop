@@ -20,7 +20,7 @@ Drive scripts, the harness and the session are platform-neutral Node. Only the t
 
 ## Launch
 
-Prerequisites: Node 22+ (global `WebSocket`) and `just`. Windows also needs PowerShell 7 from the MSI, not the Store build. Linux also needs `Xvfb`, `setsid` and `timeout`, and optionally `dbus-run-session`.
+Prerequisites: Node 22+ (global `WebSocket`) and `just`. Windows also needs PowerShell 7 from the MSI, not the Store build. Linux also needs `Xvfb`, `setsid` and `timeout`, and optionally `dbus-run-session` and `xwininfo` (for `ctx.windowShown()`).
 
 ```sh
 just verify-doctor                                   # read-only preflight
@@ -107,6 +107,9 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. |
 | `pathname()` | `location.pathname + location.search`. |
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
+| `proxy({ upstream, fail })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included) and drops the connection of each request `fail(url, method)` selects. Returns `{ url, stats, heal() }`; sign in to `url`. Closed after the drive. |
+| `relaunch()` | Close the app through its own close path and start it again on the same profile, as a user quitting and reopening. Writes `doctor-relaunch.json`. |
+| `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows (not yet run there). |
 | `readConfig(name)`, `configStat(name)`, `configFile(name)` | Files in the disposable config dir (`settings.json`, `accounts.json`, …). |
 | `appLog()` | The app's Rust log so far, as text (`app.log` in the evidence). |
 | `wmClose({ watchMs })` | Linux only. Sends the app's top-level window the `WM_PROTOCOLS`/`WM_DELETE_WINDOW` message a window manager sends for the close button, then listens `watchMs` (default 2000) for the window's `WM_CHANGE_STATE` IconicState request. Returns `{ window, iconifyRequested }`. Under Xvfb no window manager acts on that request, so `iconifyRequested` is the proof of a minimize. |
@@ -118,7 +121,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All ten are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
+Shipped drives. All eleven are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
@@ -130,17 +133,18 @@ Shipped drives. All ten are proven on Linux; the first three were also proven on
 - `labels`: the sign-in screen's Player and app settings link and Back to sign in, the save bar's Restore defaults and muted disabled Save, Favorites, the watched and favorites toggles on a movie and on episode cards, Countdown seconds gating, and the Releases startup option (opened, never chosen). Read-only.
 - `close-minimize`: saves `Minimize window`, closes through the window manager and proves the window asked to be minimized while the app kept running; then saves `Exit MediaFlick` and proves the next close exits.
 - `close-guard`: an unsaved draft, a window-manager close, the `Leave without saving?` dialog; `Keep editing` keeps the app and the draft, `Discard and leave` exits without writing it.
+- `bootstrap-retry`: sign-in through a proxy that drops the first catalog page, the retry screen, relaunch with the window shown, Sign out, Retry now while down, Home after the proxy heals. Read-only.
 
 Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed, because no drive plays anything.
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings', 'labels') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library item-detail client-settings labels close-minimize close-guard; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library item-detail client-settings labels close-minimize close-guard bootstrap-retry; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
@@ -185,8 +189,8 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Platform status
 
-- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the four newer drives have not run there.
-- **Linux: proven.** All ten shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
+- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the eight newer drives have not run there.
+- **Linux: proven.** All eleven shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).
