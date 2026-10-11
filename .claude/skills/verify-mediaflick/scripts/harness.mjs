@@ -6,11 +6,12 @@
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
+import { sendWindowClose } from "./platform.mjs"
 
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
 const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded", "selected", "invalid", "required", "readonly"]
 
-export function createHarness({ app, evidence, configDir, dataDir, log }) {
+export function createHarness({ app, child, evidence, configDir, dataDir, log }) {
   const step = (text) => log(text)
 
   function check(condition, message) {
@@ -274,6 +275,8 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
   const configFile = (name) => path.join(configDir, name)
   const readConfig = (name) => (existsSync(configFile(name)) ? JSON.parse(readFileSync(configFile(name), "utf8")) : null)
   const configStat = (name) => (existsSync(configFile(name)) ? statSync(configFile(name)) : null)
+  // The Rust log so far (copied to app.log at the end of the run).
+  const appLog = () => (existsSync(configFile("mediaflick-desktop.log")) ? readFileSync(configFile("mediaflick-desktop.log"), "utf8") : "")
 
   function writeEvidence(name, value) {
     writeFileSync(path.join(evidence, name), typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`)
@@ -290,6 +293,24 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
     await press({ role: "button", name: "Sign in" })
     await find({ role: "link", name: "Settings" }, { timeout: 60000 })
     log(`signed in as ${username}`)
+  }
+
+  // The close request a window manager sends for the title bar's close
+  // button. Also reports whether the window asked to be minimized within
+  // `watchMs`, as a window manager would see it.
+  function wmClose({ watchMs = 2000 } = {}) {
+    const sent = sendWindowClose(watchMs)
+    log(`wm close sent to window ${sent.window}; iconify requested: ${sent.iconifyRequested}`)
+    return sent
+  }
+
+  // Resolves to { code, signal } once the app exits, or null after `timeout`.
+  async function appExit(timeout) {
+    let timer
+    const exit = await Promise.race([child.exited, new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout) })])
+    clearTimeout(timer)
+    log(exit ? `app exited (code ${exit.code}, signal ${exit.signal})` : `app still running after ${timeout} ms`)
+    return exit
   }
 
   return {
@@ -317,8 +338,11 @@ export function createHarness({ app, evidence, configDir, dataDir, log }) {
     configFile,
     readConfig,
     configStat,
+    appLog,
     writeEvidence,
     signIn,
+    wmClose,
+    appExit,
     sleep,
   }
 }

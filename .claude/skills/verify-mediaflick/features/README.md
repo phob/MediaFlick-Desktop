@@ -32,7 +32,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 ## Features
 
 - [Sign in and sign out](./sign-in.md): server address, username and password, `--url` prefill, Quick Connect, the user menu, sign-out. Proven by `smoke`, `browse`, `sign-in`; the error path needs a server you own.
-- [Client settings](./client-settings.md): Player, Playback and Application shelves with Save, Discard, Restore defaults and restart notices, the leave-without-saving guard, and the Delete local account data dialog. Proven by `application-settings` and `client-settings`.
+- [Client settings](./client-settings.md): Player, Playback and Application shelves with Save, Discard, Restore defaults and restart notices, the leave-without-saving guard, the Delete local account data dialog, and what closing the window does (Close behavior and the leave guard on a window close). Proven by `application-settings`, `client-settings`, `close-minimize` and `close-guard`.
 - [Home](./home.md): billboard, shelves of poster cards, arrows, cards to detail. Proven by `browse` and `home-library`; the empty states are not reachable on the demo account.
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort, filters and chips, sidebar search, the empty result. Proven by `browse` and `home-library`.
 - [Item detail](./item-detail.md): movie, series and episode pages, More info, seasons, episodes, breadcrumbs, favorite and watched toggles. Read-only parts proven by `browse` and `item-detail`; toggles need a server you own.

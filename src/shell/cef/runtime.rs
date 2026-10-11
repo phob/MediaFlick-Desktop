@@ -149,7 +149,11 @@ wrap_browser_process_handler! {
                 .ok()
                 .map(|state| state.playback.clone());
             if let Some(surface) = playback.and_then(|playback| {
-                libmpv_overlay::LibmpvOverlaySurface::select(&settings, playback)
+                libmpv_overlay::LibmpvOverlaySurface::select(
+                    &settings,
+                    playback,
+                    handler_state.clone(),
+                )
             }) {
                 prepare_player_for_window(&handler_state);
                 let native_window = configured_player_native_window(
@@ -370,26 +374,18 @@ wrap_window_delegate! {
         }
 
         fn can_close(&self, window: Option<&mut Window>) -> i32 {
-            if should_minimize_instead_of_close(self.state.as_ref()) {
+            let browser = self
+                .browser_view
+                .borrow()
+                .as_ref()
+                .and_then(BrowserView::browser);
+            i32::from(request_main_window_close(self.state.as_ref(), browser, || {
                 update_webui_window_from_window(self.state.as_ref(), window.as_deref());
                 save_webui_window_settings(self.state.as_ref());
                 if let Some(window) = window {
                     window.minimize();
                 }
-                return 0;
-            }
-
-            let browser_view = self.browser_view.borrow();
-            let browser = browser_view
-                .as_ref()
-                .and_then(BrowserView::browser);
-            let Some(browser) = browser else {
-                return 1;
-            };
-            let Some(browser_host) = browser.host() else {
-                return 1;
-            };
-            browser_host.try_close_browser()
+            }))
         }
 
         fn initial_show_state(&self, _window: Option<&mut Window>) -> ShowState {
