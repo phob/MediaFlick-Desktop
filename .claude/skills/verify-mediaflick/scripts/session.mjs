@@ -255,7 +255,7 @@ let harness
 try {
   const port = await launch()
   await doctor(port)
-  harness = createHarness({ app, evidence, configDir, dataDir, log })
+  harness = createHarness({ app, child, evidence, configDir, dataDir, log })
   const drive = (await import(pathToFileURL(drivePath).href)).default
   if (typeof drive !== "function") throw new Error(`${result.drive} must export a default async function (ctx)`)
   log(`drive ${result.drive}`)
