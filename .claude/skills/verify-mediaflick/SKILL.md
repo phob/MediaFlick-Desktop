@@ -108,6 +108,9 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `pathname()` | `location.pathname + location.search`. |
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
 | `readConfig(name)`, `configStat(name)`, `configFile(name)` | Files in the disposable config dir (`settings.json`, `accounts.json`, …). |
+| `appLog()` | The app's Rust log so far, as text (`app.log` in the evidence). |
+| `wmClose({ watchMs })` | Linux only. Sends the app's top-level window the `WM_PROTOCOLS`/`WM_DELETE_WINDOW` message a window manager sends for the close button, then listens `watchMs` (default 2000) for the window's `WM_CHANGE_STATE` IconicState request. Returns `{ window, iconifyRequested }`. Under Xvfb no window manager acts on that request, so `iconifyRequested` is the proof of a minimize. |
+| `appExit(timeout)` | Waits for the app process to exit. Returns `{ code, signal }`, or `null` if it is still running after `timeout` ms. |
 | `screenshot(name)`, `snapshot(name)` | `<name>.png` (after a 300 ms settle) and `<name>.ax.txt`: one line per node, `role 'name' [state]`. |
 | `writeEvidence(name, value)` | Any extra artifact into the evidence folder. |
 | `step(text)` | A line in `steps.log`. |
@@ -115,7 +118,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All eight are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there:
+Shipped drives. All ten are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
@@ -125,7 +128,10 @@ Shipped drives. All eight are proven on Linux; the first three were also proven 
 - `item-detail`: movie extras and the More info menu (opened only), series seasons and episodes, an episode page and its Season breadcrumb. Read-only.
 - `client-settings`: Player shelf per backend, range alert, leave guard, Playback select, restart notices, live scrollbar style, Restore defaults + Save, the Delete local account data dialog (cancelled).
 - `labels`: the sign-in screen's Player and app settings link and Back to sign in, the save bar's Restore defaults and muted disabled Save, Favorites, the watched and favorites toggles on a movie and on episode cards, Countdown seconds gating, and the Releases startup option (opened, never chosen). Read-only.
+- `close-minimize`: saves `Minimize window`, closes through the window manager and proves the window asked to be minimized while the app kept running; then saves `Exit MediaFlick` and proves the next close exits.
+- `close-guard`: an unsaved draft, a window-manager close, the `Leave without saving?` dialog; `Keep editing` keeps the app and the draft, `Discard and leave` exits without writing it.
 
+Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed, because no drive plays anything.
 Re-run all of them:
 
 ```powershell
@@ -134,7 +140,7 @@ just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url http
 ```
 
 ```sh
-for d in smoke application-settings browse home-library item-detail client-settings labels; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library item-detail client-settings labels close-minimize close-guard; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
@@ -144,7 +150,7 @@ Each run writes **`build/verify/<run-id>/`**, which cleanup never removes (`just
 
 - `steps.log`: a timestamped line per action (`press …`, `fill …`, `hover …`), wait (`saw …`) and check (`ok: …`). This is the action record.
 - `doctor.json`: the isolation details (desktop or display), PID, exe and its mtime, git HEAD, Chromium version, `/api/status`, and profile paths and files.
-- `result.json`: `passed`, `error` (stack), `exit` (`coordinated`, `forced` or `exited-early`), `profileRemoved`, `durationMs`, and `leftovers` if any process outlived teardown.
+- `result.json`: `passed`, `error` (stack), `exit` (`coordinated`, `forced`, or `exited-early` when the app was gone before teardown, including on purpose after a drive closed it), `profileRemoved`, `durationMs`, and `leftovers` if any process outlived teardown.
 - `guard.json`: the real-profile fingerprints before and after, the changed files, and any user MediaFlick PIDs.
 - `pids.json`: the session PID, app PID, CDP port and profile path.
 - `*.png`, `*.ax.txt`, plus `failure.png` and `failure.ax.txt` when the drive throws.
@@ -180,7 +186,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 ## Platform status
 
 - **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the four newer drives have not run there.
-- **Linux: proven.** All eight shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
+- **Linux: proven.** All ten shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).
@@ -190,7 +196,9 @@ It stops only processes whose command line names a dead run's profile, then remo
 - **Audio is not isolated on Windows.** The private desktop hides windows and input, not sound. Never press Play, Resume, From start, or an episode's play button. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (the session log shows `Failed to connect to PipeWire`), but Play still starts real playback through the system libmpv, so the rule holds there too.
 - **Linux stderr noise is expected.** The private session bus activates `xdg-desktop-portal`, which logs `Choosing gtk.portal … as a last-resort fallback` and `Failed to connect to PipeWire`; `A connection to the bus can't be made` follows teardown. None of it affects the run. `steps.log` and `result.json` are the result.
 - **Linux sockets need a short `TMPDIR`.** CEF dies with `SIGTRAP` (`Socket path too long` in `cef.log`) when its singleton socket path passes 107 bytes, and the libmpv shell falls back after 20 s with `path must be shorter than SUN_LEN` in `app.log` when mpv's IPC socket does. `session.mjs` refuses to launch when the wrapper's runtime dir is too long for them; run from a shorter `TMPDIR`.
-- **A drive that ends with an unsaved settings draft exits forced.** The draft guard holds the window on `window.close()`, so teardown stops the app after 20 s (`exit: forced`). Save or Discard before the drive returns.
+- **A drive that ends with an unsaved settings draft exits forced.** The draft guard answers teardown's `window.close()` with its `Leave without saving?` dialog, so teardown stops the app after 20 s (`exit: forced`). Save or Discard before the drive returns.
+- **A drive that saves `Minimize window` exits forced with External mpv.** There, teardown's `window.close()` takes the window's close policy and minimizes. Save `Exit MediaFlick` before the drive returns, as `close-minimize` does.
+- **`wmClose` needs its sender.** The Linux `just verify` recipe builds `examples/verify-wm-close.rs` into `$CARGO_TARGET_DIR/debug/examples/`; running `session.mjs` some other way leaves it missing. It needs exactly one viewable top-level window of class `io.github.phob.MediaFlickDesktop`.
 - **External links reach the visible desktop.** `More info` menu items, `Installation help` and the update banner's release page open the user's default browser. Never press them.
 - **Never press the update banner's install action** (it downloads and runs an installer), `Install mpv`, or `Choose mpv executable` (a native file dialog nobody can answer on the private desktop).
 - The sidebar expands under the pointer and overlays content off Home. `press` waits for it to settle and parks the pointer when a target stays covered. To use the sidebar's search off Home, `hover({ css: '[data-sidebar="sidebar"]' })` first.

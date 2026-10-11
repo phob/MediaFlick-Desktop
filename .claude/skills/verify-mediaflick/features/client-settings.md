@@ -4,14 +4,14 @@ The Client group in Settings holds this device's Player, Playback and Applicatio
 
 ## Sub-features
 
-- `app-close` chooses what closing the window does (`Exit MediaFlick` or `Minimize window`).
+- `app-close` chooses what closing the window does (`Exit MediaFlick` or `Minimize window`) for the close button, Alt+F4 and mpv's close key.
 - `app-scrollbars` shows or hides native scrollbars, applied as soon as it is saved.
 - `app-loglevel` sets the log level for the next launch.
 - `app-delete-local` deletes this device's data for the signed-in account (typed `DELETE`, then a confirmation dialog).
 - `player-backend` picks the built-in player (libmpv) or external mpv. Built-in shows comfort values and shortcut recorders; external shows the mpv path, `Installation help`, and on Windows the mpv installer.
 - `player-shortcuts` records player keys, with a conflict alert.
 - `playback-quality` and `playback-segments` set the default streaming quality and intro/credits/recap/commercial skipping.
-- `savebar` covers Save, Discard, Restore defaults and restart notices; `draft-guard` covers leaving with unsaved changes.
+- `savebar` covers Save, Discard, Restore defaults and restart notices; `draft-guard` covers leaving with unsaved changes, by navigation or by closing the window.
 
 ## How to get to it (user POV)
 
@@ -37,6 +37,8 @@ Preconditions:
 - **Player, built-in.** `ctx.api("/api/settings")` reports `capabilities.libmpv` (on Linux, whether `libmpv.so.2` loaded) and `capabilities.mpvInstaller` (Windows only). With libmpv available, a fresh profile reads `Built-in player`, with spinbuttons named like `Subtitle size (%)` (each with a `… slider`) and shortcut recorders named like `Pause key` (`aria-pressed` while recording) with `Clear pause key`. A value out of range shows `role="alert"` `Enter a whole number from 50 to 200.` and disables `Save`. *Proven by `client-settings` on Linux*; the shortcut conflict alert is source-only.
 - **Player, external.** `External mpv` shows `{ role: "textbox", name: "mpv executable" }`, `{ role: "button", name: "Choose mpv executable" }`, `Installation help`, and the only shortcut recorder left, `Mark watched key`. The `Install mpv` button exists only where `capabilities.mpvInstaller` is true; on Linux the row titled `Install mpv` holds just `Installation help`. *Proven by `client-settings` on Linux.*
 - **Leave guard.** With a dirty shelf, press another settings link: `{ role: "dialog", name: "Leave without saving?" }` offers `Keep editing` (stays) and `Discard and leave` (drops the draft and navigates). The guard also fires on sidebar links that leave Settings. *Proven by `client-settings`.*
+- **Close behavior on a window close (Linux).** Save `ctx.choose({ name: "Close behavior" }, "Minimize window")`, then `ctx.wmClose()`: `iconifyRequested` is `true`, `ctx.appExit(5000)` is `null`, and `ctx.appLog()` contains `close request minimized the window`. With `Exit MediaFlick` saved, `wmClose()` reports `iconifyRequested: false` and `ctx.appExit(20000)` returns the exit. *Proven by `close-minimize`, with the Built-in player and with External mpv.*
+- **Leave guard on a window close (Linux).** With a dirty shelf, `ctx.wmClose()` opens the same `Leave without saving?` dialog. `Keep editing` keeps the app running and the draft unsaved; `Discard and leave` exits (`ctx.appExit`) and `settings.json` does not gain the draft. `app.log` shows `page asked to confirm leaving forced=false` for each attempt. *Proven by `close-guard`, with the Built-in player and with External mpv.*
 - **Delete local account data.** Typing `DELETE` into `{ role: "textbox", name: "Type DELETE to confirm local account deletion" }` enables `Delete local account data`; pressing it opens `{ role: "alertdialog", name: "Delete local account data?" }` with `Cancel` and a second `Delete local account data`. Only the dialog's action deletes. *Cancel proven by `client-settings`.*
 - **Proof.** Snapshot the draft state (`02-draft.ax.txt` in `application-settings`), screenshot each state, and keep `settings-before.json`, `settings-after.json` and `settings-final.json` via `ctx.writeEvidence`.
 
@@ -44,7 +46,9 @@ Preconditions:
 
 - `role="status"` gets no accessible name from its content, so read the save bar text with `ctx.app.evaluate('document.querySelector(".settings-save-bar [role=status]")?.textContent')`.
 - The `Settings saved` toast sits over the save bar's buttons for about 4 s. `ctx.press` waits it out; a hand-rolled click would hit the toast.
-- End a drive with the shelf saved or discarded. A dirty draft holds the window on `window.close()`, and teardown has to force the exit.
+- End a drive with the shelf saved or discarded. A dirty draft answers teardown's `window.close()` with the leave dialog, and teardown has to force the exit.
+- End a drive with `Exit MediaFlick` saved. With External mpv, teardown's `window.close()` otherwise minimizes the window and teardown has to force the exit.
+- A drive that closes the app on purpose ends with `exit: exited-early` in `result.json`; the drive's own `appExit` check is the proof.
 - Signed out, Settings navigation shows `Back to sign in` above the shelf list, and the sidebar user menu still reads `Signed in`; leave through `Back to sign in`.
 - Never press `Installation help` (opens the user's default browser on the visible desktop), `Install mpv` on Windows (downloads and installs mpv into the profile), `Choose mpv executable` (opens a native file dialog on the private display that no drive can answer), or the dialog's `Delete local account data` (wipes the profile's account and signs out mid-drive).
 - `Show scrollbars` is also passed to CEF at launch, but the saved value and the style element are the proof, not what the page's scrollbars look like.
