@@ -195,7 +195,9 @@ export function LibrarySyncProgress() {
   )
 }
 
-function UserMenu() {
+// The open menu holds the hover sidebar expanded: as a modal menu it disables
+// pointer events outside itself, so the sidebar sees the pointer leave.
+function UserMenu({ onOpenChange }: { onOpenChange?: (open: boolean) => void }) {
   const { data: status } = useStatus()
   const logout = useLogout()
   const name = status?.userName ?? "Signed in"
@@ -203,7 +205,7 @@ function UserMenu() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={onOpenChange}>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
@@ -255,9 +257,11 @@ function UserMenu() {
   )
 }
 
-type AppSidebarProps = Pick<ComponentProps<typeof Sidebar>, "onPointerEnter" | "onPointerLeave">
+type AppSidebarProps = Pick<ComponentProps<typeof Sidebar>, "onPointerEnter" | "onPointerLeave"> & {
+  onUserMenuOpenChange?: (open: boolean) => void
+}
 
-export function AppSidebar(props: AppSidebarProps = {}) {
+export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps = {}) {
   const location = useLocation()
   const cache = useQueryClient()
   const { data: status } = useStatus()
@@ -449,7 +453,7 @@ export function AppSidebar(props: AppSidebarProps = {}) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <UserMenu />
+        <UserMenu onOpenChange={onUserMenuOpenChange} />
       </SidebarFooter>
     </Sidebar>
   )
