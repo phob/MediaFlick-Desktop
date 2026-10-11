@@ -173,7 +173,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation()
   const isMobile = useIsMobile()
   const [pointerIsOverSidebar, setPointerIsOverSidebar] = useState(false)
-  const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar)
+  const [userMenuIsOpen, setUserMenuIsOpen] = useState(false)
+  const sidebarOpen = isMobile || sidebarShouldBeOpen(location.pathname, pointerIsOverSidebar, userMenuIsOpen)
   const settings = useSettings()
   const player = usePlayerState()
   const viewing = useViewing()
@@ -201,8 +202,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       className="app-experience h-full min-w-0 overflow-hidden"
     >
       <AppSidebar
-        onPointerEnter={() => setPointerIsOverSidebar(true)}
+        onPointerEnter={(event) => {
+          // React also bubbles enter from the portalled user menu, whose
+          // unmount under the pointer never sends the matching leave.
+          if (event.target instanceof Node && event.currentTarget.contains(event.target)) {
+            setPointerIsOverSidebar(true)
+          }
+        }}
         onPointerLeave={() => setPointerIsOverSidebar(false)}
+        onUserMenuOpenChange={setUserMenuIsOpen}
       />
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
         {/* The shell never scrolls; the content pane does. */}
