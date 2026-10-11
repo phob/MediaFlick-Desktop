@@ -112,11 +112,15 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return (await find(target, options)).properties
   }
 
+  // A click can close the app (`Discard and leave`). The app may then exit
+  // before CEF answers the mouse event, and the CDP client never settles a
+  // request on a closed socket, so each event also ends when the app exits.
   async function mouseAt(x, y) {
     const event = { x, y, button: "left", clickCount: 1 }
-    await app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
-    await app.send("Input.dispatchMouseEvent", { type: "mousePressed", ...event })
-    await app.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...event })
+    const exited = currentChild().exited
+    for (const params of [{ type: "mouseMoved", x, y, button: "none" }, { type: "mousePressed", ...event }, { type: "mouseReleased", ...event }]) {
+      await Promise.race([app.send("Input.dispatchMouseEvent", params), exited])
+    }
   }
 
   // What the pointer would hit at (x, y): the target itself, a descendant, or
@@ -144,12 +148,20 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     await sleep(400)
   }
 
+  // Scrolling only into view leaves a target at the viewport's edge, where a
+  // sticky bar (the settings save bar, once a draft exists) can cover it.
+  async function centre(backendNodeId) {
+    const { object } = await app.send("DOM.resolveNode", { backendNodeId })
+    await app.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function () { this.scrollIntoView({ block: 'center', inline: 'nearest' }) }" })
+  }
+
   // Scrolls the element into view and returns a point the pointer really hits.
   // The element must hold still first: leaving Home turns the pinned sidebar
   // into a collapsed overlay and slides the content left, and a click at the
   // old position lands on nothing. A toast covering it is waited out. Any
   // other covered target first gets time to settle (transitions end, the
-  // expanding sidebar finishes); only then is the pointer parked, because
+  // expanding sidebar finishes), then is scrolled to the middle of the
+  // viewport, out from under sticky bars; only then is the pointer parked, because
   // moving it away also closes hover-opened UI such as the sidebar. React may
   // re-mount the element meanwhile; a detached node is found again rather
   // than reported.
@@ -179,7 +191,8 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
         }
         covered++
         if (covered === 12) throw new Error(`${describe(target)} is covered by ${hit}`)
-        if (covered === 6) await park()
+        if (covered === 3) await centre(element.backendNodeId)
+        else if (covered === 6) await park()
         else await sleep(150)
       } catch (error) {
         if (!/detached|No node|Could not find node/i.test(error.message)) throw error
