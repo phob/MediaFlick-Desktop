@@ -118,8 +118,8 @@ describe("appearance settings live preview", () => {
       "expanded media-card preview",
     )
     fireEvent.click(within(panel).getByRole("button", { name: "Play" }))
-    fireEvent.click(within(panel).getByRole("button", { name: "Add to My List" }))
-    fireEvent.click(within(panel).getByRole("button", { name: "Mark as watched" }))
+    fireEvent.click(within(panel).getByRole("button", { name: "Add to favorites" }))
+    fireEvent.click(within(panel).getByRole("button", { name: "Mark watched" }))
 
     expect(requests.some((path) => path.includes("/api/play"))).toBe(false)
     expect(requests.some((path) => path.includes("/favorite"))).toBe(false)
@@ -147,7 +147,7 @@ test("preview delay shares the preview toggle's Save, Reset, and Discard workflo
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({previewDelayMs:850, textScale:125})))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
-  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  fireEvent.click(screen.getByRole("button", {name:"Restore defaults"}))
   expect(input.value).toBe("550")
   fireEvent.click(screen.getByRole("button", {name:"Discard"}))
   expect(input.value).toBe("850")

@@ -169,10 +169,10 @@ fn built_in_label(id: HomeBuiltIn) -> &'static str {
         HomeBuiltIn::BecauseYouWatched => "Because You Watched",
         HomeBuiltIn::RecentlyAdded => "Recently Added Movies",
         HomeBuiltIn::RecentlyAddedShows => "Recently Added Shows",
-        HomeBuiltIn::Upcoming => "Release Timeline",
+        HomeBuiltIn::Upcoming => "Releases",
         HomeBuiltIn::LatestMovies => "Latest Movies",
         HomeBuiltIn::LatestShows => "Latest Shows",
-        HomeBuiltIn::MyList => "My List",
+        HomeBuiltIn::MyList => "Favorites",
     }
 }
 
@@ -357,7 +357,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
         ),
         HomeBuiltIn::MyList => (
             "myList",
-            "My List",
+            "Favorites",
             home_query(
                 &services.library,
                 ItemQuery {

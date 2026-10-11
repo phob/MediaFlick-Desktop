@@ -108,7 +108,7 @@ test("Reset restores Letterboxd profile enablement and Save commits it", async (
     </TestProviders>,
   )
 
-  fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+  fireEvent.click(screen.getByRole("button", { name: "Restore defaults" }))
   fireEvent.click(screen.getByRole("button", { name: "Save" }))
   await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(profile.id, true))
 })

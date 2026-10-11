@@ -104,7 +104,7 @@ export function CompanionIntegration() {
   if (!companion) return <SettingsLoading />
 
   const pluginDescription = companion.available
-    ? "Companion answered this Desktop build's authenticated status check."
+    ? "MediaFlick Companion is installed on this Jellyfin server and responding."
     : companion.error ?? "MediaFlick Companion was not found on this Jellyfin server."
   const pluginAvailable = companion.available && companion.compatible
   const capabilities = companion.info?.capabilities ?? []
@@ -137,12 +137,12 @@ export function CompanionIntegration() {
       {companion.available && (
         <Section
           title="Feature compatibility"
-          description="Desktop checks the features advertised by Companion. Plugin version numbers are not used for this check."
+          description="Server features this app needs from MediaFlick Companion. If one is missing, ask your server administrator to update MediaFlick Companion."
         >
           {!companion.compatible && (
             <SettingsRow
-              title="Companion protocol"
-              description="This Desktop build cannot read the plugin's status contract."
+              title="Companion version"
+              description="This version of MediaFlick Companion does not work with this app, so none of the services below are available. Ask your server administrator to update MediaFlick Companion."
             >
               <FeatureCompatibility compatible={false} />
             </SettingsRow>

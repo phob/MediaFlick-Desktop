@@ -25,7 +25,7 @@ export default async function itemDetail(ctx) {
   await open(ctx, "night of the living", MOVIE)
   await ctx.find({ role: "heading", name: MOVIE })
   await ctx.find({ role: "combobox", name: "Streaming quality" })
-  ctx.check((await ctx.exists({ role: "button", name: "Mark watched" })) || (await ctx.exists({ role: "button", name: "Watched" })), "the watched toggle")
+  ctx.check((await ctx.exists({ role: "button", name: "Mark watched" })) || (await ctx.exists({ role: "button", name: "Mark unwatched" })), "the watched toggle")
   const movie = await ctx.snapshot("01-movie")
   ctx.step(`headings: ${JSON.stringify([...movie.matchAll(/heading '([^']+)'/g)].map((match) => match[1]))}`)
   ctx.step(`cast links: ${[...movie.matchAll(/link 'Find titles featuring /g)].length}`)

@@ -102,7 +102,7 @@ const NO_RATINGS: RatingsContextValue = {
 /**
  * The preview shelf hovers for real — the same delay, the same panel, the same
  * hold-open behavior as Home — but it remains a picture of the app: the
- * panel's Play, My List, and watched buttons render and disable exactly as
+ * panel's Play, favorites, and watched buttons render and disable exactly as
  * they do on a shelf yet mutate nothing, so resting on a card cannot launch a
  * film or rewrite watch state from the settings page. Detail and next-up reads
  * stay live so the panel fills with the same facts it carries on Home.
@@ -386,7 +386,7 @@ export function Appearance() {
         <SettingsRow
           controlId="settings-card-previews"
           title="Card previews"
-          description="Open a larger panel after resting the pointer on a card. When off, Play, My List, and watched buttons stay on the card."
+          description="Open a larger panel after resting the pointer on a card. When off, Play, favorites, and watched buttons stay on the card."
         >
           <Switch
             id="settings-card-previews"
@@ -454,7 +454,7 @@ export function Appearance() {
         <SettingsRow
           controlId="artwork-intensity"
           title="Artwork intensity"
-          description="Percent of the original artwork intensity."
+          description="Brightness of posters, episode stills, and cover art, as a percent of the original."
         >
           <SettingsNumberField
             id="artwork-intensity"
@@ -470,7 +470,7 @@ export function Appearance() {
         <SettingsRow
           controlId="backdrop-intensity"
           title="Backdrop intensity"
-          description="Percent of the original artwork intensity."
+          description="Brightness of the wide background images behind the Home billboard and detail pages, as a percent of the original."
         >
           <SettingsNumberField
             id="backdrop-intensity"

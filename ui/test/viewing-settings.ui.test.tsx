@@ -125,7 +125,7 @@ test("Viewing Reset preserves the Appearance-owned preview delay", async () => {
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({posterSize:200, previewDelayMs:850}), expect.anything()))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
-  fireEvent.click(screen.getByRole("button", {name:"Reset"}))
+  fireEvent.click(screen.getByRole("button", {name:"Restore defaults"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850}), expect.anything()))
 })

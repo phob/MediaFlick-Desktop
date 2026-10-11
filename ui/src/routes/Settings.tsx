@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   House,
   Layers,
   Link,
@@ -54,6 +55,12 @@ function SettingsNavigation() {
   const { data: status } = useStatus()
   return (
     <nav className="settings-navigation" aria-label="Settings navigation">
+      {status && !status.authenticated && (
+        <RouterLink to="/" className="mb-3">
+          <ArrowLeft />
+          <span>Back to sign in</span>
+        </RouterLink>
+      )}
       <span className="settings-nav-label">Settings</span>
       {NAVIGATION.map((item, index) => {
         const active = location.pathname.startsWith(item.to)
