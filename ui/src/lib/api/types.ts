@@ -612,6 +612,14 @@ interface SeerrCastMember {
   profilePath: string | null
 }
 
+interface SeerrCrewMember {
+  id: number
+  name: string
+  /** Display labels in the Companion's key-job order, such as "Director". */
+  jobs: string[]
+  profilePath: string | null
+}
+
 export interface SeerrReleaseDate {
   region: string
   type: "premiere" | "limited-cinema" | "cinema" | "digital" | "physical" | "tv"
@@ -652,12 +660,11 @@ export interface SeerrMediaDetail extends SeerrResult {
   revenue: number | null
   studios: string[]
   networks: string[]
-  creators: string[]
-  directors: string[]
-  writers: string[]
   productionCountries: { code: string; name: string }[]
   spokenLanguages: { code: string; name: string }[]
   cast: SeerrCastMember[]
+  /** Absent when an older compatible Companion serves the detail response. */
+  crew?: SeerrCrewMember[]
   trailer: SeerrTrailer | null
   releaseDates: SeerrReleaseDate[]
   contentRatings: SeerrContentRating[]

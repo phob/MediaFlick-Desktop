@@ -172,7 +172,7 @@ public sealed class SeerrGateway
         }
         return ShapePersonCredits(
             credits,
-            await FactsAsync(Titles(credits?["cast"]), cancellationToken).ConfigureAwait(false));
+            await FactsAsync(Titles(PersonCredits(credits)), cancellationToken).ConfigureAwait(false));
     }
 
     public async Task<SeerrPageResponse<SeerrResultResponse>> DiscoverAsync(
@@ -663,7 +663,11 @@ public sealed class SeerrGateway
     }
 
     private static IEnumerable<(string? MediaType, JsonObject? MediaInfo)> Titles(JsonNode? results)
-        => Objects(results).Select(static result => (
+        => Titles(Objects(results));
+
+    private static IEnumerable<(string? MediaType, JsonObject? MediaInfo)> Titles(
+        IEnumerable<JsonObject> results)
+        => results.Select(static result => (
             JsonRead.String(result, "mediaType"),
             result["mediaInfo"] as JsonObject));
 
@@ -714,19 +718,11 @@ public sealed class SeerrGateway
         JsonNode? node,
         ArrFacts? facts = null)
     {
-        var results = Objects((node as JsonObject)?["cast"])
-            .Where(static credit =>
-                JsonRead.String(credit, "mediaType") is "movie" or "tv"
-                && (JsonRead.Int32(credit, "id") ?? 0) > 0
-                && JsonRead.Flag(credit["adult"]) != true
-                && !string.Equals(
-                    JsonRead.String(credit, "character")?.Trim(),
-                    "Thanks",
-                    StringComparison.OrdinalIgnoreCase))
+        var results = PersonCredits(node as JsonObject)
             .GroupBy(
                 static credit => $"{JsonRead.String(credit, "mediaType")}:{JsonRead.Int32(credit, "id")}",
                 StringComparer.Ordinal)
-            // Preserve request state when only a duplicate character row
+            // Preserve request state when only a duplicate credit row
             // happens to carry Seerr's mediaInfo object.
             .Select(group => ShapeSearchResult(
                 group.FirstOrDefault(static credit => credit["mediaInfo"] is JsonObject)
@@ -739,6 +735,21 @@ public sealed class SeerrGateway
             results.Length,
             results);
     }
+
+    /// <summary>
+    /// Acting credits, then crew credits for a key job, before deduplication.
+    /// </summary>
+    private static IEnumerable<JsonObject> PersonCredits(JsonObject? credits)
+        => Objects(credits?["cast"])
+            .Where(static credit => !string.Equals(
+                JsonRead.String(credit, "character")?.Trim(),
+                "Thanks",
+                StringComparison.OrdinalIgnoreCase))
+            .Concat(Objects(credits?["crew"]).Where(static credit => KeyCrewJobRank(credit) is not null))
+            .Where(static credit =>
+                JsonRead.String(credit, "mediaType") is "movie" or "tv"
+                && (JsonRead.Int32(credit, "id") ?? 0) > 0
+                && JsonRead.Flag(credit["adult"]) != true);
 
     internal static IReadOnlyList<SeerrGenreResponse> ShapeGenres(JsonNode? node)
         => Objects(node)
@@ -875,12 +886,10 @@ public sealed class SeerrGateway
             JsonRead.Positive(detail["revenue"]),
             Names(detail["productionCompanies"]).ToArray(),
             Names(detail["networks"]).ToArray(),
-            UniqueStrings(Names(detail["createdBy"]).Concat(CrewNames(detail, "Creator", null))),
-            UniqueStrings(CrewNames(detail, "Director", null)),
-            UniqueStrings(CrewNames(detail, null, "Writing")),
             ShapeCodeNames(detail["productionCountries"], "iso_3166_1", "name"),
             ShapeCodeNames(detail["spokenLanguages"], "iso_639_1", "englishName"),
             ShapeCast(detail),
+            ShapeCrew(detail),
             ShapeTrailer(detail),
             ShapeReleaseDates(detail),
             ShapeContentRatings(detail),
@@ -919,24 +928,6 @@ public sealed class SeerrGateway
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Select(static value => value!);
 
-    private static IEnumerable<string> CrewNames(
-        JsonObject detail,
-        string? job,
-        string? department)
-        => Objects((detail["credits"] as JsonObject)?["crew"])
-            .Where(person =>
-                (job is null || JsonRead.String(person, "job") == job)
-                && (department is null || JsonRead.String(person, "department") == department))
-            .Select(static person => JsonRead.String(person, "name")?.Trim())
-            .Where(static value => !string.IsNullOrWhiteSpace(value))
-            .Select(static value => value!);
-
-    private static string[] UniqueStrings(IEnumerable<string> values)
-        => values
-            .Where(static value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
     private static SeerrCodeNameResponse[] ShapeCodeNames(
         JsonNode? node,
         string codeName,
@@ -960,6 +951,71 @@ public sealed class SeerrGateway
                 JsonRead.String(person, "character"),
                 JsonRead.String(person, "profilePath")))
             .ToArray();
+
+    /// <summary>
+    /// The crew jobs a detail page and a person's credits show, in rail order.
+    /// TMDB credits outside this table are dropped.
+    /// </summary>
+    private static readonly (string Label, Func<string?, string?, bool> Matches)[] KeyCrewJobs =
+    [
+        ("Creator", static (job, _) => job == "Creator"),
+        ("Director", static (job, _) => job == "Director"),
+        ("Writer", static (_, department) => department == "Writing"),
+        ("Producer", static (job, _) => job is "Producer" or "Executive Producer"),
+        ("Composer", static (job, _) => job is "Original Music Composer" or "Music"),
+        ("Director of Photography", static (job, _) => job == "Director of Photography"),
+    ];
+
+    private static int? KeyCrewJobRank(JsonObject credit)
+    {
+        var job = JsonRead.String(credit, "job");
+        var department = JsonRead.String(credit, "department");
+        var rank = Array.FindIndex(KeyCrewJobs, entry => entry.Matches(job, department));
+        return rank < 0 ? null : rank;
+    }
+
+    /// <summary>
+    /// One entry per person, ordered by their highest-ranked key job and then
+    /// by where TMDB first credits them, so a writer-director appears once.
+    /// </summary>
+    private static SeerrCrewMemberResponse[] ShapeCrew(JsonObject detail)
+    {
+        // Seerr relays TMDB's series `created_by` unmapped, so its headshot
+        // keeps the snake_case name the mapped crew credits do not use.
+        var creators = Objects(detail["createdBy"]).Select(static person => (
+            Person: person,
+            Rank: (int?)0,
+            ProfilePath: JsonRead.String(person, "profilePath") ?? JsonRead.String(person, "profile_path")));
+        var credits = Objects((detail["credits"] as JsonObject)?["crew"]).Select(static person => (
+            Person: person,
+            Rank: KeyCrewJobRank(person),
+            ProfilePath: JsonRead.String(person, "profilePath")));
+        return creators.Concat(credits)
+            .Select(static (credit, order) => (
+                Id: JsonRead.Int32(credit.Person, "id") ?? 0,
+                Name: JsonRead.String(credit.Person, "name")?.Trim(),
+                credit.Rank,
+                credit.ProfilePath,
+                Order: order))
+            .Where(static credit => credit.Id > 0
+                && credit.Rank is not null
+                && !string.IsNullOrWhiteSpace(credit.Name))
+            .GroupBy(static credit => credit.Id)
+            .Select(static person => (
+                First: person.First(),
+                Ranks: person.Select(static credit => credit.Rank!.Value).Distinct().Order().ToArray(),
+                ProfilePath: person.Select(static credit => credit.ProfilePath)
+                    .FirstOrDefault(static path => !string.IsNullOrWhiteSpace(path))))
+            .OrderBy(static person => person.Ranks[0])
+            .ThenBy(static person => person.First.Order)
+            .Take(20)
+            .Select(static person => new SeerrCrewMemberResponse(
+                person.First.Id,
+                person.First.Name!,
+                person.Ranks.Select(static rank => KeyCrewJobs[rank].Label).ToArray(),
+                person.ProfilePath))
+            .ToArray();
+    }
 
     private static SeerrTrailerResponse? ShapeTrailer(JsonObject detail)
     {

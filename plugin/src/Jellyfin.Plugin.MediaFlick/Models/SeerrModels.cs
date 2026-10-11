@@ -93,6 +93,12 @@ public sealed record SeerrCastMemberResponse(
     string? Character,
     string? ProfilePath);
 
+public sealed record SeerrCrewMemberResponse(
+    int Id,
+    string Name,
+    IReadOnlyList<string> Jobs,
+    string? ProfilePath);
+
 public sealed record SeerrTrailerResponse(string Name, string? Key);
 
 public sealed record SeerrReleaseDateResponse(
@@ -142,12 +148,10 @@ public sealed record SeerrMediaDetailResponse(
     long? Revenue,
     IReadOnlyList<string> Studios,
     IReadOnlyList<string> Networks,
-    IReadOnlyList<string> Creators,
-    IReadOnlyList<string> Directors,
-    IReadOnlyList<string> Writers,
     IReadOnlyList<SeerrCodeNameResponse> ProductionCountries,
     IReadOnlyList<SeerrCodeNameResponse> SpokenLanguages,
     IReadOnlyList<SeerrCastMemberResponse> Cast,
+    IReadOnlyList<SeerrCrewMemberResponse> Crew,
     SeerrTrailerResponse? Trailer,
     IReadOnlyList<SeerrReleaseDateResponse> ReleaseDates,
     IReadOnlyList<SeerrContentRatingResponse> ContentRatings,
