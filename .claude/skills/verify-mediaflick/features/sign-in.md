@@ -8,7 +8,7 @@ A signed-out user connects MediaFlick to a Jellyfin server with a server address
 - `signin-prefill` shows a server address given on the command line (`--url`, also `JELLYFIN_URL`) or remembered from the last session.
 - `signin-error` shows the server's error in the form when sign-in fails.
 - `signin-quickconnect` shows a Quick Connect code to approve in another Jellyfin client.
-- `user-menu` holds `Sync library` and `Sign out`.
+- `user-menu` holds `Sync library` and `Sign out`, and holds the hover sidebar expanded while it is open.
 - `signout` signs out from the user menu, without confirmation.
 
 ## How to get to it (user POV)
@@ -34,7 +34,8 @@ Preconditions:
 - **Error.** Sign in with a wrong password against a server you own. The error is a `p.text-destructive` inside the form, between Password and `Sign in` (no `role="alert"`); Quick Connect errors use a second `p.text-destructive` above Username. Read the right one with `ctx.app.evaluate`. Not verified: the demo account accepts any password.
 - **Settings link.** `{ role: "link", name: "Player and app settings" }` sits under the sign-in card and opens `/settings/client/player` signed out. Settings navigation then starts with `{ role: "link", name: "Back to sign in" }`, which returns to the `Server` textbox. *Proven by `labels`.*
 - **User menu.** `ctx.press({ role: "button", name: "D demo demo.jellyfin.org" })` opens it with `{ role: "menuitem", name: "Sync library" }` and `{ role: "menuitem", name: "Sign out" }`. *Proven by `sign-in`.*
-- **Sign out.** `ctx.press({ role: "menuitem", name: "Sign out" })`. The sign-in form returns with the remembered server in `{ role: "textbox", name: "Server" }`, `/api/status` reports `authenticated: false`, `accounts.json` keeps the account, and `settings.json` keeps `jellyfin_url`. *Proven by `browse`, `sign-in`.*
+- **User menu off Home.** Off Home the sidebar collapses to icons and expands under the pointer. `ctx.hover` the trigger, then press it: while the menu is open the sidebar stays expanded, also with the pointer on the menu, and it collapses once the menu closes and the pointer leaves. Read the state from `document.querySelector('[data-slot="sidebar"]').dataset.state` (`expanded` or `collapsed`), sampled over time. *Proven by `sidebar-user-menu` (`sidebar-states.json`).*
+- **Sign out.** `ctx.press({ role: "menuitem", name: "Sign out" })`. The sign-in form returns with the remembered server in `{ role: "textbox", name: "Server" }`, `/api/status` reports `authenticated: false`, `accounts.json` keeps the account, and `settings.json` keeps `jellyfin_url`. *Proven by `browse`, `sign-in`.* The URL does not change on sign-out: from `/library?kind=Movie` the form appears on that path, and signing in again stays there instead of going Home. *Proven by `library-filters`.*
 - **Proof.** Screenshot and snapshot the signed-out and signed-in states; keep `profile/config/accounts.json` and `settings.json` from the evidence folder.
 
 ## Gotchas

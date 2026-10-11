@@ -63,7 +63,9 @@ export default async function itemDetail(ctx) {
   ctx.step(`episode links: ${JSON.stringify(episodes.slice(0, 3))}`)
   const seriesPath = await ctx.pathname()
   await ctx.park()
-  await ctx.press({ role: "link", name: episodes[0] })
+  // The first title link's name gains " (Next up)" whenever that query lands,
+  // possibly after the snapshot above, so press it by its number prefix.
+  await ctx.press({ css: 'a[href^="/item/"]:has(> span.tabular-nums)' }, { nth: 0 })
   await ctx.until(async () => (await ctx.pathname()) !== seriesPath && (await ctx.pathname()).startsWith("/item/"), "the episode page")
   await ctx.find({ role: "combobox", name: "Streaming quality" })
   await ctx.find({ role: "link", name: SERIES })
