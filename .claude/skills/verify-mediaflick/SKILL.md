@@ -121,7 +121,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All fifteen are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
+Shipped drives. All sixteen are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
@@ -137,18 +137,19 @@ Shipped drives. All fifteen are proven on Linux; the first three were also prove
 - `sidebar-user-menu`: off Home, the user menu holds the hover sidebar expanded while it is open, also with the pointer on the menu, and the sidebar collapses after the menu closes. Read-only.
 - `library-filters`: the Series view, `Sort: Rating`, the Genre and Watch status filters (the menu closes on a pick and is named after its trigger), chips and `Clear all`, a one-character search that never commits, clearing a search, and signing out from a library page. Read-only.
 - `player-shelf`: the shortcut conflict alert, the Player shelf's `Player settings saved` toast, and `Restore defaults` + Save on Player, which keeps `player_backend`, `comfort` and `mark_watched_next` in `settings.json`.
+- `library-parity`: sort direction, the per-kind sort lists, a seeded Random order and Shuffle again, the In progress, Parental rating and Series status filters, the A–Z rail in both directions, and series cards' unwatched count, each compared with the demo server's own API. Read-only.
 - `home-settings`: Home's `No titles available` and `No shelves enabled` states through the local Home settings, `Configure Home`, then `Restore defaults` + Save. Read-only against the demo server.
 
 Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed, because no drive plays anything.
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'player-shelf', 'home-settings') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters player-shelf home-settings; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
@@ -194,7 +195,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 ## Platform status
 
 - **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the twelve newer drives have not run there.
-- **Linux: proven.** All fifteen shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–25 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
+- **Linux: proven.** All sixteen shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–40 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).

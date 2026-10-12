@@ -29,6 +29,8 @@ export function createQueryClient() {
   })
 }
 
+const ITEMS_ROOT = "items"
+
 export const queryKeys = {
   status: ["status"] as const,
   companion: ["companion"] as const,
@@ -42,13 +44,15 @@ export const queryKeys = {
   homeSettings: ["home", "settings"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
+  officialRatings: (kind: string) => ["official-ratings", kind] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
   // Live exact-person pages are not local SQLite projections. Keeping their
   // root separate prevents every committed sync batch from re-running the
   // same Jellyfin filmography query.
   items: (query: ItemQuery) =>
-    query.personId ? (["person-items", query] as const) : (["items", query] as const),
+    query.personId ? (["person-items", query] as const) : ([ITEMS_ROOT, query] as const),
+  itemLetters: (query: ItemQuery) => [ITEMS_ROOT, "letters", query] as const,
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
     ["person", "resolve", jellyfinId, tmdbId, name] as const,
   item: (id: string) => ["item", id] as const,
@@ -104,8 +108,9 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "genres",
   "home",
   "item",
-  "items",
+  ITEMS_ROOT,
   "letterboxd",
+  "official-ratings",
   "person",
   "person-items",
   "player",
@@ -168,7 +173,7 @@ export function invalidateMediaSurfaces(
   // Billboard slides come from a randomized endpoint. Their user-data controls
   // are patched by the mutations, so refreshing that query here would replace
   // the active title instead of merely updating it.
-  void client.invalidateQueries({ queryKey: ["items"], ...active })
+  void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   // Explicit user-data writes should refresh a live person card too; metadata
   // batches deliberately do not, because that response is already server-live.
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
@@ -199,7 +204,7 @@ export function invalidateLibraryChanged(
       const [root, id] = query.queryKey
       if (scope !== "items") {
         if (root === "home") return scope === "library" || query.queryKey.length === 1
-        if (["items", "genres", "status", "collections"].includes(String(root))) return true
+        if ([ITEMS_ROOT, "genres", "official-ratings", "status", "collections"].includes(String(root))) return true
       }
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.

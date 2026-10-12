@@ -20,9 +20,13 @@ function QueryProbeGrid({ query }: ItemGridProps) {
 
 const EMPTY: LibraryFilterState = {
   sort: "name",
+  order: "asc",
+  seed: "",
   genre: "",
   decade: "",
   watched: "",
+  parental: "",
+  seriesStatus: "",
   favorite: false,
 }
 
@@ -57,6 +61,7 @@ function FilterHarness({ initial = EMPTY }: { initial?: LibraryFilterState }) {
         value={filters}
         onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
         total={123}
+        kinds={["Movie"]}
       />
       <output data-filter-state>{JSON.stringify(filters)}</output>
     </>
@@ -81,7 +86,7 @@ describe("consolidated library filters", () => {
     fireEvent.click(screen.getByRole("radio", { name: "1990s" }))
     expect(state().decade).toBe("1990")
     fireEvent.click(screen.getByRole("radio", { name: "Unwatched" }))
-    expect(state().watched).toBe("false")
+    expect(state().watched).toBe("unwatched")
     fireEvent.click(screen.getByRole("radio", { name: "Favorites only" }))
     expect(state().favorite).toBe(true)
 
@@ -144,7 +149,7 @@ describe("library filter URL state", () => {
       <Providers>
         <MemoryRouter
           initialEntries={[
-            "/library?kind=Movie&genre=Action&decade=1990&watched=false&favorite=true&sort=year",
+            "/library?kind=Movie&genre=Action&decade=1990&watched=unwatched&favorite=true&sort=year",
           ]}
         >
           <Routes>

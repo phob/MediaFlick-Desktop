@@ -29,6 +29,7 @@ export interface ItemSummary {
   playCount: number
   positionTicks: number
   favorite: boolean
+  unplayedCount: number | null
   /**
    * Only `/api/item/{id}/children` carries this, passed through from its live
    * server reconcile; the grid queries do not, and offline rows have none.
@@ -1189,6 +1190,18 @@ export type PlayerCommand =
   | { command: "set-subtitle-track"; subtitleTrack: number | null }
   | { command: "toggle-fullscreen" }
 
+export type SortOrder = "asc" | "desc"
+
+export type LibraryLetter =
+  | "#" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+  | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+
+export type LetterIndex = Partial<Record<LibraryLetter, number>>
+
+export type WatchFilter = "unwatched" | "progress" | "watched"
+
+export type SeriesStatus = "Continuing" | "Ended"
+
 export interface ItemQuery {
   search?: string
   /** Exact Jellyfin person id; switches `/api/items` to a live `PersonIds` query. */
@@ -1199,9 +1212,13 @@ export interface ItemQuery {
   decade?: number
   parentId?: string
   seriesId?: string
-  watched?: "true" | "false" | ""
+  watched?: WatchFilter | ""
   favorite?: boolean
+  parental?: string
+  seriesStatus?: SeriesStatus | ""
   sort?: string
+  order?: SortOrder
+  seed?: number
   offset?: number
   limit?: number
 }
