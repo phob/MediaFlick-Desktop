@@ -228,6 +228,47 @@ impl ItemSort {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchFilter {
+    Unwatched,
+    InProgress,
+    Watched,
+}
+
+impl WatchFilter {
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim() {
+            "unwatched" => Some(Self::Unwatched),
+            "progress" => Some(Self::InProgress),
+            "watched" => Some(Self::Watched),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeriesStatus {
+    Continuing,
+    Ended,
+}
+
+impl SeriesStatus {
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim() {
+            "Continuing" => Some(Self::Continuing),
+            "Ended" => Some(Self::Ended),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Continuing => "Continuing",
+            Self::Ended => "Ended",
+        }
+    }
+}
+
 /// Filters for the library grid.
 #[derive(Debug, Clone, Default)]
 pub struct ItemQuery {
@@ -238,8 +279,10 @@ pub struct ItemQuery {
     pub release_decade: Option<i64>,
     pub parent_id: Option<String>,
     pub series_id: Option<String>,
-    pub watched: Option<bool>,
+    pub watched: Option<WatchFilter>,
     pub favorite: Option<bool>,
+    pub official_rating: Option<String>,
+    pub series_status: Option<SeriesStatus>,
     pub sort: ItemSort,
     pub direction: Option<SortDirection>,
     pub offset: i64,

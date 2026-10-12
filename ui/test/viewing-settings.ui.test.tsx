@@ -93,13 +93,13 @@ test.each([
 
 test("remembered Series filters take precedence over the hide-watched default", () => {
   seed({...DEFAULT_VIEWING, rememberFilters:true, hideWatched:true})
-  queryClient.setQueryData(queryKeys.browsing("server:user"), {Series:"/library?kind=Series&sort=year&watched=true&filters=true", Movie:"/library?kind=Movie&sort=rating"})
+  queryClient.setQueryData(queryKeys.browsing("server:user"), {Series:"/library?kind=Series&sort=year&watched=watched&filters=true", Movie:"/library?kind=Movie&sort=rating"})
   queryClient.setQueryData(queryKeys.genres, {genres:[]})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   render(<TestProviders client={queryClient} initialEntries={["/library?kind=Series"]}>
     <Library components={{ItemGrid:({query}) => <output aria-label="Library query">{JSON.stringify(query)}</output>}} />
   </TestProviders>)
-  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({kind:"Series", sort:"year", watched:"true"})
+  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({kind:"Series", sort:"year", watched:"watched"})
 })
 
 test.each([true, false])("countdown only starts another episode when one exists: %s", async (hasNext) => {

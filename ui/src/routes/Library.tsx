@@ -148,7 +148,7 @@ export default function Library({ components }: LibraryProps = {}) {
     if (remembered) {
       const saved = new URLSearchParams(remembered.split("?")[1])
       for (const key of REMEMBERED_LIBRARY_PARAMS) { const value = saved.get(key); if (value !== null) params.set(key, value) }
-    } else if (preferences.hideWatched) params.set("watched", "false")
+    } else if (preferences.hideWatched) params.set("watched", "unwatched")
   }
   const [total, setTotal] = useState<number | null>(null)
 

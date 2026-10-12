@@ -42,6 +42,7 @@ export const queryKeys = {
   homeSettings: ["home", "settings"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
+  officialRatings: (kind: string) => ["official-ratings", kind] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
   // Live exact-person pages are not local SQLite projections. Keeping their
@@ -106,6 +107,7 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "item",
   "items",
   "letterboxd",
+  "official-ratings",
   "person",
   "person-items",
   "player",
@@ -199,7 +201,7 @@ export function invalidateLibraryChanged(
       const [root, id] = query.queryKey
       if (scope !== "items") {
         if (root === "home") return scope === "library" || query.queryKey.length === 1
-        if (["items", "genres", "status", "collections"].includes(String(root))) return true
+        if (["items", "genres", "official-ratings", "status", "collections"].includes(String(root))) return true
       }
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.

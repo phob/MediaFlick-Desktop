@@ -1192,6 +1192,10 @@ export type PlayerCommand =
 
 export type SortOrder = "asc" | "desc"
 
+export type WatchFilter = "unwatched" | "progress" | "watched"
+
+export type SeriesStatus = "Continuing" | "Ended"
+
 export interface ItemQuery {
   search?: string
   /** Exact Jellyfin person id; switches `/api/items` to a live `PersonIds` query. */
@@ -1202,8 +1206,10 @@ export interface ItemQuery {
   decade?: number
   parentId?: string
   seriesId?: string
-  watched?: "true" | "false" | ""
+  watched?: WatchFilter | ""
   favorite?: boolean
+  parental?: string
+  seriesStatus?: SeriesStatus | ""
   sort?: string
   order?: SortOrder
   seed?: number

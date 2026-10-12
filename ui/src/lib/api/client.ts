@@ -242,6 +242,8 @@ export const api = {
   homeResume: () => request<HomeResumeResponse>("/api/home/resume"),
   billboard: () => request<{ items: ItemSummary[] }>("/api/billboard"),
   genres: () => request<{ genres: string[] }>("/api/genres"),
+  officialRatings: (kind: string) =>
+    request<{ officialRatings: string[] }>(`/api/official-ratings${queryString({ kind })}`),
   resolvePerson: (query: PersonResolveQuery, signal?: AbortSignal) =>
     request<PersonResolution>(`/api/person/resolve${queryString(query)}`, { signal }),
   items: (query: ItemQuery, signal?: AbortSignal) =>

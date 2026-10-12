@@ -1,10 +1,13 @@
 use rusqlite::functions::FunctionFlags;
+use std::cmp::Ordering;
+
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
 
 use super::{
-    ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds, TmdbCandidate,
+    ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds,
+    TmdbCandidate, WatchFilter,
 };
 
 /// Bound on one `tmdb_id IN (...)` clause so even a full person filmography
@@ -275,6 +278,24 @@ impl Library {
         })
     }
 
+    pub fn official_ratings(&self, kinds: &[String]) -> rusqlite::Result<Vec<String>> {
+        let mut ratings = self.db.with_connection(|connection| {
+            let placeholders = vec!["?"; kinds.len()].join(", ");
+            let mut statement = connection.prepare(&format!(
+                "SELECT DISTINCT official_rating FROM items
+                 WHERE official_rating <> '' AND kind IN ({placeholders})"
+            ))?;
+            let rows = statement
+                .query_map(params_from_iter(kinds.iter()), |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
+        ratings.sort_by(|left, right| natural_order(left, right));
+        Ok(ratings)
+    }
+
     /// The earliest episode of a series in broadcast order.
     pub fn first_episode(&self, series_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
@@ -491,6 +512,26 @@ fn splitmix64_finalize(value: u64) -> u64 {
     mixed ^ (mixed >> 31)
 }
 
+const SERIES_HAS_STARTED_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
+    JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
+      AND (ue.played = 1 OR ue.playback_position_ticks > 0))";
+
+const SERIES_HAS_UNWATCHED_PRESENT_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
+    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id AND e.is_virtual = 0
+      AND COALESCE(ue.played, 0) = 0)";
+
+const MOVIE_IN_PROGRESS: &str =
+    "COALESCE(u.playback_position_ticks, 0) > 0 AND COALESCE(u.played, 0) = 0";
+
+fn in_progress() -> String {
+    format!(
+        "CASE WHEN i.kind = 'Series' THEN {SERIES_HAS_STARTED_EPISODE} \
+        AND {SERIES_HAS_UNWATCHED_PRESENT_EPISODE} ELSE {MOVIE_IN_PROGRESS} END"
+    )
+}
+
 /// Builds the FROM clause, WHERE clause, and bound arguments for a query.
 fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<SqlValue>) {
     let mut conditions = Vec::new();
@@ -535,11 +576,19 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         arguments.push(SqlValue::Text(series_id.clone()));
     }
     if let Some(watched) = query.watched {
-        conditions.push(if watched {
-            "COALESCE(u.played, 0) = 1".to_string()
-        } else {
-            "COALESCE(u.played, 0) = 0".to_string()
+        conditions.push(match watched {
+            WatchFilter::Unwatched => "COALESCE(u.played, 0) = 0".to_string(),
+            WatchFilter::Watched => "COALESCE(u.played, 0) = 1".to_string(),
+            WatchFilter::InProgress => in_progress(),
         });
+    }
+    if let Some(rating) = &query.official_rating {
+        conditions.push("i.official_rating = ?".to_string());
+        arguments.push(SqlValue::Text(rating.clone()));
+    }
+    if let Some(status) = query.series_status {
+        conditions.push("i.series_status = ?".to_string());
+        arguments.push(SqlValue::Text(status.as_str().to_string()));
     }
     if let Some(favorite) = query.favorite {
         conditions.push(if favorite {
@@ -555,6 +604,46 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         format!(" WHERE {}", conditions.join(" AND "))
     };
     (from_clause, where_clause, arguments)
+}
+
+fn natural_order(left: &str, right: &str) -> Ordering {
+    fn chunks(text: &str) -> impl Iterator<Item = (bool, String)> + '_ {
+        let mut rest = text;
+        std::iter::from_fn(move || {
+            let first = rest.chars().next()?;
+            let digits = first.is_ascii_digit();
+            let end = rest
+                .find(|ch: char| ch.is_ascii_digit() != digits)
+                .unwrap_or(rest.len());
+            let (chunk, tail) = rest.split_at(end);
+            rest = tail;
+            Some((digits, chunk.to_lowercase()))
+        })
+    }
+    let compare = |(left_digits, left): (bool, String), (right_digits, right): (bool, String)| {
+        if left_digits && right_digits {
+            let left = left.trim_start_matches('0');
+            let right = right.trim_start_matches('0');
+            left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+        } else {
+            left.cmp(&right)
+        }
+    };
+    let mut left_chunks = chunks(left);
+    let mut right_chunks = chunks(right);
+    loop {
+        match (left_chunks.next(), right_chunks.next()) {
+            (None, None) => return left.cmp(right),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(left_chunk), Some(right_chunk)) => {
+                let order = compare(left_chunk, right_chunk);
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+        }
+    }
 }
 
 fn fts_match_expression(input: &str) -> Option<String> {
@@ -591,7 +680,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{ItemQuery, Library, civil_from_days};
+    use super::{ItemQuery, Library, WatchFilter, civil_from_days};
     use crate::library::test_support::{dto, seeded};
     use crate::library::{ItemSort, current_release_decade, release_decade_from_id};
 
@@ -638,7 +727,7 @@ mod tests {
                 kinds: vec!["Movie".to_string()],
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
-                watched: Some(false),
+                watched: Some(WatchFilter::Unwatched),
                 favorite: Some(true),
                 limit: 1,
                 ..Default::default()
@@ -652,7 +741,7 @@ mod tests {
                 kinds: vec!["Movie".to_string()],
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
-                watched: Some(false),
+                watched: Some(WatchFilter::Unwatched),
                 favorite: Some(true),
                 limit: 10,
                 ..Default::default()

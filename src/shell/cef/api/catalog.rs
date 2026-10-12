@@ -20,6 +20,7 @@ pub(super) fn route(
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
         }),
+        ["official-ratings"] if request.is("GET") => official_ratings(services, request),
         ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
         ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
         ["item", id, "synopsis"] if request.is("GET") => {
@@ -409,7 +410,7 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
         ItemQuery {
             kinds: vec!["Movie".to_string(), "Series".to_string()],
             genre: Some(genre.to_string()),
-            watched: Some(false),
+            watched: Some(WatchFilter::Unwatched),
             sort: ItemSort::CommunityRating,
             ..Default::default()
         },
@@ -567,6 +568,25 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 }
 
+fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    let kinds = request
+        .param("kind")
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|kind| matches!(*kind, "Movie" | "Series"))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|kinds| !kinds.is_empty())
+        .unwrap_or_else(|| vec!["Movie".to_string(), "Series".to_string()]);
+    match services.library.official_ratings(&kinds) {
+        Ok(ratings) => Ok(ApiResponse::ok(json!({ "officialRatings": ratings }))),
+        Err(error) => Err(storage_failure(&error)),
+    }
+}
+
 fn library_query(request: &ApiRequest) -> ItemQuery {
     let seed = request.param("seed").and_then(|value| value.parse().ok());
     ItemQuery {
@@ -591,14 +611,19 @@ fn library_query(request: &ApiRequest) -> ItemQuery {
         series_id: request.param("seriesId"),
         watched: request
             .param("watched")
-            .and_then(|value| match value.as_str() {
-                "true" | "1" => Some(true),
-                "false" | "0" => Some(false),
-                _ => None,
-            }),
+            .as_deref()
+            .and_then(WatchFilter::from_id),
         favorite: request
             .param("favorite")
             .map(|value| value == "true" || value == "1"),
+        official_rating: request
+            .param("parental")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        series_status: request
+            .param("seriesStatus")
+            .as_deref()
+            .and_then(SeriesStatus::from_id),
         sort: request
             .param("sort")
             .and_then(|value| ItemSort::from_id(&value, seed))

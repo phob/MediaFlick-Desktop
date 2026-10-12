@@ -25,6 +25,8 @@ const EMPTY: LibraryFilterState = {
   genre: "",
   decade: "",
   watched: "",
+  parental: "",
+  seriesStatus: "",
   favorite: false,
 }
 
@@ -84,7 +86,7 @@ describe("consolidated library filters", () => {
     fireEvent.click(screen.getByRole("radio", { name: "1990s" }))
     expect(state().decade).toBe("1990")
     fireEvent.click(screen.getByRole("radio", { name: "Unwatched" }))
-    expect(state().watched).toBe("false")
+    expect(state().watched).toBe("unwatched")
     fireEvent.click(screen.getByRole("radio", { name: "Favorites only" }))
     expect(state().favorite).toBe(true)
 
@@ -147,7 +149,7 @@ describe("library filter URL state", () => {
       <Providers>
         <MemoryRouter
           initialEntries={[
-            "/library?kind=Movie&genre=Action&decade=1990&watched=false&favorite=true&sort=year",
+            "/library?kind=Movie&genre=Action&decade=1990&watched=unwatched&favorite=true&sort=year",
           ]}
         >
           <Routes>
