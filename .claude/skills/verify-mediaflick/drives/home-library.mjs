@@ -58,7 +58,7 @@ export default async function homeLibrary(ctx) {
   await ctx.find({ role: "heading", name: "Movies" })
   const all = await ctx.until(() => itemCount(ctx), "the item count", 30000)
   await ctx.find({ role: "button", name: "Filters" })
-  await ctx.choose({ name: "Sort by" }, "Sort: Year")
+  await ctx.choose({ name: "Sort by" }, "Sort: Release date")
   await ctx.until(async () => /[?&]sort=year\b/.test(await ctx.pathname()), "sort=year in the URL")
   await ctx.press({ role: "button", name: "Filters" })
   // Radix names the menu after its trigger, not its aria-label.
