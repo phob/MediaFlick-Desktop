@@ -124,36 +124,107 @@ pub struct CachedRatings {
     pub schema_version: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "asc" => Some(Self::Ascending),
+            "desc" => Some(Self::Descending),
+            _ => None,
+        }
+    }
+
+    fn sql(self) -> &'static str {
+        match self {
+            Self::Ascending => "ASC",
+            Self::Descending => "DESC",
+        }
+    }
+}
+
 /// How the library grid is ordered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ItemSort {
     #[default]
     Name,
-    Year,
+    ReleaseDate,
     DateAdded,
+    EpisodeAdded,
     CommunityRating,
+    DatePlayed,
+    PlayCount,
+    Runtime,
+    Random {
+        seed: u32,
+    },
 }
 
 impl ItemSort {
-    pub fn from_id(value: &str) -> Option<Self> {
+    pub fn from_id(value: &str, seed: Option<u32>) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "name" => Some(Self::Name),
-            "year" => Some(Self::Year),
+            "year" => Some(Self::ReleaseDate),
             "added" | "dateadded" => Some(Self::DateAdded),
+            "episode-added" => Some(Self::EpisodeAdded),
             "rating" | "communityrating" => Some(Self::CommunityRating),
+            "played" => Some(Self::DatePlayed),
+            "plays" => Some(Self::PlayCount),
+            "runtime" => Some(Self::Runtime),
+            "random" => Some(Self::Random {
+                seed: seed.unwrap_or_default(),
+            }),
             _ => None,
         }
     }
 
-    fn order_clause(self) -> &'static str {
+    pub fn natural_direction(self) -> SortDirection {
         match self {
-            Self::Name => "i.sort_name COLLATE NOCASE ASC, i.name COLLATE NOCASE ASC, i.id ASC",
-            Self::Year => "i.year DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC",
-            Self::DateAdded => "i.date_created DESC NULLS LAST, i.id DESC",
-            Self::CommunityRating => {
-                "i.community_rating DESC NULLS LAST, i.sort_name COLLATE NOCASE ASC, i.id ASC"
-            }
+            Self::Name => SortDirection::Ascending,
+            _ => SortDirection::Descending,
         }
+    }
+
+    fn order_clause(self, direction: SortDirection) -> String {
+        const TIEBREAK: &str = "i.sort_name COLLATE NOCASE ASC, i.id ASC";
+        let direction = direction.sql();
+        let key = match self {
+            Self::Random { seed } => return format!("mediaflick_shuffle(i.id, {seed}), i.id ASC"),
+            Self::Name => {
+                return format!(
+                    "i.sort_name COLLATE NOCASE {direction}, i.name COLLATE NOCASE ASC, i.id ASC"
+                );
+            }
+            Self::ReleaseDate => {
+                return format!(
+                    "i.year {direction} NULLS LAST, i.premiere_date {direction} NULLS LAST, {TIEBREAK}"
+                );
+            }
+            Self::DateAdded => "i.date_created",
+            Self::EpisodeAdded => {
+                "COALESCE((SELECT max(e.date_created) FROM items e
+                    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
+                      AND e.is_virtual = 0), i.date_created)"
+            }
+            Self::CommunityRating => "i.community_rating",
+            // SQLite's two-argument max() is NULL when either side is, so
+            // absent dates compare as '' and turn back into NULL afterwards.
+            Self::DatePlayed => {
+                "CASE WHEN i.kind = 'Series' THEN NULLIF(max(
+                    COALESCE(u.last_played_date, ''),
+                    COALESCE((SELECT max(ue.last_played_date) FROM items e
+                        JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+                        WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id), '')
+                ), '') ELSE u.last_played_date END"
+            }
+            Self::PlayCount => "COALESCE(u.play_count, 0)",
+            Self::Runtime => "i.runtime_ticks",
+        };
+        format!("{key} {direction} NULLS LAST, {TIEBREAK}")
     }
 }
 
@@ -170,6 +241,7 @@ pub struct ItemQuery {
     pub watched: Option<bool>,
     pub favorite: Option<bool>,
     pub sort: ItemSort,
+    pub direction: Option<SortDirection>,
     pub offset: i64,
     pub limit: i64,
 }

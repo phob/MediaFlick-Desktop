@@ -1190,6 +1190,8 @@ export type PlayerCommand =
   | { command: "set-subtitle-track"; subtitleTrack: number | null }
   | { command: "toggle-fullscreen" }
 
+export type SortOrder = "asc" | "desc"
+
 export interface ItemQuery {
   search?: string
   /** Exact Jellyfin person id; switches `/api/items` to a live `PersonIds` query. */
@@ -1203,6 +1205,8 @@ export interface ItemQuery {
   watched?: "true" | "false" | ""
   favorite?: boolean
   sort?: string
+  order?: SortOrder
+  seed?: number
   offset?: number
   limit?: number
 }

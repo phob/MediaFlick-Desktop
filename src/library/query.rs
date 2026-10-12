@@ -1,3 +1,4 @@
+use rusqlite::functions::FunctionFlags;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
@@ -444,12 +445,7 @@ fn page_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<Ve
 
 fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
     let (from_clause, where_clause, mut arguments) = query_base(query, true);
-    // Relevance beats alphabetical order while the user is typing.
-    let order = if query.search.is_some() {
-        "bm25(items_fts), i.id ASC"
-    } else {
-        query.sort.order_clause()
-    };
+    let order = order_by(query);
     arguments.push(SqlValue::Integer(query.limit.clamp(1, 500)));
     arguments.push(SqlValue::Integer(query.offset.max(0)));
     (
@@ -458,6 +454,41 @@ fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
         ),
         arguments,
     )
+}
+
+fn order_by(query: &ItemQuery) -> String {
+    if query.search.is_some() {
+        return "bm25(items_fts), i.id ASC".to_string();
+    }
+    query.sort.order_clause(
+        query
+            .direction
+            .unwrap_or_else(|| query.sort.natural_direction()),
+    )
+}
+
+/// SQL functions the catalog queries call. Registered on every pooled
+/// connection, because SQLite functions belong to one connection.
+pub(super) fn register_functions(connection: &Connection) -> rusqlite::Result<()> {
+    connection.create_scalar_function(
+        "mediaflick_shuffle",
+        2,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        |context| Ok(shuffle_key(context.get(0)?, context.get(1)?)),
+    )
+}
+
+fn shuffle_key(id: i64, seed: i64) -> i64 {
+    let combined = id.cast_unsigned() ^ seed.cast_unsigned().wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    splitmix64_finalize(combined).cast_signed()
+}
+
+fn splitmix64_finalize(value: u64) -> u64 {
+    let mixed = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    mixed ^ (mixed >> 31)
 }
 
 /// Builds the FROM clause, WHERE clause, and bound arguments for a query.
