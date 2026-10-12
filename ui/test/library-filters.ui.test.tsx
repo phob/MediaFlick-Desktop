@@ -20,6 +20,8 @@ function QueryProbeGrid({ query }: ItemGridProps) {
 
 const EMPTY: LibraryFilterState = {
   sort: "name",
+  order: "asc",
+  seed: "",
   genre: "",
   decade: "",
   watched: "",
@@ -57,6 +59,7 @@ function FilterHarness({ initial = EMPTY }: { initial?: LibraryFilterState }) {
         value={filters}
         onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
         total={123}
+        kinds={["Movie"]}
       />
       <output data-filter-state>{JSON.stringify(filters)}</output>
     </>

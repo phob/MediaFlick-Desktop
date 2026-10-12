@@ -1,4 +1,4 @@
-import { Heart, ListFilter, X } from "lucide-react"
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Heart, ListFilter, Shuffle, X } from "lucide-react"
 import { useId, type ComponentProps, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -37,9 +37,12 @@ import { useTouchInput } from "@/hooks/use-touch-input"
 import {
   activeLibraryFilterCount,
   CLEARED_LIBRARY_FILTERS,
-  LIBRARY_SORTS,
+  librarySortLabel,
+  librarySortsFor,
+  newShuffleSeed,
   RELEASE_DECADES,
   type LibraryFilterState,
+  type LibraryKind,
 } from "@/lib/library-filters"
 import { useGenres } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -56,6 +59,7 @@ interface LibraryFiltersProps {
   value: LibraryFilterState
   onChange: (patch: Partial<LibraryFilterState>) => void
   total: number | null
+  kinds: readonly LibraryKind[]
 }
 
 function currentValue(value: string, fallback: string) {
@@ -421,33 +425,68 @@ function ActiveFilters({
   )
 }
 
-export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) {
+export function LibraryFilters({ value, onChange, total, kinds }: LibraryFiltersProps) {
   const genres = useGenres()
   const touchInput = useTouchInput()
   const genreOptions = genres.data?.genres ?? []
+  const sorts = librarySortsFor(kinds)
+  const fieldClass = cn(
+    "border-edge bg-field shadow-none hover:bg-field-hover",
+    touchInput && "min-h-11",
+  )
+  const iconSize = touchInput ? "icon" : "icon-sm"
+  const chooseSort = (id: string) => {
+    const sort = sorts.find((option) => option.id === id)
+    if (!sort) return
+    onChange(sort.id === "random" ? { sort: sort.id, seed: newShuffleSeed() } : { sort: sort.id })
+  }
+  const ascending = value.order === "asc"
 
   return (
     <div className="space-y-3 border-b border-hairline px-6 pb-5 sm:px-10 lg:px-14">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={value.sort || "name"} onValueChange={(sort) => onChange({ sort })}>
+        <Select value={value.sort} onValueChange={chooseSort}>
           <SelectTrigger
             size={touchInput ? "default" : "sm"}
             aria-label="Sort by"
-            className={cn(
-              "border-edge bg-field shadow-none hover:bg-field-hover",
-              touchInput && "min-h-11",
-            )}
+            className={fieldClass}
           >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {LIBRARY_SORTS.map((sort) => (
+            {sorts.map((sort) => (
               <SelectItem key={sort.id} value={sort.id}>
-                Sort: {sort.label}
+                Sort: {librarySortLabel(sort, kinds)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+
+        {value.sort === "random" ? (
+          <Button
+            type="button"
+            variant="outline"
+            size={iconSize}
+            aria-label="Shuffle again"
+            title="Shuffle again"
+            className={cn(fieldClass, touchInput && "min-w-11")}
+            onClick={() => onChange({ seed: newShuffleSeed() })}
+          >
+            <Shuffle aria-hidden="true" />
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size={iconSize}
+            aria-label={ascending ? "Sort descending" : "Sort ascending"}
+            title={ascending ? "Ascending. Sort descending" : "Descending. Sort ascending"}
+            className={cn(fieldClass, touchInput && "min-w-11")}
+            onClick={() => onChange({ order: ascending ? "desc" : "asc" })}
+          >
+            {ascending ? <ArrowUpNarrowWide aria-hidden="true" /> : <ArrowDownWideNarrow aria-hidden="true" />}
+          </Button>
+        )}
 
         {touchInput ? (
           <TouchFilters

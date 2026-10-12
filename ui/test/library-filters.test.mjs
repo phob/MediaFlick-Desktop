@@ -20,6 +20,8 @@ test("every library filter round-trips in the URL", () => {
 
   assert.deepEqual(readLibraryFilters(written), {
     sort: "year",
+    order: "desc",
+    seed: "",
     genre: "Science Fiction",
     decade: "1990",
     watched: "false",
@@ -34,6 +36,8 @@ test("every library filter round-trips in the URL", () => {
     genre: "Science Fiction",
     decade: 1990,
     sort: "year",
+    order: undefined,
+    seed: undefined,
     watched: "false",
   })
 })
@@ -42,6 +46,8 @@ test("invalid URL filter enums do not become API filters", () => {
   const params = new URLSearchParams("sort=chaos&decade=1995&watched=maybe")
   assert.deepEqual(readLibraryFilters(params), {
     sort: "name",
+    order: "asc",
+    seed: "",
     genre: "",
     decade: "",
     watched: "",
@@ -54,6 +60,8 @@ test("invalid URL filter enums do not become API filters", () => {
     genre: "",
     decade: undefined,
     sort: "name",
+    order: undefined,
+    seed: undefined,
     watched: "",
   })
 })

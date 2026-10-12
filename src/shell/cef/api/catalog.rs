@@ -527,7 +527,7 @@ fn latest_home_items(library: &Library, kind: &str) -> Vec<ItemSummary> {
         library,
         ItemQuery {
             kinds: vec![kind.to_string()],
-            sort: ItemSort::Year,
+            sort: ItemSort::ReleaseDate,
             ..Default::default()
         },
     )
@@ -549,6 +549,27 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 
     let query = ItemQuery {
+        offset: request
+            .param("offset")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
+        limit: request
+            .param("limit")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(60),
+        ..library_query(request)
+    };
+    match services.library.query(&query) {
+        Ok(page) => Ok(ApiResponse::ok(
+            json!({ "items": page.items, "total": page.total }),
+        )),
+        Err(error) => Err(storage_failure(&error)),
+    }
+}
+
+fn library_query(request: &ApiRequest) -> ItemQuery {
+    let seed = request.param("seed").and_then(|value| value.parse().ok());
+    ItemQuery {
         search: request.param("search"),
         kinds: request
             .param("kind")
@@ -580,23 +601,13 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             .map(|value| value == "true" || value == "1"),
         sort: request
             .param("sort")
-            .as_deref()
-            .and_then(ItemSort::from_id)
+            .and_then(|value| ItemSort::from_id(&value, seed))
             .unwrap_or_default(),
-        offset: request
-            .param("offset")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0),
-        limit: request
-            .param("limit")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(60),
-    };
-    match services.library.query(&query) {
-        Ok(page) => Ok(ApiResponse::ok(
-            json!({ "items": page.items, "total": page.total }),
-        )),
-        Err(error) => Err(storage_failure(&error)),
+        direction: request
+            .param("order")
+            .as_deref()
+            .and_then(SortDirection::from_id),
+        ..ItemQuery::default()
     }
 }
 
