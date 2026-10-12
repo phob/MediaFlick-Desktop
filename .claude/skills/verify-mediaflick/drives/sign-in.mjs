@@ -74,7 +74,12 @@ export default async function signIn(ctx) {
 
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   await ctx.press({ role: "button", name: "D demo demo.jellyfin.org" })
-  await ctx.find({ role: "menuitem", name: "Sync library" })
+  // Sign-in starts a sync, and the item reads `Syncing…` (disabled) until it ends.
+  const syncItem = await ctx.until(async () => {
+    for (const name of ["Sync library", "Syncing…"]) if (await ctx.exists({ role: "menuitem", name })) return name
+    return null
+  }, "the Sync library item")
+  ctx.step(`sync item reads ${syncItem}`)
   await ctx.snapshot("04-user-menu")
   await ctx.press({ role: "menuitem", name: "Sign out" })
 
