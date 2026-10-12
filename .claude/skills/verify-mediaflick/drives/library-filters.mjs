@@ -47,7 +47,7 @@ export default async function libraryFilters(ctx) {
   const watch = [...reopened.matchAll(/menuitem '(Watch status[^']*)'/g)].map((m) => m[1])[0]
   await ctx.press({ role: "menuitem", name: watch })
   await ctx.press({ role: "menuitemradio", name: "Unwatched" })
-  await ctx.until(async () => (await ctx.pathname()).includes("watched=false"), "watched=false in the URL")
+  await ctx.until(async () => (await ctx.pathname()).includes("watched=unwatched"), "watched=unwatched in the URL")
   await ctx.find({ role: "button", name: "Filters, 2 active" })
   await ctx.find({ role: "button", name: "Remove Unwatched filter" })
   await ctx.park()

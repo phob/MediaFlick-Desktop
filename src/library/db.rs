@@ -11,7 +11,7 @@ use rusqlite::{Connection, OpenFlags};
 /// Bump whenever the schema changes. Pre-1.0 databases are not migrated: an
 /// older version is dropped wholesale and recreated, and the app resyncs the
 /// catalog from the server.
-pub const SCHEMA_VERSION: i32 = 17;
+pub const SCHEMA_VERSION: i32 = 18;
 
 /// Connections kept alive between queries. The UI issues a handful of parallel
 /// reads at most; the sync thread holds one for the length of a page.
@@ -157,7 +157,7 @@ fn configure(connection: &Connection) -> rusqlite::Result<()> {
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     connection.busy_timeout(std::time::Duration::from_secs(10))?;
-    Ok(())
+    super::query::register_functions(connection)
 }
 
 fn user_version(connection: &Connection) -> rusqlite::Result<i32> {
@@ -457,20 +457,24 @@ CREATE TABLE items (
     search_genres       TEXT NOT NULL DEFAULT '',
     date_created        TEXT,
     date_last_saved     TEXT,
+    series_status       TEXT,
+    is_virtual          INTEGER NOT NULL DEFAULT 0,
     synced_at           INTEGER NOT NULL
 );
 
--- One index per library grid sort. Each matches its `ItemSort` ORDER BY
--- column for column, collation included, so a page reads rows in order and
--- stops at LIMIT instead of sorting the whole kind.
 CREATE INDEX items_kind_name
     ON items (kind, sort_name COLLATE NOCASE, name COLLATE NOCASE);
 -- Also serves release-decade filtering: kind, then a bounded year range.
-CREATE INDEX items_kind_year ON items (kind, year DESC, sort_name COLLATE NOCASE);
-CREATE INDEX items_kind_added ON items (kind, date_created);
+CREATE INDEX items_kind_year
+    ON items (kind, year DESC, premiere_date DESC, sort_name COLLATE NOCASE);
+CREATE INDEX items_kind_added ON items (kind, date_created DESC, sort_name COLLATE NOCASE);
 CREATE INDEX items_kind_rating
     ON items (kind, community_rating DESC, sort_name COLLATE NOCASE);
+CREATE INDEX items_kind_runtime
+    ON items (kind, runtime_ticks DESC, sort_name COLLATE NOCASE);
 CREATE INDEX items_series ON items (series_id, parent_index_number, index_number);
+CREATE INDEX items_series_episodes
+    ON items (series_id, is_virtual, date_created, jellyfin_id) WHERE kind = 'Episode';
 CREATE INDEX items_parent ON items (parent_id);
 CREATE INDEX items_season ON items (season_id) WHERE season_id IS NOT NULL;
 CREATE INDEX items_tmdb ON items (tmdb_id) WHERE tmdb_id IS NOT NULL;
