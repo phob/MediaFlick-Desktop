@@ -234,6 +234,14 @@ export function useOfficialRatings(kind: string) {
   })
 }
 
+export function useItemLetters(query: ItemQuery, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.itemLetters(query),
+    queryFn: ({ signal }) => api.itemLetters(query, signal),
+    enabled,
+  })
+}
+
 export function useItems(query: ItemQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.items(query),

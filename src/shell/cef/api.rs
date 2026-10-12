@@ -324,6 +324,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("GET", "home/resume"),
     ("GET", "billboard"),
     ("GET", "items"),
+    ("GET", "items/letters"),
     ("GET", "genres"),
     ("GET", "official-ratings"),
     ("GET", "person/resolve"),
