@@ -10,7 +10,7 @@ name = "mediaflick-desktop"
 path = "src/main.rs"
 
 [dependencies]
-cef = { version = "=152.4.0", default-features = false }
+cef = { version = "=154.5.0", default-features = false }
 getrandom = "0.4"
 libloading = "0.9"
 serde = { version = "1", features = ["derive"] }
@@ -53,7 +53,7 @@ unimplemented = "deny"
 unwrap_used = "deny"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-sevenz-rust2 = { version = "0.22", default-features = false, features = ["util"] }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["util"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
