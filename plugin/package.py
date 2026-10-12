@@ -10,14 +10,27 @@ import re
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 GUID = "11d8f2bb-2b9d-4ce1-8c33-5a0f809dfd2f"
-TARGET_ABI = "12.1.0.0"
+PROJECT = Path(__file__).parent / "src" / "Jellyfin.Plugin.MediaFlick" / "Jellyfin.Plugin.MediaFlick.csproj"
 PLUGIN_NAME = "MediaFlick Companion"
 DESCRIPTION = (
     "Calendar, requests, ratings, and collections for MediaFlick Desktop, with provider credentials kept on the server."
 )
+
+
+def target_abi() -> str:
+    # Jellyfin reads targetAbi as the minimum server version. The build only
+    # knows the APIs of the Jellyfin.Controller package it compiles against.
+    for reference in ElementTree.parse(PROJECT).getroot().iter("PackageReference"):
+        if reference.get("Include") == "Jellyfin.Controller":
+            version = reference.get("Version", "")
+            if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                raise SystemExit(f"Jellyfin.Controller needs an exact three-part version, found {version!r}")
+            return f"{version}.0"
+    raise SystemExit(f"Jellyfin.Controller reference not found in {PROJECT}")
 
 
 def main() -> int:
@@ -41,6 +54,7 @@ def main() -> int:
         parser.error(f"published license not found: {license_path}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    abi = target_abi()
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     meta = {
         "category": "General",
@@ -50,7 +64,7 @@ def main() -> int:
         "name": PLUGIN_NAME,
         "overview": DESCRIPTION,
         "owner": "phob",
-        "targetAbi": TARGET_ABI,
+        "targetAbi": abi,
         "timestamp": timestamp,
         "version": version,
     }
@@ -76,7 +90,7 @@ def main() -> int:
                 {
                     "version": version,
                     "changelog": meta["changelog"],
-                    "targetAbi": TARGET_ABI,
+                    "targetAbi": abi,
                     "sourceUrl": args.source_url,
                     "checksum": checksum,
                     "timestamp": timestamp,

@@ -19,6 +19,34 @@
         "digest"
       ],
       "automerge": false
+    },
+    {
+      "description": "The Jellyfin packages set the Companion's minimum server version (targetAbi). Raise it by hand when a newer API is needed; only new major versions are proposed.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchPackageNames": [
+        "Jellyfin.Common",
+        "Jellyfin.Controller",
+        "Jellyfin.Model"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Move all Jellyfin packages together so the plugin and its tests compile against one server version.",
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchPackageNames": [
+        "Jellyfin.Common",
+        "Jellyfin.Controller",
+        "Jellyfin.Model"
+      ],
+      "groupName": "Jellyfin packages"
     }
   ]
 }
