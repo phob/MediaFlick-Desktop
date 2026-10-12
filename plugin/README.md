@@ -5,10 +5,30 @@ Jellyfin-authenticated endpoints under `/MediaFlick`, keeps provider
 credentials on the server, and runs Seerr calls as the mapped Jellyfin user.
 There is no arbitrary proxy endpoint.
 
-The plugin targets Jellyfin 12.1.0 (`net10.0`) and builds with the .NET 10 SDK
+The plugin targets Jellyfin 12.0.0 (`net10.0`) and builds with the .NET 10 SDK
 pinned in the repository's `global.json`. Build it with `just plugin`, test it
 with `just plugin-test`, and deploy the release publish output to the configured
 development server with `just plugin-deploy`.
+
+## Jellyfin compatibility
+
+Jellyfin reads a plugin's `targetAbi` as the minimum server version. The
+Companion compiles against the oldest Jellyfin it supports, so one build loads
+on that release and every later release with the same major version. A build
+compiled against newer packages could call APIs that older servers lack and
+would fail at runtime there.
+
+- The `Jellyfin.Controller` version in the plugin project is the floor.
+  `package.py` derives `targetAbi` from it, so the two cannot drift.
+- Renovate proposes only new major Jellyfin packages. Raise the floor by hand,
+  in one change to every Jellyfin package reference, and only when the plugin
+  needs a newer API.
+- Before raising the floor, keep earlier catalog entries in the repository
+  manifest. Jellyfin then offers older servers the newest build they can load.
+- `just plugin-e2e` downloads the official portable server for the floor and
+  for the newest minor release, loads the packaged plugin into each, and calls
+  `/MediaFlick/info`. Pass versions such as `12.0 12.2` to choose them. The
+  report and server logs go to `build/e2e/companion-jellyfin/`.
 
 ## Test repository
 
