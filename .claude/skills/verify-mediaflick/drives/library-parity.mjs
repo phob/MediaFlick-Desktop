@@ -270,8 +270,11 @@ export default async function libraryParity(ctx) {
     const app = (await appItems("kind=Movie&watched=progress")).total
     const ui = await gridReady("In progress")
     const own = movies.Items.filter((item) => item.UserData?.PlaybackPositionTicks > 0 && !item.UserData?.Played).length
+    // The app's In progress is "part-way through": a resume point and not
+    // played. Jellyfin's IsResumable also counts played titles with a resume
+    // point (rewatches), so it is recorded, not asserted.
     report.moviesInProgressDefinition = { jellyfinIsResumable: resumable, positionAndUnplayed: own }
-    return { app: [app, ui], server: [resumable, resumable] }
+    return { app: [app, ui], server: [own, own] }
   })
   await ctx.park()
   await ctx.screenshot("08-movies-in-progress")

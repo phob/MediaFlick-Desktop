@@ -1,21 +1,22 @@
 # Sign in and sign out
 
-A signed-out user connects MediaFlick to a Jellyfin server with a server address and either a username and password or Quick Connect. The server address is remembered in `settings.json`, the session token in `library.db` and the account's preferences in `accounts.json`. Signing out from the user menu returns to the sign-in screen with the server still filled in.
+A signed-out user connects MediaFlick to a Jellyfin server with a server address and either a username and password or Quick Connect. The server address is remembered in `settings.json`, the session token in `library.db` and the account's preferences in `accounts.json`. Signing out from the user menu first signs the session out on the server (`POST /Sessions/Logout`, which revokes the token), then returns to the sign-in screen with the server still filled in.
 
 ## Sub-features
 
 - `signin-form` signs in with server address, username and password (empty password allowed).
 - `signin-prefill` shows a server address given on the command line (`--url`, also `JELLYFIN_URL`) or remembered from the last session. `--url` is saved to `settings.json` `jellyfin_url` at startup, before the UI loads, so it replaces the remembered server for later launches too (`src/main.rs`).
-- `signin-error` shows the server's error in the form when sign-in fails.
+- `signin-error` shows an error in the form when sign-in fails. A wrong password (HTTP 401) reads `the Jellyfin server rejected the session`, a fixed text, not the server's message (`ApiError::Unauthorized`, `src/jellyfin/api/client.rs`).
 - `signin-quickconnect` shows a Quick Connect code to approve in another Jellyfin client.
 - `user-menu` holds `Sync library` (`Syncing…`, disabled, while a sync runs) and `Sign out`, and holds the hover sidebar expanded while it is open.
-- `signout` signs out from the user menu, without confirmation.
+- `signout` signs out from the user menu, without confirmation, and revokes the token on the server. `library.db` keeps the server URL, device ID and the catalog cache; signing in as another account later clears the cache.
+- `signin-expired` returns to the sign-in screen when the server rejects the stored token (revoked elsewhere, or deleted by an admin) on the next server call.
 
 ## How to get to it (user POV)
 
 - Launch MediaFlick with a fresh profile: the sign-in screen is the whole window.
 - Sidebar → user menu (avatar, user name and server host at the bottom) → `Sign out`.
-- A server that rejects the stored token also returns the app to the sign-in screen (`/api/status` reports `expired: true`).
+- A server that rejects the stored token also returns the app to the sign-in screen: `/api/status` reports `authenticated: false, expired: true` and keeps `userName` and `userId`; signing in again clears `expired`.
 - A server that accepts the sign-in but cannot deliver the library leads to the retry screen, which also has `Sign out`; see [Library loading and the retry screen](./bootstrap-retry.md).
 
 ## Driving it with ctx (just verify)
@@ -24,6 +25,7 @@ Preconditions:
 
 - A fresh profile from `just verify`. Internet access for the demo server.
 - For `signin-prefill`, start with `just verify <drive> --url https://demo.jellyfin.org/stable`.
+- For sign-in, sign-out and expiry against your own server, `just verify <drive> --account SERVER --signed-out` (see SKILL.md, Your own server). `ctx.signIn({})` then presses `Use Quick Connect` and the harness approves the code as the cached account, so the app holds its own token and may sign out.
 
 - **Fresh state.** `await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in screen")`. `{ role: "button", name: "Sign in" }` is disabled until the server field has a value, and `ctx.readConfig("accounts.json")` is `null`. *Proven by `smoke`.*
 - **Prefill.** With `--url`, `ctx.find({ role: "textbox", name: "Server" })` returns `properties.value` equal to the URL. *Proven by `sign-in`.* `ctx.readConfig("settings.json").jellyfin_url` already holds it before any sign-in (observed in a maintenance run).
@@ -31,7 +33,10 @@ Preconditions:
 - **Stored session.** `ctx.api("/api/status")` returns `authenticated: true, userName: "demo"`, and `ctx.readConfig("accounts.json").accounts` has one entry. The source creates that entry on the first account-scoped write, so wait for it with `ctx.until` rather than reading once. *Proven by `browse`, `sign-in`.*
 - **Quick Connect.** The availability probe runs at once for a prefilled or remembered server, 400 ms after the typed value looks like a complete address (a dotted hostname with a letter TLD, a four-octet IPv4, a bracketed IPv6, `localhost`, or any host with a port), and when the Server field loses focus for any other non-empty value, such as a single-label LAN host. The field never has to lose focus for a complete address. Its result is the `role="status"` text `#quick-connect-help`, for example `Sign in by approving a code on a device already signed in to this Jellyfin server.` (available), `Checking Quick Connect availability…` (also shown during the 400 ms wait) `Finish the server address to check Quick Connect availability.` (an incomplete address such as `https://demo`), `Enter your server address first to use Quick Connect without a password.` (empty field), `Could not check Quick Connect. Check your server address and connection.` (probe failed, for example `https://nonexistent.invalid`) or `Quick Connect is not enabled on this server. Sign in with your username and password.` (source-only). A successful probe also adds `<server name> · <version>` under the form (`Stable Demo · 12.2.0`). The empty-field, probe-error and server-name texts were observed in a maintenance run. When available, `{ role: "button", name: "Use Quick Connect" }` enables; pressing it shows a code and `Waiting for approval…`. Editing the server address drops the code. Approval needs another Jellyfin client, so stop at the code. *Proven by `sign-in` (the demo server supports Quick Connect), including the enable while `document.activeElement.id === "server"`.*
 - **Copy the code.** `{ role: "button", name: "Copy code" }` sits right of the code and writes it to the clipboard; its name is `Copied` for 2 s, then `Copy code` again. A failed write shows the toast `Could not copy the code`. The drive grants `Browser.grantPermissions` `clipboardReadWrite` for origin `mediaflick-desktop://app` and reads the clipboard back with `navigator.clipboard.readText()`; that works under Xvfb. *Proven by `sign-in` (`quick-connect-clipboard.json`); the error toast is source-only.*
-- **Error.** Sign in with a wrong password against a server you own. The error is a `p.text-destructive` inside the form, between Password and `Sign in` (no `role="alert"`); Quick Connect errors use a second `p.text-destructive` above Username. Read the right one with `ctx.app.evaluate`. Not verified: the demo account accepts any password.
+- **Quick Connect approved.** Under `--account SERVER --signed-out`, `ctx.signIn({})` reaches the shell as the cached user; `app.log` has `authenticated against Jellyfin`. *Proven by `account-session` on Jellyfin 12.2.*
+- **Sign out revokes the token.** Take `const session = ctx.appSession()` while signed in (`status()` is 200), sign out from the user menu, and `session.status()` answers 401: the old token is dead on the server. `/api/status` reads `authenticated: false, expired: false, userName: null`, and `app.log` has no `server-side logout failed`. *Proven by `account-session`.*
+- **Expired session.** Sign in again, then `ctx.appSession().revoke()` signs the app's token out from outside. The next server call expires the session: a sync still running from the sign-in does it at once, otherwise opening `Movies` does within about a second. The `Server` textbox returns, `/api/status` reads `authenticated: false, expired: true` with `userName` kept, and `app.log` has `the Jellyfin server rejected the stored token; re-authentication required`. *Proven by `account-session` (`04-expired`, `account-session.json`).*
+- **Error.** The error is a `p.text-destructive` inside the form, between Password and `Sign in` (no `role="alert"`); Quick Connect errors use a second `p.text-destructive` above Username. Read the right one with `ctx.app.evaluate`. Not driven anywhere: the demo account accepts any password, and on your own test account every wrong password counts toward Jellyfin's lockout (3 failed attempts disable a non-admin user by default).
 - **Settings link.** `{ role: "link", name: "Player and app settings" }` sits under the sign-in card and opens `/settings/client/player` signed out. Settings navigation then starts with `{ role: "link", name: "Back to sign in" }`, which returns to the `Server` textbox. *Proven by `labels`.*
 - **User menu.** `ctx.press({ role: "button", name: "D demo demo.jellyfin.org" })` opens it with `{ role: "menuitem", name: "Sync library" }` and `{ role: "menuitem", name: "Sign out" }`. Sign-in starts a sync, and while it runs the first item is `{ role: "menuitem", name: "Syncing…" }`, disabled; accept either name, and use `Sign out` as the marker that the menu is open. *Proven by `sign-in`, `sidebar-user-menu`.*
 - **User menu off Home.** Off Home the sidebar collapses to icons and expands under the pointer. `ctx.hover` the trigger, then press it: while the menu is open the sidebar stays expanded, also with the pointer on the menu, and it collapses once the menu closes and the pointer leaves. Read the state from `document.querySelector('[data-slot="sidebar"]').dataset.state` (`expanded` or `collapsed`), sampled over time. *Proven by `sidebar-user-menu` (`sidebar-states.json`).*
@@ -49,4 +54,7 @@ Preconditions:
 - The prefill settles the remembered address, so retyping exactly that address shows the cached probe result at once, without `Checking…`. To watch the debounce, type a different address; the drive adds a trailing slash.
 - `ctx.state` omits `disabled` when the control is enabled. Test `!state.disabled`, not `state.disabled === false`.
 - Sign-out resets the settings query, so the Server field can render empty for a moment before the remembered server fills it. Wait for the value instead of reading it once.
+- A sign-out drive must not use the cached session (`--account` without `--signed-out`): its Sign out would revoke that token, so the session blocks it and fails the drive.
+- After a sign-out or an expiry the window title keeps the last page's title (`Library — MediaFlick` after an expiry on Movies).
+- Sign-in clears and re-probes the Companion; sign-out clears it (`src/shell/cef/api/auth.rs`).
 - The demo server is public and occasionally slow or down. A sign-in timeout there is an environment failure, not an app regression; retry once before investigating.

@@ -1,6 +1,6 @@
 ---
 name: verify-mediaflick
-description: Drive the real MediaFlick Desktop app (staged CEF build, build/mediaflick-desktop) the way a user does and capture proof. Runs the app on an inactive private desktop (Windows) or a private Xvfb display (Linux) with a disposable profile, and operates the embedded React UI over CDP with ARIA lookups and real mouse/keyboard input. Use to prove a UI, settings, sign-in, library or detail-page change works in the shipped binary, or to reproduce a UI bug. Not for playback, the Companion plugin, or packaging.
+description: Drive the real MediaFlick Desktop app (staged CEF build, build/mediaflick-desktop) the way a user does and capture proof. Runs the app on an inactive private desktop (Windows) or a private Xvfb display (Linux) with a disposable profile, and operates the embedded React UI over CDP with ARIA lookups and real mouse/keyboard input. Use to prove a UI, settings, sign-in, library, detail-page, playback or Companion-feature change works in the shipped binary, against Jellyfin's demo server or your own server and account, or to reproduce a UI bug. Not for the Companion plugin's own code or packaging.
 ---
 
 # Verify MediaFlick
@@ -34,12 +34,45 @@ Arguments after the drive go to `session.mjs`:
 - `--run-id ID`: letters, digits, `.`, `_` and `-`. It must be new. The default is `<drive>-<timestamp>`.
 - `--timeout SECONDS`: drive timeout, default 300.
 - `--url SERVER`: prefills the sign-in screen through the app's `--url`.
+- `--account SERVER`: starts the app signed in to your own server with the session `just verify-login` cached. See [Your own server](#your-own-server). Not combinable with `--url`.
+- `--signed-out` (with `--account`): starts on that server's sign-in screen instead; `ctx.signIn({})` signs in with Quick Connect, approved by the harness as the cached account, so the app gets its own token and may sign out.
+- `--log-level FILTER`: the app's `--log-level`, an `EnvFilter`, default `debug`. Playback drives use `debug,jellyfin.playstate=trace,playback=trace` for the playstate reports.
 - `--seed DIR`: copied into the empty config dir before launch, for example a prepared `settings.json`.
 - `--keep-profile`: leaves the profile on disk for inspection. Remove it later with `just verify-cleanup`.
 
 `MEDIAFLICK_VERIFY_HARD_TIMEOUT` (seconds, default 900) bounds the whole wrapper run.
 
 A drive is a bare name from `drives/` or a path. Ready means `steps.log` shows `isolation ok: …`, then `launched pid … on CDP port …`, then `doctor ok: …`. Startup takes about 2 s. Teardown is automatic: the session calls `window.close()` in the page, which takes the app's own close path including save-on-exit. It waits up to 20 s and records `exit: coordinated`. Otherwise it stops exactly its PID tree and records `exit: forced`.
+
+Run one `just verify` at a time per checkout. Each starts with `just build`, which copies every staged file into `build/` with `cp`, even when nothing changed. That rewrites the executable and `libcef.so` under a run that is still using them: the other run fails with `spawn ETXTBSY` or its app dies silently and the drive hangs until its timeout (seen 2026-10-12). Runs in other worktrees have their own `build/` and are safe.
+
+## Your own server
+
+The demo server only proves read-only behavior. To verify against a real server and account without anyone handing over a password, approve a Quick Connect sign-in once and let runs reuse the session:
+
+```sh
+just verify-login https://jellyfin.example.com             # once; prints a code, waits up to 10 min
+just verify home-library --account https://jellyfin.example.com
+```
+
+1. `verify-login` runs the `login` drive. It opens the sign-in screen on that server, presses `Use Quick Connect`, and writes `QUICK CONNECT CODE <code> for <server>` to `steps.log` and stdout, with `quick-connect-code.png`. The user approves the code in Jellyfin (user menu → Quick Connect) while signed in as the account to use. Jellyfin expires a code after 10 minutes. When an agent runs it, run it in the background, watch `steps.log` for that line, and send the user the code with a push notification.
+2. Once the app is signed in, `ctx.saveAccount()` reads the session the app stored in the profile's `library.db` (server URL and ID, user ID and name, device ID, token) and caches it in `~/.config/mediaflick-verify/accounts/<server>.json`, or `%APPDATA%\mediaflick-verify\accounts\` on Windows. The file is 0600 in a 0700 directory on Unix, outside the repo, `build/` and the real MediaFlick profile. A new login for the same server replaces it.
+3. `--account SERVER` first asks the server `GET /Users/Me` with only the cached token. Jellyfin then takes the client and device from the token's own device record, so the check changes nothing. A 401 fails the run before launch and names the `verify-login` command to run. Then the session writes a `library.db` holding only that session at schema version 1. The app's pre-1.0 recreation path (`migrate` in `src/library/db.rs`) builds the current schema and keeps the session, as an upgrade does, so the app starts signed in. `ctx.signIn()` then only confirms the account and ignores its arguments, so demo drives run unchanged unless they assert demo data.
+
+4. `--account SERVER --signed-out` seeds nothing and prefills the server. `ctx.signIn({})` presses `Use Quick Connect` and approves the code itself with `POST /QuickConnect/Authorize` as the cached account. The app then holds a token of its own on a new device, which a drive may sign out or revoke (`ctx.appSession()`); signing out removes that device again. The sign-out block below does not apply. `account-session` uses this.
+
+While a drive runs, `ctx.jellyfin(path)` reads the server as the cached account (GET only), for example `/Items/<id>?userId=${ctx.account.userId}` to read back what the app reported. A drive that changes server state puts it back through the user path, and also registers an after-run task that runs once the app has exited, so a failure halfway still cleans up: `ctx.restoreItemAfterRun(itemId)` resets a played title or resume point (`POST /UserItems/<id>/UserData`; play count and last-played date stay), and `ctx.cancelSeerrRequestAfterRun(id)` cancels a request still in Seerr (`DELETE /MediaFlick/seerr/request/<id>`, the app's own cancel). A failed after-run task fails the run.
+
+Safeguards in both modes:
+
+- **Sign out is blocked.** The app's Sign out revokes the token on the server (`POST /Sessions/Logout`), which would kill the cached session. CDP's `Fetch` domain does not see the app's `mediaflick-desktop://` requests, so the session wraps the page's `fetch` to refuse `/api/auth/logout` and report it through a CDP binding. The drive then fails at once with `the drive tried to sign out of a cached Jellyfin account`. `browse`, `sign-in`, `library-filters` and `bootstrap-retry` sign out and cannot run with `--account`.
+- **The token never reaches evidence.** After every run the session scans every evidence file for it, replaces any occurrence with `<redacted>`, and fails the run naming the files (`tokenScan` in `result.json`). The app's own log already redacts tokens. `--keep-profile` leaves the profile's `library.db`, token included, in the temp dir until `just verify-cleanup`.
+- An agent running the session can still read the cache file. It holds a revocable token, not a password: revoke it under Jellyfin Dashboard → Devices (the `MediaFlick Desktop` device whose ID is in `account.json`), or delete the file.
+
+Use a dedicated non-admin Jellyfin user with access to a small library. Drives that write (favorites, watched state, synced settings) change that user's real data.
+
+Proven on Linux. Against the demo server, with a test-only script approving the code as `demo`: login and cache, `home-library` on the seeded session, a Sign out blocked with the token still valid afterwards, a token planted in evidence redacted and the run failed, and a revoked token rejected before launch. Against a self-hosted Jellyfin 12.2.0 with Companion 0.2.2 (2026-10-12): a session approved by the user and cached, then `account-session`, `playback` (Built-in and External mpv), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. Not yet run on Windows.
+
 
 ## Doctor
 
@@ -58,6 +91,7 @@ It changes nothing. It reports:
 - every verify profile in the temp dir, as live (its `session.mjs` PID is running, in any worktree) or LEFTOVER, with the processes still using it;
 - whether your own MediaFlick is running (never touched);
 - the real profile path the guard watches;
+- the sessions cached by `just verify-login` (server, user, when), never their tokens;
 - the last run's result, or `INTERRUPTED` when its evidence folder has no `result.json` (it was killed by the hard timeout or a closed terminal).
 
 Exit code 1 lists the problems.
@@ -104,7 +138,18 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `exists(target)`, `count(target)` | Rendered matches right now. |
 | `until(exprOrFn, description, timeout)` | Poll a page expression or Node function until truthy; logs `saw <description>`. Never use fixed sleeps for state. |
 | `check(condition, message)` | Fail, or log `ok: message`. |
-| `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. |
+| `signIn({ server, username, password })` | Drive the sign-in form and wait for the sidebar. Under `--account`, only confirm that the app started signed in as the cached user; under `--account … --signed-out`, sign in with Quick Connect approved by the harness. |
+| `quickConnect({ timeout, approve })` | From the sign-in screen, press `Use Quick Connect`, log the code (`QUICK CONNECT CODE …`) and wait up to `timeout` ms (default 600000) for someone to approve it. `approve: true` (only with `--signed-out`) approves it as the cached account. |
+| `saveAccount()` | Under `just verify-login` only: cache the signed-in session for `--account` runs and write `account.json`. |
+| `account` | `{ server, userName, userId, login: false, signedOut }` under `--account`, `{ server, login: true }` under `verify-login`, else `null`. Never holds the token. |
+| `jellyfin(path)` | `--account` only: GET on the server as the cached account, to read back server state (`/Items/<id>?userId=${ctx.account.userId}`). |
+| `appSession()` | `--signed-out` only: the token the app holds now, as `{ status(), revoke() }`: the HTTP status of `GET /Users/Me` with it, and a sign-out from outside the app. |
+| `restoreItemAfterRun(id)`, `cancelSeerrRequestAfterRun(id)` | `--account` only: after-run cleanup once the app has exited (see [Your own server](#your-own-server)). |
+| `player()` | `GET /api/player/state`: `active`, `itemId`, `playMethod`, `positionMs`, `durationMs`, `paused`, `tracks`, `skipSegments`, `diagnostics`. |
+| `mpv(property)` | Reads one mpv property (`time-pos`, `pause`, `current-vo`, `hwdec-current`) over mpv's IPC socket, found through `app.log`'s `mpv IPC connected ipc_path=`. Reads only: the app stays mpv's single command writer. |
+| `playstates()` | The playstate reports in `app.log`: `{ queued: [{ at, endpoint, itemId, positionS }], sent: [{ at, endpoint, itemId, status }] }`. Needs `--log-level "debug,jellyfin.playstate=trace"`. |
+| `revealPlayer()` | Moves the pointer near the bottom edge so the Built-in player's hidden, `inert` bar comes back for ARIA lookups. |
+| `displayCapture(name, { seconds })` | Linux only: the whole X display with ffmpeg `x11grab` as `<name>.png`, or an MP4 clip with `seconds`. It contains the mpv video, which CDP screenshots (the page alone) do not. |
 | `pathname()` | `location.pathname + location.search`. |
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
 | `proxy({ upstream, fail })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included) and drops the connection of each request `fail(url, method)` selects. Returns `{ url, stats, heal() }`; sign in to `url`. Closed after the drive. |
@@ -121,9 +166,10 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All seventeen are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only:
+Shipped drives. All twenty-four are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
 
 - `smoke`: fresh profile, signed-out sign-in screen.
+- `login`: only through `just verify-login SERVER`. Quick Connect sign-in, approved by the user, then `saveAccount()`.
 - `application-settings`: Settings → Application, draft, Discard, Save, `settings.json`, read-back.
 - `browse`: sign-in, Home, Movies, search, movie and series detail, sign-out. Read-only against the demo server.
 - `sign-in` (needs `--url https://demo.jellyfin.org/stable`): prefill, the Quick Connect probe while the Server field keeps focus, the code (never approved) and its copy button with a clipboard readback, user menu, sign-out from Home, remembered server.
@@ -140,8 +186,14 @@ Shipped drives. All seventeen are proven on Linux; the first three were also pro
 - `player-shelf`: the shortcut conflict alert, the Player shelf's `Player settings saved` toast, and `Restore defaults` + Save on Player, which keeps `player_backend`, `comfort` and `mark_watched_next` in `settings.json`.
 - `library-parity`: sort direction, the per-kind sort lists, a seeded Random order and Shuffle again, the In progress, Parental rating and Series status filters, the A–Z rail in both directions, and series cards' unwatched count, each compared with the demo server's own API. Read-only.
 - `home-settings`: Home's `No titles available` and `No shelves enabled` states through the local Home settings, `Configure Home`, then `Restore defaults` + Save. Read-only against the demo server.
+- `account-session` (`--account SERVER --signed-out`): Quick Connect sign-in approved by the harness, Sign out revoking the token on the server, and a token revoked from outside expiring the session.
+- `playback` (`--log-level "debug,jellyfin.playstate=trace,playback=trace"`; External mpv with `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`): Play from the start, seeking past the resume minimum, pause, Stop from the bar, the resume point on the server, Resume with the startup seek rules, stop again, then watched and unwatched. Writes the test user's playstate and leaves the title as it found it.
+- `companion`: the Companion status page, Releases (Agenda, Month, toggles, month navigation), Home's Releases shelf, and MDBList ratings after picking sources in Appearance (restored).
+- `discover-requests`: Discover rows, a genre, an owned title in search and its page, then a real Seerr request from a card, cancelled from Requests.
+- `collections`: Movie Franchises and a franchise page, a My Collections entry from a TMDB template, Jellyfin mode with every BoxSet and the route redirect, then defaults again.
+- `account-settings`: Viewing Discard and Save with a revisit, the leave guard between account shelves, Appearance's accent applied live, a Letterboxd profile added, verified and removed.
 
-Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed, because no drive plays anything.
+Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`).
 Re-run all of them:
 
 ```powershell
@@ -154,6 +206,16 @@ for d in smoke application-settings browse home-library detail-crew item-detail 
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
+Your own server (one at a time; they share the cached session):
+
+```sh
+S=https://jellyfin.example.com
+just verify account-session --account "$S" --signed-out
+for d in companion discover-requests collections account-settings; do just verify "$d" --account "$S"; done
+just verify playback --account "$S" --log-level "debug,jellyfin.playstate=trace,playback=trace"
+just verify playback --account "$S" --log-level "debug,jellyfin.playstate=trace,playback=trace" --seed .claude/skills/verify-mediaflick/seeds/external-mpv
+```
+
 ## Evidence
 
 Each run writes **`build/verify/<run-id>/`**, which cleanup never removes (`just clean` does):
@@ -163,6 +225,7 @@ Each run writes **`build/verify/<run-id>/`**, which cleanup never removes (`just
 - `result.json`: `passed`, `error` (stack), `exit` (`coordinated`, `forced`, or `exited-early` when the app was gone before teardown, including on purpose after a drive closed it), `profileRemoved`, `durationMs`, and `leftovers` if any process outlived teardown.
 - `guard.json`: the real-profile fingerprints before and after, the changed files, and any user MediaFlick PIDs.
 - `pids.json`: the session PID, app PID, CDP port and profile path.
+- `account.json` under `--account` or `verify-login`: the cached account without its token, and the `/Users/Me` check. `result.json` then also has `tokenScan`.
 - `*.png`, `*.ax.txt`, plus `failure.png` and `failure.ax.txt` when the drive throws.
 - `app.log` (Rust log at `debug`), `cef.log`, and `profile/config/`: a copy of everything the app wrote to its config dir.
 
@@ -171,7 +234,7 @@ Proof standards:
 - Drive the user path: sidebar links, settings navigation, buttons, switches, cards. Do not perform the action through `/api/*`, `ctx.app.route()`, or `Runtime.evaluate` clicks.
 - Capture the action and the resulting state. `steps.log` holds the actions; snapshot or screenshot after each meaningful state, not only at the end.
 - Verify side effects alongside the screen. Files in the config dir change only on Save (compare `configStat` mtimes for drafts), and `/api/*` reads back the stored value. Then visit the page a second time.
-- The demo server is real and shared. Read-only checks there are genuine end-to-end proof; anything that writes needs a server you own.
+- The demo server is real and shared. Read-only checks there are genuine end-to-end proof; anything that writes needs a server you own (`--account`).
 - If a mapped entry point cannot be driven, report it as not verified with the reason. Do not substitute a different path.
 
 ## Cleanup
@@ -196,14 +259,15 @@ It stops only processes whose command line names a dead run's profile, then remo
 ## Platform status
 
 - **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the fourteen newer drives have not run there.
-- **Linux: proven.** All seventeen shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–40 s each after the build. CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
+- **Linux: proven.** All twenty-four shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–40 s each after the build (the real-server drives 20–120 s, most of it the first sync and playback). CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
 - Headless Wayland is not implemented; the wrapper forces X11 (`WAYLAND_DISPLAY` unset, `XDG_SESSION_TYPE=x11`).
 
 ## Gotchas
 
-- **Audio is not isolated on Windows.** The private desktop hides windows and input, not sound. Never press Play, Resume, From start, or an episode's play button. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (the session log shows `Failed to connect to PipeWire`), but Play still starts real playback through the system libmpv, so the rule holds there too.
+- **Playback is real.** Play only in `playback`-style drives with `--account` on your own server: it writes the test user's playstate, and on Windows it is audible, because the private desktop hides windows and input, not sound. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (`Failed to connect to PipeWire`). Never press Play on the demo server.
+- **External mpv fullscreen freezes CDP mouse input.** mpv's fullscreen window covers the app window; the page turns `hidden`, draws no frames, and `Input.dispatchMouseEvent` never completes, so `press` and `hover` hang until the drive times out (keys still work). Seed `default_fullscreen: "windowed"` for External mpv runs, as `seeds/external-mpv` does.
 - **Linux stderr noise is expected.** The private session bus activates `xdg-desktop-portal`, which logs `Choosing gtk.portal … as a last-resort fallback` and `Failed to connect to PipeWire`; `A connection to the bus can't be made` follows teardown. None of it affects the run. `steps.log` and `result.json` are the result.
 - **Linux sockets need a short `TMPDIR`.** CEF dies with `SIGTRAP` (`Socket path too long` in `cef.log`) when its singleton socket path passes 107 bytes, and the libmpv shell falls back after 20 s with `path must be shorter than SUN_LEN` in `app.log` when mpv's IPC socket does. `session.mjs` refuses to launch when the wrapper's runtime dir is too long for them; run from a shorter `TMPDIR`.
 - **A drive that ends with an unsaved settings draft exits forced.** The draft guard answers teardown's `window.close()` with its `Leave without saving?` dialog, so teardown stops the app after 20 s (`exit: forced`). Save or Discard before the drive returns.
