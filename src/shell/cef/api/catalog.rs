@@ -16,6 +16,7 @@ pub(super) fn route(
         ["home"] if request.is("GET") => home(services),
         ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
+        ["items", "letters"] if request.is("GET") => item_letters(services, request),
         ["genres"] if request.is("GET") => Ok(match services.library.genres() {
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
@@ -564,6 +565,15 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         Ok(page) => Ok(ApiResponse::ok(
             json!({ "items": page.items, "total": page.total }),
         )),
+        Err(error) => Err(storage_failure(&error)),
+    }
+}
+
+fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
+    match services.library.letter_index(&library_query(request)) {
+        Ok(letters) => Ok(ApiResponse::ok(json!({
+            "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
+        }))),
         Err(error) => Err(storage_failure(&error)),
     }
 }

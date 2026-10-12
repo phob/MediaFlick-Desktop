@@ -1192,6 +1192,12 @@ export type PlayerCommand =
 
 export type SortOrder = "asc" | "desc"
 
+export type LibraryLetter =
+  | "#" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+  | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+
+export type LetterIndex = Partial<Record<LibraryLetter, number>>
+
 export type WatchFilter = "unwatched" | "progress" | "watched"
 
 export type SeriesStatus = "Continuing" | "Ended"

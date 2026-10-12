@@ -6,6 +6,7 @@ import { useBrowsing } from "@/lib/queries"
 import { useEffect, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
+import { LetterJumpRail } from "@/components/LetterJumpRail"
 import { LibraryFilters } from "@/components/LibraryFilters"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState, PageHeader } from "@/components/PageHeader"
@@ -29,7 +30,7 @@ import {
   type LibraryFilterState,
   writeLibraryFilters,
 } from "@/lib/library-filters"
-import { useItems, usePersonResolution } from "@/lib/queries"
+import { useItemLetters, useItems, usePersonResolution } from "@/lib/queries"
 
 /** How many of a matched person's titles the search page shows inline. */
 const SEARCH_PERSON_ROW_LIMIT = 12
@@ -199,6 +200,10 @@ export default function Library({ components }: LibraryProps = {}) {
     ? { personId: jellyfinPersonId }
     : libraryItemQuery(params)
   const globalFavoritesView = favorite && !params.has("kind")
+  const alphabetical = !castPerson && !search && filters.sort === "name"
+  const railQuery = alphabetical ? libraryItemQuery(params) : null
+  const letters = useItemLetters(railQuery ?? {}, railQuery !== null)
+  const letterIndex = railQuery ? letters.data?.letters : undefined
 
   const title = castPerson
     ? personName
@@ -270,6 +275,9 @@ export default function Library({ components }: LibraryProps = {}) {
           <Grid
             query={query}
             onTotal={setTotal}
+            jumpRail={letterIndex
+              ? (jumpTo) => <LetterJumpRail letters={letterIndex} onJump={jumpTo} />
+              : undefined}
             empty={
               castPerson
                 ? `No Jellyfin titles feature ${personName}.`

@@ -28,6 +28,7 @@ import type {
   ItemTechnical,
   JellyfinCollectionDetail,
   JellyfinCollectionSummary,
+  LetterIndex,
   LetterboxdProfile,
   LetterboxdReviewsResponse,
   MediaInfoResponse,
@@ -248,6 +249,8 @@ export const api = {
     request<PersonResolution>(`/api/person/resolve${queryString(query)}`, { signal }),
   items: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
+  itemLetters: (query: ItemQuery, signal?: AbortSignal) =>
+    request<{ letters: LetterIndex }>(`/api/items/letters${queryString(query)}`, { signal }),
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
   itemSynopsis: (id: string) =>
     request<ItemSynopsis>(`/api/item/${encodeURIComponent(id)}/synopsis`),

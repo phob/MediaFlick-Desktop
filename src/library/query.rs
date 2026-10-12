@@ -56,6 +56,31 @@ impl Library {
         })
     }
 
+    pub fn letter_index(&self, query: &ItemQuery) -> rusqlite::Result<Vec<(String, i64)>> {
+        let (from_clause, where_clause, arguments) = query_base(query, true);
+        let order = order_by(query);
+        let sql = format!(
+            "SELECT letter, min(position) FROM (
+                 SELECT CASE WHEN initial BETWEEN 'A' AND 'Z' THEN initial ELSE '#' END AS letter,
+                        position
+                 FROM (
+                     SELECT upper(substr(COALESCE(i.sort_name, i.name), 1, 1)) AS initial,
+                            row_number() OVER (ORDER BY {order}) - 1 AS position
+                     {from_clause}{where_clause}
+                 )
+             )
+             GROUP BY letter ORDER BY letter"
+        );
+        self.db.with_connection(|connection| {
+            let mut statement = connection.prepare_cached(&sql)?;
+            statement
+                .query_map(params_from_iter(arguments.iter()), |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect()
+        })
+    }
+
     /// One page without its total, for surfaces such as Home rows that never
     /// show a count.
     pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
