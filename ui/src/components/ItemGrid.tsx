@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
 import { useItemPages } from "@/lib/queries"
+import { cn } from "@/lib/utils"
 
 /** Fallbacks for the geometry tokens in `app.css`, used before first measure. */
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
@@ -73,6 +74,7 @@ export interface ItemGridProps {
    * would either sit off-screen or need a second scrollbar.
    */
   footer?: React.ReactNode
+  jumpRail?: (jumpTo: (index: number) => void) => React.ReactNode
 }
 
 /**
@@ -86,6 +88,7 @@ export function ItemGrid({
   onTotal,
   empty = "No items match that query.",
   footer,
+  jumpRail,
 }: ItemGridProps) {
   "use no memo"
 
@@ -158,57 +161,66 @@ export function ItemGrid({
   }, [first, last, items.length])
 
   const itemAt = (index: number) => loaded.get(Math.floor(index / PAGE_SIZE))?.[index % PAGE_SIZE]
+  const jumpTo = (index: number) =>
+    virtualizer.scrollToIndex(Math.floor(index / columns), { align: "start" })
+  const rail = jumpRail && total ? jumpRail(jumpTo) : null
 
   return (
-    <div
-      ref={setScroller}
-      className="h-full overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14"
-    >
-      <div ref={setContent}>
-        {error ? (
-          <PageErrorState
-            title="Could not load library items"
-            description={error.message}
-            action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
-          />
-        ) : total === null ? (
-          <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
-        ) : total === 0 ? (
-          <PageEmptyState
-            icon={<LibraryBig className="size-6" />}
-            title="Nothing to show"
-            description={empty}
-          />
-        ) : (
-          <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-            {items.map((row) => (
-              <div
-                key={row.key}
-                className="virtual-card-row absolute top-0 left-0 flex w-full"
-                style={{
-                  height: cardHeight,
-                  gap,
-                  transform: `translateY(${row.start}px)`,
-                }}
-              >
-                {Array.from({ length: columns }, (_, column) => {
-                  const index = row.index * columns + column
-                  if (index >= total) return null
-                  const item = itemAt(index)
-                  return item ? (
-                    <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
-                  ) : (
-                    // An unloaded slot keeps its space rather than reflowing
-                    // the row once its page lands.
-                    <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
-                  )
-                })}
-              </div>
-            ))}
-          </div>
+    <div className="flex h-full min-h-0">
+      <div
+        ref={setScroller}
+        className={cn(
+          "h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14",
+          rail && "pr-2 sm:pr-3 lg:pr-4",
         )}
-        {footer}
+      >
+        <div ref={setContent}>
+          {error ? (
+            <PageErrorState
+              title="Could not load library items"
+              description={error.message}
+              action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
+            />
+          ) : total === null ? (
+            <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
+          ) : total === 0 ? (
+            <PageEmptyState
+              icon={<LibraryBig className="size-6" />}
+              title="Nothing to show"
+              description={empty}
+            />
+          ) : (
+            <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {items.map((row) => (
+                <div
+                  key={row.key}
+                  className="virtual-card-row absolute top-0 left-0 flex w-full"
+                  style={{
+                    height: cardHeight,
+                    gap,
+                    transform: `translateY(${row.start}px)`,
+                  }}
+                >
+                  {Array.from({ length: columns }, (_, column) => {
+                    const index = row.index * columns + column
+                    if (index >= total) return null
+                    const item = itemAt(index)
+                    return item ? (
+                      <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
+                    ) : (
+                      // An unloaded slot keeps its space rather than reflowing
+                      // the row once its page lands.
+                      <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+          {footer}
+        </div>
       </div>
+      {rail}
     </div>
   )
 }

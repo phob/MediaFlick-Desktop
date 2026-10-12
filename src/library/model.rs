@@ -284,6 +284,8 @@ pub struct ItemRecord {
     pub search_genres: String,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
+    pub series_status: Option<String>,
+    pub is_virtual: bool,
 }
 
 /// Whether a DTO's kind belongs in the catalog index at all. Guarding here
@@ -378,6 +380,11 @@ impl ItemRecord {
             search_genres: dto.genres.join(", "),
             date_created: non_empty(dto.date_created.as_deref()),
             date_last_saved: non_empty(dto.date_last_saved.as_deref()),
+            series_status: non_empty(dto.status.as_deref()),
+            is_virtual: dto
+                .location_type
+                .as_deref()
+                .is_some_and(|location| location.eq_ignore_ascii_case("Virtual")),
         }
     }
 }
@@ -462,6 +469,7 @@ pub struct ItemSummary {
     pub play_count: i64,
     pub position_ticks: i64,
     pub favorite: bool,
+    pub unplayed_count: Option<i64>,
     /// An episode synopsis. The cache never stores prose, so only a child
     /// list that a live reconcile answered carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -494,6 +502,9 @@ impl ItemSummary {
             play_count: user_data.map_or(0, |data| data.play_count),
             position_ticks: user_data.map_or(0, |data| data.playback_position_ticks),
             favorite: user_data.is_some_and(|data| data.is_favorite),
+            unplayed_count: (dto.item_type.as_deref() == Some("Series"))
+                .then(|| user_data.and_then(|data| data.unplayed_item_count))
+                .flatten(),
             overview: None,
         }
     }

@@ -25,6 +25,7 @@ function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
     playCount: 0,
     positionTicks: 0,
     favorite: false,
+    unplayedCount: null,
     genres: [],
     originalTitle: null,
     providerIds: { tmdb: null, imdb: null, tvdb: null },

@@ -1,4 +1,4 @@
-import { Heart, ListFilter, X } from "lucide-react"
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Heart, ListFilter, Shuffle, X } from "lucide-react"
 import { useId, type ComponentProps, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -37,25 +37,44 @@ import { useTouchInput } from "@/hooks/use-touch-input"
 import {
   activeLibraryFilterCount,
   CLEARED_LIBRARY_FILTERS,
-  LIBRARY_SORTS,
+  librarySortLabel,
+  librarySortsFor,
+  newShuffleSeed,
   RELEASE_DECADES,
+  SERIES_STATUSES,
+  seriesStatusApplies,
+  WATCH_FILTERS,
   type LibraryFilterState,
+  type LibraryKind,
 } from "@/lib/library-filters"
-import { useGenres } from "@/lib/queries"
+import { useGenres, useOfficialRatings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const ANY = "__any__"
 
-const WATCHED = [
-  { id: ANY, label: "Any watch status" },
-  { id: "false", label: "Unwatched" },
-  { id: "true", label: "Watched" },
-] as const
+const WATCHED = [{ id: ANY, label: "Any watch status" }, ...WATCH_FILTERS]
+
+interface FilterOptions {
+  genres: string[]
+  genresLoading: boolean
+  ratings: string[]
+  ratingsLoading: boolean
+  seriesStatus: boolean
+}
+
+function watchFilter(value: string) {
+  return WATCH_FILTERS.find((option) => option.id === value)?.id ?? ""
+}
+
+function seriesStatus(value: string) {
+  return SERIES_STATUSES.find((status) => status === value) ?? ""
+}
 
 interface LibraryFiltersProps {
   value: LibraryFilterState
   onChange: (patch: Partial<LibraryFilterState>) => void
   total: number | null
+  kinds: readonly LibraryKind[]
 }
 
 function currentValue(value: string, fallback: string) {
@@ -98,13 +117,11 @@ function FiltersButton({
 function DesktopFilters({
   value,
   onChange,
-  genres,
-  genresLoading,
+  options: { genres, genresLoading, ratings, ratingsLoading, seriesStatus: showSeriesStatus },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
-  genres: string[]
-  genresLoading: boolean
+  options: FilterOptions
 }) {
   const count = activeLibraryFilterCount(value)
   const watchedLabel = WATCHED.find((option) => option.id === (value.watched || ANY))?.label
@@ -185,11 +202,7 @@ function DesktopFilters({
           <DropdownMenuSubContent className="w-52">
             <DropdownMenuRadioGroup
               value={value.watched || ANY}
-              onValueChange={(watched) =>
-                onChange({
-                  watched: watched === "true" || watched === "false" ? watched : "",
-                })
-              }
+              onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
             >
               {WATCHED.map((option) => (
                 <DropdownMenuRadioItem key={option.id} value={option.id} className="min-h-9">
@@ -199,6 +212,61 @@ function DesktopFilters({
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="min-h-9">
+            <span>Parental rating</span>
+            <span className="ml-auto max-w-28 truncate text-xs text-muted-foreground">
+              {currentValue(value.parental, "Any")}
+            </span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-80 w-48 overflow-y-auto">
+            <DropdownMenuRadioGroup
+              value={value.parental || ANY}
+              onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
+            >
+              <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                Any rating
+              </DropdownMenuRadioItem>
+              {ratings.map((rating) => (
+                <DropdownMenuRadioItem key={rating} value={rating} className="min-h-9">
+                  {rating}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            {ratingsLoading && (
+              <DropdownMenuItem disabled className="min-h-9">
+                Loading ratings…
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        {showSeriesStatus && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="min-h-9">
+              <span>Series status</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {currentValue(value.seriesStatus, "Any")}
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-48">
+              <DropdownMenuRadioGroup
+                value={value.seriesStatus || ANY}
+                onValueChange={(status) => onChange({ seriesStatus: seriesStatus(status) })}
+              >
+                <DropdownMenuRadioItem value={ANY} className="min-h-9">
+                  Any status
+                </DropdownMenuRadioItem>
+                {SERIES_STATUSES.map((status) => (
+                  <DropdownMenuRadioItem key={status} value={status} className="min-h-9">
+                    {status}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
 
         <DropdownMenuSub>
           <DropdownMenuSubTrigger className="min-h-9">
@@ -281,13 +349,11 @@ function TouchGroup({
 function TouchFilters({
   value,
   onChange,
-  genres,
-  genresLoading,
+  options: { genres, genresLoading, ratings, ratingsLoading, seriesStatus: showSeriesStatus },
 }: {
   value: LibraryFilterState
   onChange: LibraryFiltersProps["onChange"]
-  genres: string[]
-  genresLoading: boolean
+  options: FilterOptions
 }) {
   const count = activeLibraryFilterCount(value)
 
@@ -332,13 +398,39 @@ function TouchFilters({
           <TouchGroup
             label="Watch status"
             value={value.watched || ANY}
-            onValueChange={(watched) =>
-              onChange({ watched: watched === "true" || watched === "false" ? watched : "" })}
+            onValueChange={(watched) => onChange({ watched: watchFilter(watched) })}
           >
             {WATCHED.map((option) => (
               <TouchChoice key={option.id} value={option.id}>{option.label}</TouchChoice>
             ))}
           </TouchGroup>
+
+          <TouchGroup
+            label="Parental rating"
+            value={value.parental || ANY}
+            onValueChange={(parental) => onChange({ parental: parental === ANY ? "" : parental })}
+          >
+            <TouchChoice value={ANY}>Any rating</TouchChoice>
+            {ratings.map((rating) => (
+              <TouchChoice key={rating} value={rating}>{rating}</TouchChoice>
+            ))}
+            {ratingsLoading && (
+              <p className="px-3 py-2 text-sm text-muted-foreground">Loading ratings…</p>
+            )}
+          </TouchGroup>
+
+          {showSeriesStatus && (
+            <TouchGroup
+              label="Series status"
+              value={value.seriesStatus || ANY}
+              onValueChange={(status) => onChange({ seriesStatus: seriesStatus(status) })}
+            >
+              <TouchChoice value={ANY}>Any status</TouchChoice>
+              {SERIES_STATUSES.map((status) => (
+                <TouchChoice key={status} value={status}>{status}</TouchChoice>
+              ))}
+            </TouchGroup>
+          )}
 
           <TouchGroup
             label="Favorites"
@@ -383,9 +475,15 @@ function ActiveFilters({
     value.decade ? { key: "decade", label: `Released: ${value.decade}s`, patch: { decade: "" } } : null,
     value.watched ? {
       key: "watched",
-      label: value.watched === "true" ? "Watched" : "Unwatched",
+      label: WATCH_FILTERS.find((option) => option.id === value.watched)?.label ?? value.watched,
       patch: { watched: "" },
     } : null,
+    value.parental
+      ? { key: "parental", label: `Rated: ${value.parental}`, patch: { parental: "" } }
+      : null,
+    value.seriesStatus
+      ? { key: "seriesStatus", label: value.seriesStatus, patch: { seriesStatus: "" } }
+      : null,
     value.favorite ? { key: "favorite", label: "Favorites", patch: { favorite: false } } : null,
   ]
   const chips = candidates.filter((chip) => chip !== null)
@@ -421,48 +519,80 @@ function ActiveFilters({
   )
 }
 
-export function LibraryFilters({ value, onChange, total }: LibraryFiltersProps) {
+export function LibraryFilters({ value, onChange, total, kinds }: LibraryFiltersProps) {
   const genres = useGenres()
+  const ratings = useOfficialRatings(kinds.join(","))
   const touchInput = useTouchInput()
-  const genreOptions = genres.data?.genres ?? []
+  const options: FilterOptions = {
+    genres: genres.data?.genres ?? [],
+    genresLoading: genres.isPending,
+    ratings: ratings.data?.officialRatings ?? [],
+    ratingsLoading: ratings.isPending,
+    seriesStatus: seriesStatusApplies(kinds),
+  }
+  const sorts = librarySortsFor(kinds)
+  const fieldClass = cn(
+    "border-edge bg-field shadow-none hover:bg-field-hover",
+    touchInput && "min-h-11",
+  )
+  const iconSize = touchInput ? "icon" : "icon-sm"
+  const chooseSort = (id: string) => {
+    const sort = sorts.find((option) => option.id === id)
+    if (!sort) return
+    onChange(sort.id === "random" ? { sort: sort.id, seed: newShuffleSeed() } : { sort: sort.id })
+  }
+  const ascending = value.order === "asc"
 
   return (
     <div className="space-y-3 border-b border-hairline px-6 pb-5 sm:px-10 lg:px-14">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={value.sort || "name"} onValueChange={(sort) => onChange({ sort })}>
+        <Select value={value.sort} onValueChange={chooseSort}>
           <SelectTrigger
             size={touchInput ? "default" : "sm"}
             aria-label="Sort by"
-            className={cn(
-              "border-edge bg-field shadow-none hover:bg-field-hover",
-              touchInput && "min-h-11",
-            )}
+            className={fieldClass}
           >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {LIBRARY_SORTS.map((sort) => (
+            {sorts.map((sort) => (
               <SelectItem key={sort.id} value={sort.id}>
-                Sort: {sort.label}
+                Sort: {librarySortLabel(sort, kinds)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
 
-        {touchInput ? (
-          <TouchFilters
-            value={value}
-            onChange={onChange}
-            genres={genreOptions}
-            genresLoading={genres.isPending}
-          />
+        {value.sort === "random" ? (
+          <Button
+            type="button"
+            variant="outline"
+            size={iconSize}
+            aria-label="Shuffle again"
+            title="Shuffle again"
+            className={cn(fieldClass, touchInput && "min-w-11")}
+            onClick={() => onChange({ seed: newShuffleSeed() })}
+          >
+            <Shuffle aria-hidden="true" />
+          </Button>
         ) : (
-          <DesktopFilters
-            value={value}
-            onChange={onChange}
-            genres={genreOptions}
-            genresLoading={genres.isPending}
-          />
+          <Button
+            type="button"
+            variant="outline"
+            size={iconSize}
+            aria-label={ascending ? "Sort descending" : "Sort ascending"}
+            title={ascending ? "Ascending. Sort descending" : "Descending. Sort ascending"}
+            className={cn(fieldClass, touchInput && "min-w-11")}
+            onClick={() => onChange({ order: ascending ? "desc" : "asc" })}
+          >
+            {ascending ? <ArrowUpNarrowWide aria-hidden="true" /> : <ArrowDownWideNarrow aria-hidden="true" />}
+          </Button>
+        )}
+
+        {touchInput ? (
+          <TouchFilters value={value} onChange={onChange} options={options} />
+        ) : (
+          <DesktopFilters value={value} onChange={onChange} options={options} />
         )}
 
         {total !== null && (
