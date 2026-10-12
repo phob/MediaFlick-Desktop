@@ -45,6 +45,11 @@ plugin:
 plugin-test:
     dotnet test --project plugin/tests/Jellyfin.Plugin.MediaFlick.Tests/Jellyfin.Plugin.MediaFlick.Tests.csproj --configuration Release
 
+# Load the packaged plugin into real Jellyfin servers (default: minimum and newest minor; Linux only)
+[group('test')]
+plugin-e2e *versions:
+    python3 scripts/e2e/companion-jellyfin.py {{versions}}
+
 # Deploy the plugin to the configured Jellyfin development host and restart it
 [group('run')]
 plugin-deploy: plugin
