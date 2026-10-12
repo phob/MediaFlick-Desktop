@@ -1,7 +1,18 @@
-// Splitting a Jellyfin `People` list into the two things a detail page shows
-// differently: performers, who get faces, and crew, who read as a list.
+// Splitting a Jellyfin `People` list into the two rails a detail page shows:
+// performers, and the crew who held one of the key jobs.
 
 import type { Person } from "./api"
+
+const CAST_KINDS = new Set(["Actor", "GuestStar"])
+
+/** Jellyfin `PersonKind` values the Crew rail shows, in rail order. */
+const CREW_JOBS = [
+  { kind: "Creator", label: "Creator" },
+  { kind: "Director", label: "Director" },
+  { kind: "Writer", label: "Writer" },
+  { kind: "Producer", label: "Producer" },
+  { kind: "Composer", label: "Composer" },
+] as const
 
 /**
  * `Type` is Jellyfin's own field and is occasionally absent, in which case a
@@ -9,29 +20,37 @@ import type { Person } from "./api"
  */
 export function castOf(people: Person[]) {
   return people.filter(
-    (person) => person.name && (person.type === "Actor" || (!person.type && person.role)),
+    (person) =>
+      person.name && ((person.type && CAST_KINDS.has(person.type)) || (!person.type && person.role)),
   )
 }
 
-/**
- * Jellyfin's `PersonKind` values are camel case — "GuestStar", not a label.
- * Splitting on the capitals is enough for every value it currently emits.
- */
-function jobLabel(type: string) {
-  return type.replace(/([a-z])([A-Z])/g, "$1 $2")
+export interface CrewMember {
+  person: Person
+  /** Display labels in rail order, such as "Director". */
+  jobs: string[]
 }
 
-/** Directors, writers, and the rest, grouped by the job they are credited for. */
-export function crewOf(people: Person[]) {
-  const groups = new Map<string, string[]>()
-  for (const person of people) {
-    if (!person.name || !person.type || person.type === "Actor") continue
-    const job = jobLabel(person.type)
-    const names = groups.get(job) ?? []
-    // A crew member credited twice for the same job would otherwise be listed
-    // twice, which happens on imported metadata more often than it should.
-    if (!names.includes(person.name)) names.push(person.name)
-    groups.set(job, names)
-  }
-  return [...groups.entries()].map(([job, names]) => ({ job, names }))
+/**
+ * One entry per person, ordered by their highest-ranked key job and then by
+ * Jellyfin's credit order, so a writer-director appears once.
+ */
+export function crewOf(people: Person[]): CrewMember[] {
+  const members = new Map<string, { person: Person; ranks: Set<number>; order: number }>()
+  people.forEach((person, order) => {
+    const rank = CREW_JOBS.findIndex((job) => job.kind === person.type)
+    if (!person.name || rank < 0) return
+    const key = person.id ?? person.name
+    const member = members.get(key) ?? { person, ranks: new Set<number>(), order }
+    member.ranks.add(rank)
+    if (!member.person.imageTag && person.imageTag) member.person = person
+    members.set(key, member)
+  })
+  return [...members.values()]
+    .map(({ person, ranks, order }) => ({ person, ranks, order, rank: Math.min(...ranks) }))
+    .sort((left, right) => left.rank - right.rank || left.order - right.order)
+    .map(({ person, ranks }) => ({
+      person,
+      jobs: CREW_JOBS.filter((_, rank) => ranks.has(rank)).map((job) => job.label),
+    }))
 }
