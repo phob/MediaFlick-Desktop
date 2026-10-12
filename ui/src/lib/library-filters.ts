@@ -1,4 +1,4 @@
-import type { ItemQuery, SortOrder } from "./api"
+import type { ItemQuery, SeriesStatus, SortOrder, WatchFilter } from "./api"
 
 export type LibraryKind = "Movie" | "Series"
 
@@ -53,6 +53,18 @@ export function newShuffleSeed() {
   return String(crypto.getRandomValues(new Uint32Array(1))[0])
 }
 
+export const WATCH_FILTERS: readonly { id: WatchFilter; label: string }[] = [
+  { id: "unwatched", label: "Unwatched" },
+  { id: "progress", label: "In progress" },
+  { id: "watched", label: "Watched" },
+]
+
+export const SERIES_STATUSES: readonly SeriesStatus[] = ["Continuing", "Ended"]
+
+export function seriesStatusApplies(kinds: readonly LibraryKind[]) {
+  return kinds.length === 1 && kinds[0] === "Series"
+}
+
 export const REMEMBERED_LIBRARY_PARAMS = [
   "sort",
   "order",
@@ -60,6 +72,8 @@ export const REMEMBERED_LIBRARY_PARAMS = [
   "genre",
   "decade",
   "watched",
+  "parental",
+  "seriesStatus",
   "filters",
 ] as const
 
@@ -69,11 +83,11 @@ export interface LibraryFilterState {
   seed: string
   genre: string
   decade: string
-  watched: WatchedFilter
+  watched: WatchFilter | ""
+  parental: string
+  seriesStatus: SeriesStatus | ""
   favorite: boolean
 }
-
-type WatchedFilter = "true" | "false" | ""
 
 export interface ReleaseDecadeOption {
   value: number
@@ -111,16 +125,22 @@ export function libraryViewKinds(params: URLSearchParams): LibraryKind[] {
 }
 
 export function readLibraryFilters(params: URLSearchParams): LibraryFilterState {
-  const sort = librarySort(params.get("sort"), libraryViewKinds(params))
+  const kinds = libraryViewKinds(params)
+  const sort = librarySort(params.get("sort"), kinds)
   const order = params.get("order")
-  const watched = params.get("watched")
+  const watched = WATCH_FILTERS.find((option) => option.id === params.get("watched"))
+  const seriesStatus = seriesStatusApplies(kinds)
+    ? SERIES_STATUSES.find((status) => status === params.get("seriesStatus"))
+    : undefined
   return {
     sort: sort.id,
     order: order === "asc" || order === "desc" ? order : sort.natural,
     seed: sort.id === "random" ? validSeed(params.get("seed")) : "",
     genre: params.get("genre") ?? "",
     decade: validDecade(params.get("decade")),
-    watched: watched === "true" || watched === "false" ? watched : "",
+    watched: watched?.id ?? "",
+    parental: params.get("parental")?.trim() ?? "",
+    seriesStatus: seriesStatus ?? "",
     favorite: params.get("favorite") === "true" || params.get("favorite") === "1",
   }
 }
@@ -142,8 +162,10 @@ export function writeLibraryFilters(
     else next.set(key, String(value))
   }
   if (patch.sort !== undefined && patch.order === undefined) next.delete("order")
-  const sort = librarySort(next.get("sort"), libraryViewKinds(next))
+  const kinds = libraryViewKinds(next)
+  const sort = librarySort(next.get("sort"), kinds)
   if (next.get("order") === sort.natural) next.delete("order")
+  if (!seriesStatusApplies(kinds)) next.delete("seriesStatus")
   if (sort.id !== "random") next.delete("seed")
   next.delete("offset")
   next.delete("page")
@@ -179,6 +201,8 @@ export function libraryItemQuery(params: URLSearchParams): ItemQuery {
       : filters.order,
     seed: filters.seed ? Number(filters.seed) : undefined,
     watched: filters.watched,
+    parental: filters.parental,
+    seriesStatus: filters.seriesStatus,
   }
 }
 
@@ -187,16 +211,20 @@ export function activeLibraryFilterCount(filters: LibraryFilterState) {
     Number(Boolean(filters.genre))
     + Number(Boolean(filters.decade))
     + Number(Boolean(filters.watched))
+    + Number(Boolean(filters.parental))
+    + Number(Boolean(filters.seriesStatus))
     + Number(filters.favorite)
   )
 }
 
 export const CLEARED_LIBRARY_FILTERS: Pick<
   LibraryFilterState,
-  "genre" | "decade" | "watched" | "favorite"
+  "genre" | "decade" | "watched" | "parental" | "seriesStatus" | "favorite"
 > = {
   genre: "",
   decade: "",
   watched: "",
+  parental: "",
+  seriesStatus: "",
   favorite: false,
 }

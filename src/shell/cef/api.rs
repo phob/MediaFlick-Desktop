@@ -25,8 +25,8 @@ use crate::jellyfin::session::{SessionScope, SessionStatus};
 use crate::library::model::technical_media_streams_json;
 use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
-    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats, SortDirection,
-    resolve_playback_preference, sync,
+    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats, SeriesStatus,
+    SortDirection, WatchFilter, resolve_playback_preference, sync,
 };
 use crate::maintenance::player_setup;
 use crate::preferences::{
@@ -325,6 +325,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("GET", "billboard"),
     ("GET", "items"),
     ("GET", "genres"),
+    ("GET", "official-ratings"),
     ("GET", "person/resolve"),
     ("GET", "item/*"),
     ("GET", "item/*/synopsis"),
