@@ -4,7 +4,8 @@ After sign-in, Home waits for the first page of the library catalog. While it lo
 
 ## Sub-features
 
-- `bootstrap-loading` keeps the startup cover up until the first catalog page commits (`/api/status` `bootstrap.state` is `loading`).
+- `bootstrap-loading` keeps the startup cover up until the first catalog page commits and the first Home and billboard queries answer (`/api/status` `bootstrap.state` is `loading`; `ui/src/lib/startup.ts`).
+- `bootstrap-background` loads the rest of the catalog after Home appears, 200 items a page, with a sidebar `role="status"` reading `Loading library. X of T`, then `Refreshing library…` while reconciling.
 - `bootstrap-retry-screen` shows the reason (`unreachable`, `server` or `storage`, worded in `ui/src/lib/sync-failure.ts`), `Trying again in N s.` or `Trying again now…`, `Retry now` and `Sign out` (`bootstrap.state` is `retrying`).
 - `bootstrap-retry-now` asks the sync worker for an attempt at once (`POST /api/sync`). The screen stays, with `Retry now` disabled, until the attempt ends.
 - `bootstrap-sign-out` signs out from the retry screen to the sign-in form.
@@ -37,6 +38,7 @@ Preconditions:
 - The worker's backoff grows across attempts (5, 10, 20, 40, 60 s, each plus a jitter under 20% that is 0 at the 5 s step). A 429 with `Retry-After` stretches it beyond 60 s. A failed `Retry now` advances it one step like any failed attempt; Sign out while the worker waits does not reset it, but Sign out during a running attempt cancels it and does (`src/library/sync/worker.rs`). To prove that `Retry now` caused an attempt, wait until `retryAt` is far enough away before pressing it.
 - `Trying again now…` and the disabled `Retry now` also show when the countdown reaches 0, before the worker's own attempt starts.
 - The `fail` predicate also matches the identity sweep (`/Items` with `Limit=1000`, `EnableImages=false`), which only runs after a catalog exists. Add `Limit=200` to the match when a drive must fail the bootstrap alone.
+- On a real library the first full sync is what later steps wait for: `bootstrap.state` turns `ready` with page one, but counts, Resume buttons and owned-title matching (Discover's `In your library`) need the whole catalog. Wait for `bootstrap.state === "ready" && syncProgress.active === false`. On Jellyfin 12.2 with 5,497 items (28 pages) that took 20–23 s from launch (`library bootstrap complete` in `app.log`). The first catalog cycle skips the identity sweep, so a proxy `fail` aimed at it only matches a later cycle.
 - Settings (`/settings/*`) bypasses the cover and the retry screen. A 401 or 403 does not show the retry screen: the session expires and the sign-in form returns.
 - A new sign-in starts in `loading`: a failure belongs to the session it happened in.
 - A launch with the window hidden (initial show state `HIDDEN`) stays hidden on the retry screen; `reveal_main_window` skips it (`src/shell/cef/mod.rs`; not driven).
