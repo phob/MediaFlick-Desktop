@@ -226,6 +226,22 @@ export function useGenres() {
   })
 }
 
+export function useOfficialRatings(kind: string) {
+  return useQuery({
+    queryKey: queryKeys.officialRatings(kind),
+    queryFn: () => api.officialRatings(kind),
+    staleTime: 30 * 60_000,
+  })
+}
+
+export function useItemLetters(query: ItemQuery, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.itemLetters(query),
+    queryFn: ({ signal }) => api.itemLetters(query, signal),
+    enabled,
+  })
+}
+
 export function useItems(query: ItemQuery, enabled = true) {
   return useQuery({
     queryKey: queryKeys.items(query),

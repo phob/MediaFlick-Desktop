@@ -6,6 +6,7 @@ import { useBrowsing } from "@/lib/queries"
 import { useEffect, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
+import { LetterJumpRail } from "@/components/LetterJumpRail"
 import { LibraryFilters } from "@/components/LibraryFilters"
 import { MediaCard } from "@/components/MediaCard"
 import { PageErrorState, PageHeader } from "@/components/PageHeader"
@@ -23,11 +24,13 @@ import {
 import {
   libraryItemQuery,
   libraryKind,
+  libraryViewKinds,
   readLibraryFilters,
+  REMEMBERED_LIBRARY_PARAMS,
   type LibraryFilterState,
   writeLibraryFilters,
 } from "@/lib/library-filters"
-import { useItems, usePersonResolution } from "@/lib/queries"
+import { useItemLetters, useItems, usePersonResolution } from "@/lib/queries"
 
 /** How many of a matched person's titles the search page shows inline. */
 const SEARCH_PERSON_ROW_LIMIT = 12
@@ -139,14 +142,14 @@ export default function Library({ components }: LibraryProps = {}) {
   const preferences = viewing.data ?? DEFAULT_VIEWING
   const kindKey = libraryKind(routeParams)
   const plainLibrary = ["Movie", "Series"].includes(kindKey) && !routeParams.has("search") && !routeParams.has("mode") && !routeParams.has("favorite")
-  const explicitFilters = ["sort", "genre", "decade", "watched", "filters"].some((key) => routeParams.has(key))
+  const explicitFilters = REMEMBERED_LIBRARY_PARAMS.some((key) => routeParams.has(key))
   const params = new URLSearchParams(routeParams)
   if (plainLibrary && !explicitFilters) {
     const remembered = preferences.rememberFilters ? history.data?.[kindKey] : undefined
     if (remembered) {
       const saved = new URLSearchParams(remembered.split("?")[1])
-      for (const key of ["sort", "genre", "decade", "watched", "filters"]) { const value = saved.get(key); if (value !== null) params.set(key, value) }
-    } else if (preferences.hideWatched) params.set("watched", "false")
+      for (const key of REMEMBERED_LIBRARY_PARAMS) { const value = saved.get(key); if (value !== null) params.set(key, value) }
+    } else if (preferences.hideWatched) params.set("watched", "unwatched")
   }
   const [total, setTotal] = useState<number | null>(null)
 
@@ -197,6 +200,10 @@ export default function Library({ components }: LibraryProps = {}) {
     ? { personId: jellyfinPersonId }
     : libraryItemQuery(params)
   const globalFavoritesView = favorite && !params.has("kind")
+  const alphabetical = !castPerson && !search && filters.sort === "name"
+  const railQuery = alphabetical ? libraryItemQuery(params) : null
+  const letters = useItemLetters(railQuery ?? {}, railQuery !== null)
+  const letterIndex = railQuery ? letters.data?.letters : undefined
 
   const title = castPerson
     ? personName
@@ -227,7 +234,14 @@ export default function Library({ components }: LibraryProps = {}) {
         eyebrow={castPerson ? "Person" : search ? "Search" : "Library"}
         title={title}
       />
-      {!castPerson && <LibraryFilters value={filters} onChange={updateFilters} total={total} />}
+      {!castPerson && (
+        <LibraryFilters
+          value={filters}
+          onChange={updateFilters}
+          total={total}
+          kinds={libraryViewKinds(params)}
+        />
+      )}
       {castPerson && (
         <h2 className="section-title px-6 pt-4 sm:px-10 lg:px-14">On your Jellyfin server</h2>
       )}
@@ -261,6 +275,9 @@ export default function Library({ components }: LibraryProps = {}) {
           <Grid
             query={query}
             onTotal={setTotal}
+            jumpRail={letterIndex
+              ? (jumpTo) => <LetterJumpRail letters={letterIndex} onJump={jumpTo} />
+              : undefined}
             empty={
               castPerson
                 ? `No Jellyfin titles credit ${personName}.`

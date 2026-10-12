@@ -13,10 +13,10 @@ function RatingReadoutView({
   ratings,
   ratingItem,
   variant,
-  hasRibbon = false,
+  topRightOccupied = false,
 }: RatingReadoutViewProps & {
   variant: "card" | "detail"
-  hasRibbon?: boolean
+  topRightOccupied?: boolean
 }) {
   if (!ratingItem || ratings.length === 0) return null
   const originLabel = "MDBList"
@@ -26,7 +26,7 @@ function RatingReadoutView({
       aria-label={`Ratings for ${itemName}`}
       data-rating-origin={ratingItem.origin}
       data-stale={ratingItem.stale || undefined}
-      data-ribbon={variant === "card" && hasRibbon ? true : undefined}
+      data-ribbon={variant === "card" && topRightOccupied ? true : undefined}
     >
       {ratings.map(({ rating, definition, formatted, accessibleValue }) => (
         <div
@@ -48,17 +48,17 @@ function RatingReadoutView({
 /** Compact multi-source card ratings; absent sources render nothing at all. */
 export function RatingOverlay({
   item,
-  hasRibbon = false,
+  topRightOccupied = false,
 }: {
   item: Pick<ItemSummary, "id" | "name">
-  hasRibbon?: boolean
+  topRightOccupied?: boolean
 }) {
   const { ratings, item: ratingItem } = useCardRatings(item.id)
   return <RatingOverlayView
     itemName={item.name}
     ratings={ratings}
     ratingItem={ratingItem}
-    hasRibbon={hasRibbon}
+    topRightOccupied={topRightOccupied}
   />
 }
 
@@ -79,12 +79,12 @@ export function RatingOverlayView({
   itemName,
   ratings,
   ratingItem,
-  hasRibbon = false,
+  topRightOccupied = false,
 }: {
   itemName: string
   ratings: DisplayRating[]
   ratingItem: ItemRatings | undefined
-  hasRibbon?: boolean
+  topRightOccupied?: boolean
 }) {
   return (
     <RatingReadoutView
@@ -92,7 +92,7 @@ export function RatingOverlayView({
       ratings={ratings}
       ratingItem={ratingItem}
       variant="card"
-      hasRibbon={hasRibbon}
+      topRightOccupied={topRightOccupied}
     />
   )
 }

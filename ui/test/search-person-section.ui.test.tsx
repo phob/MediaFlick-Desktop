@@ -26,6 +26,7 @@ function item(overrides: Partial<ItemSummary> & Pick<ItemSummary, "id" | "kind" 
     playCount: 0,
     positionTicks: 0,
     favorite: false,
+    unplayedCount: null,
     ...overrides,
   }
 }
