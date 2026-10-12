@@ -43,7 +43,7 @@ impl Library {
                 if dto.id.trim().is_empty() || !is_synced_kind(kind) {
                     continue;
                 }
-                let mut moved = upsert_item(transaction, &ItemRecord::from_dto(dto))?;
+                let mut moved = upsert_item_if_changed(transaction, &ItemRecord::from_dto(dto))?;
                 if let Some(user_data) = &dto.user_data {
                     moved |= upsert_user_data(
                         transaction,
@@ -144,7 +144,7 @@ impl Library {
                     continue;
                 }
                 keep.insert(dto.id.clone());
-                let mut moved = upsert_item(transaction, &ItemRecord::from_dto(dto))?;
+                let mut moved = upsert_item_if_changed(transaction, &ItemRecord::from_dto(dto))?;
                 if let Some(user_data) = &dto.user_data {
                     moved |= upsert_user_data(
                         transaction,
@@ -441,74 +441,79 @@ fn delete_items_from_transaction(
     Ok(())
 }
 
-fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<bool> {
+const UPSERT_ITEM_SQL: &str = "INSERT INTO items (
+        jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
+        runtime_ticks, community_rating, official_rating, parent_id, series_id,
+        series_name, season_id, index_number, parent_index_number, child_count,
+        tmdb_id, imdb_id, tvdb_id, genres, image_tags, primary_image_tag,
+        backdrop_image_tag, search_genres, date_created, date_last_saved, series_status,
+        is_virtual, synced_at
+    ) VALUES (
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+        ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
+    )
+    ON CONFLICT(jellyfin_id) DO UPDATE SET
+        kind = excluded.kind,
+        name = excluded.name,
+        original_title = excluded.original_title,
+        sort_name = excluded.sort_name,
+        year = excluded.year,
+        premiere_date = excluded.premiere_date,
+        runtime_ticks = excluded.runtime_ticks,
+        community_rating = excluded.community_rating,
+        official_rating = excluded.official_rating,
+        parent_id = excluded.parent_id,
+        series_id = excluded.series_id,
+        series_name = excluded.series_name,
+        season_id = excluded.season_id,
+        index_number = excluded.index_number,
+        parent_index_number = excluded.parent_index_number,
+        child_count = excluded.child_count,
+        tmdb_id = excluded.tmdb_id,
+        imdb_id = excluded.imdb_id,
+        tvdb_id = excluded.tvdb_id,
+        genres = excluded.genres,
+        image_tags = excluded.image_tags,
+        primary_image_tag = excluded.primary_image_tag,
+        backdrop_image_tag = excluded.backdrop_image_tag,
+        search_genres = excluded.search_genres,
+        date_created = excluded.date_created,
+        date_last_saved = excluded.date_last_saved,
+        series_status = excluded.series_status,
+        is_virtual = excluded.is_virtual,
+        synced_at = excluded.synced_at
+    WHERE kind IS NOT excluded.kind
+        OR name IS NOT excluded.name
+        OR original_title IS NOT excluded.original_title
+        OR sort_name IS NOT excluded.sort_name
+        OR year IS NOT excluded.year
+        OR premiere_date IS NOT excluded.premiere_date
+        OR runtime_ticks IS NOT excluded.runtime_ticks
+        OR community_rating IS NOT excluded.community_rating
+        OR official_rating IS NOT excluded.official_rating
+        OR parent_id IS NOT excluded.parent_id
+        OR series_id IS NOT excluded.series_id
+        OR series_name IS NOT excluded.series_name
+        OR season_id IS NOT excluded.season_id
+        OR index_number IS NOT excluded.index_number
+        OR parent_index_number IS NOT excluded.parent_index_number
+        OR child_count IS NOT excluded.child_count
+        OR tmdb_id IS NOT excluded.tmdb_id
+        OR imdb_id IS NOT excluded.imdb_id
+        OR tvdb_id IS NOT excluded.tvdb_id
+        OR genres IS NOT excluded.genres
+        OR image_tags IS NOT excluded.image_tags
+        OR primary_image_tag IS NOT excluded.primary_image_tag
+        OR backdrop_image_tag IS NOT excluded.backdrop_image_tag
+        OR search_genres IS NOT excluded.search_genres
+        OR date_created IS NOT excluded.date_created
+        OR date_last_saved IS NOT excluded.date_last_saved
+        OR series_status IS NOT excluded.series_status
+        OR is_virtual IS NOT excluded.is_virtual";
+
+fn upsert_item_if_changed(connection: &Connection, record: &ItemRecord) -> rusqlite::Result<bool> {
     let written = connection
-        .prepare_cached(
-            "INSERT INTO items (
-            jellyfin_id, kind, name, original_title, sort_name, year, premiere_date,
-            runtime_ticks, community_rating, official_rating, parent_id, series_id,
-            series_name, season_id, index_number, parent_index_number, child_count,
-            tmdb_id, imdb_id, tvdb_id, genres, image_tags, primary_image_tag,
-            backdrop_image_tag, search_genres, date_created, date_last_saved, synced_at
-        ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28
-        )
-        ON CONFLICT(jellyfin_id) DO UPDATE SET
-            kind = excluded.kind,
-            name = excluded.name,
-            original_title = excluded.original_title,
-            sort_name = excluded.sort_name,
-            year = excluded.year,
-            premiere_date = excluded.premiere_date,
-            runtime_ticks = excluded.runtime_ticks,
-            community_rating = excluded.community_rating,
-            official_rating = excluded.official_rating,
-            parent_id = excluded.parent_id,
-            series_id = excluded.series_id,
-            series_name = excluded.series_name,
-            season_id = excluded.season_id,
-            index_number = excluded.index_number,
-            parent_index_number = excluded.parent_index_number,
-            child_count = excluded.child_count,
-            tmdb_id = excluded.tmdb_id,
-            imdb_id = excluded.imdb_id,
-            tvdb_id = excluded.tvdb_id,
-            genres = excluded.genres,
-            image_tags = excluded.image_tags,
-            primary_image_tag = excluded.primary_image_tag,
-            backdrop_image_tag = excluded.backdrop_image_tag,
-            search_genres = excluded.search_genres,
-            date_created = excluded.date_created,
-            date_last_saved = excluded.date_last_saved,
-            synced_at = excluded.synced_at
-        WHERE kind IS NOT excluded.kind
-            OR name IS NOT excluded.name
-            OR original_title IS NOT excluded.original_title
-            OR sort_name IS NOT excluded.sort_name
-            OR year IS NOT excluded.year
-            OR premiere_date IS NOT excluded.premiere_date
-            OR runtime_ticks IS NOT excluded.runtime_ticks
-            OR community_rating IS NOT excluded.community_rating
-            OR official_rating IS NOT excluded.official_rating
-            OR parent_id IS NOT excluded.parent_id
-            OR series_id IS NOT excluded.series_id
-            OR series_name IS NOT excluded.series_name
-            OR season_id IS NOT excluded.season_id
-            OR index_number IS NOT excluded.index_number
-            OR parent_index_number IS NOT excluded.parent_index_number
-            OR child_count IS NOT excluded.child_count
-            OR tmdb_id IS NOT excluded.tmdb_id
-            OR imdb_id IS NOT excluded.imdb_id
-            OR tvdb_id IS NOT excluded.tvdb_id
-            OR genres IS NOT excluded.genres
-            OR image_tags IS NOT excluded.image_tags
-            OR primary_image_tag IS NOT excluded.primary_image_tag
-            OR backdrop_image_tag IS NOT excluded.backdrop_image_tag
-            OR search_genres IS NOT excluded.search_genres
-            OR date_created IS NOT excluded.date_created
-            OR date_last_saved IS NOT excluded.date_last_saved",
-        )?
+        .prepare_cached(UPSERT_ITEM_SQL)?
         .execute(params![
             record.jellyfin_id,
             record.kind,
@@ -537,6 +542,8 @@ fn upsert_item(connection: &Connection, record: &ItemRecord) -> rusqlite::Result
             record.search_genres,
             record.date_created,
             record.date_last_saved,
+            record.series_status,
+            record.is_virtual,
             now_unix(),
         ])?;
     Ok(written > 0)

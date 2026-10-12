@@ -28,6 +28,7 @@ export function itemSummary(
     playCount: 0,
     positionTicks: 0,
     favorite: false,
+    unplayedCount: null,
     ...rest,
   }
 }

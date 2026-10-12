@@ -339,18 +339,32 @@ impl Library {
     }
 }
 
-const SUMMARY_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
-i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
-i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
-COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
-COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag";
-
-const DETAIL_COLUMNS: &str = "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
+/// Counted locally rather than cached from the server's series
+/// `UnplayedItemCount`: Jellyfin's user-data push climbs only from an episode
+/// to its season, so a cached series count would go stale on every pushed
+/// episode change.
+macro_rules! summary_columns {
+    () => {
+        "i.jellyfin_id, i.kind, i.name, i.year, i.runtime_ticks, \
 i.community_rating, i.official_rating, i.series_id, i.series_name, i.index_number, \
 i.parent_index_number, i.primary_image_tag, i.child_count, i.premiere_date, i.season_id, \
 COALESCE(u.played, 0), COALESCE(u.play_count, 0), COALESCE(u.playback_position_ticks, 0), \
 COALESCE(u.is_favorite, 0), i.image_tags, i.backdrop_image_tag, \
-i.genres, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, i.parent_id, i.date_created";
+CASE WHEN i.kind = 'Series' THEN (
+    SELECT count(*) FROM items e
+    LEFT JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
+    WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id AND e.is_virtual = 0
+      AND COALESCE(ue.played, 0) = 0
+) END"
+    };
+}
+
+const SUMMARY_COLUMNS: &str = summary_columns!();
+
+const DETAIL_COLUMNS: &str = concat!(
+    summary_columns!(),
+    ", i.genres, i.original_title, i.tmdb_id, i.imdb_id, i.tvdb_id, i.parent_id, i.date_created"
+);
 
 fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a str> {
     image_tags.as_object()?.iter().find_map(|(key, value)| {
@@ -386,6 +400,7 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
         thumb_image_tag: cached_image_tag(&image_tags, "Thumb").map(str::to_string),
         logo_image_tag: cached_image_tag(&image_tags, "Logo").map(str::to_string),
         backdrop_image_tag: row.get(20)?,
+        unplayed_count: row.get(21)?,
         overview: None,
     })
 }
@@ -393,15 +408,15 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
 fn detail_row(row: &Row<'_>) -> rusqlite::Result<ItemDetail> {
     Ok(ItemDetail {
         summary: summary_row(row)?,
-        genres: serde_json::from_str(&row.get::<_, String>(21)?).unwrap_or_default(),
-        original_title: row.get(22)?,
+        genres: serde_json::from_str(&row.get::<_, String>(22)?).unwrap_or_default(),
+        original_title: row.get(23)?,
         provider_ids: ProviderIds {
-            tmdb: row.get(23)?,
-            imdb: row.get(24)?,
-            tvdb: row.get(25)?,
+            tmdb: row.get(24)?,
+            imdb: row.get(25)?,
+            tvdb: row.get(26)?,
         },
-        parent_id: row.get(26)?,
-        date_created: row.get(27)?,
+        parent_id: row.get(27)?,
+        date_created: row.get(28)?,
     })
 }
 

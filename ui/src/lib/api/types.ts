@@ -29,6 +29,7 @@ export interface ItemSummary {
   playCount: number
   positionTicks: number
   favorite: boolean
+  unplayedCount: number | null
   /**
    * Only `/api/item/{id}/children` carries this, passed through from its live
    * server reconcile; the grid queries do not, and offline rows have none.
