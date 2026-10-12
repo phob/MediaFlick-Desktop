@@ -118,6 +118,11 @@ pub struct BaseItemDto {
     pub series_primary_image_tag: Option<String>,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
+    /// A series' airing state. Jellyfin sends it for every series whatever
+    /// `Fields` asks for.
+    pub status: Option<String>,
+    /// `Virtual` marks a missing episode: metadata without a media file.
+    pub location_type: Option<String>,
     pub user_data: Option<UserItemDataDto>,
     /// Lightweight stream descriptors returned by the `MediaStreams` item
     /// field. Unlike `media_sources`, these can be cached with library rows
@@ -191,6 +196,7 @@ pub struct UserItemDataDto {
     pub is_favorite: bool,
     pub played_percentage: Option<f64>,
     pub last_played_date: Option<String>,
+    pub unplayed_item_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

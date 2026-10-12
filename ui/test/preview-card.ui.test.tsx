@@ -114,6 +114,7 @@ const movie: ItemSummary = {
   playCount: 0,
   positionTicks: 0,
   favorite: false,
+  unplayedCount: null,
 }
 
 // Technical streams no longer travel on summaries; the preview reads them
