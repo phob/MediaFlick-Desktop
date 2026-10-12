@@ -1,5 +1,5 @@
 import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect, useId, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { CardInlineActions } from "@/components/CardInlineActions"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
@@ -93,6 +93,8 @@ export const MediaCard = memo(function MediaCard({
       ? [imageUrl(item)]
       : []
   const image = images[imageIndex]
+  const unplayed = item.kind === "Series" ? item.unplayedCount ?? 0 : 0
+  const unplayedId = useId()
 
   return (
     <article
@@ -121,6 +123,7 @@ export const MediaCard = memo(function MediaCard({
           to={`/item/${encodeURIComponent(item.id)}`}
           state={detailNavigationState(location)}
           aria-label={`Open details for ${item.name}`}
+          aria-describedby={unplayed > 0 ? unplayedId : undefined}
           className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
           {image ? (
@@ -144,10 +147,27 @@ export const MediaCard = memo(function MediaCard({
               {item.name}
             </span>
           )}
-          <RatingOverlay item={item} hasRibbon={Boolean(ribbon)} />
-          {ribbon && (
-            <div className="data-label absolute top-0 right-0 z-[4] bg-primary px-1.5 py-1 leading-none text-primary-foreground">
-              {ribbon}
+          <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />
+          {(ribbon || unplayed > 0) && (
+            <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
+              {ribbon && (
+                <div className="data-label bg-primary px-1.5 py-1 leading-none text-primary-foreground">
+                  {ribbon}
+                </div>
+              )}
+              {unplayed > 0 && (
+                <div
+                  id={unplayedId}
+                  data-unplayed-count={unplayed}
+                  title={`${unplayed} unwatched ${unplayed === 1 ? "episode" : "episodes"}`}
+                  className="data-label min-w-6 bg-primary px-1.5 py-1 text-center leading-none text-primary-foreground"
+                >
+                  <span aria-hidden="true">{unplayed.toLocaleString()}</span>
+                  <span className="sr-only">
+                    {unplayed} unwatched {unplayed === 1 ? "episode" : "episodes"}
+                  </span>
+                </div>
+              )}
             </div>
           )}
           <CardTechnicalReadout item={item} active={technicalVisible} />
