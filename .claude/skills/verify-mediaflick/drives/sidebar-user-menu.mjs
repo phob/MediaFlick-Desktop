@@ -5,7 +5,9 @@
 //   just verify sidebar-user-menu
 const DEMO = "https://demo.jellyfin.org/stable"
 const USER_MENU = { role: "button", name: "D demo demo.jellyfin.org" }
-const SYNC = { role: "menuitem", name: "Sync library" }
+// The menu's marker. Not `Sync library`: that item reads `Syncing…` while a
+// sync runs, which sign-in starts.
+const SIGN_OUT = { role: "menuitem", name: "Sign out" }
 const sidebarState = (ctx) => ctx.app.evaluate(`document.querySelector('[data-slot="sidebar"]')?.dataset.state ?? null`)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -32,12 +34,12 @@ export default async function sidebarUserMenu(ctx) {
   await ctx.hover(USER_MENU)
   await ctx.until(async () => (await sidebarState(ctx)) === "expanded", "the sidebar expanded under the pointer")
   await ctx.press(USER_MENU)
-  await ctx.find(SYNC)
+  await ctx.find(SIGN_OUT)
   const afterOpen = await sample(ctx, 600)
   await ctx.screenshot("01-menu-open")
 
-  const item = await ctx.find(SYNC)
-  ctx.step(`pointer onto ${SYNC.name} at ${Math.round(item.rect.x)},${Math.round(item.rect.y)}`)
+  const item = await ctx.find(SIGN_OUT)
+  ctx.step(`pointer onto ${SIGN_OUT.name} at ${Math.round(item.rect.x)},${Math.round(item.rect.y)}`)
   const onMenu = await sample(ctx, 1500, (tick) => ctx.app.send("Input.dispatchMouseEvent", {
     type: "mouseMoved",
     x: item.rect.x + (tick % 2),
@@ -49,10 +51,10 @@ export default async function sidebarUserMenu(ctx) {
 
   ctx.check(collapses(afterOpen) === 0, `the sidebar stays expanded after the menu opens (${afterOpen.join(",")})`)
   ctx.check(collapses(onMenu) === 0, `the sidebar stays expanded with the pointer on the menu (${onMenu.join(",")})`)
-  ctx.check(await ctx.exists(SYNC), "the menu is still open")
+  ctx.check(await ctx.exists(SIGN_OUT), "the menu is still open")
 
   await ctx.key("Escape")
-  await ctx.until(async () => !(await ctx.exists(SYNC)), "the menu closed")
+  await ctx.until(async () => !(await ctx.exists(SIGN_OUT)), "the menu closed")
   await ctx.park()
   await ctx.until(async () => (await sidebarState(ctx)) === "collapsed", "the sidebar collapsed once the menu closed")
   await ctx.screenshot("03-menu-closed")
