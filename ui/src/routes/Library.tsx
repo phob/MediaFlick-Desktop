@@ -65,9 +65,9 @@ export function SearchPersonSection({ term }: { term: string }) {
   if (!person || !titles.data?.items.length) return null
 
   return (
-    <section className="flex flex-col gap-4 pt-8" aria-label={`Titles featuring ${person.name}`}>
+    <section className="flex flex-col gap-4 pt-8" aria-label={`Titles with ${person.name}`}>
       <div className="flex items-baseline justify-between gap-4">
-        <h2 className="section-title">Featuring {person.name}</h2>
+        <h2 className="section-title">With {person.name}</h2>
         <Link
           to={castSearchPath({
             jellyfinId: person.jellyfinId,
@@ -98,16 +98,16 @@ function CastCandidates({
   if (!candidates.length) {
     return (
       <p className="py-4 text-sm text-muted-foreground">
-        Jellyfin could not identify an exact cast member named {personName}. No name-only results are shown, so different people are never mixed together.
+        Jellyfin could not identify an exact person named {personName}. No name-only results are shown, so different people are never mixed together.
       </p>
     )
   }
   return (
     <div className="flex flex-col gap-3 py-4">
       <p className="text-sm text-muted-foreground">
-        More than one Jellyfin person has this name. Choose the exact cast member:
+        More than one Jellyfin person has this name. Choose the exact person:
       </p>
-      <div className="flex flex-wrap gap-2" role="list" aria-label="Matching cast members">
+      <div className="flex flex-wrap gap-2" role="list" aria-label="Matching people">
         {candidates.map((candidate) => (
           <Link
             key={candidate.jellyfinId}
@@ -231,7 +231,7 @@ export default function Library({ components }: LibraryProps = {}) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
-        eyebrow={castPerson ? "Cast search" : search ? "Search" : "Library"}
+        eyebrow={castPerson ? "Person" : search ? "Search" : "Library"}
         title={title}
       />
       {!castPerson && (
@@ -251,7 +251,7 @@ export default function Library({ components }: LibraryProps = {}) {
             {resolution.isPending ? (
               <div
                 className="flex flex-wrap gap-[var(--card-gap)]"
-                aria-label="Loading server cast results"
+                aria-label="Loading server titles for this person"
               >
                 {Array.from({ length: 4 }, (_, index) => (
                   <Skeleton key={index} className="h-poster-h w-poster-w rounded-lg" />
@@ -259,7 +259,7 @@ export default function Library({ components }: LibraryProps = {}) {
               </div>
             ) : resolution.error ? (
               <PageErrorState
-                title="Could not resolve this cast member"
+                title="Could not resolve this person"
                 description={resolution.error.message}
                 action={<Button variant="outline" onClick={() => void resolution.refetch()}>Try again</Button>}
               />
@@ -280,7 +280,7 @@ export default function Library({ components }: LibraryProps = {}) {
               : undefined}
             empty={
               castPerson
-                ? `No Jellyfin titles feature ${personName}.`
+                ? `No Jellyfin titles credit ${personName}.`
                 : search
                   ? `Nothing matches “${search}”.`
                   : "No items match that query."

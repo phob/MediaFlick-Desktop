@@ -76,7 +76,7 @@ export function DetailFactPanel({ children, className }: { children: ReactNode; 
   )
 }
 
-export interface DetailCastEntry {
+export interface DetailPersonEntry {
   key: string
   name: string
   role?: string | null
@@ -84,7 +84,7 @@ export interface DetailCastEntry {
   to: string
 }
 
-function Headshot({ entry }: { entry: DetailCastEntry }) {
+function Headshot({ entry }: { entry: DetailPersonEntry }) {
   const [failed, setFailed] = useState(false)
   if (!entry.imageUrl || failed) {
     return (
@@ -105,17 +105,23 @@ function Headshot({ entry }: { entry: DetailCastEntry }) {
   )
 }
 
-export function DetailCastRail({ entries }: { entries: DetailCastEntry[] }) {
+export function DetailPeopleRail({
+  heading,
+  entries,
+}: {
+  heading: "Cast" | "Crew"
+  entries: DetailPersonEntry[]
+}) {
   if (!entries.length) return null
   return (
     <section className="flex min-w-0 flex-col gap-4">
-      <h2 className="section-title px-6 sm:px-10 lg:px-14">Cast</h2>
+      <h2 className="section-title px-6 sm:px-10 lg:px-14">{heading}</h2>
       <div className="media-strip flex gap-6 overflow-x-auto px-6 pb-3 sm:px-10 lg:px-14">
         {entries.map((entry) => (
           <Link
             key={entry.key}
             to={entry.to}
-            aria-label={`Find titles featuring ${entry.name}`}
+            aria-label={`Find titles with ${entry.name}`}
             className="flex w-28 shrink-0 flex-col items-center gap-2 rounded-media text-center outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Headshot entry={entry} />

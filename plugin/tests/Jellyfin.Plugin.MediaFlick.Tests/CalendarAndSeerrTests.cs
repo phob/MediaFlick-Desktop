@@ -186,7 +186,7 @@ public sealed class CalendarAndSeerrTests
     }
 
     [Fact]
-    public void SeerrPersonCreditsKeepCastOnlyDeduplicateAndPreserveRequestState()
+    public void SeerrPersonCreditsMergeKeyCrewJobsDeduplicateAndPreserveRequestState()
     {
         var source = JsonNode.Parse(
             """
@@ -200,16 +200,23 @@ public sealed class CalendarAndSeerrTests
                 {"id":603,"mediaType":"tv","name":"Different namespace","adult":false},
                 {"id":8,"mediaType":"movie","title":"Adult","adult":true}
               ],
-              "crew":[{"id":9,"mediaType":"movie","title":"Directed"}]
+              "crew":[
+                {"id":9,"mediaType":"movie","title":"Directed","job":"Director",
+                 "department":"Directing","adult":false},
+                {"id":603,"mediaType":"movie","title":"The Matrix","job":"Producer",
+                 "department":"Production","adult":false},
+                {"id":10,"mediaType":"movie","title":"Lit","job":"Gaffer",
+                 "department":"Lighting","adult":false}
+              ]
             }
             """);
 
         var page = SeerrGateway.ShapePersonCredits(source);
-        Assert.Equal(2, page.Results.Count);
-        Assert.Equal("movie", page.Results[0].MediaType);
+        Assert.Equal(
+            ["movie:603", "tv:603", "movie:9"],
+            page.Results.Select(result => $"{result.MediaType}:{result.TmdbId}"));
         Assert.Equal("available", page.Results[0].Status);
-        Assert.Equal("tv", page.Results[1].MediaType);
-        Assert.Equal(2, page.TotalResults);
+        Assert.Equal(3, page.TotalResults);
     }
 
     [Fact]
@@ -265,8 +272,12 @@ public sealed class CalendarAndSeerrTests
               "imdbId":"not-an-imdb-id",
               "externalIds":{"imdbId":"tt0133093","tvdbId":-1},
               "credits":{"crew":[
-                {"id":1,"name":"Lana Wachowski","job":"Director","department":"Directing"},
-                {"id":2,"name":"Screenwriter","job":"Screenplay","department":"Writing"}
+                {"id":3,"name":"Joel Silver","job":"Producer","department":"Production"},
+                {"id":4,"name":"Gaffer","job":"Gaffer","department":"Lighting"},
+                {"id":1,"name":"Lana Wachowski","job":"Director","department":"Directing",
+                 "profilePath":"/lana.jpg"},
+                {"id":2,"name":"Screenwriter","job":"Screenplay","department":"Writing"},
+                {"id":1,"name":"Lana Wachowski","job":"Screenplay","department":"Writing"}
               ]},
               "relatedVideos":[
                 {"site":"YouTube","type":"Trailer","key":"abcdefghijk","name":"Official Trailer","size":1080},
@@ -279,15 +290,24 @@ public sealed class CalendarAndSeerrTests
             """));
 
         var detail = SeerrGateway.ShapeMedia(source, "movie");
-        Assert.Equal(["Lana Wachowski"], detail.Directors);
+        Assert.Equal(
+            ["Lana Wachowski: Director, Writer (/lana.jpg)", "Screenwriter: Writer ()", "Joel Silver: Producer ()"],
+            detail.Crew.Select(person => $"{person.Name}: {string.Join(", ", person.Jobs)} ({person.ProfilePath})"));
         Assert.Equal("tt0133093", detail.ExternalIds.Imdb);
         Assert.Null(detail.ExternalIds.Tvdb);
         Assert.Equal("abcdefghijk", detail.Trailer?.Key);
         Assert.Equal("digital", detail.ReleaseDates[0].Type);
 
         var seriesSource = Assert.IsType<JsonObject>(JsonNode.Parse(
-            """{"id":95396,"name":"Severance","externalIds":{"imdbId":"tt11280740","tvdbId":371980}}"""));
+            """
+            {"id":95396,"name":"Severance","externalIds":{"imdbId":"tt11280740","tvdbId":371980},
+             "createdBy":[{"id":5,"name":"Dan Erickson","profile_path":"/dan.jpg"}],
+             "credits":{"crew":[{"id":6,"name":"Ben Stiller","job":"Director","department":"Directing"}]}}
+            """));
         var series = SeerrGateway.ShapeMedia(seriesSource, "tv");
+        Assert.Equal(
+            ["Dan Erickson: Creator (/dan.jpg)", "Ben Stiller: Director ()"],
+            series.Crew.Select(person => $"{person.Name}: {string.Join(", ", person.Jobs)} ({person.ProfilePath})"));
         Assert.Equal("tt11280740", series.ExternalIds.Imdb);
         Assert.Equal(371980, series.ExternalIds.Tvdb);
     }

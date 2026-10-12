@@ -37,7 +37,7 @@ export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps)
   } else if (phase === "no-tmdb-identity") {
     content = (
       <p className="py-4 text-sm text-muted-foreground">
-        Jellyfin has no TMDB identity for this cast member, so Seerr discovery cannot be matched safely.
+        Jellyfin has no TMDB identity for this person, so Seerr discovery cannot be matched safely.
       </p>
     )
   } else if (phase !== "ready") {
@@ -61,7 +61,7 @@ export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps)
         isPending={credits.isPending}
         error={credits.error}
         placeholders={4}
-        empty={`No additional Seerr titles featuring ${personName} were found.`}
+        empty={`No additional Seerr titles with ${personName} were found.`}
       />
     )
   }
@@ -71,7 +71,7 @@ export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps)
       <div>
         <h2 id="cast-discover-heading" className="section-title">Discover</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          More movies and series featuring {personName}, with Seerr availability and request status.
+          More movies and series with {personName}, with Seerr availability and request status.
         </p>
       </div>
       {content}

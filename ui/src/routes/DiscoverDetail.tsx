@@ -16,7 +16,7 @@ import { DiscoverLetterboxdReviews } from "@/components/detail/LetterboxdReviews
 import {
   DetailBackdrop,
   DetailBackLink,
-  DetailCastRail,
+  DetailPeopleRail,
   DetailFact,
   DetailFactPanel,
   DetailPageSkeleton,
@@ -128,10 +128,20 @@ function contentRating(detail: SeerrMediaDetail, releases: SeerrReleaseDate[]) {
 }
 
 export function Cast({ detail }: { detail: Pick<SeerrMediaDetail, "cast"> }) {
-  return <DetailCastRail entries={detail.cast.map((person) => ({
+  return <DetailPeopleRail heading="Cast" entries={detail.cast.map((person) => ({
     key: `${person.id}-${person.name}`,
     name: person.name,
     role: person.character,
+    imageUrl: seerrImageUrl(person.profilePath, "w185"),
+    to: castSearchPath({ tmdbId: person.id, name: person.name }),
+  }))} />
+}
+
+function Crew({ detail }: { detail: Pick<SeerrMediaDetail, "crew"> }) {
+  return <DetailPeopleRail heading="Crew" entries={(detail.crew ?? []).map((person) => ({
+    key: String(person.id),
+    name: person.name,
+    role: person.jobs.join(", "),
     imageUrl: seerrImageUrl(person.profilePath, "w185"),
     to: castSearchPath({ tmdbId: person.id, name: person.name }),
   }))} />
@@ -269,9 +279,6 @@ export default function DiscoverDetail() {
       : null,
     item.studios.length ? { label: "Studios", value: item.studios.join(", ") } : null,
     item.networks.length ? { label: "Networks", value: item.networks.join(", ") } : null,
-    item.creators.length ? { label: "Created by", value: item.creators.join(", ") } : null,
-    item.directors.length ? { label: "Directed by", value: item.directors.join(", ") } : null,
-    item.writers.length ? { label: "Written by", value: item.writers.join(", ") } : null,
     moneyLabel(item.budget) ? { label: "Budget", value: moneyLabel(item.budget) } : null,
     moneyLabel(item.revenue) ? { label: "Revenue", value: moneyLabel(item.revenue) } : null,
     homepage
@@ -394,6 +401,7 @@ export default function DiscoverDetail() {
 
       <Seasons detail={item} />
       <Cast detail={item} />
+      <Crew detail={item} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
         <section className="flex flex-col gap-3">
