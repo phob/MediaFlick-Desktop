@@ -3,19 +3,23 @@
 // operated with real CDP mouse and keyboard input, so React sees the same
 // events a user produces.
 
+import { execFileSync } from "node:child_process"
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
-import { sendWindowClose } from "./platform.mjs"
+import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
+import { isLinux, sendWindowClose } from "./platform.mjs"
 import { startProxy } from "./proxy.mjs"
 
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
 const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded", "selected", "invalid", "required", "readonly"]
 
-export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown }) {
+export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown, account = null, cachedAccount = null, signOutBlocked = () => false, rememberSecret = () => {} }) {
   // Replaced by `relaunch`; every helper reads the current app.
   let app = firstApp
   const proxies = []
+  const afterRunTasks = []
   const step = (text) => log(text)
 
   function check(condition, message) {
@@ -28,6 +32,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     const deadline = Date.now() + timeout
     let last
     while (Date.now() < deadline) {
+      if (signOutBlocked()) throw new Error("the drive tried to sign out of a cached Jellyfin account; Sign out revokes its token on the server, so --account and verify-login runs block it")
       try {
         last = typeof condition === "function" ? await condition() : await app.evaluate(condition)
         if (last) {
@@ -186,6 +191,9 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
         if (hit === true) return { element, rect }
         if (typeof hit === "string" && hit.startsWith("toast: ")) {
           if (++toasted === 30) throw new Error(`${describe(target)} is covered by ${hit}`)
+          // Sonner pauses a toast while the pointer rests on it, and the
+          // pointer is often still where Save was pressed, under the toast.
+          if (toasted === 1) await park()
           await sleep(300)
           continue
         }
@@ -300,9 +308,100 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     log(`evidence ${name}`)
   }
 
+  // The app's own playback snapshot: active, itemId, playMethod, positionMs,
+  // durationMs, paused, tracks, skipSegments, stopReason, diagnostics.
+  async function player() {
+    return (await api("/api/player/state")).body
+  }
+
+  // Reads one mpv property over mpv's IPC socket, beside the app's own
+  // connection. Reads only: the app must stay mpv's single command writer.
+  async function mpv(property) {
+    const socketPath = [...appLog().matchAll(/mpv IPC connected ipc_path=(\S+)/g)].at(-1)?.[1]
+    if (!socketPath) throw new Error("app.log has no `mpv IPC connected` line yet")
+    return new Promise((resolve, reject) => {
+      const requestId = Math.floor(Math.random() * 1e9)
+      const socket = net.createConnection(socketPath)
+      let buffer = ""
+      const timer = setTimeout(() => {
+        socket.destroy()
+        reject(new Error(`mpv did not answer get_property ${property} within 5 s`))
+      }, 5000)
+      socket.on("connect", () => socket.write(`${JSON.stringify({ command: ["get_property", property], request_id: requestId })}\n`))
+      socket.on("data", (chunk) => {
+        buffer += chunk
+        for (const line of buffer.split("\n").slice(0, -1)) {
+          const message = JSON.parse(line)
+          if (message.request_id !== requestId) continue
+          clearTimeout(timer)
+          socket.end()
+          if (message.error === "success") resolve(message.data)
+          else if (message.error === "property unavailable") resolve(null)
+          else reject(new Error(`mpv get_property ${property}: ${message.error}`))
+        }
+        buffer = buffer.slice(buffer.lastIndexOf("\n") + 1)
+      })
+      socket.on("error", (error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+    })
+  }
+
+  // The playstate reports the app queued for Jellyfin and the answers it got,
+  // from app.log. Needs `--log-level "debug,jellyfin.playstate=trace"`.
+  function playstates() {
+    const queued = []
+    const sent = []
+    for (const line of appLog().split("\n")) {
+      const report = line.match(/^(\S+)\s+TRACE.*jellyfin\.playstate: queued Jellyfin playback state endpoint="([^"]+)" item_id=(\S+).*? state=position=(\d+)/)
+      if (report) queued.push({ at: report[1], endpoint: report[2], itemId: report[3], positionS: Number(report[4]) / 1e7 })
+      const answer = line.match(/^(\S+)\s+TRACE.*jellyfin\.playstate: sent Jellyfin playback state endpoint="([^"]+)" item_id=(\S+) status=(\d+)/)
+      if (answer) sent.push({ at: answer[1], endpoint: answer[2], itemId: answer[3], status: Number(answer[4]) })
+    }
+    if (!queued.length && !/jellyfin\.playstate=trace/.test(appLog())) throw new Error("playstates() needs --log-level \"debug,jellyfin.playstate=trace\"")
+    return { queued, sent }
+  }
+
+  // The integrated player bar hides after 3 s and turns `inert`; a real
+  // pointer move near the bottom edge brings it back for ARIA lookups.
+  async function revealPlayer() {
+    const [width, height] = await app.evaluate("[innerWidth, innerHeight]")
+    for (const [x, y] of [[width / 2 - 40, height - 60], [width / 2, height - 40]]) {
+      await app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
+      await sleep(150)
+    }
+  }
+
+  // Linux only: the whole X display as the user would see it, including the
+  // mpv video that CDP screenshots (the CEF layer alone) do not contain. With
+  // `seconds`, an MP4 clip instead of a PNG.
+  function displayCapture(name, { seconds } = {}) {
+    if (!isLinux) throw new Error("displayCapture uses ffmpeg x11grab and runs on Linux only")
+    const file = path.join(evidence, seconds ? `${name}.mp4` : `${name}.png`)
+    const input = ["-hide_banner", "-loglevel", "error", "-f", "x11grab", "-i", process.env.DISPLAY]
+    const output = seconds ? ["-t", String(seconds), "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"] : ["-frames:v", "1"]
+    execFileSync("ffmpeg", [...input, ...output, "-y", file], { stdio: "ignore", timeout: ((seconds ?? 0) + 20) * 1000 })
+    log(`display capture ${path.basename(file)}`)
+    return file
+  }
+
   // Signs in through the sign-in form. With no server given, the field must
-  // already hold one (pass `--url` to the session).
+  // already hold one (pass `--url` to the session). Under `--account` the app
+  // starts signed in, so this only confirms the cached account and ignores
+  // the arguments.
   async function signIn({ server, username, password = "" }) {
+    if (account?.signedOut) {
+      await quickConnect({ approve: true, timeout: 60000 })
+      return
+    }
+    if (account && !account.login) {
+      await find({ role: "link", name: "Settings" }, { timeout: 60000 })
+      const status = (await api("/api/status")).body
+      if (status?.authenticated !== true || status.userName !== account.userName) throw new Error(`the app did not start signed in as ${account.userName} from the cached session (status: ${JSON.stringify({ authenticated: status?.authenticated, expired: status?.expired, userName: status?.userName })})`)
+      log(`signed in from the cached session as ${account.userName}`)
+      return
+    }
     await find({ role: "button", name: "Sign in" }, { timeout: 30000 })
     if (server) await fill({ role: "textbox", name: "Server" }, server)
     await fill({ role: "textbox", name: "Username" }, username)
@@ -310,6 +409,123 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     await press({ role: "button", name: "Sign in" })
     await find({ role: "link", name: "Settings" }, { timeout: 60000 })
     log(`signed in as ${username}`)
+  }
+
+  // Signs in through the sign-in screen's Quick Connect and waits for the
+  // user to approve the code in Jellyfin. The server comes from the Server
+  // field (`--url`, or the server `just verify-login` was given).
+  // With `approve` (only under `--account … --signed-out`) the harness approves
+  // the code itself as the cached account.
+  async function quickConnect({ timeout = 600000, approve = false } = {}) {
+    const server = await find({ role: "textbox", name: "Server" }, { timeout: 30000 })
+    const useQuickConnect = { role: "button", name: "Use Quick Connect" }
+    const help = () => app.evaluate(`document.getElementById("quick-connect-help")?.textContent.trim() ?? ""`)
+    await until(async () => {
+      const text = await help()
+      if (/not enabled|Could not check/.test(text)) throw new Error(`Quick Connect is unavailable on ${server.properties.value}: ${text}`)
+      return !(await state(useQuickConnect)).disabled
+    }, "Use Quick Connect enabled", 30000)
+    await press(useQuickConnect)
+    const code = await until(async () => (await app.evaluate("document.body.innerText")).includes("Waiting for approval") && app.evaluate(`document.querySelector('[aria-label="Copy code"]')?.previousElementSibling?.textContent ?? null`), "a Quick Connect code", 20000)
+    await screenshot("quick-connect-code")
+    if (approve) {
+      if (!cachedAccount || !account?.signedOut) throw new Error("quickConnect({ approve: true }) needs --account SERVER --signed-out")
+      await approveQuickConnect(cachedAccount, code)
+      log(`approved Quick Connect code ${code} as ${cachedAccount.userName} (POST /QuickConnect/Authorize)`)
+    } else {
+      log(`QUICK CONNECT CODE ${code} for ${server.properties.value}: approve it in Jellyfin (user menu → Quick Connect) within ${Math.round(timeout / 60000)} min`)
+    }
+    await find({ role: "link", name: "Settings" }, { timeout })
+    const status = await api("/api/status")
+    if (status.body?.authenticated !== true) throw new Error(`Quick Connect finished but /api/status reports ${JSON.stringify(status.body?.authenticated)}`)
+    log(`signed in with Quick Connect as ${status.body.userName}`)
+    return status.body
+  }
+
+  // GET on the Jellyfin server as the cached account (`--account` only), to
+  // read back what the app reported: `/Users/<ctx.account.userId>/Items/<id>`.
+  async function jellyfin(apiPath) {
+    if (!cachedAccount) throw new Error("ctx.jellyfin needs --account SERVER")
+    return jellyfinGet(cachedAccount, apiPath)
+  }
+
+  // The token the app holds right now (`--account … --signed-out` only), as
+  // a handle that outlives the app forgetting it: `status()` is the HTTP
+  // status of GET /Users/Me with it, `revoke()` signs it out on the server
+  // from outside, as another device or an administrator would.
+  function appSession() {
+    if (!account?.signedOut) throw new Error("ctx.appSession needs --account SERVER --signed-out")
+    const stored = readStoredSession(dataDir)
+    if (!stored?.token) throw new Error("the app holds no token")
+    rememberSecret(stored.token)
+    const { server_url: serverUrl, token } = stored
+    return {
+      status: async () => {
+        const status = await tokenStatus(serverUrl, token)
+        log(`the app's token answers HTTP ${status} on GET /Users/Me`)
+        return status
+      },
+      revoke: async () => {
+        await revokeToken(serverUrl, token)
+        log("revoked the app's token on the server (POST /Sessions/Logout from outside the app)")
+      },
+    }
+  }
+
+  // Puts a test item back once the app has exited, whatever happened in the
+  // drive: a run that fails mid-playback still reports its stop at teardown.
+  // The drive's own user-path cleanup comes first; this only acts if the
+  // server still shows the item played or with a resume point.
+  function restoreItemAfterRun(itemId) {
+    if (!cachedAccount) throw new Error("restoreItemAfterRun needs --account SERVER")
+    afterRunTasks.push(async () => {
+      const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${itemId}?userId=${cachedAccount.userId}`)
+      if (!data.Played && !data.PlaybackPositionTicks) {
+        log(`after run: ${itemId} is unplayed without a resume point`)
+        return
+      }
+      await resetUserData(cachedAccount, itemId)
+      log(`after run: reset ${itemId} (was played=${data.Played}, position=${data.PlaybackPositionTicks / 1e7} s)`)
+    })
+  }
+
+  // Cancels a Seerr request once the app has exited if the drive left it
+  // pending (its own Cancel failed or never ran).
+  function cancelSeerrRequestAfterRun(requestId) {
+    if (!cachedAccount) throw new Error("cancelSeerrRequestAfterRun needs --account SERVER")
+    afterRunTasks.push(async () => {
+      const { results = [] } = await jellyfinGet(cachedAccount, "/MediaFlick/seerr/requests?filter=all&take=100&skip=0")
+      if (!results.some((request) => request.id === requestId)) {
+        log(`after run: Seerr request ${requestId} is gone`)
+        return
+      }
+      await cancelSeerrRequest(cachedAccount, requestId)
+      log(`after run: cancelled the leftover Seerr request ${requestId}`)
+    })
+  }
+
+  // Runs the after-run tasks; returns their errors.
+  async function runAfterRun() {
+    const errors = []
+    for (const task of afterRunTasks) {
+      try {
+        await task()
+      } catch (error) {
+        errors.push(error.message)
+        log(`after run failed: ${error.message}`)
+      }
+    }
+    return errors
+  }
+
+  // Caches the signed-in session for `--account` runs (`just verify-login`).
+  function saveAccount() {
+    if (!account?.login) throw new Error("saveAccount needs `just verify-login SERVER`")
+    const { account: saved, file } = cacheAccount(account.server, dataDir)
+    rememberSecret(saved.token)
+    writeEvidence("account.json", { mode: "login", cache: file, ...publicAccount(saved) })
+    log(`cached the session for ${saved.userName} on ${saved.server} in ${file}`)
+    return publicAccount(saved)
   }
 
   // The close request a window manager sends for the title bar's close
@@ -376,6 +592,19 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     appLog,
     writeEvidence,
     signIn,
+    quickConnect,
+    saveAccount,
+    jellyfin,
+    appSession,
+    restoreItemAfterRun,
+    cancelSeerrRequestAfterRun,
+    runAfterRun,
+    player,
+    mpv,
+    playstates,
+    revealPlayer,
+    displayCapture,
+    account,
     wmClose,
     appExit,
     relaunch,

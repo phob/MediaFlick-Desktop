@@ -53,4 +53,8 @@ Preconditions:
 - Signed out, Settings navigation shows `Back to sign in` above the shelf list, and the sidebar user menu still reads `Signed in`; leave through `Back to sign in`.
 - Never press `Installation help` (opens the user's default browser on the visible desktop), `Install mpv` on Windows (downloads and installs mpv into the profile), `Choose mpv executable` (opens a native file dialog on the private display that no drive can answer), or the dialog's `Delete local account data` (wipes the profile's account and signs out mid-drive).
 - `Show scrollbars` is also passed to CEF at launch, but the saved value and the style element are the proof, not what the page's scrollbars look like.
-- `Restore defaults` only loads defaults into the draft; it still needs `Save`.
+- `Restore defaults` only loads defaults into the draft; it still needs `Save`. On Player it also clears the mpv executable path, so after an External mpv run `Save` removes `mpv_path` too.
+- `settings.json` also gains `jellyfin_url` after sign-in and `webui_window` once the window moves or resizes; leave both out of before/after comparisons.
+- The leave dialog has two more forms: `Saving settings…` (leave button disabled) while a save is in flight, and `Leave settings?` with `Leave page` for a blocked window close with nothing dirty (`SettingsDraftGuard.tsx`). A drive that saves and ends at once can hit the first: wait for `Save` to turn disabled before the drive returns, or teardown ends `forced`.
+- The next-episode countdown is not a client setting: it is Viewing's `Next episode` and `Countdown seconds`, stored per account in `accounts.json` (see [Account settings](./account-settings.md)).
+- External mpv for a drive: `--seed` a `settings.json` holding `{"player_backend":"mpv","mpv_path":"/usr/bin/mpv","default_fullscreen":"windowed"}` (`seeds/external-mpv/`). Fullscreen mpv covers the app window; see [Playback](./playback.md).
