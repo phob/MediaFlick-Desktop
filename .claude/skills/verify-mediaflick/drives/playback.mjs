@@ -12,6 +12,26 @@ const MIN_RESUME = 0.08 // Jellyfin stores no resume point below 5 % of the runt
 const status = async (ctx) => (await ctx.api("/api/status")).body
 const ticksToS = (ticks) => ticks / 1e7
 
+// The whole display, video included, exists only under the Linux wrapper's
+// Xvfb (ffmpeg x11grab). Elsewhere mpv's own properties and the CDP
+// screenshots are the evidence.
+function displayCapture(ctx, name) {
+  if (process.platform === "linux") ctx.displayCapture(name)
+  else ctx.step(`no display capture for ${name}: Linux only`)
+}
+
+// The player bar shows its own Stop from 1536 px (a fullscreen Built-in
+// player on Windows); narrower, Stop moves into the overflow menu.
+async function stopFromBar(ctx) {
+  const stop = { role: "button", name: "Stop" }
+  const more = { role: "button", name: "More playback controls" }
+  await ctx.revealPlayer()
+  const direct = await ctx.until(async () => ((await ctx.exists(stop)) ? "direct" : (await ctx.exists(more)) ? "menu" : null), "the player bar's stop control", 15000)
+  if (direct === "direct") return ctx.press(stop)
+  await ctx.press(more)
+  await ctx.press({ role: "menuitem", name: "Stop playback" })
+}
+
 async function pickMovie(ctx) {
   const { Items } = await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&recursive=true&includeItemTypes=Movie&isPlayed=false&sortBy=SortName&fields=MediaStreams&limit=200`)
   const movie = Items.find((item) => {
@@ -63,12 +83,16 @@ export default async function playback(ctx) {
   }, "playback running", 90000)
   report.play = { playMethod: first.playMethod, durationMs: first.durationMs }
   ctx.check(/starting playback item_id=\S+ play_method=\S+ .*start=none/.test(logSince(ctx, marker)), "Play starts at the beginning (start=none)")
+  // Mute with the player's own key: the Windows private desktop hides the
+  // window but not the sound, and the mute key is part of what is proven.
+  await ctx.key("m", { code: "KeyM", keyCode: 77 })
+  await ctx.until(async () => (await ctx.mpv("mute")) === true, "mpv muted by the m key")
   const t1 = await ctx.mpv("time-pos")
   await ctx.sleep(2000)
   const t2 = await ctx.mpv("time-pos")
   ctx.check(t2 > t1 + 1 && (await ctx.mpv("pause")) === false, `mpv plays (time-pos ${t1.toFixed(1)} → ${t2.toFixed(1)} s)`)
   report.mpv = { vo: await ctx.mpv("current-vo"), hwdec: await ctx.mpv("hwdec-current"), timePos: [t1, t2] }
-  ctx.displayCapture("02-playing")
+  displayCapture(ctx, "02-playing")
 
   // Six quick presses of the forward key (30 s by default; the app ignores
   // auto-repeat, so a held key seeks once). ArrowRight works on both
@@ -109,17 +133,15 @@ export default async function playback(ctx) {
   await ctx.find({ role: "button", name: "Resume" })
   await ctx.snapshot("03-paused-bar")
   await ctx.screenshot("03-paused-bar")
-  ctx.displayCapture("03-paused-display")
+  displayCapture(ctx, "03-paused-display")
   await ctx.key("k", { code: "KeyK", keyCode: 75 })
   await ctx.until(async () => (await ctx.player()).paused === false, "playing again")
   const pausedReports = ctx.playstates().queued.filter((entry) => entry.endpoint === "Sessions/Playing/Progress" && entry.itemId === id)
   ctx.check(pausedReports.length >= 2, `progress reports were queued (${pausedReports.length})`)
 
-  // Stop from the player bar's overflow menu (Stop itself shows from 1536 px).
+  // Stop from the player bar.
   await ctx.until(async () => ctx.playstates().queued.some((entry) => entry.endpoint === "Sessions/Playing/Progress" && entry.positionS * 1000 >= target - 1000), "a progress report past the resume minimum", 20000)
-  await ctx.revealPlayer()
-  await ctx.press({ role: "button", name: "More playback controls" })
-  await ctx.press({ role: "menuitem", name: "Stop playback" })
+  await stopFromBar(ctx)
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop", 30000)
   const stopped = ctx.playstates().queued.filter((entry) => entry.endpoint === "Sessions/Playing/Stopped" && entry.itemId === id).at(-1)
   ctx.check(stopped && /reporting active playback stopped failed=false reason="stop"/.test(ctx.appLog()), `a Stopped report at ${stopped?.positionS.toFixed(1)} s`)
@@ -156,7 +178,7 @@ export default async function playback(ctx) {
     const value = await ctx.mpv("time-pos")
     return value > resumeAt - 3 ? value : null
   }, "mpv at the resume point", 15000)
-  ctx.displayCapture("05-resumed")
+  displayCapture(ctx, "05-resumed")
   await ctx.sleep(11000)
   const early = ctx.playstates().queued.filter((entry) => entry.itemId === id && entry.at > (stopped.at ?? "") && entry.positionS < resumeAt - 3)
   ctx.check(early.length === 0, "no report after Resume went below the resume point")
@@ -167,8 +189,7 @@ export default async function playback(ctx) {
   if (integrated) {
     await ctx.key("q", { code: "KeyQ", keyCode: 81 })
   } else {
-    await ctx.press({ role: "button", name: "More playback controls" })
-    await ctx.press({ role: "menuitem", name: "Stop playback" })
+    await stopFromBar(ctx)
   }
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop again", 30000)
   ctx.check((ctx.appLog().match(/mpv IPC connected/g) ?? []).length === 1, "one mpv IPC connection for the whole run")

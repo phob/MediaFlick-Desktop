@@ -10,6 +10,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Your own server covers what the demo server cannot: writes, playback, and the MediaFlick Companion (Releases, ratings, Discover, Requests, Movie Franchises, My Collections). Cache a session once with `just verify-login SERVER` (you approve a Quick Connect code), then run drives with `--account SERVER`; see SKILL.md, Your own server. The proofs below name the test server they ran against: Jellyfin 12.2.0 with a non-admin `Testuser` (684 movies, 97 series, 4,371 episodes, 85 BoxSets) and Companion 0.2.2 with Seerr, Sonarr, Radarr, MDBList and TMDB.
 - The MediaFlick Companion is not installed on the demo server.
 - `just verify-doctor` reports `ready` and no leftovers before you start.
+- Every drive except `close-minimize` and `close-guard` (Linux only: `ctx.wmClose`) has passed on both Linux and Windows 11; `playback` on Windows only with the Built-in player.
 
 ## Driving conventions
 
@@ -39,7 +40,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort and direction, filters and chips, the A–Z rail, the unwatched badge, sidebar search, the empty result. Proven by `browse`, `home-library`, `library-filters` and `library-parity`.
 - [Library loading and the retry screen](./bootstrap-retry.md): the startup cover after sign-in, the retry screen when the first catalog page fails (reason, next attempt, Retry now, Sign out), and the window on relaunch. Proven by `bootstrap-retry` with a failing loopback proxy.
 - [Item detail](./item-detail.md): movie, series and episode pages, the Cast and Crew rails, More info, seasons, episodes, breadcrumbs, ratings, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail`, `detail-crew` and `labels`; watched by `playback` and ratings by `companion` on your own server; favorites not yet.
-- [Playback](./playback.md): Play, the player bar and keys, playstate reports, the resume point, Resume with the startup seek rules, stop, on the Built-in player and External mpv. Proven by `playback` on both backends; segment skipping needs a server with media segments.
+- [Playback](./playback.md): Play, the player bar and keys, playstate reports, the resume point, Resume with the startup seek rules, stop, on the Built-in player and External mpv. Proven by `playback` on both backends on Linux and on the Built-in player on Windows; segment skipping needs a server with media segments.
 - [Companion: Releases, ratings and status](./companion.md): the Companion status page, the Releases page and its toggles, MDBList ratings. Proven by `companion`.
 - [Discover and Requests](./discover-requests.md): Seerr rows, genres, search, title pages, a real request and its cancellation. Proven by `discover-requests`.
 - [Collections](./collections.md): Movie Franchises, My Collections from a template, Jellyfin mode with BoxSets and the route guard. Proven by `collections`.

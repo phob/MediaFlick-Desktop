@@ -5,7 +5,7 @@ After sign-in, Home waits for the first page of the library catalog. While it lo
 ## Sub-features
 
 - `bootstrap-loading` keeps the startup cover up until the first catalog page commits and the first Home and billboard queries answer (`/api/status` `bootstrap.state` is `loading`; `ui/src/lib/startup.ts`).
-- `bootstrap-background` loads the rest of the catalog after Home appears, 200 items a page, with a sidebar `role="status"` reading `Loading library. X of T`, then `Refreshing library…` while reconciling.
+- `bootstrap-background` loads the rest of the catalog after Home appears, 200 items a page, with a sidebar `role="status"` named `Loading library. X of T` (`Loading library. Working in the background` before the first page reports a total), then `Refreshing library. Working in the background` while reconciling and during every later scheduled sync. When a later page fails while the catalog is still incomplete, it reads `Synchronization paused. Retry scheduled for HH:MM. <failure title>` and Home stays up (`LibrarySyncProgress` in `ui/src/components/AppSidebar.tsx`; source-only).
 - `bootstrap-retry-screen` shows the reason (`unreachable`, `server` or `storage`, worded in `ui/src/lib/sync-failure.ts`), `Trying again in N s.` or `Trying again now…`, `Retry now` and `Sign out` (`bootstrap.state` is `retrying`).
 - `bootstrap-retry-now` asks the sync worker for an attempt at once (`POST /api/sync`). The screen stays, with `Retry now` disabled, until the attempt ends.
 - `bootstrap-sign-out` signs out from the retry screen to the sign-in form.
