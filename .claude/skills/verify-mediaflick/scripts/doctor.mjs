@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import net from "node:net"
 import path from "node:path"
+import { accountsDir, listAccounts } from "./account.mjs"
 import { buildDir, exe, isWindows, listProcesses, pwshPath, realProfileDirs, root } from "./platform.mjs"
 import { scanRuns, userApps } from "./runs.mjs"
 
@@ -86,6 +87,8 @@ const mine = userApps(processes)
 line("your app", mine.length ? `running as pid ${mine.map(({ pid }) => pid).join(", ")} (never touched; runs beside verify sessions)` : "not running")
 const real = realProfileDirs()
 line("real profile", `${real.config} (read-only guard target)`)
+const accounts = listAccounts()
+line("accounts", accounts.length ? `${accounts.map(({ server, userName, savedAt }) => `${server} as ${userName ?? "?"} (cached ${savedAt ?? "?"})`).join("; ")} in ${accountsDir()}` : "none cached (`just verify-login SERVER`)")
 
 const runDirs = existsSync(path.join(buildDir, "verify"))
   ? readdirSync(path.join(buildDir, "verify"))

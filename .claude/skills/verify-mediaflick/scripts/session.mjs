@@ -3,7 +3,7 @@
 // cleanup. Start it through `just verify <drive>`, never directly: the
 // isolation wrapper is what keeps the app off the user's screen.
 //
-//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER] [--seed DIR] [--keep-profile]
+//   just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile]
 //
 // <drive> is a file path or the name of a file in ../drives (without .mjs).
 // Evidence goes to build/verify/<run-id>/ and survives cleanup.
@@ -16,6 +16,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { connect, sleep } from "../../../../scripts/website/cdp.mjs"
+import { checkAccount, publicAccount, readAccount, readStoredSession, redactSecret, seedLibrary, serverKey } from "./account.mjs"
 import { createHarness, stepLogger } from "./harness.mjs"
 import { profileName, userApps } from "./runs.mjs"
 import {
@@ -39,12 +40,16 @@ const { values: options, positionals } = parseArgs({
     "run-id": { type: "string" },
     timeout: { type: "string", default: "300" },
     url: { type: "string" },
+    account: { type: "string" },
+    login: { type: "string" },
+    "signed-out": { type: "boolean", default: false },
+    "log-level": { type: "string", default: "debug" },
     seed: { type: "string" },
     "keep-profile": { type: "boolean", default: false },
   },
 })
 const [driveArg] = positionals
-if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER] [--seed DIR] [--keep-profile]")
+if (!driveArg) throw new Error("usage: just verify <drive> [--run-id ID] [--timeout SECONDS] [--url SERVER | --account SERVER [--signed-out] | --login SERVER] [--log-level FILTER] [--seed DIR] [--keep-profile]")
 const drivePath = /[\\/]|\.mjs$/.test(driveArg) ? path.resolve(driveArg) : path.join(import.meta.dirname, "..", "drives", `${driveArg}.mjs`)
 if (!existsSync(drivePath)) throw new Error(`no drive at ${drivePath}`)
 const driveName = path.basename(drivePath, ".mjs")
@@ -57,6 +62,23 @@ if (!(timeoutMs > 0 && timeoutMs <= 3600_000)) throw new Error("--timeout must b
 // Isolation comes first: nothing is launched before it is confirmed.
 const isolation = assertIsolated()
 
+// --account seeds the profile with a session cached by `just verify-login`;
+// --login (that recipe) signs in with Quick Connect and caches one. Both are
+// checked before any evidence exists, so a missing or revoked session fails fast.
+if ([options.url, options.account, options.login].filter(Boolean).length > 1) throw new Error("pass only one of --url, --account and --login")
+const login = options.login ? serverKey(options.login).normalized : null
+const account = options.account ? readAccount(options.account) : null
+if (options.account && !account) throw new Error(`no cached session for ${serverKey(options.account).normalized}; run \`just verify-login ${serverKey(options.account).normalized}\` first`)
+if (options["signed-out"] && !account) throw new Error("--signed-out needs --account SERVER")
+// --signed-out starts on the sign-in screen of the account's server; the drive
+// signs in with Quick Connect, approved by the harness as the cached account,
+// so the app holds its own token and may sign out.
+const signedOut = Boolean(account && options["signed-out"])
+const accountCheck = account ? await checkAccount(account) : null
+// Tokens to keep out of evidence: the cached one, and one saved by --login.
+const secrets = new Set(account ? [account.token] : [])
+let signOutBlocked = false
+
 const evidence = path.join(buildDir, "verify", runId)
 if (existsSync(evidence)) throw new Error(`${path.relative(root, evidence)} already exists; pick a new --run-id`)
 mkdirSync(evidence, { recursive: true })
@@ -65,6 +87,10 @@ const writeJson = (name, value) => writeFileSync(path.join(evidence, name), `${J
 const started = Date.now()
 const result = { runId, drive: path.relative(root, drivePath), passed: false, error: null, exit: null, evidence: path.relative(root, evidence) }
 log(`isolation ok: ${JSON.stringify(isolation)}`)
+if (account) {
+  writeJson("account.json", { mode: signedOut ? "account-signed-out" : "account", ...publicAccount(account), check: accountCheck })
+  log(`cached session for ${account.userName} on ${account.server} is valid (HTTP ${accountCheck.status})`)
+}
 
 if (!existsSync(exe)) throw new Error(`${exe} is missing; \`just verify\` builds it, or run \`just build\``)
 
@@ -104,6 +130,10 @@ if (options.seed) {
   cpSync(path.resolve(options.seed), configDir, { recursive: true })
   log(`seeded ${configDir} from ${options.seed}`)
 }
+if (account && !signedOut) {
+  seedLibrary(dataDir, account)
+  log(`seeded library.db with the cached session for ${account.userName}`)
+}
 log(`profile ${profile}`)
 
 const freePort = () => new Promise((resolve, reject) => {
@@ -137,8 +167,11 @@ let app
 
 async function launch() {
   const port = await freePort()
-  const args = ["--remote-debugging-port", String(port), "--log-level", "debug"]
-  if (options.url) args.push("--url", options.url)
+  // An EnvFilter: playback drives add `jellyfin.playstate=trace` to see the
+  // playstate bodies the app sends.
+  const args = ["--remote-debugging-port", String(port), "--log-level", options["log-level"]]
+  const url = options.url ?? login ?? (signedOut ? account.serverUrl : null)
+  if (url) args.push("--url", url)
   child = spawn(exe, args, { cwd: buildDir, env, stdio: "ignore" })
   const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })))
   child.exited = exited
@@ -165,7 +198,38 @@ async function launch() {
     }),
   ])
   for (const domain of ["Page", "Runtime", "DOM", "Accessibility"]) await app.send(`${domain}.enable`)
+  if ((account && !signedOut) || login) await guardSignOut()
   return port
+}
+
+// Sign out posts /api/auth/logout, and the app then revokes the token on the
+// server, which would kill the cached session. CDP's Fetch domain does not see
+// the app's custom-scheme requests, so the page's fetch refuses that one call
+// and reports it through a binding; the harness fails the drive at once.
+const SIGN_OUT_BINDING = "mediaflickVerifySignOutBlocked"
+const SIGN_OUT_GUARD = `(() => {
+  if (window.${SIGN_OUT_BINDING}Installed) return
+  window.${SIGN_OUT_BINDING}Installed = true
+  const original = window.fetch
+  window.fetch = function (input, init) {
+    const url = input instanceof Request ? input.url : String(input)
+    if (new URL(url, location.href).pathname === "/api/auth/logout") {
+      try { window.${SIGN_OUT_BINDING}(url) } catch {}
+      return Promise.reject(new TypeError("verify: Sign out is blocked for a cached Jellyfin account"))
+    }
+    return original.apply(this, arguments)
+  }
+})()`
+
+async function guardSignOut() {
+  app.on("Runtime.bindingCalled", ({ name }) => {
+    if (name !== SIGN_OUT_BINDING) return
+    signOutBlocked = true
+    log("BLOCKED Sign out: it would revoke the cached session's token on the server")
+  })
+  await app.send("Runtime.addBinding", { name: SIGN_OUT_BINDING })
+  await app.send("Page.addScriptToEvaluateOnNewDocument", { source: SIGN_OUT_GUARD })
+  await app.evaluate(SIGN_OUT_GUARD)
 }
 
 async function doctor(port, file = "doctor.json") {
@@ -275,13 +339,28 @@ let harness
 try {
   const port = await launch()
   await doctor(port)
-  harness = createHarness({ app, currentChild: () => child, evidence, configDir, dataDir, log, relaunchApp: relaunch, windowShown: () => mainWindowShown(child.pid) })
+  harness = createHarness({
+    app,
+    currentChild: () => child,
+    evidence,
+    configDir,
+    dataDir,
+    log,
+    relaunchApp: relaunch,
+    windowShown: () => mainWindowShown(child.pid),
+    account: account ? { server: account.server, userName: account.userName, userId: account.userId, login: false, signedOut } : login ? { server: login, login: true } : null,
+    cachedAccount: account,
+    signOutBlocked: () => signOutBlocked,
+    rememberSecret: (token) => secrets.add(token),
+  })
   const drive = (await import(pathToFileURL(drivePath).href)).default
   if (typeof drive !== "function") throw new Error(`${result.drive} must export a default async function (ctx)`)
   log(`drive ${result.drive}`)
   await within(drive(harness), timeoutMs, () => {
     throw new Error(`drive timed out after ${timeoutMs / 1000} s`)
   })
+  if (signOutBlocked) throw new Error("the drive tried to sign out of a cached Jellyfin account")
+  if (login && !secrets.size) throw new Error("the login drive did not cache a session (ctx.saveAccount)")
   result.passed = true
   log("drive passed")
 } catch (error) {
@@ -291,7 +370,23 @@ try {
 } finally {
   await teardown()
   await harness?.dispose()
+  // With the app gone, every report it sends on exit has reached the server.
+  const afterRunErrors = (await harness?.runAfterRun()) ?? []
+  if (afterRunErrors.length) {
+    result.passed = false
+    result.error = `${result.error ? `${result.error}\n` : ""}after-run cleanup failed: ${afterRunErrors.join("; ")}`
+  }
   collectProfile()
+  // The token the app holds now (a fresh one under --signed-out) is as secret
+  // as the cached one.
+  if (account || login) {
+    try {
+      const stored = readStoredSession(dataDir)
+      if (stored?.token) secrets.add(stored.token)
+    } catch (error) {
+      log(`could not read the profile's session for the token scan: ${error.message}`)
+    }
+  }
   const guardAfter = fingerprint()
   const changed = Object.keys(guardBefore).filter((file) => JSON.stringify(guardBefore[file]) !== JSON.stringify(guardAfter[file]))
   // The user's own MediaFlick may legitimately write its profile meanwhile.
@@ -317,6 +412,16 @@ try {
   } else {
     result.profileRemoved = false
     log(`kept profile ${profile}`)
+  }
+  // Last, once every evidence file exists: no token may be among them.
+  if (secrets.size) {
+    const leaked = [...secrets].flatMap((secret) => redactSecret(evidence, secret)).map((file) => path.relative(evidence, file))
+    result.tokenScan = { scanned: true, leaked }
+    if (leaked.length) {
+      result.passed = false
+      result.error = `${result.error ? `${result.error}\n` : ""}the Jellyfin token reached evidence (now redacted): ${leaked.join(", ")}`
+    }
+    log(leaked.length ? `token scan: redacted the token from ${leaked.join(", ")}` : "token scan ok: no evidence file holds the token")
   }
   result.durationMs = Date.now() - started
   writeJson("result.json", result)

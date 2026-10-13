@@ -214,6 +214,20 @@ verify drive *args: build
     cargo build --example verify-wm-close
     bash .claude/skills/verify-mediaflick/scripts/isolate-linux.sh node .claude/skills/verify-mediaflick/scripts/session.mjs {{drive}} {{args}}
 
+# See .claude/skills/verify-mediaflick/SKILL.md. Example: just verify-login https://jellyfin.example.com
+# Sign in with Quick Connect (you approve the code) and cache the session for `just verify <drive> --account SERVER`
+[group('test')]
+[windows]
+verify-login server *args: build
+    & "$PSHOME/pwsh.exe" -NoLogo -NoProfile -File .claude/skills/verify-mediaflick/scripts/isolate-windows.ps1 node .claude/skills/verify-mediaflick/scripts/session.mjs login --login {{quote(server)}} --timeout 660 {{args}}
+
+# See .claude/skills/verify-mediaflick/SKILL.md. Example: just verify-login https://jellyfin.example.com
+# Sign in with Quick Connect (you approve the code) and cache the session for `just verify <drive> --account SERVER`
+[group('test')]
+[linux]
+verify-login server *args: build
+    bash .claude/skills/verify-mediaflick/scripts/isolate-linux.sh node .claude/skills/verify-mediaflick/scripts/session.mjs login --login {{quote(server)}} --timeout 660 {{args}}
+
 # Read-only preflight for `just verify`: build staleness, prerequisites, leftovers, last result
 [group('test')]
 verify-doctor:
