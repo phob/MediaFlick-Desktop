@@ -71,7 +71,7 @@ Safeguards in both modes:
 
 Use a dedicated non-admin Jellyfin user with access to a small library. Drives that write (favorites, watched state, synced settings) change that user's real data.
 
-Proven on Linux. Against the demo server, with a test-only script approving the code as `demo`: login and cache, `home-library` on the seeded session, a Sign out blocked with the token still valid afterwards, a token planted in evidence redacted and the run failed, and a revoked token rejected before launch. Against a self-hosted Jellyfin 12.2.0 with Companion 0.2.2 (2026-10-12): a session approved by the user and cached, then `account-session`, `playback` (Built-in and External mpv), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. Not yet run on Windows.
+Proven on Linux. Against the demo server, with a test-only script approving the code as `demo`: login and cache, `home-library` on the seeded session, a Sign out blocked with the token still valid afterwards, a token planted in evidence redacted and the run failed, and a revoked token rejected before launch. Against a self-hosted Jellyfin 12.2.0 with Companion 0.2.2 (2026-10-12): a session approved by the user and cached, then `account-session`, `playback` (Built-in and External mpv), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. On Windows 11 against the same server (2026-10-13): `login`, then `account-session`, `playback` (Built-in), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. External mpv has not run on Windows.
 
 
 ## Doctor
@@ -154,7 +154,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
 | `proxy({ upstream, fail })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included) and drops the connection of each request `fail(url, method)` selects. Returns `{ url, stats, heal() }`; sign in to `url`. Closed after the drive. |
 | `relaunch()` | Close the app through its own close path and start it again on the same profile, as a user quitting and reopening. Writes `doctor-relaunch.json`. |
-| `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows (not yet run there). |
+| `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows. |
 | `readConfig(name)`, `configStat(name)`, `configFile(name)` | Files in the disposable config dir (`settings.json`, `accounts.json`, …). |
 | `appLog()` | The app's Rust log so far, as text (`app.log` in the evidence). |
 | `wmClose({ watchMs })` | Linux only. Sends the app's top-level window the `WM_PROTOCOLS`/`WM_DELETE_WINDOW` message a window manager sends for the close button, then listens `watchMs` (default 2000) for the window's `WM_CHANGE_STATE` IconicState request. Returns `{ window, iconifyRequested }`. Under Xvfb no window manager acts on that request, so `iconifyRequested` is the proof of a minimize. |
@@ -166,7 +166,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All twenty-four are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
+Shipped drives. All twenty-four are proven on Linux. On Windows 11 (2026-10-13) all but `close-minimize` and `close-guard` pass, `playback` with the Built-in player only; those two use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `login`: only through `just verify-login SERVER`. Quick Connect sign-in, approved by the user, then `saveAccount()`.
@@ -193,7 +193,7 @@ Shipped drives. All twenty-four are proven on Linux; the first three were also p
 - `collections`: Movie Franchises and a franchise page, a My Collections entry from a TMDB template, Jellyfin mode with every BoxSet and the route redirect, then defaults again.
 - `account-settings`: Viewing Discard and Save with a revisit, the leave guard between account shelves, Appearance's accent applied live, a Letterboxd profile added, verified and removed.
 
-Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`).
+Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`; on Windows seed a copy with the `mpv.exe` path).
 Re-run all of them:
 
 ```powershell
@@ -258,7 +258,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Platform status
 
-- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the fourteen newer drives have not run there.
+- **Windows: proven.** Every shipped drive except the two Linux-only close drives passes on Windows 11 with the inactive desktop (2026-10-13), about 10–30 s each including the incremental build (`collections` about 2 min, most of it the first sync and franchise matching). CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. The Built-in player draws its bar over the video as on Linux (`integratedLibmpvOverlay`), starts fullscreen on the private desktop, and `ctx.mpv` reads it over its named pipe (`\\.\pipe\mediaflick-desktop-…`). External mpv has not run there.
 - **Linux: proven.** All twenty-four shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–40 s each after the build (the real-server drives 20–120 s, most of it the first sync and playback). CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
@@ -266,7 +266,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Gotchas
 
-- **Playback is real.** Play only in `playback`-style drives with `--account` on your own server: it writes the test user's playstate, and on Windows it is audible, because the private desktop hides windows and input, not sound. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (`Failed to connect to PipeWire`). Never press Play on the demo server.
+- **Playback is real.** Play only in `playback`-style drives with `--account` on your own server: it writes the test user's playstate, and on Windows it is audible, because the private desktop hides windows and input, not sound; `playback` mutes with the player's `m` key about 2 s after the start. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (`Failed to connect to PipeWire`). Never press Play on the demo server.
 - **External mpv fullscreen freezes CDP mouse input.** mpv's fullscreen window covers the app window; the page turns `hidden`, draws no frames, and `Input.dispatchMouseEvent` never completes, so `press` and `hover` hang until the drive times out (keys still work). Seed `default_fullscreen: "windowed"` for External mpv runs, as `seeds/external-mpv` does.
 - **Linux stderr noise is expected.** The private session bus activates `xdg-desktop-portal`, which logs `Choosing gtk.portal … as a last-resort fallback` and `Failed to connect to PipeWire`; `A connection to the bus can't be made` follows teardown. None of it affects the run. `steps.log` and `result.json` are the result.
 - **Linux sockets need a short `TMPDIR`.** CEF dies with `SIGTRAP` (`Socket path too long` in `cef.log`) when its singleton socket path passes 107 bytes, and the libmpv shell falls back after 20 s with `path must be shorter than SUN_LEN` in `app.log` when mpv's IPC socket does. `session.mjs` refuses to launch when the wrapper's runtime dir is too long for them; run from a shorter `TMPDIR`.

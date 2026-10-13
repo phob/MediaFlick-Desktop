@@ -101,11 +101,10 @@ export default async function libraryParity(ctx) {
     const options = await ctx.snapshot(`${snapshotName}-options`)
     return [...options.matchAll(/menuitemradio '([^']*)'/g)].map((match) => match[1])
   }
-  async function openFilters() {
-    const name = await ctx.until(async () => {
-      const labels = await ctx.app.evaluate(`[...document.querySelectorAll('button[aria-label^="Filters"]')].map((node) => node.getAttribute("aria-label"))`)
-      return labels[0] ?? null
-    }, "the Filters button", 10000)
+  // The trigger's name counts the active filters. Name the expected one: the
+  // label lags a removed chip by a render, and pressing a stale name waits for
+  // a button that is already gone.
+  async function openFilters(name = "Filters") {
     await ctx.press({ role: "button", name })
     await ctx.find({ role: "menu", name })
   }
@@ -172,7 +171,8 @@ export default async function libraryParity(ctx) {
     if (landed.maxScroll >= landed.targetRowStart) {
       ctx.check(landed.firstVisible === items[landed.targetRow * landed.columns].name, `${label}: ${landed.firstVisible} heads the grid after Jump to ${target}`)
     } else {
-      ctx.check(landed.scrollTop === landed.maxScroll, `${label}: the grid scrolled as far as it can (${landed.maxScroll}px) towards row ${landed.targetRow}`)
+      // scrollTop is fractional at a fractional device scale (125 % on Windows).
+      ctx.check(Math.abs(landed.scrollTop - landed.maxScroll) <= 2, `${label}: the grid scrolled as far as it can (${landed.scrollTop}px of ${landed.maxScroll}px) towards row ${landed.targetRow}`)
     }
     const first = present.find((letter) => letters[letter] === 0)
     await ctx.press({ role: "button", name: `Jump to ${first}` })
@@ -349,7 +349,7 @@ export default async function libraryParity(ctx) {
   ctx.check(seriesMenu.some((name) => name.startsWith("Series status")), "Series offer the Series status filter")
   report.seriesStatus = {}
   for (const status of ["Ended", "Continuing"]) {
-    if ((await ctx.count({ role: "menu" })) === 0) await openFilters()
+    if ((await ctx.count({ role: "menu" })) === 0) await openFilters("Filters, 1 active")
     const statuses = await openSubmenu("Series status", `13-series-status-${status}`)
     ctx.check(JSON.stringify(statuses) === JSON.stringify(["Any status", "Continuing", "Ended"]), `Series status options: ${statuses.join(", ")}`)
     await ctx.press({ role: "menuitemradio", name: status })
