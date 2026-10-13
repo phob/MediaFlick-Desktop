@@ -503,7 +503,13 @@ fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
 }
 
 fn order_by(query: &ItemQuery) -> String {
-    if query.search.is_some() {
+    // Ranking needs the `items_fts` join, which only a search with words gets.
+    if query
+        .search
+        .as_deref()
+        .and_then(fts_match_expression)
+        .is_some()
+    {
         return "bm25(items_fts), i.id ASC".to_string();
     }
     query.sort.order_clause(
@@ -574,6 +580,9 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
     if let Some(search) = search {
         conditions.push("items_fts MATCH ?".to_string());
         arguments.push(SqlValue::Text(search));
+    } else if query.search.is_some() {
+        // A search of punctuation alone has no words, so nothing matches it.
+        conditions.push("0".to_string());
     }
 
     if !query.kinds.is_empty() {
