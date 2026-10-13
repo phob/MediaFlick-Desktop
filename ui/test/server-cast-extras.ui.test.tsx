@@ -6,7 +6,7 @@ import { ServerCastExtras } from "../src/components/seerr/ServerCastExtras"
 import type { ItemSummary, SeerrStatusInfo, Status } from "../src/lib/api"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
-import { appStatus } from "./support/fixtures"
+import { appStatus, companionWithSeerr } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
@@ -66,6 +66,7 @@ describe("proven server cast extras", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
     client.setQueryData(queryKeys.status, signedIn)
+    client.setQueryData(queryKeys.companion, companionWithSeerr())
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
       page: 1,
       totalPages: 1,
@@ -87,6 +88,7 @@ describe("proven server cast extras", () => {
     const client = testQueryClient()
     client.setQueryData(queryKeys.seerrStatus, linked)
     client.setQueryData(queryKeys.status, signedIn)
+    client.setQueryData(queryKeys.companion, companionWithSeerr())
     client.setQueryData(queryKeys.seerrPersonCredits(6384, "jf-slj"), {
       page: 1,
       totalPages: 1,

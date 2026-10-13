@@ -1,4 +1,4 @@
-import { useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
+import { useCompanion, useSeerrPersonCredits, useSeerrStatus, useStatus } from "@/lib/queries"
 
 /**
  * Everything both cast surfaces (the Discover row and the proven server
@@ -29,12 +29,17 @@ export function useCastCredits({
   resolving = false,
   resolutionError = null,
 }: CastCreditsInput) {
-  const seerr = useSeerrStatus()
   const app = useStatus()
-  const companionCapabilities = app.data?.companion?.info?.capabilities ?? []
+  // The plugin's own probe-backed query, as in SeerrGate: the status snapshot
+  // can predate the Companion probe.
+  const companion = useCompanion()
+  const companionCapabilities = companion.data?.info?.capabilities ?? []
   const companionProvidesSeerr = Boolean(
-    app.data?.companion?.compatible && companionCapabilities.includes("seerr"),
+    companion.data?.compatible && companionCapabilities.includes("seerr"),
   )
+  // Seerr is reached only through the Companion. Without it there is no
+  // status to ask for, and the page explains that Seerr is not connected.
+  const seerr = useSeerrStatus(companionProvidesSeerr)
   const providerSupportsPeople =
     !companionProvidesSeerr || companionCapabilities.includes("seerr-person-discovery")
   const linked = seerr.data?.linked ?? false
@@ -55,7 +60,9 @@ export function useCastCredits({
   )
 
   let phase: CastCreditsPhase = "ready"
-  if (seerr.isPending || app.isPending) phase = "checking-seerr"
+  if (app.isPending || companion.isPending) phase = "checking-seerr"
+  else if (!companionProvidesSeerr) phase = "not-linked"
+  else if (seerr.isPending) phase = "checking-seerr"
   else if (seerr.error) phase = "seerr-error"
   else if (!linked) phase = "not-linked"
   else if (!providerSupportsPeople) phase = "needs-plugin"
@@ -64,5 +71,5 @@ export function useCastCredits({
   else if (tmdbId === null) phase = "no-tmdb-identity"
   else if (!availabilitySafe) phase = "waiting-for-catalog"
 
-  return { credits, phase }
+  return { credits, phase, seerrError: seerr.error }
 }
