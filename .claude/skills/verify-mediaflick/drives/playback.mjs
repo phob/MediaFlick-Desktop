@@ -73,6 +73,8 @@ export default async function playback(ctx) {
   await ctx.find({ role: "button", name: "Play" }, { timeout: 30000 })
   ctx.check(!(await ctx.exists({ role: "button", name: "Resume" })), "the detail page offers Play, not Resume")
   await ctx.snapshot("01-detail")
+  // The app starts mpv before anything plays; read it once while it idles.
+  await ctx.until(async () => (await ctx.mpv("idle-active")) === true, "mpv warm and idle before Play")
 
   // Play from the start.
   let marker = ctx.appLog().length
