@@ -280,8 +280,64 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
+/// The Jellyfin item types the catalog caches. Every list of synced types,
+/// on the wire and in SQL, derives from this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogKind {
+    Movie,
+    Series,
+    Season,
+    Episode,
+}
+
+impl CatalogKind {
+    pub const ALL: [Self; 4] = [Self::Movie, Self::Series, Self::Season, Self::Episode];
+    /// What a query that names no kind returns: titles a card can represent.
+    pub const TOP_LEVEL: [Self; 2] = [Self::Movie, Self::Series];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Movie => "Movie",
+            Self::Series => "Series",
+            Self::Season => "Season",
+            Self::Episode => "Episode",
+        }
+    }
+
+    /// Jellyfin's comma-separated `IncludeItemTypes` form.
+    pub fn wire_list(kinds: &[Self]) -> String {
+        kinds
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
 pub(crate) fn is_synced_kind(kind: &str) -> bool {
-    matches!(kind, "Movie" | "Series" | "Season" | "Episode")
+    CatalogKind::parse(kind).is_some()
+}
+
+/// The kinds a cached query returns. `TopLevel` is the default, so a query
+/// that names no kind cannot return seasons or episodes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum KindFilter {
+    #[default]
+    TopLevel,
+    Only(Vec<CatalogKind>),
+}
+
+impl KindFilter {
+    pub fn kinds(&self) -> &[CatalogKind] {
+        match self {
+            Self::TopLevel => &CatalogKind::TOP_LEVEL,
+            Self::Only(kinds) => kinds,
+        }
+    }
 }
 
 /// Only fields useful to a concise technical readout are retained. Subtitle

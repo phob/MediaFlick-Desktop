@@ -7,13 +7,12 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
+use crate::library::CatalogKind;
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
 use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse};
-
-pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
 /// Name, id, type, year, runtime, hierarchy, and image tags are part of
@@ -40,11 +39,6 @@ pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
 pub const PERSON_PAGE_SIZE: i64 = 500;
 
-/// Cast surfaces promise titles — movies and series. Jellyfin also credits
-/// people on seasons and episodes, and those rows would consume the visible
-/// result window without naming anything a card can represent.
-pub const PERSON_ITEM_TYPES: &str = "Movie,Series";
-
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
 }
@@ -58,7 +52,10 @@ fn items_page_query(
     vec![
         user_query(user_id),
         ("Recursive", "true".to_string()),
-        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+        (
+            "IncludeItemTypes",
+            CatalogKind::wire_list(&CatalogKind::ALL),
+        ),
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -93,7 +90,10 @@ pub fn fetch_identity_page(
         &[
             user_query(user_id),
             ("Recursive", "true".to_string()),
-            ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+            (
+                "IncludeItemTypes",
+                CatalogKind::wire_list(&CatalogKind::ALL),
+            ),
             ("Fields", String::new()),
             ("EnableUserData", "true".to_string()),
             ("EnableImages", "false".to_string()),
@@ -109,7 +109,10 @@ fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'st
     vec![
         user_query(user_id),
         ("parentId", parent_id.to_string()),
-        ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
+        (
+            "IncludeItemTypes",
+            CatalogKind::wire_list(&CatalogKind::ALL),
+        ),
         ("Fields", CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -208,7 +211,10 @@ fn box_set_children_query(user_id: &str, parent_id: &str) -> Vec<(&'static str, 
     vec![
         user_query(user_id),
         ("parentId", parent_id.to_string()),
-        ("IncludeItemTypes", "Movie,Series".to_string()),
+        (
+            "IncludeItemTypes",
+            CatalogKind::wire_list(&CatalogKind::TOP_LEVEL),
+        ),
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -273,7 +279,13 @@ fn person_items_query(
         user_query(user_id),
         ("Recursive", "true".to_string()),
         ("PersonIds", person_id.to_string()),
-        ("IncludeItemTypes", PERSON_ITEM_TYPES.to_string()),
+        // Cast surfaces promise titles. Jellyfin also credits people on
+        // seasons and episodes, and those rows would consume the visible
+        // result window without naming anything a card can represent.
+        (
+            "IncludeItemTypes",
+            CatalogKind::wire_list(&CatalogKind::TOP_LEVEL),
+        ),
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
