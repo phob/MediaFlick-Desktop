@@ -78,7 +78,6 @@ const movieRatings: ItemRatings = {
   id: "movie-1",
   ratings: [{
     sourceId: "letterboxd",
-    rawSource: "letterboxd",
     value: 4.2,
     score: 84,
     votes: 1_000,
