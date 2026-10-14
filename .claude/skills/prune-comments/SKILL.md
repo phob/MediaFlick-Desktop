@@ -84,4 +84,13 @@ Group the `REFACTOR` flags into themes, such as one guilty pattern repeated acro
 
 ## Cleanup
 
-Start from an approved `report.json`. Rerun `inventory.mjs` with a new `--run`. A verdict still applies only where a block with the same path and text exists. Audit the rest again. Make one PR for the short `DELETE` verdicts and one reviewed PR for each area's long ones, then one Refactoring PR for each refactor theme. A refactor PR deletes its theme's comments in the same change. Finish every PR with `/no-comments` on its diff.
+Start from an approved `report.json`. Make one PR for the short `DELETE` verdicts and one reviewed PR for each area's long ones, then one Refactoring PR for each refactor theme. A refactor PR deletes its theme's comments in the same change. Finish every PR with `/no-comments` on its diff.
+
+Delete with the codemod, never by hand:
+
+```sh
+node .claude/skills/prune-comments/scripts/apply.mjs --run <run> --max-lines 3 [--min-lines 4] [--path <prefix>...]
+node .claude/skills/prune-comments/scripts/check-diff.mjs [--base <ref>]
+```
+
+`apply.mjs` deletes only blocks whose text still matches the inventory and exits 1 on any stale block. Audit the stale blocks again. `check-diff.mjs` fails unless every removed line is a comment or blank line and every changed line is the old line minus a comment. Run it before the component checks.
