@@ -450,9 +450,14 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return status.body
   }
 
+  // GET as the cached account, or without --account as the session the app
+  // stored when the drive signed in (the demo server, for example).
   async function jellyfin(apiPath) {
-    if (!cachedAccount) throw new Error("ctx.jellyfin needs --account SERVER")
-    return jellyfinGet(cachedAccount, apiPath)
+    if (cachedAccount) return jellyfinGet(cachedAccount, apiPath)
+    const stored = readStoredSession(dataDir)
+    if (!stored?.token) throw new Error("ctx.jellyfin needs --account SERVER or a signed-in app")
+    rememberSecret(stored.token)
+    return jellyfinGet({ server: stored.server_url, serverUrl: stored.server_url, token: stored.token }, apiPath)
   }
 
   // The token the app holds right now (`--account … --signed-out` only), as
