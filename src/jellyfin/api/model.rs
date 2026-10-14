@@ -86,6 +86,32 @@ pub struct ItemsResponse {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
+pub struct UserViewsResponse {
+    pub items: Vec<UserViewDto>,
+}
+
+/// One `/UserViews` entry: a library the user sees. Its `collection_type` is
+/// read only by `LibraryKind::from_collection_type`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct UserViewDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub collection_type: Option<String>,
+    pub image_tags: BTreeMap<String, String>,
+}
+
+impl UserViewDto {
+    pub fn primary_image_tag(&self) -> Option<&str> {
+        self.image_tags.iter().find_map(|(key, value)| {
+            key.eq_ignore_ascii_case("Primary")
+                .then_some(value.as_str())
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
 pub struct BaseItemDto {
     pub id: String,
     pub name: Option<String>,

@@ -13,6 +13,7 @@
 //! re-bootstrap instead.
 
 mod cycle;
+mod membership;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, Ordering};
