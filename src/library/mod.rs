@@ -5,6 +5,7 @@
 //! by the surfaces that need it. A background thread ([`sync`]) keeps the thin
 //! index current.
 
+pub mod browse;
 pub mod db;
 pub mod headless;
 pub mod libraries;
@@ -22,11 +23,13 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{OptionalExtension, params};
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 
 use crate::app::ids::new_device_id;
+use libraries::LibraryId;
 
-pub use catalog_libraries::LibrarySetChange;
+pub use catalog_libraries::{FilterOptions, LibrarySetChange};
 pub use model::{
     CatalogKind, ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, KindFilter,
     LibraryStats, ProviderIds, UserDataRecord, resolve_playback_preference,
@@ -160,21 +163,91 @@ pub enum ItemSort {
     },
 }
 
+/// The id half of [`ItemSort`]: what the UI sends and what a library's
+/// capabilities list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    Name,
+    ReleaseDate,
+    DateAdded,
+    EpisodeAdded,
+    CommunityRating,
+    DatePlayed,
+    PlayCount,
+    Runtime,
+    Random,
+}
+
+impl SortKey {
+    const ALL: [Self; 9] = [
+        Self::Name,
+        Self::ReleaseDate,
+        Self::DateAdded,
+        Self::EpisodeAdded,
+        Self::CommunityRating,
+        Self::DatePlayed,
+        Self::PlayCount,
+        Self::Runtime,
+        Self::Random,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::ReleaseDate => "year",
+            Self::DateAdded => "added",
+            Self::EpisodeAdded => "episode-added",
+            Self::CommunityRating => "rating",
+            Self::DatePlayed => "played",
+            Self::PlayCount => "plays",
+            Self::Runtime => "runtime",
+            Self::Random => "random",
+        }
+    }
+
+    fn from_id(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "dateadded" => Some(Self::DateAdded),
+            "communityrating" => Some(Self::CommunityRating),
+            id => Self::ALL.into_iter().find(|key| key.id() == id),
+        }
+    }
+}
+
+impl Serialize for SortKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.id())
+    }
+}
+
 impl ItemSort {
     pub fn from_id(value: &str, seed: Option<u32>) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "name" => Some(Self::Name),
-            "year" => Some(Self::ReleaseDate),
-            "added" | "dateadded" => Some(Self::DateAdded),
-            "episode-added" => Some(Self::EpisodeAdded),
-            "rating" | "communityrating" => Some(Self::CommunityRating),
-            "played" => Some(Self::DatePlayed),
-            "plays" => Some(Self::PlayCount),
-            "runtime" => Some(Self::Runtime),
-            "random" => Some(Self::Random {
+        Some(match SortKey::from_id(value)? {
+            SortKey::Name => Self::Name,
+            SortKey::ReleaseDate => Self::ReleaseDate,
+            SortKey::DateAdded => Self::DateAdded,
+            SortKey::EpisodeAdded => Self::EpisodeAdded,
+            SortKey::CommunityRating => Self::CommunityRating,
+            SortKey::DatePlayed => Self::DatePlayed,
+            SortKey::PlayCount => Self::PlayCount,
+            SortKey::Runtime => Self::Runtime,
+            SortKey::Random => Self::Random {
                 seed: seed.unwrap_or_default(),
-            }),
-            _ => None,
+            },
+        })
+    }
+
+    pub fn key(self) -> SortKey {
+        match self {
+            Self::Name => SortKey::Name,
+            Self::ReleaseDate => SortKey::ReleaseDate,
+            Self::DateAdded => SortKey::DateAdded,
+            Self::EpisodeAdded => SortKey::EpisodeAdded,
+            Self::CommunityRating => SortKey::CommunityRating,
+            Self::DatePlayed => SortKey::DatePlayed,
+            Self::PlayCount => SortKey::PlayCount,
+            Self::Runtime => SortKey::Runtime,
+            Self::Random { .. } => SortKey::Random,
         }
     }
 
@@ -269,6 +342,8 @@ impl SeriesStatus {
 pub struct ItemQuery {
     pub search: Option<String>,
     pub kinds: KindFilter,
+    /// Only titles in this catalog library's membership.
+    pub library: Option<LibraryId>,
     pub genre: Option<String>,
     /// Inclusive first year of a standard ten-year release decade.
     pub release_decade: Option<i64>,

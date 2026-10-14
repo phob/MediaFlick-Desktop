@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 
 use rusqlite::{Connection, params};
+use serde::Serialize;
 
 use super::libraries::{GridSource, LibraryId, LibraryRegistry, MediaLibrary};
+use super::query::natural_order;
 use super::session_store::save_meta;
 use super::{Library, now_unix};
 
@@ -22,6 +24,14 @@ impl LibrarySetChange {
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty() && !self.renamed
     }
+}
+
+/// The genre and parental rating choices of one library's titles.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterOptions {
+    pub genres: Vec<String>,
+    pub official_ratings: Vec<String>,
 }
 
 impl Library {
@@ -108,6 +118,34 @@ impl Library {
                 changed = true;
             }
             Ok(changed)
+        })
+    }
+
+    pub fn library_filter_options(&self, library: &LibraryId) -> rusqlite::Result<FilterOptions> {
+        self.db.with_connection(|connection| {
+            let genres = connection
+                .prepare_cached(
+                    "SELECT DISTINCT g.genre FROM item_libraries l
+                     JOIN items i ON i.jellyfin_id = l.item_id
+                     JOIN item_genres g ON g.item_id = i.id
+                     WHERE l.library_id = ?1
+                     ORDER BY g.genre COLLATE NOCASE ASC",
+                )?
+                .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut official_ratings = connection
+                .prepare_cached(
+                    "SELECT DISTINCT i.official_rating FROM item_libraries l
+                     JOIN items i ON i.jellyfin_id = l.item_id
+                     WHERE l.library_id = ?1 AND i.official_rating <> ''",
+                )?
+                .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            official_ratings.sort_by(|left, right| natural_order(left, right));
+            Ok(FilterOptions {
+                genres,
+                official_ratings,
+            })
         })
     }
 }

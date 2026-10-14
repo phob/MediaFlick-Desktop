@@ -1187,3 +1187,73 @@ export interface ItemQuery {
   offset?: number
   limit?: number
 }
+
+/** A Jellyfin library type, from its CollectionType. What a library can do is its `browse`. */
+export type LibraryKind =
+  | "movies"
+  | "shows"
+  | "music"
+  | "musicVideos"
+  | "homeVideos"
+  | "photos"
+  | "books"
+  | "boxSets"
+  | "playlists"
+  | "liveTv"
+  | "trailers"
+  | "mixed"
+
+export type LibrarySortId =
+  | "name"
+  | "year"
+  | "added"
+  | "episode-added"
+  | "rating"
+  | "played"
+  | "plays"
+  | "runtime"
+  | "random"
+
+export type LibraryFilterId = "genre" | "decade" | "watched" | "parental" | "seriesStatus" | "favorite"
+
+/** The sorts and filters a grid can run. A request for anything else answers 400. */
+export interface BrowseCapabilities {
+  sorts: LibrarySortId[]
+  filters: LibraryFilterId[]
+  letterIndex: boolean
+}
+
+export interface Library {
+  id: string
+  name: string
+  kind: LibraryKind
+  imageTag: string | null
+  browse: BrowseCapabilities
+}
+
+export interface LibrariesResponse {
+  /** False until a sync cycle has read the server's library list. */
+  known: boolean
+  /** In the user's Jellyfin order. */
+  libraries: Library[]
+  /** What the cross-library title views (Search, Favorites, person, genre) can run. */
+  titles: BrowseCapabilities
+}
+
+/** `/api/libraries/{id}/items` and `/letters`: no kind, the library decides it. */
+export interface LibraryQuery {
+  genre?: string
+  decade?: number
+  watched?: WatchFilter | ""
+  favorite?: boolean
+  parental?: string
+  seriesStatus?: SeriesStatus | ""
+  sort?: LibrarySortId
+  order?: SortOrder
+  seed?: number
+}
+
+export interface LibraryFilterOptions {
+  genres: string[]
+  officialRatings: string[]
+}

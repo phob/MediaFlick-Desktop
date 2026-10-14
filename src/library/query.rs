@@ -567,6 +567,14 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
             .iter()
             .map(|kind| SqlValue::Text(kind.as_str().to_string())),
     );
+    if let Some(library) = &query.library {
+        conditions.push(
+            "EXISTS (SELECT 1 FROM item_libraries l
+                 WHERE l.library_id = ? AND l.item_id = i.jellyfin_id)"
+                .to_string(),
+        );
+        arguments.push(SqlValue::Text(library.as_str().to_string()));
+    }
     if let Some(genre) = &query.genre {
         conditions.push("i.id IN (SELECT item_id FROM item_genres WHERE genre = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
@@ -603,7 +611,7 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
     (from_clause, where_clause, arguments)
 }
 
-fn natural_order(left: &str, right: &str) -> Ordering {
+pub(super) fn natural_order(left: &str, right: &str) -> Ordering {
     fn chunks(text: &str) -> impl Iterator<Item = (bool, String)> + '_ {
         let mut rest = text;
         std::iter::from_fn(move || {
