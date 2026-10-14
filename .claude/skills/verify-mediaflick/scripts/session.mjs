@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { connect, sleep } from "../../../../scripts/website/cdp.mjs"
 import { checkAccount, publicAccount, readAccount, readStoredSession, redactSecret, seedLibrary, serverKey } from "./account.mjs"
+import { reconcileFavorites } from "./favorites.mjs"
 import { createHarness, stepLogger } from "./harness.mjs"
 import { profileName, userApps } from "./runs.mjs"
 import {
@@ -82,6 +83,10 @@ log(`isolation ok: ${JSON.stringify(isolation)}`)
 if (account) {
   writeJson("account.json", { mode: signedOut ? "account-signed-out" : "account", ...publicAccount(account), check: accountCheck })
   log(`cached session for ${account.userName} on ${account.server} is valid (HTTP ${accountCheck.status})`)
+  await reconcileFavorites(account, log).catch((error) => {
+    log(`FAILED before launch: ${error.message}`)
+    throw error
+  })
 }
 
 if (!existsSync(exe)) throw new Error(`${exe} is missing; \`just verify\` builds it, or run \`just build\``)

@@ -114,11 +114,11 @@ async function provesFavorites(ctx, report, expect) {
   report.favorites = { movie: { id: movie.id, name: movie.name }, episode: { id: episode.id, name: episode.name, series: episode.seriesName, season: seasonName }, before: before.total }
   ctx.step(`favoriting movie ${movie.name} (${movie.id}) and episode ${episode.seriesName} ${seasonName} ${episode.name} (${episode.id}); ${before.total} top-level favorites before`)
 
-  ctx.unfavoriteAfterRun(movie.id)
+  await ctx.unfavoriteAfterRun(movie.id)
   await openMovie(ctx, movie)
   await toggleFavorite(ctx, movie, true)
   await ctx.screenshot("favorite-movie")
-  ctx.unfavoriteAfterRun(episode.id)
+  await ctx.unfavoriteAfterRun(episode.id)
   await openEpisode(ctx, episode, seasonName)
   await toggleFavorite(ctx, episode, true)
   await ctx.screenshot("favorite-episode")
