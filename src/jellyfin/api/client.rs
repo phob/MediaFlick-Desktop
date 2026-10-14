@@ -119,20 +119,19 @@ struct SharedAgents {
 /// server- or account-specific is configured here: the base URL and token
 /// travel with each request.
 static SHARED_AGENTS: LazyLock<SharedAgents> = LazyLock::new(|| {
-    let build_agent = |http_status_as_error| -> ureq::Agent {
+    let build_agent = || -> ureq::Agent {
         ureq::Agent::config_builder()
             .timeout_global(Some(HTTP_TIMEOUT))
             .timeout_connect(Some(CONNECT_TIMEOUT))
-            .http_status_as_error(http_status_as_error)
+            // Keep error responses readable so `Retry-After` can be honored.
+            .http_status_as_error(false)
             .user_agent(format!("mediaflick-desktop/{}", build_info::APP_VERSION))
             .build()
             .into()
     };
     SharedAgents {
-        // Keep core error responses available so `Retry-After` can be
-        // honored instead of being discarded into `ureq::Error::StatusCode`.
-        core: build_agent(false),
-        companion: build_agent(false),
+        core: build_agent(),
+        companion: build_agent(),
     }
 });
 
