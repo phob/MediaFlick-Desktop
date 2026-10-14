@@ -1,18 +1,25 @@
 // Library views without a media kind (sidebar search, Favorites, its A–Z
 // rail, Home's Favorites shelf) list only movies and series, never seasons or
 // episodes, while `kind=Episode` still lists episodes.
-// Both modes: for each nested kind, a sidebar search for a word that a season
-// or episode name shares with one to six movies or series must show exactly
-// those titles, and the kindless `favorite=false` reads and A–Z letters must
-// match `kind=Movie,Series`.
+// Both modes: a sidebar search for a word from a season name that zero to six
+// movies or series share, and one for a word from an episode name that one to
+// six share, must each show exactly those titles (the empty state when there
+// are none) and no season or episode card or API row. The kindless
+// `favorite=false` reads and A–Z letters must match `kind=Movie,Series`, and
+// Home rows hold only movies and series (Recently Added Shows: series and
+// episodes).
 // With --account only: favorites a movie and an episode that were not
 // favorites, on their detail pages, then checks Favorites, its A–Z letters and
 // Home's Favorites shelf list the movie and not the episode, and removes both
-// favorites again the same way (with an after-run fallback).
+// favorites again the same way (with a journaled after-run fallback). The
+// Favorites card check reads the rendered cards of a virtualized grid, so it
+// assumes the account has few favorites.
 //   just verify top-level-titles
 //   just verify top-level-titles --account https://jellyfin.example.com
 const TOP_LEVEL = new Set(["Movie", "Series"])
+const HOME_ROW_KINDS = { recentlyAddedShows: new Set(["Series", "Episode"]) }
 const CARD = { css: 'main a[aria-label^="Open details for"]' }
+const MIN_SEARCH_HITS = { Season: 0, Episode: 1 }
 const MAX_SEARCH_HITS = 6
 
 const kindsOf = (items) => [...new Set(items.map((item) => item.kind))].sort()
@@ -43,14 +50,15 @@ async function search(ctx, term) {
   await ctx.park()
 }
 
-// A word from a season or episode name that also finds one to six movies or
-// series, so the search has both a nested match to drop and titles to show.
+// A word from a season or episode name that also finds a few movies or series
+// (none counts for seasons, whose names rarely share a word with a title), so
+// the search has a nested match to drop.
 async function sharedTerm(ctx, kind) {
   const names = (await items(ctx, { kind, limit: 500 })).items.map((item) => item.name.toLowerCase())
   const words = [...new Set(names.flatMap((name) => name.match(/\p{L}{4,}/gu) ?? []))].sort()
   for (const word of words) {
     const titles = await items(ctx, { search: word, kind: "Movie,Series", limit: MAX_SEARCH_HITS + 1 })
-    if (titles.total < 1 || titles.total > MAX_SEARCH_HITS) continue
+    if (titles.total < MIN_SEARCH_HITS[kind] || titles.total > MAX_SEARCH_HITS) continue
     const matches = await items(ctx, { search: word, kind, limit: 1 })
     if (matches.total > 0) return { term: word, kind, nestedMatches: matches.total, expected: titles.items }
   }
@@ -58,7 +66,7 @@ async function sharedTerm(ctx, kind) {
 }
 
 async function serverFavorite(ctx, id) {
-  return (await ctx.jellyfin(`/Items/${id}?userId=${ctx.account.userId}`)).UserData.IsFavorite
+  return (await ctx.jellyfin(`/Items/${encodeURIComponent(id)}?userId=${ctx.account.userId}`)).UserData.IsFavorite
 }
 
 async function firstNotFavorite(ctx, candidates) {
@@ -189,30 +197,30 @@ export default async function topLevelTitles(ctx) {
   }
   for (const kind of ["Season", "Episode"]) {
     const shared = await sharedTerm(ctx, kind)
-    if (!shared) {
-      ctx.step(`no ${kind} name shares a word with one to ${MAX_SEARCH_HITS} movies or series; ${kind} rows are covered by the favorite=false reads below`)
-      continue
-    }
-    const { term } = shared
+    expect(shared, shared ? `search ${shared.term} matches ${shared.nestedMatches} ${kind} rows and ${shared.expected.length} movies or series` : `a ${kind} name shares a word with ${MIN_SEARCH_HITS[kind]} to ${MAX_SEARCH_HITS} movies or series`)
+    if (!shared) continue
+    const { term, expected } = shared
     await search(ctx, term)
     const cards = await cardNames(ctx)
+    const cardItems = await cardIds(ctx)
+    const emptyState = await ctx.app.evaluate("(document.querySelector('main')?.innerText ?? '').includes('Nothing to show')")
     const kindless = await items(ctx, { search: term, limit: 60 })
     report.searches[term] = {
       nestedKind: kind,
       nestedMatches: shared.nestedMatches,
-      expected: shared.expected.map((item) => `${item.kind}: ${item.name}`),
+      expected: expected.map((item) => `${item.kind}: ${item.name}`),
       cards,
+      emptyState,
       apiKinds: kindsOf(kindless.items),
       nested: nested(kindless.items),
     }
     ctx.step(`search ${term} (${shared.nestedMatches} ${kind} matches): cards ${JSON.stringify(cards)}`)
     await ctx.snapshot(`search-${term}`)
     await ctx.screenshot(`search-${term}`)
-    expect(shared.expected.length > 0 && shared.nestedMatches > 0, `search ${term} matches ${shared.expected.length} movies or series and ${shared.nestedMatches} ${kind} rows`)
-    expect(sameList(idsOf(kindless.items), idsOf(shared.expected)), `search ${term} lists exactly its movies and series (got ${JSON.stringify(report.searches[term].nested)} besides)`)
-    expect(sameList([...cards].sort(), shared.expected.map((item) => item.name).sort()), `search ${term} shows one card per movie or series (${JSON.stringify(cards)})`)
+    expect(sameList(idsOf(kindless.items), idsOf(expected)), `search ${term} lists exactly its ${expected.length} movies or series and no ${kind} (got ${JSON.stringify(report.searches[term].nested)} besides)`)
+    expect(sameList([...cardItems].sort(), idsOf(expected)), `search ${term} shows one card per movie or series and no ${kind} card (${JSON.stringify(cards)})`)
+    if (!expected.length) expect(emptyState, `search ${term} shows the empty state`)
   }
-  expect(Object.keys(report.searches).length > 0, "at least one search had a nested match to drop and titles to show")
 
   const notFavorite = await items(ctx, { favorite: "false", limit: 500 })
   const topLevel = await items(ctx, { kind: "Movie,Series", favorite: "false", limit: 1 })
@@ -233,7 +241,7 @@ export default async function topLevelTitles(ctx) {
   const { kindless, movieAndSeries } = report.reads.letters
   expect(letters.status === 200 && Object.keys(kindless ?? {}).length > 0 && sameList(kindless, movieAndSeries), `a kindless view's A–Z rail matches Movies and Series (${JSON.stringify(kindless)} vs ${JSON.stringify(movieAndSeries)})`)
   expect(episodes.total > 0 && sameList(report.reads.explicitEpisodes.kinds, ["Episode"]), `kind=Episode still lists episodes (${episodes.total})`)
-  expect(report.reads.homeRows.every((row) => row.kinds.every((kind) => TOP_LEVEL.has(kind)) || row.id === "recentlyAddedShows"), "Home shelves other than Recently Added Shows hold only movies and series")
+  expect(report.reads.homeRows.every((row) => row.kinds.every((kind) => (HOME_ROW_KINDS[row.id] ?? TOP_LEVEL).has(kind))), `Home rows hold only movies and series, Recently Added Shows only series and episodes (${JSON.stringify(report.reads.homeRows)})`)
 
   if (ctx.account) await provesFavorites(ctx, report, expect)
   else ctx.step("no --account: Favorites and Home's Favorites shelf are not exercised, because the shared demo account must not be written")
