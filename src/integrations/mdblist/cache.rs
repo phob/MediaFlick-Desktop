@@ -312,8 +312,8 @@ mod tests {
         let response = json!({
             "boundaryVersion": 1,
             "items": [
-                { "itemId": "tmdb:movie:603", "ratings": [{ "source": "imdb", "value": 8.7 }] },
-                { "itemId": "tmdb:tv:603", "ratings": [{ "source": "imdb", "value": 7.2 }] }
+                { "itemId": "tmdb:movie:603", "ratings": [{ "sourceId": "imdb", "value": 8.7 }] },
+                { "itemId": "tmdb:tv:603", "ratings": [{ "sourceId": "imdb", "value": 7.2 }] }
             ]
         });
         library
@@ -371,8 +371,8 @@ mod tests {
                     "sourceUpdatedAt": SERVER_MDBLIST_KEY,
                     "diagnostic": SERVER_TMDB_KEY,
                     "ratings": [
-                        { "source": SERVER_MDBLIST_KEY, "value": 99, "trace": SERVER_TMDB_KEY },
-                        { "source": "imdb", "value": 8.7, "rawSource": SERVER_MDBLIST_KEY,
+                        { "sourceId": SERVER_MDBLIST_KEY, "value": 99, "trace": SERVER_TMDB_KEY },
+                        { "sourceId": "imdb", "value": 8.7, "rawSource": SERVER_MDBLIST_KEY,
                           "error": SERVER_TMDB_KEY }
                     ]
                 }]

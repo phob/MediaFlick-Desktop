@@ -463,7 +463,6 @@ export interface RatingsIntegrationStatus {
 
 export interface NormalizedRating {
   sourceId: string
-  rawSource: string
   value: number
   score: number | null
   votes: number | null

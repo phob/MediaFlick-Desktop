@@ -119,8 +119,6 @@ internal static partial class RatingsContract
     /// <summary>
     /// Rebuilds ratings from the fixed public source catalog. Unknown source
     /// labels, arbitrary upstream fields, and original strings are discarded.
-    /// The legacy source/rawSource keys remain for Desktop v1 compatibility,
-    /// but carry the canonical catalog id rather than upstream text.
     /// </summary>
     public static JsonArray NormalizeMedia(JsonNode? node)
     {
@@ -265,10 +263,7 @@ internal static partial class RatingsContract
 
         var rating = new JsonObject
         {
-            // These are all catalog constants; no upstream string survives.
-            ["source"] = source,
             ["sourceId"] = source,
-            ["rawSource"] = source,
             ["value"] = value,
             ["scaleMax"] = maximum
         };
