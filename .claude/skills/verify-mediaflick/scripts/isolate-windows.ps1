@@ -99,8 +99,11 @@ public static class MediaFlickVerifyDesktop {
             si.dwFlags = 0x100; // STARTF_USESTDHANDLES
             stdout = Inheritable(-11); stderr = Inheritable(-12);
             si.hStdOutput = stdout; si.hStdError = stderr;
-            // CREATE_SUSPENDED | CREATE_NO_WINDOW: contained before it runs, no console on any desktop.
-            Check(CreateProcessW(app, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, 0x4 | 0x08000000, IntPtr.Zero, null, ref si, out pi), "Cannot start the isolated command");
+            // CREATE_SUSPENDED: contained before it runs. The child shares the caller's
+            // console, so its output reaches the terminal; CREATE_NO_WINDOW would give it
+            // a hidden console of its own, where the inherited console handles write nowhere.
+            // Without a caller console, Windows opens one on the private desktop, unseen.
+            Check(CreateProcessW(app, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, true, 0x4, IntPtr.Zero, null, ref si, out pi), "Cannot start the isolated command");
             if (!AssignProcessToJobObject(job, pi.hProcess)) {
                 var code = Marshal.GetLastWin32Error();
                 TerminateProcess(pi.hProcess, 1);
