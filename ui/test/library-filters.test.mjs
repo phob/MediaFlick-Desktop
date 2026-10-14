@@ -9,7 +9,7 @@ import {
 } from "../src/lib/library-filters.ts"
 
 test("every library filter round-trips in the URL", () => {
-  const previous = new URLSearchParams("kind=Movie&search=matrix&offset=60&page=2")
+  const previous = new URLSearchParams("kind=Movie&search=matrix")
   const written = writeLibraryFilters(previous, {
     sort: "year",
     genre: "Science Fiction",
