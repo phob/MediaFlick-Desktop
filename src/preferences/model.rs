@@ -283,6 +283,7 @@ impl StreamingQuality {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SegmentSkipMode {
+    Hidden,
     Disabled,
     #[default]
     Prompt,
@@ -296,6 +297,7 @@ impl SegmentSkipMode {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Hidden => "hidden",
             Self::Disabled => "disabled",
             Self::Prompt => "prompt",
             Self::Always => "always",
@@ -304,6 +306,7 @@ impl SegmentSkipMode {
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "hidden" => Some(Self::Hidden),
             "disabled" => Some(Self::Disabled),
             "prompt" => Some(Self::Prompt),
             "always" => Some(Self::Always),
@@ -355,11 +358,11 @@ impl Default for SegmentSkipConfig {
 }
 
 impl SegmentSkipConfig {
-    pub fn all_disabled(self) -> bool {
-        self.intro == SegmentSkipMode::Disabled
-            && self.credits == SegmentSkipMode::Disabled
-            && self.recap == SegmentSkipMode::Disabled
-            && self.commercial == SegmentSkipMode::Disabled
+    pub fn all_hidden(self) -> bool {
+        self.intro == SegmentSkipMode::Hidden
+            && self.credits == SegmentSkipMode::Hidden
+            && self.recap == SegmentSkipMode::Hidden
+            && self.commercial == SegmentSkipMode::Hidden
     }
 }
 

@@ -34,7 +34,7 @@ The catch with playing outside the browser is usually that Jellyfin loses track 
 - **Full external mpv mode.** Hand streams to your own `mpv` process when you want `mpv.conf`, scripts, shaders, profiles, SVP4, custom HDR, or personal input bindings.
 - **Selectable streaming quality.** Keep original quality, use Jellyfin's automatic connection limit, or cap playback from 1.5 to 120 Mbps with server-transcoding fallback.
 - **Playstate synced to Jellyfin.** Playback start, progress, watched state, and resume positions report back to your server.
-- **Media-segment skipping.** Skip intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings.
+- **Media-segment skipping.** Skip intros, credits, recaps, and commercials, with per-type prompt or auto-skip (countdown) settings. A type set to "Don't show" is hidden entirely: no prompt, Skip button, or timeline marker.
 - **Skip markers on the seek bar.** The mpv timeline shows exactly where segments are skipped, merged with the file's own chapters.
 - **Its own native UI.** Sign-in (password or Quick Connect), home rows for Continue Watching / Next Up, Recently Added Movies, Recently Added Shows (the newest episodes), Latest Movies, and Latest Shows, a virtualized poster grid with Jellyfin-style sorting, filters and an A–Z jump rail, and a details view with cast, seasons, and episodes.
 - **Local metadata cache.** Your library is mirrored into SQLite with full-text search over titles, overviews, genres, and cast, kept current by a background sync.
