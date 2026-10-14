@@ -511,10 +511,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // Call before the drive favorites `itemId`. Refuses an item the account
-  // already favors, so a drive never touches the user's own favorites, then
-  // journals it on disk (see favorites.mjs) and takes the favorite off again
-  // once the app has exited.
   async function unfavoriteAfterRun(itemId) {
     if (!cachedAccount) throw new Error("unfavoriteAfterRun needs --account SERVER")
     if (await isFavorite(jellyfin, cachedAccount.userId, itemId)) throw new Error(`unfavoriteAfterRun: ${itemId} already is a favorite of ${cachedAccount.userName}; drives may only favorite items that are not`)
