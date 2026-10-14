@@ -1177,8 +1177,6 @@ export interface ItemQuery {
   genre?: string
   /** Inclusive first year of a standard release decade (for example 1990). */
   decade?: number
-  parentId?: string
-  seriesId?: string
   watched?: WatchFilter | ""
   favorite?: boolean
   parental?: string
