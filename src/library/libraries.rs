@@ -102,7 +102,8 @@ pub enum GridSource {
     /// The cached catalog, scoped by `item_libraries`. `title` is the one kind
     /// the grid shows and the membership pass walks.
     Catalog { title: CatalogKind },
-    /// Served from Jellyfin when browsed, never cached.
+    /// Never cached: its grid comes from Jellyfin, which this version does
+    /// not browse yet.
     Live,
 }
 
@@ -136,8 +137,7 @@ impl Serialize for FilterKey {
     }
 }
 
-/// What a grid can run. The UI offers exactly these; a request for anything
-/// else is a 400.
+/// What a grid can run. A request for anything else is a 400.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseCapabilities {

@@ -280,8 +280,7 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
-/// The Jellyfin item types the catalog caches. Every list of synced types,
-/// on the wire and in SQL, derives from this enum.
+/// The Jellyfin item types the catalog caches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogKind {
     Movie,
