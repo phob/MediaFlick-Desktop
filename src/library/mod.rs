@@ -25,8 +25,8 @@ use serde_json::Value;
 use crate::app::ids::new_device_id;
 
 pub use model::{
-    ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, LibraryStats, ProviderIds,
-    UserDataRecord, resolve_playback_preference,
+    CatalogKind, ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, KindFilter,
+    LibraryStats, ProviderIds, UserDataRecord, resolve_playback_preference,
 };
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
@@ -265,8 +265,7 @@ impl SeriesStatus {
 #[derive(Debug, Clone, Default)]
 pub struct ItemQuery {
     pub search: Option<String>,
-    /// Empty means movies and series.
-    pub kinds: Vec<String>,
+    pub kinds: KindFilter,
     pub genre: Option<String>,
     /// Inclusive first year of a standard ten-year release decade.
     pub release_decade: Option<i64>,

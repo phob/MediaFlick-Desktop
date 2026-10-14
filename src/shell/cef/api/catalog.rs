@@ -293,7 +293,6 @@ fn home(services: &Arc<Services>) -> Handled {
                 &home_query(
                     &services.library,
                     ItemQuery {
-                        kinds: vec!["Movie".to_string(), "Series".to_string()],
                         genre: Some(id.clone()),
                         sort: ItemSort::CommunityRating,
                         ..Default::default()
@@ -330,7 +329,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             home_query(
                 &services.library,
                 ItemQuery {
-                    kinds: vec!["Movie".to_string()],
+                    kinds: KindFilter::Only(vec![CatalogKind::Movie]),
                     sort: ItemSort::DateAdded,
                     ..Default::default()
                 },
@@ -347,12 +346,12 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
         HomeBuiltIn::LatestMovies => (
             "latestMovies",
             "Latest Movies",
-            latest_home_items(&services.library, "Movie"),
+            latest_home_items(&services.library, CatalogKind::Movie),
         ),
         HomeBuiltIn::LatestShows => (
             "latestShows",
             "Latest Shows",
-            latest_home_items(&services.library, "Series"),
+            latest_home_items(&services.library, CatalogKind::Series),
         ),
         HomeBuiltIn::MyList => (
             "myList",
@@ -406,7 +405,6 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
     let items = home_query(
         &services.library,
         ItemQuery {
-            kinds: vec!["Movie".to_string(), "Series".to_string()],
             genre: Some(genre.to_string()),
             watched: Some(WatchFilter::Unwatched),
             sort: ItemSort::CommunityRating,
@@ -516,11 +514,11 @@ fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec
         .collect()
 }
 
-fn latest_home_items(library: &Library, kind: &str) -> Vec<ItemSummary> {
+fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
     home_query(
         library,
         ItemQuery {
-            kinds: vec![kind.to_string()],
+            kinds: KindFilter::Only(vec![kind]),
             sort: ItemSort::ReleaseDate,
             ..Default::default()
         },
@@ -551,7 +549,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
             .param("limit")
             .and_then(|value| value.parse().ok())
             .unwrap_or(60),
-        ..library_query(request)
+        ..library_query(request)?
     };
     match services.library.query(&query) {
         Ok(page) => Ok(ApiResponse::ok(
@@ -562,7 +560,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    match services.library.letter_index(&library_query(request)) {
+    match services.library.letter_index(&library_query(request)?) {
         Ok(letters) => Ok(ApiResponse::ok(json!({
             "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
         }))),
@@ -576,34 +574,45 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .map(|value| {
             value
                 .split(',')
-                .map(str::trim)
-                .filter(|kind| matches!(*kind, "Movie" | "Series"))
-                .map(str::to_string)
+                .filter_map(|kind| CatalogKind::parse(kind.trim()))
+                .filter(|kind| CatalogKind::TOP_LEVEL.contains(kind))
                 .collect::<Vec<_>>()
         })
         .filter(|kinds| !kinds.is_empty())
-        .unwrap_or_else(|| vec!["Movie".to_string(), "Series".to_string()]);
+        .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
     match services.library.official_ratings(&kinds) {
         Ok(ratings) => Ok(ApiResponse::ok(json!({ "officialRatings": ratings }))),
         Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn library_query(request: &ApiRequest) -> ItemQuery {
+/// A `kind` list names catalog kinds only; anything else is a 400, so no
+/// route builds an empty kind list. No `kind` means movies and series.
+fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
+    let Some(value) = request.param("kind") else {
+        return Ok(KindFilter::TopLevel);
+    };
+    let kinds = value
+        .split(',')
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .map(|kind| {
+            CatalogKind::parse(kind)
+                .ok_or_else(|| ApiResponse::error(400, format!("unknown item kind {kind:?}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(if kinds.is_empty() {
+        KindFilter::TopLevel
+    } else {
+        KindFilter::Only(kinds)
+    })
+}
+
+fn library_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
     let seed = request.param("seed").and_then(|value| value.parse().ok());
-    ItemQuery {
+    Ok(ItemQuery {
         search: request.param("search"),
-        kinds: request
-            .param("kind")
-            .map(|value| {
-                value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|kind| !kind.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
+        kinds: kind_filter(request)?,
         genre: request.param("genre"),
         release_decade: request
             .param("decade")
@@ -633,7 +642,7 @@ fn library_query(request: &ApiRequest) -> ItemQuery {
             .as_deref()
             .and_then(SortDirection::from_id),
         ..ItemQuery::default()
-    }
+    })
 }
 
 fn query_person_items(services: &Arc<Services>, person_id: &str, request: &ApiRequest) -> Handled {
@@ -1085,8 +1094,8 @@ mod tests {
         .collect();
         library.upsert_page(&items).expect("seed");
 
-        let movies = latest_home_items(&library, "Movie");
-        let shows = latest_home_items(&library, "Series");
+        let movies = latest_home_items(&library, CatalogKind::Movie);
+        let shows = latest_home_items(&library, CatalogKind::Series);
 
         assert_eq!(movies[0].id, "new-movie");
         assert_eq!(movies[1].id, "old-movie");

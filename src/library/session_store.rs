@@ -1,5 +1,6 @@
 use rusqlite::params;
 
+use super::db::CATALOG_TABLES;
 use super::{Library, StoredCredentials, now_unix};
 
 const CACHE_OWNER_SERVER: &str = "cache.owner_server_id";
@@ -91,12 +92,9 @@ impl Library {
                 params![now_unix()],
             )?;
             if forget_library {
-                transaction.execute("DELETE FROM items", [])?;
-                transaction.execute("DELETE FROM user_data", [])?;
-                transaction.execute("DELETE FROM external_profiles", [])?;
-                transaction.execute("DELETE FROM legacy_item_playback_preferences", [])?;
-                transaction.execute("DELETE FROM franchise_movie_membership", [])?;
-                transaction.execute("DELETE FROM meta", [])?;
+                for table in CATALOG_TABLES {
+                    transaction.execute(&format!("DELETE FROM {table}"), [])?;
+                }
             }
             Ok(())
         })
