@@ -4,8 +4,8 @@
 // startup seek rules from AGENTS.md, stop again, then watched and unwatched
 // to leave the title as it was. Plays real audio.
 //   just verify playback --account https://jellyfin.example.com --log-level "debug,jellyfin.playstate=trace,playback=trace"
-// External mpv: add `--seed DIR` with a settings.json holding
-//   {"player_backend":"mpv","mpv_path":"/usr/bin/mpv"}
+// External mpv: add `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`
+// ({"player_backend":"mpv","mpv_path":"/usr/bin/mpv","default_fullscreen":"windowed"}).
 // Writes the test user's playstate: it picks an unplayed movie without a
 // resume point and leaves it unplayed without one.
 const MIN_RESUME = 0.08 // Jellyfin stores no resume point below 5 % of the runtime

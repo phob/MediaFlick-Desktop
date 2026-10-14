@@ -73,12 +73,23 @@ export default async function bootstrapRetry(ctx) {
   // The new attempt needs its request retries (about 2 s) before it can fail.
   ctx.check((await status(ctx)).bootstrap?.state === "loading", "a new sign-in starts loading, without the previous session's failure")
   await ctx.find(REASON, { timeout: 30000 })
+  // The countdown reaching 0 looks the same as a pressed attempt, so press with
+  // the automatic retry at least 2 s away and prove the proxy saw the pressed
+  // attempt before it was due.
+  const due = await ctx.until(async () => {
+    const body = await status(ctx)
+    const retryAt = body?.bootstrap?.state === "retrying" ? body.bootstrap.retryAt : 0
+    return retryAt - Date.now() / 1000 >= 2 ? retryAt : null
+  }, "an automatic retry at least 2 s away", 60000)
   const failedBefore = proxy.stats.failed
   await ctx.press(RETRY)
+  await ctx.until(() => proxy.stats.failed > failedBefore, "the pressed attempt to reach the server", 5000)
+  const reached = Date.now() / 1000
+  ctx.check(reached < due, `the pressed attempt reached the server ${(due - reached).toFixed(1)} s before the automatic retry was due`)
   await ctx.until(async () => (await pageText(ctx)).includes("Trying again now") && (await ctx.state(RETRY)).disabled === true, "Retry now to start an attempt while the server is still down", 5000)
   await ctx.screenshot("05-retry-attempt-running")
   await ctx.until(async () => /Trying again in \d+ s/.test(await pageText(ctx)) && (await ctx.state(RETRY)).disabled !== true, "the retry screen to return after the attempt fails")
-  ctx.check(proxy.stats.failed > failedBefore && (await ctx.exists(REASON)), "the pressed attempt reached the server and kept the reason on screen")
+  ctx.check(await ctx.exists(REASON), "the failed pressed attempt kept the reason on screen")
 
   // Only a pressed Retry now explains Home appearing well before the
   // automatic attempt, so wait until that attempt is far enough away.
