@@ -18,11 +18,7 @@ pub struct AppSettings {
     /// `None` preserves the legacy migration rule: an existing `mpv_path`
     /// selects external mpv. Fresh Windows installs select bundled libmpv;
     /// other platforms keep using external mpv until they ship a bundle.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_player_backend"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_backend: Option<PlayerBackend>,
     #[serde(
         default = "default_log_level_string",
@@ -48,10 +44,9 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
     /// The mark-watched-and-play-next key, or `None` when disabled (stored as
-    /// an empty string). A settings file written before this field existed
-    /// takes the value the legacy `input.json` held.
+    /// an empty string).
     #[serde(
-        default = "super::store::legacy_mark_watched_next",
+        default = "default_mark_watched_next",
         serialize_with = "serialize_binding",
         deserialize_with = "deserialize_binding"
     )]
@@ -388,30 +383,6 @@ impl PlayerBackend {
     }
 }
 
-/// Reads the saved backend. MPC-HC support was removed; a device file that
-/// still selects it loads with the platform's standard backend instead of
-/// failing to parse and being moved aside by backup recovery.
-fn deserialize_player_backend<'de, D>(deserializer: D) -> Result<Option<PlayerBackend>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    enum StoredPlayerBackend {
-        Libmpv,
-        Mpv,
-        Mpchc,
-    }
-
-    Ok(
-        Option::<StoredPlayerBackend>::deserialize(deserializer)?.map(|stored| match stored {
-            StoredPlayerBackend::Libmpv => PlayerBackend::Libmpv,
-            StoredPlayerBackend::Mpv => PlayerBackend::Mpv,
-            StoredPlayerBackend::Mpchc => PlayerBackend::platform_default(),
-        }),
-    )
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FullscreenBehavior {
@@ -554,7 +525,7 @@ impl Default for AppSettings {
             skip_credits: SegmentSkipMode::default(),
             skip_recap: SegmentSkipMode::default(),
             skip_commercial: SegmentSkipMode::default(),
-            mark_watched_next: Some(DEFAULT_MARK_WATCHED_NEXT.to_string()),
+            mark_watched_next: default_mark_watched_next(),
             appearance: AppearanceSettings::default(),
         }
     }
@@ -643,6 +614,10 @@ where
     Ok(clean_binding(
         Option::<String>::deserialize(deserializer)?.as_deref(),
     ))
+}
+
+fn default_mark_watched_next() -> Option<String> {
+    Some(DEFAULT_MARK_WATCHED_NEXT.to_string())
 }
 
 fn default_log_level_string() -> String {
@@ -810,27 +785,6 @@ mod tests {
         .expect("legacy appearance settings");
 
         assert_eq!(settings.appearance.accent, AppearanceAccent::Violet);
-    }
-
-    #[test]
-    fn a_settings_file_selecting_mpchc_loads_without_recovery() {
-        let path = std::env::temp_dir().join(format!(
-            "mediaflick-retired-mpchc-settings-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(&path, br#"{"player_backend":"mpchc"}"#).expect("write settings");
-
-        let loaded = crate::preferences::json_file::load_with_recovery::<AppSettings>(&path);
-        let _ = std::fs::remove_file(&path);
-        let loaded = loaded
-            .expect("read settings")
-            .expect("settings file exists");
-
-        assert!(loaded.recovery.is_none());
-        assert_eq!(
-            loaded.document.effective_backend(),
-            PlayerBackend::platform_default()
-        );
     }
 
     #[test]

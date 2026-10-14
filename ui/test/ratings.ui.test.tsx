@@ -36,7 +36,6 @@ function display(sourceId: string, value: number): DisplayRating {
   if (!definition) throw new Error(`Expected rating source ${sourceId}`)
   const rating: NormalizedRating = {
     sourceId,
-    rawSource: sourceId,
     value,
     score: null,
     votes: null,
@@ -110,7 +109,7 @@ describe("configurable card ratings", () => {
         effectiveOrigin: "plugin",
         retryAt: null,
         diagnostic: null,
-        items: [{ ...item, ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }] }],
+        items: [{ ...item, ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }] }],
       }), { status: 200 })
     })
     vi.stubGlobal("fetch", fetchMock)
@@ -179,7 +178,7 @@ describe("configurable card ratings", () => {
     const rated = (id: string): ItemRatings => ({
       ...item,
       id,
-      ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
+      ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
     })
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
@@ -238,7 +237,7 @@ describe("configurable card ratings", () => {
       const items = batchCalls.length < 2 ? [] : [{
         ...item,
         id: "movie-1",
-        ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
+        ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
       }]
       return new Response(JSON.stringify({
         available: true,

@@ -144,11 +144,7 @@ export function readLibraryFilters(params: URLSearchParams): LibraryFilterState 
   }
 }
 
-/**
- * Applies a filter patch without discarding the route's search or media kind.
- * Paging belongs to the virtual grid, but old/deep links can still carry these
- * values; a filter change always returns to the first result page.
- */
+/** Applies a filter patch without discarding the route's search or media kind. */
 export function writeLibraryFilters(
   previous: URLSearchParams,
   patch: Partial<LibraryFilterState>,
@@ -166,8 +162,6 @@ export function writeLibraryFilters(
   if (next.get("order") === sort.natural) next.delete("order")
   if (!seriesStatusApplies(kinds)) next.delete("seriesStatus")
   if (sort.id !== "random") next.delete("seed")
-  next.delete("offset")
-  next.delete("page")
   return next
 }
 

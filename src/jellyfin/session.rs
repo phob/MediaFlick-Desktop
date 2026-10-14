@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::app::services::ShellBridge;
 use crate::library::{Library, StoredCredentials};
-use crate::preferences::{AccountKey, AppSettings, normalize_server_url};
+use crate::preferences::{AccountKey, normalize_server_url};
 
 use super::api::auth::{self, Credentials};
 use super::api::{ApiError, JellyfinClient};
@@ -67,17 +67,11 @@ impl SessionScope {
 }
 
 impl Session {
-    /// Restores the persisted session, falling back to the server URL that the
-    /// pre-own-UI releases kept in the legacy `config.json`.
     pub fn restore(library: Arc<Library>, shell: Arc<ShellBridge>) -> Self {
         let stored = library.credentials();
         let authenticated = stored.is_authenticated();
-        let server_url = stored
-            .server_url
-            .clone()
-            .or_else(|| AppSettings::load().jellyfin_url);
         let state = SessionState {
-            server_url,
+            server_url: stored.server_url.clone(),
             server_name: None,
             server_id: stored.server_id,
             user_id: stored.user_id.clone(),

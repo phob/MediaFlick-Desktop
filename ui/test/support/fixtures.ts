@@ -48,7 +48,7 @@ export function itemDetail(
 }
 
 export function appStatus(overrides: Partial<Status> = {}): Status {
-  const catalog = { complete: true, processed: 0, total: 0, initial: false }
+  const catalog = { complete: true, processed: 0, total: 0 }
   return {
     authenticated: false,
     expired: false,

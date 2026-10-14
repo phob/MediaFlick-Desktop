@@ -21,8 +21,6 @@ internal sealed record ProviderHealthState
 
     public bool Valid { get; init; }
 
-    public string? Detail { get; init; }
-
     public long? QuotaLimit { get; init; }
 
     public long? QuotaRemaining { get; init; }
@@ -239,16 +237,7 @@ internal sealed class ProviderCacheStore : IDisposable
             _saveScheduled = false;
         }
 
-        try
-        {
-            Flush();
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            // A timer callback must not throw. The document holds only
-            // sanitized primitives, so this is not expected in practice.
-            _logger.LogWarning(exception, "Could not serialize the MediaFlick provider cache");
-        }
+        Flush();
     }
 
     /// <summary>
@@ -332,9 +321,6 @@ internal sealed class ProviderCacheStore : IDisposable
         {
             Validation = validation,
             Valid = valid,
-            // Status responses derive fixed wording from validation/provider;
-            // never retain a provider or transport string in the cache.
-            Detail = null,
             QuotaLimit = RatingsContract.NormalizeQuota(state.Quota).Limit,
             QuotaRemaining = RatingsContract.NormalizeQuota(state.Quota).Remaining,
             QuotaResetAt = RatingsContract.NormalizeQuota(state.Quota).ResetAt,

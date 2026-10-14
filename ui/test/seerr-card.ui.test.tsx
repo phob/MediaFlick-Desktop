@@ -97,8 +97,8 @@ describe("discovery card ratings", () => {
         items: new Map([[identity.ratingId, {
           id: identity.ratingId,
           ratings: [
-            { sourceId: "imdb", rawSource: "imdb", value: 8.7, score: 87, votes: 100, scaleMax: 10 },
-            { sourceId: "tmdb", rawSource: "tmdb", value: 8.2, score: 82, votes: 100, scaleMax: 10 },
+            { sourceId: "imdb", value: 8.7, score: 87, votes: 100, scaleMax: 10 },
+            { sourceId: "tmdb", value: 8.2, score: 82, votes: 100, scaleMax: 10 },
           ],
           origin: "plugin", fetchedAt: 1, sourceUpdatedAt: null, stale: false, schemaVersion: 1,
         }]]),

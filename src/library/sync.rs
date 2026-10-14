@@ -65,12 +65,9 @@ pub struct BootstrapProgress {
     pub ready: bool,
     pub processed: i64,
     pub total: Option<i64>,
-    pub initial: bool,
 }
 
-/// The catalog becomes usable after its first successful page commit. Existing
-/// rows are an equally strong readiness signal during a rebuild or the daily
-/// re-bootstrap, even if an older build never wrote the explicit marker.
+/// The catalog becomes usable after its first successful page commit.
 ///
 /// This only reports progress; the sync cycle reads its own state fallibly.
 /// An unreadable database is logged and reported as a catalog that is not
@@ -83,15 +80,12 @@ pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
 }
 
 fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgress> {
-    let has_items = library.has_items()?;
     let complete = flag(library, META_BOOTSTRAP_DONE)?;
     Ok(BootstrapProgress {
         complete,
-        ready: complete || has_items || flag(library, META_CATALOG_READY)?,
+        ready: complete || flag(library, META_CATALOG_READY)?,
         processed: meta_count(library, META_BOOTSTRAP_OFFSET)?.unwrap_or(0),
         total: meta_count(library, META_BOOTSTRAP_TOTAL)?,
-        // A migration/backfill over an existing cache is never first-time setup.
-        initial: library.meta(META_LAST_BOOTSTRAP)?.is_none() && !has_items,
     })
 }
 

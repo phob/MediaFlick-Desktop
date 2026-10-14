@@ -3,13 +3,6 @@ import { afterEach } from "vitest"
 
 afterEach(() => cleanup())
 
-// Radix feature-detects these browser APIs while setting up dismissable
-// layers. jsdom does not currently provide them, but their no-op behavior is
-// sufficient for interaction tests that do not measure or drag the dialog.
-if (!window.PointerEvent) {
-  Object.defineProperty(window, "PointerEvent", { value: MouseEvent, writable: true })
-}
-
 if (!globalThis.ResizeObserver) {
   Object.defineProperty(window, "ResizeObserver", {
     value: class ResizeObserver {

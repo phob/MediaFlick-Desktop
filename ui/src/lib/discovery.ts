@@ -16,7 +16,6 @@ export const DISCOVERY_FILTER_KEYS = [
   "timeWindow",
 ] as const
 
-const LEGACY_DISCOVERY_FILTER_KEYS = ["century"] as const
 const CURRENT_YEAR = new Date().getUTCFullYear()
 const CURRENT_DECADE = Math.floor(CURRENT_YEAR / 10) * 10
 
@@ -152,9 +151,6 @@ export function writeDiscoveryFilters(
 ) {
   const next = new URLSearchParams(params)
   for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
-  // Intermediate builds briefly serialized the superseded century control.
-  // Never reinterpret that much broader selection as one particular decade.
-  for (const key of LEGACY_DISCOVERY_FILTER_KEYS) next.delete(key)
 
   if (row === "trending") {
     if (filters.mediaType && filters.mediaType !== "all") {

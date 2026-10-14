@@ -567,13 +567,7 @@ export default function Discover() {
     const hasAdvancedFilters = DISCOVERY_FILTER_KEYS.some((key) => params.has(key))
     const clearAdvancedFilters = !advancedDiscovery && hasAdvancedFilters
     const clearUnsupportedDecade = !decadeDiscovery && params.has("decade")
-    const clearLegacyCentury = params.has("century")
-    if (
-      !unsupportedRow &&
-      !clearAdvancedFilters &&
-      !clearUnsupportedDecade &&
-      !clearLegacyCentury
-    ) {
+    if (!unsupportedRow && !clearAdvancedFilters && !clearUnsupportedDecade) {
       return
     }
 
@@ -586,7 +580,6 @@ export default function Discover() {
         } else if (clearUnsupportedDecade) {
           next.delete("decade")
         }
-        next.delete("century")
         return next
       },
       { replace: true },

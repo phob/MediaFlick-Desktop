@@ -16,12 +16,6 @@ const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
 
 impl Library {
-    pub fn has_items(&self) -> rusqlite::Result<bool> {
-        self.db.with_connection(|connection| {
-            connection.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |row| row.get(0))
-        })
-    }
-
     pub fn stats(&self) -> LibraryStats {
         self.db
             .with_connection(|connection| {
