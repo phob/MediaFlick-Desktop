@@ -185,8 +185,8 @@ public sealed class RatingsTests
         Assert.DoesNotContain("missing", bySource.Keys);
         Assert.All(bySource.Values, value =>
         {
-            Assert.Equal(value["sourceId"]!.GetValue<string>(), value["source"]!.GetValue<string>());
-            Assert.Equal(value["sourceId"]!.GetValue<string>(), value["rawSource"]!.GetValue<string>());
+            Assert.False(value.ContainsKey("source"));
+            Assert.False(value.ContainsKey("rawSource"));
         });
         Assert.Contains("mdblist_score", bySource.Keys);
         Assert.Contains("mdblist_score_average", bySource.Keys);
@@ -200,8 +200,8 @@ public sealed class RatingsTests
         using var fixture = new RatingsFixture();
         fixture.Secrets.Set("mdblist", mdbListKey);
         fixture.Secrets.Set("tmdb", tmdbKey);
-        fixture.Cache.SetHealth("mdblist", ValidState() with { Detail = mdbListKey });
-        fixture.Cache.SetHealth("tmdb", ValidState() with { Detail = tmdbKey });
+        fixture.Cache.SetHealth("mdblist", ValidState());
+        fixture.Cache.SetHealth("tmdb", ValidState());
 
         var cachedTarget = Target("cached-card", "tmdb", "604");
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -268,7 +268,6 @@ public sealed class RatingsTests
         var upstream = response.Items.Single(item => item.ItemId == "upstream-card");
         var rating = Assert.Single(upstream.Ratings.OfType<JsonObject>());
         Assert.Equal("imdb", rating["sourceId"]!.GetValue<string>());
-        Assert.Equal("imdb", rating["rawSource"]!.GetValue<string>());
         var cached = response.Items.Single(item => item.ItemId == "cached-card");
         Assert.Empty(cached.Ratings);
     }
@@ -479,7 +478,6 @@ public sealed class RatingsTests
         {
             Validation = "valid",
             Valid = true,
-            Detail = "Valid MDBList credential.",
             QuotaLimit = 1000,
             QuotaRemaining = 900,
             QuotaResetAt = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds(),

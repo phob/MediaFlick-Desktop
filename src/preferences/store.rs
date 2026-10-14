@@ -29,7 +29,7 @@ impl AppSettings {
                 settings.sanitize();
                 settings
             }
-            Ok(None) => load_legacy_settings(),
+            Ok(None) => Self::default(),
             Err(error) => {
                 tracing::warn!(
                     "failed to read {}; using defaults and leaving the file unchanged: {error}",
@@ -159,52 +159,6 @@ pub fn take_device_recovery_notice() -> Option<RecoveryNotice> {
         .and_then(|mut recovery| recovery.take())
 }
 
-fn load_legacy_settings() -> AppSettings {
-    let path = config_dir().join("config.json");
-    let parsed = std::fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<AppSettings>(&bytes).ok());
-    let mut settings = parsed.unwrap_or_else(|| AppSettings {
-        mark_watched_next: legacy_mark_watched_next(),
-        ..AppSettings::default()
-    });
-    settings.sanitize();
-    settings
-}
-
-/// The mark-watched-next key from `input.json`, where builds before
-/// `settings.json` carried the binding kept it. A missing or unreadable file
-/// means the default key; a blank value means the binding was disabled. The
-/// file is only read, so a newer settings file never disagrees with it.
-pub(crate) fn legacy_mark_watched_next() -> Option<String> {
-    let path = config_dir().join("input.json");
-    let value = match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!("failed to read {}: {error}", path.display());
-                return Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string());
-            }
-        },
-        Err(_) => return Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string()),
-    };
-    legacy_binding(&value)
-}
-
-fn legacy_binding(value: &serde_json::Value) -> Option<String> {
-    let lookup = |key: &str| {
-        value
-            .get("bindings")
-            .and_then(|bindings| bindings.get(key))
-            .or_else(|| value.get(key))
-    };
-    // `kb_watched` is the name the first builds used.
-    match lookup("mark_watched_next").or_else(|| lookup("kb_watched")) {
-        None => Some(super::DEFAULT_MARK_WATCHED_NEXT.to_string()),
-        Some(binding) => super::clean_binding(binding.as_str()),
-    }
-}
-
 pub fn config_dir() -> PathBuf {
     crate::app::paths::platform_config_dir().join("mediaflick-desktop")
 }
@@ -213,27 +167,6 @@ pub fn config_dir() -> PathBuf {
 mod tests {
     use super::*;
     use crate::preferences::{AppearanceAccent, AppearanceSettings};
-
-    #[test]
-    fn legacy_input_files_keep_their_watched_binding() {
-        use serde_json::json;
-
-        for (file, expected) in [
-            (
-                json!({ "bindings": { "mark_watched_next": " W " } }),
-                Some("W"),
-            ),
-            (
-                json!({ "mark_watched_next": "Shift+Meta+w" }),
-                Some("Shift+Meta+w"),
-            ),
-            (json!({ "kb_watched": "x" }), Some("x")),
-            (json!({ "bindings": { "mark_watched_next": "" } }), None),
-            (json!({}), Some("w")),
-        ] {
-            assert_eq!(legacy_binding(&file).as_deref(), expected, "{file}");
-        }
-    }
 
     #[test]
     fn the_device_snapshot_excludes_account_owned_appearance() {

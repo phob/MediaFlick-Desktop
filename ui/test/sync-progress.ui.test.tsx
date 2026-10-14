@@ -12,7 +12,6 @@ const catalog = {
   complete: true,
   processed: 120,
   total: 120,
-  initial: false,
 }
 
 function status(progress: SyncProgress): Status {

@@ -448,18 +448,13 @@ fn seerr_image(services: &Arc<Services>, size: &str, file: &str) -> Handled {
     let key = cache_key("tmdb", size, file, 0);
     let cache_path = crate::app::paths::image_cache_dir().join(&key);
     if let Ok(bytes) = std::fs::read(&cache_path)
-        && !bytes.is_empty()
+        && let Some(content_type) = image_mime_type(&bytes)
     {
-        if let Some(content_type) = image_mime_type(&bytes) {
-            return Ok(ApiResponse::bytes(
-                content_type.to_string(),
-                bytes,
-                IMMUTABLE_CACHE,
-            ));
-        }
-        // An earlier Companion proxy cached JSON error bodies under image keys.
-        // Drop only the invalid entry so the same request repairs it below.
-        let _ = std::fs::remove_file(&cache_path);
+        return Ok(ApiResponse::bytes(
+            content_type.to_string(),
+            bytes,
+            IMMUTABLE_CACHE,
+        ));
     }
     match services.companion.collection_artwork(size, &path) {
         Ok((bytes, _)) => {
