@@ -1,11 +1,11 @@
 # Discover and Requests
 
-When the MediaFlick Companion provides Seerr and the Jellyfin account is mapped to a Seerr user, the sidebar gains Discover and Requests. Discover browses and searches Seerr's TMDB catalogue, marks titles the library already owns, and requests the rest; Requests lists the user's own requests with their status and cancels one while it awaits approval. Request buttons also appear on partly owned series and on Seerr sections of library search and person pages.
+When the MediaFlick Companion provides Seerr, the sidebar gains Discover and Requests; both pages then need the Jellyfin account mapped to a Seerr user, and otherwise show `Your Seerr account is not mapped` (or `Seerr is unavailable`) with `Back to Home` (`SeerrGate`). Discover browses and searches Seerr's TMDB catalogue, marks titles the library already owns, and requests the rest; Requests lists the user's own requests with their status and cancels one while it awaits approval. Request buttons also appear on partly owned series and on Seerr sections of library search and person pages.
 
 ## Sub-features
 
 - `discover-rows`: tabs `Trending`, `Popular movies`, `Popular series`, `Upcoming movies`, `Upcoming series`, loading more titles as you scroll.
-- `discover-refine`: Trending's Format and Window, the Popular rows' genre strip, Sort, `Filter by release decade` and Minimum score, and a Library filter on every view.
+- `discover-refine`: Trending's Format and Window, the Popular rows' genre strip, Sort, `Filter by release decade` and Minimum score, and a Library filter on every view. These depend on the Companion's `seerr-discovery-v2`…`v4` capabilities: without them Discover has three tabs and no refine controls, and the decade filter needs `v4` (`ui/src/routes/Discover.tsx`).
 - `discover-search`: a Seerr search with its own results.
 - `discover-detail`: a title page with status badges, `Open in library`, `Request options`, Cast, Crew, Seasons and release schedule.
 - `request-dialog`: seasons (with partial requests), `Request in 4K` (with permission), Download quality (with advanced requests), quota, `Cancel` and `Request`.
@@ -26,7 +26,7 @@ Preconditions: your own server with the Companion and Seerr, `just verify discov
 - **Owned title.** Searching `28 Days Later` shows `{ role: "heading", name: "Results for “28 Days Later”" }` and a card whose text includes `In your library`. Its title page has `Open in library`, and `Back to discovery` returns. *Proven by `discover-requests` (`03-search-owned`, `04-discover-owned-detail`).*
 - **Request.** A card's quick `Request <title>` button is in the DOM but transparent and unclickable until the card is hovered: `ctx.hover` the card's link (`a[href^="/discover/movie/<tmdbId>"]`), then press the button. `{ role: "dialog", name: "Request <title> (<year>)" }` opens; while it is open the page is hidden, so `{ role: "button", name: "Request" }` is the dialog's. Success shows the toast `Requested` (`Approved` with auto-approve), and `/api/seerr/requests?filter=all` holds the request with `status: "pending"`. *Proven by `discover-requests` (request 457, `05-request-dialog`).*
 - **Cancel.** `Requests` → `Awaiting approval` lists it in a `li`; its `Cancel` (one per pending request, so pick the one inside that `li`) shows `Request cancelled`, and the request leaves `/api/seerr/requests`. The drive registers `ctx.cancelSeerrRequestAfterRun(id)` first, so a failure in between still cancels it after the app exits. *Proven by `discover-requests` (`06-requests-pending`, `07-requests-after-cancel`).*
-- **Read-back endpoints.** `/api/seerr/requests?filter=all|pending|approved|processing|available|failed&take=40`, `/api/seerr/media/movie/<tmdbId>`, `/api/seerr/discover/<row>?page=N` (rows `trending`, `movies`, `series`, …), `/api/seerr/search?q=&page=`.
+- **Read-back endpoints.** `/api/seerr/requests?filter=all|pending|approved|processing|available|failed&take=40`, `/api/seerr/media/movie/<tmdbId>`, `/api/seerr/discover/<row>?page=N` (rows `trending`, `movies`, `tv`, `upcoming-movies`, `upcoming-tv`; `Popular series` writes `row=tv`, and an unknown row answers 404), `/api/seerr/search?q=&page=`.
 
 ## Gotchas
 

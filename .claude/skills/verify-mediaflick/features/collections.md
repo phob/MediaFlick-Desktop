@@ -5,7 +5,7 @@ Collections group titles in one of two modes. In MediaFlick mode the sidebar sho
 ## Sub-features
 
 - `mode-sidebar`: the sidebar entries follow the effective mode; `/collections` and the other mode's routes redirect to the active one.
-- `franchises`: the franchise grid (`Finding movie franchises…` while the first run works), and a franchise page with `Owned` and `Missing` sections, `Show all N` and `Choose edition`.
+- `franchises`: the franchise grid (`Finding movie franchises...`, with three ASCII dots, while the first run works), and a franchise page with `Owned` and `Missing` sections, `Show all N` and `Choose edition`.
 - `my-collections`: the cards with an `Actions for <title>` menu (`Edit`, `Check for updates`), the empty state with `Choose templates`, and a collection's page.
 - `jellyfin-collections`: the BoxSet grid and a BoxSet's `Items`.
 - `collections-settings`: Settings → `Collections` with `Collection mode`, `Include unreleased titles`, reorder and delete with `Undo`, the template catalog and the `Add collection` / `Edit collection` dialog (preview, custom poster, `Available on Home`).
@@ -29,7 +29,7 @@ Preconditions: your own server with the Companion (`collection-experience-v1` an
 ## Gotchas
 
 - `Collections` in Settings navigation and the sidebar's collection links are different elements; inside Settings, `Collections` is the only link with that name, but `Home` exists twice (sidebar and shelf).
-- The first franchise visit can sit on `Finding movie franchises…` for several seconds while the scheduler runs; poll the API, not the text.
+- The first franchise visit can sit on `Finding movie franchises...` for several seconds while the scheduler runs; poll the API, not the text.
 - Once, creating a collection stayed on `Saving…` for over 60 s with nothing in `app.log`, then saved; the next runs took under 3 s. The drive allows 240 s and logs the time it took.
 - Preview, Save and `Check for updates` read TMDB or MDBList through the Companion and use the server's provider quota; they never write to Jellyfin.
 - Never press `Request <title>` on a Missing card: it opens a Seerr request.
