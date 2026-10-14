@@ -52,9 +52,6 @@ async function search(ctx, term) {
   await ctx.park()
 }
 
-// A word from a season or episode name that also finds a few movies or series
-// (none counts for seasons, whose names rarely share a word with a title), so
-// the search has a nested match to drop.
 async function sharedTerm(ctx, kind) {
   const names = (await items(ctx, { kind, limit: 500 })).items.map((item) => item.name.toLowerCase())
   const words = [...new Set(names.flatMap((name) => name.match(/\p{L}{4,}/gu) ?? []))].sort()
@@ -187,8 +184,6 @@ export default async function topLevelTitles(ctx) {
   }, "the first sync to finish", 300000)
 
   const report = { mode: ctx.account ? `account ${ctx.account.server}` : "demo", searches: {}, reads: {}, checks: [] }
-  // Every check is recorded and the run fails only at the end, so a failing
-  // run still exercises and reports every view.
   const expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)
