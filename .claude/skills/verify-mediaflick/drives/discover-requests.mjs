@@ -72,6 +72,7 @@ export default async function discoverRequests(ctx) {
   await ctx.find({ role: "link", name: "Open in library" }, { timeout: 30000 })
   await ctx.screenshot("04-discover-owned-detail")
   await ctx.press({ role: "link", name: "Back to discovery" })
+  await ctx.until(async () => /^\/discover(\?|$)/.test(await ctx.pathname()), "Back to discovery to return to /discover")
 
   // Request a movie from its Discover card.
   const pick = await pickUnrequested(ctx)

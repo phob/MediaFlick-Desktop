@@ -25,10 +25,10 @@ Preconditions:
 - A failing server: `const proxy = await ctx.proxy({ upstream: "https://demo.jellyfin.org/stable", fail })` with `fail(url, method)` selecting the bootstrap's catalog pages, `url.pathname === "/Items"` with `SortBy=DateCreated` and `SortOrder=Ascending` (`fetch_items_page` in `src/jellyfin/api/items.rs`). Sign in to `proxy.url`. `proxy.heal()` stops failing; `proxy.stats` counts forwarded and dropped requests.
 
 - **Retry screen.** `ctx.find({ role: "heading", name: "Can't reach your Jellyfin server" })`, then `{ role: "button", name: "Retry now" }` and `{ role: "button", name: "Sign out" }`. `ctx.api("/api/status")` reports `bootstrap: { state: "retrying", reason: "unreachable", retryAt }`. The next-attempt line is plain text; read it from `document.body.innerText`. *Proven by `bootstrap-retry`.*
-- **Retry now, server still down.** Press `Retry now`: the text becomes `Trying again now…` and the button is disabled, then the countdown returns once the attempt fails. *Proven by `bootstrap-retry`.*
+- **Retry now, server still down.** With the automatic retry at least 2 s away (`bootstrap.retryAt`), press `Retry now`: the proxy drops the pressed attempt's request before `retryAt`, the text becomes `Trying again now…` and the button is disabled, then the countdown returns once the attempt fails. *Proven by `bootstrap-retry`.*
 - **Retry now, server back.** `proxy.heal()`, press `Retry now`, wait for `{ role: "link", name: "Settings" }` and pathname `/`. `bootstrap.state` is `ready`. *Proven by `bootstrap-retry`.*
 - **Sign out.** Press `Sign out`; `{ role: "textbox", name: "Server" }` returns and `/api/status` reports `authenticated: false`. *Proven by `bootstrap-retry`.*
-- **Relaunch.** `await ctx.relaunch()` while the proxy still fails, then the retry screen handles above and `await ctx.until(() => ctx.windowShown(), …)`. *Proven by `bootstrap-retry` on Linux.*
+- **Relaunch.** `await ctx.relaunch()` while the proxy still fails, then the retry screen handles above and `await ctx.until(() => ctx.windowShown(), …)`. *Proven by `bootstrap-retry` on Linux and Windows.*
 - **Proof.** Snapshot and screenshot the retry screen on first launch and after relaunch, and Home after `Retry now`.
 
 ## Gotchas
@@ -40,6 +40,7 @@ Preconditions:
 - The `fail` predicate also matches the identity sweep (`/Items` with `Limit=1000`, `EnableImages=false`), which only runs after a catalog exists. Add `Limit=200` to the match when a drive must fail the bootstrap alone.
 - On a real library the first full sync is what later steps wait for: `bootstrap.state` turns `ready` with page one, but counts, Resume buttons and owned-title matching (Discover's `In your library`) need the whole catalog. Wait for `bootstrap.state === "ready" && syncProgress.active === false`. On Jellyfin 12.2 with 5,497 items (28 pages) that took 20–23 s from launch (`library bootstrap complete` in `app.log`). The first catalog cycle skips the identity sweep, so a proxy `fail` aimed at it only matches a later cycle.
 - Settings (`/settings/*`) bypasses the cover and the retry screen. A 401 or 403 does not show the retry screen: the session expires and the sign-in form returns.
-- A new sign-in starts in `loading`: a failure belongs to the session it happened in.
+- A new sign-in starts in `loading`: a failure belongs to the session it happened in (*proven by `bootstrap-retry`*). The retry screen never shows raw transport text (also checked there).
+- A failing `Retry now` request itself shows its error as a toast; `Sign out` is disabled while its request runs; a 429 reports reason `server`, not `unreachable` (source-only).
 - A launch with the window hidden (initial show state `HIDDEN`) stays hidden on the retry screen; `reveal_main_window` skips it (`src/shell/cef/mod.rs`; not driven).
 - The proxy forwards every request it does not drop, so the demo server's read-only rules apply through it too.
