@@ -436,7 +436,7 @@ impl ControllerState {
             "loading selected external Jellyfin subtitle from its remote URL"
         );
         match self.send_mpv_command_with_timeout(command, IPC_SUBTITLE_COMMAND_TIMEOUT) {
-            Ok(()) => {
+            Ok(_) => {
                 tracing::debug!(target: "mpv.ipc", "loaded selected external Jellyfin subtitle")
             }
             Err(IpcCommandFailure::Rejected(error)) => {
@@ -619,7 +619,7 @@ impl ControllerState {
             }
             Some("chapter-list") => {
                 if let Some(chapters) = data.and_then(Value::as_array) {
-                    self.handle_chapter_list_event(chapters.clone());
+                    self.handle_chapter_list(chapters.clone());
                 }
             }
             Some("playback-abort") if data.and_then(Value::as_bool).unwrap_or(false) => {
@@ -926,13 +926,22 @@ impl ControllerState {
 
     pub(super) fn send_mpv_command(&self, command: Value) -> Result<(), IpcCommandFailure> {
         self.send_mpv_command_with_timeout(command, IPC_COMMAND_TIMEOUT)
+            .map(drop)
+    }
+
+    pub(super) fn get_mpv_property(&self, name: &str) -> Result<Value, IpcCommandFailure> {
+        let command = json!({
+            "command": ["get_property", name],
+            "request_id": next_request_id(),
+        });
+        self.send_mpv_command_with_timeout(command, IPC_COMMAND_TIMEOUT)
     }
 
     fn send_mpv_command_with_timeout(
         &self,
         command: Value,
         timeout: Duration,
-    ) -> Result<(), IpcCommandFailure> {
+    ) -> Result<Value, IpcCommandFailure> {
         let Some(worker) = &self.ipc.worker else {
             tracing::warn!(
                 target: "mpv.ipc",
@@ -956,7 +965,7 @@ impl ControllerState {
         );
         let result = worker.send_with_timeout(command, timeout);
         match &result {
-            Ok(()) => tracing::debug!(target: "mpv.ipc", "sent mpv command"),
+            Ok(_) => tracing::debug!(target: "mpv.ipc", "sent mpv command"),
             Err(error) => tracing::warn!(target: "mpv.ipc", "mpv command send failed: {error}"),
         }
         result

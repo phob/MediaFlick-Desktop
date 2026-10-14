@@ -246,6 +246,7 @@ impl ControllerState {
         if self.startup_seek.is_none() {
             self.load_pending_external_subtitle();
         }
+        self.read_chapter_list();
         self.publish_snapshot();
     }
 
