@@ -95,7 +95,7 @@ pub(super) struct IpcWorker {
     writer_alive: Arc<AtomicBool>,
 }
 
-type IpcCommand = (Value, Duration, Sender<Result<(), IpcCommandFailure>>);
+type IpcCommand = (Value, Duration, Sender<Result<Value, IpcCommandFailure>>);
 
 #[derive(Debug)]
 pub(super) enum IpcCommandFailure {
@@ -184,11 +184,13 @@ impl IpcWorker {
         self.writer_alive.load(Ordering::SeqCst)
     }
 
+    /// Sends one command and returns its reply's `data` (`null` when the
+    /// reply has none, and for an async command, which is not awaited).
     pub(super) fn send_with_timeout(
         &self,
         command: Value,
         timeout: Duration,
-    ) -> Result<(), IpcCommandFailure> {
+    ) -> Result<Value, IpcCommandFailure> {
         if !self.writer_alive.load(Ordering::SeqCst) {
             return Err(IpcCommandFailure::Transport(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -252,13 +254,15 @@ impl IpcCommandWriter {
                 // while this one is still executing. Acknowledge the successful
                 // write now; a later validated command drains and logs the
                 // eventual completion reply by request id.
-                write_command(self.stream.get_mut(), &command).map_err(IpcCommandFailure::Transport)
+                write_command(self.stream.get_mut(), &command)
+                    .map(|()| Value::Null)
+                    .map_err(IpcCommandFailure::Transport)
             } else {
                 self.write_command_and_wait_for_reply(&command, timeout)
             };
             match result {
-                Ok(()) => {
-                    let _ = ack.send(Ok(()));
+                Ok(data) => {
+                    let _ = ack.send(Ok(data));
                 }
                 Err(IpcCommandFailure::Rejected(error)) => {
                     let _ = ack.send(Err(IpcCommandFailure::Rejected(error)));
@@ -276,7 +280,7 @@ impl IpcCommandWriter {
         &mut self,
         command: &Value,
         timeout: Duration,
-    ) -> Result<(), IpcCommandFailure> {
+    ) -> Result<Value, IpcCommandFailure> {
         let request_id = command
             .get("request_id")
             .and_then(Value::as_i64)
@@ -336,9 +340,9 @@ impl IpcCommandWriter {
     }
 }
 
-fn command_reply_result(reply: &Value, request_id: i64) -> io::Result<()> {
+fn command_reply_result(reply: &Value, request_id: i64) -> io::Result<Value> {
     match reply.get("error").and_then(Value::as_str) {
-        Some("success") => Ok(()),
+        Some("success") => Ok(reply.get("data").cloned().unwrap_or(Value::Null)),
         Some(error) => Err(io::Error::other(format!(
             "mpv rejected request {request_id}: {error}"
         ))),
