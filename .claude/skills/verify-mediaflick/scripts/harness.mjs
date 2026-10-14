@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeF
 import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
-import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
+import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, removeFavorite, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
 import { startProxy } from "./proxy.mjs"
 
@@ -510,6 +510,21 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
+  // Takes a favorite the drive added off again once the app has exited. Only
+  // register items that were not favorites before the drive touched them.
+  function unfavoriteAfterRun(itemId) {
+    if (!cachedAccount) throw new Error("unfavoriteAfterRun needs --account SERVER")
+    afterRunTasks.push(async () => {
+      const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${itemId}?userId=${cachedAccount.userId}`)
+      if (!data.IsFavorite) {
+        log(`after run: ${itemId} is not a favorite`)
+        return
+      }
+      await removeFavorite(cachedAccount, itemId)
+      log(`after run: removed ${itemId} from favorites`)
+    })
+  }
+
   function cancelSeerrRequestAfterRun(requestId) {
     if (!cachedAccount) throw new Error("cancelSeerrRequestAfterRun needs --account SERVER")
     afterRunTasks.push(async () => {
@@ -609,6 +624,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     jellyfin,
     appSession,
     restoreItemAfterRun,
+    unfavoriteAfterRun,
     cancelSeerrRequestAfterRun,
     revokeAppSessionAfterRun,
     runAfterRun,
