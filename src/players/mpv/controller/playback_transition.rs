@@ -76,7 +76,7 @@ impl ControllerState {
             mute: self.last_state.mute,
             tracks: self.playback_tracks.clone(),
             chapters: self.playback_chapters(),
-            skip_segments: self.skip_segments.clone(),
+            skip_segments: self.shown_skip_segments(),
             diagnostics: self.playback_diagnostics,
             stop_reason,
         };
