@@ -39,14 +39,14 @@ Preconditions:
 - **Favorite.** `ctx.press({ role: "button", name: "Add to favorites" })` flips the name and `aria-pressed` (`POST /api/item/<id>/favorite`). Not verified; drive it only with `--account`.
 - **Ratings.** With rating sources picked in Appearance, the hero holds `dl[aria-label="Ratings for <title>"]` (a `dl` has no stable role, so use css), one entry per source named `<Source> rating <value>` (`IMDb rating 7.3 out of 10`). *Proven by `companion` (`06-detail-ratings`).*
 - **Collection and requests.** `{ role: "link", name: "Part of <collection>" }` needs MediaFlick collection mode and a TMDB id on the movie, and opens `/collections/franchises/<id>`. `Request season <n>` / `Request seasons` needs Seerr linked, a TMDB id, TV request permission and a Seerr season with status `unknown`; it opens the request dialog. Both source-only.
-- **Person page with Seerr.** A cast or crew link's page adds `h2 Discover` (Seerr person credits not in the library, with hover-revealed `Request <title>` buttons) and the region `More server titles with <name>`; without `seerr-person-discovery` it says `Seerr person discovery is unavailable on this server.` Source-only.
+- **Person page Discover.** Every cast or crew person page has the region `Discover` (`h2 Discover`). With a linked Seerr it lists Seerr person credits not in the library, with hover-revealed `Request <title>` buttons, and the region `More server titles with <name>` appears when the server has extra titles; without `seerr-person-discovery` it says `Seerr person discovery is unavailable on this server.` (source-only). Without Seerr through the Companion it reads `Seerr is not connected. Your server results above are still complete.` with a `Back to Home` link, and a failed Seerr status shows `Seerr is unavailable: <its error>`. *Proven by `person-discover` on the demo server and with `--account` on a server with the Companion and Seerr (Seerr credits with `Request <title>` buttons).*
 - **Proof.** `03-movie-detail` and `04-series-detail` from `browse`; `01-movie`, `02-more-info`, `06-episode` and `07-season-breadcrumb` from `item-detail`.
 
 ## Gotchas
 
 - Other demo users leave progress, so the primary button is `Play` or `Resume` depending on the day; accept both.
 - Press `Play`, `Resume` or `From start` only with `--account` on your own server; see [Playback](./playback.md). Never on the demo server.
-- The watched and favorite buttons are not disabled while their request runs; a double press sends two opposite writes. Press once and wait for the name to flip. Watched on a series cascades to every episode.
+- The hero's watched and favorite buttons are not disabled while their request runs (the episode-card icon buttons are); a double press sends two opposite writes. Press once and wait for the name to flip. Watched on a series cascades to every episode.
 - Never toggle favorites or watched on the shared demo account, including the episode cards' watched buttons (and their favorites buttons when card previews are off); the change is visible to everyone.
 - Never change the Media panel's `Media source`, `Audio track` or `Subtitle track` selects: each change saves a playback preference.
 - Opening `More info` is safe; its items open the user's default browser on the visible desktop. Never press them.
@@ -54,4 +54,4 @@ Preconditions:
 - The Viewing setting that hides episode spoilers (off by default) renames unplayed episodes `Unwatched episode`, hides Cast, Crew and the overview, and adds `Reveal episode spoilers`. Fresh profiles are unaffected.
 - The quality picker is absent on series pages. A season link never shows a season page; it redirects to the series with `?season=`.
 - The breadcrumb `nav` has no accessible name; target its links. The Jellyfin community-rating label sits on a plain `span`, which Chrome may leave unnamed.
-- A `Letterboxd` section (`h2 Letterboxd`) appears on movies only when the account has linked Letterboxd profiles (see [Account settings](./account-settings.md)).
+- A `Letterboxd` section (`h2 Letterboxd`) appears on a movie with a TMDB id only when a linked Letterboxd profile reviewed it, a profile is unavailable, or the fetch failed (`LetterboxdReviews.tsx`; see [Account settings](./account-settings.md)).

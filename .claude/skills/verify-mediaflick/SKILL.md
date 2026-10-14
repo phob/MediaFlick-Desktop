@@ -71,7 +71,7 @@ Safeguards in both modes:
 
 Use a dedicated non-admin Jellyfin user with access to a small library. Drives that write (favorites, watched state, synced settings) change that user's real data.
 
-Proven on Linux. Against the demo server, with a test-only script approving the code as `demo`: login and cache, `home-library` on the seeded session, a Sign out blocked with the token still valid afterwards, a token planted in evidence redacted and the run failed, and a revoked token rejected before launch. Against a self-hosted Jellyfin 12.2.0 with Companion 0.2.2 (2026-10-12): a session approved by the user and cached, then `account-session`, `playback` (Built-in and External mpv), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. Not yet run on Windows.
+Proven on Linux. Against the demo server, with a test-only script approving the code as `demo`: login and cache, `home-library` on the seeded session, a Sign out blocked with the token still valid afterwards, a token planted in evidence redacted and the run failed, and a revoked token rejected before launch. Against a self-hosted Jellyfin 12.2.0 with Companion 0.2.2 (2026-10-12): a session approved by the user and cached, then `account-session`, `playback` (Built-in and External mpv), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`. On Windows 11 against the same server (2026-10-13): `login`, then `account-session`, `playback` (Built-in, and External mpv with an SVP mpv bundle at `C:\mpv\mpv.exe`), `companion`, `discover-requests`, `collections` and `account-settings`, each passing with `token scan ok`.
 
 
 ## Doctor
@@ -146,7 +146,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `appSession()` | `--signed-out` only: the token the app holds now, as `{ status(), revoke() }`: the HTTP status of `GET /Users/Me` with it, and a sign-out from outside the app. |
 | `restoreItemAfterRun(id)`, `cancelSeerrRequestAfterRun(id)` | `--account` only: after-run cleanup once the app has exited (see [Your own server](#your-own-server)). |
 | `player()` | `GET /api/player/state`: `active`, `itemId`, `playMethod`, `positionMs`, `durationMs`, `paused`, `tracks`, `skipSegments`, `diagnostics`. |
-| `mpv(property)` | Reads one mpv property (`time-pos`, `pause`, `current-vo`, `hwdec-current`) over mpv's IPC socket, found through `app.log`'s `mpv IPC connected ipc_path=`. Reads only: the app stays mpv's single command writer. |
+| `mpv(property)` | Reads one mpv property (`time-pos`, `pause`, `current-vo`, `hwdec-current`) over mpv's IPC socket, found through `app.log`'s `mpv IPC connected ipc_path=`, on one connection kept for the drive. On Windows, when a script has moved mpv's IPC server (SVP's `mpvSockets.lua` re-points it to `<TEMP>\mpvSockets\<pid>`), it follows the move and logs `mpv IPC moved by a script`. Reads only: the app stays mpv's single command writer. |
 | `playstates()` | The playstate reports in `app.log`: `{ queued: [{ at, endpoint, itemId, positionS }], sent: [{ at, endpoint, itemId, status }] }`. Needs `--log-level "debug,jellyfin.playstate=trace"`. |
 | `revealPlayer()` | Moves the pointer near the bottom edge so the Built-in player's hidden, `inert` bar comes back for ARIA lookups. |
 | `displayCapture(name, { seconds })` | Linux only: the whole X display with ffmpeg `x11grab` as `<name>.png`, or an MP4 clip with `seconds`. It contains the mpv video, which CDP screenshots (the page alone) do not. |
@@ -154,7 +154,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
 | `proxy({ upstream, fail })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included) and drops the connection of each request `fail(url, method)` selects. Returns `{ url, stats, heal() }`; sign in to `url`. Closed after the drive. |
 | `relaunch()` | Close the app through its own close path and start it again on the same profile, as a user quitting and reopening. Writes `doctor-relaunch.json`. |
-| `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows (not yet run there). |
+| `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows. |
 | `readConfig(name)`, `configStat(name)`, `configFile(name)` | Files in the disposable config dir (`settings.json`, `accounts.json`, …). |
 | `appLog()` | The app's Rust log so far, as text (`app.log` in the evidence). |
 | `wmClose({ watchMs })` | Linux only. Sends the app's top-level window the `WM_PROTOCOLS`/`WM_DELETE_WINDOW` message a window manager sends for the close button, then listens `watchMs` (default 2000) for the window's `WM_CHANGE_STATE` IconicState request. Returns `{ window, iconifyRequested }`. Under Xvfb no window manager acts on that request, so `iconifyRequested` is the proof of a minimize. |
@@ -166,7 +166,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All twenty-four are proven on Linux; the first three were also proven on Windows before `press` gained its stillness and toast waits, so re-run them there. `close-minimize` and `close-guard` use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
+Shipped drives. All but `punctuation-search` and `person-discover` are proven on Linux; those two are proven on Windows only so far. On Windows 11 (2026-10-13) all but `close-minimize` and `close-guard` pass, `playback` on both backends; those two use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `login`: only through `just verify-login SERVER`. Quick Connect sign-in, approved by the user, then `saveAccount()`.
@@ -186,6 +186,8 @@ Shipped drives. All twenty-four are proven on Linux; the first three were also p
 - `player-shelf`: the shortcut conflict alert, the Player shelf's `Player settings saved` toast, and `Restore defaults` + Save on Player, which keeps `player_backend`, `comfort` and `mark_watched_next` in `settings.json`.
 - `library-parity`: sort direction, the per-kind sort lists, a seeded Random order and Shuffle again, the In progress, Parental rating and Series status filters, the A–Z rail in both directions, and series cards' unwatched count, each compared with the demo server's own API. Read-only.
 - `home-settings`: Home's `No titles available` and `No shelves enabled` states through the local Home settings, `Configure Home`, then `Restore defaults` + Save. Read-only against the demo server.
+- `punctuation-search`: a search of punctuation alone (`!!`) shows `Nothing to show` and `/api/items` answers 200 with no items, while `night!!` still finds titles. Read-only against the demo server.
+- `person-discover` (demo server, or `--account SERVER`): a person page's Discover section, reached through a movie's Crew, says Seerr is not connected without the Companion and lists Seerr's person credits with it. Read-only.
 - `account-session` (`--account SERVER --signed-out`): Quick Connect sign-in approved by the harness, Sign out revoking the token on the server, and a token revoked from outside expiring the session.
 - `playback` (`--log-level "debug,jellyfin.playstate=trace,playback=trace"`; External mpv with `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`): Play from the start, seeking past the resume minimum, pause, Stop from the bar, the resume point on the server, Resume with the startup seek rules, stop again, then watched and unwatched. Writes the test user's playstate and leaves the title as it found it.
 - `companion`: the Companion status page, Releases (Agenda, Month, toggles, month navigation), Home's Releases shelf, and MDBList ratings after picking sources in Appearance (restored).
@@ -193,16 +195,16 @@ Shipped drives. All twenty-four are proven on Linux; the first three were also p
 - `collections`: Movie Franchises and a franchise page, a My Collections entry from a TMDB template, Jellyfin mode with every BoxSet and the route redirect, then defaults again.
 - `account-settings`: Viewing Discard and Save with a revisit, the leave guard between account shelves, Appearance's accent applied live, a Letterboxd profile added, verified and removed.
 
-Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`).
+Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`; on Windows seed a copy with the `mpv.exe` path).
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings', 'punctuation-search', 'person-discover') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings punctuation-search person-discover; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
@@ -258,7 +260,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Platform status
 
-- **Windows: proven.** All three shipped drives pass on Windows 11 with the inactive desktop, about 15–25 s each including the incremental build. CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. Not yet re-run after `press` gained its stillness and toast waits, and the fourteen newer drives have not run there.
+- **Windows: proven.** Every shipped drive except the two Linux-only close drives passes on Windows 11 with the inactive desktop (2026-10-13), about 10–30 s each including the incremental build (`collections` about 2 min, most of it the first sync and franchise matching). CEF renders there, `requestAnimationFrame` runs, `document.visibilityState` is `visible`, and `Page.captureScreenshot` returns real frames. `window.close()` exits cleanly, `guard.json` shows the real profile untouched, and no process or profile survives. The Built-in player draws its bar over the video as on Linux (`integratedLibmpvOverlay`), starts fullscreen on the private desktop, and `ctx.mpv` reads it over its named pipe (`\\.\pipe\mpvpipe` with the SVP libmpv profile these runs used). External mpv plays in its own window on the private desktop, windowed at 1280 px, so `Stop` sits in the bar's overflow menu there.
 - **Linux: proven.** All twenty-four shipped drives pass on Ubuntu 26.04 under Xvfb with the private session bus, about 2–40 s each after the build (the real-server drives 20–120 s, most of it the first sync and playback). CEF renders, `Page.captureScreenshot` returns real frames, `window.close()` exits cleanly (`exit: coordinated`), `guard.json` shows the real profile untouched, and no process, profile or `mediaflick-xvfb.*` dir survives. The app's Linux window is composited through libmpv (`libmpv.so.2`, the default Built-in player): `app.log` shows `mpv IPC connected` and `received first Linux CEF frame` on a healthy start.
 
   Not yet exercised on Linux: the hard timeout, and a run without `dbus-run-session`.
@@ -266,7 +268,7 @@ It stops only processes whose command line names a dead run's profile, then remo
 
 ## Gotchas
 
-- **Playback is real.** Play only in `playback`-style drives with `--account` on your own server: it writes the test user's playstate, and on Windows it is audible, because the private desktop hides windows and input, not sound. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (`Failed to connect to PipeWire`). Never press Play on the demo server.
+- **Playback is real.** Play only in `playback`-style drives with `--account` on your own server: it writes the test user's playstate, and on Windows it is audible, because the private desktop hides windows and input, not sound; `playback` mutes with the player's `m` key about 2 s after the start. On Linux the private `XDG_RUNTIME_DIR` cuts off the user's audio server (`Failed to connect to PipeWire`). Never press Play on the demo server.
 - **External mpv fullscreen freezes CDP mouse input.** mpv's fullscreen window covers the app window; the page turns `hidden`, draws no frames, and `Input.dispatchMouseEvent` never completes, so `press` and `hover` hang until the drive times out (keys still work). Seed `default_fullscreen: "windowed"` for External mpv runs, as `seeds/external-mpv` does.
 - **Linux stderr noise is expected.** The private session bus activates `xdg-desktop-portal`, which logs `Choosing gtk.portal … as a last-resort fallback` and `Failed to connect to PipeWire`; `A connection to the bus can't be made` follows teardown. None of it affects the run. `steps.log` and `result.json` are the result.
 - **Linux sockets need a short `TMPDIR`.** CEF dies with `SIGTRAP` (`Socket path too long` in `cef.log`) when its singleton socket path passes 107 bytes, and the libmpv shell falls back after 20 s with `path must be shorter than SUN_LEN` in `app.log` when mpv's IPC socket does. `session.mjs` refuses to launch when the wrapper's runtime dir is too long for them; run from a shorter `TMPDIR`.

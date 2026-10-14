@@ -1,4 +1,4 @@
-import type { ItemDetail, ItemSummary, PlayerState, Status } from "../../src/lib/api"
+import type { CompanionStatus, ItemDetail, ItemSummary, PlayerState, Status } from "../../src/lib/api"
 import { isJsonObject, type JsonObject, type JsonValue } from "../../src/lib/json"
 
 export function itemSummary(
@@ -73,6 +73,23 @@ export function appStatus(overrides: Partial<Status> = {}): Status {
       supportedApi: { min: 1, max: 1 },
     },
     ...overrides,
+  }
+}
+
+/** A compatible Companion that provides Seerr with person discovery. */
+export function companionWithSeerr(): CompanionStatus {
+  return {
+    available: true,
+    compatible: true,
+    checked: true,
+    info: {
+      pluginVersion: "0.2.2",
+      apiVersion: 1,
+      capabilities: ["seerr", "seerr-person-discovery"],
+      services: { sonarr: false, radarr: false, seerr: true, mdblist: false, tmdb: false },
+    },
+    error: null,
+    supportedApi: { min: 1, max: 1 },
   }
 }
 
