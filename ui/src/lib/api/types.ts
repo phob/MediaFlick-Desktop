@@ -438,7 +438,7 @@ export interface ClientSettings {
   serverUrl: string | null
 }
 
-type SegmentSkipMode = "disabled" | "prompt" | "always"
+type SegmentSkipMode = "hidden" | "disabled" | "prompt" | "always"
 
 export interface AppearanceSettings {
   accent: "signal" | "cobalt" | "amber" | "violet"
