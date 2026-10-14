@@ -26,6 +26,8 @@ export default async function itemDetail(ctx) {
   await ctx.find({ role: "heading", name: MOVIE })
   await ctx.find({ role: "combobox", name: "Streaming quality" })
   ctx.check((await ctx.exists({ role: "button", name: "Mark watched" })) || (await ctx.exists({ role: "button", name: "Mark unwatched" })), "the watched toggle")
+  await ctx.until(async () => (await ctx.exists({ role: "button", name: "Play" })) || (await ctx.exists({ role: "button", name: "Resume" })), "the Play or Resume button")
+  await ctx.find({ role: "heading", name: "Cast" })
   const movie = await ctx.snapshot("01-movie")
   ctx.step(`headings: ${JSON.stringify([...movie.matchAll(/heading '([^']+)'/g)].map((match) => match[1]))}`)
   ctx.step(`cast links: ${[...movie.matchAll(/link 'Find titles with /g)].length}`)
@@ -47,6 +49,14 @@ export default async function itemDetail(ctx) {
     const tree = await ctx.snapshot("03-series")
     return /link '\d+\./.test(tree) ? tree : null
   }, "the episode list")
+  // The Next Up button loads after the episode list; when it exists, its
+  // episode's title link carries " (Next up)".
+  const nextUp = await ctx.until(async () => (await ctx.snapshot("03-series")).match(/button '(?:Play|Resume) (S\d+E\d+)'/)?.[1], "the series Next Up button", 5000).catch(() => null)
+  if (nextUp) {
+    ctx.check(/link '\d+\.[^']* \(Next up\)'/.test(await ctx.snapshot("03-series")), `the ${nextUp} episode link is marked (Next up)`)
+  } else {
+    ctx.step("no Next Up episode for the demo user; (Next up) not checked")
+  }
   const seasons = [...series.matchAll(/button '(Season \d+|Specials)'(.*)$/gm)].map((match) => ({ name: match[1], pressed: /pressed/.test(match[2]) }))
   ctx.step(`seasons: ${JSON.stringify(seasons)}`)
   const other = seasons.find((season) => !season.pressed)

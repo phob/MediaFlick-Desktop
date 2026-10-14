@@ -28,6 +28,7 @@ export default async function clientSettings(ctx) {
     await ctx.fill({ role: "spinbutton", name: "Subtitle size (%)" }, "300")
     const alert = await ctx.until(() => ctx.app.evaluate(`[...document.querySelectorAll("[role=alert]")].map((e) => e.textContent.trim()).join(" | ") || null`), "a range alert")
     ctx.step(`alert: ${alert}`)
+    ctx.check(alert.includes("Enter a whole number from 50 to 200."), "the range alert names the allowed range")
     ctx.check((await ctx.state({ role: "button", name: "Save" })).disabled === true, "Save is disabled while a value is out of range")
     await ctx.press({ role: "button", name: "Discard" })
   }
@@ -40,7 +41,11 @@ export default async function clientSettings(ctx) {
   await ctx.find({ role: "button", name: "Mark watched key" })
   ctx.check(!(await ctx.exists({ role: "button", name: "Pause key" })), "player shortcut recorders are built-in only")
   ctx.check((await ctx.exists({ role: "button", name: "Install mpv" })) === capabilities.mpvInstaller, "Install mpv follows capabilities.mpvInstaller")
-  ctx.step(`status: ${await saveBarStatus(ctx)}`)
+  const backendStatus = await saveBarStatus(ctx)
+  ctx.step(`status: ${backendStatus}`)
+  if (client.player.playerBackend === "libmpv") {
+    ctx.check(backendStatus === "Restart MediaFlick to switch player backends.", "leaving the Built-in player asks for a restart")
+  }
   await ctx.snapshot("02-external-mpv")
   await ctx.screenshot("02-external-mpv")
   await ctx.press({ role: "button", name: "Discard" })
@@ -73,6 +78,7 @@ export default async function clientSettings(ctx) {
   await ctx.until(async () => (await saveBarStatus(ctx)) === "Log-level changes apply after restarting MediaFlick.", "the log-level restart notice")
   // The "Settings saved" toast then covers Save for a few seconds; press waits.
   await ctx.press({ role: "button", name: "Save" })
+  await ctx.until(() => ctx.app.evaluate(`[...document.querySelectorAll("[data-sonner-toast]")].some((t) => t.textContent.trim().startsWith("Settings saved"))`), "the Settings saved toast")
   await ctx.until(() => ctx.readConfig("settings.json")?.show_scrollbars === true && ctx.readConfig("settings.json")?.log_level === "info", "settings.json to record both values")
   await ctx.until(async () => !(await scrollbarStyle(ctx)), "the scrollbar style to go without a restart")
   await ctx.screenshot("04-saved")

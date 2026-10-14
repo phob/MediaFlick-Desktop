@@ -35,6 +35,7 @@ export default async function collections(ctx) {
   const settings = (await ctx.api("/api/collections/settings")).body
   evidence.settings = { effectiveMode: settings.effectiveMode, modeSelection: settings.modeSelection, readiness: settings.readiness }
   ctx.check(settings.effectiveMode === "mediaFlick" && settings.readiness?.tmdb === true, "MediaFlick mode by default with TMDB ready through the Companion")
+  ctx.check(settings.modeSelection === null && settings.readiness?.mdblist === true, "no mode saved yet, and MDBList ready through the Companion")
   const names = await sidebarNames(ctx)
   ctx.check(names.includes("Movie Franchises") && names.includes("My Collections") && !names.includes("Jellyfin Collections"), "the sidebar shows Movie Franchises and My Collections")
 
@@ -97,9 +98,9 @@ export default async function collections(ctx) {
   const boxsets = (await ctx.jellyfin(`/Items?userId=${ctx.account.userId}&recursive=true&includeItemTypes=BoxSet&limit=0`)).TotalRecordCount
   const shown = await ctx.until(async () => {
     const count = await cardCount(ctx)
-    return count >= Math.min(boxsets, 12) ? count : null
-  }, "BoxSet cards", 30000)
-  evidence.jellyfin = { boxsets, rendered: shown, countText: await ctx.app.evaluate(`document.querySelector("main")?.textContent.match(/(\\d[\\d,]*) items/)?.[0] ?? null`) }
+    return count === boxsets ? count : null
+  }, `one card for each of the ${boxsets} BoxSets`, 30000)
+  evidence.jellyfin = { boxsets, rendered: shown }
   await ctx.park()
   await ctx.screenshot("05-jellyfin-collections")
   await ctx.app.route("/collections/franchises")

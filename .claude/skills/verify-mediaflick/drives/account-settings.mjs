@@ -66,15 +66,24 @@ export default async function accountSettings(ctx) {
 
   // Letterboxd: add a public profile, save, remove, save.
   await openShelf(ctx, "Letterboxd")
-  await ctx.fill({ css: "#letterboxd-profile" }, LETTERBOXD_USER)
+  await ctx.fill({ role: "textbox", name: "Letterboxd username or profile URL" }, LETTERBOXD_USER)
   await ctx.press({ role: "button", name: "Add profile" })
+  await ctx.find({ role: "button", name: `Cancel adding ${LETTERBOXD_USER}` })
   await ctx.press({ role: "button", name: "Save" })
   const letterboxd = await ctx.until(() => account(ctx)?.letterboxd_profiles?.find((profile) => profile.profileKey?.toLowerCase().includes(LETTERBOXD_USER)) ?? null, "accounts.json to hold the Letterboxd profile", 30000)
   evidence.letterboxd = { displayName: letterboxd.displayName, canonicalUrl: letterboxd.canonicalUrl, verificationStatus: letterboxd.verificationStatus }
   ctx.step(`Letterboxd profile ${letterboxd.displayName}: ${letterboxd.verificationStatus}`)
   await ctx.find({ role: "switch", name: `Enable ${letterboxd.displayName}` }, { timeout: 15000 })
   await ctx.snapshot("03-letterboxd-saved")
+  // Remove only marks the row until Save; Undo brings the profile back.
   await ctx.press({ role: "button", name: "Remove profile" })
+  const undo = { role: "button", name: `Undo removal of ${letterboxd.displayName}` }
+  await ctx.find(undo)
+  ctx.check(await ctx.app.evaluate(`document.body.innerText.includes("Will be removed when you save")`), "the removed row says it goes on Save")
+  await ctx.press(undo)
+  await ctx.find({ role: "switch", name: `Enable ${letterboxd.displayName}` })
+  await ctx.press({ role: "button", name: "Remove profile" })
+  await ctx.find(undo)
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => !(account(ctx)?.letterboxd_profiles?.length), "the Letterboxd profile removed from accounts.json")
   // The file lands before the save settles; closing earlier asks to confirm leaving.
