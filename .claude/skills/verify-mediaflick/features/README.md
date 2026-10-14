@@ -10,7 +10,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Your own server covers what the demo server cannot: writes, playback, and the MediaFlick Companion (Releases, ratings, Discover, Requests, Movie Franchises, My Collections). Cache a session once with `just verify-login SERVER` (you approve a Quick Connect code), then run drives with `--account SERVER`; see SKILL.md, Your own server. The proofs below name the test server they ran against: Jellyfin 12.2.0 with a non-admin `Testuser` (684 movies, 97 series, 4,371 episodes, 85 BoxSets) and Companion 0.2.2 with Seerr, Sonarr, Radarr, MDBList and TMDB.
 - The MediaFlick Companion is not installed on the demo server.
 - `just verify-doctor` reports `ready` and no leftovers before you start.
-- Every drive except `close-minimize` and `close-guard` (Linux only: `ctx.wmClose`) has passed on Windows 11, and every drive except `punctuation-search` and `person-discover` (new, not yet run there) on Linux.
+- Every drive except `close-minimize` and `close-guard` (Linux only: `ctx.wmClose`) has passed on Windows 11, and every drive on Linux (all but `login` re-run in the 2026-10-14 maintenance pass).
 
 ## Driving conventions
 
