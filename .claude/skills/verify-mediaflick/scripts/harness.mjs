@@ -510,6 +510,25 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }
   }
 
+  // Signs the app's own token (`--signed-out` only) out on the server once the
+  // app has exited, unless the drive already did. Uses the cached account's
+  // server, not the stored URL, which may be a proxy closed by then.
+  function revokeAppSessionAfterRun() {
+    if (!account?.signedOut) throw new Error("revokeAppSessionAfterRun needs --account SERVER --signed-out")
+    const stored = readStoredSession(dataDir)
+    if (!stored?.token) throw new Error("the app holds no token")
+    rememberSecret(stored.token)
+    const { token } = stored
+    afterRunTasks.push(async () => {
+      if ((await tokenStatus(cachedAccount.serverUrl, token)) === 401) {
+        log("after run: the app's token is already signed out")
+        return
+      }
+      await revokeToken(cachedAccount.serverUrl, token)
+      log("after run: signed the app's token out on the server (POST /Sessions/Logout)")
+    })
+  }
+
   // Puts a test item back once the app has exited, whatever happened in the
   // drive: a run that fails mid-playback still reports its stop at teardown.
   // The drive's own user-path cleanup comes first; this only acts if the
@@ -590,8 +609,8 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     app = await relaunchApp()
   }
 
-  async function proxy({ upstream, fail }) {
-    const started = await startProxy({ upstream, fail, log })
+  async function proxy({ upstream, fail, answer }) {
+    const started = await startProxy({ upstream, fail, answer, log })
     proxies.push(started)
     return started
   }
@@ -637,6 +656,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     appSession,
     restoreItemAfterRun,
     cancelSeerrRequestAfterRun,
+    revokeAppSessionAfterRun,
     runAfterRun,
     player,
     mpv,

@@ -145,6 +145,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `jellyfin(path)` | `--account` only: GET on the server as the cached account, to read back server state (`/Items/<id>?userId=${ctx.account.userId}`). |
 | `appSession()` | `--signed-out` only: the token the app holds now, as `{ status(), revoke() }`: the HTTP status of `GET /Users/Me` with it, and a sign-out from outside the app. |
 | `restoreItemAfterRun(id)`, `cancelSeerrRequestAfterRun(id)` | `--account` only: after-run cleanup once the app has exited (see [Your own server](#your-own-server)). |
+| `revokeAppSessionAfterRun()` | `--signed-out` only, after sign-in: once the app has exited, sign the app's own token out on the cached account's server unless it already is (a drive that signs in to a proxy cannot sign out through it after the run). |
 | `player()` | `GET /api/player/state`: `active`, `itemId`, `playMethod`, `positionMs`, `durationMs`, `paused`, `tracks`, `skipSegments`, `diagnostics`. |
 | `mpv(property)` | Reads one mpv property (`time-pos`, `pause`, `current-vo`, `hwdec-current`) over mpv's IPC socket, found through `app.log`'s `mpv IPC connected ipc_path=`, on one connection kept for the drive. On Windows, when a script has moved mpv's IPC server (SVP's `mpvSockets.lua` re-points it to `<TEMP>\mpvSockets\<pid>`), it follows the move and logs `mpv IPC moved by a script`. Reads only: the app stays mpv's single command writer. |
 | `playstates()` | The playstate reports in `app.log`: `{ queued: [{ at, endpoint, itemId, positionS }], sent: [{ at, endpoint, itemId, status }] }`. Needs `--log-level "debug,jellyfin.playstate=trace"`. |
@@ -152,7 +153,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 | `displayCapture(name, { seconds })` | Linux only: the whole X display with ffmpeg `x11grab` as `<name>.png`, or an MP4 clip with `seconds`. It contains the mpv video, which CDP screenshots (the page alone) do not. |
 | `pathname()` | `location.pathname + location.search`. |
 | `api(path)` | GET the app's own `/api/*` as the UI does, to read results. Never the action under test. |
-| `proxy({ upstream, fail })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included) and drops the connection of each request `fail(url, method)` selects. Returns `{ url, stats, heal() }`; sign in to `url`. Closed after the drive. |
+| `proxy({ upstream, fail, answer })` | Start a loopback Jellyfin proxy on `127.0.0.1` that forwards to `upstream` (path prefix included), streaming bodies and ranges and passing WebSocket upgrades (the app's `/socket`) through. It drops the connection of each request `fail(url, method)` selects, and answers a request itself when `answer(url, method)` returns `{ status, body }` (JSON); `mediaSegmentsAnswer({ [itemId]: [{ type, startS, endS }] })` from `scripts/proxy.mjs` serves `GET /MediaSegments/<id>` in Jellyfin's format. Returns `{ url, stats, heal() }` (`stats.answered` lists the answered requests); sign in to `url`. Closed after the drive. |
 | `relaunch()` | Close the app through its own close path and start it again on the same profile, as a user quitting and reopening. Writes `doctor-relaunch.json`. |
 | `windowShown()` | Whether the native main window is shown: `xwininfo` map state on Linux, `MainWindowHandle` on Windows. |
 | `readConfig(name)`, `configStat(name)`, `configFile(name)` | Files in the disposable config dir (`settings.json`, `accounts.json`, …). |
@@ -166,7 +167,7 @@ The `ctx` helpers come from `scripts/harness.mjs`. Targets are `{ role, name }`,
 
 To find handles for a page you have not driven yet, take a `snapshot` there and read the `.ax.txt`. Read the feature map in `features/` before writing a drive. It lists entry points, handles marked *proven* or source-only, and traps.
 
-Shipped drives. All are proven on Linux. On Windows 11 (2026-10-13) all but `close-minimize` and `close-guard` pass, `playback` on both backends; those two use `wmClose` and run on Linux only. The last six need your own server (`--account`; see [Your own server](#your-own-server)):
+Shipped drives. All are proven on Linux, `segments` only in part: its `Ask me` and `Never` cases on a file with chapters pass, and its other cases wait for the `Don't show` build or a marker fix (see [Playback](features/playback.md)). On Windows 11 (2026-10-13) all but `close-minimize`, `close-guard` and `segments` pass, `playback` on both backends; the close drives use `wmClose` and run on Linux only, and `segments` has not run there yet. The last seven need your own server (`--account`; see [Your own server](#your-own-server)):
 
 - `smoke`: fresh profile, signed-out sign-in screen.
 - `login`: only through `just verify-login SERVER`. Quick Connect sign-in, approved by the user, then `saveAccount()`.
@@ -194,6 +195,7 @@ Shipped drives. All are proven on Linux. On Windows 11 (2026-10-13) all but `clo
 - `discover-requests`: Discover rows, a genre, an owned title in search and its page, then a real Seerr request from a card, cancelled from Requests.
 - `collections`: Movie Franchises and a franchise page, a My Collections entry from a TMDB template, Jellyfin mode with every BoxSet and the route redirect, then defaults again.
 - `account-settings`: Viewing Discard and Save with a revisit, the leave guard between account shelves, Appearance's accent applied live, a Letterboxd profile added, verified and removed.
+- `segments` (`--account SERVER --signed-out --log-level "debug,mpv.ipc=trace"`; External mpv with `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`): signs in to a loopback proxy that adds an Intro and an Outro to one episode, then per Playback segment setting plays it and checks `skipSegments`, mpv's chapter markers, `Skip Intro`, the OSD prompt and that nothing skips; with External mpv also a mid-playback switch to `Don't show`. `MEDIAFLICK_VERIFY_SEGMENTS=baseline` runs only `Ask me` and `Never`. Writes the test user's playstate and leaves the episode as it found it.
 
 Both close drives also run with External mpv as the window: seed a `settings.json` holding `{"player_backend":"mpv"}` with `--seed DIR`. No mpv executable is needed for them, because they play nothing. `playback` with External mpv needs one (`mpv_path` in `seeds/external-mpv/settings.json`, `/usr/bin/mpv`; on Windows seed a copy with the `mpv.exe` path).
 Re-run all of them:
@@ -216,6 +218,8 @@ just verify account-session --account "$S" --signed-out
 for d in companion discover-requests collections account-settings; do just verify "$d" --account "$S"; done
 just verify playback --account "$S" --log-level "debug,jellyfin.playstate=trace,playback=trace"
 just verify playback --account "$S" --log-level "debug,jellyfin.playstate=trace,playback=trace" --seed .claude/skills/verify-mediaflick/seeds/external-mpv
+just verify segments --account "$S" --signed-out --timeout 600 --log-level "debug,mpv.ipc=trace"
+just verify segments --account "$S" --signed-out --timeout 600 --log-level "debug,mpv.ipc=trace" --seed .claude/skills/verify-mediaflick/seeds/external-mpv
 ```
 
 ## Evidence
