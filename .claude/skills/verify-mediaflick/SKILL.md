@@ -188,6 +188,7 @@ Shipped drives. All are proven on Linux, `segments` only in part: its `Ask me` a
 - `library-parity`: sort direction, the per-kind sort lists, a seeded Random order and Shuffle again, the In progress, Parental rating and Series status filters, the A–Z rail in both directions, and series cards' unwatched count, each compared with the demo server's own API. Read-only.
 - `home-settings`: Home's `No titles available` and `No shelves enabled` states through the local Home settings, `Configure Home`, then `Restore defaults` + Save. Read-only against the demo server.
 - `punctuation-search`: a search of punctuation alone (`!!`) shows `Nothing to show` and `/api/items` answers 200 with no items, while `night!!` still finds titles. Read-only against the demo server.
+- `top-level-titles`: sidebar searches that match an episode (`night`, `earthfall`) and the season (`season`) list only movies and series, and the same kindless `/api/items` reads behind Favorites and the A–Z rail match `kind=Movie,Series`, while `kind=Episode` still lists episodes. Read-only.
 - `person-discover` (demo server, or `--account SERVER`): a person page's Discover section, reached through a movie's Crew, says Seerr is not connected without the Companion and lists Seerr's person credits with it. Read-only.
 - `account-session` (`--account SERVER --signed-out`): Quick Connect sign-in approved by the harness, Sign out revoking the token on the server, and a token revoked from outside expiring the session.
 - `playback` (`--log-level "debug,jellyfin.playstate=trace,playback=trace"`; External mpv with `--seed .claude/skills/verify-mediaflick/seeds/external-mpv`): Play from the start, seeking past the resume minimum, pause, Stop from the bar, the resume point on the server, Resume with the startup seek rules, stop again, then watched and unwatched. Writes the test user's playstate and leaves the title as it found it.
@@ -201,12 +202,12 @@ Both close drives also run with External mpv as the window: seed a `settings.jso
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings', 'punctuation-search', 'person-discover') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings', 'punctuation-search', 'top-level-titles', 'person-discover') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings punctuation-search person-discover; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings punctuation-search top-level-titles person-discover; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
