@@ -26,6 +26,9 @@ import type {
   JellyfinCollectionDetail,
   JellyfinCollectionSummary,
   LetterIndex,
+  LibrariesResponse,
+  LibraryFilterOptions,
+  LibraryQuery,
   LetterboxdProfile,
   LetterboxdReviewsResponse,
   MediaInfoResponse,
@@ -245,6 +248,23 @@ export const api = {
     request<{ items: ItemSummary[]; total: number }>(`/api/items${queryString(query)}`, { signal }),
   itemLetters: (query: ItemQuery, signal?: AbortSignal) =>
     request<{ letters: LetterIndex }>(`/api/items/letters${queryString(query)}`, { signal }),
+  libraries: () => request<LibrariesResponse>("/api/libraries"),
+  libraryItems: (id: string, query: LibraryQuery, offset: number, limit: number, signal?: AbortSignal) =>
+    request<{ items: ItemSummary[]; total: number }>(
+      `/api/libraries/${encodeURIComponent(id)}/items${queryString({ ...query, offset, limit })}`,
+      { signal },
+    ),
+  libraryLetters: (id: string, query: LibraryQuery, signal?: AbortSignal) =>
+    request<{ letters: LetterIndex }>(
+      `/api/libraries/${encodeURIComponent(id)}/letters${queryString(query)}`,
+      { signal },
+    ),
+  libraryOptions: (id: string) =>
+    request<LibraryFilterOptions>(`/api/libraries/${encodeURIComponent(id)}/options`),
+  libraryLatest: (id: string, limit?: number) =>
+    request<{ items: ItemSummary[] }>(
+      `/api/libraries/${encodeURIComponent(id)}/latest${queryString({ limit })}`,
+    ),
   item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
   itemSynopsis: (id: string) =>
     request<ItemSynopsis>(`/api/item/${encodeURIComponent(id)}/synopsis`),

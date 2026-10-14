@@ -1,19 +1,10 @@
-import type { ItemQuery, SeriesStatus, SortOrder, WatchFilter } from "./api"
+import type { ItemQuery, LibrarySortId, SeriesStatus, SortOrder, WatchFilter } from "./api"
+
+export type { LibrarySortId }
 
 export type LibraryKind = "Movie" | "Series"
 
 const BOTH_KINDS: readonly LibraryKind[] = ["Movie", "Series"]
-
-export type LibrarySortId =
-  | "name"
-  | "year"
-  | "added"
-  | "episode-added"
-  | "rating"
-  | "played"
-  | "plays"
-  | "runtime"
-  | "random"
 
 export interface LibrarySort {
   id: LibrarySortId
