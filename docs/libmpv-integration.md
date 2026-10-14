@@ -6,8 +6,7 @@ MediaFlick uses dynamically loaded libmpv as the default player on fresh
 Windows and Linux installations. Linux supports the same React playback overlay using
 a bundled AppImage runtime or system libmpv on X11 or XWayland. macOS retains external mpv
 as its default; existing explicit backend choices and mpv paths are preserved.
-External mpv remains supported. MPC-HC support was removed; a saved MPC-HC
-selection loads as the platform's standard backend.
+External mpv remains supported.
 
 Windows uses the integrated player in the normal build and the normal `just
 run` workflow whenever Built-in player was selected when MediaFlick started.

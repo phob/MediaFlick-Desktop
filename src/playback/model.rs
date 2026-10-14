@@ -53,21 +53,17 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// A request to open media in the selected player.
-///
-/// The serialized field names remain compatible with the existing Jellyfin Web
-/// bridge. Backend-specific track translation happens in each player adapter.
+/// A request to open media in the selected player. Backend-specific track
+/// translation happens in each player adapter.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PlaybackRequest {
-    #[serde(alias = "url")]
     pub media_url: String,
     pub headers: Vec<HttpHeader>,
     pub item_id: Option<String>,
     pub media_source_id: Option<String>,
     pub play_session_id: Option<String>,
     pub device_id: Option<String>,
-    #[serde(alias = "startPositionTicks")]
     pub start_time_ticks: Option<i64>,
     pub start_milliseconds: Option<f64>,
     pub runtime_ticks: Option<i64>,

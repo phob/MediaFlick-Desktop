@@ -4,4 +4,4 @@
 
 ### Removed
 
-- Removed the MPC-HC player backend. Installations that selected MPC-HC now start with the platform's standard player: the built-in player on Windows and external mpv elsewhere.
+- Removed the MPC-HC player backend.
