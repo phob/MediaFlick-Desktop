@@ -342,12 +342,20 @@ try {
   log(`FAILED: ${error instanceof Error ? error.message : result.error}`)
   await failureEvidence(harness)
 } finally {
-  await teardown()
-  await harness?.dispose()
+  const cleanupErrors = []
+  for (const [name, stop] of [["teardown", teardown], ["dispose", async () => harness?.dispose()]]) {
+    try {
+      await stop()
+    } catch (error) {
+      cleanupErrors.push(`${name} failed: ${error instanceof Error ? error.message : String(error)}`)
+      log(cleanupErrors.at(-1))
+    }
+  }
   const afterRunErrors = (await harness?.runAfterRun()) ?? []
-  if (afterRunErrors.length) {
+  if (afterRunErrors.length) cleanupErrors.push(`after-run cleanup failed: ${afterRunErrors.join("; ")}`)
+  if (cleanupErrors.length) {
     result.passed = false
-    result.error = `${result.error ? `${result.error}\n` : ""}after-run cleanup failed: ${afterRunErrors.join("; ")}`
+    result.error = `${result.error ? `${result.error}\n` : ""}${cleanupErrors.join("\n")}`
   }
   collectProfile()
   if (account || login) {
