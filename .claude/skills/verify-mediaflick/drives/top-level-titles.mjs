@@ -16,6 +16,8 @@
 // assumes the account has few favorites.
 //   just verify top-level-titles
 //   just verify top-level-titles --account https://jellyfin.example.com
+import { isFavorite } from "../scripts/favorites.mjs"
+
 const TOP_LEVEL = new Set(["Movie", "Series"])
 const HOME_ROW_KINDS = { recentlyAddedShows: new Set(["Series", "Episode"]) }
 const CARD = { css: 'main a[aria-label^="Open details for"]' }
@@ -65,12 +67,8 @@ async function sharedTerm(ctx, kind) {
   return null
 }
 
-async function serverFavorite(ctx, id) {
-  return (await ctx.jellyfin(`/Items/${encodeURIComponent(id)}?userId=${ctx.account.userId}`)).UserData.IsFavorite
-}
-
 async function firstNotFavorite(ctx, candidates) {
-  for (const item of candidates) if (!(await serverFavorite(ctx, item.id))) return item
+  for (const item of candidates) if (!(await isFavorite(ctx.jellyfin, ctx.account.userId, item.id))) return item
   throw new Error(`no candidate is free of favorites on the server: ${JSON.stringify(candidates.map((item) => item.name))}`)
 }
 
@@ -98,7 +96,7 @@ async function toggleFavorite(ctx, item, favorite) {
   const [from, to] = favorite ? ["Add to favorites", "Remove from favorites"] : ["Remove from favorites", "Add to favorites"]
   await ctx.press({ role: "button", name: from })
   await ctx.find({ role: "button", name: to })
-  await ctx.until(async () => (await serverFavorite(ctx, item.id)) === favorite, `${item.kind} ${item.name} with IsFavorite=${favorite} on the server`)
+  await ctx.until(async () => (await isFavorite(ctx.jellyfin, ctx.account.userId, item.id)) === favorite, `${item.kind} ${item.name} with IsFavorite=${favorite} on the server`)
 }
 
 async function cardIds(ctx) {
@@ -168,7 +166,7 @@ async function provesFavorites(ctx, report, expect) {
   await toggleFavorite(ctx, movie, false)
   await openEpisode(ctx, episode, seasonName)
   await toggleFavorite(ctx, episode, false)
-  report.favorites.after = { movie: await serverFavorite(ctx, movie.id), episode: await serverFavorite(ctx, episode.id), total: (await items(ctx, { favorite: "true", limit: 1 })).total }
+  report.favorites.after = { movie: await isFavorite(ctx.jellyfin, ctx.account.userId, movie.id), episode: await isFavorite(ctx.jellyfin, ctx.account.userId, episode.id), total: (await items(ctx, { favorite: "true", limit: 1 })).total }
 
   const listedIds = favorites.items.map((item) => item.id)
   expect(favoriteEpisodes.items.some((item) => item.id === episode.id), `kind=Episode&favorite=true lists the favorited episode ${episode.name}`)
