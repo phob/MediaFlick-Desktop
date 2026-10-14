@@ -1,6 +1,3 @@
-//! URL helpers shared by the Jellyfin REST client and the app-scheme server.
-
-/// Percent-encode a value so it survives as a single path segment.
 pub fn encode_path_segment(value: &str) -> String {
     encode_with(
         value,
@@ -8,7 +5,6 @@ pub fn encode_path_segment(value: &str) -> String {
     )
 }
 
-/// Percent-encode a value so it survives as a query-string key or value.
 pub fn encode_query_component(value: &str) -> String {
     encode_path_segment(value)
 }
@@ -25,7 +21,6 @@ fn encode_with(value: &str, is_unreserved: impl Fn(u8) -> bool) -> String {
     out
 }
 
-/// Build a `key=value&…` query string, skipping nothing and encoding everything.
 pub fn build_query(pairs: &[(&str, String)]) -> String {
     pairs
         .iter()
@@ -74,7 +69,6 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-/// Look up a single query parameter by exact (decoded) name.
 pub fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (raw_key, raw_value) = pair.split_once('=')?;
@@ -112,7 +106,6 @@ pub fn remove_query_params(url: &str, keys: &[&str]) -> String {
     output
 }
 
-/// Join a server base URL with an API path, collapsing the separating slash.
 pub fn join_url(base: &str, path: &str) -> String {
     format!(
         "{}/{}",

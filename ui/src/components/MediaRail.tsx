@@ -16,19 +16,15 @@ export function MediaRail({
   title,
   viewAll,
   children,
-  /** Reserves room to the left of the first card, for the Top 10 numerals. */
   className,
   itemCount,
-  /** Identity of the shelf's first card. A change resets the shelf to it. */
   resetKey,
 }: {
   title: string
   viewAll?: string
   children: ReactNode
   className?: string
-  /** Re-measures the edges when the shelf's contents change length. */
   itemCount?: number
-  /** Identity of the shelf's first card. A change resets the shelf to it. */
   resetKey?: string
 }) {
   const rail = useRef<HTMLDivElement>(null)
@@ -70,9 +66,6 @@ export function MediaRail({
 
   return (
     <section className="group/row flex flex-col gap-3" aria-labelledby={headingId}>
-      {/* Marker, title, then a hairline out to the page edge. The rule is what
-          makes a shelf read as a band across the page rather than as a row of
-          pictures with a caption above it. */}
       <div className="flex items-center gap-3 px-6 sm:px-10 lg:px-14">
         <span className="rail-marker" aria-hidden />
         <h2 id={headingId} className="text-base font-semibold tracking-tight sm:text-lg">

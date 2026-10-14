@@ -21,8 +21,6 @@ pub(super) fn route(
     Some(response)
 }
 
-// ------------------------------------------------------------------ playback
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PlayBody {
@@ -43,7 +41,6 @@ struct ItemBody {
     item_id: String,
 }
 
-/// The item a playback request names; blank ids are rejected like missing ones.
 fn item_id_of(request: &ApiRequest) -> Result<String, ApiResponse> {
     let body = request.body::<ItemBody>()?;
     if body.item_id.is_empty() {
@@ -71,7 +68,6 @@ fn play_item(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     start_playback(services, &options)
 }
 
-/// Used by the UI when mpv reports end-of-file or a mark-watched-and-next.
 fn play_next(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let item_id = item_id_of(request)?;
     let next = match services.library.next_episode(&item_id) {
@@ -141,9 +137,6 @@ fn start_playback(services: &Arc<Services>, options: &PlayOptions) -> Handled {
         )),
         Err(play::StartError::AccountChanged) => Err(stale_account_response()),
         Err(play::StartError::Api(error)) => {
-            // A 404 from `PlaybackInfo` means the item no longer exists on the
-            // server, so the cached row is a phantom: drop it now rather than
-            // offering a Play button that can never work.
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_item(services, &scope, &options.item_id);
             }
@@ -160,7 +153,6 @@ fn player_state(services: &Arc<Services>) -> Handled {
     Ok(ApiResponse::ok(snapshot))
 }
 
-/// The commands the player bar sends, as the UI's `PlayerCommand` union.
 #[derive(Deserialize)]
 #[serde(
     tag = "command",

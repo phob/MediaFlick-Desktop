@@ -24,9 +24,6 @@
 
 :root {
   color-scheme: dark;
-  /* Surfaces. Every neutral is mixed toward the accent hue rather than being a
-     pure grey — the reason the shell reads as green-lit rather than as a grey
-     app that happens to have a green button in it. */
   --background: #070b09;
   --foreground: #e6ede9;
   --card: #0f1512;
@@ -39,7 +36,6 @@
      the focus ring, the active shelf marker — where brightness is legibility
      rather than noise. */
   --primary: #2bff88;
-  /* Near-black, never white: white on a green this bright is unreadable. */
   --primary-foreground: #04120b;
   --secondary: #18211d;
   --secondary-foreground: #e6ede9;
@@ -49,34 +45,23 @@
   --accent-foreground: #e6ede9;
   --destructive: #ff6b6b;
   --destructive-foreground: #120505;
-  /* Something needs attention but nothing failed, such as a settings file
-     that was recovered from its backup. */
   --warning: #f59e0b;
   --warning-foreground: #fef3c7;
 
-  /* Translucent white over the dark backdrop: `field` fills controls that sit
-     directly on artwork or the page, `edge` outlines them and framed artwork,
-     and `hairline` separates sections and rests quietly around cards. */
   --field: rgb(255 255 255 / 5%);
   --field-hover: rgb(255 255 255 / 8%);
   --edge: rgb(255 255 255 / 10%);
   --hairline: rgb(255 255 255 / 5%);
 
-  /* Lines */
   --border: #202c27;
   --input: #202c27;
   --ring: #2bff88;
 
-  /* The dimmed accent, for washes and gradients where full strength would
-     glow rather than tint. */
   --signal-deep: #0f7d45;
 
-  /* Chrome is 4px and artwork is 2px. Nothing in the app is round except a
-     progress track and an avatar. */
   --radius: 0.25rem;
   --radius-media: 2px;
 
-  /* Media-grid geometry, carried over verbatim. */
   --poster-width: 168px;
   --poster-height: 252px;
   --landscape-width: 280px;
@@ -84,8 +69,6 @@
   --card-gap: 18px;
   --card-height: 306px;
   --header-height: 56px;
-  /* Sidebar: a shade below the page rather than above it, so the rail reads as
-     the frame the content sits in. */
   --sidebar: #0a100d;
   --sidebar-foreground: #e6ede9;
   --sidebar-primary: #2bff88;
@@ -113,8 +96,6 @@
   transition-duration: 1ms !important;
 }
 
-/* Presentation controls affect only imagery, never labels, controls, progress,
-   or contrast scrims layered above it. */
 .media-artwork-image {
   opacity: var(--artwork-intensity);
   transition: opacity 180ms ease;
@@ -162,13 +143,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  /* Named separately from `primary` so the accent can be reached where a
-     shadcn primitive already owns the primary slot. */
   --color-signal: var(--primary);
   --color-signal-deep: var(--signal-deep);
 
-  /* The data face. Cascadia ships with Windows, which is what the shell
-     targets; the rest is the usual ladder down to whatever is installed. */
   --font-mono:
     "Cascadia Mono", "JetBrains Mono", "SF Mono", ui-monospace, Consolas, monospace;
 
@@ -205,7 +182,6 @@
   }
 
   body {
-    /* The app owns the whole window; the shell never scrolls, panes do. */
     @apply overflow-hidden bg-background text-foreground;
     font:
       14px/1.45 "Segoe UI",
@@ -235,7 +211,6 @@
     user-select: text;
   }
 
-  /* Artwork is content to look at, not an attachment to pick up. */
   img {
     -webkit-user-drag: none;
   }
@@ -244,9 +219,6 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* When Client settings reveals scrollbars they are overlay-thin and inherit
-     the signal palette instead of Chromium's light-gray defaults; hidden mode
-     removes them entirely at the process level. */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -333,10 +305,6 @@ html[data-libmpv-cursor-hidden] * {
 .libmpv-overlay-brand > span > span {
   color: var(--primary);
 }
-
-/* ==========================================================================
-   Settings
-   ========================================================================== */
 
 .settings-layout {
   display: grid;
@@ -444,8 +412,6 @@ html[data-libmpv-cursor-hidden] * {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--background);
-  /* Card and shelf copy inherit their color; without this they would keep
-     reading the saved root foreground across the draft boundary. */
   color: var(--foreground);
 }
 
@@ -458,9 +424,6 @@ html[data-libmpv-cursor-hidden] * {
   flex-direction: column;
 }
 
-/* Ambient wash behind the shelf, faded by the draft backdrop intensity the
-   same way the home billboard's establishing art is. Mixed from the accent and
-   surface tokens rather than fixed colors, so it stays a quiet tint. */
 .appearance-preview-backdrop {
   position: absolute;
   inset: 0;
@@ -473,9 +436,6 @@ html[data-libmpv-cursor-hidden] * {
   transition: opacity 180ms ease;
 }
 
-/* A quiet sketch of the real shell rail: brand mark, wordmark with the accent
-   carried by "Flick", the library entries, and the server pulse. Decorative
-   only — it exists so chrome surfaces have draft tokens on them too. */
 .appearance-preview-chrome {
   position: relative;
   z-index: 1;
@@ -601,10 +561,6 @@ html[data-libmpv-cursor-hidden] * {
   .appearance-preview-motion-track { display: none; }
 }
 
-/* ==========================================================================
-   Startup
-   ========================================================================== */
-
 .loading-screen {
   position: fixed;
   inset: 0;
@@ -676,10 +632,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* ==========================================================================
-   Data type
-   ========================================================================== */
-
 /* Every measured fact in the app — runtimes, years, ratings, counters, shelf
    eyebrows — is set in this. Titles stay in the UI face, so a page separates
    into "what this is called" and "what is known about it" before a word of it
@@ -693,18 +645,12 @@ html[data-libmpv-cursor-hidden] * {
   font-variant-numeric: tabular-nums;
 }
 
-/* The same face at reading size and without the caps, for metadata rows that
-   have to hold a sentence's worth of facts. */
 .data-value {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
-
-/* ==========================================================================
-   Shelves
-   ========================================================================== */
 
 .home-media-rail {
   overscroll-behavior-inline: contain;
@@ -754,8 +700,6 @@ html[data-libmpv-cursor-hidden] * {
   box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 55%, transparent);
 }
 
-/* The release timeline's today mark: the shelf rule turned upright, in the
-   accent, fading out down the poster so it never competes with the artwork. */
 .release-today-rule {
   width: 1px;
   background: linear-gradient(
@@ -766,13 +710,6 @@ html[data-libmpv-cursor-hidden] * {
   );
 }
 
-/* ==========================================================================
-   Cards
-   ========================================================================== */
-
-/* No zoom. A hovered card is framed with corner brackets and lifted a couple of
-   pixels — the artwork stays exactly the size it was, which keeps a shelf's
-   rhythm intact while the pointer runs along it. */
 .home-media-card,
 .catalog-card {
   transform-origin: center;
@@ -792,8 +729,6 @@ html[data-libmpv-cursor-hidden] * {
   filter: drop-shadow(0 14px 20px rgb(0 0 0 / 55%));
 }
 
-/* Suppressed while the expanded panel covers the card: the lift would slide
-   artwork out from under a panel that was positioned once and does not follow. */
 .home-media-card[data-expanded],
 .home-media-card[data-expanded]:hover,
 .catalog-card[data-expanded],
@@ -802,13 +737,9 @@ html[data-libmpv-cursor-hidden] * {
   filter: none;
 }
 
-/* The frame itself: four corner brackets drawn as eight gradient slivers on one
-   pseudo-element, so the whole reticle is a single compositable layer and no
-   extra nodes are added to a grid that renders hundreds of these. */
 .media-frame::after {
   position: absolute;
   inset: 0;
-  /* Above every in-frame overlay, including direct card actions. */
   z-index: 8;
   background:
     linear-gradient(var(--primary), var(--primary)) 0 0 / 15px 2px no-repeat,
@@ -831,9 +762,6 @@ html[data-libmpv-cursor-hidden] * {
   opacity: 1;
 }
 
-/* When expanded previews are disabled, the same actions stay inside the
-   artwork frame. They remain in the tab order and reveal as soon as keyboard
-   focus or the pointer enters the card. */
 .card-inline-actions {
   position: absolute;
   right: 0;
@@ -850,8 +778,6 @@ html[data-libmpv-cursor-hidden] * {
   transition: opacity 140ms ease;
 }
 
-/* Reuse the technical readout's existing bottom scrim when it is present.
-   Only its text leaves while the direct controls are visible. */
 .media-frame:has(.card-technical-readout) > .card-inline-actions {
   background: none;
 }
@@ -918,7 +844,6 @@ html[data-libmpv-cursor-hidden] * {
 }
 
 .card-rating-readout[data-ribbon="true"] {
-  /* Keep a Top 10/New corner marker independent of the rating text. */
   padding-right: 3.8rem;
 }
 
@@ -968,8 +893,6 @@ html[data-libmpv-cursor-hidden] * {
 
 .card-rating-readout[data-stale="true"] { opacity: 0.84; }
 
-/* Expanded artwork has more room than a shelf card, so its otherwise identical
-   rating vocabulary grows just enough to retain the same visual proportion. */
 .preview-panel .card-rating-readout {
   gap: 0.22rem 0.78rem;
   padding: 0.55rem 0.75rem 1.8rem;
@@ -979,8 +902,6 @@ html[data-libmpv-cursor-hidden] * {
 .preview-panel .card-rating-readout .rating-source-icon { width: 0.88rem; height: 0.88rem; }
 .preview-panel .card-rating-readout .rating-source-icon-user { width: 0.48rem; height: 0.48rem; }
 
-/* Detail ratings use the same icons without carrying the artwork gradient into
-   the hero metadata line. */
 .detail-rating-readout {
   display: inline-flex;
   min-width: 0;
@@ -1057,8 +978,6 @@ html[data-libmpv-cursor-hidden] * {
   color: color-mix(in srgb, var(--primary) 60%, transparent);
 }
 
-/* The preview already owns a bottom artwork scrim, so its larger technical
-   readout can live in the title stack without adding a second gradient. */
 .preview-technical-readout {
   position: static;
   gap: 0.24rem;
@@ -1078,8 +997,6 @@ html[data-libmpv-cursor-hidden] * {
   top: calc(var(--poster-height) - 3.25rem);
 }
 
-/* A touchscreen cannot manufacture hover. Keep the action in the same overlay
-   position, but leave it visible for coarse/no-hover primary pointers. */
 @media (hover: none), (pointer: coarse) {
   .quick-request-action {
     pointer-events: auto;
@@ -1088,12 +1005,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* ==========================================================================
-   Billboard
-   ========================================================================== */
-
-/* Slow enough to read as a dissolve between two pictures rather than as one
-   picture being replaced, which is the whole point of holding both. */
 .billboard-slide {
   container-type: size;
   transition: opacity 900ms ease-in-out;
@@ -1254,8 +1165,6 @@ html[data-libmpv-cursor-hidden] * {
   filter: brightness(0.9) saturate(0.94) contrast(1.02);
 }
 
-/* A soft optical vignette makes footage of wildly different grades feel like
-   it belongs to the same hero before the directional text scrims are applied. */
 .billboard-media-vignette {
   background:
     radial-gradient(
@@ -1282,8 +1191,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* The copy block hangs off a lit rule rather than floating over the artwork
-   unanchored. It is the same gesture as the shelf marker, at hero scale. */
 .billboard-spine {
   width: 3px;
   align-self: stretch;
@@ -1298,9 +1205,6 @@ html[data-libmpv-cursor-hidden] * {
   box-shadow: 0 0 22px color-mix(in srgb, var(--primary) 55%, transparent);
 }
 
-/* Slide indicators as segments on a track, not dots: they read as a position in
-   a sequence, which is what they are, and they match the mono counter beside
-   them. */
 .billboard-tick {
   height: 2px;
   width: 1.75rem;
@@ -1319,10 +1223,6 @@ html[data-libmpv-cursor-hidden] * {
   background: color-mix(in srgb, var(--foreground) 60%, transparent);
 }
 
-/* ==========================================================================
-   Expanded preview
-   ========================================================================== */
-
 .preview-panel {
   transform-origin: center;
   animation: preview-in 170ms cubic-bezier(0.2, 0, 0.2, 1);
@@ -1340,9 +1240,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* Square controls, sized as a set. Their being squares rather than circles is
-   the single change that most separates this panel from the one every
-   streaming service ships. */
 .preview-action {
   display: flex;
   flex-shrink: 0;
@@ -1366,28 +1263,17 @@ html[data-libmpv-cursor-hidden] * {
   outline-offset: 2px;
 }
 
-/* ==========================================================================
-   Shell
-   ========================================================================== */
-
-/* The fixed sidebar must stay above cards that lift on hover. The inset forms
-   its own paint boundary as well, so artwork and rails cannot leak left even
-   if a future component introduces a larger transform. */
 .app-sidebar-container {
   z-index: 40;
   box-shadow: 16px 0 40px rgb(0 0 0 / 30%);
 }
 
-/* Outside Home, the page only reserves room for the icon rail. Expanding the
-   fixed sidebar then covers the page instead of changing its available width. */
 .app-experience[data-sidebar-overlay="true"] [data-slot="sidebar-gap"] {
   width: var(--sidebar-width-icon);
 }
 
 .content-viewport {
   contain: paint;
-  /* Detail artwork follows the visible pane, not the route's content height.
-     Reserve the scrollbar width even when a shorter season fits in the pane. */
   container-type: size;
   scrollbar-gutter: stable;
 }
@@ -1399,8 +1285,6 @@ html[data-libmpv-cursor-hidden] * {
   border-right: 1px solid var(--sidebar-border);
 }
 
-/* The active entry is lit from its own edge: a solid accent rule with the wash
-   falling away from it, rather than a coloured pill around the label. */
 .app-experience [data-sidebar="menu-button"][data-active="true"] {
   background: linear-gradient(
     90deg,
@@ -1415,8 +1299,6 @@ html[data-libmpv-cursor-hidden] * {
   color: var(--primary);
 }
 
-/* One coalesced status surface sits directly above Settings. It survives the
-   icon rail as an accessible glyph/title and never competes with navigation. */
 .sidebar-sync-progress {
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr);
@@ -1502,8 +1384,6 @@ html[data-libmpv-cursor-hidden] * {
   letter-spacing: -0.02em;
 }
 
-/* Detail pages float their section headings over full-bleed artwork, so the
-   type carries its own contrast shadow to stay readable on light art. */
 .detail-page .section-title {
   text-shadow: 0 1px 3px rgb(0 0 0 / 65%);
 }
@@ -1540,13 +1420,10 @@ html[data-libmpv-cursor-hidden] * {
     transition: none;
   }
 
-  /* The brackets stay — they are the hover state, not decoration on it. */
   .media-frame::after {
     transition: none;
   }
 
-  /* The panel still appears — it is the only way to reach those controls —
-     but it does so without the zoom. */
   .preview-panel {
     animation: none;
   }
@@ -1568,8 +1445,6 @@ html[data-libmpv-cursor-hidden] * {
   }
 }
 
-/* Only the mounted virtual rows get layers. Reuse their artwork and readouts
-   while scrolling instead of repainting the whole library on every frame. */
 .virtual-card-row {
   will-change: transform;
 }

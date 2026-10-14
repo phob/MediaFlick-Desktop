@@ -38,7 +38,6 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         }
         catch (DirectoryNotFoundException)
         {
-            // No data folder yet means there is no legacy cache to remove.
         }
         catch (IOException exception)
         {

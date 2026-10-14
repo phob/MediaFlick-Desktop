@@ -40,7 +40,6 @@ describe("startup request", () => {
     expect(queryClient.getQueryData(queryKeys.status)).toEqual(status)
     expect(queryClient.getQueryData(queryKeys.home)).toEqual(startup().home)
     expect(queryClient.getQueryData(queryKeys.billboard)).toEqual({ items: [] })
-    // Unanswered parts stay empty so their own queries request them.
     expect(queryClient.getQueryState(queryKeys.settings)).toBeUndefined()
   })
 })

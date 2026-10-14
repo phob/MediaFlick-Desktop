@@ -107,8 +107,6 @@ function RequestCard({ request }: { request: SeerrRequest }) {
             </Link>
           </Button>
         )}
-        {/* Offered only while it can still be withdrawn. A refusal from Seerr
-            surfaces as a permission error and leaves the session alone. */}
         {request.status === "pending" && (
           <Button
             variant="ghost"
@@ -125,7 +123,6 @@ function RequestCard({ request }: { request: SeerrRequest }) {
   )
 }
 
-/** Your own requests — never the household's; Seerr shows those to admins. */
 export default function Requests() {
   const [filter, setFilter] = useState<string>("all")
   const requests = useSeerrRequests(filter)

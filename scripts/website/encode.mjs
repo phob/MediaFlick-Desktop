@@ -63,9 +63,6 @@ async function frameList(dir, frames, name) {
   return list
 }
 
-// Screencast frames carry wall-clock timestamps; the last frame is held until
-// the recording stopped. A `from` mark cuts everything before it, and the
-// frame on screen at that moment becomes the first.
 async function screencastList(name) {
   const dir = path.join(rawDir, name)
   const { stopped, from, frames: all } = JSON.parse(await readFile(path.join(dir, "frames.json"), "utf8"))
@@ -89,9 +86,6 @@ function encodeLoop(input, filter, name, width) {
   return { mp4, webm, poster }
 }
 
-// The film under the app's own overlay, frame for frame: each overlay frame
-// was captured at a known film position, and the source is cut to start at
-// the first of them.
 async function compositePlayer() {
   const report = JSON.parse(await readFile(path.join(rawDir, "report-demo.json"), "utf8"))
   const { source, overlay } = report.scenes.player ?? {}
@@ -147,8 +141,6 @@ for (const [kind, file] of Object.entries(encodeLoop(["-i", player.clip], "", "p
 // Lossless intermediates stay 4:4:4: the window's 1125-pixel height is odd,
 // which 4:2:0 cannot hold. Only the final encodes scale to even sizes.
 
-// Hero: the browsing tour, cropped from the 16:10 window to the player's
-// 16:9 frame, cross-fading into the composited playback.
 const tourList = await screencastList("tour")
 const tourClip = path.join(workDir, "tour.mkv")
 ffmpeg([
@@ -168,8 +160,6 @@ for (const [kind, file] of Object.entries(encodeLoop(["-i", heroClip], "", "hero
 }
 
 const report = path.join(root, "build", "website-capture", "encode-report.json")
-// The page's hero readouts switch from the library ones to the playback ones
-// at this second; it belongs in data-play-at on the hero video in index.html.
 const heroPlayAt = Math.round((duration(tourClip) - fade / 2) * 10) / 10
 await writeFile(report, JSON.stringify({ encodedAt: new Date().toISOString(), heroPlayAt, outputs }, null, 2))
 console.log(`hero playback starts at ${heroPlayAt}s; set data-play-at on the hero video in website/public/index.html`)

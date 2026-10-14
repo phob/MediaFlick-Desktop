@@ -1,7 +1,6 @@
 import { useEffect } from "react"
 import { useSettings } from "@/lib/queries"
 
-/** Applies the saved appearance to the document root, where the theme tokens read it. */
 export function AppearanceSync() {
   const { data: settings } = useSettings()
   useEffect(() => {

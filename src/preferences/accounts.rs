@@ -152,8 +152,6 @@ impl HomeSettings {
         }
     }
 
-    /// A configuration saved before a built-in shelf existed gains it, enabled
-    /// as in a fresh configuration, after the nearest earlier built-in.
     pub fn insert_missing_built_ins(&mut self) {
         for (order, id) in HomeBuiltIn::ORDER.into_iter().enumerate() {
             let element = HomeElementId::BuiltIn { id };
@@ -238,8 +236,6 @@ use super::store::config_dir;
 
 const ACCOUNT_CONFIG_VERSION: u32 = 1;
 
-/// Stable identity for one Jellyfin account. The same user id on another
-/// server is a different account and must not inherit its preferences.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AccountKey {
@@ -316,9 +312,6 @@ impl Default for AccountConfigurationFile {
     }
 }
 
-/// The sole owner of small, durable settings associated with Jellyfin users.
-/// Catalog rebuilds never open this file. Mutations update the in-memory copy
-/// only after the atomic replacement succeeds.
 pub struct AccountConfigurationService {
     path: PathBuf,
     document: Mutex<AccountConfigurationFile>,
@@ -436,9 +429,6 @@ impl AccountConfigurationService {
         })
     }
 
-    /// Moves the pre-account-scoping appearance into durable account storage.
-    /// When startup is signed out, keep it pending until the next account can
-    /// claim it instead of stripping the only copy from settings.json.
     pub fn import_legacy_appearance(
         &self,
         key: Option<&AccountKey>,
@@ -783,9 +773,6 @@ mod tests {
 
     #[test]
     fn saved_home_gains_a_new_built_in_after_its_predecessor() {
-        // Failure modes: the new row never appears, lands at the start or end
-        // instead of beside its predecessor, arrives disabled, or the upgrade
-        // discards the user's own ordering.
         let path = test_path("home-new-built-in");
         let alice = key("server", "alice");
         let service = AccountConfigurationService::open(path.clone()).expect("open");
@@ -909,7 +896,6 @@ mod tests {
             .claim_legacy_appearance(&alice)
             .expect("claim appearance");
         assert_eq!(reopened.appearance(&alice), appearance);
-        // A startup retry cannot move or overwrite the value a second time.
         reopened
             .claim_legacy_appearance(&key("server", "bob"))
             .expect("idempotent retry");

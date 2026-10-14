@@ -3,7 +3,6 @@ import { useLocation, useNavigationType } from "react-router-dom"
 
 const positions = new Map<string, number>()
 
-/** Restore only history traversal; new routes and changed filters start at the top. */
 export function useScrollRestoration(element: HTMLElement | null, scope: string, ready = true) {
   const location = useLocation()
   const navigationType = useNavigationType()
@@ -15,8 +14,6 @@ export function useScrollRestoration(element: HTMLElement | null, scope: string,
     let restoring = top > 0
     const targetFits = () => top <= Math.max(0, element.scrollHeight - element.clientHeight) + 1
     const restore = () => {
-      // Never chase a missing offset by scrolling to the current bottom: an
-      // infinite list would interpret each attempt as a request for more data.
       if (!targetFits()) return
       element.scrollTo({ top, behavior: "instant" })
       restoring = Math.abs(element.scrollTop - top) > 1
@@ -25,8 +22,6 @@ export function useScrollRestoration(element: HTMLElement | null, scope: string,
       element.scrollTo({ top: 0, behavior: "instant" })
     }
     restore()
-    // Async queries and virtual grids can initially be shorter than the saved
-    // offset. Retry as content arrives, until it fits or the user takes over.
     const retry = () => {
       if (!restoring) return
       restore()

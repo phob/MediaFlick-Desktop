@@ -6,8 +6,6 @@ use serde_json::json;
 use super::{CachedRatings, Library, RatingTarget, now_unix};
 
 impl Library {
-    /// Resolves requested cards to one preferred MDBList lookup identity.
-    /// TMDB is numeric and cheapest to batch; IMDb is the stable fallback.
     pub fn rating_targets(&self, item_ids: &[String]) -> rusqlite::Result<Vec<RatingTarget>> {
         if item_ids.is_empty() {
             return Ok(Vec::new());

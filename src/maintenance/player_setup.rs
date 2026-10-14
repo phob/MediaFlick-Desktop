@@ -2,14 +2,12 @@ use std::path::PathBuf;
 
 use crate::maintenance::updater::UpdaterResult;
 
-/// Where users can read about installing mpv on every platform.
 pub const MPV_HELP_URL: &str = "https://mpv.io/installation/";
 
 #[cfg(target_os = "windows")]
 const MPV_LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest";
 
-/// A stage of the in-app mpv setup, reported back to the UI while it runs.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub enum MpvSetupPhase {
@@ -17,7 +15,6 @@ pub enum MpvSetupPhase {
     Extracting,
 }
 
-/// Short identifier for the host platform, consumed by the welcome/settings UI.
 pub fn platform_id() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows"
@@ -30,7 +27,6 @@ pub fn platform_id() -> &'static str {
     }
 }
 
-/// Whether this build can download and install mpv on its own.
 pub fn supported() -> bool {
     cfg!(target_os = "windows")
         && (cfg!(target_arch = "x86_64")
@@ -38,7 +34,6 @@ pub fn supported() -> bool {
             || cfg!(target_arch = "x86"))
 }
 
-/// Location of the mpv executable installed by [`download_and_install`].
 pub fn installed_mpv_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {

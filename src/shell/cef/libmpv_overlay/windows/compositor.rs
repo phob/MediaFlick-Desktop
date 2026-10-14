@@ -21,10 +21,6 @@ use windows::Win32::Graphics::Dxgi::{
 };
 use windows::core::Interface;
 
-// The `windows` crate marks every COM method `unsafe`. Unless a comment says
-// otherwise, the calls here pass only owned interfaces, borrowed references
-// and plain values, which the crate converts to valid ABI arguments.
-
 pub(super) struct Compositor {
     composition: IDCompositionDevice,
     _target: IDCompositionTarget,

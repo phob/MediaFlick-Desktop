@@ -4,23 +4,14 @@ use serde_json::{Value, json};
 
 const MAX_VOTES: i64 = 1_000_000_000_000;
 
-/// Positive response allowlist shared by Companion responses and cache repair.
-/// It reads only catalog source IDs and bounded numeric fields; all other JSON
-/// is intentionally forgotten.
 pub(super) fn normalize_rating_array(value: &Value) -> Value {
     let mut ratings = Vec::new();
     for rating in value.as_array().into_iter().flatten() {
-        let source = rating
+        let Some(source) = rating
             .get("sourceId")
             .and_then(Value::as_str)
             .and_then(canonical_source)
-            .or_else(|| {
-                rating
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .and_then(canonical_source)
-            });
-        let Some(source) = source else {
+        else {
             continue;
         };
         let raw_value = number(rating.get("value").or_else(|| rating.get("rating")));
@@ -61,11 +52,7 @@ fn normalized_rating(
     votes: Option<i64>,
 ) -> Value {
     json!({
-        // Keep Desktop v1's legacy keys, but make every string a catalog
-        // constant rather than copying provider data.
-        "source": source,
         "sourceId": source,
-        "rawSource": source,
         "value": value,
         "score": score,
         "votes": votes,
@@ -213,33 +200,29 @@ fn source_definition(id: &str, label: &str, short_label: &str, scale: f64, forma
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     #[test]
-    fn normalization_uses_native_scales_and_drops_unknown_source_text() {
+    fn normalization_uses_native_scales_and_drops_unknown_sources() {
         let ratings = normalize_rating_array(&json!([
-                { "source": "mdblist_score", "value": 84, "score": 84 },
-                { "source": "score_average", "value": 81, "score": 81 },
-                { "source": "imdb", "value": 8.1, "score": 81, "votes": 10 },
-                { "source": "letterboxd", "value": 8, "score": 80 },
-                { "source": "tomatoes", "value": 97, "score": 97 },
-                { "source": "audience", "value": 91, "score": 91 },
-                { "source": "future-meter!", "value": 7.25, "score": 73 }
+            { "sourceId": "mdblist_score", "value": 84, "score": 84 },
+            { "sourceId": "mdblist_score_average", "value": 81, "score": 81 },
+            { "sourceId": "imdb", "value": 8.1, "score": 81, "votes": 10 },
+            { "sourceId": "letterboxd", "value": 8, "score": 80 },
+            { "sourceId": "tomatoes", "value": 96, "score": 97 },
+            { "sourceId": "popcorn", "value": 91, "score": 91 },
+            { "sourceId": "future_meter", "value": 7.25, "score": 73 }
         ]));
-        let by_source = ratings
-            .as_array()
-            .expect("ratings")
-            .iter()
-            .map(|rating| (rating["sourceId"].as_str().expect("source"), rating))
-            .collect::<HashMap<_, _>>();
-        assert_eq!(by_source["letterboxd"]["value"], 4.0);
-        assert_eq!(by_source["letterboxd"]["scaleMax"], 5.0);
-        assert_eq!(by_source["popcorn"]["value"], 91.0);
-        assert!(!by_source.contains_key("future_meter"));
-        assert_eq!(by_source["imdb"]["rawSource"], "imdb");
-        assert!(by_source.contains_key("mdblist_score"));
-        assert!(by_source.contains_key("mdblist_score_average"));
+        assert_eq!(
+            ratings,
+            json!([
+                { "sourceId": "imdb", "value": 8.1, "score": 81.0, "votes": 10, "scaleMax": 10.0 },
+                { "sourceId": "letterboxd", "value": 4.0, "score": 80.0, "votes": null, "scaleMax": 5.0 },
+                { "sourceId": "mdblist_score", "value": 84.0, "score": 84.0, "votes": null, "scaleMax": 100.0 },
+                { "sourceId": "mdblist_score_average", "value": 81.0, "score": 81.0, "votes": null, "scaleMax": 100.0 },
+                { "sourceId": "popcorn", "value": 91.0, "score": 91.0, "votes": null, "scaleMax": 100.0 },
+                { "sourceId": "tomatoes", "value": 96.0, "score": 97.0, "votes": null, "scaleMax": 100.0 }
+            ])
+        );
     }
 }

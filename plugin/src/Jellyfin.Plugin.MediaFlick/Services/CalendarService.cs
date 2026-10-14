@@ -172,9 +172,6 @@ public sealed class CalendarService
         }
         catch (GatewayException exception)
         {
-            // A failed source is retried every FailureRetryInterval; warn only
-            // when it stops being available. Only the status is logged, and
-            // Desktop receives a fixed reason derived from it.
             var previous = _cache.Snapshot().Sources.GetValueOrDefault(sourceName);
             _logger.Log(
                 previous is { Enabled: true, Available: false } ? LogLevel.Debug : LogLevel.Warning,

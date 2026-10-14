@@ -277,7 +277,6 @@ fn set_item_playback_preference(
         })
 }
 
-/// The first local trailer attached to an item, if the server has one.
 fn trailer_info(services: &Arc<Services>, item_id: &str) -> Handled {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -317,9 +316,6 @@ fn remote_trailer_info(services: &Arc<Services>, scope: &SessionScope, item_id: 
     }
 }
 
-/// Converts only a plain YouTube watch/share/embed URL into the privacy-enhanced
-/// player. Jellyfin metadata is external input, so it never becomes an iframe
-/// address verbatim.
 fn youtube_embed_url(value: &str) -> Option<String> {
     let value = value.trim();
     let prefixes = [
@@ -369,7 +365,6 @@ fn trailer_stream(services: &Arc<Services>, trailer_id: &str, request: &ApiReque
     }
 }
 
-/// Accept one simple `bytes=` range and cap it to a small proxy chunk.
 fn bounded_byte_range(value: Option<&str>) -> String {
     let fallback = format!("bytes=0-{}", TRAILER_CHUNK_SIZE - 1);
     let Some(spec) = value
@@ -525,7 +520,6 @@ impl ExternalProvider {
             return None;
         }
         Some(match (self, kind) {
-            // IMDb keeps movies, series, and episodes under one `/title/` route.
             (Self::Imdb, "Movie" | "Series" | "Episode") => {
                 format!("https://www.imdb.com/title/{id}/")
             }
@@ -615,9 +609,6 @@ fn set_favorite(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -
     Ok(ApiResponse::ok(json!({ "favorite": favorite })))
 }
 
-/// The server is the source of truth for watch state, so it is written first
-/// and the local mirror only follows a success. The returned scope is the
-/// account that wrote it: only that account's cache may mirror the change.
 fn user_data_write(
     services: &Arc<Services>,
     item_id: &str,
@@ -711,8 +702,6 @@ mod tests {
         assert_eq!(external_url("trakt", "12345", "Movie"), None);
     }
 
-    /// Ids reach `open_external_link` as a path segment, so anything that is
-    /// not a plain token must not produce a URL at all.
     #[test]
     fn external_links_reject_ids_that_are_not_plain_tokens() {
         let too_long = "a".repeat(33);
@@ -724,8 +713,6 @@ mod tests {
         assert_eq!(external_url("tmdb", "000", "Movie"), None);
     }
 
-    /// Non-admin users get an opaque id in `Path`, which must not be printed as
-    /// if it were the name of a file.
     #[test]
     fn media_source_paths_that_are_not_file_names_are_dropped() {
         assert_eq!(file_name_of("6967c5ef-2daf-4951-9d03-38db9a7f5351"), None);

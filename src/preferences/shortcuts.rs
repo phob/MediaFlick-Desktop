@@ -1,4 +1,3 @@
-/// Normalize the mpv-compatible subset supported by the built-in shortcut recorder.
 pub(super) fn normalize(binding: &str) -> Option<String> {
     let binding = binding.trim();
     if binding.is_empty() {

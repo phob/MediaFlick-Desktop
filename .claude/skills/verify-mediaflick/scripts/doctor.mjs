@@ -57,8 +57,6 @@ if (isWindows) {
   if (existsSync(exe) && !existsSync(path.join(buildDir, "libcef.so"))) problems.push("build/libcef.so is missing; run `just build`")
 }
 
-// CDP runs over 127.0.0.1. On some machines loopback connects intermittently
-// stall for seconds; every run is then slow or times out.
 async function loopbackMs() {
   const server = net.createServer((socket) => socket.end())
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
@@ -104,8 +102,6 @@ if (runDirs.length) {
     const last = JSON.parse(readFileSync(resultFile, "utf8"))
     line("last run", `${last.runId}: ${last.passed ? "passed" : "FAILED"} (exit: ${last.exit}) ${path.relative(root, dir)}`)
   } else {
-    // The session writes result.json last; without it the run was killed
-    // (hard timeout, closed terminal) or is still going.
     line("last run", `${path.basename(dir)}: ${live ? "still running" : "INTERRUPTED (no result.json; see its steps.log)"} ${path.relative(root, dir)}`)
   }
 } else {

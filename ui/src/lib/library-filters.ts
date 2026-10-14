@@ -94,7 +94,6 @@ export interface ReleaseDecadeOption {
   label: string
 }
 
-/** Standard release decades, newest first, shared by both local catalogues. */
 export function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
   const currentDecade = Math.floor(currentYear / 10) * 10
   const decades: ReleaseDecadeOption[] = []
@@ -145,11 +144,7 @@ export function readLibraryFilters(params: URLSearchParams): LibraryFilterState 
   }
 }
 
-/**
- * Applies a filter patch without discarding the route's search or media kind.
- * Paging belongs to the virtual grid, but old/deep links can still carry these
- * values; a filter change always returns to the first result page.
- */
+/** Applies a filter patch without discarding the route's search or media kind. */
 export function writeLibraryFilters(
   previous: URLSearchParams,
   patch: Partial<LibraryFilterState>,
@@ -167,17 +162,11 @@ export function writeLibraryFilters(
   if (next.get("order") === sort.natural) next.delete("order")
   if (!seriesStatusApplies(kinds)) next.delete("seriesStatus")
   if (sort.id !== "random") next.delete("seed")
-  next.delete("offset")
-  next.delete("page")
   return next
 }
 
 export function libraryKind(params: URLSearchParams) {
-  // Person mode is a mixed movie/series/episode Search view, not a catalogue tab.
   if (params.get("mode") === "person") return ""
-  // The existing API accepts comma-separated kinds, and Home links use
-  // `Movie,Series` for mixed genre pages. An explicit blank also historically
-  // meant all kinds, so only an absent value receives the Movies default.
   if (params.has("kind")) return params.get("kind") ?? ""
   const favorite = params.get("favorite") === "true" || params.get("favorite") === "1"
   return params.get("search") || favorite ? "" : "Movie"

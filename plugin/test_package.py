@@ -1,5 +1,3 @@
-"""Check the ZIP and catalog that Jellyfin actually downloads."""
-
 import hashlib
 import json
 import subprocess

@@ -24,9 +24,7 @@ import { usePrefersReducedMotion } from "@/lib/reduced-motion"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
-/** How long a title without a usable trailer holds before the next takes over. */
 const NO_TRAILER_DWELL_MS = 12_000
-/** Earliest moment a trailer may take over from the establishing still. */
 const TRAILER_DELAY_MS = 2_500
 /**
  * A trailer that has not confirmed playback within this window is treated as
@@ -168,8 +166,6 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
     setAdvancePending(false)
     showSlide(slide)
   }
-  // The synopsis is live-only and arrives after the cached hero has painted;
-  // until it lands (or offline) the billboard simply shows no overview.
   const synopsis = useItemSynopsis(current?.id)
   const nextUp = useNextUp(current?.id, current?.kind === "Series")
   // Warm the next title's trailer record while the current slide plays so the
@@ -182,9 +178,6 @@ export function Billboard({ items }: { items: ItemSummary[] }) {
     <section
       className="relative flex h-1/2 min-h-[30rem] shrink-0 items-end overflow-hidden"
       aria-labelledby="billboard-title"
-      // Pausing while the pointer is in the hero is what makes the action
-      // buttons usable: a rotation underneath a reaching cursor swaps the
-      // button's meaning out from under the click.
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={resumeRotation}
       onFocusCapture={() => setPaused(true)}
@@ -285,8 +278,6 @@ function BillboardBackdrop({
     trailerPlayback.session === session && trailerPlayback.started
   const trailerPlaying =
     trailerPlayback.session === session && trailerPlayback.playing
-  // The stage reveals only once the establish period has passed AND the player
-  // has confirmed that footage is really rolling.
   const trailerVisible = trailerArmed && trailerPlaying
 
   const complete = useCallback(() => {
@@ -304,7 +295,6 @@ function BillboardBackdrop({
     onFinished(item.id)
   }, [item.id, onFinished, session])
 
-  /** Hide the player and reveal it only once fresh start-up chrome is gone. */
   const scheduleReveal = useCallback(() => {
     if (revealTimer.current !== null) window.clearTimeout(revealTimer.current)
     setTrailerPlayback((current) =>
@@ -335,8 +325,6 @@ function BillboardBackdrop({
   const trailerId = trailerInfo?.id
   const trailerEmbed = trailerInfo?.embedUrl
 
-  // Keep ordinary stills rotating. A real trailer takes ownership of the
-  // lifecycle below and does not release the slide until playback completes.
   useEffect(() => {
     if (
       !active ||
@@ -402,9 +390,6 @@ function BillboardBackdrop({
     }
   }, [active, complete, item.id, scheduleReveal, session, trailerEmbed])
 
-  // Footage becomes visible only once the player itself confirms playback. A
-  // trailer that never does — a missing stream, an unavailable embed — or that
-  // reports an error advances the billboard without ever being shown.
   useEffect(() => {
     if (!active || reducedMotion || trailerStarted) return
     if (!trailerId && !trailerEmbed) return
@@ -438,9 +423,6 @@ function BillboardBackdrop({
         onError={() => setImageIndex((current) => current + 1)}
         className="billboard-backdrop-image media-backdrop-image"
       />
-      {/* Players mount as soon as the slide is active so loading, buffering,
-          and autoplay happen underneath the establishing still. Visibility is
-          governed separately by data-playing. */}
       {active && trailerId && (
         <div
           className="billboard-trailer-stage"
@@ -506,7 +488,6 @@ function BillboardCopy({
   playTarget,
 }: {
   item: ItemSummary
-  /** Fetched live after the hero paints; null until then. */
   overview: string | null
   /** Always the row's own entry — what the buttons act on. */
   summary: ItemSummary
@@ -530,8 +511,6 @@ function BillboardCopy({
     item.positionTicks > 0 ? "Continue watching" : item.played ? "Watch it again" : "Featured"
 
   return (
-    // The copy hangs off a lit rule rather than floating over the artwork
-    // unanchored — the shelf marker's gesture, at hero scale.
     <div className="billboard-copy relative z-10 flex max-w-2xl gap-5 px-6 pb-24 sm:px-10 sm:pb-28 lg:px-14">
       <span className="billboard-spine" aria-hidden />
       <div className="flex min-w-0 flex-col items-start gap-4 py-1">
@@ -561,8 +540,6 @@ function BillboardCopy({
         )}
       </div>
 
-      {/* Facts, in the data face and divided by accent slashes. Titles are
-          typeset; everything known about them is measured. */}
       <div className="data-value flex flex-wrap items-center gap-x-2 gap-y-2 text-foreground/80">
         {communityRating && (
           <span
@@ -586,8 +563,6 @@ function BillboardCopy({
               {fact}
             </span>
           ))}
-        {/* No "HD" plaque alongside it: nothing at this level knows the
-            resolution, and the media info on the detail page does. */}
         {item.officialRating && (
           <span className="data-label border border-foreground/25 px-1.5 py-0.5 text-foreground/75">
             {item.officialRating}
@@ -606,13 +581,10 @@ function BillboardCopy({
           <div className="h-[3px] flex-1 overflow-hidden bg-foreground/20">
             <div className="h-full bg-primary" style={{ width: `${progress * 100}%` }} />
           </div>
-          {/* Not the uppercase label face: "16m left" set in caps reads as
-              "16M LEFT", which looks like a size rather than a duration. */}
           {remaining && <span className="data-value shrink-0 text-foreground/70">{remaining}</span>}
         </div>
       )}
 
-      {/* The accent carries the primary action rather than white doing it. */}
       <div className="flex flex-wrap items-center gap-2 pt-1">
         {isPlayable && (
           <Button

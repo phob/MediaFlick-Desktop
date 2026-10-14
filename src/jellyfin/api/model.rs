@@ -124,9 +124,6 @@ pub struct BaseItemDto {
     /// `Virtual` marks a missing episode: metadata without a media file.
     pub location_type: Option<String>,
     pub user_data: Option<UserItemDataDto>,
-    /// Lightweight stream descriptors returned by the `MediaStreams` item
-    /// field. Unlike `media_sources`, these can be cached with library rows
-    /// without retaining paths, source negotiation, or subtitle delivery data.
     pub media_streams: Vec<MediaStream>,
     pub media_sources: Vec<MediaSourceInfo>,
     pub remote_trailers: Vec<MediaUrl>,
@@ -145,8 +142,6 @@ impl BaseItemDto {
         self.name.as_deref().unwrap_or("Untitled")
     }
 
-    /// Finds a tag in Jellyfin's per-image-type map without relying on the
-    /// server's key casing.
     pub fn image_tag(&self, image_type: &str) -> Option<&str> {
         self.image_tags.iter().find_map(|(key, value)| {
             key.eq_ignore_ascii_case(image_type)
@@ -154,8 +149,6 @@ impl BaseItemDto {
         })
     }
 
-    /// The image tag to use for the poster, falling back to the parent series
-    /// so episodes still render art.
     pub fn primary_image_tag(&self) -> Option<&str> {
         self.image_tag("Primary")
             .or(self.series_primary_image_tag.as_deref())

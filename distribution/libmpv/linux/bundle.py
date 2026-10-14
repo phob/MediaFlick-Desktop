@@ -1,5 +1,3 @@
-"""Bundle the private playback libraries and their exact Debian/Ubuntu sources."""
-
 import os
 from pathlib import Path
 import re

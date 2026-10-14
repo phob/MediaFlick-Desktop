@@ -50,7 +50,6 @@ const technicalStreams = [
     audioSpatialFormat: "DolbyAtmos",
     isDefault: true,
   }),
-  // Subtitle detail is intentionally not part of a card's technical readout.
   stream({ index: 2, type: "Subtitle", codec: "subrip" }),
 ]
 
@@ -88,8 +87,6 @@ const series: ItemSummary = {
   childCount: 2,
 }
 
-// Streams are never part of a summary row any more; cards read them from the
-// live batched technical channel, so tests provide that channel directly.
 function withTechnical(streams: ReadonlyMap<string, MediaStream[]>, children: ReactNode) {
   return (
     <MemoryRouter>

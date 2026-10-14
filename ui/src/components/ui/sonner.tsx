@@ -8,8 +8,6 @@ import {
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import type { CSSVariableProperties } from "@/lib/style"
 
-// shadcn ships this wired to `next-themes`. The app owns the whole window and is
-// dark-only, so the theme is pinned and that dependency is dropped.
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner

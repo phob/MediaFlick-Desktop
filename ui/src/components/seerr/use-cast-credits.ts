@@ -37,8 +37,6 @@ export function useCastCredits({
   const companionProvidesSeerr = Boolean(
     companion.data?.compatible && companionCapabilities.includes("seerr"),
   )
-  // Seerr is reached only through the Companion. Without it there is no
-  // status to ask for, and the page explains that Seerr is not connected.
   const seerr = useSeerrStatus(companionProvidesSeerr)
   const providerSupportsPeople =
     !companionProvidesSeerr || companionCapabilities.includes("seerr-person-discovery")

@@ -28,8 +28,6 @@ if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || (( timeout_s < 1 || timeout_s > 3600 )); 
   exit 2
 fi
 
-# Not "mediaflick-verify-…": that prefix marks disposable profiles, which
-# verify-cleanup removes when no live session owns them.
 work="$(mktemp -d "${TMPDIR:-/tmp}/mediaflick-xvfb.XXXXXX")"
 xvfb_pid=""
 child=""
@@ -73,8 +71,6 @@ unset WAYLAND_DISPLAY WAYLAND_SOCKET XAUTHORITY DBUS_SESSION_BUS_ADDRESS PULSE_S
 mkdir -m 700 "$work/runtime"
 export XDG_RUNTIME_DIR="$work/runtime"
 
-# A private session bus when available; otherwise none at all. Either way the
-# app cannot reach the user's notifications, portals or keyring.
 runner=()
 if command -v dbus-run-session >/dev/null; then runner=(dbus-run-session --); fi
 

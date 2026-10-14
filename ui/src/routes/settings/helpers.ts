@@ -6,12 +6,10 @@ import { sameJson } from "@/lib/json"
 import { queryKeys } from "@/lib/query-client"
 import { readShellEvent, type ShellEvent } from "@/lib/shell-events"
 
-/** Structural equality for small settings drafts. */
 export function same<T>(left: T, right: T) {
   return sameJson(left, right)
 }
 
-/** Stores the device settings the shell answered with and confirms the save. */
 export function saveSettings(cache: QueryClient, saved: ClientSettings, message = "Settings saved") {
   cache.setQueryData(queryKeys.settings, saved)
   toast.success(message)
@@ -28,7 +26,6 @@ export function useShellEvents(listener: (event: ShellEvent) => void) {
   }, [listener])
 }
 
-/** A URL-safe id that pairs a native shell request with its completion event. */
 export function requestId() {
   return crypto.randomUUID?.().replaceAll("-", "") ?? `${Date.now()}${Math.random().toString(16).slice(2)}`
 }

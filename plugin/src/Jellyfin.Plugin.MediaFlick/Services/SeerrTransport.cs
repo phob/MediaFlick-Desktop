@@ -10,7 +10,6 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 /// </summary>
 internal interface ISeerrTransport
 {
-    /// <summary>Whether unmapped Jellyfin users may be imported into Seerr on first use.</summary>
     bool AutoImportUsers { get; }
 
     /// <summary>
@@ -26,7 +25,6 @@ internal interface ISeerrTransport
         CancellationToken cancellationToken);
 }
 
-/// <summary>Sends Seerr calls through the shared Companion HTTP client.</summary>
 internal sealed class CompanionSeerrTransport : ISeerrTransport
 {
     private readonly CompanionHttpClient _http;

@@ -125,8 +125,6 @@ export function DetailPeopleRail({
             className="flex w-28 shrink-0 flex-col items-center gap-2 rounded-media text-center outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Headshot entry={entry} />
-            {/* The labels float over the page backdrop, so they carry their own
-                contrast shadow for light artwork. */}
             <span className="flex flex-col gap-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
               <span className="text-xs leading-tight">{entry.name}</span>
               {entry.role && (

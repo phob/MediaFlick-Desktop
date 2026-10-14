@@ -1,6 +1,5 @@
 import type { SyncFailure } from "@/lib/api"
 
-/** How each sync failure reads to a person; raw error text stays in the log. */
 export const SYNC_FAILURES: Record<SyncFailure, { title: string; detail: string }> = {
   unreachable: {
     title: "Can't reach your Jellyfin server",

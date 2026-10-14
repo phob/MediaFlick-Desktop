@@ -78,7 +78,6 @@ const movieRatings: ItemRatings = {
   id: "movie-1",
   ratings: [{
     sourceId: "letterboxd",
-    rawSource: "letterboxd",
     value: 4.2,
     score: 84,
     votes: 1_000,
@@ -117,8 +116,6 @@ const movie: ItemSummary = {
   unplayedCount: null,
 }
 
-// Technical streams no longer travel on summaries; the preview reads them
-// from the live batched technical channel, keyed by item id.
 const movieStreams: MediaStream[] = [
   stream({ type: "Video", codec: "hevc", width: 3840, height: 1608, videoRangeType: "DOVI" }),
   stream({ index: 1, type: "Audio", codec: "truehd", channels: 8, audioSpatialFormat: "DolbyAtmos" }),

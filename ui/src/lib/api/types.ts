@@ -1,6 +1,3 @@
-// Wire types for the JSON API served by `src/shell/cef/api.rs`, with the
-// id tables and write-shape converters that belong to those types.
-
 import type { JsonObject } from "../json.ts"
 
 type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
@@ -19,7 +16,6 @@ export interface ItemSummary {
   parentIndexNumber: number | null
   primaryImageTag: string | null
   thumbImageTag: string | null
-  /** The title treatment — the wordmark on transparency, where the server has one. */
   logoImageTag: string | null
   backdropImageTag: string | null
   childCount: number | null
@@ -45,7 +41,6 @@ export interface Person {
   imageTag: string | null
 }
 
-/** Stable identity shared by Jellyfin cast filtering and TMDB/Seerr credits. */
 export interface PersonIdentity {
   jellyfinId: string
   tmdbId: number | null
@@ -65,7 +60,6 @@ export interface PersonResolveQuery {
   name?: string
 }
 
-/** The cached thin detail row: instant, but without prose or cast. */
 export interface ItemDetail extends ItemSummary {
   genres: string[]
   originalTitle: string | null
@@ -87,18 +81,15 @@ export interface ItemAbout {
   studios: string[]
 }
 
-/** The billboard's purpose-built live prose response. */
 export interface ItemSynopsis {
   overview: string | null
 }
 
-/** One card's live technical descriptors from `/api/technical/batch`. */
 export interface ItemTechnical {
   id: string
   mediaStreams: MediaStream[]
 }
 
-/** One profile's newest rating and newest written review in the current movie RSS feed. */
 export interface LetterboxdReview {
   profileId: string
   username: string
@@ -121,7 +112,6 @@ export interface LetterboxdReviewsResponse {
   unavailableProfiles: number
 }
 
-/** One track of a media source, as `media_stream_json` in `api.rs` shapes it. */
 export interface MediaStream {
   index: number
   /** Present on cached item summaries; detail sources already group by type. */
@@ -144,7 +134,6 @@ export interface MediaStream {
   isExternal: boolean
 }
 
-/** One playable file behind an item, from `/api/item/{id}/media`. */
 export interface MediaSource {
   id: string | null
   name: string
@@ -159,7 +148,6 @@ export interface MediaSource {
   subtitles: MediaStream[]
 }
 
-/** A saved choice after the shell has validated it against current sources. */
 export interface PlaybackTrackPreference {
   mediaSourceId: string | null
   mediaSourceIndex: number
@@ -273,13 +261,10 @@ interface BootstrapProgress {
   complete: boolean
   processed: number
   total: number | null
-  initial: boolean
 }
 
-/** Mirrors `AppStatus` (`src/shell/cef/api.rs`); every field is always sent. */
 export interface Status {
   authenticated: boolean
-  /** The server rejected the stored token; the user must sign in again. */
   expired: boolean
   serverUrl: string | null
   serverName: string | null
@@ -357,7 +342,6 @@ export interface PlayerSettings {
   mpvPath: string | null
   defaultFullscreen: "fullscreen" | "windowed"
   markWatchedNext: string | null
-  /** Computed by the shell from the selected backend/path; never writable. */
   playerConfigured: boolean
 }
 
@@ -409,7 +393,6 @@ export interface PlayerComfort {
   seekForwardThirtyKey: string
 }
 
-/** Mirrors `SettingsView` (`src/shell/cef/api/settings.rs`); every field is always sent. */
 export interface ClientSettings {
   client: {
     player: PlayerSettings
@@ -433,7 +416,6 @@ export interface ClientSettings {
     integratedLibmpvOverlay: boolean
     mpvInstaller: boolean
   }
-  /** Durable settings files restored from their backup at startup. */
   recoveries: { area: string; restoredBackup: boolean }[]
   serverUrl: string | null
 }
@@ -446,9 +428,7 @@ export interface AppearanceSettings {
   artworkIntensity: number
   backdropIntensity: number
   reducedMotion: boolean
-  /** Whether resting the pointer on a media card opens the expanded panel. */
   cardPreviews: boolean
-  /** Whether technical video/audio facts are drawn over library cards. */
   showMediaInfo: boolean
   /** Canonical IDs from the fixed public MDBList source catalog. */
   ratingSources: string[]
@@ -482,7 +462,6 @@ export interface RatingsIntegrationStatus {
 
 export interface NormalizedRating {
   sourceId: string
-  rawSource: string
   value: number
   score: number | null
   votes: number | null
@@ -524,7 +503,6 @@ export interface LetterboxdProfile {
   lastCheckedAt: number | null
 }
 
-/** Mirrors the JSON `Session::connect` answers. */
 export interface ServerInfo {
   serverUrl: string
   serverName: string | null
@@ -538,12 +516,8 @@ export interface QuickConnectStart {
   secret: string
 }
 
-// ------------------------------------------------------------------- seerr
-
-/** The two TMDB namespaces; `person` results never reach the UI. */
 export type SeerrMediaType = "movie" | "tv"
 
-/** Normalized media availability returned by Companion's Seerr contract. */
 export type SeerrStatus =
   | "unknown"
   | "pending"
@@ -564,7 +538,6 @@ export type SeerrActivity =
   | "unreleased"
   | "awaiting-episodes"
 
-/** Normalized request state returned by Companion's Seerr contract. */
 export type SeerrRequestStatus = "unknown" | "pending" | "approved" | "declined" | "failed"
 
 /**
@@ -590,7 +563,6 @@ export interface SeerrResult {
   played?: boolean
 }
 
-/** Ratings batch keys accept library IDs or a namespaced discovery TMDB identity. */
 export function discoveryRatingId(result: Pick<SeerrResult, "libraryItemId" | "mediaType" | "tmdbId">): string {
   return result.libraryItemId ?? `tmdb:${result.mediaType}:${result.tmdbId}`
 }
@@ -707,7 +679,6 @@ export interface SeerrRequest {
   libraryItemId: string | null
 }
 
-/** What one media kind may do, from the user's Seerr permission mask. */
 export interface SeerrCapability {
   request: boolean
   autoApprove: boolean
@@ -747,7 +718,6 @@ interface SeerrQuotaStatus {
   restricted: boolean
 }
 
-/** The signed-in user's Seerr state reported by MediaFlick Companion. */
 export interface SeerrStatusInfo {
   linked: boolean
   instance: {
@@ -760,8 +730,6 @@ export interface SeerrStatusInfo {
   quota: { movie: SeerrQuotaStatus; tv: SeerrQuotaStatus } | null
   mapped: boolean
 }
-
-// ------------------------------------------------------------- collections
 
 export type CollectionMode = "mediaFlick" | "jellyfin"
 export type CollectionMediaType = "movie" | "series" | "mixed"
@@ -985,7 +953,6 @@ export interface JellyfinCollectionDetail {
   totalRecordCount: number
 }
 
-/** The single exact TMDB franchise a movie belongs to, or none. */
 export interface MovieCollection {
   tmdbId: number
   collection: { id: number; name: string } | null
@@ -1042,7 +1009,6 @@ export interface SeerrDiscoverFilters {
 
 type SyncPhase = "catalog" | "reconciling" | "complete"
 
-/** Why a sync cycle failed (`SyncFailure`, `src/library/sync.rs`). */
 export type SyncFailure = "unreachable" | "server" | "storage"
 
 /** A failed cycle and when the worker tries again, in Unix seconds. */
@@ -1065,7 +1031,6 @@ export interface SyncProgress {
   active: boolean
   phase: SyncPhase
   catalog: BootstrapProgress
-  /** Set while the worker waits out a failure. */
   retry: SyncRetry | null
 }
 
@@ -1075,7 +1040,6 @@ export interface SeerrGenre {
   backdrops: string[]
 }
 
-/** Ids accepted by `StreamingQuality::from_id` (`src/preferences/model.rs`). */
 export type StreamingQualityId =
   | "original"
   | "auto"
@@ -1136,7 +1100,6 @@ export interface PlaybackDiagnostics {
   frameRate: number | null
 }
 
-/** Mirrors `StopReason` (`src/playback/model.rs`). */
 export type StopReason =
   | "eof"
   | "watched-next"
@@ -1147,7 +1110,6 @@ export type StopReason =
   | "shutdown"
   | "unknown"
 
-/** Mirrors `PlayerSnapshot` (`src/playback/model.rs`); every field is always sent. */
 export interface PlayerState {
   active: boolean
   playbackId: number | null
@@ -1176,7 +1138,6 @@ export interface PlayStarted {
   startTicks?: number
 }
 
-/** Mirrors `PlayerCommandBody` (`src/shell/cef/api/playback.rs`). */
 export type PlayerCommand =
   | { command: "mark-watched-next" | "toggle-subtitles" }
   | { command: "pause" | "resume" | "stop" }
@@ -1211,7 +1172,6 @@ export type SeriesStatus = "Continuing" | "Ended"
 
 export interface ItemQuery {
   search?: string
-  /** Exact Jellyfin person id; switches `/api/items` to a live `PersonIds` query. */
   personId?: string
   kind?: string
   genre?: string

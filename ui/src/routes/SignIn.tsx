@@ -38,8 +38,6 @@ export default function SignIn() {
   const serverValue = server ?? settings.data?.serverUrl ?? ""
   const serverAddress = serverValue.trim()
   const addressComplete = looksLikeServerAddress(serverAddress)
-  // The last address the user settled on, by pausing on a complete-looking
-  // address or by leaving the field. It probes only while the field still holds it.
   const [settled, setSettled] = useState("")
   const probeTarget = server === null
     ? settings.data?.serverUrl ?? ""
@@ -103,11 +101,8 @@ export default function SignIn() {
                 onChange={(event) => {
                   setServer(event.target.value)
                   if (event.target.value.trim() === serverAddress) return
-                  // Stop displaying and polling a code as soon as its server changes.
                   quickConnect.reset()
                 }}
-                // An address the completeness check does not recognize, such as a
-                // single-label LAN host, is still probed once the user moves on.
                 onBlur={() => setSettled(serverAddress)}
                 placeholder="https://jellyfin.example.com"
                 autoComplete="url"
@@ -189,7 +184,6 @@ export default function SignIn() {
   )
 }
 
-// The page disables text selection, so the code needs its own way to the clipboard.
 function CopyCodeButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
 

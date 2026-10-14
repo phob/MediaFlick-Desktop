@@ -32,8 +32,6 @@ fn kill_on_close_job() -> isize {
     })
 }
 
-/// Bind an external player child to this process's lifetime, so it is killed if
-/// MediaFlick exits without (or fails) a graceful shutdown. No-op off Windows.
 #[cfg(target_os = "windows")]
 pub fn confine_to_app_lifetime(child: &std::process::Child) {
     use std::os::windows::io::AsRawHandle;

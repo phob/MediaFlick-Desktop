@@ -1,5 +1,3 @@
-//! mpv IPC endpoint allocation, command transport, and event decoding.
-
 use std::io::{self, BufRead, BufReader, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -614,7 +612,6 @@ pub(super) mod test_server {
 
     use super::{IpcWorker, MpvEvent};
 
-    /// Connection indexes in the order the worker opens them.
     pub(in crate::players::mpv) const EVENT_CONNECTION: usize = 0;
     pub(in crate::players::mpv) const COMMAND_CONNECTION: usize = 1;
 
@@ -633,7 +630,6 @@ pub(super) mod test_server {
     }
 
     impl FakeMpv {
-        /// Starts serving and returns once a client can connect.
         pub(in crate::players::mpv) fn start(
             reply: impl Fn(&Value) -> Vec<Value> + Send + 'static,
         ) -> Self {
@@ -696,12 +692,10 @@ pub(super) mod test_server {
             }
         }
 
-        /// Connects a worker the way the controller does.
         pub(in crate::players::mpv) fn connect(&self) -> (IpcWorker, Receiver<MpvEvent>) {
             IpcWorker::start(&self.path).expect("connect to fake mpv")
         }
 
-        /// The next command mpv received on a given connection.
         pub(in crate::players::mpv) fn next_command_on(&self, connection: usize) -> Value {
             loop {
                 let (from, command) = self
@@ -724,7 +718,6 @@ pub(super) mod test_server {
             drop(events);
         }
 
-        /// Closes the connections the way mpv does on exit and joins the worker.
         pub(in crate::players::mpv) fn finish(self, worker: IpcWorker) {
             self.events.lock().expect("event stream").take();
             worker.shutdown();
@@ -831,8 +824,6 @@ mod tests {
         let fake = FakeMpv::start(|command| {
             let id = command["request_id"].clone();
             match command["command"][0].as_str() {
-                // Events and other requests' replies can share the command
-                // connection; the writer waits for its own request id.
                 Some("first") => vec![
                     json!({ "event": "property-change", "name": "pause", "data": true }),
                     json!({ "request_id": 999_999, "error": "success" }),
@@ -841,8 +832,6 @@ mod tests {
                 Some("rejected") => {
                     vec![json!({ "request_id": id, "error": "property unavailable" })]
                 }
-                // mpv answers an async command only when it completes; here that
-                // is just before the next command's own reply.
                 Some("late") => Vec::new(),
                 Some("after-async") => vec![
                     json!({ "request_id": 4, "error": "success" }),
@@ -869,9 +858,6 @@ mod tests {
             "a rejection keeps the writer"
         );
         assert!(worker.is_writer_alive());
-        // The fake accepts only the event and command connections, so a
-        // writer that reopened the pipe per command could not have been
-        // answered at all.
         for expected in ["first", "rejected", "after-rejection"] {
             assert_eq!(
                 fake.next_command_on(COMMAND_CONNECTION)["command"][0],
@@ -879,8 +865,6 @@ mod tests {
             );
         }
 
-        // An async command is acknowledged once written; its late reply is
-        // skipped by the next validated command's wait.
         let asynchronous = worker.send_with_timeout(
             json!({ "command": ["late"], "request_id": 4, "async": true }),
             Duration::from_secs(5),
@@ -902,9 +886,6 @@ mod tests {
         fake.finish(worker);
     }
 
-    /// The event connection polls with a two-second read timeout. A command
-    /// reply is bounded only by that command's own deadline, so a slow
-    /// `sub-add` of a remote subtitle is not mistaken for a dead mpv session.
     #[test]
     fn a_command_reply_slower_than_the_event_poll_is_accepted_within_its_deadline() {
         let fake = FakeMpv::start(|command| {

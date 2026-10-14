@@ -274,8 +274,6 @@ impl LibmpvOverlaySurface {
         }
     }
 
-    /// The user's close request. Leaves the overlay running when the window
-    /// minimizes or the page keeps it open.
     fn request_close(&self) {
         let browser = self.browser.borrow().clone();
         request_main_window_close(Some(&self.state), browser, || {
@@ -287,7 +285,6 @@ impl LibmpvOverlaySurface {
         });
     }
 
-    /// Closes after the window or its composition failed; nothing may cancel it.
     fn close(&self) {
         if !self.closing.replace(true)
             && let Some(host) = self.browser_host()

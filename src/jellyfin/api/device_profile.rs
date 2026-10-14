@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use crate::app::build_info;
 use crate::preferences::StreamingQuality;
 
-/// Bitrate advertised when the user asked for untouched original files.
 const UNLIMITED_BITRATE: u64 = 1_000_000_000;
 
 pub fn device_profile(quality: StreamingQuality) -> Value {
@@ -57,8 +56,6 @@ fn transcoding_profiles(quality: StreamingQuality) -> Value {
     ])
 }
 
-/// Text subtitles are handed to the player as separate files; image-based
-/// formats stay in the container because neither player can fetch them.
 fn subtitle_profiles() -> Value {
     json!([
         { "Format": "srt", "Method": "External" },

@@ -6,8 +6,6 @@ import { markWindowRevealed, windowRevealed } from "@/lib/startup"
 const HIDDEN_PAINT_FALLBACK_MS = 100
 
 function nextPaint() {
-  // Until the first ready report shows the native window, no frame reaches the
-  // screen, so there is nothing to wait for.
   if (!windowRevealed() || document.visibilityState === "hidden") return Promise.resolve()
   return new Promise<void>((resolve) => {
     let settled = false

@@ -49,8 +49,6 @@ fn main() {
     let effective_log_level = cli.log_level.as_deref().unwrap_or(&settings.log_level);
     let _log_guard = logger::init(&log_file, effective_log_level);
 
-    // Headless checks open no window and share the database through WAL, so
-    // they run before the single-instance guard and work alongside a running app.
     if cli.library_stats {
         std::process::exit(library::headless::print_stats());
     }

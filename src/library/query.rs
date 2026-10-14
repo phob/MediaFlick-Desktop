@@ -16,12 +16,6 @@ const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
 
 impl Library {
-    pub fn has_items(&self) -> rusqlite::Result<bool> {
-        self.db.with_connection(|connection| {
-            connection.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |row| row.get(0))
-        })
-    }
-
     pub fn stats(&self) -> LibraryStats {
         self.db
             .with_connection(|connection| {
@@ -41,7 +35,6 @@ impl Library {
                         .query_row("SELECT count(*) FROM items", [], |row| row.get(0))?,
                 })
             })
-            // Counts are only displayed; zero is the honest fallback.
             .unwrap_or_else(|error| {
                 tracing::warn!(target: "library.db", "could not count cached items: {error}");
                 LibraryStats::default()
@@ -81,8 +74,6 @@ impl Library {
         })
     }
 
-    /// One page without its total, for surfaces such as Home rows that never
-    /// show a count.
     pub fn query_page(&self, query: &ItemQuery) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db
             .with_connection(|connection| page_items(connection, query))
@@ -144,9 +135,6 @@ impl Library {
         })
     }
 
-    /// Card rows for a bounded set of Jellyfin ids. Collection pages already
-    /// know their exact local members, so one batched read avoids a separate
-    /// app-scheme request and SQLite connection for every mounted card.
     pub fn items_by_ids(&self, item_ids: &[String]) -> rusqlite::Result<Vec<ItemSummary>> {
         if item_ids.is_empty() {
             return Ok(Vec::new());
@@ -211,8 +199,6 @@ impl Library {
         })
     }
 
-    /// One stable recommendation seed can be selected from this process's
-    /// account cache. The detail row carries the leading genre needed by Home.
     pub fn random_played_movie_with_genre(&self) -> rusqlite::Result<Option<ItemDetail>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -231,9 +217,6 @@ impl Library {
         })
     }
 
-    /// The newest added episode of each series, newest first. Rows stream from
-    /// `items_kind_added`, so the walk stops once `limit` series are found
-    /// instead of grouping every cached episode.
     pub fn recently_added_episodes(&self, limit: usize) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -257,7 +240,6 @@ impl Library {
         })
     }
 
-    /// A fresh set of movies and series for the home billboard.
     pub fn random_billboard_titles(&self, limit: i64) -> rusqlite::Result<Vec<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -321,7 +303,6 @@ impl Library {
         Ok(ratings)
     }
 
-    /// The earliest episode of a series in broadcast order.
     pub fn first_episode(&self, series_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -341,7 +322,6 @@ impl Library {
         })
     }
 
-    /// The episode immediately before `item_id` inside its series.
     pub fn previous_episode(&self, item_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -363,7 +343,6 @@ impl Library {
         })
     }
 
-    /// The episode that follows `item_id` inside its series.
     pub fn next_episode(&self, item_id: &str) -> rusqlite::Result<Option<ItemSummary>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare(&format!(
@@ -421,7 +400,6 @@ fn cached_image_tag<'a>(image_tags: &'a Value, image_type: &str) -> Option<&'a s
     })
 }
 
-/// Reads [`SUMMARY_COLUMNS`], which [`DETAIL_COLUMNS`] begins with.
 fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
     let image_tags = parsed_json(&row.get::<_, String>(19)?);
     Ok(ItemSummary {
@@ -472,8 +450,6 @@ fn parsed_json(raw: &str) -> Value {
 }
 
 fn count_items(connection: &Connection, query: &ItemQuery) -> rusqlite::Result<i64> {
-    // `user_data` holds at most one row per item, so the join only matters to
-    // the count when a condition reads it.
     let needs_user_data = query.watched.is_some() || query.favorite.is_some();
     let (from_clause, where_clause, arguments) = query_base(query, needs_user_data);
     connection
@@ -503,7 +479,6 @@ fn page_sql(query: &ItemQuery) -> (String, Vec<SqlValue>) {
 }
 
 fn order_by(query: &ItemQuery) -> String {
-    // Ranking needs the `items_fts` join, which only a search with words gets.
     if query
         .search
         .as_deref()
@@ -563,7 +538,6 @@ fn in_progress() -> String {
     )
 }
 
-/// Builds the FROM clause, WHERE clause, and bound arguments for a query.
 fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<SqlValue>) {
     let mut conditions = Vec::new();
     let mut arguments = Vec::new();
@@ -581,7 +555,6 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         conditions.push("items_fts MATCH ?".to_string());
         arguments.push(SqlValue::Text(search));
     } else if query.search.is_some() {
-        // A search of punctuation alone has no words, so nothing matches it.
         conditions.push("0".to_string());
     }
 
@@ -689,7 +662,6 @@ fn fts_match_expression(input: &str) -> Option<String> {
     (!tokens.is_empty()).then(|| tokens.join(" AND "))
 }
 
-/// Howard Hinnant's `civil_from_days`, the standard days-to-date conversion.
 pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -906,8 +878,6 @@ mod tests {
 
     #[test]
     fn children_returns_episodes_of_a_season_in_order() {
-        // Inserted against broadcast order, and with names that sort the
-        // other way, so neither row order nor a name sort can pass.
         let library = Library::open_in_memory().expect("library");
         library
             .upsert_page(&[
@@ -955,7 +925,6 @@ mod tests {
         assert_eq!(detail.provider_ids.tmdb.as_deref(), Some("603"));
         assert!(library.item("missing").expect("query").is_none());
 
-        // The UI's ItemDetail extends ItemSummary: one flat object.
         let wire = serde_json::to_value(&detail).expect("detail json");
         assert_eq!(wire["id"], "m1");
         assert_eq!(wire["kind"], "Movie");
@@ -1014,12 +983,10 @@ mod tests {
             })
         };
 
-        // Quotes, dashes, and operator words are text, not FTS syntax.
         let matrix = search(r#"matr" -"#).expect("punctuation is not a syntax error");
         assert_eq!(matrix.total, 1);
         assert_eq!(matrix.items[0].id, "m1");
         assert_eq!(search("matrix OR arrival").expect("operator word").total, 0);
-        // Every typed word must match, not any of them.
         assert_eq!(search("the arriv").expect("two words").total, 0);
     }
 
@@ -1045,8 +1012,6 @@ mod tests {
         assert_eq!(total("matr"), 0, "the old name still matches");
         assert_eq!(total("reloa"), 1);
 
-        // The next insert reuses the removed row id, so a leftover index
-        // entry would make the old name find the new title.
         library.forget("a").expect("forget");
         library
             .upsert_page(&[dto(r#"{"Id":"b","Name":"Arrival","Type":"Movie"}"#)])

@@ -25,8 +25,6 @@ export function accountsDir(env = process.env) {
   return path.join(root, "mediaflick-verify", "accounts")
 }
 
-// The address the user typed, compared without case in scheme and host and
-// without a trailing slash. Only http and https servers are accepted.
 export function serverKey(server) {
   let url
   try {
@@ -48,7 +46,6 @@ export function readAccount(server) {
   return account
 }
 
-// Cached sessions without their tokens, for the doctor.
 export function listAccounts() {
   const dir = accountsDir()
   if (!existsSync(dir)) return []
@@ -64,7 +61,6 @@ export function listAccounts() {
     })
 }
 
-// The session the app stored in a profile's library.db after signing in.
 export function readStoredSession(dataDir) {
   const database = new DatabaseSync(path.join(dataDir, "library.db"), { readOnly: true })
   try {
@@ -144,8 +140,6 @@ export async function checkAccount(account) {
   return { status: response.status, userName: user.Name }
 }
 
-// Reads server state as the cached account (watched state, resume position,
-// favorites) to check what the app reported. GET only; the token stays here.
 export async function jellyfinGet(account, apiPath) {
   const response = await fetch(`${account.serverUrl}${apiPath}`, {
     headers: { Authorization: `MediaBrowser Token="${account.token}"`, Accept: "application/json" },
@@ -155,8 +149,6 @@ export async function jellyfinGet(account, apiPath) {
   return response.json()
 }
 
-// Sets an item's resume point and played flag for the cached account. Only for
-// putting a test item back after a run; play count and last-played date stay.
 export async function resetUserData(account, itemId, { played = false, positionTicks = 0 } = {}) {
   const response = await fetch(`${account.serverUrl}/UserItems/${encodeURIComponent(itemId)}/UserData?userId=${account.userId}`, {
     method: "POST",
@@ -167,8 +159,6 @@ export async function resetUserData(account, itemId, { played = false, positionT
   if (!response.ok) throw new Error(`resetting user data of ${itemId} answered HTTP ${response.status}`)
 }
 
-// Cancels one of the account's own Seerr requests through the Companion, the
-// same call the app's Cancel makes. Only for cleaning up after a failed run.
 export async function cancelSeerrRequest(account, requestId) {
   const response = await fetch(`${account.serverUrl}/MediaFlick/seerr/request/${Number(requestId)}`, {
     method: "DELETE",
@@ -178,8 +168,6 @@ export async function cancelSeerrRequest(account, requestId) {
   if (!response.ok) throw new Error(`cancelling Seerr request ${requestId} answered HTTP ${response.status}`)
 }
 
-// Status of an arbitrary token on the account's server, and a way to revoke
-// it, for the token the app holds (`ctx.appSession()`).
 export async function tokenStatus(serverUrl, token) {
   const response = await fetch(`${serverUrl}/Users/Me`, { headers: { Authorization: `MediaBrowser Token="${token}"` }, signal: AbortSignal.timeout(20000) })
   return response.status
@@ -190,9 +178,6 @@ export async function revokeToken(serverUrl, token) {
   if (!response.ok) throw new Error(`revoking a token answered HTTP ${response.status}`)
 }
 
-// Approves a Quick Connect code as the cached account, as the user would on a
-// device already signed in. The app then gets its own new token, which the
-// drive may sign out and revoke without touching the cached session.
 export async function approveQuickConnect(account, code) {
   const response = await fetch(`${account.serverUrl}/QuickConnect/Authorize?code=${encodeURIComponent(code)}`, {
     method: "POST",
@@ -202,7 +187,6 @@ export async function approveQuickConnect(account, code) {
   if (!response.ok) throw new Error(`approving Quick Connect code ${code} answered HTTP ${response.status}`)
 }
 
-// The account as evidence may show it: everything except the token.
 export function publicAccount(account) {
   const { token: _token, ...rest } = account
   return rest

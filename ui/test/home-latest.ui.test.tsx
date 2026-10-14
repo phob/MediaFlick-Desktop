@@ -195,7 +195,6 @@ describe("home latest shelves", () => {
     renderHome()
 
     const upcoming = shelf("Releases")
-    // Episode names stay concealed while spoiler protection is on.
     expect(upcoming.queryByText("Third Episode")).toBeNull()
     expect(upcoming.getByText("S02E03")).toBeTruthy()
   })

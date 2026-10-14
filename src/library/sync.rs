@@ -29,18 +29,11 @@ use super::{Library, LibraryChangeBatch};
 pub use cycle::run_cycle;
 pub use worker::spawn;
 
-/// Base delay between incremental sweeps; jittered per cycle.
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
-/// How often the identity-only pass runs. It mirrors watch state *and* detects
-/// deletions from the same pages, so both stay this fresh for one pass' cost.
 pub(super) const IDENTITY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
-/// How often the whole library is re-paged. This is the only thing that notices
-/// an in-place metadata edit, and thin pages are cheap, so it runs daily.
 pub(super) const REBOOTSTRAP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// Identity-only pages can be much larger than metadata pages.
 pub(super) const IDENTITY_PAGE_SIZE: i64 = 1_000;
-/// Safety valve so a server that never reaches the watermark cannot loop.
 pub(super) const MAX_INCREMENTAL_PAGES: usize = 100;
 /// The same valve for the two full passes, which end on the server's own idea
 /// of where the library stops. Both caps sit far above any real library — a
@@ -68,17 +61,13 @@ pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapProgress {
     pub complete: bool,
-    /// Reported as [`Bootstrap::Ready`], the one readiness signal the UI reads.
     #[serde(skip)]
     pub ready: bool,
     pub processed: i64,
     pub total: Option<i64>,
-    pub initial: bool,
 }
 
-/// The catalog becomes usable after its first successful page commit. Existing
-/// rows are an equally strong readiness signal during a rebuild or the daily
-/// re-bootstrap, even if an older build never wrote the explicit marker.
+/// The catalog becomes usable after its first successful page commit.
 ///
 /// This only reports progress; the sync cycle reads its own state fallibly.
 /// An unreadable database is logged and reported as a catalog that is not
@@ -91,20 +80,15 @@ pub fn bootstrap_progress(library: &Library) -> BootstrapProgress {
 }
 
 fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgress> {
-    let has_items = library.has_items()?;
     let complete = flag(library, META_BOOTSTRAP_DONE)?;
     Ok(BootstrapProgress {
         complete,
-        ready: complete || has_items || flag(library, META_CATALOG_READY)?,
+        ready: complete || flag(library, META_CATALOG_READY)?,
         processed: meta_count(library, META_BOOTSTRAP_OFFSET)?.unwrap_or(0),
         total: meta_count(library, META_BOOTSTRAP_TOTAL)?,
-        // A migration/backfill over an existing cache is never first-time setup.
-        initial: library.meta(META_LAST_BOOTSTRAP)?.is_none() && !has_items,
     })
 }
 
-/// Whether the cache can answer "is this title in the library". A database
-/// that cannot be read cannot answer, so it is logged and treated as not.
 pub fn ownership_available(library: &Library) -> bool {
     let available = flag(library, META_BOOTSTRAP_DONE)
         .and_then(|done| Ok(done && !flag(library, META_LATEST_FAILURE)?));
@@ -125,7 +109,6 @@ fn meta_count(library: &Library, key: &str) -> rusqlite::Result<Option<i64>> {
         .map(|value| value.max(0)))
 }
 
-/// What a single cycle changed; surfaced by `/api/status` and `--library-stats`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncReport {
@@ -153,10 +136,7 @@ impl SyncReport {
 /// nothing observable until the hour is up, which reads as a broken button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
-    /// The timer came around.
     Scheduled,
-    /// A person asked: the refresh button, a fresh sign-in, or
-    /// `--library-sync-once`.
     Requested,
 }
 
@@ -187,16 +167,11 @@ pub enum SyncPhase {
     Complete,
 }
 
-/// Why a cycle failed, in the categories a person can act on. The UI words
-/// them; raw transport and decoder text stays in the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SyncFailure {
-    /// No connection: DNS, TLS, refused, reset, or timed out.
     Unreachable,
-    /// The server answered, but not with a usable page.
     Server,
-    /// The local library database failed.
     Storage,
 }
 
@@ -216,7 +191,6 @@ impl SyncFailure {
     }
 }
 
-/// A failed cycle and when the worker tries again on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Retry {
@@ -224,8 +198,6 @@ pub struct Retry {
     pub retry_at: i64,
 }
 
-/// What the shell gates on after sign-in: Home needs a usable catalog. Until
-/// then the catalog is loading, or its last attempt failed and a retry is due.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum Bootstrap {
@@ -234,9 +206,6 @@ pub enum Bootstrap {
     Ready,
 }
 
-/// The last failure outlives the next attempt, so a person retrying sees the
-/// reason until a page arrives. It belongs to the session generation it
-/// failed under; a sign-out or account switch leaves it behind.
 #[derive(Debug, Clone, Copy)]
 struct Failure {
     generation: u64,
@@ -255,21 +224,16 @@ pub struct SyncProgress {
     pub active: bool,
     pub phase: SyncPhase,
     pub catalog: BootstrapProgress,
-    /// Set while the worker waits out a failure.
     pub retry: Option<Retry>,
 }
 
-/// `SyncHandle::status`: the sidebar's progress and the shell's gate, read
-/// from one snapshot of the worker.
 pub struct SyncStatus {
     pub progress: SyncProgress,
     pub bootstrap: Bootstrap,
 }
 
-/// Runs after a cycle that changed what the library holds.
 pub type CycleCompleted = Arc<dyn Fn() + Send + Sync>;
 
-/// Handle used by the shell to nudge or stop the sync thread.
 #[derive(Clone)]
 pub struct SyncHandle {
     signal: Arc<Signal>,
@@ -293,15 +257,11 @@ impl SyncHandle {
         }
     }
 
-    /// A handle with no worker thread behind it: requests are recorded and
-    /// never run, so tests cannot start a sync against a real server.
     #[cfg(test)]
     pub fn detached() -> Self {
         Self::new(Arc::default())
     }
 
-    /// Registers what the application does after a cycle that changed the
-    /// library; the collections scheduler re-derives ownership from it.
     pub fn on_cycle_completed(&self, hook: CycleCompleted) {
         if let Ok(mut slot) = self.cycle_completed.lock() {
             *slot = Some(hook);
@@ -336,8 +296,6 @@ impl SyncHandle {
         self.signal.condvar.notify_all();
     }
 
-    /// Reports that the main window has painted its first route, which ends
-    /// the startup hold on a warm start's first cycle.
     pub fn release_startup_hold(&self) {
         if let Ok(mut flags) = self.signal.flags.lock() {
             flags.window_ready = true;
@@ -364,8 +322,6 @@ impl SyncHandle {
         self.running.load(Ordering::Relaxed)
     }
 
-    /// `generation` is the current session's; failures from another are not
-    /// reported.
     pub fn status(&self, catalog: BootstrapProgress, generation: u64) -> SyncStatus {
         let state = self.state.lock().map(|state| *state).unwrap_or_default();
         let retry = state

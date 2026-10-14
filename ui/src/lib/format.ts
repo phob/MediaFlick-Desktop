@@ -1,6 +1,3 @@
-// Display formatting for the detail page. Everything returns `null` for values
-// worth omitting entirely, so callers can drop a row instead of printing a dash.
-
 import { ticksToMs, type MediaStream } from "./api"
 
 export function formatRuntime(ticks: number | null | undefined) {
@@ -10,7 +7,6 @@ export function formatRuntime(ticks: number | null | undefined) {
   return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 }
 
-/** "24m left" for the Resume button — the part still ahead, not behind. */
 export function formatRemaining(positionTicks: number, runtimeTicks: number | null) {
   if (!runtimeTicks || positionTicks <= 0) return null
   const minutes = Math.round(ticksToMs(runtimeTicks - positionTicks) / 60_000)
@@ -19,13 +15,11 @@ export function formatRemaining(positionTicks: number, runtimeTicks: number | nu
   return hours ? `${hours}h ${minutes % 60}m left` : `${minutes}m left`
 }
 
-/** The server-supplied community score, kept on its native ten-point scale. */
 export function formatCommunityRating(communityRating: number | null | undefined) {
   if (communityRating == null || communityRating <= 0) return null
   return communityRating.toFixed(1)
 }
 
-/** Jellyfin dates are ISO 8601; an unparsable one is not worth a row. */
 export function formatDate(value: string | null | undefined) {
   if (!value) return null
   const date = new Date(value)
@@ -111,8 +105,6 @@ export function formatLanguage(code: string | null | undefined) {
     const resolved = languageNames?.of(trimmed)
     if (resolved && resolved.toLowerCase() !== trimmed.toLowerCase()) return resolved
   } catch {
-    // A code Intl cannot parse at all throws; the raw value still says more
-    // than nothing.
   }
   return trimmed.toUpperCase()
 }
@@ -188,8 +180,6 @@ function videoRangeLabels(stream: Pick<MediaStream, "videoRange" | "videoRangeTy
   const general = stream.videoRange?.trim()
   const value = specific && specific.toUpperCase() !== "SDR" ? specific : general
   if (!value || value.toUpperCase() === "SDR" || value.toUpperCase() === "UNKNOWN") return null
-  // Anything Jellyfin adds later prints as the server spelled it rather than
-  // as shouted camel case.
   const known = knownVideoRanges.get(value.toLowerCase())
   return known ?? { label: value }
 }
@@ -232,7 +222,6 @@ function formatAudioSpatialFormat(
 export interface CardMediaSummary {
   video: string[]
   audio: string[]
-  /** Complete, spoken/native-tooltip text, including facts omitted visually. */
   description: string
 }
 
@@ -310,8 +299,6 @@ export function summarizeCardMedia(streams: MediaStream[] | null | undefined): C
   const audioCodec = audio ? formatAudioCodec(audio) : null
   const channels = audio ? formatChannels(audio.channels) : null
 
-  // Range is more useful than a codec at card size. For ordinary SDR files,
-  // the codec takes that second slot instead.
   const visibleVideo = uniqueLabels([resolution, range ?? videoCodec])
   const visibleAudio = uniqueLabels([audioCodec, spatial ?? channels])
   const fullVideo = uniqueLabels([
@@ -333,7 +320,6 @@ export function summarizeCardMedia(streams: MediaStream[] | null | undefined): C
     : null
 }
 
-/** Compact one-line summary of a track, used in the media-info lists. */
 export function describeStream(stream: MediaStream, kind: "video" | "audio" | "subtitle") {
   const suppliedName = stream.title?.trim() || stream.displayTitle?.trim() || null
   const parts = [
@@ -351,11 +337,9 @@ export function describeStream(stream: MediaStream, kind: "video" | "audio" | "s
   const unique = parts.filter(
     (part, index) => parts.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index,
   )
-  // A track with nothing recognisable still has whatever the server called it.
   return unique.length ? unique.join(" · ") : "Unknown"
 }
 
-/** Full selector label, including the server's default marker when present. */
 export function describeTrackChoice(stream: MediaStream, kind: "audio" | "subtitle") {
   const label = describeStream(stream, kind)
   return stream.isDefault ? `${label} · Default` : label

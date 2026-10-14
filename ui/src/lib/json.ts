@@ -4,7 +4,6 @@ export interface JsonObject {
   [key: string]: JsonValue
 }
 
-/** Decode a JSON object without accepting arrays, boxed primitives, or class instances. */
 export function isJsonObject(value: JsonValue | undefined): value is JsonObject {
   return value !== undefined
     && value !== null

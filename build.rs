@@ -53,8 +53,6 @@ fn build_ui(repo_root: &Path) {
         panic!("ui/package.json is missing — the UI bundle cannot be built");
     }
 
-    // Any of these changing invalidates the bundle. `ui/src` is watched
-    // recursively.
     for path in [
         "src",
         "index.html",
@@ -164,7 +162,6 @@ fn track_git_refs(repo_root: &Path) {
     let git_dir = if dot_git.is_dir() {
         dot_git
     } else {
-        // A linked worktree's `.git` is a file naming its private git dir.
         let Some(path) = std::fs::read_to_string(&dot_git).ok().and_then(|file| {
             file.trim()
                 .strip_prefix("gitdir:")

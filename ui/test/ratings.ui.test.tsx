@@ -36,7 +36,6 @@ function display(sourceId: string, value: number): DisplayRating {
   if (!definition) throw new Error(`Expected rating source ${sourceId}`)
   const rating: NormalizedRating = {
     sourceId,
-    rawSource: sourceId,
     value,
     score: null,
     votes: null,
@@ -110,7 +109,7 @@ describe("configurable card ratings", () => {
         effectiveOrigin: "plugin",
         retryAt: null,
         diagnostic: null,
-        items: [{ ...item, ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }] }],
+        items: [{ ...item, ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }] }],
       }), { status: 200 })
     })
     vi.stubGlobal("fetch", fetchMock)
@@ -127,7 +126,6 @@ describe("configurable card ratings", () => {
           </RatingsProvider>
         </QueryClientProvider>,
       )
-      // Cards are committed before the post-render ratings timer starts.
       expect(screen.getAllByText("movie-1:ready")).toHaveLength(2)
       expect(fetchMock).not.toHaveBeenCalled()
       await act(async () => {
@@ -180,7 +178,7 @@ describe("configurable card ratings", () => {
     const rated = (id: string): ItemRatings => ({
       ...item,
       id,
-      ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
+      ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
     })
     const client = testQueryClient()
     client.setQueryData(queryKeys.settings, clientSettings)
@@ -197,7 +195,6 @@ describe("configurable card ratings", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
       expect(pending).toHaveLength(1)
 
-      // A later shelf mounts while the first batch is still in flight.
       view.rerender(harness(["movie-a", "movie-b"]))
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
       expect(pending).toHaveLength(2)
@@ -208,8 +205,6 @@ describe("configurable card ratings", () => {
         await Promise.resolve()
       })
       await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
-      // The first response must not abort the second batch, and its cards must
-      // not need a replacement request.
       expect(pending[1].signal?.aborted).toBe(false)
       expect(pending).toHaveLength(2)
 
@@ -239,12 +234,10 @@ describe("configurable card ratings", () => {
       // SAFETY: the provider under test always posts a JSON `{ ids }` body.
       const { ids } = JSON.parse(String(init?.body)) as { ids: string[] }
       batchCalls.push(ids)
-      // The native call that owns this title's refresh finishes between the
-      // first answer and the retry, so only the retry carries the entry.
       const items = batchCalls.length < 2 ? [] : [{
         ...item,
         id: "movie-1",
-        ratings: [{ sourceId: "letterboxd", rawSource: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
+        ratings: [{ sourceId: "letterboxd", value: 4.2, score: 84, votes: 10, scaleMax: 5 }],
       }]
       return new Response(JSON.stringify({
         available: true,
@@ -272,7 +265,6 @@ describe("configurable card ratings", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(2_100) })
       expect(batchCalls).toHaveLength(2)
       expect(screen.getByText("movie-1:1")).toBeTruthy()
-      // A returned entry ends the retry cycle.
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
       expect(batchCalls).toHaveLength(2)
     } finally {
@@ -313,7 +305,6 @@ describe("configurable card ratings", () => {
       )
       await act(async () => { await vi.advanceTimersByTimeAsync(80) })
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
-      // The omission is retried, but only a bounded number of times.
       const settled = batchCalls.length
       expect(settled).toBeGreaterThan(1)
       expect(batchCalls.every((ids) => ids.includes("episode-1"))).toBe(true)

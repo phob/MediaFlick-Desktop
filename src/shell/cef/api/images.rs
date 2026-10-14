@@ -17,10 +17,7 @@ pub(super) fn route(
     Some(response)
 }
 
-// -------------------------------------------------------------------- images
-
 static IMAGE_WRITES: AtomicUsize = AtomicUsize::new(0);
-/// Prune once the cache is clearly larger than a big library's poster set.
 const IMAGE_CACHE_MAX_FILES: usize = 4_000;
 const IMAGE_CACHE_PRUNE_EVERY: usize = 200;
 
@@ -66,8 +63,6 @@ fn image(
             Ok(ApiResponse::bytes(content_type, bytes, IMMUTABLE_CACHE))
         }
         Err(error) => {
-            // A missing image is the first sign of a replaced file, because the
-            // grid renders posters long before anything tries to play them.
             if matches!(error, ApiError::Status { status: 404 }) {
                 forget_if_server_disowns(services, &scope, item_id);
             }
@@ -95,8 +90,6 @@ fn forget_if_server_disowns(services: &Arc<Services>, scope: &SessionScope, item
     }
 }
 
-/// Only characters that are safe in a file name survive, so a hostile item id
-/// cannot escape the cache directory.
 pub(super) fn cache_key(item_id: &str, image_type: &str, tag: &str, max_width: u32) -> String {
     let sanitize = |value: &str| -> String {
         value
@@ -129,7 +122,6 @@ pub(super) fn store_image(path: &std::path::Path, bytes: &[u8]) {
     }
 }
 
-/// Drops the oldest quarter of the cache once it grows past the cap.
 fn prune_image_cache(directory: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;

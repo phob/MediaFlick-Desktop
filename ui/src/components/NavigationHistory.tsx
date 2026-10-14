@@ -3,7 +3,6 @@ import { createPath, Link, useLocation, useNavigate, useNavigationType, useResol
 
 const BackHistoryContext = createContext<(path: string) => boolean>(() => false)
 
-/** Keep return links on the original history entry, including its filters and scroll position. */
 export function NavigationHistory({ children }: { children: ReactNode }) {
   const location = useLocation()
   const action = useNavigationType()

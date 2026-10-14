@@ -559,9 +559,6 @@ export default function Discover() {
   const availability = availabilityFilter(params.get("library"))
   const resultSetKey = discoveryResultSetKey(row, filters, availability)
 
-  // Capability changes can make a deep-linked row or control unavailable.
-  // Canonicalize only after the probe settles; clearing during the pending
-  // frame would destroy valid persisted state before the plugin answered.
   useEffect(() => {
     if (companion.isPending) return
     const unsupportedRow =
@@ -570,13 +567,7 @@ export default function Discover() {
     const hasAdvancedFilters = DISCOVERY_FILTER_KEYS.some((key) => params.has(key))
     const clearAdvancedFilters = !advancedDiscovery && hasAdvancedFilters
     const clearUnsupportedDecade = !decadeDiscovery && params.has("decade")
-    const clearLegacyCentury = params.has("century")
-    if (
-      !unsupportedRow &&
-      !clearAdvancedFilters &&
-      !clearUnsupportedDecade &&
-      !clearLegacyCentury
-    ) {
+    if (!unsupportedRow && !clearAdvancedFilters && !clearUnsupportedDecade) {
       return
     }
 
@@ -589,7 +580,6 @@ export default function Discover() {
         } else if (clearUnsupportedDecade) {
           next.delete("decade")
         }
-        next.delete("century")
         return next
       },
       { replace: true },

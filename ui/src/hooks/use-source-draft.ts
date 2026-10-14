@@ -13,7 +13,6 @@ function mergeDraft<T>(previous: T, draft: T, source: T): T {
   return next
 }
 
-/** Refresh untouched fields while retaining edits; account changes start a new draft. */
 export function useSourceDraft<T>(source: T, account?: string) {
   const [state, setState] = useState(() => ({ source, value: source, account }))
 

@@ -94,8 +94,6 @@ test("restoration waits for late content and stops when the user scrolls", async
   setHeight(100)
   await act(() => router.navigate(-1))
   expect(viewport.scrollTop).toBe(0)
-  // Waiting at the top must not overwrite the original target or chase the
-  // growing bottom (which would trigger an infinite list's pagination).
   fireEvent.scroll(viewport)
   viewport.querySelector("[data-height]")!.setAttribute("data-height", "3000")
   await act(async () => {})

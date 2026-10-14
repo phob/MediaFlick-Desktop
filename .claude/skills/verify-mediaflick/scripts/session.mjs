@@ -59,23 +59,15 @@ if (!/^[A-Za-z0-9._-]{1,80}$/.test(runId)) throw new Error("run id may only use 
 const timeoutMs = Number(options.timeout) * 1000
 if (!(timeoutMs > 0 && timeoutMs <= 3600_000)) throw new Error("--timeout must be 1..3600 seconds")
 
-// Isolation comes first: nothing is launched before it is confirmed.
 const isolation = assertIsolated()
 
-// --account seeds the profile with a session cached by `just verify-login`;
-// --login (that recipe) signs in with Quick Connect and caches one. Both are
-// checked before any evidence exists, so a missing or revoked session fails fast.
 if ([options.url, options.account, options.login].filter(Boolean).length > 1) throw new Error("pass only one of --url, --account and --login")
 const login = options.login ? serverKey(options.login).normalized : null
 const account = options.account ? readAccount(options.account) : null
 if (options.account && !account) throw new Error(`no cached session for ${serverKey(options.account).normalized}; run \`just verify-login ${serverKey(options.account).normalized}\` first`)
 if (options["signed-out"] && !account) throw new Error("--signed-out needs --account SERVER")
-// --signed-out starts on the sign-in screen of the account's server; the drive
-// signs in with Quick Connect, approved by the harness as the cached account,
-// so the app holds its own token and may sign out.
 const signedOut = Boolean(account && options["signed-out"])
 const accountCheck = account ? await checkAccount(account) : null
-// Tokens to keep out of evidence: the cached one, and one saved by --login.
 const secrets = new Set(account ? [account.token] : [])
 let signOutBlocked = false
 
@@ -94,7 +86,6 @@ if (account) {
 
 if (!existsSync(exe)) throw new Error(`${exe} is missing; \`just verify\` builds it, or run \`just build\``)
 
-// --- Read-only guard over the user's real profile. ---
 const real = realProfileDirs()
 const GUARDED = [
   ["config", "accounts.json"], ["config", "settings.json"], ["config", "collections.json"], ["config", "playback-preferences.json"],
@@ -111,7 +102,6 @@ const fingerprint = () => Object.fromEntries(GUARDED.map(([kind, name]) => {
 }))
 const guardBefore = fingerprint()
 
-// --- Disposable profile. ---
 const profile = path.join(profileParent, profileName(runId, process.pid, randomBytes(3).toString("hex")))
 const { env, dirs, configDir, dataDir } = appEnvironment(profile)
 // Sockets in TMPDIR must fit the 107-byte Unix path limit: CEF dies with
@@ -147,8 +137,6 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const ours = () => listProcesses().filter((row) => row.cmd.includes(profile))
 
-// Races a promise against a deadline whose timer is cleared either way, so a
-// finished run never lingers on a pending timeout.
 function within(promise, ms, onTimeout) {
   let timer
   const deadline = new Promise((resolve, reject) => {
@@ -167,8 +155,6 @@ let app
 
 async function launch() {
   const port = await freePort()
-  // An EnvFilter: playback drives add `jellyfin.playstate=trace` to see the
-  // playstate bodies the app sends.
   const args = ["--remote-debugging-port", String(port), "--log-level", options["log-level"]]
   const url = options.url ?? login ?? (signedOut ? account.serverUrl : null)
   if (url) args.push("--url", url)
@@ -177,8 +163,6 @@ async function launch() {
   child.exited = exited
   writeJson("pids.json", { session: process.pid, app: child.pid, port, profile })
   log(`launched pid ${child.pid} on CDP port ${port}`)
-  // Loopback connects fail intermittently on some machines; the WebSocket
-  // rejects with a bare ErrorEvent, so retry and keep a readable message.
   const attach = async () => {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -250,8 +234,6 @@ async function doctor(port, file = "doctor.json") {
   const problems = []
   if (!href.startsWith("mediaflick-desktop://app")) problems.push(`CDP page is ${href}, not the app`)
   if (status.status !== 200) problems.push(`/api/status answered ${status.status}`)
-  // instance.json and the log appear in the profile only if the app really
-  // resolved its config dir there.
   if (!existsSync(path.join(configDir, "instance.json"))) problems.push("the app did not create instance.json in the disposable config dir")
   if (!processes.some((row) => row.pid === child.pid) && !listProcesses().some((row) => row.pid === child.pid && isAppProcess(row))) problems.push(`pid ${child.pid} is not a running app process`)
   if (problems.length) throw new Error(`doctor: ${problems.join("; ")}`)
@@ -266,14 +248,10 @@ function gitHead() {
   }
 }
 
-// Closes the window the way the app's own close path does, so save-on-exit
-// runs, then falls back to stopping exactly the processes this run started.
-// Returns how the app exited and any process that outlived it.
 async function closeApp() {
   let exit
   if (child.exitCode === null && child.signalCode === null && app) {
     log("closing the app window")
-    // A stalled CDP link must not hold teardown; the exit wait covers it.
     await within(app.evaluate("window.close(), true").catch(() => {}), 5000, () => {})
     const closed = await within(child.exited.then(() => true), 20000, () => false)
     exit = closed ? "coordinated" : "forced"
@@ -306,9 +284,6 @@ async function teardown() {
   if (leftovers.length) result.leftovers = leftovers
 }
 
-// A drive's `ctx.relaunch()`: the same profile, a new process. The single
-// instance gate would hand a second launch to a surviving process, so the
-// first one must be gone entirely.
 async function relaunch() {
   const { exit, leftovers } = await closeApp()
   if (exit !== "coordinated" || leftovers.length) throw new Error(`relaunch: the app exited ${exit}${leftovers.length ? ` and left ${JSON.stringify(leftovers)}` : ""}`)
@@ -325,7 +300,6 @@ async function failureEvidence(harness) {
 
 function collectProfile() {
   const target = path.join(evidence, "profile")
-  // Durable files the app wrote; CEF's cache and the catalog DB stay behind.
   if (existsSync(configDir)) cpSync(configDir, path.join(target, "config"), { recursive: true })
   for (const name of ["cef.log"]) {
     const file = path.join(dataDir, name)
@@ -370,15 +344,12 @@ try {
 } finally {
   await teardown()
   await harness?.dispose()
-  // With the app gone, every report it sends on exit has reached the server.
   const afterRunErrors = (await harness?.runAfterRun()) ?? []
   if (afterRunErrors.length) {
     result.passed = false
     result.error = `${result.error ? `${result.error}\n` : ""}after-run cleanup failed: ${afterRunErrors.join("; ")}`
   }
   collectProfile()
-  // The token the app holds now (a fresh one under --signed-out) is as secret
-  // as the cached one.
   if (account || login) {
     try {
       const stored = readStoredSession(dataDir)
@@ -389,7 +360,6 @@ try {
   }
   const guardAfter = fingerprint()
   const changed = Object.keys(guardBefore).filter((file) => JSON.stringify(guardBefore[file]) !== JSON.stringify(guardAfter[file]))
-  // The user's own MediaFlick may legitimately write its profile meanwhile.
   const running = userApps()
   writeJson("guard.json", { realProfile: real, changed, userAppsRunning: running.map(({ pid }) => pid), before: guardBefore, after: guardAfter })
   if (changed.length && !running.length) {
@@ -413,7 +383,6 @@ try {
     result.profileRemoved = false
     log(`kept profile ${profile}`)
   }
-  // Last, once every evidence file exists: no token may be among them.
   if (secrets.size) {
     const leaked = [...secrets].flatMap((secret) => redactSecret(evidence, secret)).map((file) => path.relative(evidence, file))
     result.tokenScan = { scanned: true, leaked }

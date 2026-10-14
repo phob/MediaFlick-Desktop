@@ -12,7 +12,6 @@ use crate::playback::{PlaybackEvent, PlayerBackend};
 use crate::players::mpv::MpvController;
 use crate::preferences::{AppSettings, PlayerBackend as PlayerBackendKind};
 
-/// Build the configured player adapter at the application boundary.
 pub fn build_backend(
     settings: &AppSettings,
     event_tx: Sender<PlaybackEvent>,
@@ -29,8 +28,6 @@ pub fn build_backend(
     }
 }
 
-/// Resolve the selected runtime without making the settings UI provide a path
-/// for the bundled backend.
 pub fn configured_player_path(settings: &AppSettings) -> Option<String> {
     match settings.effective_backend() {
         PlayerBackendKind::Libmpv => {

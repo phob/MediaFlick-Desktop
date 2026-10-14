@@ -11,7 +11,6 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 public sealed class CompanionHttpClient
 {
     public const string ClientName = "MediaFlick.Companion";
-    /// <summary>Seerr answers are single pages of results.</summary>
     internal const int MaxSeerrResponseBytes = 16 * 1024 * 1024;
 
     /// <summary>
@@ -145,8 +144,6 @@ public sealed class CompanionHttpClient
 
             _health.Success(serviceName);
 
-            // Only a usable answer ends a failure streak; a service that keeps
-            // returning non-JSON must stay on the Debug path after its first Warning.
             if (_failures.Recovered(serviceName))
             {
                 _logger.LogInformation("{Service} is answering again", serviceName);
@@ -273,8 +270,6 @@ public sealed class CompanionHttpClient
         }
         else
         {
-            // Per-request outcomes such as a missing title or a Seerr user
-            // without permission for an action.
             _logger.LogDebug("{Service} returned HTTP {StatusCode}", serviceName, code);
         }
     }

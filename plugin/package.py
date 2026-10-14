@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Build MediaFlick Companion release metadata and its Jellyfin catalog entry."""
 
 from __future__ import annotations
 

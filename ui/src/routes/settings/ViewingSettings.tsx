@@ -29,7 +29,6 @@ const POSTER_WIDTHS = [
   [240, "Extra large"],
 ] as const
 
-/** Language codes typed as a comma list, normalized the way the shell stores them. */
 function languageList(text: string | undefined) {
   return (text ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)
 }
@@ -37,7 +36,6 @@ function languageList(text: string | undefined) {
 function posterWidthOptions(current: number) {
   const known = POSTER_WIDTHS.some(([width]) => width === current)
   return [
-    // A width saved by an older build stays visible instead of reading as blank.
     ...(known ? [] : [{ value: String(current), label: `Current — ${current} px`, disabled: true }]),
     ...POSTER_WIDTHS.map(([width, name]) => ({ value: String(width), label: `${name} — ${width} px` })),
   ]
@@ -279,7 +277,6 @@ export default function ViewingSettings() {
           setSubtitleText(query.data?.subtitleLanguages.join(", "))
         }}
         onReset={() => {
-          // The card preview delay is edited on the Appearance page.
           setDraft({ ...DEFAULT_VIEWING, previewDelayMs: query.data?.previewDelayMs ?? DEFAULT_VIEWING.previewDelayMs })
           setAudioText("")
           setSubtitleText("")

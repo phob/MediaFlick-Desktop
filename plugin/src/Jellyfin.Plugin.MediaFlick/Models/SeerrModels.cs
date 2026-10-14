@@ -5,7 +5,6 @@ namespace Jellyfin.Plugin.MediaFlick.Models;
 // Desktop mirrors them in ui/src/lib/api/types.ts (SeerrStatusInfo, SeerrResult,
 // SeerrMediaDetail, SeerrPage, SeerrRequest, SeerrRequestOptions).
 
-/// <summary>The signed-in user's Seerr state.</summary>
 public sealed record SeerrStatusResponse(
     bool Linked,
     bool Mapped,

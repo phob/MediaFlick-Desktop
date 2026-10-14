@@ -17,9 +17,6 @@ import { createQueryClient } from "./lib/query-client"
 installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 const queryClient = createQueryClient()
-// The window stays hidden behind the loading cover until the first route is
-// ready, so rendering after the one startup request costs nothing visible and
-// saves the queries from asking for the same data separately.
 void primeStartupQueries(queryClient, window.location.pathname).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>

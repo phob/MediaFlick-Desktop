@@ -1,6 +1,6 @@
 import { detailNavigationState } from "@/lib/navigation"
 import { ArrowUpRight, Plus, Star } from "lucide-react"
-import { memo, type MouseEvent, useState } from "react"
+import { memo, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { RatingOverlay } from "@/components/RatingOverlay"
 import { RequestDialog } from "@/components/seerr/RequestDialog"
@@ -106,18 +106,7 @@ export const SeerrCard = memo(function SeerrCard({
 
   const destination = {
     pathname: `/discover/${result.mediaType}/${result.tmdbId}`,
-    // Keeping the browse query on the detail URL makes the explicit Back link
-    // as reliable as browser Back, including after a reload.
     search: location.pathname === "/discover" ? location.search : "",
-  }
-
-  const openQuickRequest = (event: MouseEvent<HTMLButtonElement>) => {
-    // The action overlays a card-sized detail link. Keep this guard even though
-    // the button is its semantic sibling: it prevents a future wrapper change,
-    // or a synthetic parent handler, from turning Request into navigation.
-    event.preventDefault()
-    event.stopPropagation()
-    setRequesting(true)
   }
 
   return (
@@ -149,7 +138,7 @@ export const SeerrCard = memo(function SeerrCard({
             aria-label={`Request ${result.title}`}
             aria-haspopup="dialog"
             title={`Request ${result.title}`}
-            onClick={openQuickRequest}
+            onClick={() => setRequesting(true)}
             className={cn(
               "quick-request-action absolute right-2 z-20 grid size-11 place-items-center rounded-media border border-primary/45 bg-background/90 text-primary shadow-lg shadow-black/60 backdrop-blur-sm outline-none transition-[opacity,transform,background-color,border-color] duration-150 hover:border-primary hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               quickRequestVisible

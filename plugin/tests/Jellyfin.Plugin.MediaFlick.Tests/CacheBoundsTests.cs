@@ -173,7 +173,6 @@ public sealed class CacheBoundsTests : IDisposable
             expiresAt ?? now + 600));
     }
 
-    /// <summary>A body whose length is only known by reading it.</summary>
     private sealed class UnknownLengthStream(byte[] content) : MemoryStream(content)
     {
         public override bool CanSeek => false;
