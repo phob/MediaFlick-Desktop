@@ -1,6 +1,3 @@
-// Addresses the UI builds itself: image proxy URLs, provider artwork, and
-// external title pages. None of them carry a token.
-
 import type {
   ItemDetail,
   ItemSummary,
@@ -9,11 +6,8 @@ import type {
 } from "./types.ts"
 
 const POSTER_WIDTH = 400
-/** Home progress cards are drawn wider and use 16:9 art. */
 export const LANDSCAPE_WIDTH = 560
-/** The detail hero renders edge to edge, so its backdrop needs a real width. */
 export const BACKDROP_WIDTH = 1920
-/** The detail hero's poster: a bigger slot than the library grid's. */
 export const DETAIL_POSTER_WIDTH = 600
 /** Episode still cards: wide grid slots, doubled to cover HiDPI. */
 export const THUMBNAIL_WIDTH = 800
@@ -53,7 +47,6 @@ export function imageUrl(
   return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag })}`
 }
 
-/** Null when the item has no backdrop, so callers can lay out without one. */
 export function backdropUrl(item: ItemDetail, maxWidth = BACKDROP_WIDTH) {
   if (!item.backdropImageTag) return null
   // Jellyfin supplies a series' backdrop tag as ParentBackdropImageTags on
@@ -117,17 +110,13 @@ export function personImageUrl(person: Person, maxWidth = HEADSHOT_WIDTH) {
   return imageUrl({ id: person.id, primaryImageTag: person.imageTag }, "Primary", maxWidth)
 }
 
-// The first Companion-backed image proxy cached error JSON as immutable art.
-// Keep the same disk key while forcing CEF to ask the repaired proxy once.
-const SEERR_IMAGE_CACHE_VERSION = 2
-
 /**
  * Provider art through the Desktop and Companion proxies. The UI supplies
  * only an allowlisted rendition name and provider-issued image path.
  */
 export function seerrImageUrl(path: string | null | undefined, size = "w300") {
   if (!path) return null
-  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}?v=${SEERR_IMAGE_CACHE_VERSION}`
+  return `/api/seerr/image/${size}/${encodeURIComponent(path.replace(/^\//, ""))}`
 }
 
 /**

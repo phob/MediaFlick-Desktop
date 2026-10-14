@@ -19,8 +19,6 @@ export default function SettingsDraftGuard({ children }: { children: ReactNode }
   const dirty = pending.size > 0
   const saving = [...pending.values()].some(Boolean)
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname)
-  // The native shell cancels a window close this page's beforeunload objects
-  // to and asks here instead; leaving then closes the window for real.
   const [closeBlocked, setCloseBlocked] = useState(false)
   const leaving = useRef(false)
   useBeforeUnload(useCallback((event) => {

@@ -23,7 +23,6 @@ export default async function companion(ctx) {
   }, "the first sync to finish", 300000)
   const evidence = {}
 
-  // Status: the app's probe and the read-only Companion page.
   const info = (await ctx.api("/api/companion/info")).body
   evidence.companion = { available: info.available, compatible: info.compatible, pluginVersion: info.info?.pluginVersion, capabilities: info.info?.capabilities, services: info.info?.services }
   ctx.check(info.available && info.compatible, `the Companion ${info.info?.pluginVersion} is available and compatible`)
@@ -41,7 +40,6 @@ export default async function companion(ctx) {
   await ctx.snapshot("01-companion-status")
   await ctx.screenshot("01-companion-status")
 
-  // Releases: Agenda, Month, navigation and the release-type toggles.
   await sidebarLink(ctx, "Releases")
   await ctx.until(async () => (await ctx.pathname()).startsWith("/calendar"), "/calendar")
   const now = new Date()
@@ -70,7 +68,6 @@ export default async function companion(ctx) {
   await ctx.press({ role: "button", name: "Today" })
   await ctx.until(async () => (await monthTitle(ctx)) === monthName(now), "Today returns to the current month")
 
-  // Home's Releases shelf: past and upcoming around a Today separator.
   await sidebarLink(ctx, "Home")
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   const shelf = await ctx.until(() => ctx.app.evaluate(`(() => {
@@ -89,7 +86,6 @@ export default async function companion(ctx) {
   await ctx.park()
   await ctx.screenshot("04-home-releases")
 
-  // Ratings: pick sources in Appearance, then see them on cards and a detail page.
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name: "Appearance" })
   const imdb = await ctx.find({ role: "checkbox", name: "IMDb" }, { timeout: 20000 })
@@ -116,7 +112,6 @@ export default async function companion(ctx) {
   evidence.ratings.detail = detail
   await ctx.snapshot("06-detail-ratings")
 
-  // Put Appearance back.
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name: "Appearance" })
   await ctx.press({ role: "button", name: "Restore defaults" })

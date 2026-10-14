@@ -12,7 +12,6 @@ import Discover from "@/routes/Discover"
 import { testQueryClient } from "./test-query-client"
 
 beforeEach(() => {
-  // Model wrapped cards and the real pagination threshold; jsdom has no layout.
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600)
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
     return 500 + this.querySelectorAll("[data-quick-request-card]").length * 100
@@ -87,8 +86,6 @@ async function browse(url: string, mediaType: SeerrMediaType) {
     <StrictMode><QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider></StrictMode>,
   )
   const viewport = view.container.querySelector<HTMLElement>(".content-viewport")!
-  // Text queries, not name-filtered role queries: computing every card link's
-  // accessible name pushed this file past the timeout on CI runners.
   await screen.findByText(`${mediaType} title 0`)
   for (const top of [1900, 3900]) {
     fireEvent.wheel(viewport)
@@ -99,7 +96,6 @@ async function browse(url: string, mediaType: SeerrMediaType) {
   const requestCount = requests.mock.calls.length
   fireEvent.click(screen.getByText(`${mediaType} title 45`))
   await screen.findByRole("link", { name: "Back to discovery" })
-  // Let inactive-query garbage collection run: gcTime: 0 lost all pages here.
   await act(() => new Promise((resolve) => setTimeout(resolve, 20)))
   return { client, router, view, viewport, requests, requestCount }
 }
@@ -110,7 +106,6 @@ test.each([
   ["/discover?q=space", "movie"],
 ] as const)("Back to %s restores loaded pages without fetching them again", async (url, mediaType) => {
   const { client, router, view, viewport, requests, requestCount } = await browse(url, mediaType)
-  // Aging the snapshot must not cause a background refetch of every page.
   for (const query of client.getQueryCache().findAll({ queryKey: ["seerr", url.includes("q=") ? "search" : "discover"] })) {
     client.setQueryData(query.queryKey, query.state.data, { updatedAt: Date.now() - 60 * 60_000 })
   }
@@ -119,7 +114,6 @@ test.each([
   expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(60)
   expect(requests).toHaveBeenCalledTimes(requestCount)
 
-  // A different result set starts from page one and the top, with no old cards.
   await act(() => router.navigate(url.includes("q=") ? "/discover?q=ocean" : `${url}&decade=1980`))
   await waitFor(() => expect(view.container.querySelectorAll("[data-quick-request-card]")).toHaveLength(20))
   // StrictMode can cancel and restart the new first-page request.
@@ -141,7 +135,6 @@ test("an expired Discovery snapshot does not auto-load pages to reach the saved 
   const newPages = requests.mock.calls.slice(requestCount).map((args) => args[2])
   expect(newPages.length).toBeGreaterThan(0)
   expect(newPages.every((number) => number === 1)).toBe(true)
-  // Normal user scrolling still loads the next page and cancels restoration.
   fireEvent.wheel(viewport)
   viewport.scrollTop = 1900
   fireEvent.scroll(viewport)

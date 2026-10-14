@@ -33,8 +33,6 @@ fn record_change_identity(
 }
 
 impl Library {
-    /// Ingests server DTOs into the thin index (plus their user data) in one
-    /// transaction, reporting which rows and contexts actually moved.
     pub fn ingest_page(&self, dtos: &[BaseItemDto]) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
@@ -60,13 +58,11 @@ impl Library {
         })
     }
 
-    /// Upserts a page of items (and their user data) in one transaction.
     pub fn upsert_page(&self, items: &[BaseItemDto]) -> rusqlite::Result<usize> {
         self.ingest_page(items)
             .map(|changes| changes.item_ids.len())
     }
 
-    /// Applies pushed watch-state changes for items already in the catalog.
     pub fn apply_user_data(
         &self,
         records: &[UserDataRecord],
@@ -108,7 +104,6 @@ impl Library {
         })
     }
 
-    /// Mirrors a page of watch state, returning how many rows actually moved.
     pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
         self.db.with_transaction(|transaction| {
             let mut refreshed = 0;
@@ -121,13 +116,10 @@ impl Library {
         })
     }
 
-    /// Removes cached items the server no longer reports, retaining their old
-    /// hierarchy long enough for every affected UI context to be invalidated.
     pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<LibraryChangeBatch> {
         self.delete_missing(&self.all_ids()?, keep)
     }
 
-    /// Atomically replaces one live container's direct child snapshot.
     pub fn reconcile_children(
         &self,
         parent_id: &str,
@@ -181,8 +173,6 @@ impl Library {
         })
     }
 
-    /// Maps each requested card id to the item whose media streams answer its
-    /// technical badge.
     pub fn technical_stream_sources(
         &self,
         ids: &[String],
@@ -265,8 +255,6 @@ impl Library {
         self.ids_by_provider(kind, "tvdb_id", tvdb_ids)
     }
 
-    /// Watched flags for library items matched by provider id. Absent ids are
-    /// unowned; the join reads their absence as unwatched.
     pub fn played_by_tmdb(
         &self,
         kind: &str,
@@ -322,7 +310,6 @@ impl Library {
         })
     }
 
-    /// Drops one item the server has authoritatively disowned.
     pub fn forget(&self, item_id: &str) -> rusqlite::Result<LibraryChangeBatch> {
         self.db.with_transaction(|transaction| {
             let mut changes = LibraryChangeBatch::default();
@@ -343,8 +330,6 @@ impl Library {
         })
     }
 
-    /// Mirrors a played/favorite toggle locally so the UI updates without a
-    /// server round trip.
     pub fn set_local_played(&self, item_id: &str, played: bool) -> rusqlite::Result<()> {
         self.db.with_connection(|connection| {
             connection.execute(
@@ -398,8 +383,6 @@ fn delete_missing_from_transaction(
     delete_items_from_transaction(connection, &stale, changes)
 }
 
-/// Captures hierarchy before deletion so a committed removal can invalidate
-/// the item itself and every aggregate container that used to own it.
 fn delete_items_from_transaction(
     connection: &Connection,
     item_ids: &[String],

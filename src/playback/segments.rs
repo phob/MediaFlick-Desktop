@@ -294,8 +294,6 @@ mod tests {
         );
     }
 
-    /// Leaving the segment during the countdown cancels it: coming back starts
-    /// a fresh countdown instead of skipping on the abandoned deadline.
     #[test]
     fn leaving_the_segment_cancels_the_automatic_skip_countdown() {
         let segments = vec![segment(SegmentType::Intro, 100, 200)];

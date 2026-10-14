@@ -20,8 +20,6 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const FEED_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const MAX_CACHE_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-/// Keeps one detail request from producing an unbounded fan-out if a local
-/// database has been edited or imported from a future build.
 pub const MAX_CONNECTED_PROFILES: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,9 +28,6 @@ pub struct Profile {
     pub canonical_url: String,
 }
 
-/// One public Letterboxd profile selected by a Jellyfin account. Account ids
-/// are supplied by the owning account configuration and never written into the
-/// nested profile object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExternalProfile {
@@ -183,9 +178,6 @@ impl ReviewService {
                 .collect::<Vec<_>>()
         };
 
-        // At most MAX_CONNECTED_PROFILES short, bounded requests run together,
-        // so one unavailable member cannot multiply the endpoint's 12-second
-        // response budget by the number of connected friends.
         let refreshes = std::thread::scope(|scope| {
             pending
                 .into_iter()
@@ -255,9 +247,6 @@ impl ReviewService {
     }
 }
 
-/// Accept either a member username or only a canonical Letterboxd profile URL.
-/// The fixed URL stored after this step means no user-provided host is ever
-/// passed to an external browser or HTTP client.
 pub fn normalize_profile(input: &str) -> Result<Profile, String> {
     let input = input.trim();
     if input.is_empty() {

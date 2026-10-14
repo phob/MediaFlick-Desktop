@@ -1,6 +1,3 @@
-//! gpu-next owns the video surface and composites CEF's bitmap on its GPU.
-//! These synchronous client calls run on the existing controller thread. mpv
-//! copies the validated bitmap before returning; no borrowed pixels escape.
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io;
 use std::thread;

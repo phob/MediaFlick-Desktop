@@ -85,7 +85,7 @@ describe("cast Discover results", () => {
       syncProgress: {
         active: true,
         phase: "catalog",
-        catalog: { complete: false, processed: 200, total: 1000, initial: true },
+        catalog: { complete: false, processed: 200, total: 1000 },
         retry: null,
       },
     })

@@ -63,7 +63,6 @@ export default async function labels(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   ctx.step(`shelves: ${JSON.stringify(await ctx.app.evaluate(`[...document.querySelectorAll("section[aria-labelledby] h2")].map((h) => h.textContent.trim())`))}`)
   ctx.check(!(await ctx.app.evaluate(`document.body.innerText.includes("My List")`)), "Home never says My List")
-  // Home's billboard keeps the sidebar pinned open, so Favorites is pressable here.
   await ctx.press({ role: "link", name: "Favorites" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?favorite=true", "the Favorites route")
   await ctx.find({ role: "heading", name: "Favorites" })

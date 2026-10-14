@@ -11,7 +11,6 @@ async function openHomeSettings(ctx) {
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.until(async () => (await ctx.pathname()) === "/settings/client/player", "Settings")
-  // The sidebar's Home link comes first; the second is in Settings navigation.
   await ctx.press(SETTINGS_HOME, { nth: 1 })
   await ctx.until(async () => (await ctx.pathname()) === "/settings/home", "the Home settings shelf")
   await ctx.find({ role: "checkbox", name: "Show billboard" }, { timeout: 30000 })

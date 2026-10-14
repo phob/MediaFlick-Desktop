@@ -34,7 +34,6 @@ const COMFORT_NUMBERS = [
 
 type InstallState = { state: string; message?: string; downloaded?: number; total?: number | null }
 
-/** Out-of-range numbers keep their last valid value in the subtitle preview. */
 function previewComfort(comfort: PlayerComfort): PlayerComfort {
   const valid = COMFORT_NUMBERS.map(([key, , min, max]) => [
     key,

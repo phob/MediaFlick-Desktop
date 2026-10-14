@@ -13,18 +13,14 @@ use super::api::{self, ApiRequest, ApiResponse};
 
 pub const APP_SCHEME: &str = "mediaflick-desktop";
 pub const APP_HOST: &str = "app";
-/// Where the browser window points at startup.
 pub const APP_URL: &str = "mediaflick-desktop://app/";
 
-/// True for URLs this handler owns (as opposed to the legacy action URLs the
-/// native dialogs still use, which live on other hosts).
 pub fn is_app_url(url: &str) -> bool {
     url.strip_prefix("mediaflick-desktop://")
         .and_then(|rest| rest.split(['/', '?', '#']).next())
         .is_some_and(|host| host.eq_ignore_ascii_case(APP_HOST))
 }
 
-/// Must run on the CEF UI thread after context initialisation.
 pub fn register() {
     let mut factory = AppSchemeHandlerFactory::new();
     let registered = register_scheme_handler_factory(
@@ -39,7 +35,6 @@ pub fn register() {
     }
 }
 
-/// Splits `mediaflick-desktop://app/api/items?limit=20` into path and query.
 fn split_url(url: &str) -> (String, String) {
     let without_scheme = url
         .strip_prefix("mediaflick-desktop://")
@@ -49,7 +44,6 @@ fn split_url(url: &str) -> (String, String) {
         .unwrap_or_default();
     let after_host = match without_scheme.find('/') {
         Some(index) => &without_scheme[index..],
-        // `mediaflick-desktop://app?x=1` has no path at all.
         None => "/",
     };
     match after_host.split_once('?') {
@@ -132,8 +126,6 @@ wrap_scheme_handler_factory! {
     }
 }
 
-/// What `response_headers` needs from a prepared response. The body can be
-/// megabytes of artwork or trailer bytes, so it is never cloned for this.
 struct ResponseHead {
     status: u16,
     content_type: String,
@@ -153,7 +145,6 @@ impl ResponseHead {
         }
     }
 
-    /// `open` always stores a response first; this only covers a poisoned lock.
     fn internal_error() -> Self {
         Self {
             status: 500,
@@ -186,8 +177,6 @@ wrap_resource_handler! {
             handle_request: Option<&mut i32>,
             _callback: Option<&mut Callback>,
         ) -> i32 {
-            // CEF calls this on a background thread, which is what makes the
-            // blocking SQLite and Jellyfin calls in the handlers safe.
             debug_assert_eq!(currently_on(ThreadId::UI), 0);
             debug_assert_eq!(currently_on(ThreadId::IO), 0);
 
@@ -220,7 +209,6 @@ wrap_resource_handler! {
             let Some(response) = response else {
                 return;
             };
-            // Only the head is copied out; the body stays in place for `read`.
             let prepared = self
                 .state
                 .lock()
@@ -240,7 +228,6 @@ wrap_resource_handler! {
                 Some(&CefString::from(prepared.cache_control)),
                 1,
             );
-            // The UI is a first-party bundle; nothing may be pulled from the web.
             response.set_header_by_name(
                 Some(&CefString::from("Content-Security-Policy")),
                 Some(&CefString::from(CONTENT_SECURITY_POLICY)),

@@ -12,7 +12,6 @@ export default async function libraryFilters(ctx) {
   const results = {}
   await ctx.signIn({ server: DEMO, username: "demo" })
 
-  // Series view.
   await ctx.press({ role: "link", name: "Movies" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
@@ -23,7 +22,6 @@ export default async function libraryFilters(ctx) {
   await ctx.park()
   await ctx.screenshot("01-series")
 
-  // Sort and the Genre filter.
   await ctx.choose({ name: "Sort by" }, "Sort: Rating")
   await ctx.until(async () => /[?&]sort=rating\b/.test(await ctx.pathname()), "sort=rating in the URL")
   await ctx.press({ role: "button", name: "Filters" })
@@ -37,7 +35,6 @@ export default async function libraryFilters(ctx) {
   const pick = results.genreOptions.find((name) => name !== "Any genre" && !name.startsWith("Loading"))
   await ctx.press({ role: "menuitemradio", name: pick })
   await ctx.until(async () => (await ctx.pathname()).includes("genre="), "genre= in the URL")
-  // No Escape: picking an option closes the whole menu.
   await ctx.until(async () => (await ctx.count({ role: "menu" })) === 0, "the menu to close after a pick", 3000)
   await ctx.find({ role: "button", name: `Remove Genre: ${pick} filter` })
   await ctx.press({ role: "button", name: "Filters, 1 active" })
@@ -59,11 +56,9 @@ export default async function libraryFilters(ctx) {
   await ctx.until(async () => !(await ctx.exists({ role: "group", name: "Active filters" })), "the chips to go")
   ctx.check((await ctx.pathname()).includes("sort=rating"), "Clear all keeps the sort")
 
-  // Search: a one-character term never commits; clearing returns to /library.
   const before = await ctx.pathname()
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.fill({ role: "textbox", name: "Search the library" }, "n")
-  // Negative check: give the 200 ms debounce three times its delay to (not) fire.
   await sleep(600)
   ctx.check((await ctx.pathname()) === before, "a one-character term does not navigate")
   await ctx.fill({ role: "textbox", name: "Search the library" }, "night of the living")
@@ -72,8 +67,6 @@ export default async function libraryFilters(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === "/library", "clearing the search to go to /library")
   await ctx.find({ role: "heading", name: "Movies" })
 
-  // Sign out from a library page: the form appears on that page, and signing
-  // in again stays there.
   await ctx.press({ role: "link", name: "Movies" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
   await ctx.park()

@@ -25,8 +25,6 @@ impl Library {
                     },
                 )
             })
-            // An unreadable session reads as signed out; nothing is erased,
-            // and the next successful sign-in overwrites the row.
             .unwrap_or_else(|error| {
                 tracing::warn!(target: "library.db", "could not read the stored session: {error}");
                 StoredCredentials::default()
@@ -69,8 +67,6 @@ impl Library {
             .flatten()
     }
 
-    /// Drops the token but keeps the server URL so the login screen stays
-    /// prefilled, and wipes cached metadata that belonged to that account.
     pub fn clear_session(&self, forget_library: bool) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
             if !forget_library {

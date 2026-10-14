@@ -1,5 +1,3 @@
-//! Opaque identifier generation without pulling in a UUID dependency.
-
 use std::fmt::Write;
 
 /// A lowercase hex string of `bytes * 2` characters filled from the operating
@@ -20,7 +18,6 @@ pub fn random_hex(bytes: usize) -> String {
     out
 }
 
-/// A stable per-installation device identifier for the Jellyfin Devices list.
 pub fn new_device_id() -> String {
     random_hex(16)
 }

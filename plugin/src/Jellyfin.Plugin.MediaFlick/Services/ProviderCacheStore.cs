@@ -21,8 +21,6 @@ internal sealed record ProviderHealthState
 
     public bool Valid { get; init; }
 
-    public string? Detail { get; init; }
-
     public long? QuotaLimit { get; init; }
 
     public long? QuotaRemaining { get; init; }
@@ -50,7 +48,6 @@ internal sealed record ProviderHealthState
 /// </summary>
 internal sealed class ProviderCacheStore : IDisposable
 {
-    /// <summary>Rating entries kept at most; the oldest fetches go first.</summary>
     internal const int MaxEntries = 100_000;
     internal static readonly TimeSpan DefaultSaveDelay = TimeSpan.FromSeconds(2);
     private const int DocumentVersion = 1;
@@ -240,16 +237,7 @@ internal sealed class ProviderCacheStore : IDisposable
             _saveScheduled = false;
         }
 
-        try
-        {
-            Flush();
-        }
-        catch (Exception exception) when (exception is JsonException or NotSupportedException)
-        {
-            // A timer callback must not throw. The document holds only
-            // sanitized primitives, so this is not expected in practice.
-            _logger.LogWarning(exception, "Could not serialize the MediaFlick provider cache");
-        }
+        Flush();
     }
 
     /// <summary>
@@ -333,9 +321,6 @@ internal sealed class ProviderCacheStore : IDisposable
         {
             Validation = validation,
             Valid = valid,
-            // Status responses derive fixed wording from validation/provider;
-            // never retain a provider or transport string in the cache.
-            Detail = null,
             QuotaLimit = RatingsContract.NormalizeQuota(state.Quota).Limit,
             QuotaRemaining = RatingsContract.NormalizeQuota(state.Quota).Remaining,
             QuotaResetAt = RatingsContract.NormalizeQuota(state.Quota).ResetAt,
@@ -409,14 +394,11 @@ internal sealed class ProviderCacheStore : IDisposable
         }
         catch (IOException exception)
         {
-            // The in-memory cache remains usable. Rating persistence failure
-            // must not make the Jellyfin catalogue or this optional overlay fail.
             ReportPersistFailure(exception);
             return false;
         }
         catch (UnauthorizedAccessException exception)
         {
-            // Same graceful degradation for a read-only plugin data volume.
             ReportPersistFailure(exception);
             return false;
         }
@@ -424,7 +406,6 @@ internal sealed class ProviderCacheStore : IDisposable
 
     private void ReportPersistFailure(Exception exception)
     {
-        // Every save retries persistence; warn once per outage.
         if (_persistFailing)
         {
             _logger.LogDebug(exception, "The MediaFlick ratings cache still cannot be saved");

@@ -12,9 +12,6 @@ const MIN_RESUME = 0.08 // Jellyfin stores no resume point below 5 % of the runt
 const status = async (ctx) => (await ctx.api("/api/status")).body
 const ticksToS = (ticks) => ticks / 1e7
 
-// The whole display, video included, exists only under the Linux wrapper's
-// Xvfb (ffmpeg x11grab). Elsewhere mpv's own properties and the CDP
-// screenshots are the evidence.
 function displayCapture(ctx, name) {
   if (process.platform === "linux") ctx.displayCapture(name)
   else ctx.step(`no display capture for ${name}: Linux only`)
@@ -59,13 +56,10 @@ export default async function playback(ctx) {
   ctx.restoreItemAfterRun(id)
   ctx.step(`movie: ${movie.Name} (${id}), ${Math.round(ticksToS(movie.RunTimeTicks) / 60)} min`)
   const { client, capabilities } = (await ctx.api("/api/settings")).body
-  // Built-in on Linux draws the bar over the video and hides it; External mpv
-  // plays in its own window and keeps the bar at the bottom of the page.
   const integrated = capabilities.integratedLibmpvOverlay === true
   const report = { backend: client.player.playerBackend, integrated, movie: { id, name: movie.Name, runtimeS: ticksToS(movie.RunTimeTicks) } }
   ctx.step(`backend ${report.backend}${integrated ? " (integrated overlay)" : ""}`)
 
-  // Open it as a user: sidebar search, then the result card.
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   await ctx.fill({ role: "textbox", name: "Search the library" }, movie.Name)
   await ctx.until(async () => (await ctx.pathname()).startsWith("/library?search="), "the search route")
@@ -73,10 +67,8 @@ export default async function playback(ctx) {
   await ctx.find({ role: "button", name: "Play" }, { timeout: 30000 })
   ctx.check(!(await ctx.exists({ role: "button", name: "Resume" })), "the detail page offers Play, not Resume")
   await ctx.snapshot("01-detail")
-  // The app starts mpv before anything plays; read it once while it idles.
   await ctx.until(async () => (await ctx.mpv("idle-active")) === true, "mpv warm and idle before Play")
 
-  // Play from the start.
   let marker = ctx.appLog().length
   await ctx.press({ role: "button", name: "Play" })
   const first = await ctx.until(async () => {
@@ -85,8 +77,6 @@ export default async function playback(ctx) {
   }, "playback running", 90000)
   report.play = { playMethod: first.playMethod, durationMs: first.durationMs }
   ctx.check(/starting playback item_id=\S+ play_method=\S+ .*start=none/.test(logSince(ctx, marker)), "Play starts at the beginning (start=none)")
-  // Mute with the player's own key: the Windows private desktop hides the
-  // window but not the sound, and the mute key is part of what is proven.
   await ctx.key("m", { code: "KeyM", keyCode: 77 })
   await ctx.until(async () => (await ctx.mpv("mute")) === true, "mpv muted by the m key")
   const t1 = await ctx.mpv("time-pos")
@@ -96,9 +86,6 @@ export default async function playback(ctx) {
   report.mpv = { vo: await ctx.mpv("current-vo"), hwdec: await ctx.mpv("hwdec-current"), timePos: [t1, t2] }
   displayCapture(ctx, "02-playing")
 
-  // Six quick presses of the forward key (30 s by default; the app ignores
-  // auto-repeat, so a held key seeks once). ArrowRight works on both
-  // backends; ArrowUp and the stop key only on the Built-in player.
   const beforeRapid = (await ctx.player()).positionMs
   for (let press = 0; press < 6; press++) await ctx.key("ArrowRight", { code: "ArrowRight", keyCode: 39 })
   await ctx.sleep(3000)
@@ -128,7 +115,6 @@ export default async function playback(ctx) {
   ctx.step(`${presses} spaced ArrowRight presses (${lost} without effect) reached ${Math.round((await ctx.player()).positionMs / 1000)} s`)
   ctx.check(Math.abs((await ctx.mpv("time-pos")) * 1000 - (await ctx.player()).positionMs) < 3000, "mpv's time-pos matches the app's position after seeking")
 
-  // Pause and play again with the pause key: each reports to Jellyfin at once.
   await ctx.key("k", { code: "KeyK", keyCode: 75 })
   await ctx.until(async () => (await ctx.player()).paused === true && (await ctx.mpv("pause")) === true, "paused in the app and in mpv")
   await ctx.revealPlayer()
@@ -141,7 +127,6 @@ export default async function playback(ctx) {
   const pausedReports = ctx.playstates().queued.filter((entry) => entry.endpoint === "Sessions/Playing/Progress" && entry.itemId === id)
   ctx.check(pausedReports.length >= 2, `progress reports were queued (${pausedReports.length})`)
 
-  // Stop from the player bar.
   await ctx.until(async () => ctx.playstates().queued.some((entry) => entry.endpoint === "Sessions/Playing/Progress" && entry.positionS * 1000 >= target - 1000), "a progress report past the resume minimum", 20000)
   await stopFromBar(ctx)
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop", 30000)
@@ -158,7 +143,6 @@ export default async function playback(ctx) {
   ctx.check(await ctx.exists({ role: "button", name: "From start" }), "the detail page now offers Resume and From start")
   await ctx.snapshot("04-resumable")
 
-  // Resume: the startup seek after file-loaded, the held position, no start option.
   marker = ctx.appLog().length
   await ctx.press({ role: "button", name: "Resume" })
   await ctx.until(async () => (await ctx.player())?.active, "resumed playback", 90000)
@@ -170,7 +154,6 @@ export default async function playback(ctx) {
   ctx.check(order.every((index, n) => index >= 0 && (n === 0 || index > order[n - 1])), "load → file-loaded activation → delayed startup seek → resume range, in that order")
   const loadfile = resumed.split("\n").find((line) => /command=loadfile/.test(line)) ?? ""
   ctx.check(!/#t=|start=/.test(loadfile.replace(/^.*?url=/, "")), "loadfile carries no start option or #t= fragment")
-  // The log names the property a set_property sets (`set_property pause=false`).
   const startupCommands = resumed.slice(0, order[3]).split("\n").flatMap((line) => line.match(/sending mpv command command=(\S+(?: [\w-]+=\S*)?)/)?.[1] ?? [])
   ctx.check(!startupCommands.some((command) => /^set_property pause=/.test(command)), `no pause command during startup (${[...new Set(startupCommands)].join(", ")})`)
   const resumedReports = ctx.playstates().queued.filter((entry) => entry.itemId === id && entry.at > (stopped.at ?? ""))
@@ -186,8 +169,6 @@ export default async function playback(ctx) {
   ctx.check(early.length === 0, "no report after Resume went below the resume point")
   report.resume = { launchStartS: launchStart, startReportS: startReport.positionS, mpvTimePosS: timePos, startupCommands: [...new Set(startupCommands)] }
 
-  // Stop again: the stop key with the Built-in player, the bar otherwise
-  // (the app's stop key only applies to the integrated player).
   if (integrated) {
     await ctx.key("q", { code: "KeyQ", keyCode: 81 })
   } else {
@@ -196,7 +177,6 @@ export default async function playback(ctx) {
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop again", 30000)
   ctx.check((ctx.appLog().match(/mpv IPC connected/g) ?? []).length === 1, "one mpv IPC connection for the whole run")
 
-  // Leave the title unplayed without a resume point.
   await ctx.press({ role: "button", name: "Mark watched" })
   await ctx.find({ role: "button", name: "Mark unwatched" }, { timeout: 15000 })
   await ctx.until(async () => (await userData(ctx, id)).Played === true, "Jellyfin to mark it played")

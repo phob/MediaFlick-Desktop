@@ -16,7 +16,6 @@ export const DISCOVERY_FILTER_KEYS = [
   "timeWindow",
 ] as const
 
-const LEGACY_DISCOVERY_FILTER_KEYS = ["century"] as const
 const CURRENT_YEAR = new Date().getUTCFullYear()
 const CURRENT_DECADE = Math.floor(CURRENT_YEAR / 10) * 10
 
@@ -64,8 +63,6 @@ export function discoveryResultSetKey(
   ].join("&")
 }
 
-/** Force card-local state (including poster failures) to belong to one result
- * set, not merely to a TMDB id that happens to occur in consecutive sets. */
 export function discoveryCardKey(resultSetKey: string, result: SeerrResult) {
   return `${resultSetKey}:${result.mediaType}-${result.tmdbId}`
 }
@@ -110,8 +107,6 @@ function positiveInteger(value: string | null) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
-/** Read only values represented by the controls; malformed deep links safely
- * fall back to that row's defaults instead of reaching the app API. */
 export function readDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,
@@ -149,8 +144,6 @@ export function readDiscoveryFilters(
   return filters
 }
 
-/** Replace one row's server-side filters while preserving search, tab, and
- * local-library state in the URL. Defaults are omitted to keep links concise. */
 export function writeDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,
@@ -158,9 +151,6 @@ export function writeDiscoveryFilters(
 ) {
   const next = new URLSearchParams(params)
   for (const key of DISCOVERY_FILTER_KEYS) next.delete(key)
-  // Intermediate builds briefly serialized the superseded century control.
-  // Never reinterpret that much broader selection as one particular decade.
-  for (const key of LEGACY_DISCOVERY_FILTER_KEYS) next.delete(key)
 
   if (row === "trending") {
     if (filters.mediaType && filters.mediaType !== "all") {

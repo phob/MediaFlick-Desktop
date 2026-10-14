@@ -17,7 +17,6 @@ export default async function signIn(ctx) {
   ctx.check(server.properties.value === DEMO, "--url prefills the Server field (pass --url to the session)")
   ctx.check(ctx.readConfig("accounts.json") === null, "no accounts.json before sign-in")
 
-  // A prefilled or remembered server is probed at once.
   const help = await ctx.until(async () => {
     const text = await quickConnectHelp(ctx)
     return text && !text.startsWith("Checking") ? text : null
@@ -26,9 +25,6 @@ export default async function signIn(ctx) {
   await ctx.snapshot("01-signed-out")
   await ctx.screenshot("01-signed-out")
 
-  // A typed address is probed while the field keeps focus; nothing below may blur it.
-  // DEMO itself was settled by the prefill and would answer from the cache at
-  // once, so the typed address differs from it to exercise the debounce.
   const typed = `${DEMO}/`
   const finishHelp = "Finish the server address to check Quick Connect availability."
   await ctx.fill(SERVER, "https://demo")
@@ -63,7 +59,6 @@ export default async function signIn(ctx) {
   await ctx.find({ role: "button", name: "Copy code" }, { timeout: 5000 })
   ctx.step("the copy button reads Copy code again")
 
-  // Any edit of the server address drops the pending code.
   await ctx.fill(SERVER, DEMO)
   await ctx.until(async () => !(await pageText(ctx)).includes("Waiting for approval"), "the code to go after editing the server")
 
@@ -74,7 +69,6 @@ export default async function signIn(ctx) {
 
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   await ctx.press({ role: "button", name: "D demo demo.jellyfin.org" })
-  // Sign-in starts a sync, and the item reads `Syncing…` (disabled) until it ends.
   const syncItem = await ctx.until(async () => {
     for (const name of ["Sync library", "Syncing…"]) if (await ctx.exists({ role: "menuitem", name })) return name
     return null
@@ -84,9 +78,7 @@ export default async function signIn(ctx) {
   await ctx.press({ role: "menuitem", name: "Sign out" })
 
   await ctx.find(SERVER, { timeout: 30000 })
-  // Sign-out resets the settings query, so the field can render empty for a moment.
   await ctx.until(async () => (await ctx.find(SERVER)).properties.value === DEMO, "the remembered server prefilled after sign-out")
-  // Signing out from Home (path /) also resets the window title.
   await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in title")
   ctx.check((await ctx.api("/api/status")).body?.authenticated === false, "/api/status reports signed out")
   ctx.check(ctx.readConfig("accounts.json")?.accounts?.length === 1, "accounts.json keeps the account after sign-out")

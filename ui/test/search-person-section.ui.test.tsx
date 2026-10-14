@@ -79,7 +79,6 @@ describe("search page live person section", () => {
     renderSection("tom hanks")
 
     expect(await screen.findByText("With Tom Hanks")).toBeTruthy()
-    // Cards can print the title in more than one place (name + aria).
     expect(screen.getAllByText("Cast Away").length).toBeGreaterThan(0)
     expect(screen.getAllByText("Band of Brothers").length).toBeGreaterThan(0)
     const seeAll = screen.getByRole("link", { name: "See all" })

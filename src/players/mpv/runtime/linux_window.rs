@@ -1,5 +1,3 @@
-//! App-owned X11 toplevel and a separately sized video container. The shell
-//! coalesces WM resize events before resizing that container and libmpv's VO.
 use std::io;
 
 use x11rb::connection::Connection;

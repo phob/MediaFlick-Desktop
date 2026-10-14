@@ -70,8 +70,6 @@ async function visit(route, file, readyText) {
   const badges = await evaluate(
     `[...document.querySelectorAll('[data-slot="badge"]')].map((badge) => ({ label: badge.textContent.trim(), description: badge.title }))`,
   )
-  // Every in-progress badge explains itself on hover, including the
-  // "Processing" fallback shown when Radarr or Sonarr cannot say more.
   for (const badge of badges.filter((badge) => IN_PROGRESS_LABELS.includes(badge.label))) {
     check(badge.description.length > 0, `${route}: the "${badge.label}" badge has no description`)
   }
@@ -147,8 +145,6 @@ for (const result of discover) {
   }
 }
 
-// The Requests page must render exactly one badge per in-progress, not-in-library
-// request, labelled by its activity, and never the old unconditional "Downloading".
 const requestBadges = await visit("/requests", "requests.png", "Requests")
 const expectedLabels = requests
   .filter((request) => request.mediaStatus === "processing" && !request.libraryItemId)
@@ -167,7 +163,6 @@ const detailPages = []
 for (const title of titles.filter((title) => !title.is4k)) {
   const file = `detail-${title.mediaType}-${title.tmdbId}.png`
   const badges = await visit(`/discover/${title.mediaType}/${title.tmdbId}`, file, title.title)
-  // A title already in the library shows that instead of its Seerr status.
   const expected = title.inLibrary ? "In your library" : (LABELS[title.detailActivity] ?? "Processing")
   check(badges.includes(expected), `${title.title}: detail page does not show "${expected}" (badges: ${badges.join(", ")})`)
   detailPages.push({ title: title.title, screenshot: file, badges })

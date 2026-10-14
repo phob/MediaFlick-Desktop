@@ -8,7 +8,6 @@
 const DEMO = "https://demo.jellyfin.org/stable"
 // role=status takes no accessible name from its content, so read its text.
 const saveBarStatus = (ctx) => ctx.app.evaluate(`document.querySelector(".settings-save-bar [role=status]")?.textContent.trim() ?? null`)
-// Present while scrollbars are hidden; saving show_scrollbars removes it live.
 const scrollbarStyle = (ctx) => ctx.app.evaluate(`!!document.getElementById("__mediaFlickDesktopScrollbarStyle")`)
 
 export default async function clientSettings(ctx) {
@@ -21,7 +20,6 @@ export default async function clientSettings(ctx) {
   await ctx.snapshot("01-player")
   await ctx.screenshot("01-player")
 
-  // Built-in player: comfort values and shortcut recorders.
   if (capabilities.libmpv) {
     ctx.check((await ctx.state({ role: "combobox", name: "Player backend" })).value === "Built-in player", "Built-in player is selected")
     await ctx.find({ role: "button", name: "Pause key" })
@@ -33,7 +31,6 @@ export default async function clientSettings(ctx) {
     await ctx.press({ role: "button", name: "Discard" })
   }
 
-  // External mpv: path controls; the installer button exists only on Windows.
   const saved = ctx.configStat("settings.json")?.mtimeMs
   await ctx.choose({ name: "Player backend" }, "External mpv")
   await ctx.find({ role: "textbox", name: "mpv executable" })
@@ -51,7 +48,6 @@ export default async function clientSettings(ctx) {
   await ctx.press({ role: "button", name: "Discard" })
   ctx.check(ctx.configStat("settings.json")?.mtimeMs === saved, "Discard leaves settings.json alone")
 
-  // Leaving a dirty shelf asks first.
   await ctx.press({ role: "link", name: "Application" })
   await ctx.until(async () => (await ctx.pathname()) === "/settings/client/application", "the Application shelf")
   await ctx.press({ role: "switch", name: "Show scrollbars" })
@@ -69,27 +65,23 @@ export default async function clientSettings(ctx) {
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => ctx.readConfig("settings.json")?.skip_intro === "always", "settings.json to record skip_intro: always")
 
-  // A restart notice replaces the unsaved-changes text; scrollbars apply live.
   await ctx.press({ role: "link", name: "Application" })
   ctx.check((await ctx.state({ role: "switch", name: "Show scrollbars" })).checked === false, "Discard and leave dropped the draft")
   ctx.check(await scrollbarStyle(ctx), "the scrollbar-hiding style is present")
   await ctx.press({ role: "switch", name: "Show scrollbars" })
   await ctx.choose({ name: "Log level" }, "Info")
   await ctx.until(async () => (await saveBarStatus(ctx)) === "Log-level changes apply after restarting MediaFlick.", "the log-level restart notice")
-  // The "Settings saved" toast then covers Save for a few seconds; press waits.
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => ctx.app.evaluate(`[...document.querySelectorAll("[data-sonner-toast]")].some((t) => t.textContent.trim().startsWith("Settings saved"))`), "the Settings saved toast")
   await ctx.until(() => ctx.readConfig("settings.json")?.show_scrollbars === true && ctx.readConfig("settings.json")?.log_level === "info", "settings.json to record both values")
   await ctx.until(async () => !(await scrollbarStyle(ctx)), "the scrollbar style to go without a restart")
   await ctx.screenshot("04-saved")
 
-  // Restore defaults loads defaults into the draft; Save then drops the keys.
   await ctx.press({ role: "button", name: "Restore defaults" })
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => !("show_scrollbars" in (ctx.readConfig("settings.json") ?? {})), "Restore defaults + Save to drop show_scrollbars")
   await ctx.until(() => scrollbarStyle(ctx), "the scrollbar style to return")
 
-  // Typing DELETE only enables the button; the wipe needs the dialog's action.
   await ctx.fill({ role: "textbox", name: "Type DELETE to confirm local account deletion" }, "DELETE")
   await ctx.press({ role: "button", name: "Delete local account data" })
   await ctx.find({ role: "alertdialog", name: "Delete local account data?" })

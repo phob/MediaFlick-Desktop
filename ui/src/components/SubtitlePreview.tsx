@@ -45,7 +45,6 @@ export function SubtitlePreview({ comfort }: { comfort: PlayerComfort }) {
           {["Somewhere beyond", "the familiar horizon."].map((line) => <div key={line}><span style={{
             backgroundColor: `rgb(0 0 0 / ${comfort.subtitleBackground}%)`,
             padding: "0.08em 0.25em",
-            // Paint the fill last so large strokes cannot cover the letters.
             paintOrder: "stroke fill",
             WebkitTextFillColor: "white",
             WebkitTextStroke: `${comfort.subtitleOutline * 0.16}cqw black`,

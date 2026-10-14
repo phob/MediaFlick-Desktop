@@ -18,11 +18,7 @@ pub struct AppSettings {
     /// `None` preserves the legacy migration rule: an existing `mpv_path`
     /// selects external mpv. Fresh Windows installs select bundled libmpv;
     /// other platforms keep using external mpv until they ship a bundle.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_player_backend"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_backend: Option<PlayerBackend>,
     #[serde(
         default = "default_log_level_string",
@@ -48,17 +44,13 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "SegmentSkipMode::is_default")]
     pub skip_commercial: SegmentSkipMode,
     /// The mark-watched-and-play-next key, or `None` when disabled (stored as
-    /// an empty string). A settings file written before this field existed
-    /// takes the value the legacy `input.json` held.
+    /// an empty string).
     #[serde(
-        default = "super::store::legacy_mark_watched_next",
+        default = "default_mark_watched_next",
         serialize_with = "serialize_binding",
         deserialize_with = "deserialize_binding"
     )]
     pub mark_watched_next: Option<String>,
-    /// Visual preferences intentionally live with the otherwise flat legacy
-    /// configuration. The API exposes them as a coherent section without
-    /// forcing existing installations through a risky file migration.
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
 }
@@ -81,12 +73,8 @@ pub struct AppearanceSettings {
     pub backdrop_intensity: u8,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reduced_motion: bool,
-    /// Expanded panels shown after resting the pointer on a media card.
     #[serde(default = "default_card_previews", skip_serializing_if = "is_true")]
     pub card_previews: bool,
-    /// Technical video/audio facts shown over library card artwork. Enabled by
-    /// default to preserve the card presentation from releases that predate
-    /// this preference.
     #[serde(default = "default_show_media_info", skip_serializing_if = "is_true")]
     pub show_media_info: bool,
     /// Canonical rating source IDs chosen for card overlays. This is ordinary
@@ -315,9 +303,6 @@ impl SegmentSkipMode {
     }
 }
 
-/// Player settings the adapter applies itself. They are pushed when the
-/// backend is built and whenever they change, so adapters never read settings
-/// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerPreferences {
     pub segment_skip: SegmentSkipConfig,
@@ -326,7 +311,6 @@ pub struct PlayerPreferences {
     pub mark_watched_next: Option<String>,
 }
 
-/// Built-in player subtitle styling, from the Player settings comfort section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubtitleAppearance {
     /// Percent of mpv's default size.
@@ -375,8 +359,6 @@ pub enum PlayerBackend {
 }
 
 impl PlayerBackend {
-    /// The backend a fresh installation uses on this platform. Windows
-    /// releases and Linux AppImages bundle libmpv.
     pub fn platform_default() -> Self {
         if cfg!(any(target_os = "windows", target_os = "linux")) {
             Self::Libmpv
@@ -399,30 +381,6 @@ impl PlayerBackend {
             _ => None,
         }
     }
-}
-
-/// Reads the saved backend. MPC-HC support was removed; a device file that
-/// still selects it loads with the platform's standard backend instead of
-/// failing to parse and being moved aside by backup recovery.
-fn deserialize_player_backend<'de, D>(deserializer: D) -> Result<Option<PlayerBackend>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    enum StoredPlayerBackend {
-        Libmpv,
-        Mpv,
-        Mpchc,
-    }
-
-    Ok(
-        Option::<StoredPlayerBackend>::deserialize(deserializer)?.map(|stored| match stored {
-            StoredPlayerBackend::Libmpv => PlayerBackend::Libmpv,
-            StoredPlayerBackend::Mpv => PlayerBackend::Mpv,
-            StoredPlayerBackend::Mpchc => PlayerBackend::platform_default(),
-        }),
-    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -567,7 +525,7 @@ impl Default for AppSettings {
             skip_credits: SegmentSkipMode::default(),
             skip_recap: SegmentSkipMode::default(),
             skip_commercial: SegmentSkipMode::default(),
-            mark_watched_next: Some(DEFAULT_MARK_WATCHED_NEXT.to_string()),
+            mark_watched_next: default_mark_watched_next(),
             appearance: AppearanceSettings::default(),
         }
     }
@@ -601,7 +559,6 @@ impl AppSettings {
         }
     }
 
-    /// What the player adapter applies itself, pushed to it on every change.
     pub fn player_preferences(&self) -> PlayerPreferences {
         PlayerPreferences {
             segment_skip: self.segment_skip_config(),
@@ -636,7 +593,6 @@ impl AppSettings {
     }
 }
 
-/// A trimmed binding; blank means disabled.
 pub fn clean_binding(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -658,6 +614,10 @@ where
     Ok(clean_binding(
         Option::<String>::deserialize(deserializer)?.as_deref(),
     ))
+}
+
+fn default_mark_watched_next() -> Option<String> {
+    Some(DEFAULT_MARK_WATCHED_NEXT.to_string())
 }
 
 fn default_log_level_string() -> String {
@@ -825,27 +785,6 @@ mod tests {
         .expect("legacy appearance settings");
 
         assert_eq!(settings.appearance.accent, AppearanceAccent::Violet);
-    }
-
-    #[test]
-    fn a_settings_file_selecting_mpchc_loads_without_recovery() {
-        let path = std::env::temp_dir().join(format!(
-            "mediaflick-retired-mpchc-settings-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(&path, br#"{"player_backend":"mpchc"}"#).expect("write settings");
-
-        let loaded = crate::preferences::json_file::load_with_recovery::<AppSettings>(&path);
-        let _ = std::fs::remove_file(&path);
-        let loaded = loaded
-            .expect("read settings")
-            .expect("settings file exists");
-
-        assert!(loaded.recovery.is_none());
-        assert_eq!(
-            loaded.document.effective_backend(),
-            PlayerBackend::platform_default()
-        );
     }
 
     #[test]

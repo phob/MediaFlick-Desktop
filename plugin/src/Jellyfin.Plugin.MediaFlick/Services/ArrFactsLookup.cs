@@ -17,7 +17,6 @@ internal interface IArrTransport
     Task<JsonNode?> SendAsync(string service, string path, CancellationToken cancellationToken);
 }
 
-/// <summary>Sends Radarr and Sonarr calls through the shared Companion HTTP client.</summary>
 internal sealed class CompanionArrTransport : IArrTransport
 {
     private readonly CompanionHttpClient _http;
@@ -66,10 +65,8 @@ public sealed class ArrFactsLookup
 {
     internal static readonly TimeSpan FactsLifetime = TimeSpan.FromMinutes(5);
 
-    /// <summary>How long a Seerr page may wait for the arr answers.</summary>
     internal static readonly TimeSpan LookupBudget = TimeSpan.FromSeconds(3);
 
-    /// <summary>How long a failing service is skipped before it is asked again.</summary>
     internal static readonly TimeSpan OutageBackoff = TimeSpan.FromMinutes(1);
 
     internal const int CacheCapacity = 2_000;
@@ -175,7 +172,6 @@ public sealed class ArrFactsLookup
             }
             catch (GatewayException exception)
             {
-                // CompanionHttpClient has already logged and recorded the outage.
                 _skipUntil[service] = _time.GetUtcNow() + OutageBackoff;
                 _logger.LogDebug(
                     "{Service} lookup failed ({Failure}); showing Seerr status without it",

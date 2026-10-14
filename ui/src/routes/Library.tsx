@@ -32,7 +32,6 @@ import {
 } from "@/lib/library-filters"
 import { useItemLetters, useItems, usePersonResolution } from "@/lib/queries"
 
-/** How many of a matched person's titles the search page shows inline. */
 const SEARCH_PERSON_ROW_LIMIT = 12
 
 interface LibraryComponents {
@@ -60,8 +59,6 @@ export function SearchPersonSection({ term }: { term: string }) {
     { personId: person?.jellyfinId, limit: SEARCH_PERSON_ROW_LIMIT },
     person !== null,
   )
-  // No exact person, still resolving, or the server is unreachable: the
-  // local results stand alone, silently.
   if (!person || !titles.data?.items.length) return null
 
   return (
@@ -167,8 +164,6 @@ export default function Library({ components }: LibraryProps = {}) {
   const tmdbPersonId = castPerson?.tmdbId ?? resolved?.tmdbId ?? null
   const personName = resolved?.name ?? castPerson?.name ?? "Cast member"
 
-  // Enrich an id from either provider into a durable two-provider deep link.
-  // Replace avoids adding a synthetic history stop after the original click.
   useEffect(() => {
     if (!castPerson || !resolved) return
     if (
@@ -184,8 +179,6 @@ export default function Library({ components }: LibraryProps = {}) {
   const favorite = filters.favorite
   const kind = libraryKind(params)
 
-  // The URL is the filter state, so a filtered view is linkable and survives a
-  // reload — the app scheme already serves `index.html` for unknown paths.
   const updateFilters = (patch: Partial<LibraryFilterState>) => {
     const next = writeLibraryFilters(params, patch)
     next.set("filters", "true")
@@ -285,8 +278,6 @@ export default function Library({ components }: LibraryProps = {}) {
                   ? `Nothing matches “${search}”.`
                   : "No items match that query."
             }
-            // Inside the grid's own scroller: it owns the scroll container and
-            // the virtualized height, so the block cannot simply follow it.
             footer={
               castPerson ? (
                 <>

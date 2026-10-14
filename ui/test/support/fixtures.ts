@@ -47,10 +47,8 @@ export function itemDetail(
   }
 }
 
-/** An idle player snapshot, as the shell sends when nothing is playing. */
-/** A signed-out `/api/status` with an empty, fully synced library and no Companion. */
 export function appStatus(overrides: Partial<Status> = {}): Status {
-  const catalog = { complete: true, processed: 0, total: 0, initial: false }
+  const catalog = { complete: true, processed: 0, total: 0 }
   return {
     authenticated: false,
     expired: false,
@@ -76,7 +74,6 @@ export function appStatus(overrides: Partial<Status> = {}): Status {
   }
 }
 
-/** A compatible Companion that provides Seerr with person discovery. */
 export function companionWithSeerr(): CompanionStatus {
   return {
     available: true,

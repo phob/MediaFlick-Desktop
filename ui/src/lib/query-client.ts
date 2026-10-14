@@ -118,7 +118,6 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "seerr",
 ])
 
-/** Removes data whose meaning depends on the signed-in Jellyfin account. */
 export function removeAccountQueryData(client: QueryClient) {
   client.removeQueries({
     predicate: (query) => ACCOUNT_QUERY_ROOTS.has(String(query.queryKey[0])),
@@ -137,10 +136,7 @@ export function invalidateSeerrSurfaces(client: QueryClient) {
   void client.invalidateQueries({ queryKey: ["seerr", "person"], ...active })
   void client.invalidateQueries({ queryKey: ["seerr", "discover"], ...active })
   void client.invalidateQueries({ queryKey: ["seerr", "media"], ...active })
-  // Collection parts carry the same Seerr availability badges as discovery
-  // rows, so a request made from anywhere refreshes them too.
   void client.invalidateQueries({ queryKey: ["collections"], ...active })
-  // The quota moves with every request, and it lives on the status.
   void client.invalidateQueries({ queryKey: queryKeys.seerrStatus, ...active })
 }
 
@@ -174,8 +170,6 @@ export function invalidateMediaSurfaces(
   // are patched by the mutations, so refreshing that query here would replace
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
-  // Explicit user-data writes should refresh a live person card too; metadata
-  // batches deliberately do not, because that response is already server-live.
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue

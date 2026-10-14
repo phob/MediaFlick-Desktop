@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-/** One labelled setting: title and help on the left, its control on the right. */
 export function SettingsRow({
   title,
   description,
@@ -33,7 +32,6 @@ export function SettingsRow({
   )
 }
 
-/** A notice that a damaged settings file was moved aside and what replaced it. */
 export function RecoveryNotice({ children }: { children: ReactNode }) {
   return (
     <p className="rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning-foreground" role="status">
@@ -65,7 +63,6 @@ export function SelectField<const Value extends string>({
   options: readonly SelectOption<Value>[]
   label: string
   disabled?: boolean
-  /** Shown while `value` is empty, such as before the saved value loads. */
   placeholder?: string
 }) {
   const selectOption = (candidate: string) => {
@@ -105,7 +102,6 @@ export function Section({ title, description, children }: { title: string; descr
   )
 }
 
-/** A staged addition or removal that takes effect when the shelf is saved. */
 export function PendingRow({ title, note, action }: { title: string; note: string; action: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border p-3">

@@ -66,9 +66,6 @@ impl ArtworkStore {
             .find(|path| path.is_file())
     }
 
-    /// References in both the primary and backup document remain live. Files
-    /// get a seven-day grace period so a crash between image and JSON commits
-    /// cannot turn into immediate data loss.
     pub fn collect_orphans(&self, collections_path: &Path, now: SystemTime) -> io::Result<usize> {
         let live = live_artwork_ids(collections_path);
         let mut removed = 0;

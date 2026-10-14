@@ -70,9 +70,7 @@ export const MediaCard = memo(function MediaCard({
   item: ItemSummary
   className?: string
   landscape?: boolean
-  /** A corner flag — "Top 10", "New" — drawn over the artwork. */
   ribbon?: string
-  /** Off for cards the expanded panel would sit badly on, such as a Top 10 rank. */
   preview?: boolean
 }) {
   const protectedEpisode = useSpoilerProtection(originalItem)
@@ -100,9 +98,6 @@ export const MediaCard = memo(function MediaCard({
     <article
       ref={observeTechnical}
       {...handlers}
-      // While the expanded panel is over this card, its own lift would push the
-      // artwork out from under an opaque panel that is not going to move with
-      // it — a sliver of the poster creeping past the panel's edge.
       data-expanded={expanded || undefined}
       className={cn(
         "signal-card group flex flex-col gap-2",
@@ -110,9 +105,6 @@ export const MediaCard = memo(function MediaCard({
         className,
       )}
     >
-      {/* `media-frame` carries the corner brackets on hover. They are drawn
-          inside its own box, so clipping the artwork here does not touch
-          them. */}
       <div
         className={cn(
           "media-frame relative overflow-hidden rounded-media bg-card ring-1 ring-hairline",

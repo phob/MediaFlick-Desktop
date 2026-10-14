@@ -29,8 +29,6 @@ import { launch, stop, DEMO_URL } from "./launch.mjs"
 const root = path.resolve(import.meta.dirname, "../..")
 const rawDir = path.join(root, "build", "website-capture", "raw")
 const VIEWPORT = { width: 1600, height: 1000 }
-// Somewhere with no hover affordance. The sidebar expands under the pointer,
-// so the top-right corner of the page is the quiet spot.
 const PARK = { x: 1596, y: 4 }
 
 const profile = process.argv[2]
@@ -81,7 +79,6 @@ async function park() {
   await app.evaluate("document.activeElement?.blur?.(), true")
 }
 
-// Every visible image decoded and no loading placeholders left.
 async function settled(extra = 700) {
   await app.waitFor(
     `(() => {
@@ -101,8 +98,6 @@ async function settled(extra = 700) {
 async function go(route) {
   await app.route(route)
   await sleep(400)
-  // Route changes keep the scroll container's position; every scene starts
-  // at the top of its page.
   await app.evaluate(`(() => {
     for (const element of document.querySelectorAll("*")) if (element.scrollTop > 0) element.scrollTop = 0
     scrollTo(0, 0)
@@ -186,9 +181,6 @@ async function stopPlayback() {
 // The seek thumb's aria-valuenow is the player position in milliseconds.
 const POSITION = `+(document.querySelector(".player-seek-target [role=slider]")?.getAttribute("aria-valuenow") ?? NaN)`
 
-// Page frames with a transparent background while the film plays. Each frame
-// records the film position it shows: the position is anchored at the moment
-// the app reports a new value, and advances with the wall clock from there.
 async function overlayFrames(name, { from, seconds, interval = 80 }) {
   await app.waitFor(`${POSITION} >= ${from}`, { timeout: 90000, interval: 100 })
   const dir = path.join(rawDir, name)
@@ -199,7 +191,6 @@ async function overlayFrames(name, { from, seconds, interval = 80 }) {
   const wiggle = (async () => {
     for (let step = 0; !stopWiggle; step++) {
       const height = await app.evaluate("innerHeight")
-      // Inside the reveal band but above the bar, so no seek tooltip shows.
       await app.mouse("mouseMoved", 1000 + (step % 2) * 40, height - 90)
       await sleep(350)
     }
@@ -229,8 +220,6 @@ async function overlayFrames(name, { from, seconds, interval = 80 }) {
   }
 }
 
-// The demo server's original file for an item, fetched with the demo
-// account's own token so the composite uses exactly what the app played.
 async function downloadDemoSource(itemId) {
   const file = path.join(rawDir, `source-${itemId}.mp4`)
   if (existsSync(file)) return file
@@ -250,8 +239,6 @@ async function downloadDemoSource(itemId) {
   return file
 }
 
-// The sign-in screen is captured by the runner before it signs in, as scene
-// `signin`; the rest need a session.
 const demoScenes = {
   async home() {
     await go("/")
@@ -266,9 +253,6 @@ const demoScenes = {
     await app.waitFor(`!!document.querySelector(${JSON.stringify(card)})`)
     await app.evaluate(`document.querySelector(${JSON.stringify(card)}).scrollIntoView({ block: "center" }), true`)
     await settled(900)
-    // The loop starts and ends with the card open, so its first frame (what a
-    // paused or not-yet-playing video shows) is the hover card, and the loop
-    // joins without a jump. In between the pointer leaves and comes back.
     const recording = await record("home-hover", async () => {
       await app.hover(card)
       await sleep(1300)
@@ -304,9 +288,6 @@ const demoScenes = {
     await settled(1500)
     return { still: await still("series-detail") }
   },
-  // The sidebar is open on Home or under the pointer, and a search moves to
-  // the library, so the pointer rests on the sidebar while typing and then
-  // leaves it, as a user's would.
   async search() {
     await go("/")
     await park()
@@ -339,9 +320,6 @@ const demoScenes = {
     await stopPlayback()
     return { source, overlay }
   },
-  // The site's hero loop: Home, a scroll to the shelves, a hover card and the
-  // details page as a CDP screencast, ending on the Play click. encode.mjs
-  // continues it with the composited player clip.
   async tour() {
     await go("/")
     await park()
@@ -370,9 +348,6 @@ const demoScenes = {
   },
 }
 
-// The home profile belongs to a real person on a real server. Their account
-// name and server host are swapped for neutral stand-ins in every text node,
-// including ones rendered later, before anything is captured.
 async function anonymize() {
   const identity = await app.evaluate(`(() => {
     const footer = document.querySelector("[data-sidebar=footer]")
@@ -385,7 +360,6 @@ async function anonymize() {
   const replacements = [
     [identity.host, "jellyfin.local"],
     [identity.name, "cinema"],
-    // The avatar initial; CSS may uppercase it.
     [identity.name[0], "c"],
   ]
   await app.evaluate(`(() => {
@@ -456,9 +430,6 @@ const homeScenes = {
     await settled(1500)
     return { still: await still("timeline") }
   },
-  // Companion ratings (IMDb, Rotten Tomatoes, Letterboxd and friends) on the
-  // details page of the newest film whose card already shows them; a brand
-  // new release may not have any ratings yet.
   async "rated-detail"() {
     await go("/")
     const href = await app.waitFor(`(() => {
@@ -517,7 +488,6 @@ try {
     await signInToDemo()
   } else {
     await app.waitFor(`!!document.querySelector("a[href='/settings']")`, { timeout: 30000 })
-    // The copied profile resumes its background library sync first.
     await app.waitFor(`!/Loading library/.test(document.querySelector("[data-sidebar=footer]")?.innerText ?? "")`, { timeout: 300000, interval: 1000 })
     report.anonymized = await anonymize()
   }

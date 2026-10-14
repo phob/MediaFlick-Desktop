@@ -14,9 +14,6 @@ const PLUGIN_FRESH_SECONDS: i64 = 24 * 60 * 60;
 const EXPIRE_SECONDS: i64 = 30 * 24 * 60 * 60;
 
 impl RatingsService {
-    /// Returns cached data immediately where possible and performs at most the
-    /// bounded refresh work owned by this call. Catalog endpoints never invoke
-    /// this method, so rating latency cannot delay progressive sync.
     pub fn batch(&self, item_ids: &[String]) -> Result<Value, RatingsError> {
         let item_ids = bounded_item_ids(item_ids);
         let _ = self.companion.probe(false);
@@ -83,8 +80,6 @@ impl RatingsService {
         }))
     }
 
-    /// Rewrites tampered cache rows before they can feed a Desktop response.
-    /// Fresh Companion results and persisted entries use the same allowlist.
     fn sanitize_cached(
         &self,
         targets: &[RatingTarget],
@@ -152,8 +147,6 @@ impl RatingsService {
     }
 }
 
-/// Discovery cards share the library cache and refresh path without requiring
-/// a catalog row. Only typed, positive TMDB identities can bypass catalog lookup.
 fn rating_targets(
     library: &crate::library::Library,
     item_ids: &[String],
@@ -174,7 +167,6 @@ fn discovery_target(item_id: &str) -> Option<RatingTarget> {
         "tv" => ("Series", "show"),
         _ => return None,
     };
-    // Canonical decimal IDs keep equivalent lookups on the same cache key.
     let id = provider_id.parse::<i64>().ok().filter(|id| *id > 0)?;
     if id.to_string() != provider_id {
         return None;
@@ -320,8 +312,8 @@ mod tests {
         let response = json!({
             "boundaryVersion": 1,
             "items": [
-                { "itemId": "tmdb:movie:603", "ratings": [{ "source": "imdb", "value": 8.7 }] },
-                { "itemId": "tmdb:tv:603", "ratings": [{ "source": "imdb", "value": 7.2 }] }
+                { "itemId": "tmdb:movie:603", "ratings": [{ "sourceId": "imdb", "value": 8.7 }] },
+                { "itemId": "tmdb:tv:603", "ratings": [{ "sourceId": "imdb", "value": 7.2 }] }
             ]
         });
         library
@@ -379,8 +371,8 @@ mod tests {
                     "sourceUpdatedAt": SERVER_MDBLIST_KEY,
                     "diagnostic": SERVER_TMDB_KEY,
                     "ratings": [
-                        { "source": SERVER_MDBLIST_KEY, "value": 99, "trace": SERVER_TMDB_KEY },
-                        { "source": "imdb", "value": 8.7, "rawSource": SERVER_MDBLIST_KEY,
+                        { "sourceId": SERVER_MDBLIST_KEY, "value": 99, "trace": SERVER_TMDB_KEY },
+                        { "sourceId": "imdb", "value": 8.7, "rawSource": SERVER_MDBLIST_KEY,
                           "error": SERVER_TMDB_KEY }
                     ]
                 }]

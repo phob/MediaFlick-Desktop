@@ -11,9 +11,6 @@ const REASON = { role: "heading", name: "Can't reach your Jellyfin server" }
 const RETRY = { role: "button", name: "Retry now" }
 const SIGN_OUT = { role: "button", name: "Sign out" }
 
-// The bootstrap pages the catalog in ascending DateCreated order
-// (`fetch_items_page` in src/jellyfin/api/items.rs); the incremental sweep
-// pages descending, and sign-in and user lookups use other paths.
 const bootstrapPage = (url) =>
   url.pathname === "/Items" && url.searchParams.get("SortBy") === "DateCreated" && url.searchParams.get("SortOrder") === "Ascending"
 
@@ -70,12 +67,8 @@ export default async function bootstrapRetry(ctx) {
   await ctx.screenshot("04-signed-out")
 
   await signInThrough(ctx, proxy)
-  // The new attempt needs its request retries (about 2 s) before it can fail.
   ctx.check((await status(ctx)).bootstrap?.state === "loading", "a new sign-in starts loading, without the previous session's failure")
   await ctx.find(REASON, { timeout: 30000 })
-  // The countdown reaching 0 looks the same as a pressed attempt, so press with
-  // the automatic retry at least 2 s away and prove the proxy saw the pressed
-  // attempt before it was due.
   const due = await ctx.until(async () => {
     const body = await status(ctx)
     const retryAt = body?.bootstrap?.state === "retrying" ? body.bootstrap.retryAt : 0
@@ -91,8 +84,6 @@ export default async function bootstrapRetry(ctx) {
   await ctx.until(async () => /Trying again in \d+ s/.test(await pageText(ctx)) && (await ctx.state(RETRY)).disabled !== true, "the retry screen to return after the attempt fails")
   ctx.check(await ctx.exists(REASON), "the failed pressed attempt kept the reason on screen")
 
-  // Only a pressed Retry now explains Home appearing well before the
-  // automatic attempt, so wait until that attempt is far enough away.
   const scheduled = await ctx.until(async () => {
     const body = await status(ctx)
     const retryAt = body?.bootstrap?.state === "retrying" ? body.bootstrap.retryAt : 0

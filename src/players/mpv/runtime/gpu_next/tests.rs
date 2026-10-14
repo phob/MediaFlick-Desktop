@@ -46,8 +46,6 @@ fn configured_gpu_next_composes_and_resizes_browser_frames() -> TestResult {
         resize(&conn, window, content, size)?;
         let frame = pattern();
         let mut returned = runtime.present_overlay(frame)?;
-        // Reuse immediately: mpv must have copied the previous frame before
-        // returning ownership to CEF, including the raw-address command path.
         returned.pixels.fill(0);
         wait_pixel(&conn, content, (size.0 / 4, size.1 / 4), |p| {
             p[2] > 180 && p[1] < 20

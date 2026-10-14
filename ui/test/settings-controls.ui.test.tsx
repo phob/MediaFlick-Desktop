@@ -134,7 +134,6 @@ test("External mpv shows only the mark-watched shortcut", async () => {
   fireEvent.click(await screen.findByRole("option", {name:"External mpv"}))
   expect(screen.queryByRole("button", {name:"Stop playback key"})).toBeNull()
   expect(screen.queryByRole("spinbutton", {name:"Subtitle size (%)"})).toBeNull()
-  // External mpv keeps only the mark-watched-and-play-next binding.
   expect(screen.getAllByRole("button", {name:/^(?!Clear\b).+ key$/})).toEqual([screen.getByRole("button", {name:"Mark watched key"})])
 })
 
@@ -158,7 +157,6 @@ test("the mpv file picker fills only its own request's path into the draft", asy
   await waitFor(() => expect((screen.getByRole("textbox", {name:"mpv executable"}) as HTMLInputElement).value).toBe("C:/mpv/mpv.exe"))
 })
 
-// README: original-quality direct playback is the default in both player modes.
 test("Playback Reset restores original streaming quality and saves it", async () => {
   const settings = page("/settings/client/playback", "windows", (cached) => ({
     ...cached,

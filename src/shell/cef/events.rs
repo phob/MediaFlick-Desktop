@@ -24,8 +24,6 @@ fn player_warmup_mode(settings: &AppSettings) -> FullscreenBehavior {
     }
 }
 
-/// Coalesces rapid playback state updates before forwarding them to the WebUI,
-/// while tracking which meaningful state changes should be logged.
 pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<PlaybackEvent>) {
     const STATE_PUSH_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -91,8 +89,6 @@ pub(super) fn start_playback_event_bridge(state: &BrowserState, rx: Receiver<Pla
     });
 }
 
-/// Timeline movement and diagnostic counters still reach the UI, but should
-/// not repeat the full snapshot in the log on every progress update.
 fn playback_event_needs_log(
     last_logged_snapshot: &mut Option<PlayerSnapshot>,
     event: &PlaybackEvent,
@@ -221,10 +217,7 @@ enum PlaybackCacheRefreshOutcome {
     Deferred,
 }
 
-/// Why a post-playback refresh did not reach the catalog cache.
 enum PlaybackCacheWriteError {
-    /// The account changed during the fetch; the row belongs to the previous
-    /// account's cache.
     StaleSession,
     Storage(rusqlite::Error),
 }
@@ -358,8 +351,6 @@ wrap_task! {
     }
 }
 
-/// Delivers a playback event to every registered WebUI browser and emits
-/// dispatch diagnostics when `log_event` is true.
 fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_event: bool) {
     if let PlaybackEvent::Failed { message } = &event {
         tracing::warn!(target: "bridge", message, "player backend reported a playback failure");
@@ -386,9 +377,6 @@ fn dispatch_playback_event(state: &BrowserState, event: &PlaybackEvent, log_even
     }
 }
 
-/// Runs `script` in the main frame of every registered browser, attributed to
-/// `source_url` in DevTools, and returns how many frames received it. The
-/// browser list is copied out so no lock is held while CEF runs the script.
 pub(super) fn broadcast_script(state: &BrowserState, script: &str, source_url: &str) -> usize {
     let browsers = state
         .lock()
@@ -711,9 +699,6 @@ fn apply_settings_snapshot_preserving_live_window(
     current: &mut AppSettings,
     mut incoming: AppSettings,
 ) {
-    // Bounds are intentionally persisted only on close/minimize. Until then the
-    // BrowserState copy is newer than the preference service's disk snapshot,
-    // so a settings PATCH must not replace it with the last launched size.
     incoming.webui_window = current.webui_window;
     *current = incoming;
 }
@@ -853,8 +838,6 @@ mod tests {
 
         apply_settings_snapshot_preserving_live_window(&mut live, stale_preference_snapshot);
 
-        // This is the snapshot the close lifecycle persists after resize ->
-        // unrelated settings change -> close.
         assert_eq!(live.webui_window.size(), (1536, 864));
         assert_eq!(live.appearance.accent, AppearanceAccent::Violet);
     }

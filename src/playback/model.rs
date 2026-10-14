@@ -1,5 +1,3 @@
-//! Backend-neutral playback values shared by the application and player adapters.
-
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -32,7 +30,6 @@ pub fn ticks_to_milliseconds(ticks: i64) -> f64 {
     ticks as f64 / TICKS_PER_MILLISECOND
 }
 
-/// The trimmed text, or `None` when it is missing or blank.
 pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -56,21 +53,17 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-/// A request to open media in the selected player.
-///
-/// The serialized field names remain compatible with the existing Jellyfin Web
-/// bridge. Backend-specific track translation happens in each player adapter.
+/// A request to open media in the selected player. Backend-specific track
+/// translation happens in each player adapter.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PlaybackRequest {
-    #[serde(alias = "url")]
     pub media_url: String,
     pub headers: Vec<HttpHeader>,
     pub item_id: Option<String>,
     pub media_source_id: Option<String>,
     pub play_session_id: Option<String>,
     pub device_id: Option<String>,
-    #[serde(alias = "startPositionTicks")]
     pub start_time_ticks: Option<i64>,
     pub start_milliseconds: Option<f64>,
     pub runtime_ticks: Option<i64>,
@@ -119,8 +112,6 @@ impl PlaybackRequest {
     }
 }
 
-/// State used for playstate reporting. Time is represented in Jellyfin ticks
-/// until the reporting protocol can migrate independently from its wire format.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReportingState {
     pub position_ticks: i64,
@@ -209,8 +200,6 @@ pub struct PlaybackDiagnostics {
     pub frame_rate: Option<f64>,
 }
 
-/// The player state the UI reads, from `GET /api/player/state` and from the
-/// pushed playback events alike.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
@@ -232,26 +221,20 @@ pub struct PlayerSnapshot {
     pub stop_reason: Option<StopReason>,
 }
 
-/// Why playback ended, sent to the UI as `stopReason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StopReason {
-    /// The file played to its end.
     Eof,
-    /// The viewer marked the item watched and asked for the next one.
     WatchedNext,
     Stop,
     Quit,
     Error,
     Redirect,
     Shutdown,
-    /// A reason this app does not know.
     Unknown,
 }
 
 impl StopReason {
-    /// Reads an mpv `end-file` reason, ignoring case and surrounding space.
-    /// A missing or blank reason is `None`.
     pub fn parse(reason: &str) -> Option<Self> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -269,7 +252,6 @@ impl StopReason {
         })
     }
 
-    /// The item was finished, so it counts as watched.
     pub fn is_completion(self) -> bool {
         matches!(self, Self::Eof | Self::WatchedNext)
     }

@@ -1,5 +1,3 @@
-//! An input-only sibling above the embedded video container. Browser pixels are composed by
-//! libmpv itself, so this window never allocates a second video-sized surface.
 use cef::{ImplBinaryValue, ImplImage};
 use std::cell::Cell;
 use std::io;
@@ -211,7 +209,6 @@ impl OverlayWindow {
         self.conn.flush().map_err(io::Error::other)
     }
 
-    /// Asks the window manager to minimize the window (ICCCM WM_CHANGE_STATE).
     pub fn iconify(&self) -> io::Result<()> {
         const ICONIC_STATE: u32 = 3;
         let event = ClientMessageEvent::new(
@@ -534,8 +531,6 @@ mod focus_tests {
         overlay.place(1280, 720, true)?;
         overlay.conn.get_input_focus()?.reply()?;
 
-        // A window-manager click focuses the frame; the adapter redirects to
-        // its input child. Both transfers emit FocusOut, but neither is a blur.
         for target in [parent, content, video, overlay.window, parent] {
             conn.set_input_focus(InputFocus::PARENT, target, x11rb::CURRENT_TIME)?
                 .check()?;
@@ -543,7 +538,6 @@ mod focus_tests {
             assert_eq!(conn.get_input_focus()?.reply()?.focus, overlay.window);
         }
 
-        // A temporary keyboard grab changes event routing, not logical focus.
         let grab = conn
             .grab_keyboard(
                 false,
@@ -558,7 +552,6 @@ mod focus_tests {
         conn.ungrab_keyboard(x11rb::CURRENT_TIME)?.check()?;
         assert!(overlay.focus_browser()?);
 
-        // Genuine focus loss still reaches CEF so menus and key state reset.
         conn.set_input_focus(InputFocus::PARENT, outside, x11rb::CURRENT_TIME)?
             .check()?;
         assert!(!overlay.focus_browser()?);

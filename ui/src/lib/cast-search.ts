@@ -12,7 +12,6 @@ function positiveInteger(value: string | null) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-/** Cast mode exists only when explicitly named; ordinary `search=` links stay ordinary. */
 export function readCastSearch(params: URLSearchParams): CastSearchPerson | null {
   if (params.get("mode") !== "person") return null
   return {
@@ -35,7 +34,6 @@ export function castSearchPath(person: {
   return `/library?${params.toString()}`
 }
 
-/** Adds provider identities discovered after navigation without dropping route state. */
 export function writeResolvedCastPerson(previous: URLSearchParams, person: PersonIdentity) {
   const next = new URLSearchParams(previous)
   next.set("mode", "person")

@@ -105,8 +105,6 @@ if (scenario === "missing") {
   })
 }
 
-// Reload for fresh data, then route to Home in-app: a reload itself follows
-// the startup-page setting, which may not be Home.
 await send("Page.enable")
 await send("Page.reload", { ignoreCache: true })
 await sleep(3000)
@@ -123,13 +121,11 @@ for (let attempt = 0; attempt < 60 && !shelfReady; attempt++) {
 }
 if (!shelfReady) throw new Error("the Home release timeline did not render within 30 seconds")
 
-// The same calendar Desktop's Home reads, fetched through the app's API.
 const simulatedMissing = scenario === "missing" ? await evaluate("window.__e2eSimulatedMissing ?? null") : null
 const calendar = await evaluate(
   `fetch("/api/calendar?start=${windowStart}&end=${windowEnd}").then((response) => response.json())`,
 )
 
-// Let artwork settle before reading the cards.
 await sleep(2500)
 const shelf = await evaluate(`(() => {
   const heading = [...document.querySelectorAll("h2")].find((node) => node.textContent === ${JSON.stringify(SHELF_TITLE)})
@@ -169,7 +165,6 @@ const isDownloaded = (entry) => entry.hasFile || entry.libraryItemId != null
 const entryTitle = (entry) => (entry.kind === "episode" ? entry.seriesTitle ?? entry.title : entry.title)
 
 const cards = shelf.cards.map((card, index) => {
-  // Every calendar entry this card could stand for: same displayed title and date.
   const matches = entries.filter((entry) => entryTitle(entry) === card.title && shelf.dateLabels[entry.date] === card.dateLabel)
   const dates = [...new Set(matches.map((entry) => entry.date))]
   const date = dates.length === 1 ? dates[0] : null
@@ -186,17 +181,14 @@ const cards = shelf.cards.map((card, index) => {
 check(calendar.provider === "plugin", `calendar provider is ${calendar.provider}; past-release truth needs the Companion`)
 check(cards.length > 0, "the shelf holds no cards")
 
-// Every card must be traceable to the calendar it came from.
 for (const card of cards) check(card.date != null, `card ${card.index} (${card.title} @ ${card.dateLabel}) matches no single calendar date`)
 
-// One timeline: dates never go backwards, and every past card precedes every upcoming card.
 for (let index = 1; index < cards.length; index++) {
   const previous = cards[index - 1].date
   const current = cards[index].date
   if (previous && current) check(previous <= current, `card ${index} (${current}) comes after a later date (${previous})`)
 }
 
-// With the Companion the shelf leads with recent releases.
 const pastCards = cards.filter((card) => card.past).length
 const futureCards = cards.length - pastCards
 const eligiblePast = new Set(
@@ -207,7 +199,6 @@ const eligiblePast = new Set(
 const eligibleFuture = new Set(entries.filter((entry) => entry.date >= today).map((entry) => `${entry.date}:${entryTitle(entry)}`)).size
 check(eligiblePast === 0 || pastCards > 0, `the calendar has ${eligiblePast} recent releases but the shelf shows none`)
 
-// Past cards carry exactly one truthful status; upcoming cards carry none.
 for (const card of cards) {
   if (!card.date) continue
   if (!card.past) {
@@ -220,7 +211,6 @@ for (const card of cards) {
   check(card.ariaLabel?.endsWith(`, ${card.status}`), `past card ${card.index} (${card.title}) does not announce its status: ${card.ariaLabel}`)
 }
 
-// Today is marked once, between the last past and the first upcoming card.
 const firstFuture = cards.findIndex((card) => card.date && !card.past)
 if (pastCards > 0 && firstFuture > 0) {
   check(shelf.todayMarks.length === 1, `expected one today mark, found ${shelf.todayMarks.length}`)
@@ -239,7 +229,6 @@ if (scenario === "missing") {
   if (card) check(card.status === "Missing", `the missing movie ${card.title} shows ${card.status ?? "no status"}, not Missing`)
 }
 
-// Screenshots: the shelf's start (recent releases), then scrolled to the first upcoming card.
 await mkdir(outDir, { recursive: true })
 async function shelfScreenshot(file) {
   const clip = await evaluate(`(() => {

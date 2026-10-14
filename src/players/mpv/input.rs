@@ -4,8 +4,6 @@ const STOP_PLAYBACK_KEYS: &[&str] = &["q", "Q", "CLOSE_WIN", "STOP"];
 const SEEK_PLAYBACK_BINDINGS: &[(&str, i32)] =
     &[("LEFT", -10), ("RIGHT", 10), ("DOWN", -30), ("UP", 30)];
 
-/// The mpv input section MediaFlick defines: stop and seek keys, plus the
-/// mark-watched-and-play-next binding from Player settings when it is set.
 pub fn section_contents(mark_watched_next: Option<&str>) -> String {
     let mut lines = STOP_PLAYBACK_KEYS
         .iter()

@@ -398,8 +398,6 @@ fn new_browser_state(
         &settings,
         playback_event_tx.clone(),
     )));
-    // The app-scheme API starts playback from a background thread, so it needs
-    // the coordinator without reaching into this UI-thread state.
     if let Some(services) = services::services() {
         services.attach_playback(playback.clone());
     }

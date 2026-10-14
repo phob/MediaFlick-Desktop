@@ -5,7 +5,6 @@ namespace Jellyfin.Plugin.MediaFlick.Tests;
 
 internal sealed record CapturedLog(LogLevel Level, string Message, Exception? Exception)
 {
-    /// <summary>Everything a log sink could render for this entry.</summary>
     public string Rendered => Message + Environment.NewLine + Exception;
 }
 

@@ -158,8 +158,6 @@ where
     }))
 }
 
-/// Writes a complete document, retaining the last valid primary as `.bak`.
-/// The caller must update its in-memory copy only after this returns success.
 pub fn save_with_backup<T>(path: &Path, document: &T) -> io::Result<()>
 where
     T: Serialize + DeserializeOwned,
@@ -183,8 +181,6 @@ where
     atomic_write(path, &bytes)
 }
 
-/// Account deletion must scrub the old account from both the primary and its
-/// recovery copy. Replace the backup atomically after the primary commits.
 pub fn replace_backup_with_primary(path: &Path) -> io::Result<()> {
     if path.is_file() {
         atomic_write(&backup_path(path), &std::fs::read(path)?)?;
@@ -213,12 +209,8 @@ fn appended_path(path: &Path, suffix: &str) -> PathBuf {
 pub(super) mod test_support {
     use std::path::Path;
 
-    /// A document written by a newer app version: an unsupported version plus
-    /// a field this reader's strict schema does not know.
     pub const NEWER_DOCUMENT: &[u8] = br#"{"version":2,"futureField":{"added":true}}"#;
 
-    /// Asserts that a rejected document was neither moved aside, replaced by
-    /// its backup, nor reset to defaults.
     pub fn assert_left_untouched(path: &Path, original: &[u8]) {
         assert_eq!(std::fs::read(path).expect("read original"), original);
         let name = path
@@ -318,8 +310,6 @@ mod tests {
 
     #[test]
     fn another_versions_document_is_rejected_before_recovery_can_touch_it() {
-        // A different version number, and the supported number with content
-        // this schema rejects: what an older build sees of a newer one.
         for foreign in [
             test_support::NEWER_DOCUMENT,
             br#"{"version":1,"value":5,"unknown":true}"#,

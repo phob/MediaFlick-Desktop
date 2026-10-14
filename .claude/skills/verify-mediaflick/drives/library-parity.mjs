@@ -4,8 +4,6 @@ const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
 const FIRST_TITLES = 6
 const itemCount = (ctx) => ctx.app.evaluate(`(() => { const m = document.body.innerText.match(/^([\\d,]+) items?$/m); return m ? Number(m[1].replace(/,/g, "")) : null })()`)
 
-// The demo account is shared, so strangers change watch state while the drive
-// runs. A comparison passes once both sides agree within the window.
 const LIVE_WINDOW_MS = 90000
 
 async function jellyfinClient() {
@@ -101,9 +99,6 @@ export default async function libraryParity(ctx) {
     const options = await ctx.snapshot(`${snapshotName}-options`)
     return [...options.matchAll(/menuitemradio '([^']*)'/g)].map((match) => match[1])
   }
-  // The trigger's name counts the active filters. Name the expected one: the
-  // label lags a removed chip by a render, and pressing a stale name waits for
-  // a button that is already gone.
   async function openFilters(name = "Filters") {
     await ctx.press({ role: "button", name })
     await ctx.find({ role: "menu", name })

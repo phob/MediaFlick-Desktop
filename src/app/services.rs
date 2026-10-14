@@ -1,6 +1,3 @@
-//! Process-wide services the app-scheme API reaches from CEF's background
-//! threads, where the UI-thread browser state is not available.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
@@ -63,7 +60,6 @@ pub enum ShellRequest {
     InstallMpv {
         request_id: String,
     },
-    /// A committed cache mutation changed catalog rows.
     LibraryChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
@@ -73,11 +69,7 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
-    /// A committed provider snapshot changed collection projections.
     CollectionsChanged,
-    /// Any native Jellyfin call observed an authorization rejection.
-    /// Relay it so the UI re-reads the canonical session state immediately,
-    /// even when the failing request itself is silent by design.
     SessionExpired,
 }
 
@@ -110,7 +102,6 @@ impl ShellBridge {
             .map_err(|_| "the desktop shell is unavailable")
     }
 
-    /// A committed cache batch. An empty batch has nothing to refresh.
     pub fn library_changed(&self, changes: LibraryChangeBatch) {
         if changes.item_ids.is_empty() {
             return;
@@ -160,14 +151,10 @@ impl Services {
     }
 }
 
-/// Opens the library database and restores the session. Safe to call twice;
-/// only the first call does the work.
 pub fn init() -> Option<Arc<Services>> {
     services().or_else(|| init_with_settings(AppSettings::load()))
 }
 
-/// Same initialization path, with the already-normalized launch settings CEF
-/// will use. This keeps CLI overrides and API writes in one snapshot.
 pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>> {
     if let Some(services) = SERVICES.get() {
         return Some(services.clone());
@@ -286,9 +273,6 @@ fn warm_restored_session(session: Arc<Session>, companion: Arc<CompanionSession>
     });
 }
 
-/// The lower layers report work that only the application can act on through
-/// hooks registered here, rather than looking the services up themselves. The
-/// hooks hold weak references, so they never keep the services alive.
 fn connect_app_hooks(services: &Arc<Services>) {
     let weak = Arc::downgrade(services);
     services.sync.on_cycle_completed(Arc::new(move || {
@@ -451,7 +435,6 @@ pub fn services() -> Option<Arc<Services>> {
     SERVICES.get().cloned()
 }
 
-/// Why [`init`] failed, for the error the UI shows instead of a blank window.
 pub fn init_error() -> Option<&'static str> {
     INIT_ERROR.get().map(String::as_str)
 }
@@ -461,9 +444,6 @@ pub(crate) mod test_support {
     use super::*;
     use crate::app::ids::random_hex;
 
-    /// Services over an in-memory catalog and a scratch configuration folder,
-    /// without the sync and event-socket threads, so API tests never touch the
-    /// user's data or reach a server the test did not start.
     pub(crate) struct TestServices {
         pub services: Arc<Services>,
         directory: PathBuf,
@@ -474,7 +454,6 @@ pub(crate) mod test_support {
             Self::new(None)
         }
 
-        /// Signed in as `user` on the Jellyfin server `server` at `server_url`.
         pub fn signed_in(server_url: &str) -> Self {
             Self::new(Some(server_url))
         }

@@ -16,8 +16,6 @@ wrap_app! {
                 return;
             };
 
-            // Same spirit as upstream jellyfin-desktop: avoid Google background
-            // services and permit media playback without a browser gesture.
             for switch in [
                 "disable-background-networking",
                 "disable-client-side-phishing-detection",
@@ -49,8 +47,6 @@ wrap_app! {
                 );
             }
 
-            // Trackpad history swipes navigate back and forward like a browser;
-            // the shell owns one surface and has no history to leave.
             command_line.append_switch_with_value(
                 Some(&CefString::from("disable-features")),
                 Some(&CefString::from("OverscrollHistoryNavigation")),
@@ -121,8 +117,6 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             debug_assert_ne!(currently_on(ThreadId::UI), 0);
 
-            // The own UI is the only UI: it is served from our own scheme and
-            // talks to the library cache and the player through /api/*.
             app_scheme::register();
             services::init_with_settings(self.config.settings.clone());
 

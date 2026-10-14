@@ -245,8 +245,6 @@ fn configure_libmpv_options(
     ];
     #[cfg(target_os = "linux")]
     options.extend([
-        // gpu-next owns a child surface inside the app's X11 container and
-        // composites CEF bitmaps itself. No mpv_render_context is created.
         ("vo", "gpu-next"),
         ("gpu-api", "vulkan,opengl"),
         ("gpu-context", "x11vk,x11egl"),

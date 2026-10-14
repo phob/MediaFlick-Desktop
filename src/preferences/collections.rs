@@ -67,9 +67,6 @@ struct State {
     recovery: Option<RecoveryNotice>,
 }
 
-/// Owns all non-rebuildable collection intent for every Jellyfin account.
-/// Mutations serialize and replace the whole document before publishing the
-/// new in-memory state.
 pub struct CollectionConfigurationService {
     path: PathBuf,
     state: Mutex<State>,

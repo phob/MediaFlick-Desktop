@@ -7,7 +7,6 @@ const DEMO = "https://demo.jellyfin.org/stable"
 const CARD = { css: 'a[aria-label^="Open details for"]' }
 const billboardTitle = (ctx) => ctx.app.evaluate(`document.getElementById("billboard-title")?.textContent.trim() ?? null`)
 const pageText = (ctx) => ctx.app.evaluate("document.body.innerText")
-// The library count is an aria-live span reading "N items" or "1 item".
 const itemCount = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll('[aria-live="polite"]')].map((e) => e.textContent.trim()).find((t) => /\\bitems?$/.test(t)) ?? null`)
 
 export default async function homeLibrary(ctx) {
@@ -20,7 +19,6 @@ export default async function homeLibrary(ctx) {
   ctx.step(`shelves: ${JSON.stringify(await ctx.app.evaluate(`[...document.querySelectorAll("section[aria-labelledby] h2")].map((h) => h.textContent.trim())`))}`)
   ctx.check(await ctx.exists({ role: "link", name: "MediaFlick" }), "the brand link is named on Home (sidebar pinned open)")
 
-  // Billboard: read the toggles, only press the slide ticks.
   const first = await billboardTitle(ctx)
   if (first) {
     await ctx.find({ role: "link", name: "Details" })
@@ -33,7 +31,6 @@ export default async function homeLibrary(ctx) {
     }
   }
 
-  // Shelf arrows: Previous is disabled at the start and enables after Next.
   const shelf = [...home.matchAll(/button 'Next ([^']+)'(.*)$/gm)].find((match) => !/disabled/.test(match[2]))?.[1]
   if (shelf) {
     ctx.check((await ctx.state({ role: "button", name: `Previous ${shelf}` })).disabled === true, `Previous ${shelf} is disabled at the start`)
@@ -46,13 +43,11 @@ export default async function homeLibrary(ctx) {
     ctx.step("no shelf overflows; arrows not exercised")
   }
 
-  // A poster card on Home opens the detail page.
   await ctx.park()
   const card = await ctx.app.evaluate(`document.querySelector('main a[aria-label^="Open details for"]')?.getAttribute("aria-label")`)
   await ctx.press({ role: "link", name: card }, { nth: 0 })
   await ctx.until(async () => (await ctx.pathname()).startsWith("/item/"), `${card} from Home`)
 
-  // Movies: sort, filter, chip.
   await ctx.press({ role: "link", name: "Movies" })
   await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
   await ctx.find({ role: "heading", name: "Movies" })
@@ -64,7 +59,6 @@ export default async function homeLibrary(ctx) {
   // Radix names the menu after its trigger, not its aria-label.
   await ctx.find({ role: "menu", name: "Filters" })
   const menu = await ctx.snapshot("04-filters-menu")
-  // Sub-menu triggers carry their current value ("Release decade Any").
   const decade = menu.match(/menuitem '(Release decade[^']*)'/)?.[1]
   ctx.check(Boolean(decade), "the Release decade sub-menu")
   await ctx.press({ role: "menuitem", name: decade })
@@ -84,7 +78,6 @@ export default async function homeLibrary(ctx) {
   ctx.check((await ctx.pathname()).includes("sort=year"), "the sort survives removing the chip")
   ctx.check(!(await ctx.exists({ role: "group", name: "Active filters" })), "no chips left")
 
-  // A search with no match.
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.fill({ role: "textbox", name: "Search the library" }, "zzqqxx")
   await ctx.until(async () => (await ctx.pathname()) === "/library?search=zzqqxx", "the search route")
@@ -92,7 +85,6 @@ export default async function homeLibrary(ctx) {
   ctx.check((await pageText(ctx)).includes("Nothing matches “zzqqxx”."), "the empty reason names the term")
   await ctx.screenshot("06-empty-search")
 
-  // Favorites is a filter, so it shows as a chip.
   await ctx.park()
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.press({ role: "link", name: "Favorites" })

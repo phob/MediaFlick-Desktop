@@ -64,8 +64,6 @@ fn is_iso_date(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
 }
 
-// ------------------------------------------------------------------ browsing
-
 struct ResolvedHome {
     account: AccountKey,
     settings: HomeSettings,
@@ -322,7 +320,6 @@ fn home(services: &Arc<Services>) -> Handled {
     })))
 }
 
-/// Watching and the release timeline are not generic shelves; Home assembles them separately.
 fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn) -> Option<Value> {
     let (row_id, title, items) = match id {
         HomeBuiltIn::Watching | HomeBuiltIn::Upcoming => return None,
@@ -465,8 +462,6 @@ fn home_collection(services: &Services, home: &ResolvedHome, profile_id: &str) -
     Some(home_row("collection", &profile.id, &profile.title, &items))
 }
 
-/// Enriches cached Continue Watching with Jellyfin's server-owned Next Up
-/// decisions without holding the rest of Home behind a network request.
 fn home_resume(services: &Arc<Services>) -> Handled {
     let home = resolved_home(services)?;
     if !element_enabled(&home.settings, HomeBuiltIn::Watching) {
@@ -521,9 +516,6 @@ fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec
         .collect()
 }
 
-/// New releases are separate from Recently Added Movies: importing an older
-/// title moves it to the front of the latter, but not to the front of these
-/// shelves.
 fn latest_home_items(library: &Library, kind: &str) -> Vec<ItemSummary> {
     home_query(
         library,
@@ -771,10 +763,7 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 
 fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     match services.library.item(item_id) {
-        // The thin catalog row answers instantly; prose, cast, and critic
-        // scores arrive separately through the live `about` endpoint.
         Ok(Some(cached)) => Ok(ApiResponse::ok(cached)),
-        // A deep link can outrun the catalog; fetch that one item and cache it.
         Ok(None) => fetch_and_cache_item(services, item_id),
         Err(error) => Err(storage_failure(&error)),
     }
@@ -809,8 +798,6 @@ fn is_cast_credit(person: &BaseItemPerson) -> bool {
                 .is_some_and(|role| !role.trim().is_empty()))
 }
 
-/// Keeps the live about payload and its headshot fan-out bounded while
-/// preserving Jellyfin's credit order and a useful spread of crew jobs.
 fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
     let mut selected = Vec::with_capacity(ITEM_ABOUT_CAST_LIMIT + ITEM_ABOUT_CREW_LIMIT);
     let mut cast = 0;
@@ -856,9 +843,6 @@ fn bounded_about_people(people: &[BaseItemPerson]) -> Vec<Value> {
     selected
 }
 
-/// Rich metadata for one item, fetched live from Jellyfin and never persisted.
-/// The detail page draws the cached thin row first and fills this in when it
-/// lands; when the server is unreachable the UI keeps its plain error state.
 fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
@@ -893,8 +877,6 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
     let scope = session_scope(services)?;
     match items::fetch_item(scope.client(), scope.user_id(), item_id) {
         Ok(Some(dto)) => {
-            // The row belongs to the account that fetched it; an account switch
-            // during the request must not seed the next account's cache.
             let cached = services
                 .session
                 .commit_if_current(&scope, stale_account_response, || {
@@ -931,8 +913,6 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
 const CHILD_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
 static CHILD_RECONCILES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
-/// Claims the next reconcile of `parent_id`, or `false` while one is running
-/// or ran within [`CHILD_RECONCILE_INTERVAL`].
 fn claim_child_reconcile(parent_id: &str) -> bool {
     let now = Instant::now();
     let mut reconciles = CHILD_RECONCILES
@@ -948,8 +928,6 @@ fn claim_child_reconcile(parent_id: &str) -> bool {
 }
 
 fn children(services: &Arc<Services>, item_id: &str) -> Handled {
-    // Only containers have a child list worth asking the server about; a movie
-    // detail page asks for children too and must not pay for a round trip.
     let container = matches!(
         services.library.kind(item_id).as_deref(),
         Some("Series" | "Season")
@@ -984,8 +962,6 @@ fn children(services: &Arc<Services>, item_id: &str) -> Handled {
     let overviews = reconcile_children(services, item_id);
     match services.library.children(item_id) {
         Ok(mut children) => {
-            // Episode synopses are not cached; they ride along only when a
-            // live reconcile answered this request. Otherwise rows have none.
             if let Some(overviews) = &overviews {
                 for child in &mut children {
                     child.overview = overviews.get(&child.id).cloned().flatten();
@@ -1026,8 +1002,6 @@ fn reconcile_children(
         let page = match items::fetch_children(client, user_id, parent_id, offset) {
             Ok(page) => page,
             Err(error) => {
-                // Offline, or the server is unwell. The cached list is still the
-                // best answer available, so leave it exactly as it is.
                 tracing::debug!(
                     target: "app.api",
                     "could not reconcile the children of {parent_id}: {error}"
@@ -1133,8 +1107,6 @@ mod tests {
         }
     }
 
-    /// The in-progress episode is also its series' Next Up, so the split
-    /// shelves must not show that series twice.
     #[test]
     fn a_show_already_being_watched_is_removed_from_next_up() {
         let next_up = deduplicate_next_up(

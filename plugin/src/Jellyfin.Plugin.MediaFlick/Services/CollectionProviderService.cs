@@ -26,8 +26,6 @@ public sealed class CollectionProviderService
     private readonly SemaphoreSlim _requestGate = new(4, 4);
     private readonly SemaphoreSlim _tmdbValidationGate = new(1, 1);
     private readonly SemaphoreSlim _mdbListValidationGate = new(1, 1);
-    // Results can hold thousands of titles, so only a bounded, expiring set
-    // of recent requests stays in memory.
     private readonly BoundedCache<string, CachedResult> _cache;
     private readonly BoundedCache<string, long> _identityCache;
     private readonly ConcurrentDictionary<string, byte> _validatedThisRun =
@@ -455,7 +453,6 @@ public sealed class CollectionProviderService
         {
             if (!_secrets.IsConfigured(provider))
             {
-                // A removed credential is not an outage to recover from.
                 _readinessFailures.Recovered(provider);
                 return;
             }
