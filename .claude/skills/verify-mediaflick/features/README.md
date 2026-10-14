@@ -19,7 +19,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Reach pages the way a user does: sidebar links, settings navigation, cards. Do not jump with `ctx.app.route()` when the feature is the navigation itself.
 - Never write to the shared demo account: no favorites, watched marks, playback, or Letterboxd/Companion changes. Write paths run on your own server with `--account`; never put credentials in a drive.
 - Play only with `--account` on your own server (see [Playback](./playback.md)). Playback writes the test user's playstate and plays real audio; on Windows the private desktop does not isolate it.
-- A drive that changes server state puts it back through the user path and registers an after-run safety net (`ctx.restoreItemAfterRun`, `ctx.cancelSeerrRequestAfterRun`) that runs once the app has exited.
+- A drive that changes server state puts it back through the user path and registers an after-run safety net (`ctx.restoreItemAfterRun`, `ctx.unfavoriteAfterRun`, `ctx.cancelSeerrRequestAfterRun`) that runs once the app has exited.
 
 ## Proof and skip reporting
 
