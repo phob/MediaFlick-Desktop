@@ -26,11 +26,11 @@ impl ControllerState {
             );
             return;
         }
-        if self.segment_skip_config.all_disabled() {
+        if self.segment_skip_config.all_hidden() {
             tracing::debug!(
                 target: "jellyfin.media_segments",
                 playback_id,
-                "ignored Jellyfin media segments because segment skipping is disabled"
+                "ignored Jellyfin media segments because every segment type is hidden"
             );
             return;
         }
@@ -56,7 +56,7 @@ impl ControllerState {
     }
 
     pub(super) fn fetch_media_segments(&self, playback_id: i64, launch: PlaybackRequest) {
-        if self.segment_skip_config.all_disabled() {
+        if self.segment_skip_config.all_hidden() {
             return;
         }
         let tx = self.tx.clone();
@@ -82,6 +82,14 @@ impl ControllerState {
                     .playback_identity
                     .as_ref()
                     .is_some_and(|identity| identity.playback_id == playback_id))
+    }
+
+    pub(super) fn shown_skip_segments(&self) -> Vec<SkipSegment> {
+        self.skip_segments
+            .iter()
+            .filter(|segment| segments::is_shown(&self.segment_skip_config, segment.segment_type))
+            .cloned()
+            .collect()
     }
 
     pub(super) fn clear_skip_segment_state(&mut self) {
@@ -111,6 +119,7 @@ impl ControllerState {
                 .collect::<Vec<_>>();
             self.chapter_markers.original = Some(base);
             self.chapter_markers.last_sent = Some(chapters);
+            self.publish_snapshot();
             return;
         }
         self.capture_original_chapters(chapters);
@@ -133,7 +142,8 @@ impl ControllerState {
             return;
         }
 
-        let markers = if self.skip_segments.is_empty() {
+        let shown = self.shown_skip_segments();
+        let markers = if shown.is_empty() {
             Vec::new()
         } else {
             if self.chapter_markers.original.is_none() {
@@ -144,7 +154,7 @@ impl ControllerState {
                 return;
             };
             let duration_seconds = duration_ticks as f64 / TICKS_PER_SECOND;
-            build_segment_chapter_markers(&self.skip_segments, duration_seconds)
+            build_segment_chapter_markers(&shown, duration_seconds)
         };
 
         let base = self.chapter_markers.original.clone().unwrap_or_default();

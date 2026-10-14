@@ -500,12 +500,15 @@ impl ControllerState {
             tracing::debug!(target: "playback", ?config, "updated segment skip settings");
             self.segment_skip_config = config;
             self.segment_skip_state.cancel_pending();
-            if config.all_disabled() {
+            if config.all_hidden() {
                 self.clear_skip_segment_state();
             } else {
                 self.update_skip_segment_state(self.last_state.position_ticks);
             }
             self.refresh_chapter_markers();
+            if self.mpv_playback_active {
+                self.publish_snapshot();
+            }
         }
         self.subtitle_appearance = preferences.subtitles;
         if preferences.mark_watched_next != self.mark_watched_next {
