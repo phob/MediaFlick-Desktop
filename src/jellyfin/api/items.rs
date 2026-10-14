@@ -113,7 +113,13 @@ pub fn fetch_user_views(
     client: &JellyfinClient,
     user_id: &str,
 ) -> Result<Vec<UserViewDto>, ApiError> {
-    let response: UserViewsResponse = client.get_json("/UserViews", &[user_query(user_id)])?;
+    let response: UserViewsResponse = match client.get_json("/UserViews", &[user_query(user_id)]) {
+        Err(ApiError::Status { status }) if status == 404 || status == 405 => {
+            let legacy = format!("/Users/{}/Views", encode_path_segment(user_id));
+            client.get_json(&legacy, &[])?
+        }
+        result => result?,
+    };
     Ok(response.items)
 }
 
