@@ -1,7 +1,4 @@
-// Launch and evidence only: the signed-out first screen of a fresh profile.
-//   just verify smoke
 export default async function smoke(ctx) {
-  // The card title is not a heading; the window title names the screen.
   await ctx.until("document.title === 'Sign in — MediaFlick'", "the sign-in screen", 30000)
   await ctx.find({ role: "textbox", name: "Server" })
   ctx.check((await ctx.state({ role: "button", name: "Sign in" })).disabled === true, "Sign in is disabled until a server is entered")

@@ -11,7 +11,6 @@ export function PageHeader({
   eyebrow: string
   title: string
   actions?: ReactNode
-  /** Keeps page actions on the same content canvas as a constrained body. */
   contentClassName?: string
 }) {
   return (

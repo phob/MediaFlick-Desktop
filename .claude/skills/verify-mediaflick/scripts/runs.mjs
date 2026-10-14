@@ -35,6 +35,5 @@ export function scanRuns(processes = listProcesses()) {
   return runs
 }
 
-// The user's own MediaFlick sessions: app browser processes not started by a verify run.
 export const userApps = (processes = listProcesses()) =>
   processes.filter((row) => isAppProcess(row) && !row.cmd.includes(PROFILE_PREFIX) && !/--type=/.test(row.cmd))

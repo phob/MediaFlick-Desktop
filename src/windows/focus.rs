@@ -22,8 +22,6 @@ struct WindowSearch {
     window: HWND,
 }
 
-/// Activates the visible top-level window owned by `process_id` without
-/// changing its normal/maximized state. A minimized window is restored first.
 #[cfg(target_os = "windows")]
 pub fn activate_process_window(process_id: u32) -> ProcessWindowActivation {
     let mut search = WindowSearch {

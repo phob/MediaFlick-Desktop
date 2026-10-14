@@ -30,7 +30,6 @@ export function BootstrapRetry({ retry, attempting }: { retry: SyncRetry; attemp
   const now = useUnixSeconds()
   const request = useMutation({
     mutationFn: api.sync,
-    // Re-read status at once so the running attempt shows without waiting for the pulse.
     onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.status }),
     onError: (error: Error) => toast.error(error.message),
   })

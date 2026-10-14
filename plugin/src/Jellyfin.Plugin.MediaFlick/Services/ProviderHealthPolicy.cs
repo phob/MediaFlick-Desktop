@@ -3,7 +3,6 @@ using Jellyfin.Plugin.MediaFlick.Models;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>One MDBList or TMDB answer, reduced to the facts health tracking uses.</summary>
 internal sealed record ProviderOutcome(
     HttpStatusCode StatusCode,
     long? RetryAt,
@@ -38,12 +37,10 @@ internal static class ProviderHealthPolicy
     public static bool IsRateLimited(HttpStatusCode status)
         => (int)status == StatusCodes.Status429TooManyRequests;
 
-    /// <summary>A retryable outage: rate limits, timeouts, and server errors.</summary>
     public static bool IsTransient(HttpStatusCode status)
         => IsRateLimited(status)
             || (int)status is StatusCodes.Status408RequestTimeout or >= 500;
 
-    /// <summary>Exponential transient backoff, capped at six hours.</summary>
     public static long BackoffSeconds(int failureCount)
         => Math.Min(
             BaseBackoffSeconds << Math.Clamp(failureCount, 0, 8),

@@ -2,9 +2,6 @@ const TMDB_SIZES: &[&str] = &[
     "w92", "w154", "w185", "w300", "w342", "w500", "w780", "w1280",
 ];
 
-/// Validates the rendition and filename before the fixed-origin request is
-/// delegated to the Companion. Desktop never receives or constructs a
-/// provider URL.
 pub fn tmdb_image_path(size: &str, file: &str) -> Option<String> {
     if !TMDB_SIZES.contains(&size) {
         return None;

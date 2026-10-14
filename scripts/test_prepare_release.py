@@ -1,5 +1,3 @@
-"""Exercise release preparation in an isolated source fixture."""
-
 import subprocess
 import sys
 import tempfile

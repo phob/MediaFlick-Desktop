@@ -184,8 +184,6 @@ fn startup_seek_holds_resume_position_until_mpv_reaches_resume_range() {
     assert!(state.startup_seek.is_none());
 }
 
-/// A replaced file's stale `end-file` (stop) is ignored while the next file
-/// loads, but mpv failing to open that file must still end the load.
 #[test]
 fn an_end_file_error_ends_a_pending_replacement_load() {
     let mut state = controller_with_pending_load(None);
@@ -269,7 +267,6 @@ fn library_resume_waits_for_file_loaded_and_holds_reported_position() {
     assert_eq!(state.last_state.position_ticks, 200_000_000);
 }
 
-/// mpv that accepts every command, or rejects every seek.
 fn scripted_mpv(reject_seeks: bool) -> FakeMpv {
     FakeMpv::start(move |command| {
         let rejected = reject_seeks && command["command"][0] == "seek";
@@ -295,7 +292,6 @@ fn make_due(state: &mut ControllerState) -> StartupSeek {
     *seek
 }
 
-/// 90 s into the item.
 const RESUME_TICKS: i64 = 900_000_000;
 
 #[test]
@@ -316,8 +312,6 @@ fn startup_seek_waits_for_its_delay_then_retries_until_the_position_arrives() {
     state.maybe_send_startup_seek();
     assert_eq!(next_seek(&fake), json!(["seek", 90.0, "absolute+exact"]));
 
-    // mpv still reports the start of the file: Jellyfin keeps the resume
-    // position, and the seek goes out again once the retry is due.
     assert!(state.defer_startup_position_update(0));
     make_due(&mut state);
     state.maybe_send_startup_seek();

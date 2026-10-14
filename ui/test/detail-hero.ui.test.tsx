@@ -35,7 +35,6 @@ function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
   }
 }
 
-/** The image owner and kind, independent of rendition size and cache tag. */
 function imagePath(url: string | null) {
   return url === null ? null : new URL(url, "https://app.test").pathname
 }

@@ -67,8 +67,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
       const response = await api.technical.batch(ids, controller.signal)
       if (controller.signal.aborted) return
       const returned = new Map(response.items.map((item) => [item.id, item.mediaStreams]))
-      // A successful lookup that has no representative stream is a real empty
-      // result. Remember it too, or remounting that card would query forever.
       setItems((current) => {
         const next = new Map(current)
         for (const id of ids) next.set(id, returned.get(id) ?? [])
@@ -78,8 +76,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
       for (const id of ids) checkedAt.current.set(id, now)
     } catch (error) {
       if (!isAbortError(error)) {
-        // Failed/offline cards stay quiet and wait for the same bounded stale
-        // interval before retrying instead of creating a request loop.
         const now = Date.now()
         for (const id of ids) checkedAt.current.set(id, now)
       }
@@ -94,8 +90,6 @@ export function TechnicalProvider({ children }: { children: ReactNode }) {
     flushRef.current = flush
   }, [flush])
 
-  // Unknown settings are disabled: otherwise a saved false value can lose a
-  // race with the initial settings request and still send a technical batch.
   const showMediaInfo = settings.data?.appearance.showMediaInfo === true
 
   useEffect(() => {

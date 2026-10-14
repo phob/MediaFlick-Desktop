@@ -6,8 +6,6 @@
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)")
 const root = document.documentElement
 
-// Replaces an element's text with a short entrance, so a changing title reads
-// as a change rather than a flicker.
 function swapText(element, text) {
   if (!element || typeof text !== "string" || element.textContent === text) return
   element.textContent = text
@@ -15,8 +13,6 @@ function swapText(element, text) {
   void element.offsetWidth
   element.setAttribute("data-swapped", "")
 }
-
-/* ------------------------------------------------------------ accent */
 
 const ACCENTS = ["signal", "cobalt", "amber", "violet"]
 const accentButtons = document.querySelectorAll("[data-accent-choice]")
@@ -32,7 +28,6 @@ try {
   const saved = localStorage.getItem("mf-accent")
   if (saved) applyAccent(saved)
 } catch {
-  // Storage can be unavailable (private windows); the default accent stays.
 }
 for (const button of accentButtons) {
   button.addEventListener("click", () => {
@@ -40,20 +35,15 @@ for (const button of accentButtons) {
     try {
       localStorage.setItem("mf-accent", button.dataset.accentChoice)
     } catch {
-      // Not persisted; the choice still applies to this visit.
     }
   })
 }
-
-/* ------------------------------------------------------------ chrome */
 
 const chrome = document.querySelector("[data-chrome]")
 const onScroll = () => chrome?.toggleAttribute("data-scrolled", scrollY > 8)
 addEventListener("scroll", onScroll, { passive: true })
 onScroll()
 
-// The section crossing the middle of the viewport is current in the nav and
-// the spine; the nav's underline slides to it.
 const chromeNav = document.querySelector(".chrome-nav")
 const sectionLinks = [...document.querySelectorAll(".chrome-nav a[href^='#'], .spine a[href^='#']")]
 function setCurrentSection(id) {
@@ -76,10 +66,6 @@ const sectionObserver = new IntersectionObserver(
 )
 for (const section of document.querySelectorAll("main section[id]")) sectionObserver.observe(section)
 
-/* ------------------------------------------------------------ ticker */
-
-// The ticker runs at reading pace and speeds up with the scroll, easing back
-// once the page settles.
 const tickerTrack = document.querySelector(".ticker-track")
 if (tickerTrack && !reducedMotion.matches) {
   let lastY = scrollY
@@ -109,9 +95,6 @@ if (tickerTrack && !reducedMotion.matches) {
   )
 }
 
-/* ------------------------------------------------------------ reveal */
-
-// Siblings that reveal together are staggered by their order in the parent.
 for (const element of document.querySelectorAll(".reveal")) {
   const siblings = [...(element.parentElement?.children ?? [])].filter((child) => child.classList.contains("reveal"))
   const index = siblings.indexOf(element)
@@ -129,15 +112,10 @@ const revealObserver = new IntersectionObserver(
 )
 for (const element of document.querySelectorAll(".reveal")) revealObserver.observe(element)
 
-/* ------------------------------------------------------------ videos */
-
-// Loops play only while visible, and not at all under reduced motion, where
-// they keep their poster and gain controls instead.
 const videos = [...document.querySelectorAll("video[data-autoplay]")]
 function playIfAllowed(video) {
   if (reducedMotion.matches || video.closest("[hidden]")) return
   video.play().catch(() => {
-    // Autoplay can be refused (data saver, battery); the poster remains.
   })
 }
 const videoObserver = new IntersectionObserver(
@@ -164,11 +142,6 @@ applyMotionPreference()
 reducedMotion.addEventListener("change", applyMotionPreference)
 for (const video of videos) videoObserver.observe(video)
 
-/* ------------------------------------------------------------ hero readouts */
-
-// The recording tours the library and then starts playback. The readouts
-// around the window follow it: library ones first, playback ones once the
-// film starts, and the window's title says which is which.
 const heroStage = document.querySelector("[data-hero-stage]")
 const heroVideo = document.querySelector("[data-hero]")
 if (heroStage && heroVideo) {
@@ -186,8 +159,6 @@ if (heroStage && heroVideo) {
     setPhase("browse")
     heroVideo.addEventListener("timeupdate", follow)
     heroVideo.addEventListener("seeked", follow)
-    // If autoplay is refused, the poster stays on the tour; show the
-    // playback readouts anyway rather than an empty stage.
     setTimeout(() => {
       if (heroVideo.paused) setPhase("play")
     }, 2500)
@@ -197,11 +168,6 @@ if (heroStage && heroVideo) {
   })
 }
 
-/* ------------------------------------------------------------ walkthrough */
-
-// The Browse walkthrough: the window pins while the steps scroll past. The
-// step in the middle of the viewport is the frame the window shows, and the
-// window's title names it. The hover recording plays only while it is shown.
 const walk = document.querySelector("[data-walk]")
 if (walk) {
   const steps = [...walk.querySelectorAll("[data-walk-step]")]
@@ -215,7 +181,6 @@ if (walk) {
       const show = frame.dataset.walkFrame === walk.dataset.walkActive
       if (show && inView && !reducedMotion.matches) {
         frame.play().catch(() => {
-          // Autoplay can be refused; the poster remains.
         })
       } else {
         frame.pause()
@@ -250,9 +215,6 @@ if (walk) {
   reducedMotion.addEventListener("change", syncVideos)
 }
 
-/* ------------------------------------------------------------ tiles */
-
-// A light follows the pointer across the tiles in Highlights and Details.
 for (const bento of document.querySelectorAll(".bento")) {
   bento.addEventListener("pointermove", (event) => {
     const tile = event.target instanceof Element ? event.target.closest(".tile") : null
@@ -263,9 +225,6 @@ for (const bento of document.querySelectorAll(".bento")) {
   })
 }
 
-/* ------------------------------------------------------------ tabs */
-
-// Shared roving-tabindex behaviour for the two tab strips.
 function tabs(tabList, select) {
   const buttons = [...tabList.querySelectorAll("[role=tab]")]
   tabList.addEventListener("keydown", (event) => {
@@ -293,8 +252,6 @@ function markSelected(buttons, selected) {
   }
 }
 
-/* ------------------------------------------------------------ player switch */
-
 const playerSwitch = document.querySelector("[data-switch]")
 if (playerSwitch) {
   const tabList = playerSwitch.querySelector("[role=tablist]")
@@ -316,7 +273,6 @@ if (playerSwitch) {
   playerSwitch.dataset.active = "builtin"
 }
 
-// Types the unchanged mpv.conf once, the first time it is shown.
 const typer = document.querySelector("[data-typer]")
 const typerText = typer?.textContent ?? ""
 let typed = false
@@ -336,8 +292,6 @@ function typeConfig() {
   }
   step()
 }
-
-/* ------------------------------------------------------------ companion showcase */
 
 const showcase = document.querySelector("[data-showcase]")
 if (showcase) {
@@ -393,9 +347,6 @@ if (showcase) {
   }
 }
 
-/* ------------------------------------------------------------ playstate readout */
-
-// Follows the CSS progress animation so the time matches the bar.
 const syncTime = document.querySelector("[data-sync-time]")
 const syncFill = document.querySelector(".sync-demo .bar-fill:not(.bar-fill-lag)")
 if (syncTime && syncFill && !reducedMotion.matches) {
@@ -414,8 +365,6 @@ if (syncTime && syncFill && !reducedMotion.matches) {
   requestAnimationFrame(tick)
 }
 
-/* ------------------------------------------------------------ gallery */
-
 const gallery = document.querySelector("[data-gallery]")
 if (gallery) {
   const scrollByItem = (direction) => {
@@ -428,8 +377,6 @@ if (gallery) {
 
   const lightbox = document.querySelector("[data-lightbox]")
   const lightboxImage = lightbox?.querySelector("[data-lightbox-image]")
-  // Where the browser supports it, the thumbnail grows into the lightbox and
-  // shrinks back into place on close. Elsewhere the dialog simply opens.
   const morph = (thumbnail, change) => {
     if (typeof document.startViewTransition !== "function" || reducedMotion.matches) {
       change()
@@ -455,7 +402,6 @@ if (gallery) {
       lightboxImage.src = shot.dataset.full
       lightboxImage.alt = thumbnail?.alt ?? ""
       await lightboxImage.decode().catch(() => {
-        // A failed decode still opens the dialog; the image shows its alt text.
       })
       openedFrom = thumbnail
       morph(thumbnail, () => lightbox.showModal())
@@ -466,7 +412,6 @@ if (gallery) {
     if (openedFrom) morph(openedFrom, () => lightbox.close())
     else lightbox.close()
   }
-  // Escape, the close button and a click on the backdrop all morph back.
   lightbox?.addEventListener("cancel", (event) => {
     event.preventDefault()
     closeLightbox()
@@ -479,8 +424,6 @@ if (gallery) {
     if (event.target === lightbox) closeLightbox()
   })
 }
-
-/* ------------------------------------------------------------ downloads */
 
 const PLATFORM_LABELS = { windows: "Windows", linux: "Linux", macos: "macOS" }
 
@@ -500,8 +443,6 @@ if (platform) {
   if (primaryLabel) primaryLabel.textContent = `Download for ${PLATFORM_LABELS[platform]}`
 }
 
-// The newest published release fills in the version and direct asset links.
-// Every link already points at the GitHub releases page if this fails.
 fetch("https://api.github.com/repos/phob/MediaFlick-Desktop/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
   .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
   .then((release) => {
@@ -519,5 +460,4 @@ fetch("https://api.github.com/repos/phob/MediaFlick-Desktop/releases/latest", { 
     }
   })
   .catch(() => {
-    // Offline or rate-limited: the static links stay.
   })

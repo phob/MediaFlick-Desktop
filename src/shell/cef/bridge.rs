@@ -70,8 +70,6 @@ pub(super) fn route_bridge_action(request_url: &str, state: &BrowserState) -> bo
     true
 }
 
-/// Server administration is deliberately not rebuilt in the own UI; it opens in
-/// the system browser instead.
 pub(super) fn open_server_dashboard(state: &BrowserState) {
     let server_url = state
         .lock()
@@ -204,7 +202,6 @@ pub(super) fn show_about_dialog(browser: Option<&mut Browser>, frame: Option<&mu
     }
 }
 
-/// The context menu's Settings entry: an in-app navigation.
 pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
     let target_frame = browser
         .and_then(|browser| browser.main_frame())
@@ -216,7 +213,6 @@ pub(super) fn open_settings_page(browser: Option<&mut Browser>, frame: Option<&m
     }
 }
 
-/// Closes every browser and quits, as after an update installer has started.
 pub(super) fn initiate_app_exit(state: &BrowserState) {
     tracing::info!(target: "app", "exit requested");
 
@@ -302,8 +298,6 @@ fn start_update_download(state: &BrowserState) {
     });
 }
 
-/// Installs mpv for the Player settings shelf, reporting progress to the page
-/// as `mpv-install-progress` shell events tagged with `request_id`.
 pub(super) fn start_mpv_download(state: &BrowserState, request_id: String) {
     let failed = |message: &str| {
         dispatch_shell_event(

@@ -1,6 +1,3 @@
-// Typed client for the JSON API served by `src/shell/cef/api.rs` on the
-// `mediaflick-desktop://app/` scheme.
-
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
 import type {
   AppearanceSettings,
@@ -69,10 +66,8 @@ import { queryString, type ExternalProvider } from "./urls.ts"
 
 export const PAGE_SIZE = 60
 
-/** Mirrors the `{ error, expired }` envelope `ApiResponse::error` produces. */
 export class ApiError extends Error {
   readonly status: number
-  /** The server rejected the stored token — the shell must return to sign-in. */
   readonly expired: boolean
   constructor(message: string, status: number, expired: boolean) {
     super(message)
@@ -103,7 +98,6 @@ function readApiErrorEnvelope(value: JsonValue): ApiErrorEnvelope | null {
   }
 }
 
-/** Every route answers JSON; a failure carries the `{ error, expired }` envelope. */
 async function readResponse<T>(response: Response): Promise<T> {
   let payload: JsonValue = null
   try {
@@ -358,8 +352,6 @@ export const api = {
     cancelRequest: (id: number) =>
       request<{ cancelled: boolean }>(`/api/seerr/request/${id}`, { method: "DELETE" }),
   },
-
-  // ------------------------------------------------------------ collections
 
   collections: {
     settings: (reprobe = false) =>

@@ -31,7 +31,6 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* The app's accent choices, applied to the page by the swatches. */
 [data-accent="cobalt"] { --primary: #5da8ff; --primary-foreground: #05152a; --signal-deep: #2868ba; }
 [data-accent="amber"] { --primary: #ffbd4a; --primary-foreground: #261500; --signal-deep: #b87814; }
 [data-accent="violet"] { --primary: #b69cff; --primary-foreground: #160b31; --signal-deep: #6f54be; }
@@ -41,8 +40,6 @@
   initial-value: 5;
   inherits: false;
 }
-/* The hero readouts combine two motions on one translate: a time-based bob
-   and a scroll-linked drift. Each is a registered length so both can animate. */
 @property --bob {
   syntax: "<length>";
   initial-value: 0px;
@@ -132,8 +129,6 @@ code {
 }
 .skip-link:focus { top: 1rem; }
 
-/* ---------------------------------------------------------------- buttons */
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -179,8 +174,6 @@ code {
 .icon-link svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .icon-link svg { stroke: none; }
 
-/* ----------------------------------------------------------------- chrome */
-
 .chrome {
   position: sticky;
   top: 0;
@@ -209,7 +202,6 @@ code {
 }
 .chrome-nav a:hover { color: var(--foreground); background: rgb(255 255 255 / 4%); }
 .chrome-nav a[aria-current="true"] { color: var(--foreground); }
-/* The current section's underline slides between links instead of jumping. */
 .nav-ink {
   position: absolute;
   bottom: -1px;
@@ -231,10 +223,6 @@ code {
   .chrome-actions { margin-left: auto; }
 }
 
-/* ------------------------------------------------------------------ spine */
-
-/* A fixed rail of section numbers on wide screens. The line fills with the
-   accent as the page is read; the current section shows its name. */
 .spine {
   position: fixed;
   top: 50%;
@@ -306,8 +294,6 @@ code {
 .spine a:hover::after,
 .spine a[aria-current="true"]::after { max-width: 8rem; opacity: 1; }
 
-/* ------------------------------------------------------------------- hero */
-
 .hero { position: relative; padding-top: clamp(2.2rem, 5vw, 3.6rem); }
 
 .hero-glow {
@@ -369,7 +355,6 @@ code {
   line-height: 0.98;
   letter-spacing: -0.045em;
 }
-/* Each line clips its words so they can rise into place one after another. */
 .hero h1 .line { display: block; overflow: hidden; margin-bottom: -0.12em; padding: 0.04em 0.1em 0.12em; }
 .hero h1 .w { display: inline-block; }
 .hero h1 .line:nth-child(2) .w { --l: 3; }
@@ -382,7 +367,6 @@ code {
   text-shadow: 0 0 60px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 
-/* The copy recedes as the window takes over the viewport. */
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
     .hero-copy {
@@ -402,8 +386,6 @@ code {
 .hero-meta { display: flex; justify-content: center; gap: 0.7rem; margin-top: 1rem; color: var(--muted); font-size: 0.68rem; }
 
 .hero-stage { position: relative; margin-top: clamp(2rem, 4vw, 2.75rem); padding-bottom: 2rem; }
-
-/* ------------------------------------------------------------ app screens */
 
 .screen {
   position: relative;
@@ -445,7 +427,6 @@ code {
 .dots i { width: 9px; height: 9px; border-radius: 50%; background: rgb(255 255 255 / 12%); }
 .dots i:first-child { background: color-mix(in srgb, var(--primary) 70%, transparent); }
 
-/* Corner brackets: the app's hover frame, drawn as eight slivers. */
 .brackets {
   position: absolute;
   inset: 10px;
@@ -477,7 +458,6 @@ code {
     0 40px 100px -30px rgb(0 0 0 / 90%);
 }
 
-/* The hero window leans back and settles flat as it scrolls into view. */
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
     .screen-hero {
@@ -493,8 +473,6 @@ code {
   to { transform: perspective(1800px) rotateX(0deg) scale(1); }
 }
 
-/* Floating readouts around the hero window. They bob on their own clock and
-   drift at different rates with the scroll, which gives the stage depth. */
 .float-chip {
   position: absolute;
   z-index: 4;
@@ -524,8 +502,6 @@ code {
 .chip-d { top: 14%; right: -1%; animation-delay: -1.2s; }
 .chip-e { bottom: 16%; left: -1%; --chip-in: 320ms; animation-delay: -3.5s; }
 
-/* With scripts, the stage knows which part of the recording is playing and
-   shows only the readouts that belong to it. */
 [data-phase="browse"] .chip-play,
 [data-phase="play"] .chip-browse { opacity: 0; scale: 0.92; transition-delay: 0ms; }
 
@@ -538,7 +514,6 @@ code {
   }
 }
 
-/* The screen bar's title changes with what the window shows. */
 [data-swapped] { animation: text-in 420ms var(--ease-out); }
 
 .sync-dot { position: relative; width: 12px; height: 12px; margin: 0 0.4rem; border-radius: 50%; background: var(--primary); }
@@ -547,8 +522,6 @@ code {
 .skip-ring { position: relative; display: grid; place-items: center; width: 2.2rem; height: 2.2rem; }
 .skip-ring svg { position: absolute; inset: 0; rotate: -90deg; }
 .skip-ring circle { fill: none; stroke: var(--primary); stroke-width: 3; stroke-dasharray: 94.3; animation: drain 5s linear infinite; }
-/* The digit is a registered integer counted down with the ring; the static
-   "5" in the markup is only there for browsers without @property. */
 .skip-ring b { font-size: 0.8rem; letter-spacing: 0; }
 @supports (counter-reset: countdown var(--countdown)) {
   .skip-ring b { font-size: 0; counter-reset: countdown var(--countdown); animation: count 5s steps(5, end) infinite; }
@@ -563,8 +536,6 @@ code {
   .float-chip { display: none; }
 }
 
-/* ----------------------------------------------------------------- ticker */
-
 .ticker {
   overflow: hidden;
   margin-top: clamp(2.5rem, 6vw, 4rem);
@@ -578,8 +549,6 @@ code {
 .ticker-list { display: flex; margin: 0; padding: 0; list-style: none; color: var(--muted); }
 .ticker-list li { display: flex; align-items: center; padding-inline: 1.6rem; white-space: nowrap; }
 .ticker-list li::before { width: 6px; height: 6px; margin-right: 1.6rem; border-radius: 1px; background: var(--primary); content: ""; opacity: 0.7; rotate: 45deg; }
-
-/* --------------------------------------------------------------- sections */
 
 .section { padding-block: clamp(4.5rem, 10vw, 8rem); }
 .section-tint {
@@ -600,8 +569,6 @@ code {
 .section-head p,
 .split-copy > p { color: var(--muted); font-size: 1.08rem; max-width: 62ch; }
 .section-head-row { display: flex; align-items: end; justify-content: space-between; max-width: none; }
-
-/* --------------------------------------------------------- player switch */
 
 .segmented {
   position: relative;
@@ -728,8 +695,6 @@ code {
   animation: caret 1s steps(1) infinite;
 }
 
-/* ------------------------------------------------------------ diagrams */
-
 .handoff-diagram,
 .topology { width: 100%; height: auto; overflow: visible; }
 .node rect,
@@ -759,8 +724,6 @@ code {
 .packet-dim { fill: color-mix(in srgb, var(--primary) 70%, var(--muted)); }
 .packet-back { fill: var(--foreground); filter: drop-shadow(0 0 5px var(--foreground)); }
 .label { fill: var(--muted); font: 500 9.5px var(--font-data); letter-spacing: 0.1em; text-anchor: middle; text-transform: uppercase; }
-
-/* ---------------------------------------------------------------- library */
 
 .split {
   display: grid;
@@ -816,10 +779,6 @@ code {
 .facts li { display: grid; gap: 0.3rem; padding: 0.9rem 1rem; background: var(--background); font-size: 0.92rem; }
 .facts .data { color: var(--primary); font-size: 0.62rem; }
 
-/* ------------------------------------------------------- browse walkthrough */
-
-/* The window sticks while the steps scroll past it. Each step, once it
-   reaches the middle of the viewport, becomes the frame the window shows. */
 .walk-body {
   display: grid;
   grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
@@ -870,7 +829,6 @@ code {
 .walk-step.is-active::after { transition: scale 600ms var(--ease-out); scale: 1 1; }
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
-    /* The line fills as the step crosses the middle of the viewport. */
     .walk-step::after { animation: grow linear both; animation-timeline: view(); animation-range: cover 25% cover 65%; }
     .walk-step.is-active::after { transition: none; }
   }
@@ -878,8 +836,6 @@ code {
 .walk-step .data { color: var(--primary); font-size: 0.66rem; }
 .walk-step h3 { font-size: clamp(1.45rem, 2.4vw, 1.95rem); letter-spacing: -0.02em; }
 .walk-step p { max-width: 42ch; color: var(--muted); font-size: 1.02rem; }
-
-/* --------------------------------------------------------------- playstate */
 
 .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-bottom: 1.2rem; }
 .panel {
@@ -953,10 +909,7 @@ code {
 .skip-text { position: relative; }
 
 .wide { max-width: 1100px; margin-inline: auto; }
-/* The player bar is the subject here, so the caption moves to the top. */
 .wide figcaption { top: 0.8rem; right: 0.8rem; bottom: auto; left: auto; }
-
-/* --------------------------------------------------------------- companion */
 
 .companion {
   display: grid;
@@ -1004,8 +957,6 @@ code {
 }
 .showcase-panel figcaption b { color: var(--foreground); }
 
-/* ------------------------------------------------------------------ bento */
-
 .bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
 .tile {
   position: relative;
@@ -1020,7 +971,6 @@ code {
   transition: border-color 200ms ease, translate 200ms var(--ease-out);
 }
 .tile:hover { border-color: color-mix(in srgb, var(--primary) 35%, var(--hairline)); translate: 0 -2px; }
-/* A soft light follows the pointer across the tile. */
 .tile::before {
   position: absolute;
   inset: 0;
@@ -1169,8 +1119,6 @@ code {
 .pict-admin i { padding: 0.45rem 0.55rem; border-radius: 3px; color: var(--muted); font-style: normal; }
 .pict-admin i.on { background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); animation: highlight 3s ease-in-out infinite; }
 
-/* ------------------------------------------------------------- highlights */
-
 /* What sets MediaFlick apart. Same tiles as Details, larger, with
    a tag that says whether the Companion is needed. Each pictogram acts out
    the feature: a request moves through its states, a franchise's gaps ask to
@@ -1194,7 +1142,6 @@ code {
 .feature-tag[data-needs="companion"] { color: var(--primary); }
 .feature-tag[data-needs="companion"]::before { background: var(--primary); box-shadow: 0 0 8px var(--primary); }
 
-/* Poster stand-ins share one gradient so the pictograms read as artwork. */
 .pict-status .poster,
 .pict-franchise .posters i {
   border-radius: var(--radius-media);
@@ -1309,7 +1256,6 @@ code {
 }
 .review { display: grid; gap: 0.35rem; width: 100%; }
 .review > .data { color: var(--muted); font-size: 0.52rem; }
-/* Muted stars with lit ones drawn over them, wiped in to four and a half. */
 .stars { position: relative; justify-self: start; color: rgb(255 255 255 / 14%); font-size: 1rem; letter-spacing: 0.1em; line-height: 1; }
 .stars::after {
   position: absolute;
@@ -1348,8 +1294,6 @@ code {
 }
 .mpv-notes { display: flex; gap: 1rem; color: var(--muted); font-size: 0.52rem; }
 
-/* ---------------------------------------------------------------- gallery */
-
 .gallery {
   display: grid;
   grid-auto-columns: min(78vw, 560px);
@@ -1381,7 +1325,6 @@ code {
 }
 .shot:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--edge)); translate: 0 -3px; }
 .shot img { width: 100%; height: auto; aspect-ratio: 16 / 10; object-fit: cover; }
-/* Each shot pans slightly as it crosses the strip, so the row has depth. */
 @supports (animation-timeline: view()) {
   @media (prefers-reduced-motion: no-preference) {
     .shot img { scale: 1.1; animation: pan linear both; animation-timeline: view(inline); }
@@ -1415,16 +1358,12 @@ code {
 .lightbox img { width: 100%; height: auto; max-height: 92vh; object-fit: contain; border-radius: 8px; }
 .lightbox-close { position: absolute; top: -0.9rem; right: -0.9rem; z-index: 1; background: var(--card); }
 
-/* With view transitions, the thumbnail itself grows into the lightbox and
-   shrinks back on close; the dialog's own entrance would fight that. */
 :root:active-view-transition .lightbox[open] { animation: none; }
 ::view-transition-group(shot) { animation-duration: 460ms; animation-timing-function: var(--ease-out); }
 ::view-transition-old(shot),
 ::view-transition-new(shot) { height: 100%; object-fit: cover; animation-duration: 200ms; }
 ::view-transition-old(root),
 ::view-transition-new(root) { animation-duration: 300ms; }
-
-/* --------------------------------------------------------------- download */
 
 .download { position: relative; overflow: hidden; text-align: center; }
 .download::before {
@@ -1479,8 +1418,6 @@ code {
 .download-more { margin-top: 2rem; color: var(--muted); }
 .download-more a { color: var(--foreground); text-decoration-color: color-mix(in srgb, var(--primary) 60%, transparent); text-underline-offset: 3px; }
 
-/* ----------------------------------------------------------------- footer */
-
 .footer { padding-block: 3rem 3.5rem; border-top: 1px solid var(--hairline); color: var(--muted); }
 .footer-grid { display: grid; grid-template-columns: 1.2fr auto; gap: 2rem 3rem; }
 .footer-note { max-width: 44ch; margin-top: 0.8rem; font-size: 0.92rem; }
@@ -1488,8 +1425,6 @@ code {
 .footer-links a { font-size: 0.92rem; text-decoration: none; }
 .footer-links a:hover { color: var(--foreground); }
 .footer-credits { grid-column: 1 / -1; padding-top: 1.5rem; border-top: 1px solid var(--hairline); font-size: 0.8rem; }
-
-/* ------------------------------------------------------------ responsive */
 
 @media (max-width: 1080px) {
   .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1502,7 +1437,6 @@ code {
   .switch-panel,
   .walk-body,
   .duo { grid-template-columns: 1fr; }
-  /* The window pins under the chrome and the steps read beneath it. */
   .walk-body { gap: 1.5rem; }
   .walk-stage { top: 64px; z-index: 2; padding-bottom: 1rem; background: linear-gradient(180deg, var(--background) 88%, transparent); }
   .walk-step { align-content: start; min-height: 46vh; padding-block: 1.5rem 2rem; }
@@ -1523,8 +1457,6 @@ code {
   .hero-meta { flex-wrap: wrap; }
 }
 
-/* ------------------------------------------------------------- reveal */
-
 /* Hidden only when scripts run, so a page without JavaScript is complete. A
    late fallback reveals everything if the observer never fires.
 
@@ -1543,7 +1475,6 @@ code {
     transition-delay: var(--reveal-delay, 0ms);
   }
 
-  /* draw: the rule extends from the mark, then the label follows. */
   .reveal[data-reveal="draw"]:not(.is-visible) { opacity: 1; translate: 0 0; }
   .reveal[data-reveal="draw"] .rail-rule { transform-origin: left; transition: scale 1000ms var(--ease-out) 100ms; }
   .reveal[data-reveal="draw"] .rail-mark { transition: opacity 400ms ease, box-shadow 700ms ease 300ms; }
@@ -1552,9 +1483,6 @@ code {
   .reveal[data-reveal="draw"]:not(.is-visible) .rail-mark { opacity: 0; box-shadow: none; }
   .reveal[data-reveal="draw"]:not(.is-visible) p { opacity: 0; translate: -10px 0; }
 
-  /* clip: the heading wipes up; whatever sits with it fades in after. The
-     clip sits on the heading, not the observed wrapper: a clipped box does
-     not intersect the viewport as far as the observer is concerned. */
   .reveal[data-reveal="clip"]:not(.is-visible) { opacity: 1; translate: 0 0; }
   .reveal[data-reveal="clip"] > h2 {
     clip-path: inset(-0.25em -0.1em -0.25em -0.1em);
@@ -1567,17 +1495,14 @@ code {
   .reveal[data-reveal="clip"] > :not(h2) { transition: opacity 700ms var(--ease-out) 250ms, translate 800ms var(--ease-out) 250ms; }
   .reveal[data-reveal="clip"]:not(.is-visible) > :not(h2) { opacity: 0; translate: 0 20px; }
 
-  /* words: each word rises out of its line, left to right, line by line. */
   .reveal[data-reveal="words"]:not(.is-visible) { opacity: 1; translate: 0 0; }
   .reveal[data-reveal="words"] .w { transition: translate 1000ms var(--ease-out), opacity 600ms ease; transition-delay: calc((var(--l, 0) + var(--i, 0)) * 85ms); }
   .reveal[data-reveal="words"]:not(.is-visible) .w { translate: 0 115%; opacity: 0; }
 
-  /* lock: the screen settles from slightly large and the brackets flash once. */
   .reveal[data-reveal="lock"] { transition: opacity 800ms var(--ease-out), translate 900ms var(--ease-out), scale 1100ms var(--ease-out); }
   .reveal[data-reveal="lock"]:not(.is-visible) { translate: 0 24px; scale: 0.97; }
   .reveal[data-reveal="lock"].is-visible .brackets { animation: lock-on 1300ms var(--ease-out) 350ms; }
 
-  /* wire: the services arrive one after another along their wires. */
   .reveal[data-reveal="wire"] .service { transition: opacity 500ms ease, translate 700ms var(--ease-out); }
   .reveal[data-reveal="wire"] .service:nth-of-type(2) { transition-delay: 90ms; }
   .reveal[data-reveal="wire"] .service:nth-of-type(3) { transition-delay: 180ms; }
@@ -1585,8 +1510,6 @@ code {
   .reveal[data-reveal="wire"] .service:nth-of-type(5) { transition-delay: 360ms; }
   .reveal[data-reveal="wire"]:not(.is-visible) .service { opacity: 0; translate: -24px 0; }
 }
-
-/* --------------------------------------------------------------- motion */
 
 @keyframes ping { 0% { opacity: 0.7; scale: 1; } 100% { opacity: 0; scale: 3; } }
 @keyframes bob { 0%, 100% { --bob: 0px; } 50% { --bob: -10px; } }
@@ -1639,8 +1562,6 @@ code {
   .walk-frame,
   .walk-step,
   .float-chip { transition: none; }
-  /* The pictograms rest on their end state: the request in the library, the
-     review at four and a half stars. */
   .states b,
   .stars::after { animation: none; }
   .states b.done { opacity: 1; }

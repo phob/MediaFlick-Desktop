@@ -38,7 +38,6 @@ function pointerMovedFarEnough(event: MouseEvent, origin: PointerPosition) {
   return deltaX * deltaX + deltaY * deltaY >= CURSOR_REVEAL_DISTANCE_PX ** 2
 }
 
-/** The route-owned scroll container, separated from sidebar/player chrome for focused testing. */
 export function RouteScrollViewport({ children }: { children: ReactNode }) {
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
   useScrollRestoration(viewport, "route")
@@ -213,11 +212,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         onUserMenuOpenChange={setUserMenuIsOpen}
       />
       <SidebarInset className="isolate min-h-0 min-w-0 overflow-hidden">
-        {/* The shell never scrolls; the content pane does. */}
         <RouteScrollViewport>
-          {/* Wraps the routed content because every card that can expand is in
-              it. The panel itself is portalled to the body, so this subtree's
-              clipping — `content-viewport` and the rails — does not reach it. */}
           <PreviewProvider enabled={cardPreviews} delay={viewing.data?.previewDelayMs}>{children}</PreviewProvider>
         </RouteScrollViewport>
         <PlayerBar />

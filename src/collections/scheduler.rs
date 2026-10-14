@@ -59,8 +59,6 @@ pub fn request_run(services: Arc<Services>) {
     spawn_named("collections-refresh", move || refresh_due_work(&services));
 }
 
-/// A complete local-library update can change franchise membership and title
-/// ownership without changing a provider snapshot.
 pub fn request_after_library_sync(services: Arc<Services>) {
     spawn_named("collections-after-sync", move || {
         let Some(account) = active_mediaflick_account(&services) else {

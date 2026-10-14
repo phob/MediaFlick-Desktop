@@ -44,7 +44,6 @@ const account = (elements, extra = {}) => ({
   accounts: [{ serverId: "server", userId: "user", appearance: { accent: "violet", rating_sources: ["imdb", "tomatoes"] }, home: { ...HOME, elements }, ...extra }],
 })
 const KNOWN_HOME = [{ kind: "builtIn", id: "watching", enabled: true }, { kind: "builtIn", id: "recentlyAdded", enabled: true }]
-// What a newer build writes: the supported version, with a shelf this one lacks.
 const NEWER_ACCOUNTS = json(account([...KNOWN_HOME, { kind: "builtIn", id: "someFutureShelf", enabled: true }]))
 const NEWER_FIELD_ACCOUNTS = json({ ...account(KNOWN_HOME), futureOption: { added: true } })
 const VALID_ACCOUNTS = json(account(KNOWN_HOME))
@@ -65,29 +64,22 @@ const scenarios = [
   {
     name: "newer-settings",
     files: { "settings.json": NEWER_SETTINGS, "settings.json.bak": VALID_SETTINGS, "accounts.json": VALID_ACCOUNTS },
-    // The app runs on defaults, and a settings change is refused rather
-    // than saved over the newer file.
     patch: { path: "/api/settings/client/application", body: { showScrollbars: true }, status: 400 },
     expect: { untouched: ["settings.json", "settings.json.bak", "accounts.json"], apiStatus: 200 },
   },
   {
     name: "damaged-accounts",
     files: { "accounts.json": `${VALID_ACCOUNTS.slice(0, 40)}`, "accounts.json.bak": VALID_ACCOUNTS, "settings.json": VALID_SETTINGS },
-    // Real damage still recovers: the bytes move aside and the backup returns.
-    // settings.json is valid here, so the app may save it on exit as usual.
     expect: { untouched: ["accounts.json.bak"], restored: { "accounts.json": VALID_ACCOUNTS }, movedAside: "accounts.json", apiStatus: 200 },
   },
 ]
 
 async function stopApp() {
-  // Only the app started here listens on this debugging port.
   const script = `Get-CimInstance Win32_Process -Filter "Name = 'mediaflick-desktop.exe'" | Where-Object { $_.CommandLine -match '--remote-debugging-port[ =]${PORT}\\b' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
   await new Promise((resolve) => spawn("pwsh.exe", ["-NoLogo", "-NoProfile", "-Command", script], { stdio: "ignore" }).on("exit", resolve))
   await sleep(1000)
 }
 
-// Closes the window the way a user does, so any save-on-exit runs, and waits
-// for the process to end.
 async function closeApp(pid) {
   const script = `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { [void]$p.CloseMainWindow(); if (-not $p.WaitForExit(15000)) { exit 1 } }`
   const closed = await new Promise((resolve) => spawn("pwsh.exe", ["-NoLogo", "-NoProfile", "-Command", script], { stdio: "ignore" }).on("exit", (code) => resolve(code === 0)))
@@ -121,7 +113,6 @@ for (const scenario of scenarios) {
   try {
     const app = await connect(PORT)
     await app.send("Runtime.enable")
-    // The page's own API, as the UI calls it.
     const call = (method, apiPath, body) => app.evaluate(`fetch(${JSON.stringify(apiPath)}, { method: ${JSON.stringify(method)}, headers: { "Content-Type": "application/json" }${body ? `, body: ${JSON.stringify(JSON.stringify(body))}` : ""} }).then(async (response) => ({ status: response.status, text: (await response.text()).slice(0, 600) }))`)
     await sleep(1500)
     result.settings = await call("GET", "/api/settings")
@@ -136,7 +127,6 @@ for (const scenario of scenarios) {
   }
   result.closedCleanly = await closeApp(child.pid)
 
-  // Every file, byte for byte, after the app has exited.
   const entries = await readdir(config)
   result.files = entries.filter((name) => name.endsWith(".json") || name.includes(".json."))
   for (const name of scenario.expect.untouched) {

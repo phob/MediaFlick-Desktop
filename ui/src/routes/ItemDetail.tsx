@@ -27,9 +27,6 @@ function episodeCode(episode: ItemSummary) {
     : null
 }
 
-/**
- * A movie's exact TMDB collection membership in MediaFlick mode.
- */
 function CollectionChip({ tmdbId }: { tmdbId: number }) {
   const settings = useCollectionSettings()
   const { data } = useMovieCollection(tmdbId, settings.data?.effectiveMode === "mediaFlick")
@@ -68,14 +65,10 @@ export default function ItemDetail() {
   const [revealedId, setRevealedId] = useState<string | null>(null)
   const hidden = useSpoilerProtection(originalItem) && revealedId !== id
   const item = originalItem && hidden ? concealEpisode(originalItem) : originalItem
-  // The cached row answers instantly; the synopsis, cast, tags, studios, and
-  // critic score arrive from this live fetch and are never persisted.
   const about = useItemAbout(id)
   const children = useChildren(id)
   const isSeries = item?.kind === "Series"
   const isContainer = isSeries || item?.kind === "Season"
-  // Both of these are server round trips, so they only run for the kind that
-  // has an answer: containers have no streams, and only a series has a Next Up.
   const media = useMediaInfo(id, Boolean(item) && !isContainer)
   const nextUp = useNextUp(id, isSeries)
 
@@ -109,8 +102,6 @@ export default function ItemDetail() {
   if (isPending) return <DetailPageSkeleton />
   if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
 
-  // Episodes are browsed on the series page; a season is not a page of its
-  // own, so anything still linking one lands on its series with it selected.
   if (item.kind === "Season" && item.seriesId) {
     return (
       <Navigate
@@ -123,15 +114,11 @@ export default function ItemDetail() {
   const navigationState: DetailNavigationState =
     readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item.kind)
 
-  // A series knows how many seasons it has but not how many episodes; each
-  // season row carries its own count, so the total is already on hand.
   const episodeCount = isSeries
     ? seasons.reduce((total, season) => total + (season.childCount ?? 0), 0)
     : 0
   const backdrop = backdropUrl(item)
 
-  // A series cannot be played itself, so its Play button stands in for the
-  // Next Up episode; everything else plays itself and needs no target at all.
   const playTarget = isSeries ? nextUpItem : undefined
 
   return (
@@ -175,8 +162,6 @@ export default function ItemDetail() {
                 params.set("season", season.id)
                 return params
               },
-              // Season switches restate the page rather than advancing it, so
-              // Back leaves the series instead of unwinding every click.
               { replace: true },
             )
           }
@@ -188,8 +173,6 @@ export default function ItemDetail() {
         />
       )}
 
-      {/* Credits are live-only; the rows appear when the fetch lands and
-          simply stay absent when the server cannot be reached. */}
       <CastRow people={hidden ? [] : about.data?.people ?? []} />
       <CrewRow people={hidden ? [] : about.data?.people ?? []} />
 

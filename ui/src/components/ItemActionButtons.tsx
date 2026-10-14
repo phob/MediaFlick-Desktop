@@ -52,7 +52,6 @@ export function ItemActionButtons({
   variant,
 }: {
   item: Pick<ItemSummary, "id" | "favorite" | "played">
-  /** Omitted while there is nothing to play, such as a series without Next Up. */
   play?: ItemPlayAction | null
   favorite: ItemActionMutation<{ id: string; favorite: boolean }>
   played: ItemActionMutation<{ id: string; played: boolean; context?: string | null }>

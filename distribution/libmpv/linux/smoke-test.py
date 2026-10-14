@@ -1,5 +1,3 @@
-"""Load the packaged client ABI, verify its feature profile, and decode audio."""
-
 import argparse
 import ctypes as c
 from pathlib import Path
@@ -19,7 +17,6 @@ def smoke_test(path, placebo_config, gpu_api=None):
     lib.mpv_client_api_version.restype = c.c_ulong
     if lib.mpv_client_api_version() >> 16 != 2:
         raise RuntimeError("Expected libmpv client API major 2")
-    # Require the render API even though this headless check uses null output.
     for symbol in ("mpv_render_context_create", "mpv_render_context_render", "mpv_render_context_free"):
         getattr(lib, symbol)
     lib.mpv_create.restype = c.c_void_p
@@ -44,8 +41,6 @@ def smoke_test(path, placebo_config, gpu_api=None):
             lib.mpv_free(pointer)
 
     try:
-        # Include the app's script-related options: disabling Lua must not make
-        # its normal startup configuration fail with an unknown option.
         options = {
             "config": "no", "load-scripts": "no", "osc": "no", "idle": "yes",
             "vo": "null", "ao": "null", "keep-open": "yes", "hwdec": "no",
@@ -87,8 +82,6 @@ def smoke_test(path, placebo_config, gpu_api=None):
         ):
             if option not in ffmpeg_configuration:
                 raise RuntimeError(f"Packaged FFmpeg lacks required build option: {option}")
-        # Verify compiled decoder hardware configurations, not just flags.
-        # These queries need no GPU or proprietary NVIDIA driver installed.
         class HardwareConfig(c.Structure):
             _fields_ = [("pix_fmt", c.c_int), ("methods", c.c_int), ("device_type", c.c_int)]
 

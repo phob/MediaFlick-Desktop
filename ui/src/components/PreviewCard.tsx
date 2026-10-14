@@ -40,7 +40,6 @@ const OPEN_DELAY = 550
 const CLOSE_DELAY = 140
 
 const PANEL_WIDTH = 348
-/** Only used before the panel has been measured, to pick a first position. */
 const ESTIMATED_HEIGHT = 320
 const VIEWPORT_MARGIN = 12
 
@@ -137,9 +136,6 @@ export function PreviewProvider({
         window.clearTimeout(openTimer.current)
         window.clearTimeout(closeTimer.current)
         openTimer.current = window.setTimeout(() => {
-          // Re-read the rect at fire time rather than at hover time: the rail
-          // may have been scrolled during the delay, and a stale rect would
-          // open the panel over whatever slid into that spot.
           setTarget({ item, rect: anchor.getBoundingClientRect() })
         }, delay)
       },
@@ -155,7 +151,6 @@ export function PreviewProvider({
     [enabled, expanded, setTarget, delay],
   )
 
-  // Before paint, so the card under a fresh panel never flashes its own hover.
   const activeId = target?.item.id ?? null
   useLayoutEffect(() => {
     expanded.set(activeId)
@@ -210,7 +205,6 @@ export function PreviewProvider({
   )
 }
 
-/** Where the panel sits: centred on the card, kept inside the viewport. */
 function usePanelPosition(rect: DOMRect, height: number) {
   const clamp = (value: number, max: number) =>
     Math.max(VIEWPORT_MARGIN, Math.min(value, max - VIEWPORT_MARGIN))
@@ -281,7 +275,6 @@ function PreviewPanel({
   const setFavorite = dependencies.favorite()
   const setPlayed = dependencies.played()
 
-  // A series is not playable itself; its button stands in for one episode.
   const playTarget = isSeries ? (nextUp.data?.item ?? null) : item
   const canPlay = Boolean(
     playTarget && (playTarget.kind === "Movie" || playTarget.kind === "Episode"),
@@ -411,7 +404,6 @@ function PreviewPanel({
   )
 }
 
-/** The 16:9 head of the panel: artwork, the title over it, and the resume bar. */
 function PreviewArt({
   item,
   logo,

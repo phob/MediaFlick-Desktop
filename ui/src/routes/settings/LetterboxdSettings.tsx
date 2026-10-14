@@ -75,7 +75,6 @@ export default function LetterboxdSettings() {
   const checkAccount = () => {
     if (!isCurrentAccount()) throw new Error("The signed-in account changed. Remaining profile changes were not saved.")
   }
-  // Profile writes also change every movie's public-review projection.
   const refresh = () => {
     if (isCurrentAccount()) void cache.invalidateQueries({ queryKey: ["letterboxd"] })
   }
@@ -92,7 +91,6 @@ export default function LetterboxdSettings() {
   }
   const save = useMutation({
     mutationFn: async (submitted: PendingChanges) => {
-      // Acknowledge each completed write so a later failure leaves only unfinished work to retry.
       for (const profile of profiles.data?.profiles ?? []) {
         checkAccount()
         const enabled = submitted.enabled[profile.id] ?? profile.enabled

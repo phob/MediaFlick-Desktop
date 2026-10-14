@@ -16,7 +16,6 @@ const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", 
 const STATE_PROPERTIES = ["focused", "disabled", "checked", "pressed", "expanded", "selected", "invalid", "required", "readonly"]
 
 export function createHarness({ app: firstApp, currentChild, evidence, configDir, dataDir, log, relaunchApp, windowShown, account = null, cachedAccount = null, signOutBlocked = () => false, rememberSecret = () => {} }) {
-  // Replaced by `relaunch`; every helper reads the current app.
   let app = firstApp
   const proxies = []
   const afterRunTasks = []
@@ -27,7 +26,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     log(`ok: ${message}`)
   }
 
-  // Polls a JS expression in the page, or an async function in Node, until truthy.
   async function until(condition, description, timeout = 20000, { quiet = false } = {}) {
     const deadline = Date.now() + timeout
     let last
@@ -47,8 +45,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     throw new Error(`timed out after ${timeout} ms waiting for ${description} (last: ${JSON.stringify(last)})`)
   }
 
-  // { role, name } goes through the accessibility tree; { css } is the
-  // fallback for controls without a stable accessible name.
   async function axQuery({ role, name, css }) {
     const { root } = await app.send("DOM.getDocument", { depth: 0 })
     if (css) {
@@ -74,8 +70,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
 
   const describe = ({ role, name, css }) => (css ? `css ${css}` : `${role ?? "*"} ${JSON.stringify(name ?? "*")}`)
 
-  // Waits for exactly one rendered element with this role and accessible name.
-  // `nth` picks among several on purpose; otherwise duplicates are an error.
   async function find(target, { timeout = 15000, nth } = {}) {
     return until(async () => {
       const matches = []
@@ -88,7 +82,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }, `${describe(target)} to be on screen`, timeout, { quiet: true })
   }
 
-  // How many rendered elements match (for lists, grids and shelves).
   async function count(target) {
     let total = 0
     for (const node of await axQuery(target)) if (await box(node.backendDOMNodeId)) total++
@@ -104,7 +97,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     const result = {}
     for (const property of node.properties ?? []) {
       if (!STATE_PROPERTIES.includes(property.name)) continue
-      // checked and pressed are tristate tokens ("true", "false", "mixed").
       const value = property.value?.value
       result[property.name] = value === "true" ? true : value === "false" ? false : value
     }
@@ -112,7 +104,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return result
   }
 
-  // Current state properties (checked, expanded, value, ...) of an element.
   async function state(target, options) {
     return (await find(target, options)).properties
   }
@@ -128,16 +119,12 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }
   }
 
-  // What the pointer would hit at (x, y): the target itself, a descendant, or
-  // the name of whatever covers it.
   async function hitTest(backendNodeId, x, y) {
     const { backendNodeId: hit } = await app.send("DOM.getNodeForLocation", { x: Math.round(x), y: Math.round(y) })
     const { object: target } = await app.send("DOM.resolveNode", { backendNodeId })
     const { object: covering } = await app.send("DOM.resolveNode", { backendNodeId: hit })
     const { result } = await app.send("Runtime.callFunctionOn", {
       objectId: target.objectId,
-      // A Sonner toast is reported as such: it covers the bottom-right corner
-      // (the settings Save button) for a few seconds, then leaves on its own.
       functionDeclaration: "function (hit) { if (this === hit || this.contains(hit)) return true; const toast = hit.closest('[data-sonner-toast]'); return toast ? `toast: ${toast.textContent.trim().slice(0, 80)}` : (hit.closest('a,button,[role]')?.outerHTML ?? hit.outerHTML).slice(0, 160) }",
       arguments: [{ objectId: covering.objectId }],
       returnByValue: true,
@@ -145,8 +132,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return result.value
   }
 
-  // Moves the pointer to the quiet top-right corner, as a user moves it away
-  // from the sidebar (which expands under the pointer and overlays content).
   async function park() {
     const [width] = await app.evaluate("[innerWidth, innerHeight]")
     await app.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: width - 4, y: 4, button: "none" })
@@ -211,7 +196,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     throw new Error(`${describe(target)} kept detaching from the document`)
   }
 
-  // Clicks the element's centre with the mouse once nothing covers it.
   async function press(target, options) {
     const { element, rect } = await reach(target, options)
     if (element.properties.disabled) throw new Error(`${describe(target)} is disabled`)
@@ -220,8 +204,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return element
   }
 
-  // Starts from the parked corner so the move always enters the element
-  // (pointerenter fires; the sidebar expands on it).
   async function hover(target, options) {
     await park()
     const { rect } = await reach(target, options)
@@ -235,7 +217,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     await app.send("Input.dispatchKeyEvent", { type: "keyUp", ...event })
   }
 
-  // Focuses a text field, selects its content and types over it.
   async function fill(target, text) {
     const { rect } = await reach(target)
     log(`fill ${describe(target)} with ${JSON.stringify(text)}`)
@@ -245,14 +226,12 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     else await app.send("Input.insertText", { text })
   }
 
-  // Opens a Radix Select (role combobox, named by its label) and picks an option.
   async function choose(target, optionName) {
     await press({ role: "combobox", ...target })
     await press({ role: "option", name: optionName })
     await until(async () => (await state({ role: "combobox", ...target })).expanded !== true, "the listbox to close", 5000, { quiet: true })
   }
 
-  // Lets transitions (switch thumbs, dialogs, toasts) finish before capture.
   async function screenshot(name, { settle = 300 } = {}) {
     await sleep(settle)
     const { data } = await app.send("Page.captureScreenshot", { format: "png" })
@@ -262,7 +241,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return file
   }
 
-  // The accessibility tree as text: one line per node, `role 'name' state`.
   async function snapshot(name) {
     const { nodes } = await app.send("Accessibility.getFullAXTree")
     const byId = new Map(nodes.map((node) => [node.nodeId, node]))
@@ -296,11 +274,9 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
 
   const pathname = () => app.evaluate("location.pathname + location.search")
 
-  // Files the app wrote into the disposable profile.
   const configFile = (name) => path.join(configDir, name)
   const readConfig = (name) => (existsSync(configFile(name)) ? JSON.parse(readFileSync(configFile(name), "utf8")) : null)
   const configStat = (name) => (existsSync(configFile(name)) ? statSync(configFile(name)) : null)
-  // The Rust log so far (copied to app.log at the end of the run).
   const appLog = () => (existsSync(configFile("mediaflick-desktop.log")) ? readFileSync(configFile("mediaflick-desktop.log"), "utf8") : "")
 
   function writeEvidence(name, value) {
@@ -308,8 +284,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     log(`evidence ${name}`)
   }
 
-  // The app's own playback snapshot: active, itemId, playMethod, positionMs,
-  // durationMs, paused, tracks, skipSegments, stopReason, diagnostics.
   async function player() {
     return (await api("/api/player/state")).body
   }
@@ -348,7 +322,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
       for (const line of buffer.split("\n").slice(0, -1)) {
         const message = JSON.parse(line)
         const waiting = pending.get(message.request_id)
-        if (!waiting) continue // events and other replies
+        if (!waiting) continue
         pending.delete(message.request_id)
         waiting.resolve(message)
       }
@@ -371,7 +345,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     const message = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(requestId)
-        // Drop the connection so the next read resolves the pipe again.
         socket.destroy()
         reject(new Error(`mpv did not answer get_property ${property} within 5 s`))
       }, 5000)
@@ -386,8 +359,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     throw new Error(`mpv get_property ${property}: ${message.error}`)
   }
 
-  // The playstate reports the app queued for Jellyfin and the answers it got,
-  // from app.log. Needs `--log-level "debug,jellyfin.playstate=trace"`.
   function playstates() {
     const queued = []
     const sent = []
@@ -401,8 +372,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return { queued, sent }
   }
 
-  // The integrated player bar hides after 3 s and turns `inert`; a real
-  // pointer move near the bottom edge brings it back for ARIA lookups.
   async function revealPlayer() {
     const [width, height] = await app.evaluate("[innerWidth, innerHeight]")
     for (const [x, y] of [[width / 2 - 40, height - 60], [width / 2, height - 40]]) {
@@ -480,8 +449,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return status.body
   }
 
-  // GET on the Jellyfin server as the cached account (`--account` only), to
-  // read back what the app reported: `/Users/<ctx.account.userId>/Items/<id>`.
   async function jellyfin(apiPath) {
     if (!cachedAccount) throw new Error("ctx.jellyfin needs --account SERVER")
     return jellyfinGet(cachedAccount, apiPath)
@@ -510,9 +477,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     }
   }
 
-  // Signs the app's own token (`--signed-out` only) out on the server once the
-  // app has exited, unless the drive already did. Uses the cached account's
-  // server, not the stored URL, which may be a proxy closed by then.
   function revokeAppSessionAfterRun() {
     if (!account?.signedOut) throw new Error("revokeAppSessionAfterRun needs --account SERVER --signed-out")
     const stored = readStoredSession(dataDir)
@@ -546,8 +510,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // Cancels a Seerr request once the app has exited if the drive left it
-  // pending (its own Cancel failed or never ran).
   function cancelSeerrRequestAfterRun(requestId) {
     if (!cachedAccount) throw new Error("cancelSeerrRequestAfterRun needs --account SERVER")
     afterRunTasks.push(async () => {
@@ -561,7 +523,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // Runs the after-run tasks; returns their errors.
   async function runAfterRun() {
     const errors = []
     for (const task of afterRunTasks) {
@@ -575,7 +536,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return errors
   }
 
-  // Caches the signed-in session for `--account` runs (`just verify-login`).
   function saveAccount() {
     if (!account?.login) throw new Error("saveAccount needs `just verify-login SERVER`")
     const { account: saved, file } = cacheAccount(account.server, dataDir)
@@ -585,16 +545,12 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return publicAccount(saved)
   }
 
-  // The close request a window manager sends for the title bar's close
-  // button. Also reports whether the window asked to be minimized within
-  // `watchMs`, as a window manager would see it.
   function wmClose({ watchMs = 2000 } = {}) {
     const sent = sendWindowClose(watchMs)
     log(`wm close sent to window ${sent.window}; iconify requested: ${sent.iconifyRequested}`)
     return sent
   }
 
-  // Resolves to { code, signal } once the app exits, or null after `timeout`.
   async function appExit(timeout) {
     let timer
     const exit = await Promise.race([currentChild().exited, new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeout) })])
@@ -603,8 +559,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return exit
   }
 
-  // Closes the app through its own close path and starts it again on the same
-  // profile, as a user quitting and reopening MediaFlick.
   async function relaunch() {
     app = await relaunchApp()
   }

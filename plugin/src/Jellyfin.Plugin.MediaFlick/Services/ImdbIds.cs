@@ -8,7 +8,6 @@ namespace Jellyfin.Plugin.MediaFlick.Services;
 /// </summary>
 internal static partial class ImdbIds
 {
-    /// <summary>The canonical lower-case id, or null when the value is not one.</summary>
     public static string? Normalize(string? value)
     {
         var candidate = value?.Trim().ToLowerInvariant();

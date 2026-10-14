@@ -1,5 +1,3 @@
-"""Exercise macOS package staging without requiring macOS signing tools."""
-
 import os
 from pathlib import Path
 import shutil

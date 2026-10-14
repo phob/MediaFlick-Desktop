@@ -11,7 +11,6 @@ import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
 import { useItemPages } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
-/** Fallbacks for the geometry tokens in `app.css`, used before first measure. */
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 
 function readGeometry(element: HTMLElement) {
@@ -64,7 +63,6 @@ function useGridMetrics(element: HTMLElement | null) {
 export interface ItemGridProps {
   /** Without `limit`/`offset` — the grid owns paging. */
   query: ItemQuery
-  /** Reports the result count so the caller can label the view. */
   onTotal?: (total: number | null) => void
   empty?: string
   /**
@@ -93,8 +91,6 @@ export function ItemGrid({
   "use no memo"
 
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
-  // Measured on the content box, not the scroller: the scroller carries the
-  // horizontal padding, which would otherwise be counted as usable width.
   const [content, setContent] = useState<HTMLDivElement | null>(null)
   const { measured, columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
@@ -122,9 +118,6 @@ export function ItemGrid({
   // as unloaded slots until the query retries.
   const error = results[0]?.data ? null : results[0]?.error
 
-  // Not memoised: `useQueries` hands back a fresh array every render, so any
-  // dependency list including it would miss on every pass anyway. Building a
-  // map of two or three pages is cheaper than pretending otherwise.
   const loaded = new Map<number, ItemSummary[]>()
   pages.forEach((page, index) => {
     const data = results[index]?.data
@@ -148,8 +141,6 @@ export function ItemGrid({
 
   useScrollRestoration(scroller, `grid:${JSON.stringify(query)}`, total !== null && measured)
 
-  // Feeding the range back through state is what drives page selection; doing
-  // it in render would fetch for a range the virtualizer has not committed.
   const items = virtualizer.getVirtualItems()
   const first = items[0]?.index ?? 0
   const last = items[items.length - 1]?.index ?? 0
@@ -208,8 +199,6 @@ export function ItemGrid({
                     return item ? (
                       <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
                     ) : (
-                      // An unloaded slot keeps its space rather than reflowing
-                      // the row once its page lands.
                       <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
                     )
                   })}

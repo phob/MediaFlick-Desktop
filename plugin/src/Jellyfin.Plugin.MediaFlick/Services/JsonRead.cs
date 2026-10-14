@@ -14,7 +14,6 @@ internal static class JsonRead
 {
     private const int MaxNumericTextLength = 32;
 
-    /// <summary>A JSON string, or null for any other kind.</summary>
     public static string? String(JsonNode? node)
         => node is JsonValue value
             && value.GetValueKind() == JsonValueKind.String
@@ -24,7 +23,6 @@ internal static class JsonRead
 
     public static string? String(JsonObject? value, string name) => String(value?[name]);
 
-    /// <summary>A strict JSON boolean; other kinds are null.</summary>
     public static bool? Bool(JsonNode? node)
         => node is JsonValue value
             ? value.GetValueKind() switch
@@ -71,7 +69,6 @@ internal static class JsonRead
         }
     }
 
-    /// <summary>An integral JSON number that fits in an <see cref="int"/>.</summary>
     public static int? Int32(JsonNode? node)
         => NumberText(node) is { } text
             && int.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var number)
@@ -80,7 +77,6 @@ internal static class JsonRead
 
     public static int? Int32(JsonObject? value, string name) => Int32(value?[name]);
 
-    /// <summary>An integral JSON number that fits in an unsigned 64-bit mask.</summary>
     public static ulong? UInt64(JsonNode? node)
         => NumberText(node) is { } text
             && ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
@@ -102,10 +98,8 @@ internal static class JsonRead
                 : null;
     }
 
-    /// <summary>A strictly positive <see cref="Integer"/>, as used for provider ids.</summary>
     public static long? Positive(JsonNode? node) => Integer(node) is > 0 and var id ? id : null;
 
-    /// <summary>A finite number sent as a JSON number or a short numeric string.</summary>
     public static double? Number(JsonNode? node)
     {
         var text = NumberText(node) ?? String(node)?.Trim();
@@ -116,7 +110,6 @@ internal static class JsonRead
                 : null;
     }
 
-    /// <summary>The four-digit year that starts an ISO-style date string.</summary>
     public static int? Year(string? date)
         => date is { Length: >= 4 }
             && int.TryParse(date.AsSpan(0, 4), NumberStyles.None, CultureInfo.InvariantCulture, out var year)

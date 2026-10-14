@@ -17,7 +17,6 @@ export default async function playerShelf(ctx) {
   ctx.step(`capabilities ${JSON.stringify(capabilities)}`)
   results.settingsFresh = ctx.readConfig("settings.json")
 
-  // Recording the Mute key's default (m) on Pause key conflicts.
   if (capabilities.libmpv) {
     await ctx.press({ role: "button", name: "Pause key" })
     ctx.check((await ctx.state({ role: "button", name: "Pause key" })).pressed === true, "Pause key is recording")

@@ -94,7 +94,6 @@ export interface ReleaseDecadeOption {
   label: string
 }
 
-/** Standard release decades, newest first, shared by both local catalogues. */
 export function releaseDecades(currentYear = new Date().getUTCFullYear()): ReleaseDecadeOption[] {
   const currentDecade = Math.floor(currentYear / 10) * 10
   const decades: ReleaseDecadeOption[] = []
@@ -173,11 +172,7 @@ export function writeLibraryFilters(
 }
 
 export function libraryKind(params: URLSearchParams) {
-  // Person mode is a mixed movie/series/episode Search view, not a catalogue tab.
   if (params.get("mode") === "person") return ""
-  // The existing API accepts comma-separated kinds, and Home links use
-  // `Movie,Series` for mixed genre pages. An explicit blank also historically
-  // meant all kinds, so only an absent value receives the Movies default.
   if (params.has("kind")) return params.get("kind") ?? ""
   const favorite = params.get("favorite") === "true" || params.get("favorite") === "1"
   return params.get("search") || favorite ? "" : "Movie"

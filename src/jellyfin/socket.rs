@@ -33,25 +33,14 @@ use super::api::sessions;
 use super::remote::RemoteCommand;
 use super::session::{Session, SessionScope};
 
-/// How often the worker re-checks for a signed-in session while idle. Cheap —
-/// one in-process state read — so sign-in starts the stream promptly.
 const IDLE_INTERVAL: Duration = Duration::from_secs(5);
-/// TCP connect budget per resolved address.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Socket read/write budget while the TLS and WebSocket handshakes run.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Read timeout once connected. Each expiry is one loop tick: the worker
-/// checks the stop flag and the session, and sends a due keep-alive.
 const READ_TICK: Duration = Duration::from_secs(5);
-/// Ping cadence until the server announces its own timeout via ForceKeepAlive.
 const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-/// Reconnect backoff bounds for an unreachable or refusing server.
 const RECONNECT_MIN: Duration = Duration::from_secs(5);
 const RECONNECT_MAX: Duration = Duration::from_secs(10 * 60);
-/// A connection that lasted this long proves the server healthy, so the next
-/// reconnect starts from the minimum delay again.
 const STABLE_CONNECTION: Duration = Duration::from_secs(60);
-/// Ids per `/Items?ids=` fetch when a LibraryChanged burst names many items.
 const FETCH_CHUNK: usize = 100;
 
 const KEEPALIVE_MESSAGE: &str = r#"{"MessageType":"KeepAlive"}"#;
@@ -63,7 +52,6 @@ struct Signal {
     condvar: Condvar,
 }
 
-/// Handle used by the shell to stop the event-stream thread.
 #[derive(Clone)]
 pub struct SocketHandle {
     signal: Arc<Signal>,
@@ -71,7 +59,6 @@ pub struct SocketHandle {
     remote: Arc<Mutex<Option<RemoteHandler>>>,
 }
 
-/// Carries out a remote-control command for the application.
 pub type RemoteHandler = Arc<dyn Fn(RemoteCommand) + Send + Sync>;
 
 impl SocketHandle {
@@ -86,14 +73,11 @@ impl SocketHandle {
         }
     }
 
-    /// A handle with no event thread behind it, for tests.
     #[cfg(test)]
     pub fn detached() -> Self {
         Self::new(Arc::default())
     }
 
-    /// Registers who carries out Play, Playstate and GeneralCommand messages.
-    /// Until then they are dropped, as there is no player to drive.
     pub fn on_remote_command(&self, handler: RemoteHandler) {
         if let Ok(mut slot) = self.remote.lock() {
             *slot = Some(handler);
@@ -170,8 +154,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
             Ok((mut socket, scope)) => {
                 tracing::info!(target: "jellyfin.socket", "listening for Jellyfin server events");
                 announce_capabilities(session, &scope);
-                // Whatever happened while no connection existed was never
-                // pushed; one requested cycle reconciles the gap.
                 sync.request();
                 let connected_at = Instant::now();
                 match listen(&mut socket, library, session, sync, handle, &scope) {
@@ -248,21 +230,13 @@ fn announce_capabilities(session: &Arc<Session>, scope: &SessionScope) {
     }
 }
 
-/// Why [`listen`] returned.
 enum Disconnect {
-    /// The shell asked the worker to exit.
     Stopped,
-    /// The signed-in session no longer matches the connected one.
     SessionChanged,
-    /// The server ended the connection in an orderly way.
     Closed,
-    /// The connection died.
     Failed(String),
 }
 
-/// Opens the stream for the current account. The returned scope is the
-/// connection's identity: everything the server pushes over it belongs to that
-/// account, so every cache write it causes commits against the scope.
 fn connect(session: &Session) -> Result<(Socket, SessionScope), String> {
     let scope = session.scope().map_err(|error| error.to_string())?;
     let client = scope.client();
@@ -312,9 +286,6 @@ fn listen(
             let _ = socket.flush();
             return Disconnect::Stopped;
         }
-        // Sign-out, account switches, and token rejection end the session
-        // this connection authenticated as; keep listening only while it is
-        // still current.
         if !session.scope_is_current(scope) {
             let _ = socket.close(None);
             let _ = socket.flush();
@@ -333,8 +304,6 @@ fn listen(
                     handle_message(text.as_str(), library, session, sync, handle, scope)
                 {
                     keepalive_interval = interval;
-                    // Answer immediately so the server's lost-connection
-                    // timer resets from a known point.
                     if socket.send(Message::text(KEEPALIVE_MESSAGE)).is_err() {
                         return Disconnect::Failed("keep-alive answer failed".to_string());
                     }
@@ -343,7 +312,6 @@ fn listen(
             }
             Ok(Message::Close(_)) => return Disconnect::Closed,
             Ok(_) => {}
-            // The read timeout elapsing is the loop's tick, not a failure.
             Err(tungstenite::Error::Io(error))
                 if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
@@ -354,8 +322,6 @@ fn listen(
     }
 }
 
-/// Applies one server message. Returns a new keep-alive interval when the
-/// server announced its timeout via ForceKeepAlive.
 fn handle_message(
     text: &str,
     library: &Library,
@@ -387,7 +353,6 @@ fn handle_message(
     None
 }
 
-/// The subset of Jellyfin's WebSocket traffic this client acts on.
 #[derive(Debug, Clone, PartialEq)]
 enum ServerMessage {
     /// ForceKeepAlive: the server's lost-connection timeout, already halved
@@ -395,18 +360,13 @@ enum ServerMessage {
     KeepAliveInterval(Duration),
     /// UserDataChanged: pushed watch-state rows for the signed-in user.
     UserData(Vec<UserDataRecord>),
-    /// LibraryChanged: item ids added/updated on the server, and ids removed.
     LibraryChanged {
         changed: Vec<String>,
         removed: Vec<String>,
     },
-    /// Play: another client asked this session to start something.
     Play(Value),
-    /// Playstate: pause/stop/seek/next from a remote client.
     Playstate(Value),
-    /// GeneralCommand: volume and mute from a remote client.
     GeneralCommand(Value),
-    /// Anything else — session chatter, keep-alive acks, refresh progress.
     Ignored,
 }
 
@@ -419,8 +379,6 @@ fn parse_message(text: &str) -> ServerMessage {
         "ForceKeepAlive" => {
             let timeout = data.as_u64().filter(|seconds| *seconds > 0);
             match timeout {
-                // Ping at half the announced timeout so one lost frame does
-                // not end the connection.
                 Some(seconds) => {
                     ServerMessage::KeepAliveInterval(Duration::from_secs((seconds / 2).max(5)))
                 }
@@ -479,16 +437,11 @@ fn id_list(data: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Why a pushed change was not written to the catalog cache.
 enum ScopedWriteError {
-    /// The account the connection belongs to is no longer the signed-in one.
     Stale,
     Storage(rusqlite::Error),
 }
 
-/// Writes to the catalog cache only while `scope` is still the signed-in
-/// session, atomically with account switches and sign-out, so a push that
-/// raced one can never land in the next account's cache.
 fn commit_scoped<T>(
     session: &Session,
     scope: &SessionScope,
@@ -567,8 +520,6 @@ fn apply_library_change(
 
     for chunk in changed.chunks(FETCH_CHUNK) {
         match items::fetch_items(scope.client(), scope.user_id(), chunk) {
-            // Non-library kinds (music, folders) come back too; ingest_page
-            // already filters them out.
             Ok(response) => {
                 match commit_scoped(session, scope, || library.ingest_page(&response.items)) {
                     Ok(changes) => batch.merge(changes),
@@ -615,8 +566,6 @@ fn set_read_timeout(socket: &mut Socket, timeout: Duration) {
     let _ = stream.set_read_timeout(Some(timeout));
 }
 
-/// Where the server's `/socket` endpoint lives, derived from the session's
-/// HTTP(S) base URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Endpoint {
     host: String,
@@ -716,8 +665,6 @@ mod tests {
         library
     }
 
-    /// Remote control is the application's job: the socket hands each command
-    /// to the handler registered on its handle, with the delivering session.
     #[test]
     fn remote_commands_reach_the_registered_handler_in_order() {
         let library = alice_library("http://127.0.0.1:9");
@@ -728,7 +675,6 @@ mod tests {
         let message =
             |kind: &str| format!(r#"{{"MessageType":"{kind}","Data":{{"Command":"x"}}}}"#);
 
-        // Without a handler the command is dropped rather than half-applied.
         handle_message(&message("Play"), &library, &session, &sync, &handle, &scope);
 
         let (seen_tx, seen) = mpsc::channel();
@@ -757,8 +703,6 @@ mod tests {
         );
     }
 
-    /// Reads one whole HTTP request, body included, so answering and closing
-    /// never resets a connection that still holds unread request bytes.
     fn receive_request(listener: &TcpListener) -> (TcpStream, String) {
         let (mut stream, _) = listener.accept().expect("accept");
         let mut request = Vec::new();
@@ -805,9 +749,6 @@ mod tests {
         .expect("write response");
     }
 
-    /// The race this guards: a LibraryChanged fetch for Alice is still in
-    /// flight when the user switches to Bob, whose sign-in clears the cache.
-    /// Alice's late response must not land in Bob's catalog.
     #[test]
     fn a_pushed_change_fetched_before_an_account_switch_is_not_cached() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -848,7 +789,6 @@ mod tests {
         let alice = session.scope().expect("Alice scope");
         let sync = SyncHandle::detached();
 
-        // While Alice is current, a pushed change is fetched and cached.
         apply_library_change(
             &library,
             &session,
@@ -987,8 +927,6 @@ mod tests {
         );
     }
 
-    /// End to end over a loopback socket: handshake, ForceKeepAlive,
-    /// a pushed watch-state change, and an orderly close.
     #[test]
     fn pushed_watch_state_reaches_the_library_cache() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -1008,8 +946,6 @@ mod tests {
                          "IsFavorite":false}]}}"#,
                 ))
                 .expect("user data");
-            // The client answers ForceKeepAlive immediately; reading that
-            // answer proves both pushes were delivered before closing.
             loop {
                 match socket.read() {
                     Ok(Message::Text(_)) => break,

@@ -12,16 +12,11 @@ export interface PreviewTarget {
 }
 
 export interface PreviewApi {
-  /** Arms the open timer for `item`, anchored on the element the pointer entered. */
   open: (item: ItemSummary, anchor: HTMLElement) => void
-  /** Disarms a pending open — the pointer left before the delay elapsed. */
   cancel: () => void
-  /** Arms the close timer; `hold` cancels it again. */
   release: () => void
   hold: () => void
-  /** The id currently expanded, so the card underneath can suppress its hover. */
   expanded: ExpandedStore
-  /** The saved Appearance choice shared by every card under this provider. */
   enabled: boolean
 }
 

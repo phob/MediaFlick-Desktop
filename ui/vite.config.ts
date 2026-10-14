@@ -16,12 +16,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    // CEF 150 ships a modern Chromium we control, so no polyfills, no
-    // browserslist, no legacy output.
     target: "esnext",
     cssCodeSplit: false,
-    // Sourcemaps would be embedded in the binary too; use
-    // `--remote-debugging-port` for debugging instead.
     sourcemap: false,
     rollupOptions: {
       output: {

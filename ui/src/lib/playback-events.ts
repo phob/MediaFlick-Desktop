@@ -8,11 +8,8 @@ import { invalidateMediaSurfaces, queryKeys } from "./query-client"
 
 declare global {
   interface Window {
-    /** Called by `dispatch_playback_event` in `src/shell/cef/events.rs`. */
     __mediaFlickDesktopPlaybackStateChanged?: (payload: PlayerState) => void
-    /** Called by `dispatch_playback_event` in `src/shell/cef/events.rs`. */
     __mediaFlickDesktopPlaybackStopped?: (payload: PlayerState) => void
-    /** Called after the shell's post-playback Jellyfin/cache refresh settles. */
     __mediaFlickDesktopPlaybackCacheRefreshed?: (payload: {
       itemId: string
       status: "refreshed" | "deferred"
@@ -60,9 +57,6 @@ export function usePlaybackEventsBridge() {
     window.__mediaFlickDesktopPlaybackStopped = (payload) => {
       queryClient.setQueryData<PlayerState>(queryKeys.playerState, { ...payload, active: false })
 
-      // An item-bearing stop is invalidated by the completion callback below,
-      // after Jellyfin's final playstate has actually reached SQLite. Stops
-      // without an item cannot start that refresh, so clear their surfaces now.
       if (!payload?.itemId) invalidateMediaSurfaces(queryClient)
 
       const finished = payload?.stopReason === "eof" || payload?.stopReason === "watched-next"
@@ -108,9 +102,6 @@ export function usePlaybackEventsBridge() {
     }
 
     window.__mediaFlickDesktopPlaybackCacheRefreshed = (payload) => {
-      // Deferred means the focused refresh failed and the shell queued a full
-      // sync. Invalidating here still avoids treating the pre-stop cache as
-      // fresh; the ordinary query lifecycle can pick up that sync afterward.
       invalidateMediaSurfaces(queryClient, payload?.itemId)
     }
 

@@ -33,9 +33,6 @@ pub struct FranchiseView {
     pub missing: Vec<NormalizedTitle>,
 }
 
-/// Applies local-date visibility to cached provider membership. Owned titles
-/// remain visible regardless of their date. Missing future or undated titles
-/// are hidden unless the account setting opts in.
 pub fn visible_franchises(
     snapshots: &[FranchiseSnapshot],
     local_items: &HashMap<CanonicalIdentity, Vec<super::LocalItem>>,

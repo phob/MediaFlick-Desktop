@@ -5,7 +5,6 @@ export interface ShellEvent {
   payload: JsonObject
 }
 
-/** Decode the single native-to-renderer event channel at its DOM boundary. */
 export function readShellEvent(event: Event): ShellEvent | null {
   if (!(event instanceof CustomEvent)) return null
   const detail: JsonValue = event.detail

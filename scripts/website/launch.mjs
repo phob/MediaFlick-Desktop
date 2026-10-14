@@ -35,8 +35,6 @@ export async function launch(profile) {
   const args = ["--remote-debugging-port", String(PORTS[profile]), "--log-level", "info"]
   if (profile === "demo") {
     args.push("--url", DEMO_URL)
-    // Windowed playback keeps the player inside the capture window instead of
-    // taking over the screen. Everything else stays at the defaults.
     const settings = { default_fullscreen: "windowed", webui_window: { width: 1600, height: 1000, maximized: false } }
     await writeFile(path.join(roaming, "mediaflick-desktop", "settings.json"), `${JSON.stringify(settings, null, 2)}\n`)
   }
@@ -53,8 +51,6 @@ export async function launch(profile) {
     }
   }
 
-  // `just build` does not stage libmpv (that needs `just libmpv` through WSL);
-  // borrow the installed release's runtime for the built-in player.
   const env = { ...process.env, APPDATA: roaming, LOCALAPPDATA: local }
   const installedLibmpv = path.join(process.env.LOCALAPPDATA ?? "", "Programs", "MediaFlick Desktop", "libmpv-2.dll")
   if (!existsSync(path.join(root, "build", "libmpv-2.dll")) && existsSync(installedLibmpv)) {
@@ -71,8 +67,6 @@ export async function launch(profile) {
   return { pid: child.pid, port: PORTS[profile] }
 }
 
-// The capture app is the only mediaflick-desktop process listening on the
-// profile's debugging port; a normal session never passes that flag.
 export async function stop(profile) {
   const port = PORTS[profile]
   const script = `Get-CimInstance Win32_Process -Filter "Name = 'mediaflick-desktop.exe'" | Where-Object { $_.CommandLine -match '--remote-debugging-port[ =]${port}\\b' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`

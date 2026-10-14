@@ -50,7 +50,6 @@ internal sealed record ProviderHealthState
 /// </summary>
 internal sealed class ProviderCacheStore : IDisposable
 {
-    /// <summary>Rating entries kept at most; the oldest fetches go first.</summary>
     internal const int MaxEntries = 100_000;
     internal static readonly TimeSpan DefaultSaveDelay = TimeSpan.FromSeconds(2);
     private const int DocumentVersion = 1;
@@ -409,14 +408,11 @@ internal sealed class ProviderCacheStore : IDisposable
         }
         catch (IOException exception)
         {
-            // The in-memory cache remains usable. Rating persistence failure
-            // must not make the Jellyfin catalogue or this optional overlay fail.
             ReportPersistFailure(exception);
             return false;
         }
         catch (UnauthorizedAccessException exception)
         {
-            // Same graceful degradation for a read-only plugin data volume.
             ReportPersistFailure(exception);
             return false;
         }
@@ -424,7 +420,6 @@ internal sealed class ProviderCacheStore : IDisposable
 
     private void ReportPersistFailure(Exception exception)
     {
-        // Every save retries persistence; warn once per outage.
         if (_persistFailing)
         {
             _logger.LogDebug(exception, "The MediaFlick ratings cache still cannot be saved");

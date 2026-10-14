@@ -29,7 +29,6 @@ import {
   useSeerrStatus,
 } from "@/lib/queries"
 
-/** A season already here, on its way, or blocked is not one to ask for again. */
 function isRequestable(season: SeerrSeason, is4k: boolean) {
   return season[is4k ? "status4k" : "status"] === "unknown"
 }
@@ -100,7 +99,6 @@ export function RequestDialog({
 }) {
   const status = useSeerrStatus()
   const isSeries = result.mediaType === "tv"
-  // Only a series needs the detail call: it is where the seasons come from.
   const detail = useSeerrMedia(result.mediaType, result.tmdbId, isSeries)
   const request = useSeerrRequest()
   const [is4k, setIs4k] = useState(false)
@@ -200,8 +198,6 @@ export function RequestDialog({
           </p>
         )}
 
-        {/* Only offered where the instance has 4K on *and* the user's own
-            permission mask carries the 4K bit for this media type. */}
         {capability4k?.request && (
           <Label className="font-normal">
             <Checkbox
@@ -282,8 +278,6 @@ export function RequestDialog({
                 {
                   mediaType: result.mediaType,
                   tmdbId: result.tmdbId,
-                  // Omitted for a movie, and for an instance that does not do
-                  // partial requests: Seerr then takes the whole show.
                   seasons:
                     isSeries && partialRequests ? [...selected].sort((a, b) => a - b) : undefined,
                   is4k,

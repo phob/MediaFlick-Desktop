@@ -4,9 +4,6 @@ use serde_json::{Value, json};
 
 const MAX_VOTES: i64 = 1_000_000_000_000;
 
-/// Positive response allowlist shared by Companion responses and cache repair.
-/// It reads only catalog source IDs and bounded numeric fields; all other JSON
-/// is intentionally forgotten.
 pub(super) fn normalize_rating_array(value: &Value) -> Value {
     let mut ratings = Vec::new();
     for rating in value.as_array().into_iter().flatten() {

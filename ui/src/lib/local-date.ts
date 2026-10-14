@@ -9,7 +9,6 @@ export function currentLocalDate() {
   ].join("-")
 }
 
-/** Re-key release visibility just after the next local midnight. */
 export function useLocalDate() {
   const [value, setValue] = useState(currentLocalDate)
   useEffect(() => {

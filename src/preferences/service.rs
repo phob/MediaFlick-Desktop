@@ -9,8 +9,6 @@ use super::{
     WebUiWindowSettings, clean_binding,
 };
 
-/// Serialized patches accepted by the settings API.  These deliberately name
-/// sections instead of exposing `AppSettings` as a generic key/value bag.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum NullablePatch<T> {
     #[default]
@@ -39,11 +37,9 @@ where
 pub struct PlayerSettingsPatch {
     pub comfort: Option<super::PlayerComfort>,
     pub player_backend: Option<String>,
-    /// An explicit JSON `null` clears a path; an omitted field preserves it.
     #[serde(default)]
     pub mpv_path: NullablePatch<String>,
     pub default_fullscreen: Option<String>,
-    /// Missing leaves the binding alone; JSON `null` explicitly disables it.
     #[serde(default)]
     pub mark_watched_next: NullablePatch<String>,
 }
@@ -79,7 +75,6 @@ pub struct AppearanceSettingsPatch {
     pub rating_sources: Option<Vec<String>>,
 }
 
-/// A persisted settings snapshot plus the effects the CEF shell has to apply.
 #[derive(Debug, Clone)]
 pub struct SettingsChange {
     pub settings: AppSettings,
@@ -148,8 +143,6 @@ impl PreferencesService {
             .unwrap_or_default()
     }
 
-    /// Selects the account-owned appearance after sign-in, or the neutral
-    /// defaults after sign-out. The account document itself is retained.
     pub fn activate_account(
         &self,
         active_account: Option<AccountKey>,
@@ -183,8 +176,6 @@ impl PreferencesService {
         Ok(change)
     }
 
-    /// The shell has one top-level browser, so a single registered receiver is
-    /// sufficient and avoids retaining dead CEF state after shutdown.
     pub fn subscribe(&self) -> mpsc::Receiver<SettingsChange> {
         let (sender, receiver) = mpsc::channel();
         if let Ok(mut listener) = self.listener.lock() {
@@ -355,8 +346,6 @@ impl PreferencesService {
         Ok(change)
     }
 
-    /// Installation is a shell operation, but writing its discovered path
-    /// still follows the same preference pipeline as an ordinary PATCH.
     pub fn set_mpv_path(&self, path: String) -> Result<SettingsChange, PreferencesError> {
         self.update(move |next| {
             next.mpv_path = clean_path(&path);
@@ -437,11 +426,9 @@ fn set_segment(
     Ok(())
 }
 
-/// Runtime effects required after applying a preference change.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SettingsApplyPlan {
     pub rebuild_player: bool,
-    /// Segment skipping, subtitle styling, or the watched binding changed.
     pub update_player_preferences: bool,
     pub update_shell_css: bool,
     pub restart_required: bool,
@@ -454,8 +441,6 @@ impl SettingsApplyPlan {
             && (previous.effective_backend() == super::PlayerBackend::Libmpv
                 || next.effective_backend() == super::PlayerBackend::Libmpv);
         Self {
-            // The selected backend determines whether startup builds a normal
-            // CEF window or a DirectComposition surface on mpv's window.
             rebuild_player: !window_model_changed
                 && (backend_changed
                     || match next.effective_backend() {

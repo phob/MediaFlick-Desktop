@@ -1,6 +1,3 @@
-//! Account-scoped collections API. Provider configuration never crosses this
-//! boundary; the browser receives readiness and normalized titles only.
-
 use super::*;
 
 mod browse;

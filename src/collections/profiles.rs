@@ -4,8 +4,6 @@ use crate::app::ids::random_hex;
 
 use super::{CollectionProfile, CollectionSource};
 
-/// Result-affecting fields are the only fields that require a fresh Preview
-/// and a new revision. Presentation edits keep the active snapshot.
 pub fn result_configuration_changed(
     previous: &CollectionProfile,
     next: &CollectionProfile,
@@ -23,9 +21,6 @@ pub fn allocate_revision_id() -> String {
     random_hex(16)
 }
 
-/// Accepts an MDBList public-list id or canonical HTTPS list URL and returns
-/// the stable id stored in profile JSON. Share tokens and arbitrary hosts are
-/// rejected at this boundary.
 pub fn normalize_mdblist_list_id(value: &str) -> Result<String, &'static str> {
     let value = value.trim();
     if valid_list_id(value) {

@@ -112,8 +112,6 @@ fn desktop_shell_resolves_and_launches_registered_identity() -> io::Result<()> {
     use std::process::Command;
 
     let fixture = Fixture::new();
-    // Exercise both desktop-string escaping and Exec argument/field-code
-    // escaping through GIO, including characters meaningful to a shell.
     let executable = fixture
         .0
         .join("space = %f $HOME `id` \"quote\" \\ newline\n/app");

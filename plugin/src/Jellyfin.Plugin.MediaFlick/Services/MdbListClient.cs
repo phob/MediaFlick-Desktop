@@ -258,7 +258,6 @@ internal sealed class MdbListHttpTransport : IMdbListTransport, IDisposable
         }
         else
         {
-            // Per-request outcomes such as a private or missing public list.
             _logger.LogDebug("MDBList returned HTTP {StatusCode}", code);
         }
     }

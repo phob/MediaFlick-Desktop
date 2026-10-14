@@ -13,8 +13,6 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
 const SHIM_ENABLED_ENV: &str = "MEDIAFLICK_DESKTOP_COMSPEC_SHIM";
 
-/// Run this executable as a hidden command processor shim when `system()` from an
-/// mpv script invokes `%COMSPEC% /c ...`.
 #[cfg(target_os = "windows")]
 pub fn run_command_processor_shim() -> Option<i32> {
     std::env::var_os(SHIM_ENABLED_ENV)?;

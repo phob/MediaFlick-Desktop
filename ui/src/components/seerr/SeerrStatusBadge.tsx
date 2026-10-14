@@ -82,7 +82,6 @@ export function SeerrStatusBadge({
       </Badge>
     )
   }
-  // An activity this build does not know, from a newer Companion, falls back.
   const known = activity && Object.hasOwn(ACTIVITY_LABELS, activity) ? ACTIVITY_LABELS[activity] : null
   return (
     <Badge

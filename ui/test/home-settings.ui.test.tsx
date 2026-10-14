@@ -44,7 +44,6 @@ test("dragging a Home shelf above another stages the new order until Save", asyn
     </TestProviders>,
   )
 
-  // jsdom has no layout, so give the drop target a position above the pointer.
   const watchingRow = screen.getByRole("button", { name: "Drag Watching" }).closest("[data-home-element-key]")
   if (!watchingRow) throw new Error("Watching row not found")
   watchingRow.getBoundingClientRect = () => ({ left: 20, top: 100, width: 500, height: 50, right: 520, bottom: 150, x: 20, y: 100, toJSON: () => ({}) })

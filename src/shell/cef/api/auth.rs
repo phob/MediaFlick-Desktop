@@ -122,8 +122,6 @@ fn auth_logout(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     status(services)
 }
 
-/// Keeps `settings.json` in step with the signed-in server, so the dashboard
-/// action and upgrades from older releases keep working.
 fn remember_server_url(services: &Services) {
     let Some(server_url) = services.session.server_url() else {
         return;

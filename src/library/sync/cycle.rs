@@ -14,7 +14,6 @@ use super::{
     SyncPhase, SyncReport, Trigger, now_unix,
 };
 
-/// Runs one full cycle. Public so `--library-sync-once` can reuse it.
 pub fn run_cycle(
     library: &Library,
     session: &Session,
@@ -40,8 +39,6 @@ pub(super) fn run_cycle_inner(
 
     let result = (|| -> Result<(), ApiError> {
         if full_bootstrap_due(library)? {
-            // Re-page everything. Upserts are idempotent, so this refreshes
-            // metadata in place rather than churning rows.
             commit(session, &scope, || {
                 library
                     .set_meta(META_BOOTSTRAP_DONE, "0")
@@ -78,9 +75,6 @@ pub(super) fn run_cycle_inner(
             control,
         )?;
         if initial_catalog {
-            // The just-completed catalog itself is a complete identity and user
-            // data observation; repeating every page immediately would double
-            // first-run request load without finding a stale row.
             commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
         } else if trigger.forces_identity_sweep()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
@@ -102,9 +96,6 @@ pub(super) fn run_cycle_inner(
                 .map_err(|storage| storage_error(&storage))
         });
         session.note_scoped_error(&scope, error);
-        // Bootstrap/incremental pages commit independently. A later network
-        // failure must not strand already-visible SQLite changes without the
-        // same batched UI notification a fully successful cycle receives.
         if !report.changes.is_empty()
             && session.scope_is_current(&scope)
             && let Some(control) = control
@@ -140,14 +131,11 @@ pub(super) fn run_cycle_inner(
     if (initial_catalog || report.changed())
         && let Err(error) = library.optimize()
     {
-        // Stale statistics only slow queries down; the sync itself succeeded.
         tracing::warn!(target: "library.sync", "could not refresh query statistics: {error}");
     }
     Ok(report)
 }
 
-/// Pages the whole library once, resuming from the stored offset after a crash
-/// or a mid-sync sign-out.
 fn bootstrap(
     library: &Library,
     session: &Session,
@@ -178,9 +166,6 @@ fn bootstrap(
         let fetch_started = Instant::now();
         let page = items::fetch_items_page(client, user_id, offset, "DateCreated", "Ascending")?;
         let fetch_ms = fetch_started.elapsed().as_millis() as u64;
-        // Jellyfin normally reports the total on every page. Preserve the last
-        // useful value if a trailing empty page omits it, while still recording
-        // a real zero for an empty library.
         if page.items.is_empty() {
             commit_empty_bootstrap_page(
                 library,
@@ -208,7 +193,6 @@ fn bootstrap(
                 "first catalog page committed; library is ready"
             );
         }
-        // Bootstrap commits invalidate local projections without refetching live Next Up.
         if !page_changes.is_empty()
             && let Some(control) = control
         {
@@ -238,9 +222,6 @@ fn bootstrap(
         &watermark_ids,
     )?;
     if truncated {
-        // The offset is stored, so the next cycle picks up where this one
-        // stopped. Marking the bootstrap done here would instead declare a
-        // half-paged library complete.
         tracing::warn!(
             target: "library.sync",
             pages,
@@ -332,7 +313,6 @@ fn commit_empty_bootstrap_page(
                 .set_meta(META_BOOTSTRAP_TOTAL, &total_record_count.max(0).to_string())
                 .map_err(|error| storage_error(&error))?;
         }
-        // Even an empty library has a successful first catalog page.
         library
             .set_meta(META_CATALOG_READY, "1")
             .map_err(|error| storage_error(&error))?;
@@ -569,8 +549,6 @@ fn full_bootstrap_due(library: &Library) -> Result<bool, ApiError> {
         && due(library, META_LAST_BOOTSTRAP, REBOOTSTRAP_INTERVAL)?)
 }
 
-/// A sync-state read. A failed read stops the cycle; treating it as absent
-/// would restart the catalog from its first page.
 fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
     library.meta(key).map_err(|error| storage_error(&error))
 }
@@ -581,8 +559,6 @@ fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
         .map_err(|error| storage_error(&error))
 }
 
-/// Storage failures are reported through the same channel as API failures so a
-/// cycle stops on the first problem instead of half-applying a page.
 fn cancelled(
     control: Option<&SyncHandle>,
     session: &Session,
@@ -753,8 +729,6 @@ mod tests {
         let targets = server.join().expect("server");
         assert!(targets[0].contains("StartIndex=0"));
         assert!(targets[1].contains(&format!("StartIndex={PAGE_SIZE}")));
-        // The index filters, sorts, and joins on these; without them the
-        // cache silently loses genres, provider matches, and name order.
         for field in ["ProviderIds", "Genres", "SortName", "ParentId"] {
             assert!(
                 targets[0].contains(field),
@@ -764,7 +738,6 @@ mod tests {
         }
     }
 
-    /// Answers one request per body, in order, returning the request targets.
     fn serve(bodies: Vec<String>) -> (String, thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("address"));
@@ -787,8 +760,6 @@ mod tests {
         library.set_meta(key, value).expect("meta");
     }
 
-    /// A completed catalog whose daily re-page and hourly identity sweep
-    /// just ran, so a scheduled cycle only walks the incremental sweep.
     fn settled_catalog(library: &Library) {
         let now = now_unix().to_string();
         set_meta(library, META_BOOTSTRAP_DONE, "1");
@@ -798,8 +769,6 @@ mod tests {
 
     #[test]
     fn an_unreadable_sync_state_stops_the_cycle_instead_of_restarting_the_catalog() {
-        // Nothing listens here: a cycle that misreads the broken state as
-        // "never bootstrapped" fails on the network instead of on storage.
         let library = Arc::new(Library::open_in_memory().expect("library"));
         let session = authenticated_session(&library, "http://127.0.0.1:9");
         settled_catalog(&library);
@@ -815,8 +784,6 @@ mod tests {
         assert!(!bootstrap_progress(&library).complete);
     }
 
-    /// A requested cycle (sign-in, the refresh button) runs the identity
-    /// sweep, the only pass that notices a deletion on the server.
     #[test]
     fn a_requested_cycle_reconciles_server_deletions() {
         let (url, server) = serve(vec![

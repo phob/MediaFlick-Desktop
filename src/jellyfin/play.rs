@@ -18,11 +18,9 @@ use super::api::model::{MediaSourceInfo, MediaStream, PlaybackInfoResponse};
 use super::api::{ApiError, JellyfinClient};
 use super::session::{Session, SessionScope};
 
-/// What the UI asked for.
 #[derive(Debug, Clone, Default)]
 pub struct PlayOptions {
     pub item_id: String,
-    /// Resume from the cached playback position instead of the start.
     pub resume: bool,
     pub start_ticks: Option<i64>,
     pub media_source_id: Option<String>,
@@ -36,7 +34,6 @@ pub struct PlayOptions {
     pub viewing: crate::preferences::ViewingSettings,
 }
 
-/// The negotiated request plus what the UI needs to describe it.
 #[derive(Debug, Clone)]
 pub struct PreparedPlayback {
     pub request: PlaybackRequest,
@@ -44,14 +41,10 @@ pub struct PreparedPlayback {
     pub media_source_name: String,
 }
 
-/// Why [`start`] could not launch the player.
 #[derive(Debug)]
 pub enum StartError {
-    /// No player runtime is configured in Settings.
     NoPlayer,
-    /// The playback coordinator has not been attached yet.
     NotReady,
-    /// Another account signed in while playback was being prepared.
     AccountChanged,
     Api(ApiError),
 }
@@ -367,8 +360,6 @@ fn build(
     })
 }
 
-/// Prefers the source the caller asked for, then anything playable, then
-/// anything transcodable.
 fn select_source<'a>(
     info: &'a PlaybackInfoResponse,
     preferred_id: Option<&str>,
@@ -402,8 +393,6 @@ fn select_source<'a>(
         .or_else(|| info.media_sources.first())
 }
 
-/// Builds the URL the external player opens, together with the `PlayMethod`
-/// value Jellyfin expects in playstate reports.
 fn stream_url(
     client: &JellyfinClient,
     item_id: &str,

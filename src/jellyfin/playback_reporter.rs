@@ -119,8 +119,6 @@ impl PlaybackReporter {
 fn playstate_reporter() -> &'static mpsc::Sender<PlaystateMessage> {
     PLAYSTATE_REPORTER.get_or_init(|| {
         let (tx, rx) = mpsc::channel();
-        // Without the thread its receiver is dropped, so every report fails to
-        // queue and is logged there; playback itself carries on.
         if let Err(error) = thread::Builder::new()
             .name("jellyfin-playstate".to_string())
             .spawn(move || run_playstate_reporter(&rx))

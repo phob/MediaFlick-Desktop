@@ -39,8 +39,6 @@ export default function App() {
   const location = useLocation()
   const bootstrap = status?.authenticated ? status.bootstrap : null
   const catalogLoading = bootstrap?.state === "loading"
-  // Device-owned player and application configuration remain available from
-  // the sign-in screen. Account-owned settings explain that sign-in is needed.
   const showingSettings = location.pathname === "/settings" || location.pathname.startsWith("/settings/")
   const showingHome = location.pathname === "/"
   const showShell = Boolean(status?.authenticated || showingSettings)
@@ -66,9 +64,6 @@ export default function App() {
       ) : bootstrap?.state === "retrying" && !showingSettings ? (
         <BootstrapRetry retry={bootstrap} attempting={Boolean(status?.syncing)} />
       ) : !showShell ? (
-        // One gate for the whole app: the Rust session is the source of truth,
-        // and `/api/status` re-reports it after the server rejects a stored
-        // token.
         <SignIn />
       ) : (
         // The expanded-card provider lives inside AppShell and renders its
@@ -95,9 +90,6 @@ export default function App() {
               </Route>
               <Route path="/item/:id" element={<ItemDetail />} />
               <Route path="/calendar" element={<Calendar />} />
-              {/* Registered even when Companion does not provide Seerr. The
-                  sidebar hides them, while a deep link still receives the
-                  capability or user-mapping explanation. */}
               <Route
                 path="/discover"
                 element={

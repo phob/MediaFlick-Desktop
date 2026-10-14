@@ -33,8 +33,6 @@ const TYPES = {
   ".webp": "image/webp", ".mp4": "video/mp4", ".webm": "video/webm", ".xml": "application/xml", ".txt": "text/plain",
 }
 
-// Only the site-wide block of _headers matters here: the CSP is what can
-// break the page.
 const headersFile = await readFile(path.join(siteDir, "_headers"), "utf8")
 const csp = headersFile.match(/^\s*Content-Security-Policy:\s*(.+)$/m)?.[1]
 if (!csp) throw new Error("website/public/_headers has no Content-Security-Policy")
@@ -107,7 +105,6 @@ try {
   await page.send("Runtime.enable")
   await page.send("Log.enable")
   await page.send("Page.enable")
-  // CSP violations are reported to the page itself; collect them there.
   await page.send("Page.addScriptToEvaluateOnNewDocument", {
     source: `window.__cspViolations = []; document.addEventListener("securitypolicyviolation", (event) => window.__cspViolations.push(event.violatedDirective + " " + event.blockedURI))`,
   })
@@ -134,8 +131,6 @@ try {
     const heroTop = await page.evaluate(`document.querySelector(".screen-hero").getBoundingClientRect().top`)
     if (name === "desktop" && heroTop > metrics.height - 120) fail(name, `hero window starts at ${Math.round(heroTop)}px, below the fold`)
 
-    // The headline's words have risen and the readouts follow the recording:
-    // the library ones while it tours, the playback ones once the film starts.
     const hero = await page.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       const stage = document.querySelector("[data-hero-stage]")
@@ -159,7 +154,6 @@ try {
     }
     if (hero.play.phase !== "play" || hero.play.playChip !== "1" || hero.play.browseChip !== "0" || !hero.play.title.includes("Now playing")) fail(name, `hero readouts did not follow playback: ${JSON.stringify(hero.play)}`)
 
-    // Walk the page so every reveal, lazy image and in-view video fires.
     const height = await page.evaluate("document.documentElement.scrollHeight")
     for (let y = 0; y < height; y += Math.round(metrics.height * 0.6)) {
       await page.evaluate(`scrollTo(0, ${y})`)
@@ -177,8 +171,6 @@ try {
     })()`)
     if (state.hidden.length) fail(name, `${state.hidden.length} sections never revealed: ${state.hidden.join(", ")}`)
 
-    // What sets the app apart comes first: Highlights straight after the
-    // hero, then the Companion, and only then the standard features.
     const order = await page.evaluate(`(() => {
       const sections = [...document.querySelectorAll("main > section[id]")].map((section) => section.id)
       const cards = [...document.querySelectorAll("#highlights .feature")].map((card) => ({
@@ -195,7 +187,6 @@ try {
     for (const card of order.cards) if (!card.tag || !card.title || card.height < 200) fail(name, `Highlights card is incomplete: ${JSON.stringify(card)}`)
     if (state.brokenImages.length) fail(name, `images failed: ${state.brokenImages.join(", ")}`)
 
-    // Every media URL the page references must decode, loaded or not yet.
     const assets = await page.evaluate(`(async () => {
       const urls = new Set()
       for (const image of document.images) {
@@ -262,8 +253,6 @@ try {
       if (result.videoPlaying !== (step === "hover")) fail(name, `hover recording ${result.videoPlaying ? "plays" : "does not play"} on step ${step}`)
     }
 
-    // The current section is tracked in the nav's sliding underline and, on
-    // wide screens, in the spine.
     const tracking = await page.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       const target = document.querySelector("#companion")
@@ -284,7 +273,6 @@ try {
     if (tracking.navVisible && (tracking.navCurrent !== "#companion" || !tracking.ink || tracking.inkWidth <= 0)) fail(name, `nav did not track the Companion section: ${JSON.stringify(tracking)}`)
     if (metrics.width >= 1400 && (!tracking.spineVisible || tracking.spineCurrent !== "Companion")) fail(name, `spine did not track the Companion section: ${JSON.stringify(tracking)}`)
 
-    // Interactions, through the page's own controls.
     const interactions = await page.evaluate(`(async () => {
       const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       const results = {}
@@ -321,7 +309,6 @@ try {
     }
     for (const video of interactions.videos) if (!video.ok) fail(name, `video did not load: ${video.src}`)
 
-    // Full-page screenshot from the top, with every section revealed.
     await page.evaluate("scrollTo(0, 0)")
     await sleep(900)
     const fullHeight = await page.evaluate("document.documentElement.scrollHeight")

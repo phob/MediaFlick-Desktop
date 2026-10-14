@@ -18,7 +18,6 @@ pub use model::{
 use crate::preferences::{FullscreenBehavior, PlayerPreferences};
 use std::time::Duration;
 
-/// Opaque native window identity owned by a playback backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeWindowHandle {
     raw: usize,
@@ -89,7 +88,6 @@ impl NativeWindowHandle {
 /// own work (the mpv adapter posts every call to its controller thread).
 pub trait PlayerBackend: Send + Sync {
     fn warm(&self, path: String, fullscreen: FullscreenBehavior);
-    /// Return the native window owned by this backend, if it exposes one.
     fn native_window(&self, timeout: Duration) -> Option<NativeWindowHandle>;
     #[cfg(target_os = "linux")]
     fn submit_overlay(&self, _frame: NativeOverlayFrame) -> Result<NativeOverlayReply, String> {
@@ -97,8 +95,6 @@ pub trait PlayerBackend: Send + Sync {
     }
     fn load(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest);
     fn control(&self, command: PlayerCommand);
-    /// Replaces the player preferences the adapter applies itself, including on
-    /// a running player where the backend supports it.
     fn set_preferences(&self, preferences: PlayerPreferences);
     fn snapshot(&self) -> PlayerSnapshot;
     fn shutdown(&self);

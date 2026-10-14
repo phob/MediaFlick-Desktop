@@ -36,17 +36,11 @@ use crate::preferences::{
 };
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection, tmdb_image_path};
 
-/// Rows shown on the home screen.
 const HOME_ROW_LIMIT: i64 = 24;
-/// Films rotating through the top billboard.
 const BILLBOARD_LIMIT: i64 = 5;
-/// Bound each proxied video request so a trailer is never buffered wholesale.
 const TRAILER_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
-/// Posters are content-addressed by image tag, so they never go stale.
 const IMMUTABLE_CACHE: &str = "public, max-age=31536000, immutable";
 const NO_STORE: &str = "no-store";
-/// A pathological server must fail Discover safely rather than loop forever or
-/// return an ownership check it only partially completed.
 const MAX_PERSON_QUERY_PAGES: usize = 100;
 
 #[derive(Debug, Clone)]
@@ -55,8 +49,6 @@ pub struct ApiRequest {
     pub path: String,
     pub query: String,
     pub body: Vec<u8>,
-    /// Browser media requests use this to seek without downloading a trailer
-    /// wholesale. Other request headers are intentionally not forwarded.
     pub range: Option<String>,
     /// Raised by CEF's `cancel` callback when the browser abandons the request
     /// (an aborted fetch, a closed page). Handlers block synchronously, so
@@ -175,9 +167,6 @@ impl ApiResponse {
     }
 }
 
-/// What an endpoint handler returns. Both sides are complete responses; the
-/// error side lets a handler stop early with `?` on a bad body, a signed-out
-/// session or a failed lookup, and the router sends whichever it gets.
 type Handled = Result<ApiResponse, ApiResponse>;
 
 /// The signed-in account this request runs against. Its failures go through
@@ -191,7 +180,6 @@ fn session_scope(services: &Services) -> Result<SessionScope, ApiResponse> {
         .map_err(|error| ApiResponse::from_api_error(&error))
 }
 
-/// A failed Jellyfin call, reported against the account that made it.
 fn scoped_failure(services: &Services, scope: &SessionScope, error: &ApiError) -> ApiResponse {
     services.session.note_scoped_error(scope, error);
     ApiResponse::from_api_error(error)
@@ -208,15 +196,11 @@ pub fn handle(request: &ApiRequest) -> ApiResponse {
     dispatch(request, services::init)
 }
 
-/// [`handle`] with the service lookup injected, so tests route requests
-/// against their own services instead of the user's data folder.
 fn dispatch(request: &ApiRequest, services: impl FnOnce() -> Option<Arc<Services>>) -> ApiResponse {
     if let Some(response) = assets::static_asset(&request.path) {
         return response;
     }
     let Some(api_path) = request.path.strip_prefix("/api/") else {
-        // Unknown non-API paths fall back to the shell so client-side routing
-        // survives a reload.
         return assets::index_html();
     };
 
@@ -411,8 +395,6 @@ fn route_status(
     Some(response)
 }
 
-/// `/api/status`: the session plus the library, sync and Companion state the
-/// shell gates on. Mirrors `Status` in `ui/src/lib/api/types.ts`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppStatus {
@@ -593,8 +575,6 @@ mod tests {
         dispatch(request, || Some(fixture.services.clone()))
     }
 
-    /// `/api/status` is `Status` in `ui/src/lib/api/types.ts`, whose fields
-    /// are all required: every one of them must be sent.
     #[test]
     fn status_sends_every_field_the_ui_type_declares() {
         let fixture = TestServices::signed_out();
@@ -635,8 +615,6 @@ mod tests {
         body["error"].as_str().unwrap_or_default().to_string()
     }
 
-    /// A Jellyfin address that accepts connections but never answers, so a
-    /// test can prove that no request was sent to it.
     fn silent_server() -> std::net::TcpListener {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
         listener.set_nonblocking(true).expect("nonblocking");
@@ -652,8 +630,6 @@ mod tests {
         let server = silent_server();
         let fixture = TestServices::signed_in(&server_url(&server));
         let cases: [(&str, &[u8]); 10] = [
-            // A garbled "mark unwatched" used to decode as `{}` and mark the
-            // item watched.
             ("/api/item/item-1/played", b"not json"),
             ("/api/item/item-1/played", b"{}"),
             ("/api/item/item-1/played", br#"{"played":"false"}"#),
@@ -729,8 +705,6 @@ mod tests {
         );
     }
 
-    /// One request read to its end: the request line, then its body, so the
-    /// client never sees a reset from unread bytes.
     fn read_request(stream: &mut std::net::TcpStream) -> String {
         use std::io::{BufRead, BufReader, Read};
 
@@ -881,12 +855,10 @@ mod tests {
     fn player_commands_are_decoded_before_the_player_is_asked() {
         let fixture = TestServices::signed_out();
         let command = |body: &[u8]| send(&fixture, &post("/api/player/command", body));
-        // Decoded and valid: only the missing playback coordinator stops it.
         let response = command(br#"{"command":"set-mute","mute":true}"#);
         assert_eq!(response.status, 503, "{}", error_of(&response));
         let response = command(br#"{"command":"set-subtitle-track","subtitleTrack":null}"#);
         assert_eq!(response.status, 503, "{}", error_of(&response));
-        // Decoded, but not a value the player can apply.
         let response = command(br#"{"command":"set-playback-rate","rate":0}"#);
         assert_eq!(response.status, 400);
     }

@@ -50,8 +50,6 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
       return
     }
     stats.forwarded++
-    // Media streams are few and long-lived, and a player stalls on one that
-    // never answers, so each gets a line when it opens, answers and closes.
     const stream = /^\/(Videos|Audio)\//i.test(url.pathname) ? { at: new Date().toISOString(), path: url.pathname, range: request.headers.range ?? null, status: null, bytes: 0, firstByteMs: null, durationMs: null, end: null } : null
     const started = Date.now()
     if (stream) {

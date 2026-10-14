@@ -18,8 +18,6 @@ export function NotInYourLibrary({ term }: { term: string }) {
   if (!linked || !term.trim()) return null
 
   const results = search.data?.results.filter((result) => !result.libraryItemId)
-  // Nothing to add is not worth a heading, and neither is a Seerr that is
-  // merely unreachable: the local results above are still a complete answer.
   if (search.error || (search.isSuccess && !results?.length)) return null
 
   return (

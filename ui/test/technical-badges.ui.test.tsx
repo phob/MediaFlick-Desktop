@@ -74,7 +74,6 @@ describe("live card technical channel", () => {
       </QueryClientProvider>,
     )
 
-    // Cards commit before the coalescing timer fires a single request.
     expect(screen.getAllByText("movie-1:pending")).toHaveLength(2)
     expect(fetchMock).not.toHaveBeenCalled()
     await act(async () => {
@@ -164,8 +163,6 @@ describe("live card technical channel", () => {
     })
     expect(screen.getByText("movie-1:h264")).toBeTruthy()
 
-    // movie-2 scrolls away, then an episode change invalidates the mounted
-    // series through its parent context as well as the direct movie id.
     rerender(view(["movie-1"]))
     codec = "av1"
     await act(async () => {
@@ -182,12 +179,9 @@ describe("live card technical channel", () => {
       await Promise.resolve()
     })
 
-    // Only the mounted card refetches now…
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ ids: ["movie-1"] })
     expect(screen.getByText("movie-1:av1")).toBeTruthy()
 
-    // …but the unmounted card was invalidated too, so remounting it fetches
-    // fresh streams instead of reusing the pre-change cache entry.
     rerender(view(["movie-1", "movie-2"]))
     expect(screen.getByText("movie-2:pending")).toBeTruthy()
     await act(async () => {

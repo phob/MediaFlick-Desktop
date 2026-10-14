@@ -94,8 +94,6 @@ const MENU_ID_CLIENT_SETTINGS: i32 = MENU_ID_FULLSCREEN + 1;
 const MENU_ID_DASHBOARD: i32 = MENU_ID_CLIENT_SETTINGS + 1;
 const MENU_ID_ABOUT: i32 = MENU_ID_DASHBOARD + 1;
 
-/// CEF takes several enum and flag values as `i32`. The constants used here all
-/// fit; one that ever did not is logged and the call skipped, not a panic.
 pub(super) fn cef_i32<T>(value: T) -> Option<i32>
 where
     T: TryInto<i32> + Copy + std::fmt::Debug,
@@ -461,12 +459,10 @@ wrap_request_handler! {
                 );
                 return 0;
             }
-            // Our own UI is served by the app-scheme handler; let it through.
             if app_scheme::is_app_url(&request_url) {
                 return 0;
             }
             if !request_url.starts_with("mediaflick-desktop://") {
-                // Nothing outside the app bundle is ever rendered in-window.
                 if user_gesture != 0 && is_browser_openable_url(&request_url) {
                     open_external_link(&request_url);
                     return 1;
@@ -525,7 +521,6 @@ wrap_resource_request_handler! {
             };
 
             let request_url = CefString::from(&request.url()).to_string();
-            // The app scheme is served by our resource handler, not here.
             if app_scheme::is_app_url(&request_url) {
                 return ReturnValue::CONTINUE;
             }

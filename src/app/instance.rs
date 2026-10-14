@@ -1,7 +1,3 @@
-//! Single-instance gate: ensures only one interactive MediaFlick session runs
-//! at a time, keyed by a stable id persisted in `instance.json` (mirroring
-//! Jellyfin Desktop's per-config-directory instance file).
-
 use std::path::{Path, PathBuf};
 
 use crate::preferences::config_dir;
@@ -57,16 +53,12 @@ fn new_instance_id() -> String {
     format!("{nanos:032x}{pid:08x}")
 }
 
-/// Owns the OS handle that marks this process as the live MediaFlick session.
-/// Dropping it (or the process exiting) releases the gate for the next launch.
 pub struct InstanceGuard {
     #[cfg(target_os = "windows")]
     handle: windows_sys::Win32::Foundation::HANDLE,
 }
 
 impl InstanceGuard {
-    /// Returns `Some(guard)` when this process now owns the single session, or
-    /// `None` when another MediaFlick session already holds it.
     #[cfg(target_os = "windows")]
     pub fn acquire(instance_id: &str) -> Option<Self> {
         use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
@@ -110,7 +102,6 @@ impl Drop for InstanceGuard {
     }
 }
 
-/// Tells the user a session is already running before the second launch exits.
 #[cfg(target_os = "windows")]
 pub fn notify_already_running() {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};

@@ -70,9 +70,6 @@ for pattern in \
 done
 shopt -u nullglob
 
-# The loader already recognizes this private directory. Each library has an
-# origin-relative RUNPATH, so codec dependencies need no global linker override.
-# Never pick up a system/custom libmpv accidentally staged with the Cargo output.
 rm -f "$appdir/usr/bin/"libmpv.so*
 cp -R "$libmpv_dir/lib" "$appdir/usr/bin/libmpv"
 libmpv_docs="$appdir/usr/share/doc/mediaflick-desktop/libmpv"
@@ -81,7 +78,6 @@ cp -R "$libmpv_dir/licenses" "$libmpv_docs/"
 cp "$libmpv_dir/"*.txt "$libmpv_dir/"*CONFIG* "$libmpv_dir/SHA256SUMS" "$libmpv_docs/"
 python3 distribution/libmpv/linux/smoke-test.py "$appdir/usr/bin/libmpv/libmpv.so.2" \
     "$libmpv_docs/LIBPLACEBO-CONFIG.h"
-# Publish corresponding sources alongside the AppImage, not inside its runtime.
 cp "$libmpv_dir/$libmpv_sources" "dist/linux/$libmpv_sources"
 
 required=(
