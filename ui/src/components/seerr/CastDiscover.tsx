@@ -19,13 +19,13 @@ const PHASE_COPY = {
 } satisfies Partial<Record<CastCreditsPhase, string>>
 
 export function CastDiscover({ personName, ...creditsInput }: CastDiscoverProps) {
-  const { credits, phase } = useCastCredits(creditsInput)
+  const { credits, phase, seerrError } = useCastCredits(creditsInput)
 
   let content
   if (phase === "seerr-error") {
     content = (
       <p className="py-4 text-sm text-destructive">
-        Seerr is unavailable: {credits.error?.message ?? "unknown error"}
+        Seerr is unavailable: {seerrError?.message ?? "unknown error"}
       </p>
     )
   } else if (phase === "resolution-error") {

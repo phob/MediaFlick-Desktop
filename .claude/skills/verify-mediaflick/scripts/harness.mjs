@@ -4,12 +4,12 @@
 // events a user produces.
 
 import { execFileSync } from "node:child_process"
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
 import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
-import { isLinux, sendWindowClose } from "./platform.mjs"
+import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
 import { startProxy } from "./proxy.mjs"
 
 const SKIPPED_ROLES = new Set(["InlineTextBox", "LineBreak", "none", "generic", "ignored"])
@@ -314,38 +314,76 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return (await api("/api/player/state")).body
   }
 
+  // The pipe to read mpv on. mpv's own scripts can move its IPC server after
+  // the app has connected: SVP's mpvSockets.lua, shipped in many Windows mpv
+  // bundles and loaded by External mpv (`--load-scripts=yes`), re-points
+  // input-ipc-server to <TEMP>\mpvSockets\<pid>. The logged pipe's name
+  // lingers, but a new client there never connects. Follow the move to the
+  // pipe named after the mpv process launched with the logged one.
+  function mpvSocketPath(logged) {
+    if (!isWindows) return logged
+    const prefix = "\\\\.\\pipe\\"
+    const launched = listProcesses().find((entry) => entry.cmd.includes(`--input-ipc-server=${logged}`))
+    const moved = launched && readdirSync(prefix).find((pipe) => pipe.endsWith(`\\mpvSockets\\${launched.pid}`))
+    if (!moved) return logged
+    log(`mpv IPC moved by a script: ${prefix}${moved}`)
+    return `${prefix}${moved}`
+  }
+
+  // One connection per mpv IPC path, kept for the drive, so a read never
+  // depends on mpv accepting a new client mid-playback.
+  let mpvClient = null
+  function mpvConnection(logged) {
+    if (mpvClient?.logged === logged && !mpvClient.socket.destroyed) return mpvClient
+    mpvClient?.socket.destroy()
+    const pending = new Map()
+    const socket = net.createConnection(mpvSocketPath(logged))
+    const fail = (error) => {
+      for (const { reject } of pending.values()) reject(error)
+      pending.clear()
+    }
+    let buffer = ""
+    socket.on("data", (chunk) => {
+      buffer += chunk
+      for (const line of buffer.split("\n").slice(0, -1)) {
+        const message = JSON.parse(line)
+        const waiting = pending.get(message.request_id)
+        if (!waiting) continue // events and other replies
+        pending.delete(message.request_id)
+        waiting.resolve(message)
+      }
+      buffer = buffer.slice(buffer.lastIndexOf("\n") + 1)
+    })
+    socket.on("error", fail)
+    socket.on("close", () => fail(new Error("the mpv IPC connection closed")))
+    socket.unref()
+    mpvClient = { logged, socket, pending }
+    return mpvClient
+  }
+
   // Reads one mpv property over mpv's IPC socket, beside the app's own
   // connection. Reads only: the app must stay mpv's single command writer.
   async function mpv(property) {
     const socketPath = [...appLog().matchAll(/mpv IPC connected ipc_path=(\S+)/g)].at(-1)?.[1]
     if (!socketPath) throw new Error("app.log has no `mpv IPC connected` line yet")
-    return new Promise((resolve, reject) => {
-      const requestId = Math.floor(Math.random() * 1e9)
-      const socket = net.createConnection(socketPath)
-      let buffer = ""
+    const { socket, pending } = mpvConnection(socketPath)
+    const requestId = Math.floor(Math.random() * 1e9)
+    const message = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        pending.delete(requestId)
+        // Drop the connection so the next read resolves the pipe again.
         socket.destroy()
         reject(new Error(`mpv did not answer get_property ${property} within 5 s`))
       }, 5000)
-      socket.on("connect", () => socket.write(`${JSON.stringify({ command: ["get_property", property], request_id: requestId })}\n`))
-      socket.on("data", (chunk) => {
-        buffer += chunk
-        for (const line of buffer.split("\n").slice(0, -1)) {
-          const message = JSON.parse(line)
-          if (message.request_id !== requestId) continue
-          clearTimeout(timer)
-          socket.end()
-          if (message.error === "success") resolve(message.data)
-          else if (message.error === "property unavailable") resolve(null)
-          else reject(new Error(`mpv get_property ${property}: ${message.error}`))
-        }
-        buffer = buffer.slice(buffer.lastIndexOf("\n") + 1)
+      pending.set(requestId, {
+        resolve: (reply) => { clearTimeout(timer); resolve(reply) },
+        reject: (error) => { clearTimeout(timer); reject(error) },
       })
-      socket.on("error", (error) => {
-        clearTimeout(timer)
-        reject(error)
-      })
+      socket.write(`${JSON.stringify({ command: ["get_property", property], request_id: requestId })}\n`)
     })
+    if (message.error === "success") return message.data
+    if (message.error === "property unavailable") return null
+    throw new Error(`mpv get_property ${property}: ${message.error}`)
   }
 
   // The playstate reports the app queued for Jellyfin and the answers it got,
@@ -559,6 +597,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   }
 
   async function dispose() {
+    mpvClient?.socket.destroy()
     await Promise.all(proxies.map((started) => started.close()))
   }
 

@@ -7,7 +7,7 @@ import { api, type SeerrResult, type SeerrStatusInfo, type Status } from "../src
 import { castDiscoverResults } from "../src/lib/cast-search"
 import { queryKeys } from "../src/lib/query-client"
 import { testQueryClient } from "./test-query-client"
-import { appStatus } from "./support/fixtures"
+import { appStatus, companionWithSeerr } from "./support/fixtures"
 import { TestProviders } from "./test-utils"
 
 const linked: SeerrStatusInfo = {
@@ -54,6 +54,7 @@ function clientWithStatus(status: SeerrStatusInfo = linked, app: Status = signed
   const client = testQueryClient()
   client.setQueryData(queryKeys.seerrStatus, status)
   client.setQueryData(queryKeys.status, app)
+  client.setQueryData(queryKeys.companion, companionWithSeerr())
   return client
 }
 
