@@ -7,9 +7,7 @@
 // the next --account run reconciles it before launch. Both modes fail by design.
 //   just verify cleanup-journal --account https://jellyfin.example.com
 //   $env:MEDIAFLICK_VERIFY_HARD_EXIT = "1"; just verify cleanup-journal --account https://jellyfin.example.com
-import { readJournal } from "../scripts/favorites.mjs"
-
-const serverFavorite = async (ctx, id) => (await ctx.jellyfin(`/Items/${encodeURIComponent(id)}?userId=${ctx.account.userId}`)).UserData.IsFavorite
+import { isFavorite, readJournal } from "../scripts/favorites.mjs"
 
 export default async function cleanupJournal(ctx) {
   if (!ctx.account || ctx.account.signedOut) throw new Error("cleanup-journal needs --account SERVER")
@@ -22,7 +20,7 @@ export default async function cleanupJournal(ctx) {
   const { items } = (await ctx.api(`/api/items?${new URLSearchParams({ kind: "Movie", favorite: "false", sort: "added", limit: 20 })}`)).body
   let movie = null
   for (const item of items.filter((candidate) => /\p{L}{3,}/u.test(candidate.name))) {
-    if (!(await serverFavorite(ctx, item.id))) {
+    if (!(await isFavorite(ctx.jellyfin, ctx.account.userId, item.id))) {
       movie = item
       break
     }
@@ -37,7 +35,7 @@ export default async function cleanupJournal(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === `/item/${encodeURIComponent(movie.id)}`, `${movie.name}'s page`)
   await ctx.press({ role: "button", name: "Add to favorites" })
   await ctx.find({ role: "button", name: "Remove from favorites" })
-  await ctx.until(async () => (await serverFavorite(ctx, movie.id)) === true, `${movie.name} with IsFavorite=true on the server`)
+  await ctx.until(async () => (await isFavorite(ctx.jellyfin, ctx.account.userId, movie.id)) === true, `${movie.name} with IsFavorite=true on the server`)
   await ctx.screenshot("favorited")
   const journal = readJournal()
   ctx.writeEvidence("journal.json", journal)

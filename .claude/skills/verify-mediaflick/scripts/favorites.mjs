@@ -15,9 +15,12 @@ const FIELDS = ["server", "userId", "itemId"]
 
 export function readJournal() {
   if (!existsSync(journalFile)) return []
-  const entries = JSON.parse(readFileSync(journalFile, "utf8"))
+  let entries = null
+  try {
+    entries = JSON.parse(readFileSync(journalFile, "utf8"))
+  } catch {}
   if (!Array.isArray(entries) || !entries.every((entry) => FIELDS.every((field) => typeof entry?.[field] === "string" && entry[field]))) {
-    throw new Error(`${journalFile} is not a list of {server, userId, itemId}; check those favorites on the server, then fix or remove the file`)
+    throw new Error(`${journalFile} is not a JSON list of {server, userId, itemId}; check those favorites on the server, then fix or remove the file`)
   }
   return entries
 }
@@ -25,27 +28,42 @@ export function readJournal() {
 function writeJournal(entries) {
   mkdirSync(path.dirname(journalFile), { recursive: true })
   const temporary = `${journalFile}.${process.pid}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(entries, null, 2)}\n`)
+  writeFileSync(temporary, `${JSON.stringify(entries, null, 2)}
+`)
   renameSync(temporary, journalFile)
 }
 
-const isEntry = (account, itemId) => (entry) => entry.server === account.server && entry.userId === account.userId && entry.itemId === itemId
+const isEntry = (entry, account, itemId) => entry.server === account.server && entry.userId === account.userId && entry.itemId === itemId
 
 export function journalFavorite(account, itemId) {
   const entries = readJournal()
-  if (!entries.some(isEntry(account, itemId))) writeJournal([...entries, { server: account.server, userId: account.userId, itemId }])
+  if (!entries.some((entry) => isEntry(entry, account, itemId))) writeJournal([...entries, { server: account.server, userId: account.userId, itemId }])
 }
 
-export async function isFavorite(account, itemId) {
-  return (await jellyfinGet(account, `/Items/${encodeURIComponent(itemId)}?userId=${account.userId}`)).UserData.IsFavorite === true
+// `get` is a GET on the server as the account: `ctx.jellyfin` in a drive.
+export async function isFavorite(get, userId, itemId) {
+  return (await get(`/Items/${encodeURIComponent(itemId)}?userId=${userId}`)).UserData.IsFavorite === true
 }
 
-// Returns whether the server still listed `itemId` as a favorite.
+// Returns "removed", "not-favorite", or "missing" when the server answers 404
+// for the item (a rename or an upgraded file can give a title a new id).
 export async function settleFavorite(account, itemId) {
-  const favorite = await isFavorite(account, itemId)
-  if (favorite) await removeFavorite(account, itemId)
-  writeJournal(readJournal().filter((entry) => !isEntry(account, itemId)(entry)))
-  return favorite
+  let state
+  try {
+    state = (await isFavorite((apiPath) => jellyfinGet(account, apiPath), account.userId, itemId)) ? "removed" : "not-favorite"
+  } catch (error) {
+    if (error.status !== 404) throw error
+    state = "missing"
+  }
+  if (state === "removed") await removeFavorite(account, itemId)
+  writeJournal(readJournal().filter((entry) => !isEntry(entry, account, itemId)))
+  return state
+}
+
+const RECONCILED = {
+  removed: (itemId) => `favorites journal: removed leftover test favorite ${itemId}, which the server showed as set`,
+  "not-favorite": (itemId) => `favorites journal: ${itemId} is not a favorite; dropped its entry`,
+  missing: (itemId) => `favorites journal: ${itemId} no longer exists; dropped its entry`,
 }
 
 export async function reconcileFavorites(account, log) {
@@ -57,7 +75,7 @@ export async function reconcileFavorites(account, log) {
   const errors = []
   for (const { itemId } of pending) {
     try {
-      log((await settleFavorite(account, itemId)) ? `favorites journal: removed leftover test favorite ${itemId}` : `favorites journal: ${itemId} is not a favorite; dropped its entry`)
+      log(RECONCILED[await settleFavorite(account, itemId)](itemId))
     } catch (error) {
       errors.push(`${itemId}: ${error.message}`)
     }

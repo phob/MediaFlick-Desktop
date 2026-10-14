@@ -517,11 +517,12 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   // once the app has exited.
   async function unfavoriteAfterRun(itemId) {
     if (!cachedAccount) throw new Error("unfavoriteAfterRun needs --account SERVER")
-    if (await isFavorite(cachedAccount, itemId)) throw new Error(`unfavoriteAfterRun: ${itemId} already is a favorite of ${cachedAccount.userName}; drives may only favorite items that are not`)
+    if (await isFavorite(jellyfin, cachedAccount.userId, itemId)) throw new Error(`unfavoriteAfterRun: ${itemId} already is a favorite of ${cachedAccount.userName}; drives may only favorite items that are not`)
     journalFavorite(cachedAccount, itemId)
     log(`journaled test favorite ${itemId} in ${journalFile}`)
     afterRunTasks.push(async () => {
-      log((await settleFavorite(cachedAccount, itemId)) ? `after run: removed ${itemId} from favorites` : `after run: ${itemId} is not a favorite`)
+      const state = await settleFavorite(cachedAccount, itemId)
+      log({ removed: `after run: removed ${itemId} from favorites`, "not-favorite": `after run: ${itemId} is not a favorite`, missing: `after run: ${itemId} no longer exists; dropped its journal entry` }[state])
     })
   }
 

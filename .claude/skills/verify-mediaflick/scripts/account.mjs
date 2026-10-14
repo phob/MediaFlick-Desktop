@@ -145,7 +145,7 @@ export async function jellyfinGet(account, apiPath) {
     headers: { Authorization: `MediaBrowser Token="${account.token}"`, Accept: "application/json" },
     signal: AbortSignal.timeout(20000),
   })
-  if (!response.ok) throw new Error(`GET ${apiPath} on ${account.server} answered HTTP ${response.status}`)
+  if (!response.ok) throw Object.assign(new Error(`GET ${apiPath} on ${account.server} answered HTTP ${response.status}`), { status: response.status })
   return response.json()
 }
 
