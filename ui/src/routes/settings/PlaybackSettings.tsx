@@ -11,6 +11,7 @@ import { PageTitle, Section, SelectField, SettingsError, SettingsLoading, Settin
 type PlaybackDraft = ClientSettings["client"]["playback"]
 
 const SKIP_CHOICES = [
+  { value: "hidden", label: "Don't show" },
   { value: "disabled", label: "Never" },
   { value: "prompt", label: "Ask me" },
   { value: "always", label: "Always skip" },

@@ -77,9 +77,20 @@ pub fn mode_for_segment(config: &SegmentSkipConfig, segment_type: SegmentType) -
     }
 }
 
-pub fn active_segment_at(segments: &[SkipSegment], ticks: i64) -> Option<usize> {
+pub fn is_shown(config: &SegmentSkipConfig, segment_type: SegmentType) -> bool {
+    mode_for_segment(config, segment_type) != SegmentSkipMode::Hidden
+}
+
+pub fn active_segment_at(
+    segments: &[SkipSegment],
+    config: &SegmentSkipConfig,
+    ticks: i64,
+) -> Option<usize> {
     segments.iter().position(|segment| {
-        !segment.triggered && ticks >= segment.start_ticks && ticks < segment.end_ticks
+        !segment.triggered
+            && is_shown(config, segment.segment_type)
+            && ticks >= segment.start_ticks
+            && ticks < segment.end_ticks
     })
 }
 
@@ -136,8 +147,7 @@ impl SegmentSkipState {
         ticks: i64,
         now: Instant,
     ) -> Option<SegmentSkipAction> {
-        let Some(index) = active_segment_at(segments, ticks).filter(|_| !config.all_disabled())
-        else {
+        let Some(index) = active_segment_at(segments, config, ticks) else {
             self.current_segment = None;
             self.pending_auto_skip = None;
             return None;
@@ -145,7 +155,7 @@ impl SegmentSkipState {
         let entered = self.current_segment != Some(index);
         self.current_segment = Some(index);
         match mode_for_segment(config, segments[index].segment_type) {
-            SegmentSkipMode::Disabled => {
+            SegmentSkipMode::Hidden | SegmentSkipMode::Disabled => {
                 self.pending_auto_skip = None;
                 None
             }
@@ -252,12 +262,13 @@ mod tests {
     #[test]
     fn active_segment_respects_bounds_and_triggered() {
         let mut segments = vec![segment(SegmentType::Intro, 100, 200)];
-        assert_eq!(active_segment_at(&segments, 99), None);
-        assert_eq!(active_segment_at(&segments, 100), Some(0));
-        assert_eq!(active_segment_at(&segments, 199), Some(0));
-        assert_eq!(active_segment_at(&segments, 200), None);
+        let config = SegmentSkipConfig::default();
+        assert_eq!(active_segment_at(&segments, &config, 99), None);
+        assert_eq!(active_segment_at(&segments, &config, 100), Some(0));
+        assert_eq!(active_segment_at(&segments, &config, 199), Some(0));
+        assert_eq!(active_segment_at(&segments, &config, 200), None);
         segments[0].triggered = true;
-        assert_eq!(active_segment_at(&segments, 150), None);
+        assert_eq!(active_segment_at(&segments, &config, 150), None);
     }
 
     #[test]
