@@ -261,7 +261,6 @@ interface BootstrapProgress {
   complete: boolean
   processed: number
   total: number | null
-  initial: boolean
 }
 
 export interface Status {
