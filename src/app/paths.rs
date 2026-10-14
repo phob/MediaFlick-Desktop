@@ -1,6 +1,3 @@
-//! Per-user data locations shared by the CEF cache, the library database, and
-//! the poster cache.
-
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -13,7 +10,6 @@ fn trusted_root(value: Option<OsString>) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// Platform convention for machine-local (non-roaming) application data.
 pub fn platform_data_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -45,9 +41,6 @@ pub fn platform_data_dir() -> PathBuf {
     std::env::temp_dir()
 }
 
-/// Platform convention for roaming (synced) configuration, where the durable
-/// user settings live. Like [`platform_data_dir`], a root the environment
-/// supplies must be absolute.
 pub fn platform_config_dir() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -83,12 +76,10 @@ pub fn app_data_dir() -> PathBuf {
     platform_data_dir().join("mediaflick-desktop")
 }
 
-/// SQLite database holding credentials, the metadata cache, and sync state.
 pub fn library_db_path() -> PathBuf {
     app_data_dir().join("library.db")
 }
 
-/// Disk cache for posters and backdrops proxied from the server.
 pub fn image_cache_dir() -> PathBuf {
     app_data_dir().join("image-cache")
 }

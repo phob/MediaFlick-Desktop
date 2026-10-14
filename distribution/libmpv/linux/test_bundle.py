@@ -1,5 +1,3 @@
-"""Regression checks for the Linux runtime's relocated dependency closure."""
-
 import os
 from pathlib import Path
 import shutil
@@ -58,8 +56,6 @@ class BundleTests(unittest.TestCase):
             bundle.bundle(self.prefix, self.output, self.sources)
 
     def test_host_driver_is_not_copied_or_traversed(self):
-        # Its deliberately missing private dependency belongs to the host's
-        # driver stack; bundling must stop at the stable libva interface.
         for interface in ("libva.so.2", "libvulkan.so.1", "libcuda.so.1", "libnvcuvid.so.1"):
             with self.subTest(interface=interface):
                 self.compile("libfixture-driver.so.1", "int driver(void) { return 1; }")
@@ -87,8 +83,6 @@ class BundleTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0)
             return subprocess_run(args, **kwargs)
 
-        # libc6-dev is present with the compiler; use its real package metadata
-        # and notice, but intercept network downloads for this regression test.
         with patch.object(bundle.subprocess, "run", side_effect=run):
             bundle.bundle(self.prefix, self.output, self.sources, build_packages=["libc6-dev"])
         record = (self.output / "SYSTEM-PACKAGES.txt").read_text().strip().split("\t")

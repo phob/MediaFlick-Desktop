@@ -401,8 +401,6 @@ public sealed class RatingsService : IDisposable
                     _cache.SetHealth(CredentialProviders.MdbList, state);
                     if (!response.StatusCode.IsSuccess())
                     {
-                        // Never relay upstream response/transport text through
-                        // the desktop diagnostic boundary.
                         return RatingsContract.StatusDetail(state.Validation, CredentialProviders.MdbList);
                     }
 

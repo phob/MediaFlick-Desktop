@@ -1,7 +1,3 @@
-// Every OS-specific detail of verify-mediaflick lives here, next to the two
-// isolation wrappers (isolate-windows.ps1, isolate-linux.sh). session.mjs,
-// harness.mjs and the drives are platform-neutral.
-
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync, readlinkSync } from "node:fs"
 import os from "node:os"
@@ -21,9 +17,6 @@ export const exe = path.join(buildDir, isWindows ? "mediaflick-desktop.exe" : "m
 export const PROFILE_PREFIX = "mediaflick-verify-"
 export const profileParent = os.tmpdir()
 
-// Where the user's real profile lives, for the read-only guard. Resolved from
-// this process's environment before any override, the same way the app does
-// (src/app/paths.rs).
 export function realProfileDirs(env = process.env) {
   if (isWindows) {
     const roaming = env.APPDATA ?? path.join(env.USERPROFILE ?? os.homedir(), "AppData", "Roaming")
@@ -37,8 +30,6 @@ export function realProfileDirs(env = process.env) {
   }
 }
 
-// Environment that points every per-user location the app (and CEF) uses at
-// the disposable profile. Returns the env plus the app's config and data dirs.
 export function appEnvironment(profile) {
   const env = { ...process.env }
   let configRoot
@@ -61,7 +52,6 @@ export function appEnvironment(profile) {
       // The wrapper's private runtime dir is short, per run, and removed with it.
       TMPDIR: process.env.XDG_RUNTIME_DIR,
     })
-    // Same loader setup as `just run` on Linux.
     const cef = path.join(buildDir, "libcef.so")
     env.LD_LIBRARY_PATH = [buildDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":")
     if (existsSync(cef)) {
@@ -69,7 +59,6 @@ export function appEnvironment(profile) {
       env.LD_PRELOAD = [cef, process.env.LD_PRELOAD].filter(Boolean).join(" ")
     }
   }
-  // Settings come from the profile, not from a developer's shell.
   for (const name of ["MEDIAFLICK_DESKTOP_REMOTE_DEBUGGING_PORT", "MEDIAFLICK_DESKTOP_LOG_FILE", "MEDIAFLICK_DESKTOP_LOG_LEVEL", "JELLYFIN_URL"]) delete env[name]
   const dirs = Object.values(isWindows ? { configRoot, dataRoot, temp: env.TEMP } : { configRoot, dataRoot, home: env.HOME, cache: env.XDG_CACHE_HOME, state: env.XDG_STATE_HOME })
   return {
@@ -88,8 +77,6 @@ function pwsh(script) {
   return execFileSync(pwshPath, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true })
 }
 
-// Confirms this process really runs inside the isolation the wrapper claims.
-// Throws otherwise; nothing may be launched outside it.
 export function assertIsolated() {
   const claim = process.env.MEDIAFLICK_VERIFY_ISOLATION ?? ""
   if (isWindows) {
@@ -122,13 +109,11 @@ export function assertIsolated() {
   try {
     xvfbExe = path.basename(readlinkSync(`/proc/${xvfb}/exe`))
   } catch {
-    // Reported below.
   }
   if (xvfbExe !== "Xvfb") throw new Error(`DISPLAY ${display} is not served by the wrapper's Xvfb (pid ${xvfb}: ${xvfbExe || "missing"})`)
   return { kind: "linux-xvfb", display, xvfbPid: xvfb, runtimeDir: process.env.XDG_RUNTIME_DIR, dbus: process.env.DBUS_SESSION_BUS_ADDRESS ? "private" : "none" }
 }
 
-// All processes as { pid, ppid, name, cmd }.
 export function listProcesses() {
   if (isWindows) {
     const json = pwsh(`@(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine) | ConvertTo-Json -Compress -Depth 2`)
@@ -154,7 +139,6 @@ export function listProcesses() {
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
       rows.push({ pid: Number(entry), ppid, name, cmd })
     } catch {
-      // The process exited while listing.
     }
   }
   return rows
@@ -171,15 +155,11 @@ export function sendWindowClose(watchMs) {
   return JSON.parse(execFileSync(tool, ["io.github.phob.MediaFlickDesktop", String(watchMs)], { encoding: "utf8" }))
 }
 
-// Whether the app's main window is shown to the user. The native window starts
-// hidden and the UI's first ready report reveals it, so a UI that never
-// reports ready leaves a running app with no window.
 export function mainWindowShown(pid) {
   if (isWindows) {
     // .NET reports a MainWindowHandle only for a visible top-level window.
     return pwsh(`(Get-Process -Id ${Number(pid)}).MainWindowHandle -ne 0`).trim() === "True"
   }
-  // The private display holds only this run's app, so its WM_CLASS finds it.
   const tree = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8" })
   const id = tree.match(/^\s*(0x[0-9a-f]+) .*\("io\.github\.phob\.MediaFlickDesktop" /m)?.[1]
   if (!id) throw new Error("no MediaFlick window on the display")
@@ -188,12 +168,9 @@ export function mainWindowShown(pid) {
 
 export const isAppProcess = (row) => /^mediaflick-desktop(\.exe)?$/i.test(row.name)
 
-// Stops exactly the given PIDs and, with tree, the processes they started.
 export function killPids(pids, { tree = false } = {}) {
   let targets = [...pids]
   if (tree && isLinux) {
-    // Children first found through their parent PIDs; the app stays in the
-    // wrapper's process group, so a group kill there remains the safety net.
     const rows = listProcesses()
     for (let index = 0; index < targets.length; index++) {
       for (const row of rows) if (row.ppid === targets[index] && !targets.includes(row.pid)) targets.push(row.pid)
@@ -204,7 +181,6 @@ export function killPids(pids, { tree = false } = {}) {
       if (isWindows) execFileSync("taskkill.exe", ["/PID", String(pid), ...(tree ? ["/T"] : []), "/F"], { stdio: "ignore", windowsHide: true })
       else process.kill(pid, "SIGKILL")
     } catch {
-      // Already gone.
     }
   }
 }

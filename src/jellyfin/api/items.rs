@@ -13,7 +13,6 @@ use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
 use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse};
 
-/// Item types the local cache mirrors. Music and live TV are out of scope.
 pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
@@ -28,30 +27,17 @@ pub const SYNCED_ITEM_TYPES: &str = "Movie,Series,Season,Episode";
 pub const CATALOG_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
 PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
 
-/// A child response persists only the catalog fields, but passes each episode's
-/// synopsis directly to the open season page.
 const CHILD_FIELDS: &str = "ProviderIds,Overview,Genres,DateCreated,OriginalTitle,SortName,\
 PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId";
 
-/// Next Up is shaped directly into a browsing card. Provider ids, prose, cast,
-/// and streams are not read by that card response.
 const NEXT_UP_FIELDS: &str = "PremiereDate,OfficialRating,CommunityRating,ChildCount";
 
-/// The Jellyfin calendar fallback reads only stable provider ids and air date.
 const UPCOMING_FIELDS: &str = "ProviderIds,PremiereDate";
 
-/// Page size for lightweight catalog and incremental sweeps. Requests remain
-/// serial; this bounds both each SQLite commit and one coalesced UI invalidation.
 pub const PAGE_SIZE: i64 = 200;
 
-/// Page size for one parent's children. A series' season list and a season's
-/// episode list both fit inside a single page in practice; the paging loop is
-/// only there so a pathological parent still resolves completely.
 pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
-/// Cast filmographies are live server queries rather than local-cache joins.
-/// A large page keeps Discover's ownership verification bounded while the UI
-/// can still request its ordinary 60-card windows.
 pub const PERSON_PAGE_SIZE: i64 = 500;
 
 /// Cast surfaces promise titles — movies and series. Jellyfin also credits
@@ -83,7 +69,6 @@ fn items_page_query(
     ]
 }
 
-/// One page of the library, ordered so paging stays stable during a sweep.
 pub fn fetch_items_page(
     client: &JellyfinClient,
     user_id: &str,
@@ -97,8 +82,6 @@ pub fn fetch_items_page(
     )
 }
 
-/// Identity-only sweep used to detect items deleted on the server, and the
-/// cheap user-data mirror.
 pub fn fetch_identity_page(
     client: &JellyfinClient,
     user_id: &str,
@@ -126,8 +109,6 @@ fn children_query(user_id: &str, parent_id: &str, start_index: i64) -> Vec<(&'st
     vec![
         user_query(user_id),
         ("parentId", parent_id.to_string()),
-        // Deliberately not recursive: a series must answer with its seasons,
-        // not with every episode underneath it.
         ("IncludeItemTypes", SYNCED_ITEM_TYPES.to_string()),
         ("Fields", CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
@@ -166,8 +147,6 @@ fn exact_items_query(user_id: &str, item_ids: &[String]) -> Vec<(&'static str, S
     ]
 }
 
-/// Fetch exact catalog items through `/Items?ids=`, which every supported
-/// server version exposes.
 pub fn fetch_items(
     client: &JellyfinClient,
     user_id: &str,
@@ -185,12 +164,8 @@ pub fn fetch_item(
     Ok(response.items.into_iter().next())
 }
 
-/// Exactly what the `/about` response serializes — prose, cast, tags, studios,
-/// and critic score. User data, genres, and media streams are deliberately
-/// absent from every detail request.
 pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";
 
-/// The billboard needs prose and nothing else from the live rich record.
 pub const SYNOPSIS_FIELDS: &str = "Overview";
 
 fn synopsis_query(user_id: &str, item_id: &str) -> Vec<(&'static str, String)> {
@@ -203,8 +178,6 @@ fn synopsis_query(user_id: &str, item_id: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// One item's live synopsis without cast, tags, studios, ratings, or image
-/// metadata. This is the rotating billboard's purpose-built request.
 pub fn fetch_item_synopsis(
     client: &JellyfinClient,
     user_id: &str,
@@ -219,8 +192,6 @@ fn box_sets_query(user_id: &str) -> Vec<(&'static str, String)> {
         user_query(user_id),
         ("Recursive", "true".to_string()),
         ("IncludeItemTypes", "BoxSet".to_string()),
-        // Provider ids carry the TMDB collection identity the native
-        // collections feature matches on; ChildCount feeds the card counter.
         ("Fields", "ProviderIds,ChildCount".to_string()),
         ("EnableUserData", "false".to_string()),
         ("EnableImages", "true".to_string()),
@@ -229,8 +200,6 @@ fn box_sets_query(user_id: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Every BoxSet visible to the signed-in user, ordered like a library view.
-/// Collection mode reads these rows without creating or modifying BoxSets.
 pub fn fetch_box_sets(client: &JellyfinClient, user_id: &str) -> Result<ItemsResponse, ApiError> {
     client.get_json("/Items", &box_sets_query(user_id))
 }
@@ -249,7 +218,6 @@ fn box_set_children_query(user_id: &str, parent_id: &str) -> Vec<(&'static str, 
     ]
 }
 
-/// One BoxSet's movie and series children, shaped like any other card row.
 pub fn fetch_box_set_children(
     client: &JellyfinClient,
     user_id: &str,
@@ -278,9 +246,6 @@ pub fn fetch_item_about(
     Ok(response.items.into_iter().next())
 }
 
-/// Technical stream descriptors for a batch of exact ids, feeding the card
-/// quality badges. Everything else is deliberately excluded: badges need no
-/// images, no user data, and no prose.
 pub fn fetch_media_stream_batch(
     client: &JellyfinClient,
     user_id: &str,
@@ -309,8 +274,6 @@ fn person_items_query(
         ("Recursive", "true".to_string()),
         ("PersonIds", person_id.to_string()),
         ("IncludeItemTypes", PERSON_ITEM_TYPES.to_string()),
-        // Cards need the lightweight catalog shape, not a broad People or
-        // MediaStreams fetch per page.
         ("Fields", CATALOG_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
@@ -339,9 +302,6 @@ pub fn fetch_person_items(
     )
 }
 
-/// Candidates used only to bridge a TMDB person link to Jellyfin's stable id.
-/// Callers accept an exact provider id or one unambiguous exact name; this
-/// endpoint never turns a fuzzy name match directly into a filmography.
 pub fn fetch_people(
     client: &JellyfinClient,
     user_id: &str,
@@ -411,8 +371,6 @@ pub fn fetch_local_trailers(
     }
 }
 
-/// Remote trailers recorded on one item. This is a separate, on-demand field:
-/// it has no place in every row of the local metadata mirror.
 pub fn fetch_remote_trailers(
     client: &JellyfinClient,
     user_id: &str,
@@ -436,8 +394,6 @@ pub fn fetch_remote_trailers(
         .unwrap_or_default())
 }
 
-/// Server-side "what should I watch next" logic; deliberately not replicated
-/// against the local cache.
 fn next_up_query(
     user_id: &str,
     series_id: Option<&str>,
@@ -465,9 +421,6 @@ pub fn fetch_next_up(
     client.get_json("/Shows/NextUp", &next_up_query(user_id, series_id, limit))
 }
 
-/// Jellyfin's metadata-only calendar fallback. Unlike the companion calendar
-/// this has no Sonarr truth (monitored/file state) and covers episodes only,
-/// but it keeps the releases surface useful when the plugin is absent.
 fn upcoming_query(user_id: &str, limit: i64) -> Vec<(&'static str, String)> {
     vec![
         user_query(user_id),
@@ -541,7 +494,6 @@ fn user_data_write(
     }
 }
 
-/// What the caller wants out of `PlaybackInfo`.
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackInfoRequest {
     pub media_source_id: Option<String>,
@@ -594,7 +546,6 @@ pub fn playback_info(
     client.post_json(&path, &[("userId", user_id.to_string())], &body)
 }
 
-/// Path of the poster/backdrop endpoint for an item.
 pub fn image_path(item_id: &str, image_type: &str) -> String {
     format!(
         "/Items/{}/Images/{}",
@@ -607,8 +558,6 @@ pub fn image_path(item_id: &str, image_type: &str) -> String {
 mod tests {
     use super::{PERSON_PAGE_SIZE, children_query, person_items_query};
 
-    /// `Recursive` must stay absent: with it, a series would answer with every
-    /// episode underneath it and the season reconcile would delete its seasons.
     #[test]
     fn a_children_request_asks_for_direct_children_only() {
         let query = children_query("uid", "season1", 0)
@@ -616,7 +565,6 @@ mod tests {
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(query["parentId"], "season1");
         assert!(!query.contains_key("Recursive"));
-        // The season page shows each episode's synopsis from this answer.
         assert!(query["Fields"].contains("Overview"));
     }
 

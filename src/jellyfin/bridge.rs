@@ -35,8 +35,6 @@ pub fn parse_bridge_action(request_url: &str) -> Option<BridgeAction> {
     })
 }
 
-/// Generates the session token once in the browser process and hands it to CEF
-/// subprocesses through the environment.
 pub fn ensure_session_token() {
     BRIDGE_TOKEN.get_or_init(|| {
         if let Ok(token) = std::env::var(BRIDGE_TOKEN_ENV)

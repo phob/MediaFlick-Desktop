@@ -1,7 +1,3 @@
-//! Process-level application support.
-//!
-//! Feature behavior belongs to playback, preferences, maintenance, or shell.
-
 pub mod build_info;
 pub mod cli;
 #[cfg(target_os = "linux")]

@@ -317,7 +317,6 @@ public sealed class RatingsTests
             "server_mdblist",
             response.Items[0].Origin));
 
-        // Shutting the store down writes its pending batch.
         fixture.Cache.Dispose();
         using var reloaded = new ProviderCacheStore(
             fixture.CachePath,
@@ -370,7 +369,6 @@ public sealed class RatingsTests
     [InlineData(true)]
     public async Task BackgroundRefreshFailureIsLoggedAsWarningWithoutTheApiKey(bool uriEscaped)
     {
-        // '+' and '/' make the URI-escaped key differ from the raw key.
         const string secret = "mdb+log/secret-7f3a9c";
         var escaped = Uri.EscapeDataString(secret);
         using var fixture = new RatingsFixture();
@@ -391,7 +389,6 @@ public sealed class RatingsTests
             now - 100,
             now - 1,
             now + 1000))]);
-        // An unexpected failure whose text carries the key-bearing URI.
         fixture.Transport.BatchException = new InvalidOperationException(
             $"POST https://api.mdblist.com/tmdb/movie/?apikey={(uriEscaped ? escaped : secret)} failed");
 

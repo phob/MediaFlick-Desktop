@@ -31,7 +31,6 @@ pub use model::{
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;
 
-/// The newest standard decade that can be selected by the library UI.
 pub fn current_release_decade() -> i64 {
     let days = now_unix().div_euclid(86_400);
     let (year, _, _) = query::civil_from_days(days);
@@ -49,8 +48,6 @@ pub fn release_decade_from_id(value: &str) -> Option<i64> {
         .then_some(decade)
 }
 
-/// Which cached rows one committed mutation touched, so the UI can invalidate
-/// exactly the affected items and their parent/series/season contexts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LibraryChangeBatch {
     pub item_ids: Vec<String>,
@@ -75,7 +72,6 @@ fn normalize_ids(ids: &mut Vec<String>) {
     ids.dedup();
 }
 
-/// Session details persisted across restarts.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StoredCredentials {
     pub server_url: Option<String>,
@@ -95,7 +91,6 @@ impl StoredCredentials {
     }
 }
 
-/// A cached title that may satisfy one TMDB credit after a live id check.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TmdbCandidate {
     pub tmdb_id: i64,
@@ -103,7 +98,6 @@ pub(crate) struct TmdbCandidate {
     pub item_id: String,
 }
 
-/// Stable external identity used to batch rating lookups.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RatingTarget {
@@ -147,7 +141,6 @@ impl SortDirection {
     }
 }
 
-/// How the library grid is ordered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ItemSort {
     #[default]
@@ -269,7 +262,6 @@ impl SeriesStatus {
     }
 }
 
-/// Filters for the library grid.
 #[derive(Debug, Clone, Default)]
 pub struct ItemQuery {
     pub search: Option<String>,
@@ -332,8 +324,6 @@ impl Library {
         })
     }
 
-    /// A sync-state value. Unlike an absent key, a failed read is an error:
-    /// reading "not done" from a broken database would restart the catalog.
     pub fn meta(&self, key: &str) -> rusqlite::Result<Option<String>> {
         self.db.with_connection(|connection| {
             connection
@@ -357,7 +347,6 @@ impl Library {
         })
     }
 
-    /// Refreshes query planner statistics after the catalog changed.
     pub fn optimize(&self) -> rusqlite::Result<()> {
         self.db.optimize()
     }

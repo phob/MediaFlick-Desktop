@@ -1,5 +1,3 @@
-//! User preference model, persistence port, and runtime application policy.
-
 mod accounts;
 mod collections;
 mod deletions;

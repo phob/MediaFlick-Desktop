@@ -53,7 +53,6 @@ const segmentTypes = (state) => (state?.skipSegments ?? []).map((segment) => seg
 const promptShown = (log) => /sending raw mpv command command=.*"show-text","Seek to Skip Intro"/.test(log)
 const mpvConnections = (ctx) => (ctx.appLog().match(/mpv IPC connected/g) ?? []).length
 
-// The markers the app injects for a segment type, as mpv lists them.
 function markersFor(episode, type) {
   const segment = episode.segments.find((candidate) => candidate.type.toLowerCase() === type)
   const [start, end] = type === "intro" ? ["Intro", "Intro End"] : ["Credits", "Credits End"]
@@ -61,7 +60,6 @@ function markersFor(episode, type) {
 }
 const hasMarker = (chapters, marker) => chapters.some((chapter) => chapter.title === marker.title && Math.abs(chapter.time - marker.time) < 0.01)
 
-// ctx.until that hands back null on timeout, for a state a later check names.
 async function settle(ctx, condition, description, timeout) {
   try {
     return await ctx.until(condition, description, timeout)
@@ -76,8 +74,6 @@ function displayCapture(ctx, name) {
   else ctx.step(`no display capture for ${name}: Linux only`)
 }
 
-// The first unplayed H.264 S1E1 of 15 minutes or more, of a series whose name
-// is unique (search opens it by name), with or without embedded chapters.
 async function pickEpisode(ctx, withChapters) {
   const userId = ctx.account.userId
   const { Items: shows } = await ctx.jellyfin(`/Items?userId=${userId}&recursive=true&includeItemTypes=Series&isPlayed=false&sortBy=SortName&limit=300`)
@@ -133,8 +129,6 @@ async function openEpisode(ctx, episode) {
   await ctx.find({ role: "heading", name: "Episodes" }, { timeout: 30000 })
   const season = { role: "button", name: `Season ${episode.season}` }
   if ((await ctx.exists(season)) && (await ctx.state(season)).pressed !== true) await ctx.press(season)
-  // The title link becomes `1.<name> (Next up)` for Next Up; the image link
-  // is named by the episode alone.
   await ctx.press({ role: "link", name: episode.name })
   await ctx.until(async () => (await ctx.pathname()) === `/item/${episode.id}`, "the episode page")
 }
@@ -271,8 +265,6 @@ async function userData(ctx, id) {
   return (await ctx.jellyfin(`/Items/${id}?userId=${ctx.account.userId}`)).UserData
 }
 
-// Mark watched, then Mark unwatched, when the runs left a resume point or a
-// played state on the episode.
 async function restoreEpisode(ctx, episode) {
   const before = await userData(ctx, episode.id)
   if (!before.Played && !before.PlaybackPositionTicks) {

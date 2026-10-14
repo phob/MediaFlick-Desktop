@@ -94,8 +94,6 @@ function SourceCard({ source, selected }: { source: MediaSource; selected: boole
     formatFileSize(source.size),
     formatBitrate(source.bitrate),
   ].filter(Boolean)
-  // The server only hands the real path to admins; for everyone else the source
-  // name is the release name, which answers the same question.
   const label = source.fileName ?? source.name
 
   return (

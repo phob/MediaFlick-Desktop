@@ -39,8 +39,6 @@ checkout() {
         git -C "$dest" fetch --depth=1 origin "$revision"
         git -C "$dest" checkout --detach FETCH_HEAD
     fi
-    # Remove only our previously applied patch before checking source integrity.
-    # Unrelated local changes still fail the check and are never reset away.
     if [[ -n "$source_patch" ]] && git -C "$dest" apply --reverse --check "$source_patch" 2>/dev/null; then
         git -C "$dest" apply --reverse "$source_patch"
     fi
@@ -66,8 +64,6 @@ export PKG_CONFIG_PATH="$prefix/lib/pkgconfig"
 export CFLAGS="$cpu_flags -O2 -fPIC"
 export CXXFLAGS="$CFLAGS"
 
-# This prefix belongs to the build. Reinstall it so removed features/libraries
-# cannot survive a profile change in the reusable cache.
 rm -rf "$prefix"
 mkdir -p "$prefix" "$work_dir/ffmpeg-build"
 cd "$work_dir/ffmpeg-build"
@@ -83,8 +79,6 @@ cd "$work_dir/ffmpeg-build"
 make -j "$jobs"
 make install
 
-# Preserve the embedded player's Vulkan renderer and OpenGL fallback.
-# glslang supplies Vulkan's SPIR-V compilation.
 meson setup --wipe "$work_dir/placebo-build" "$sources/libplacebo" \
     --prefix="$prefix" --libdir=lib --buildtype=release --default-library=shared \
     --wrap-mode=nodownload -Dauto_features=disabled -Ddemos=false \
@@ -141,8 +135,6 @@ cp "$work_dir/placebo-build/src/include/libplacebo/config.h" "$output_dir/LIBPLA
 cp "$work_dir/ffmpeg-build/config.h" "$output_dir/FFMPEG-CONFIG.h"
 cp "$work_dir/ffmpeg-build/ffbuild/config.mak" "$output_dir/FFMPEG-CONFIG.mak"
 
-# Include the build recipe and configuration as well as exact upstream and
-# distribution sources for every redistributed dependency.
 mkdir -p "$work_dir/recipe"
 cp "$script_dir"/*.sh "$script_dir"/*.py "$script_dir"/*.md "$script_dir"/*.patch "$work_dir/recipe/"
 cp "$output_dir/"*CONFIG* "$output_dir/SOURCE-REVISIONS.txt" \

@@ -134,9 +134,7 @@ struct ControllerState {
     chapter_markers: ChapterMarkers,
     seek_started_at_ticks: Option<i64>,
     segment_skip_config: SegmentSkipConfig,
-    /// The mark-watched-and-play-next key the input section binds.
     mark_watched_next: Option<String>,
-    /// Built-in player subtitle styling, applied as each file loads.
     subtitle_appearance: SubtitleAppearance,
     recent_loads: VecDeque<RecentLoad>,
     next_playback_handoff_until: Option<Instant>,
@@ -147,8 +145,6 @@ struct ControllerState {
     shutdown_requested: Arc<AtomicBool>,
 }
 
-/// The IPC connection to the running mpv. `next_id` numbers the sessions so
-/// an event from a replaced connection can be recognized and dropped.
 struct IpcSession {
     path: Option<String>,
     worker: Option<IpcWorker>,
@@ -167,11 +163,8 @@ impl Default for IpcSession {
     }
 }
 
-/// Media-segment markers added to mpv's chapter list, and the retry state for
-/// writing them while mpv is still loading the file.
 #[derive(Default)]
 struct ChapterMarkers {
-    /// The file's own chapters, before any markers were added.
     original: Option<Vec<Value>>,
     injected: Vec<Value>,
     last_sent: Option<Vec<Value>>,
@@ -180,9 +173,6 @@ struct ChapterMarkers {
     next_attempt_at: Option<Instant>,
 }
 
-/// Built-in libmpv on Linux: a fullscreen start waits until the video is
-/// ready and no startup seek is outstanding, so the first fullscreen frame is
-/// the resumed picture rather than the start of the file.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct FullscreenGate {
@@ -270,7 +260,6 @@ impl PlaybackPhase {
         }
     }
 
-    /// Ends a load that is still waiting for mpv, leaving other phases alone.
     fn take_pending(&mut self) -> Option<PendingPlayback> {
         if !matches!(self, Self::Loading(_)) {
             return None;
@@ -281,7 +270,6 @@ impl PlaybackPhase {
         }
     }
 
-    /// Ends the reported playback, leaving other phases alone.
     fn take_active(&mut self) -> Option<ActivePlayback> {
         if !matches!(self, Self::Playing(_)) {
             return None;

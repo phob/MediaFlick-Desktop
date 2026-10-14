@@ -45,7 +45,6 @@ function RatingReadoutView({
   )
 }
 
-/** Compact multi-source card ratings; absent sources render nothing at all. */
 export function RatingOverlay({
   item,
   topRightOccupied = false,
@@ -62,7 +61,6 @@ export function RatingOverlay({
   />
 }
 
-/** Selected MDBList sources beside the rest of a title's detail metadata. */
 export function DetailRatingReadout({ item }: { item: Pick<ItemSummary, "id" | "name"> }) {
   const { ratings, item: ratingItem } = useCardRatings(item.id)
   return (

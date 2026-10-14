@@ -2,7 +2,6 @@ using System.Text.Json.Nodes;
 
 namespace Jellyfin.Plugin.MediaFlick.Services;
 
-/// <summary>What Radarr knows about one movie.</summary>
 internal sealed record RadarrMovieFacts(string? Status, bool IsAvailable, bool HasFile);
 
 /// <summary>
@@ -16,7 +15,6 @@ internal sealed record SonarrSeriesFacts(
     SonarrEpisodeFacts Series,
     IReadOnlyDictionary<int, SonarrEpisodeFacts> Seasons);
 
-/// <summary>The Radarr and Sonarr answers gathered for one Seerr response.</summary>
 internal sealed record ArrFacts(
     IReadOnlyDictionary<int, RadarrMovieFacts> MoviesByTmdb,
     IReadOnlyDictionary<int, SonarrSeriesFacts> SeriesByTvdb)
@@ -42,7 +40,6 @@ internal static class MediaActivity
     public const string Unreleased = "unreleased";
     public const string AwaitingEpisodes = "awaiting-episodes";
 
-    /// <summary>Seerr's MediaStatus.PROCESSING.</summary>
     public const int ProcessingStatus = 3;
 
     /// <summary>

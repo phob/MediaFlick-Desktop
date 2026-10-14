@@ -27,8 +27,5 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string ProtectedMdbListApiKey { get; set; } = string.Empty;
 
-    /// <summary>
-    /// ASP.NET Data Protection ciphertext for TMDB-backed collection features.
-    /// </summary>
     public string ProtectedTmdbApiKey { get; set; } = string.Empty;
 }

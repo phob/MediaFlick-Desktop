@@ -8,7 +8,6 @@ import { TestProviders } from "./test-utils"
 import { playerSnapshot } from "./support/fixtures"
 import { clientSettingsFixture } from "./support/settings"
 
-// Longer than any plausible auto-hide delay, so the test does not pin one.
 const IDLE_MS = 10_000
 
 describe("integrated libmpv overlay", () => {

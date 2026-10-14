@@ -1,5 +1,3 @@
-/// The discovery rows the UI can ask for. An enum rather than a string so a
-/// path segment from the page can never reach the address unchecked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoverKind {
     Trending,
@@ -140,8 +138,6 @@ impl DiscoverOptions {
                     .ok_or_else(|| "minimum rating must be between 0 and 10".to_string())
             })
             .transpose()?;
-        // Keep the public contract narrower than arbitrary upstream dates and
-        // use the same twentieth-century boundary for films and television.
         let current_decade = UtcDate::today().decade();
         let release_decade = release_decade
             .map(|value| {
@@ -185,7 +181,6 @@ impl DiscoverOptions {
         })
     }
 
-    /// Query pairs accepted by the typed Companion discovery route.
     pub fn query_pairs(&self, kind: DiscoverKind, page: i64) -> Vec<(&'static str, String)> {
         let mut query = vec![("page", page.clamp(1, 1_000).to_string())];
 

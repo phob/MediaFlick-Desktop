@@ -352,8 +352,6 @@ function LetterboxdReviewSection({
     data: LetterboxdReviewsResponse | undefined
   }
 }) {
-  // Reserve no space while the lookup is in flight: without cached data there
-  // is nothing to show yet, so the section appears only once reviews exist.
   if (lookup.isPending) return null
 
   if (lookup.error) {

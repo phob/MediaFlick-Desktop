@@ -81,8 +81,6 @@ public sealed class SeerrGateway
         }
         catch (GatewayException exception)
         {
-            // Permissions remain useful if this optional usage counter is
-            // temporarily unavailable. The HTTP client logs upstream outages.
             _logger.LogDebug(
                 "Seerr quota lookup failed with status {StatusCode}; returning permissions without quota",
                 exception.StatusCode);
@@ -522,8 +520,6 @@ public sealed class SeerrGateway
             return cached;
         }
 
-        // One lookup at a time: concurrent first requests from the same user
-        // share a single user scan instead of each paging through Seerr.
         await _lookupGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -736,9 +732,6 @@ public sealed class SeerrGateway
             results);
     }
 
-    /// <summary>
-    /// Acting credits, then crew credits for a key job, before deduplication.
-    /// </summary>
     private static IEnumerable<JsonObject> PersonCredits(JsonObject? credits)
         => Objects(credits?["cast"])
             .Where(static credit => !string.Equals(

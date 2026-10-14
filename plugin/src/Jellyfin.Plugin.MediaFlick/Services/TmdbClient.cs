@@ -237,7 +237,6 @@ internal sealed class TmdbHttpTransport : ITmdbTransport, IDisposable
         }
         else
         {
-            // Per-request outcomes such as a title or image that does not exist.
             _logger.LogDebug("{Service} returned HTTP {StatusCode}", subject, code);
         }
     }

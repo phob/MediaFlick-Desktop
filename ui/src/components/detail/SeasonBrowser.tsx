@@ -128,8 +128,6 @@ function EpisodeCard({
       <div
         className={cn(
           "media-frame relative aspect-video overflow-hidden rounded-media bg-card",
-          // The accent ring is the "you are here" mark: the next-up season is
-          // preselected, and this pins the eye to the episode inside it.
           nextUp ? "ring-2 ring-primary" : "ring-1 ring-hairline",
         )}
       >
@@ -205,7 +203,6 @@ function EpisodeCard({
   )
 }
 
-/** The episode grid's existing labelled controls when expanded previews are on. */
 function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId: string }) {
   const play = usePlay()
   const setPlayed = useSetPlayed()
@@ -213,8 +210,6 @@ function EpisodeActions({ episode, parentId }: { episode: ItemSummary; parentId:
   const resumable = episode.positionTicks > 0
 
   return (
-    // The controls stay mounted so keyboard users can reach them; only their
-    // opacity follows the pointer.
     <div className="absolute inset-x-0 bottom-0 z-[2] flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
       <Button
         size="sm"
@@ -285,7 +280,6 @@ function EpisodeGridSkeleton() {
   )
 }
 
-/** The series page's episode browser: the season rail over the episode grid. */
 export function SeasonBrowser({
   seasons,
   selectedSeason,

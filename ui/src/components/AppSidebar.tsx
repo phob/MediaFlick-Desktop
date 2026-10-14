@@ -65,13 +65,11 @@ const NAV = [
   { title: "Favorites", to: "/library?favorite=true", icon: Heart },
 ]
 
-/** Shown only when Companion advertises its typed Seerr capability. */
 const SEERR_NAV = [
   { title: "Discover", to: "/discover", icon: Compass },
   { title: "Requests", to: "/requests", icon: Inbox },
 ]
 
-/** `http://jellyfin.local:8096/` → `jellyfin.local:8096`, unparseable → as-is. */
 function serverLabel(url: string | null | undefined) {
   if (!url) return "Not connected"
   try {
@@ -93,12 +91,8 @@ export function SearchBox() {
     },
     [locationSearch, navigate],
   )
-  // The library URL owns committed searches. The draft can temporarily hold a
-  // one-character term while the corresponding unfiltered URL remains active.
   const [search, setSearch, flushSearch] = useLiveSearch(locationSearch, commitSearch)
 
-  // Collapsed to icons there is no room for a field, so the icon stands in for
-  // it: expanding and focusing is the same gesture as clicking into it.
   if (state === "collapsed") {
     return (
       <SidebarMenu>
@@ -346,8 +340,6 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
             <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-media bg-primary text-primary-foreground shadow-lg shadow-primary/25">
               <Film className="size-4" />
             </div>
-            {/* "Flick" carries the accent, so the wordmark states the palette
-                the rest of the shell is built from. */}
             <span className="truncate text-[0.95rem] font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
               Media<span className="text-primary">Flick</span>
             </span>

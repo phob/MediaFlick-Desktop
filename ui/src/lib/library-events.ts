@@ -3,7 +3,6 @@ import { useEffect } from "react"
 import { invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds } from "./shell-events"
 
-/** Relays native background metadata commits into React Query's active views. */
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
@@ -33,7 +32,6 @@ export function useLibraryMetadataBridge() {
       const itemIds = shellEventIds(detail.payload.itemIds)
       const contextIds = shellEventIds(detail.payload.contextIds)
       if (detail.type === "catalog-changed") {
-        // Show the first page immediately, then bound aggregate work during a burst.
         invalidateLibraryChanged(queryClient, itemIds, contextIds, catalogTimer ? "items" : "catalog")
         if (catalogTimer) catalogPending = true
         else catalogTimer = setTimeout(flushCatalog, 1_000)

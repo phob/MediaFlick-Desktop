@@ -110,7 +110,6 @@ function resultSignature(profile: CollectionProfileDraft) {
 type CollectionSettingsDraft = {
   modeSelection: CollectionSettings["effectiveMode"]
   includeUnreleased: boolean
-  /** Saved order, including profiles staged for deletion. */
   profileIds: string[]
   deletedProfileIds: string[]
 }
@@ -190,7 +189,6 @@ function ConfiguredProfiles({ profileIds, deletedProfileIds, onProfileIdsChange,
   const profiles = profileIds.map((id) => byId.get(id)).filter((profile): profile is CollectionProfile => Boolean(profile))
   const kept = profiles.filter((profile) => !deletedProfileIds.includes(profile.id))
   const disabled = !settings.data
-  // Swap within the kept profiles; staged deletions keep their slots until Save removes them.
   const reorder = (from: number, to: number) => {
     if (to < 0 || to >= kept.length) return
     const next = [...profileIds]
@@ -671,7 +669,6 @@ export default function CollectionSettingsPage() {
     mutationFn: async (value: CollectionSettingsDraft) => {
       const savedIds = savedDraft?.profileIds ?? []
       const kept = (ids: string[]) => ids.filter((id) => !value.deletedProfileIds.includes(id))
-      // Skip deletions that an earlier, partly failed save already completed.
       const deletions = value.deletedProfileIds.filter((id) => savedIds.includes(id))
       for (const id of deletions) await api.collections.deleteProfile(id)
       const nextSettings = await api.collections.patchSettings({

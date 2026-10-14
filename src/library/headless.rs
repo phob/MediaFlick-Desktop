@@ -1,5 +1,3 @@
-//! Headless entry points for verifying the cache without starting CEF.
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,7 +6,6 @@ use crate::jellyfin::session::Session;
 
 use super::{Library, sync};
 
-/// Backs `--library-stats`: prints what the local cache currently holds.
 pub fn print_stats() -> i32 {
     let Some(library) = open() else {
         return 1;
@@ -54,7 +51,6 @@ pub fn print_stats() -> i32 {
     0
 }
 
-/// Backs `--library-sync-once`: runs a single sync cycle synchronously.
 pub fn sync_once() -> i32 {
     let Some(library) = open() else {
         return 1;
@@ -65,8 +61,6 @@ pub fn sync_once() -> i32 {
         eprintln!("not signed in: start the app and sign in first");
         return 2;
     }
-    // Running this by hand is an explicit ask, so it reconciles deletions even
-    // if the background thread swept less than an hour ago.
     match sync::run_cycle(&library, &session, sync::Trigger::Requested) {
         Ok(report) => {
             println!(

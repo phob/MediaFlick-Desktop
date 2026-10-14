@@ -131,9 +131,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
   const reducedMotion = systemReducedMotion || appearance.reducedMotion
   const home = useHome()
   const savedRatings = useContext(RatingsContext)
-  // The unsaved source selection drives which overlays render; the fetched
-  // ratings and the shared request scheduler stay the provider's own, so the
-  // preview never issues requests of its own.
   const draftRatings = useMemo<RatingsContextValue | null>(
     () => savedRatings && { ...savedRatings, selected: appearance.ratingSources },
     [savedRatings, appearance.ratingSources],
@@ -161,9 +158,6 @@ function AppearancePreview({ appearance, previewDelay }: { appearance: Appearanc
     PANEL_HOST.style.setProperty("--backdrop-intensity", String(appearance.backdropIntensity / 100))
   }, [appearance.accent, appearance.density, appearance.artworkIntensity, appearance.backdropIntensity, reducedMotion])
   const shelfRef = useRef<HTMLDivElement>(null)
-  // Inert per link keeps it out of tab order, activation, and hit-testing, so
-  // a pointer over the artwork targets the card around it and the real hover
-  // rules fire exactly as they do on an actual shelf.
   useEffect(() => {
     for (const link of shelfRef.current?.querySelectorAll("a") ?? []) {
       link.setAttribute("inert", "")
@@ -323,7 +317,6 @@ export function Appearance() {
     setDraft({ ...draft, [key]: value })
   const validIntensity = (value: number) => isSettingsNumberValid(value, 0, 100)
   const validDelay = previewDelay === undefined || isSettingsNumberValid(previewDelay, ...PREVIEW_DELAY_RANGE)
-  // The preview keeps the last saved value for a number that is mid-edit.
   const previewAppearance = {
     ...draft,
     artworkIntensity: validIntensity(draft.artworkIntensity)

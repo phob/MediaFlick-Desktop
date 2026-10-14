@@ -52,9 +52,6 @@ function QualityPicker() {
         toast.success(`Next playback uses ${label}.`)
       }}
     >
-      {/* Opaque with the poster's drop shadow: the trigger floats over the
-          full-bleed backdrop, where a transparent control disappears on art
-          with light sky or sand. */}
       <SelectTrigger
         size="sm"
         aria-label="Streaming quality"
@@ -76,7 +73,6 @@ function QualityPicker() {
   )
 }
 
-/** Opens an exact provider-id match in the system browser. */
 function ExternalLinks({ item }: { item: ItemDetail }) {
   const open = useOpenExternal()
   const links = externalLinksFor(item)
@@ -166,8 +162,6 @@ export function DetailActions({
           aria-pressed={item.favorite}
           onClick={() => setFavorite.mutate({ id: item.id, favorite: !item.favorite })}
         >
-          {/* The accent, not the conventional red heart: destructive is the one
-              colour in this palette that means something has gone wrong. */}
           <Heart className={item.favorite ? "size-4 fill-current text-primary" : "size-4"} />
         </Button>
         <RequestSeasonsButton item={item} />

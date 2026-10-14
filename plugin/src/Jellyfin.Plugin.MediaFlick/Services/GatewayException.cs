@@ -16,6 +16,5 @@ public sealed class GatewayException : Exception
 
     public int StatusCode { get; }
 
-    /// <summary>Why an upstream service call failed, when one was attempted.</summary>
     public ServiceFailure? Failure { get; }
 }

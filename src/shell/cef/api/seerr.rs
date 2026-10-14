@@ -41,8 +41,6 @@ pub(super) fn route(
     Some(response)
 }
 
-/// Runs one Companion call for the signed-in account. The account is fixed
-/// before the call, so a late 401 from its token cannot expire a newer one.
 fn companion_call(
     services: &Arc<Services>,
     call: impl FnOnce() -> Result<Value, ApiError>,
@@ -106,8 +104,6 @@ fn join_server_person_availability(
     Ok(())
 }
 
-/// Jellyfin's exact-id endpoint accepts a bounded list, so the usual cast page
-/// proves all extra titles with one request instead of one request per credit.
 const EXTRA_OWNERSHIP_FETCH_CHUNK: usize = 100;
 
 /// Proves which Seerr credits exist on the server even though Jellyfin's own
@@ -190,9 +186,6 @@ fn verify_off_filmography_titles(
     verified
 }
 
-/// Every page of one exact person's live Jellyfin filmography, joined into the
-/// credits as owned. Returns the filmography's title identities so callers can
-/// tell which credits the relation answered for.
 fn fetch_person_filmography(
     client: &JellyfinClient,
     user_id: &str,
@@ -233,8 +226,6 @@ fn fetch_person_filmography(
     ))
 }
 
-/// Seerr names movie credits `movie` and series credits `tv`; seasons and
-/// episodes have no Seerr credit a card could represent.
 fn seerr_media_type(item_type: &str) -> Option<&'static str> {
     match item_type {
         "Movie" => Some("movie"),
@@ -264,8 +255,6 @@ fn credit_keys(value: &Value) -> impl Iterator<Item = (String, i64)> + '_ {
         })
 }
 
-/// Credits Jellyfin's filmography did not answer for, deduplicated in credit
-/// order so proven extras retain the provider's ordering.
 fn unmatched_credit_keys(
     value: &Value,
     filmography: &HashSet<(String, i64)>,
@@ -285,8 +274,6 @@ fn clear_person_availability(value: &mut Value) {
     }
 }
 
-/// Marks the credits these server items satisfy as locally owned, so the UI
-/// suppresses them from Discover instead of offering a redundant request.
 fn mark_owned_credits(value: &mut Value, owned: &[BaseItemDto]) {
     let owned: HashMap<_, _> = owned
         .iter()

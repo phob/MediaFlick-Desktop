@@ -21,17 +21,14 @@ import { cn } from "@/lib/utils"
 import { useViewing } from "@/lib/viewing"
 
 const UPCOMING_DAYS = 90
-/** How far back the shelf looks for releases that should have arrived. */
 const RECENT_DAYS = 30
 const UPCOMING_LIMIT = 24
-/** The share of the shelf given to recent releases when both sides can fill it. */
 const RECENT_SHARE = 0.3
 
 type ReleaseStatus = "downloaded" | "missing"
 
 interface UpcomingShelfEntry {
   entry: CalendarEntry
-  /** Dated before today. */
   past: boolean
   /** Set only for past releases; a future date has nothing to be missing yet. */
   status: ReleaseStatus | null
@@ -72,9 +69,7 @@ function isDownloaded(entry: CalendarEntry) {
 }
 
 function shelfKey(entry: CalendarEntry, past: boolean, premieres: Set<string>) {
-  // Same-day later episodes of a season premiere fold into its one card.
   if (entry.kind === "episode" && premieres.has(seasonDay(entry))) return `${upcomingIdentity(entry)}:${entry.season}:premiere`
-  // A released movie is one card at its latest release, not one per channel.
   if (entry.kind === "movie" && past) return `released:${upcomingIdentity(entry)}`
   return `${entry.kind}:${entry.dateKind}:${entry.date}:${entry.tmdbId ?? entry.tvdbId ?? entry.title}`
 }
@@ -97,7 +92,6 @@ function upcomingEntries(entries: CalendarEntry[], today: string): UpcomingShelf
   const groups = new Map<string, CalendarEntry[]>()
   for (const entry of eligible) {
     const past = entry.date < today
-    // A cinema run is not a release anyone can have downloaded.
     if (past && entry.kind === "movie" && entry.dateKind === "cinema") continue
     const key = shelfKey(entry, past, premieres)
     const group = groups.get(key)
@@ -153,8 +147,6 @@ function UpcomingCard({ entry, past, status }: UpcomingShelfEntry) {
   const itemId = entry.kind === "episode"
     ? newSeason ? entry.seriesLibraryItemId : entry.libraryItemId ?? entry.seriesLibraryItemId
     : entry.libraryItemId
-  // Episodes show their series' poster. A title not in the library yet falls
-  // back to the TMDB poster the Companion found for it.
   const posterOwner = entry.kind === "episode" ? entry.seriesLibraryItemId : entry.libraryItemId
   const posters = [
     posterOwner ? imageUrl({ id: posterOwner, primaryImageTag: null }) : null,
@@ -164,8 +156,6 @@ function UpcomingCard({ entry, past, status }: UpcomingShelfEntry) {
   const image = posters[imageIndex]
   const title = entry.kind === "episode" ? entry.seriesTitle ?? entry.title : entry.title
   const code = episodeCode(entry)
-  // As in the calendar, episode names stay hidden under spoiler protection:
-  // whether this user has watched an entry is not known here.
   const episodeName = !newSeason && viewing.data?.spoilerProtection === false ? entry.title : null
   const subtitle = entry.kind === "episode"
     ? [code, episodeName].filter(Boolean).join(" · ") || "Episode"
@@ -214,7 +204,6 @@ function TodayMark() {
 function UpcomingRow({ entries }: { entries: UpcomingShelfEntry[] }) {
   if (!entries.length) return null
   const first = entries[0].entry
-  // Only a boundary inside the shelf is marked; at either end it would mark nothing.
   const todayIndex = entries.findIndex((item) => !item.past)
   return (
     <MediaRail title="Releases" viewAll="/calendar" itemCount={entries.length} resetKey={`${first.kind}-${first.date}`}>

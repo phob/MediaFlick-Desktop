@@ -1,11 +1,5 @@
-// Minimal Chrome DevTools Protocol client for driving a running MediaFlick
-// Desktop started with `--remote-debugging-port`. Node's built-in WebSocket is
-// enough; no browser automation dependency is needed.
-
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// Attaches to the first page target the predicate accepts; by default the
-// MediaFlick Desktop app page.
 export async function connect(port, accept = (target) => target.url.startsWith("mediaflick-desktop://app")) {
   let page
   for (let attempt = 0; attempt < 120 && !page; attempt++) {
@@ -13,7 +7,6 @@ export async function connect(port, accept = (target) => target.url.startsWith("
       const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
       page = targets.find((target) => target.type === "page" && accept(target))
     } catch {
-      // The app is still starting.
     }
     if (!page) await sleep(500)
   }
@@ -71,14 +64,10 @@ export async function connect(port, accept = (target) => target.url.startsWith("
     throw new Error(`timed out waiting for ${expression}`)
   }
 
-  // Client-side navigation keeps the running app state; a reload would follow
-  // the startup-page setting instead of the requested route.
   async function route(path) {
     await evaluate(`(history.pushState(null, "", ${JSON.stringify(path)}), dispatchEvent(new PopStateEvent("popstate")), true)`)
   }
 
-  // Real keyboard input, so React's controlled inputs and debounced search
-  // see the same events a user produces.
   async function type(selector, text, { delay = 0, clear = true } = {}) {
     await evaluate(`(() => {
       const element = document.querySelector(${JSON.stringify(selector)})
@@ -107,7 +96,6 @@ export async function connect(port, accept = (target) => target.url.startsWith("
     await send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", clickCount: 1 })
   }
 
-  // Centre of the first element matching the selector, in CSS pixels.
   async function center(selector) {
     return evaluate(`(() => {
       const element = document.querySelector(${JSON.stringify(selector)})

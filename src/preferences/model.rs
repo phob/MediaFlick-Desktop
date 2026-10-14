@@ -56,9 +56,6 @@ pub struct AppSettings {
         deserialize_with = "deserialize_binding"
     )]
     pub mark_watched_next: Option<String>,
-    /// Visual preferences intentionally live with the otherwise flat legacy
-    /// configuration. The API exposes them as a coherent section without
-    /// forcing existing installations through a risky file migration.
     #[serde(default, skip_serializing_if = "AppearanceSettings::is_default")]
     pub appearance: AppearanceSettings,
 }
@@ -81,12 +78,8 @@ pub struct AppearanceSettings {
     pub backdrop_intensity: u8,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reduced_motion: bool,
-    /// Expanded panels shown after resting the pointer on a media card.
     #[serde(default = "default_card_previews", skip_serializing_if = "is_true")]
     pub card_previews: bool,
-    /// Technical video/audio facts shown over library card artwork. Enabled by
-    /// default to preserve the card presentation from releases that predate
-    /// this preference.
     #[serde(default = "default_show_media_info", skip_serializing_if = "is_true")]
     pub show_media_info: bool,
     /// Canonical rating source IDs chosen for card overlays. This is ordinary
@@ -315,9 +308,6 @@ impl SegmentSkipMode {
     }
 }
 
-/// Player settings the adapter applies itself. They are pushed when the
-/// backend is built and whenever they change, so adapters never read settings
-/// files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerPreferences {
     pub segment_skip: SegmentSkipConfig,
@@ -326,7 +316,6 @@ pub struct PlayerPreferences {
     pub mark_watched_next: Option<String>,
 }
 
-/// Built-in player subtitle styling, from the Player settings comfort section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubtitleAppearance {
     /// Percent of mpv's default size.
@@ -375,8 +364,6 @@ pub enum PlayerBackend {
 }
 
 impl PlayerBackend {
-    /// The backend a fresh installation uses on this platform. Windows
-    /// releases and Linux AppImages bundle libmpv.
     pub fn platform_default() -> Self {
         if cfg!(any(target_os = "windows", target_os = "linux")) {
             Self::Libmpv
@@ -601,7 +588,6 @@ impl AppSettings {
         }
     }
 
-    /// What the player adapter applies itself, pushed to it on every change.
     pub fn player_preferences(&self) -> PlayerPreferences {
         PlayerPreferences {
             segment_skip: self.segment_skip_config(),
@@ -636,7 +622,6 @@ impl AppSettings {
     }
 }
 
-/// A trimmed binding; blank means disabled.
 pub fn clean_binding(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)

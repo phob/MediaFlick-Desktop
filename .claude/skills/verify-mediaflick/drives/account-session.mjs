@@ -15,7 +15,6 @@ export default async function accountSession(ctx) {
   ctx.check((await ctx.find(SERVER)).properties.value === ctx.account.server, "the Server field holds the account's server")
   await ctx.screenshot("01-signed-out")
 
-  // Sign in: Quick Connect, approved from outside the app.
   await ctx.signIn({})
   const signedIn = await status(ctx)
   ctx.check(signedIn.authenticated === true && signedIn.userName === user, `/api/status reports ${user}`)
@@ -23,7 +22,6 @@ export default async function accountSession(ctx) {
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
   await ctx.screenshot("02-signed-in")
 
-  // Sign out revokes the app's token on the server.
   const first = ctx.appSession()
   ctx.check((await first.status()) === 200, "the app's token is valid while signed in")
   await ctx.press(userMenu(ctx, user))
@@ -36,15 +34,11 @@ export default async function accountSession(ctx) {
   await ctx.until(async () => (await ctx.find(SERVER)).properties.value === ctx.account.server, "the remembered server after sign-out")
   await ctx.snapshot("03-signed-out-again")
 
-  // A token revoked elsewhere: the next server call expires the session.
   await ctx.signIn({})
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home after signing in again")
   const second = ctx.appSession()
   await second.revoke()
   ctx.check((await second.status()) === 401, "the revoked token is rejected")
-  // The next server call gets 401 and expires the session. A sync still
-  // running from the sign-in makes one at once; otherwise opening a library
-  // page does within about a second.
   await ctx.sleep(3000)
   if ((await status(ctx)).expired !== true) {
     ctx.step("no server call yet; opening Movies")

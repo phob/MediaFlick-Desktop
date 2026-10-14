@@ -78,8 +78,6 @@ export function CollectionTitleGrid<T>({
 
   const rows = Math.ceil(items.length / layout.columns)
   const ready = scroller !== null && layout.scrollMargin !== null
-  // TanStack Virtual is intentionally outside compiler memoization. Its
-  // current diagnostics do not recognize the explicit compiler opt-out.
   // oxlint-disable-next-line react/incompatible-library -- upstream false positive after explicit compiler opt-out
   const virtualizer = useVirtualizer({
     count: rows,

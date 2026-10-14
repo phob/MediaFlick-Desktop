@@ -30,7 +30,6 @@ function Resolve-InnoCompiler {
     param([string]$ExplicitCompiler)
 
     $Candidates = @()
-    # Environment/explicit inputs win over local developer defaults.
     if ($ExplicitCompiler) { $Candidates += $ExplicitCompiler }
     $Candidates += "C:\Users\pho\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 

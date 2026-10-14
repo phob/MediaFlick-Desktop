@@ -1,6 +1,3 @@
-//! Blocking Jellyfin REST client shared by auth, the library sync thread, the
-//! app-scheme API, and the play path.
-
 use std::fmt;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -11,19 +8,11 @@ use serde::de::DeserializeOwned;
 use crate::app::build_info;
 use crate::app::urls::{build_query, join_url};
 
-/// A sync page carries full metadata for hundreds of items, which a remote
-/// server can take a while to assemble, so the overall budget is generous.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
-/// Reaching the server at all must still fail fast, so an unreachable address
-/// on the sign-in screen does not appear to hang.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 3;
-/// The budget above is per attempt, so retries must share one deadline of their
-/// own: otherwise a stalling server holds a caller — the sign-in screen, the UI
-/// thread waiting on an API answer — for `MAX_ATTEMPTS` × `HTTP_TIMEOUT`.
 const RETRY_BUDGET: Duration = HTTP_TIMEOUT;
 
-/// Value reported to the Jellyfin Devices dashboard as the client name.
 pub const CLIENT_NAME: &str = build_info::APP_NAME;
 
 #[derive(Debug, Clone)]
@@ -37,30 +26,18 @@ pub struct ByteResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
-    /// The server rejected our token. The session must be re-established.
     Unauthorized,
-    /// Any other non-success HTTP status.
     Status { status: u16 },
-    /// The server asked clients to slow down. Seconds are retained from a
-    /// numeric `Retry-After` header so background work does not hammer it.
     RateLimited { retry_after_secs: Option<u64> },
-    /// A typed companion endpoint refused the action and supplied a safe
-    /// user-facing explanation.
     Remote { status: u16, message: String },
-    /// Connection, DNS, TLS, or timeout failure.
     Transport(String),
-    /// The response body did not match the expected shape.
     Decode(String),
-    /// The local library database failed, not Jellyfin.
     Storage(String),
-    /// No server URL is configured, or no session exists yet.
     NotConfigured,
-    /// Local application shutdown cancelled work between bounded requests.
     Cancelled,
 }
 
 impl ApiError {
-    /// Whether retrying the same request could plausibly succeed.
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::Transport(_) | Self::RateLimited { .. } => true,
@@ -82,7 +59,6 @@ impl ApiError {
         }
     }
 
-    /// HTTP status to surface to our own UI for this failure.
     pub fn client_status(&self) -> u16 {
         match self {
             Self::Unauthorized => 401,
@@ -122,7 +98,6 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
-/// An authenticated (or anonymous) handle to one Jellyfin server.
 #[derive(Clone)]
 pub struct JellyfinClient {
     agent: ureq::Agent,
@@ -184,15 +159,11 @@ impl JellyfinClient {
         &self.device_id
     }
 
-    /// Only the tests read the raw token now: everything that sends it uses
-    /// [`Self::authorization_header`] or [`Self::auth_headers`], so it never
-    /// reaches a URL.
     #[cfg(test)]
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref()
     }
 
-    /// The `Authorization: MediaBrowser …` header every Jellyfin client sends.
     pub fn authorization_header(&self) -> String {
         let mut header = format!(
             "MediaBrowser Client=\"{}\", Device=\"{}\", DeviceId=\"{}\", Version=\"{}\"",
@@ -207,7 +178,6 @@ impl JellyfinClient {
         header
     }
 
-    /// Auth headers suitable for handing to an external player or another agent.
     pub fn auth_headers(&self) -> Vec<crate::playback::HttpHeader> {
         let mut headers = vec![crate::playback::HttpHeader {
             name: "Authorization".to_string(),
@@ -300,7 +270,6 @@ impl JellyfinClient {
         read_json(response, Diagnostics::Relayed)
     }
 
-    /// POST that ignores the response body (Jellyfin often answers 204).
     pub fn post_empty<B: Serialize>(
         &self,
         path: &str,
@@ -387,8 +356,6 @@ impl JellyfinClient {
         read_json(response, Diagnostics::Withheld)
     }
 
-    /// Info feeds the native capability/status surface. Keep malformed or
-    /// failed plugin diagnostics out of that publicly serialized state too.
     pub fn companion_get_info_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let url = self.url(path, &[]);
         let response =
@@ -406,14 +373,12 @@ impl JellyfinClient {
         .map(|_| ())
     }
 
-    /// The headers every JSON request carries.
     fn json<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
         request
             .header("Accept", "application/json")
             .header("Authorization", self.authorization_header())
     }
 
-    /// One core Jellyfin request, retried while its failure is transient.
     fn core_send(
         &self,
         path: &str,
@@ -424,8 +389,6 @@ impl JellyfinClient {
         })
     }
 
-    /// One MediaFlick Companion request. Reads retry like core requests; writes
-    /// run once, because a retried POST could file a second Seerr request.
     fn companion_send(
         &self,
         path: &str,
@@ -501,18 +464,12 @@ enum Attempts {
     Once,
 }
 
-/// Whether a companion failure may carry the plugin's own wording. Ratings and
-/// the capability probe withhold it: the plugin owns provider credentials, and
-/// those answers feed publicly serialized state.
 #[derive(Debug, Clone, Copy)]
 enum Diagnostics {
     Relayed,
     Withheld,
 }
 
-/// Both agents keep HTTP error statuses as responses, so ureq only fails for
-/// transport problems (connect, TLS, timeout, protocol); statuses are mapped by
-/// [`core_response`] and [`companion_response`].
 fn transport_error(error: &ureq::Error) -> ApiError {
     ApiError::Transport(error.to_string())
 }
@@ -591,7 +548,6 @@ fn companion_status_error(response: &mut Response, status: u16) -> ApiError {
     ApiError::Remote { status, message }
 }
 
-/// Jellyfin shows this in the Devices dashboard; the hostname keeps it useful.
 fn device_name() -> String {
     for variable in ["COMPUTERNAME", "HOSTNAME", "HOST"] {
         if let Some(value) = std::env::var_os(variable)
@@ -604,8 +560,6 @@ fn device_name() -> String {
     "Desktop".to_string()
 }
 
-/// Header parameter values are double-quoted, so quotes and control characters
-/// must not survive into them.
 fn quote(value: &str) -> String {
     value
         .chars()
@@ -654,8 +608,6 @@ mod tests {
         request_line.trim_end().to_string()
     }
 
-    /// Answers each request in turn with `responses`, returning the request
-    /// lines it received.
     fn serve(responses: Vec<&'static str>) -> (String, thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let address = format!("http://{}", listener.local_addr().expect("address"));

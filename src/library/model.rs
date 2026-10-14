@@ -1,5 +1,3 @@
-//! Row shapes for the metadata cache and their translation from Jellyfin DTOs.
-
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -76,7 +74,6 @@ impl TrackPreference {
     }
 }
 
-/// The media source identity saved with the selected tracks.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MediaSourcePreference {
@@ -119,8 +116,6 @@ impl ItemPlaybackPreference {
     }
 }
 
-/// A stored preference resolved against the media sources currently reported
-/// by Jellyfin. This is the small index mapping the UI and play negotiation use.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedPlaybackPreference {
@@ -132,9 +127,6 @@ pub struct ResolvedPlaybackPreference {
     pub subtitle_stream_index: Option<i64>,
 }
 
-/// Resolves an optional stored selection to safe, current source/track indices.
-/// Missing or changed source/track identities fall back to the same server
-/// defaults used by playback instead of applying a now-unrelated stream index.
 pub fn resolve_playback_preference(
     preference: Option<&ItemPlaybackPreference>,
     sources: &[MediaSourceInfo],
@@ -288,9 +280,6 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
-/// Whether a DTO's kind belongs in the catalog index at all. Guarding here
-/// keeps live single-item fetches (which can resolve people, folders, or other
-/// non-library kinds) from writing rows browsing would then surface.
 pub(crate) fn is_synced_kind(kind: &str) -> bool {
     matches!(kind, "Movie" | "Series" | "Season" | "Episode")
 }
@@ -389,7 +378,6 @@ impl ItemRecord {
     }
 }
 
-/// Watch state mirrored from the server and from our own playback reporting.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UserDataRecord {
     pub jellyfin_id: String,
@@ -415,7 +403,6 @@ impl UserDataRecord {
     }
 }
 
-/// Counts shown on the status card and by `--library-stats`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryStats {
@@ -470,8 +457,6 @@ pub struct ItemSummary {
     pub position_ticks: i64,
     pub favorite: bool,
     pub unplayed_count: Option<i64>,
-    /// An episode synopsis. The cache never stores prose, so only a child
-    /// list that a live reconcile answered carries it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
 }
@@ -532,7 +517,6 @@ pub struct ProviderIds {
 }
 
 impl ProviderIds {
-    /// The id for a provider named as in `providerIds`.
     pub fn get(&self, provider: &str) -> Option<&str> {
         match provider {
             "tmdb" => self.tmdb.as_deref(),
@@ -598,8 +582,6 @@ mod tests {
             old.streams_of_type("Subtitle")
                 .find(|stream| stream.index == 4),
         );
-        // The same absolute indices now describe different tracks. Applying
-        // them would silently play the wrong language, so both use defaults.
         let changed = media_source(
             r#"{"Id":"src","DefaultAudioStreamIndex":1,"DefaultSubtitleStreamIndex":3,
                 "MediaStreams":[

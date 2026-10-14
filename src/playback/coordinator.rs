@@ -75,9 +75,6 @@ impl PlaybackCoordinator {
     }
 
     pub fn open(&self, path: String, fullscreen: FullscreenBehavior, request: PlaybackRequest) {
-        // The backend and executable are one runtime choice. A settings save
-        // may persist a different window model for the next launch, but the
-        // running coordinator must keep feeding its already-warmed backend.
         let path = self
             .player_path
             .lock()
@@ -110,7 +107,6 @@ mod tests {
 
     use super::*;
 
-    /// Blocks in `native_window` until the test releases it.
     struct WaitingBackend {
         entered: Mutex<mpsc::Sender<()>>,
         release: Mutex<mpsc::Receiver<()>>,

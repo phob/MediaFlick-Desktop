@@ -106,8 +106,6 @@ export const SeerrCard = memo(function SeerrCard({
 
   const destination = {
     pathname: `/discover/${result.mediaType}/${result.tmdbId}`,
-    // Keeping the browse query on the detail URL makes the explicit Back link
-    // as reliable as browser Back, including after a reload.
     search: location.pathname === "/discover" ? location.search : "",
   }
 

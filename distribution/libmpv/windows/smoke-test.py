@@ -1,5 +1,3 @@
-"""Exercise the packaged Windows gpu-next renderer without user configuration."""
-
 import argparse
 import ctypes as c
 from pathlib import Path
@@ -52,8 +50,6 @@ def render_video(library, directory, warp):
         if lib.mpv_initialize(handle) < 0:
             raise RuntimeError("libmpv initialization failed")
 
-        # Local, deterministic video forces shader compilation and presentation;
-        # a version query or successful mpv_initialize alone misses GPU failures.
         media = directory / "video.y4m"
         frame = bytes([128]) * (64 * 64 * 3 // 2)
         media.write_bytes(
@@ -85,8 +81,6 @@ def render_video(library, directory, warp):
 
 
 def smoke_test(library, warp):
-    # Native crashes and initialization/shutdown hangs must fail the packaging
-    # job instead of taking down its runner or leaving it waiting indefinitely.
     with tempfile.TemporaryDirectory(prefix="mediaflick-windows-gpu-") as temp:
         directory = Path(temp)
         command = [

@@ -196,9 +196,6 @@ impl LibmpvOverlaySurface {
         if module.is_null() {
             return Err(io::Error::last_os_error().to_string());
         }
-        // The window owns this strong reference until WM_NCDESTROY. Passing
-        // the raw pointer through CREATESTRUCT keeps the Rust surface alive
-        // for every message the native child can receive.
         let retained = Rc::into_raw(Rc::clone(self));
         // SAFETY: INPUT_CLASS is a registered, NUL-terminated class name and
         // `retained` is a live surface pointer; input_wndproc stores it at
@@ -377,8 +374,6 @@ impl LibmpvOverlaySurface {
         true
     }
 
-    /// The user's close request. Leaves the overlay running when the window
-    /// minimizes or the page keeps it open.
     fn request_close(&self) {
         let browser = self.browser.borrow().clone();
         request_main_window_close(Some(&self.state), browser, || {
@@ -1324,7 +1319,6 @@ mod tests {
 
     #[test]
     fn an_unspecified_display_refresh_falls_back_to_60_hz() {
-        // DEVMODE reports 0 or 1 for the hardware's default refresh rate.
         for reported in [0, 1] {
             assert_eq!(super::usable_frame_rate(reported), 60);
         }

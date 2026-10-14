@@ -1,5 +1,3 @@
-"""Stage a public Jellyfin test catalog without publishing a GitHub release."""
-
 import argparse
 import json
 import shutil
@@ -16,7 +14,6 @@ def main():
     plugin = manifest[0]
     release = plugin["versions"][0]
     version = release["version"]
-    # This tool only consumes the package tool's numeric Jellyfin versions.
     if len(version.split(".")) not in (3, 4) or not all(part.isascii() and part.isdigit() for part in version.split(".")):
         parser.error("invalid package version")
     destination = args.repository_dir / "packages" / version

@@ -8,13 +8,8 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
-/// Bump whenever the schema changes. Pre-1.0 databases are not migrated: an
-/// older version is dropped wholesale and recreated, and the app resyncs the
-/// catalog from the server.
 pub const SCHEMA_VERSION: i32 = 18;
 
-/// Connections kept alive between queries. The UI issues a handful of parallel
-/// reads at most; the sync thread holds one for the length of a page.
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
 pub struct Database {
@@ -24,7 +19,6 @@ pub struct Database {
 }
 
 impl Database {
-    /// Opens (creating if needed) the database and ensures the current schema.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
@@ -45,7 +39,6 @@ impl Database {
         Ok(database)
     }
 
-    /// An in-memory database for tests.
     #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -94,7 +87,6 @@ impl Database {
         }
     }
 
-    /// Runs `work` against a pooled connection.
     pub fn with_connection<T>(
         &self,
         work: impl FnOnce(&Connection) -> rusqlite::Result<T>,
@@ -111,12 +103,10 @@ impl Database {
     pub fn optimize(&self) -> rusqlite::Result<()> {
         let connection = self.acquire()?;
         let result = (|| {
-            // Bounds each ANALYZE to a sample so a large catalog stays cheap.
             connection.pragma_update(None, "analysis_limit", 1000)?;
             connection.pragma_update(None, "optimize", 0x10002)
         })();
         if result.is_ok() {
-            // Closed after the pool lock is released.
             let retired = self
                 .idle
                 .lock()
@@ -128,7 +118,6 @@ impl Database {
         result
     }
 
-    /// Runs `work` inside a transaction, committing only on success.
     pub fn with_transaction<T>(
         &self,
         work: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>,
@@ -152,7 +141,6 @@ fn read_write_flags() -> OpenFlags {
 }
 
 fn configure(connection: &Connection) -> rusqlite::Result<()> {
-    // WAL keeps the sync thread's writes from blocking UI reads.
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -397,8 +385,6 @@ fn drop_everything(connection: &Connection) -> rusqlite::Result<()> {
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
-    // Referential actions between the historical tables all cascade towards
-    // `items`; dropping with foreign keys off sidesteps ordering entirely.
     connection.pragma_update(None, "foreign_keys", "OFF")?;
     let result = (|| {
         for table in &tables {
@@ -730,8 +716,6 @@ mod tests {
     #[test]
     fn an_older_database_is_recreated_rather_than_migrated() {
         let connection = Connection::open_in_memory().expect("open");
-        // A minimal stand-in for a pre-14 database: an items table with a rich
-        // column this schema no longer has, plus the queue table v13 removed.
         connection
             .execute_batch(
                 "CREATE TABLE items (
@@ -761,8 +745,6 @@ mod tests {
             .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
             .expect("items");
         assert_eq!(items, 0, "old rows must not survive the recreate");
-        // The signed-in session is the one thing that survives: it is what
-        // performs the from-scratch resync after the recreate.
         let (token, device_id): (String, String) = connection
             .query_row(
                 "SELECT token, device_id FROM credentials WHERE id = 1",

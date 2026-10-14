@@ -17,7 +17,6 @@ const sidebarNames = (ctx) => ctx.app.evaluate(`[...document.querySelectorAll('[
 const cardCount = (ctx) => ctx.app.evaluate(`document.querySelectorAll('main a[aria-label^="Open "]').length`)
 const profiles = (ctx) => ctx.readConfig("collections.json")?.accounts?.flatMap((account) => account.profiles ?? []) ?? []
 
-// Marks one element for a css press: template buttons are named by all their text.
 const mark = (ctx, selector, text) => ctx.app.evaluate(`(() => {
   document.querySelectorAll("[data-verify-target]").forEach((node) => node.removeAttribute("data-verify-target"))
   const node = [...document.querySelectorAll(${JSON.stringify(selector)})].find((candidate) => candidate.textContent.includes(${JSON.stringify(text)}))
@@ -39,7 +38,6 @@ export default async function collections(ctx) {
   const names = await sidebarNames(ctx)
   ctx.check(names.includes("Movie Franchises") && names.includes("My Collections") && !names.includes("Jellyfin Collections"), "the sidebar shows Movie Franchises and My Collections")
 
-  // Movie Franchises: the first visit runs the scheduler.
   await sidebarLink(ctx, "Movie Franchises")
   await ctx.until(async () => (await ctx.pathname()) === "/collections/franchises", "/collections/franchises")
   const franchises = await ctx.until(async () => {
@@ -59,7 +57,6 @@ export default async function collections(ctx) {
   await ctx.snapshot("02-franchise-detail")
   await ctx.screenshot("02-franchise-detail")
 
-  // My Collections: empty, then one collection from a TMDB template.
   await sidebarLink(ctx, "My Collections")
   await ctx.find({ role: "heading", name: "No collections yet" }, { timeout: 30000 })
   await ctx.press({ role: "link", name: "Choose templates" })
@@ -84,7 +81,6 @@ export default async function collections(ctx) {
   await ctx.snapshot("04-my-collection")
   await ctx.screenshot("04-my-collection")
 
-  // Jellyfin mode: the server's BoxSets, and the guard on MediaFlick routes.
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name: "Collections" }, { nth: 0 })
   await ctx.choose({ name: "Collection mode" }, "Jellyfin")
@@ -106,7 +102,6 @@ export default async function collections(ctx) {
   await ctx.app.route("/collections/franchises")
   await ctx.until(async () => (await ctx.pathname()) === "/collections/jellyfin", "/collections/franchises redirects to /collections/jellyfin")
 
-  // Back to defaults: MediaFlick mode, and the collection deleted.
   await ctx.press({ role: "link", name: "Settings" })
   await ctx.press({ role: "link", name: "Collections" }, { nth: 0 })
   await ctx.press({ role: "button", name: `Delete ${title}` })

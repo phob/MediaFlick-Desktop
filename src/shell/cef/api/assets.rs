@@ -1,7 +1,5 @@
 use super::*;
 
-// -------------------------------------------------------------------- assets
-
 // The bundle is built by `build.rs` (Vite, in `ui/`) and staged into `OUT_DIR`.
 // It is emitted with fixed names — no content hashing and no code splitting,
 // because the assets never cross a network: they are embedded here and served

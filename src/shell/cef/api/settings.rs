@@ -71,8 +71,6 @@ fn push_recovery(
     }
 }
 
-/// `/api/settings`, and the answer to every settings write. Mirrors
-/// `ClientSettings` in `ui/src/lib/api/types.ts`.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsView {
@@ -98,7 +96,6 @@ struct PlayerView {
     default_fullscreen: &'static str,
     mark_watched_next: Option<String>,
     comfort: crate::preferences::PlayerComfort,
-    /// Computed from the selected backend and path; never written.
     player_configured: bool,
 }
 
@@ -142,7 +139,6 @@ struct Capabilities {
     mpv_installer: bool,
 }
 
-/// A durable settings file that was restored from its backup at startup.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Recovery {
@@ -282,7 +278,6 @@ mod tests {
         }
     }
 
-    /// `ClientSettings` in `ui/src/lib/api/types.ts` requires every field.
     #[test]
     fn settings_send_every_field_the_ui_type_declares() -> Result<(), serde_json::Error> {
         let settings = crate::preferences::AppSettings::default();

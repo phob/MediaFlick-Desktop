@@ -6,7 +6,6 @@ const DEMO = "https://demo.jellyfin.org/stable"
 const MOVIE = "Night of the Living Dead"
 const DIRECTOR = "George A. Romero"
 
-// The rail's text is not in the accessibility tree as one node; read it whole.
 const sectionText = (ctx, heading) =>
   ctx.app.evaluate(`[...document.querySelectorAll("section")].find((section) => section.querySelector("h2")?.textContent === ${JSON.stringify(heading)})?.innerText ?? null`)
 
@@ -36,7 +35,6 @@ export default async function detailCrew(ctx) {
   ctx.check(!labels.some((label) => ["Director", "Writer", "Producer"].includes(label)), "the Details panel no longer lists crew jobs")
 
   await ctx.app.evaluate(`[...document.querySelectorAll("h2")].find((heading) => heading.textContent === "Crew")?.scrollIntoView({ block: "center" })`)
-  // Headshots load lazily, so the scroll above is what starts this one.
   await ctx.until(`(() => { const image = document.querySelector('a[aria-label=${JSON.stringify(`Find titles with ${DIRECTOR}`)}] img'); return image?.complete && image.naturalWidth > 0 })()`, `${DIRECTOR}'s headshot to load`)
   await ctx.screenshot("01-crew-rail")
 

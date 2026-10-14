@@ -11,7 +11,6 @@ const mtime = (ctx) => ctx.configStat("accounts.json")?.mtimeMs ?? null
 
 async function openShelf(ctx, name) {
   if (!(await ctx.exists({ role: "navigation", name: "Settings navigation" }))) await ctx.press({ role: "link", name: "Settings" })
-  // Home exists twice (sidebar and shelf); the shelf link is inside Settings navigation.
   const nth = name === "Home" ? 1 : 0
   await ctx.press({ role: "link", name }, { nth })
 }
@@ -20,7 +19,6 @@ export default async function accountSettings(ctx) {
   await ctx.signIn({})
   const evidence = {}
 
-  // Viewing: a discarded draft writes nothing; a saved one lands in accounts.json.
   await openShelf(ctx, "Viewing")
   await ctx.until(async () => (await ctx.pathname()) === "/settings/viewing", "/settings/viewing")
   await ctx.find({ role: "switch", name: "Hide watched by default" }, { timeout: 20000 })
@@ -32,7 +30,6 @@ export default async function accountSettings(ctx) {
   await ctx.press({ role: "switch", name: "Hide watched by default" })
   await ctx.fill({ role: "textbox", name: "Audio languages" }, "EN, de")
 
-  // The leave guard between shelves while the draft is dirty.
   await ctx.press({ role: "link", name: "Appearance" })
   await ctx.find({ role: "dialog", name: "Leave without saving?" })
   await ctx.press({ role: "button", name: "Keep editing" })
@@ -53,7 +50,6 @@ export default async function accountSettings(ctx) {
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => account(ctx)?.viewing?.hideWatched === false, "Viewing back to defaults")
 
-  // Appearance: the accent applies to the whole app once saved.
   await openShelf(ctx, "Appearance")
   await ctx.choose({ name: "Accent" }, "Cobalt")
   await ctx.press({ role: "button", name: "Save" })
@@ -64,7 +60,6 @@ export default async function accountSettings(ctx) {
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => !account(ctx)?.appearance?.accent, "the accent back to its default (key left out)")
 
-  // Letterboxd: add a public profile, save, remove, save.
   await openShelf(ctx, "Letterboxd")
   await ctx.fill({ role: "textbox", name: "Letterboxd username or profile URL" }, LETTERBOXD_USER)
   await ctx.press({ role: "button", name: "Add profile" })
@@ -75,7 +70,6 @@ export default async function accountSettings(ctx) {
   ctx.step(`Letterboxd profile ${letterboxd.displayName}: ${letterboxd.verificationStatus}`)
   await ctx.find({ role: "switch", name: `Enable ${letterboxd.displayName}` }, { timeout: 15000 })
   await ctx.snapshot("03-letterboxd-saved")
-  // Remove only marks the row until Save; Undo brings the profile back.
   await ctx.press({ role: "button", name: "Remove profile" })
   const undo = { role: "button", name: `Undo removal of ${letterboxd.displayName}` }
   await ctx.find(undo)
@@ -86,7 +80,6 @@ export default async function accountSettings(ctx) {
   await ctx.find(undo)
   await ctx.press({ role: "button", name: "Save" })
   await ctx.until(() => !(account(ctx)?.letterboxd_profiles?.length), "the Letterboxd profile removed from accounts.json")
-  // The file lands before the save settles; closing earlier asks to confirm leaving.
   await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled === true, "the save bar to settle")
   ctx.writeEvidence("account-settings.json", evidence)
 }

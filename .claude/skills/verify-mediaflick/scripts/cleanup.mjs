@@ -20,7 +20,6 @@ for (const run of runs) {
     console.log(`stopping ${run.processes.map(({ pid, name }) => `${name} ${pid}`).join(", ")}`)
     killPids(run.processes.map(({ pid }) => pid))
   }
-  // Re-check by command line; a stopped tree takes a moment to unwind.
   for (let attempt = 0; attempt < 20 && listProcesses().some((row) => row.cmd.includes(run.dir)); attempt++) await new Promise((resolve) => setTimeout(resolve, 500))
   try {
     rmSync(run.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 })

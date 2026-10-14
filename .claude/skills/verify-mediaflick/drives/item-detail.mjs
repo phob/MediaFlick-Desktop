@@ -8,7 +8,6 @@ const MOVIE = "Night of the Living Dead"
 const SERIES = "Pioneer One"
 const pageText = (ctx) => ctx.app.evaluate("document.body.innerText")
 
-// Sidebar search to a title. Off Home the sidebar is collapsed until hovered.
 async function open(ctx, term, title) {
   await ctx.park()
   if ((await ctx.pathname()) !== "/") await ctx.hover({ css: '[data-sidebar="sidebar"]' })
@@ -32,7 +31,6 @@ export default async function itemDetail(ctx) {
   ctx.step(`headings: ${JSON.stringify([...movie.matchAll(/heading '([^']+)'/g)].map((match) => match[1]))}`)
   ctx.step(`cast links: ${[...movie.matchAll(/link 'Find titles with /g)].length}`)
   await ctx.screenshot("01-movie")
-  // Opening the menu is safe; its items open the user's browser.
   await ctx.press({ role: "button", name: "More info" })
   const menu = await ctx.snapshot("02-more-info")
   ctx.step(`More info: ${JSON.stringify([...menu.matchAll(/menuitem '([^']+)'/g)].map((match) => match[1]))}`)
@@ -44,13 +42,10 @@ export default async function itemDetail(ctx) {
   await ctx.find({ role: "list", name: "Seasons" }, { timeout: 30000 })
   await ctx.find({ role: "heading", name: "Episodes" })
   ctx.check(!(await ctx.exists({ role: "combobox", name: "Streaming quality" })), "no quality picker on a series")
-  // Episode title links are named "<n>.<name>", with " (Next up)" on that one.
   const series = await ctx.until(async () => {
     const tree = await ctx.snapshot("03-series")
     return /link '\d+\./.test(tree) ? tree : null
   }, "the episode list")
-  // The Next Up button loads after the episode list; when it exists, its
-  // episode's title link carries " (Next up)".
   const nextUp = await ctx.until(async () => (await ctx.snapshot("03-series")).match(/button '(?:Play|Resume) (S\d+E\d+)'/)?.[1], "the series Next Up button", 5000).catch(() => null)
   if (nextUp) {
     ctx.check(/link '\d+\.[^']* \(Next up\)'/.test(await ctx.snapshot("03-series")), `the ${nextUp} episode link is marked (Next up)`)
@@ -82,7 +77,6 @@ export default async function itemDetail(ctx) {
   const episode = await ctx.snapshot("06-episode")
   ctx.check(/S\d+E\d+/.test(await pageText(ctx)), "the episode page shows its SxEy code")
   await ctx.screenshot("06-episode")
-  // Seasons are not pages: the breadcrumb lands on the series with ?season=.
   const crumb = episode.match(/link '(Season \d+)'/)?.[1]
   ctx.check(Boolean(crumb), "the Season breadcrumb")
   await ctx.press({ role: "link", name: crumb })

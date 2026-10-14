@@ -111,8 +111,6 @@ where
     Ok(installer_path)
 }
 
-/// Streams a trusted GitHub download to `dest`, writing to a `.download` sidecar
-/// first and renaming on success. Reports byte progress as it goes.
 pub(crate) fn download_to_file<F>(
     url: &str,
     fallback_size: Option<u64>,

@@ -82,7 +82,6 @@ function saveTimeDisplay(value: "elapsed" | "remaining") {
   try {
     window.localStorage.setItem(TIME_DISPLAY_KEY, value)
   } catch {
-    // Playback controls still work when browser storage is unavailable.
   }
 }
 
@@ -95,7 +94,6 @@ function formatClock(ms: number) {
   return hours ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
 }
 
-/** "Pause (Space or K)": fixed keys first, then whichever bindings are set. */
 function withShortcuts(label: string, fixed: string[], bindings: (string | null | undefined)[] = []) {
   const keys = [...fixed, ...bindings.filter((binding): binding is string => Boolean(binding)).map(shortcutLabel)]
   const unique = keys.filter((key, index) => keys.indexOf(key) === index)
@@ -1030,7 +1028,6 @@ function ActivePlayerBar({
   )
 }
 
-/** Controls for the active player while the selected backend owns video rendering. */
 export function PlayerBar({ onMenuOpenChange }: { onMenuOpenChange?: (open: boolean) => void }) {
   const { data: player } = usePlayerState()
   if (!player?.active) return null

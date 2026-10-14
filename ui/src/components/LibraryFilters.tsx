@@ -318,7 +318,6 @@ function TouchChoice({ value, children }: { value: string; children: ReactNode }
   )
 }
 
-/** One touch-sized radio group per filter; `ANY` stands for "no filter". */
 function TouchGroup({
   label,
   value,

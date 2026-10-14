@@ -1,11 +1,8 @@
-//! Native Jellyfin authentication: password login, Quick Connect, and logout.
-
 use serde_json::{Value, json};
 
 use super::client::{ApiError, JellyfinClient};
 use super::model::{AuthenticationResult, PublicSystemInfo, QuickConnectResult};
 
-/// Credentials worth persisting after a successful authentication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credentials {
     pub token: String,
@@ -45,7 +42,6 @@ impl Credentials {
     }
 }
 
-/// Reachability probe that also yields the name shown on the login screen.
 pub fn public_system_info(client: &JellyfinClient) -> Result<PublicSystemInfo, ApiError> {
     client.get_json("/System/Info/Public", &[])
 }
@@ -96,7 +92,6 @@ pub fn authenticate_with_quick_connect(
     Credentials::from_result(result)
 }
 
-/// Best-effort session teardown; a failure here must not block local logout.
 pub fn logout(client: &JellyfinClient) -> Result<(), ApiError> {
     client.post_empty("/Sessions/Logout", &[], &json!({}))
 }

@@ -1,5 +1,3 @@
-//! Backend-neutral playback values shared by the application and player adapters.
-
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -32,7 +30,6 @@ pub fn ticks_to_milliseconds(ticks: i64) -> f64 {
     ticks as f64 / TICKS_PER_MILLISECOND
 }
 
-/// The trimmed text, or `None` when it is missing or blank.
 pub fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -119,8 +116,6 @@ impl PlaybackRequest {
     }
 }
 
-/// State used for playstate reporting. Time is represented in Jellyfin ticks
-/// until the reporting protocol can migrate independently from its wire format.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReportingState {
     pub position_ticks: i64,
@@ -209,8 +204,6 @@ pub struct PlaybackDiagnostics {
     pub frame_rate: Option<f64>,
 }
 
-/// The player state the UI reads, from `GET /api/player/state` and from the
-/// pushed playback events alike.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayerSnapshot {
@@ -232,26 +225,20 @@ pub struct PlayerSnapshot {
     pub stop_reason: Option<StopReason>,
 }
 
-/// Why playback ended, sent to the UI as `stopReason`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StopReason {
-    /// The file played to its end.
     Eof,
-    /// The viewer marked the item watched and asked for the next one.
     WatchedNext,
     Stop,
     Quit,
     Error,
     Redirect,
     Shutdown,
-    /// A reason this app does not know.
     Unknown,
 }
 
 impl StopReason {
-    /// Reads an mpv `end-file` reason, ignoring case and surrounding space.
-    /// A missing or blank reason is `None`.
     pub fn parse(reason: &str) -> Option<Self> {
         let reason = reason.trim();
         if reason.is_empty() {
@@ -269,7 +256,6 @@ impl StopReason {
         })
     }
 
-    /// The item was finished, so it counts as watched.
     pub fn is_completion(self) -> bool {
         matches!(self, Self::Eof | Self::WatchedNext)
     }

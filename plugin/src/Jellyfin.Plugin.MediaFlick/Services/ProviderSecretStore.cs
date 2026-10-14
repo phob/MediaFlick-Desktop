@@ -183,7 +183,6 @@ internal sealed class DataProtectedProviderSecretStore : IProviderSecretStore
         }
         catch (UnauthorizedAccessException exception)
         {
-            // Jellyfin may own a read-only externally managed key-ring ACL.
             _logger.LogInformation(
                 exception,
                 "Could not restrict MediaFlick key-ring file modes; protect the plugin data directory with host permissions");

@@ -157,8 +157,6 @@ internal static partial class RatingsContract
         {
             foreach (var candidate in ratings.OfType<JsonObject>())
             {
-                // Read only sourceId from a cache record. Older raw `source` /
-                // `rawSource` values are deliberately never re-emitted.
                 AddRating(
                     bySource,
                     JsonRead.String(candidate["sourceId"]),

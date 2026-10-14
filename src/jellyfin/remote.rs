@@ -19,7 +19,6 @@ use super::api::items;
 use super::play::{self, PlayOptions};
 use super::session::SessionScope;
 
-/// What a `Play` message asked for, in this client's terms.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PlayAsk {
     pub item_ids: Vec<String>,
@@ -120,15 +119,12 @@ pub(crate) fn parse_general(data: &Value) -> GeneralAction {
     }
 }
 
-/// A remote-control message, with the session whose event stream delivered it.
 pub enum RemoteCommand {
     Play { data: Value, scope: SessionScope },
     Playstate { data: Value, scope: SessionScope },
     General { data: Value },
 }
 
-/// Carries out one command. The socket thread calls this through the handler
-/// the application registered, in the order the server sent them.
 pub fn handle(services: &Arc<Services>, command: RemoteCommand) {
     match command {
         RemoteCommand::Play { data, scope } => handle_play(services, &data, &scope),
@@ -140,8 +136,6 @@ pub fn handle(services: &Arc<Services>, command: RemoteCommand) {
 fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
     let ask = parse_play(data);
     if !ask.play_command.eq_ignore_ascii_case("PlayNow") {
-        // PlayNext/PlayLast are queueing commands and this client has no
-        // playback queue to append to.
         tracing::debug!(
             target: "jellyfin.remote",
             command = %ask.play_command,
@@ -195,7 +189,6 @@ fn handle_play(services: &Arc<Services>, data: &Value, scope: &SessionScope) {
                 "ignoring a remote play request from an account that is no longer signed in"
             );
         }
-        // `play::start` already reported the failure against `scope`.
         Err(play::StartError::Api(error)) => {
             tracing::warn!(target: "jellyfin.remote", "remote play failed: {error}");
         }
@@ -242,8 +235,6 @@ fn resolve_playable(
                     .find_map(|child| (child.kind == "Episode").then_some(child.id))
             })
             .map(|id| (id, true)),
-        // Movies, episodes, and deep-linked ids the cache has not seen play
-        // as themselves; `PlaybackInfo` is the authority on playability.
         _ => Some((item_id.to_string(), false)),
     }
 }
@@ -344,8 +335,6 @@ mod tests {
         assert_eq!(ask.subtitle_stream_index, Some(-1));
         assert_eq!(ask.play_command, "PlayNow");
 
-        // An absent command means "play now", and a zero position means
-        // "from the start" rather than a resume point.
         let bare = parse_play(&json!({ "ItemIds": ["a"], "StartPositionTicks": 0 }));
         assert_eq!(bare.play_command, "PlayNow");
         assert_eq!(bare.start_ticks, None);
@@ -416,7 +405,6 @@ mod tests {
             parse_general(&json!({ "Name": "DisplayMessage" })),
             GeneralAction::Unsupported("DisplayMessage".to_string())
         );
-        // A volume command without a usable value must not set anything.
         assert_eq!(
             parse_general(&json!({ "Name": "SetVolume", "Arguments": {} })),
             GeneralAction::Unsupported("SetVolume".to_string())

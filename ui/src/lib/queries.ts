@@ -96,7 +96,6 @@ export function useStatusPulse() {
   })
 }
 
-/** Active sync progress, for the one indicator that renders it. */
 export function useSyncProgress() {
   return useQuery({ queryKey: queryKeys.status, queryFn: api.status, select: selectSyncProgress })
 }
@@ -124,12 +123,10 @@ export async function primeStartupQueries(client: QueryClient, pathname: string)
   if (startup.billboard) client.setQueryData(queryKeys.billboard, startup.billboard)
 }
 
-/** The signed-in account's viewing preferences. */
 export function viewingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.viewing(account), queryFn: api.viewing })
 }
 
-/** The last route and remembered library filters of the signed-in account. */
 export function browsingQueryOptions(account: string) {
   return queryOptions({ queryKey: queryKeys.browsing(account), queryFn: api.browsing })
 }
@@ -221,7 +218,6 @@ export function useGenres() {
   return useQuery({
     queryKey: queryKeys.genres,
     queryFn: api.genres,
-    // Genres change only when the library does; no point re-asking per mount.
     staleTime: 30 * 60_000,
   })
 }
@@ -289,7 +285,6 @@ export function useItem(id: string | undefined) {
   })
 }
 
-/** Live billboard prose without the detail page's cast and facts payload. */
 export function useItemSynopsis(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.itemSynopsis(id ?? ""),
@@ -316,8 +311,6 @@ export function useItemAbout(id: string | undefined, enabled = true) {
   })
 }
 
-/** Public profile activity is independent of the local item response, so a
- * slow or unavailable RSS feed never delays the usable detail page. */
 export function useLetterboxdReviews(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.letterboxdReviews(id ?? ""),
@@ -328,8 +321,6 @@ export function useLetterboxdReviews(id: string | undefined, enabled = true) {
   })
 }
 
-/** Discovered films have no Jellyfin item id yet, so their public-profile
- * activity is matched directly in Letterboxd's TMDB movie namespace. */
 export function useLetterboxdMovieReviews(tmdbId: number | null, enabled = true) {
   return useQuery({
     queryKey: queryKeys.letterboxdMovieReviews(tmdbId ?? 0),
@@ -385,7 +376,6 @@ export function useSetPlaybackPreference(itemId: string) {
   })
 }
 
-/** Resolves only the small trailer record; video bytes stay lazy until mounted. */
 export function useTrailer(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.trailer(id ?? ""),
@@ -396,7 +386,6 @@ export function useTrailer(id: string | undefined, enabled = true) {
   })
 }
 
-/** The episode a series should resume with; server-side logic, series only. */
 export function useNextUp(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.nextUp(id ?? ""),
@@ -424,7 +413,6 @@ export function usePlaybackNeighbors(itemId: string | undefined, enabled = true)
   })
 }
 
-/** mpv pushes state; the slow poll only guards against a missed push. */
 export function usePlayerState() {
   return useQuery({
     queryKey: queryKeys.playerState,
@@ -448,7 +436,6 @@ type BillboardUserDataPatch = Partial<
   Pick<ItemSummary, "favorite" | "played" | "positionTicks">
 >
 
-/** Update controls on stable billboard slides without asking the random endpoint again. */
 function patchBillboardItem(client: QueryClient, id: string, patch: BillboardUserDataPatch) {
   client.setQueryData<{ items: ItemSummary[] }>(queryKeys.billboard, (previous) => {
     if (!previous) return previous
@@ -499,8 +486,6 @@ export function usePlay() {
       quality?: StreamingQualityId
     }) => api.play(id, resume, quality),
     onSuccess: (started) => {
-      // The player is a separate window that can take a moment to come up, so
-      // say something: otherwise Play looks like it did nothing at all.
       toast.success(started.playMethod ? `Playing (${started.playMethod})` : "Playing")
       void client.invalidateQueries({ queryKey: queryKeys.playerState })
     },
@@ -556,7 +541,6 @@ export function usePlayerCommand() {
   })
 }
 
-/** Keeps a control's expected outcome on screen until mpv pushes the new state. */
 export function usePatchPlayerState() {
   const client = useQueryClient()
   return (patch: Partial<PlayerState>) => patchPlayerState(client, patch)
@@ -583,7 +567,6 @@ export function useServerInfo(server: string) {
     queryKey: queryKeys.serverInfo(server),
     queryFn: ({ signal }) => api.connect(server, signal),
     enabled: Boolean(server),
-    // A typo in the address should surface immediately, not after a retry.
     retry: false,
     staleTime: 60_000,
   })
@@ -635,8 +618,6 @@ export function useLogout() {
   })
 }
 
-// -------------------------------------------------------------------- seerr
-
 /**
  * Whether Companion mapped this Jellyfin user to Seerr, and what they may ask
  * for. Every Seerr feature gates on this shared answer.
@@ -646,8 +627,6 @@ export function useSeerrStatus(enabled = true) {
     queryKey: queryKeys.seerrStatus,
     queryFn: api.seerr.status,
     enabled,
-    // The answer costs a Companion and Seerr round trip. It changes only when
-    // an administrator updates the service or user mapping.
     staleTime: 5 * 60_000,
     retry: false,
   })
@@ -718,9 +697,6 @@ export function useSeerrDiscover(
       lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled,
     retry: false,
-    // Filters still replace the complete result-set identity. In-flight work
-    // is cancelled through `signal` when its observer goes away, while already
-    // loaded pages remain available for a return to that exact result set.
   })
 }
 
@@ -734,7 +710,6 @@ export function useSeerrGenres(mediaType: SeerrMediaType, enabled = true) {
   })
 }
 
-/** One title in full. Also how a request card resolves its own title. */
 export function useSeerrMedia(
   mediaType: SeerrMediaType | undefined,
   tmdbId: number | null | undefined,
@@ -744,8 +719,6 @@ export function useSeerrMedia(
     queryKey: queryKeys.seerrMedia(mediaType ?? "", tmdbId ?? 0),
     queryFn: () => api.seerr.media(mediaType!, tmdbId!),
     enabled: enabled && Boolean(mediaType) && Boolean(tmdbId),
-    // A title's own facts barely move; its availability is what changes, and a
-    // request invalidates this key anyway.
     staleTime: 10 * 60_000,
     retry: false,
   })
@@ -794,8 +767,6 @@ export function useSeerrRequest() {
     }) => api.seerr.request(body),
     onError: reportError(client),
     onSuccess: (created) => {
-      // The dialog is shown even to users whose requests Seerr auto-approves,
-      // so the outcome is reported from what Seerr actually did.
       toast.success(created.status === "approved" ? "Approved" : "Requested")
       invalidateSeerrSurfaces(client)
     },
@@ -814,9 +785,6 @@ export function useSeerrCancelRequest() {
   })
 }
 
-// ------------------------------------------------------------- collections
-
-/** Scopes account-owned query keys to the signed-in server and user. */
 export function accountKey(status: Pick<Status, "serverUrl" | "userId"> | undefined) {
   return `${status?.serverUrl ?? "anonymous"}:${status?.userId ?? "anonymous"}`
 }

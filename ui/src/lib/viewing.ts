@@ -31,6 +31,5 @@ export const ViewingContext = createContext<ViewingSettings | null>(DEFAULT_VIEW
 
 export function useSpoilerProtection(item: ItemSummary | undefined) {
   const viewing = useContext(ViewingContext)
-  // Hide while preferences load so an account's first frame cannot reveal spoilers.
   return Boolean(item?.kind === "Episode" && !item.played && viewing?.spoilerProtection !== false)
 }

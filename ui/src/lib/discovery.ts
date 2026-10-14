@@ -64,8 +64,6 @@ export function discoveryResultSetKey(
   ].join("&")
 }
 
-/** Force card-local state (including poster failures) to belong to one result
- * set, not merely to a TMDB id that happens to occur in consecutive sets. */
 export function discoveryCardKey(resultSetKey: string, result: SeerrResult) {
   return `${resultSetKey}:${result.mediaType}-${result.tmdbId}`
 }
@@ -110,8 +108,6 @@ function positiveInteger(value: string | null) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
-/** Read only values represented by the controls; malformed deep links safely
- * fall back to that row's defaults instead of reaching the app API. */
 export function readDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,
@@ -149,8 +145,6 @@ export function readDiscoveryFilters(
   return filters
 }
 
-/** Replace one row's server-side filters while preserving search, tab, and
- * local-library state in the URL. Defaults are omitted to keep links concise. */
 export function writeDiscoveryFilters(
   params: URLSearchParams,
   row: SeerrDiscoverRow,

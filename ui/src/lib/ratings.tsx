@@ -102,16 +102,12 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
           }
         }
       }
-      // Refetch only if the status view is active; cards do not need another
-      // network request to display the response they just received.
       void queryClient.invalidateQueries({
         queryKey: queryKeys.ratingsStatus,
         refetchType: "active",
       })
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError")) {
-        // A missing/offline overlay is intentionally silent. The integration
-        // page exposes the actionable validation/backoff detail.
       }
     } finally {
       batches.current.delete(batch)
@@ -174,7 +170,6 @@ export function RatingsProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     (id: string) => {
       active.current.set(id, (active.current.get(id) ?? 0) + 1)
-      // A remount is a fresh look at the card, so it earns fresh retries.
       omitted.current.delete(id)
       const cached = itemsRef.current.get(id)
       const shouldRecheck = !cached

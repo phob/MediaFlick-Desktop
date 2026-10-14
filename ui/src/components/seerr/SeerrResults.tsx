@@ -50,7 +50,6 @@ export function SeerrResults({
   empty?: string
   placeholders?: number
   resultSetKey?: string
-  /** Render matched library items with MediaCard instead of a Seerr card. */
   ownedAsLocal?: boolean
 }) {
   const status = useSeerrStatus()

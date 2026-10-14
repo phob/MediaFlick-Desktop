@@ -1,6 +1,3 @@
-//! The one authenticated Jellyfin session shared by the UI API, the sync
-//! thread, the play path, and the playback reporter.
-
 use std::sync::{Arc, Mutex, RwLock};
 
 use serde::Serialize;
@@ -23,18 +20,15 @@ struct SessionState {
     device_id: String,
     token: Option<String>,
     restricted: bool,
-    /// Set when the server rejected our token; the UI must re-authenticate.
     expired: bool,
     generation: u64,
     deleting: bool,
 }
 
-/// The signed-in state, as `/api/status` reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     pub authenticated: bool,
-    /// The server rejected the stored token; the UI must sign in again.
     pub expired: bool,
     pub server_url: Option<String>,
     pub server_name: Option<String>,
@@ -45,7 +39,6 @@ pub struct SessionStatus {
 
 pub struct Session {
     library: Arc<Library>,
-    /// Where an expired token is announced, so the UI can ask to sign in.
     shell: Arc<ShellBridge>,
     state: RwLock<SessionState>,
     operation_gate: Mutex<()>,
@@ -126,8 +119,6 @@ impl Session {
         AccountKey::new(state.server_id?, state.user_id?)
     }
 
-    /// Changes on every sign-in, sign-out and account switch, so work started
-    /// under one session can tell it no longer applies.
     pub fn generation(&self) -> u64 {
         self.read().generation
     }
@@ -225,7 +216,6 @@ impl Session {
         commit()
     }
 
-    /// An authenticated client, or the reason one cannot be built.
     pub fn client(&self) -> Result<JellyfinClient, ApiError> {
         let state = self.read();
         if state.expired || state.deleting {
@@ -241,19 +231,16 @@ impl Session {
         ))
     }
 
-    /// An authenticated client together with the user id every item query needs.
     pub fn client_and_user(&self) -> Result<(JellyfinClient, String), ApiError> {
         let client = self.client()?;
         let user_id = self.user_id().ok_or(ApiError::NotConfigured)?;
         Ok((client, user_id))
     }
 
-    /// A client for pre-login calls against an arbitrary server.
     pub fn anonymous_client(&self, server_url: &str) -> JellyfinClient {
         JellyfinClient::new(server_url, &self.read().device_id, None)
     }
 
-    /// Probes a server and remembers it as the login target.
     pub fn connect(&self, server_url: &str) -> Result<Value, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
@@ -297,8 +284,6 @@ impl Session {
         }))
     }
 
-    /// One poll step: reports whether the code has been approved yet, and
-    /// completes the login when it has.
     pub fn quick_connect_poll(&self, server_url: &str, secret: &str) -> Result<Value, ApiError> {
         let normalized = normalize_server_url(server_url).ok_or(ApiError::NotConfigured)?;
         let client = self.anonymous_client(&normalized);
@@ -318,7 +303,6 @@ impl Session {
     ) -> Result<SessionStatus, ApiError> {
         let user_name = credentials.user_name.clone();
         let cleared_cache = self.commit_credentials(server_url, credentials)?;
-        // Logging and the settings write happen after the gate is released.
         if cleared_cache {
             tracing::info!(
                 target: "jellyfin.session",
@@ -333,9 +317,6 @@ impl Session {
         Ok(self.status())
     }
 
-    /// Switches the stored session to `credentials` under the operation gate:
-    /// clears another account's cache, saves the credentials, and starts a new
-    /// generation. Returns whether the cache was cleared.
     fn commit_credentials(
         &self,
         server_url: &str,

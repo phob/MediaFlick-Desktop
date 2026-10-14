@@ -1,11 +1,7 @@
-// Splitting a Jellyfin `People` list into the two rails a detail page shows:
-// performers, and the crew who held one of the key jobs.
-
 import type { Person } from "./api"
 
 const CAST_KINDS = new Set(["Actor", "GuestStar"])
 
-/** Jellyfin `PersonKind` values the Crew rail shows, in rail order. */
 const CREW_JOBS = [
   { kind: "Creator", label: "Creator" },
   { kind: "Director", label: "Director" },
@@ -27,7 +23,6 @@ export function castOf(people: Person[]) {
 
 export interface CrewMember {
   person: Person
-  /** Display labels in rail order, such as "Director". */
   jobs: string[]
 }
 

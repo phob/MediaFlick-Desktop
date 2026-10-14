@@ -12,12 +12,8 @@ use crate::library::Library;
 use super::cycle::run_cycle_inner;
 use super::{SYNC_INTERVAL, SyncHandle, Trigger};
 
-/// Delay used while waiting for the user to sign in.
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
-/// The longest a warm start holds its first cycle for the window to paint.
 const STARTUP_HOLD_MAX: Duration = Duration::from_secs(15);
-/// How long the first cycle waits after the window paints, so Home's live
-/// follow-up requests finish before the cycle's change notifications arrive.
 const STARTUP_HOLD_SETTLE: Duration = Duration::from_secs(3);
 
 pub fn spawn(library: Arc<Library>, session: Arc<Session>, shell: Arc<ShellBridge>) -> SyncHandle {
@@ -49,8 +45,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
             handle.running.store(false, Ordering::Relaxed);
             match wait(handle, IDLE_INTERVAL) {
                 Wake::Stopped => return,
-                // Held until a cycle can actually consume it: this is the
-                // sign-in nudge arriving just before the session goes live.
                 Wake::Requested => trigger = Trigger::Requested,
                 Wake::Elapsed => {}
             }
@@ -64,8 +58,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                 startup_hold = None;
             } else {
                 startup_hold = Some(until);
-                // A request made meanwhile, such as the event socket's
-                // reconnect nudge, runs as this first cycle once it is due.
                 match wait(handle, remaining) {
                     Wake::Stopped => return,
                     Wake::Requested => trigger = Trigger::Requested,
@@ -99,17 +91,11 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
                     jittered(SYNC_INTERVAL)
                 }
                 Err(ApiError::Cancelled) if handle.is_stopped() => return,
-                // A sign-out, account deletion, or account switch invalidates
-                // the old generation. It is an expected handoff, not a
-                // failing sync that should poison the next account's backoff.
                 Err(ApiError::Cancelled) => {
                     backoff = Duration::ZERO;
                     IDLE_INTERVAL
                 }
                 Err(ApiError::Unauthorized) => {
-                    // The cycle already reported the 401 against the account it
-                    // ran for, so a late rejection of a previous account's
-                    // token cannot expire the account that replaced it.
                     backoff = Duration::ZERO;
                     IDLE_INTERVAL
                 }
@@ -140,8 +126,6 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, handle: &SyncHandle) {
     }
 }
 
-/// The held first cycle's start: the cap, or a short settle after the window
-/// has painted, whichever comes first.
 fn startup_hold_deadline(until: Instant, window_ready: bool, now: Instant) -> Instant {
     if window_ready {
         until.min(now + STARTUP_HOLD_SETTLE)
@@ -163,14 +147,10 @@ fn retry_delay(error: &ApiError, fallback: Duration) -> Duration {
     error.retry_after().unwrap_or(fallback).max(fallback)
 }
 
-/// Why the sync thread stopped waiting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Wake {
-    /// Someone called [`SyncHandle::request`].
     Requested,
-    /// The timeout elapsed on its own.
     Elapsed,
-    /// The thread should exit.
     Stopped,
 }
 
@@ -193,8 +173,6 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
     if flags.stopped {
         return Wake::Stopped;
     }
-    // A request that landed during the wait still counts as one: the condvar
-    // cannot distinguish it from a plain timeout, but the flag can.
     if flags.requested {
         flags.requested = false;
         return Wake::Requested;
@@ -202,7 +180,6 @@ fn wait(handle: &SyncHandle, timeout: Duration) -> Wake {
     Wake::Elapsed
 }
 
-/// Spreads restarts across clients so a server is not hit by a thundering herd.
 fn jittered(base: Duration) -> Duration {
     let entropy = u64::from_str_radix(&random_hex(2), 16).unwrap_or(0);
     let spread = base.as_secs().max(1) / 5;

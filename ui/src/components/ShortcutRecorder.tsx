@@ -12,7 +12,6 @@ export function ShortcutRecorder({ id, label, value, onChange, disabled = false 
 }) {
   const [recording, setRecording] = useState(false)
   const [message, setMessage] = useState("")
-  // Keep capture prompts and status messages from resizing the settings column.
   return <div className="w-64 max-w-full min-w-0 space-y-2" data-shortcut-recorder>
     <div className="flex items-center gap-2">
       <Button id={id} type="button" variant="outline" className="min-w-0 flex-1 shrink justify-start aria-pressed:border-primary aria-pressed:bg-primary/10" aria-label={label} aria-describedby={`${id}-capture-help`} aria-pressed={recording} disabled={disabled} title={value ? shortcutLabel(value) : "Disabled"}

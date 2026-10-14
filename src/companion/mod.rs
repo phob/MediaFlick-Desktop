@@ -47,7 +47,6 @@ impl CompanionInfo {
     }
 }
 
-/// What `/api/status` and `/api/companion/info` report about the Companion.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionStatus {
@@ -59,7 +58,6 @@ pub struct CompanionStatus {
     pub supported_api: SupportedApi,
 }
 
-/// The Companion API versions this build speaks.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SupportedApi {
     pub min: i64,
@@ -111,8 +109,6 @@ impl CompanionSession {
     }
 
     pub fn probe(&self, force: bool) -> Result<Option<CompanionInfo>, ApiError> {
-        // Waiters recheck the cache after discovery finishes. No cache or
-        // synchronization lock is held while the authenticated request runs.
         let mut running = self
             .probe_running
             .lock()
@@ -246,8 +242,6 @@ impl CompanionSession {
         }
     }
 
-    /// Versioned ratings boundary. The plugin keeps any administrator-owned
-    /// provider credential server-side and returns capabilities/data only.
     pub fn ratings_v1(&self, body: &Value) -> Result<Value, ApiError> {
         let _ = self.probe(false);
         if !self.supports("ratings-v1") {
@@ -258,8 +252,6 @@ impl CompanionSession {
     }
 
     pub fn calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
-        // Cached once probed; a probe failure just means the metadata
-        // fallback below answers instead.
         let _ = self.probe(false);
         if self.supports("calendar") {
             let client = self.session.client()?;
@@ -610,8 +602,6 @@ fn join_seerr_rows(library: &Library, value: &mut Value, field: &str) {
     let series = provider_ids(results, "tv");
     let movie_ids = library.ids_by_tmdb("Movie", &movies).unwrap_or_default();
     let series_ids = library.ids_by_tmdb("Series", &series).unwrap_or_default();
-    // Watched state rides along so collection pages can sort and filter on
-    // it without hydrating every card first.
     let movie_played = library.played_by_tmdb("Movie", &movies).unwrap_or_default();
     for item in results {
         let media_type = item["mediaType"].as_str().unwrap_or_default();
@@ -752,7 +742,6 @@ mod tests {
     use crate::library::Library;
     use serde_json::json;
 
-    /// A signed-in Companion session whose server is `server_url`.
     fn companion_at(server_url: String) -> (Arc<Session>, CompanionSession) {
         let library = Arc::new(Library::open_in_memory().expect("library"));
         let mut credentials = library.credentials();
@@ -766,8 +755,6 @@ mod tests {
         (session, companion)
     }
 
-    /// Answers every request with the current scripted status and body, and
-    /// counts requests, until dropped.
     struct ScriptedServer {
         url: String,
         response: Arc<Mutex<(u16, &'static str)>>,
@@ -833,7 +820,6 @@ mod tests {
         }
     }
 
-    /// Moves the last probe `by` into the past, as if that much time elapsed.
     fn age_last_probe(companion: &CompanionSession, by: Duration) {
         let state = companion.read();
         companion.replace(ProbeState {
@@ -930,7 +916,6 @@ mod tests {
         assert_eq!(detail["parts"][0]["played"], true);
         assert_eq!(detail["parts"][1]["libraryItemId"], "m2");
         assert_eq!(detail["parts"][1]["played"], false);
-        // Unowned parts are neither joined nor watched.
         assert!(detail["parts"][2]["libraryItemId"].is_null());
         assert_eq!(detail["parts"][2]["played"], false);
         // TMDB numeric ids can overlap across movie and TV namespaces.
