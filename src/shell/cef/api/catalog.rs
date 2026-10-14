@@ -609,8 +609,6 @@ fn library_query(request: &ApiRequest) -> ItemQuery {
             .param("decade")
             .as_deref()
             .and_then(crate::library::release_decade_from_id),
-        parent_id: request.param("parentId"),
-        series_id: request.param("seriesId"),
         watched: request
             .param("watched")
             .as_deref()

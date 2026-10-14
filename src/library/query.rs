@@ -576,14 +576,6 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         arguments.push(SqlValue::Integer(decade));
         arguments.push(SqlValue::Integer(decade.saturating_add(10)));
     }
-    if let Some(parent_id) = &query.parent_id {
-        conditions.push("i.parent_id = ?".to_string());
-        arguments.push(SqlValue::Text(parent_id.clone()));
-    }
-    if let Some(series_id) = &query.series_id {
-        conditions.push("i.series_id = ?".to_string());
-        arguments.push(SqlValue::Text(series_id.clone()));
-    }
     if let Some(watched) = query.watched {
         conditions.push(match watched {
             WatchFilter::Unwatched => "COALESCE(u.played, 0) = 0".to_string(),
@@ -607,11 +599,7 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         });
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = format!(" WHERE {}", conditions.join(" AND "));
     (from_clause, where_clause, arguments)
 }
 
