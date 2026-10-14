@@ -7,10 +7,12 @@
 
 pub mod db;
 pub mod headless;
+pub mod libraries;
 pub mod model;
 pub mod sync;
 
 mod catalog;
+mod catalog_libraries;
 mod integrations;
 mod legacy;
 mod query;
@@ -24,6 +26,7 @@ use serde_json::Value;
 
 use crate::app::ids::new_device_id;
 
+pub use catalog_libraries::LibrarySetChange;
 pub use model::{
     CatalogKind, ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, KindFilter,
     LibraryStats, ProviderIds, UserDataRecord, resolve_playback_preference,

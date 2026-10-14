@@ -6,6 +6,7 @@ use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
+use super::membership::{membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
@@ -36,8 +37,10 @@ pub(super) fn run_cycle_inner(
         && meta(library, META_LAST_BOOTSTRAP)?.is_none();
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
+    let mut membership_changed = false;
 
     let result = (|| -> Result<(), ApiError> {
+        let libraries = refresh_libraries(library, session, &scope)?;
         if full_bootstrap_due(library)? {
             commit(session, &scope, || {
                 library
@@ -60,6 +63,10 @@ pub(super) fn run_cycle_inner(
         {
             control.set_phase(SyncPhase::Catalog);
         }
+        if initial_catalog {
+            // Before the first fill, so library grids fill page by page with it.
+            membership_changed |= membership_pass(library, session, &scope, control)?;
+        }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
@@ -74,17 +81,21 @@ pub(super) fn run_cycle_inner(
             &mut report.changes,
             control,
         )?;
-        if initial_catalog {
+        let swept = if initial_catalog {
             commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+            false
         } else if trigger.forces_identity_sweep()
+            // A removed library's titles leave the cache now, not within the hour.
+            || !libraries.removed.is_empty()
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
-            let (refreshed, deletion_changes) =
-                identity_sweep(library, session, &scope, client, user_id, control)?;
-            report.user_data_refreshed = refreshed;
-            report.deleted = deletion_changes.item_ids.len();
-            report.changes.merge(deletion_changes);
-            commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+            sweep_identity(library, session, &scope, control, &mut report)?;
+            true
+        } else {
+            false
+        };
+        if !libraries.is_empty() || report.changed() || swept || trigger == Trigger::Requested {
+            membership_changed |= membership_pass(library, session, &scope, control)?;
         }
         Ok(())
     })();
@@ -106,17 +117,7 @@ pub(super) fn run_cycle_inner(
     result?;
 
     report.elapsed_ms = started.elapsed().as_millis() as u64;
-    let serialized_report = serde_json::to_string(&report).unwrap_or_default();
-    commit(session, &scope, || {
-        library
-            .set_meta(META_LATEST_FAILURE, "0")
-            .map_err(|error| storage_error(&error))?;
-        touch(library, META_LAST_SYNC)?;
-        library
-            .set_meta("sync.last_report", &serialized_report)
-            .map_err(|error| storage_error(&error))?;
-        Ok(())
-    })?;
+    record_success(library, session, &scope, &report)?;
     if let Some(control) = control {
         if recovering_ownership {
             control.shell().collections_changed();
@@ -124,7 +125,7 @@ pub(super) fn run_cycle_inner(
         if !report.changes.is_empty() {
             control.shell().library_changed(report.changes.clone());
         }
-        if initial_catalog || report.changed() || recovering_ownership {
+        if initial_catalog || report.changed() || recovering_ownership || membership_changed {
             control.announce_cycle_completed();
         }
     }
@@ -134,6 +135,46 @@ pub(super) fn run_cycle_inner(
         tracing::warn!(target: "library.sync", "could not refresh query statistics: {error}");
     }
     Ok(report)
+}
+
+fn record_success(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    report: &SyncReport,
+) -> Result<(), ApiError> {
+    let serialized_report = serde_json::to_string(report).unwrap_or_default();
+    commit(session, scope, || {
+        library
+            .set_meta(META_LATEST_FAILURE, "0")
+            .map_err(|error| storage_error(&error))?;
+        touch(library, META_LAST_SYNC)?;
+        library
+            .set_meta("sync.last_report", &serialized_report)
+            .map_err(|error| storage_error(&error))?;
+        Ok(())
+    })
+}
+
+fn sweep_identity(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+    report: &mut SyncReport,
+) -> Result<(), ApiError> {
+    let (refreshed, deletion_changes) = identity_sweep(
+        library,
+        session,
+        scope,
+        scope.client(),
+        scope.user_id(),
+        control,
+    )?;
+    report.user_data_refreshed = refreshed;
+    report.deleted = deletion_changes.item_ids.len();
+    report.changes.merge(deletion_changes);
+    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))
 }
 
 fn bootstrap(
@@ -559,7 +600,7 @@ fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
         .map_err(|error| storage_error(&error))
 }
 
-fn cancelled(
+pub(super) fn cancelled(
     control: Option<&SyncHandle>,
     session: &Session,
     scope: &SessionScope,
@@ -571,7 +612,7 @@ fn cancelled(
     }
 }
 
-fn commit<T>(
+pub(super) fn commit<T>(
     session: &Session,
     scope: &SessionScope,
     work: impl FnOnce() -> Result<T, ApiError>,
@@ -579,7 +620,7 @@ fn commit<T>(
     session.commit_if_current(scope, || ApiError::Cancelled, work)
 }
 
-fn storage_error(error: &rusqlite::Error) -> ApiError {
+pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
     ApiError::Storage(error.to_string())
 }
 
@@ -692,6 +733,10 @@ mod tests {
             let mut targets = Vec::new();
             let (stream, target) = receive_target(&listener);
             targets.push(target);
+            send_json(stream, NO_LIBRARIES);
+
+            let (stream, target) = receive_target(&listener);
+            targets.push(target);
             send_json(stream, &first_body);
 
             let (stream, target) = receive_target(&listener);
@@ -727,13 +772,14 @@ mod tests {
         assert_eq!(library.stats().total, PAGE_SIZE + 1);
 
         let targets = server.join().expect("server");
-        assert!(targets[0].contains("StartIndex=0"));
-        assert!(targets[1].contains(&format!("StartIndex={PAGE_SIZE}")));
+        assert!(targets[0].starts_with("/UserViews?"), "{}", targets[0]);
+        assert!(targets[1].contains("StartIndex=0"));
+        assert!(targets[2].contains(&format!("StartIndex={PAGE_SIZE}")));
         for field in ["ProviderIds", "Genres", "SortName", "ParentId"] {
             assert!(
-                targets[0].contains(field),
+                targets[1].contains(field),
                 "{field} missing: {}",
-                targets[0]
+                targets[1]
             );
         }
     }
@@ -755,6 +801,7 @@ mod tests {
     }
 
     const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
+    const NO_LIBRARIES: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
 
     fn set_meta(library: &Library, key: &str, value: &str) {
         library.set_meta(key, value).expect("meta");
@@ -787,6 +834,7 @@ mod tests {
     #[test]
     fn a_requested_cycle_reconciles_server_deletions() {
         let (url, server) = serve(vec![
+            NO_LIBRARIES.to_string(),
             EMPTY_PAGE.to_string(),
             r#"{"Items":[{"Id":"kept"}],"TotalRecordCount":1}"#.to_string(),
         ]);

@@ -101,7 +101,11 @@ impl Library {
     }
 }
 
-fn save_meta(connection: &rusqlite::Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+pub(super) fn save_meta(
+    connection: &rusqlite::Connection,
+    key: &str,
+    value: &str,
+) -> rusqlite::Result<()> {
     connection.execute(
         "INSERT INTO meta (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",

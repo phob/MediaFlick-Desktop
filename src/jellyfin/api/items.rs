@@ -12,7 +12,10 @@ use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
-use super::model::{BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse};
+use super::model::{
+    BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse, UserViewDto,
+    UserViewsResponse,
+};
 
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
 /// Name, id, type, year, runtime, hierarchy, and image tags are part of
@@ -96,6 +99,44 @@ pub fn fetch_identity_page(
             ),
             ("Fields", String::new()),
             ("EnableUserData", "true".to_string()),
+            ("EnableImages", "false".to_string()),
+            ("StartIndex", start_index.to_string()),
+            ("Limit", page_size.to_string()),
+            ("SortBy", "DateCreated".to_string()),
+            ("SortOrder", "Ascending".to_string()),
+        ],
+    )
+}
+
+/// The libraries the user sees, in the order they arranged them in Jellyfin.
+pub fn fetch_user_views(
+    client: &JellyfinClient,
+    user_id: &str,
+) -> Result<Vec<UserViewDto>, ApiError> {
+    let response: UserViewsResponse = client.get_json("/UserViews", &[user_query(user_id)])?;
+    Ok(response.items)
+}
+
+/// One page of the ids of every `kind` item inside a library, at any depth.
+/// An item's own `ParentId` is its folder, never its library, so this walk is
+/// the only way to learn membership.
+pub fn fetch_library_member_ids(
+    client: &JellyfinClient,
+    user_id: &str,
+    library_id: &str,
+    kind: CatalogKind,
+    start_index: i64,
+    page_size: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("parentId", library_id.to_string()),
+            ("Recursive", "true".to_string()),
+            ("IncludeItemTypes", kind.as_str().to_string()),
+            ("Fields", String::new()),
+            ("EnableUserData", "false".to_string()),
             ("EnableImages", "false".to_string()),
             ("StartIndex", start_index.to_string()),
             ("Limit", page_size.to_string()),
