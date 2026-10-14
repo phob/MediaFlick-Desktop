@@ -1,79 +1,244 @@
-// Library views without a media kind (sidebar search, Favorites, Home's
-// Favorites shelf) list only movies and series, never seasons or episodes.
-// Searches typed into the sidebar for terms the demo server's episodes and
-// season share (`night`, `season`, `earthfall`), then reads `/api/items` the
-// way those views do: by search, by favorite state (the demo account has no
-// favorites, so `favorite=false` exercises the same kindless query) and the
-// A–Z letters. An explicit `kind=Episode` must still list episodes. Read-only
-// against the demo server.
+// Library views without a media kind (sidebar search, Favorites, its A–Z
+// rail, Home's Favorites shelf) list only movies and series, never seasons or
+// episodes, while `kind=Episode` still lists episodes.
+// Both modes: for each nested kind, a sidebar search for a word that a season
+// or episode name shares with one to six movies or series must show exactly
+// those titles, and the kindless `favorite=false` reads and A–Z letters must
+// match `kind=Movie,Series`.
+// With --account only: favorites a movie and an episode that were not
+// favorites, on their detail pages, then checks Favorites, its A–Z letters and
+// Home's Favorites shelf list the movie and not the episode, and removes both
+// favorites again the same way (with an after-run fallback).
 //   just verify top-level-titles
+//   just verify top-level-titles --account https://jellyfin.example.com
 const TOP_LEVEL = new Set(["Movie", "Series"])
 const CARD = { css: 'main a[aria-label^="Open details for"]' }
+const MAX_SEARCH_HITS = 6
 
 const kindsOf = (items) => [...new Set(items.map((item) => item.kind))].sort()
 const nested = (items) => items.filter((item) => !TOP_LEVEL.has(item.kind)).map((item) => `${item.kind}: ${item.name}`)
+const idsOf = (items) => items.map((item) => item.id).sort()
+const sameList = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+const query = (params) => `/api/items?${new URLSearchParams(params)}`
+const cardFor = (id) => ({ css: `main a[aria-label^="Open details for"][href$="/item/${encodeURIComponent(id)}"]` })
+
+async function items(ctx, params) {
+  const response = await ctx.api(query(params))
+  if (response.status !== 200) throw new Error(`${query(params)} answered ${response.status}`)
+  return response.body
+}
+
+async function cardNames(ctx) {
+  return ctx.app.evaluate(`[...document.querySelectorAll('main a[aria-label^="Open details for"]')].map((a) => a.getAttribute("aria-label").replace("Open details for ", ""))`)
+}
+
+async function search(ctx, term) {
+  await ctx.hover({ css: '[data-sidebar="sidebar"]' })
+  await ctx.fill({ role: "textbox", name: "Search the library" }, term)
+  await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1] ?? "").get("search") === term, `search=${term} in the URL`)
+  await ctx.until(async () => {
+    const text = await ctx.app.evaluate("document.querySelector('main')?.innerText ?? ''")
+    return text.includes("Nothing to show") || (await ctx.count(CARD)) > 0
+  }, `the results for ${term}`, 15000)
+  await ctx.park()
+}
+
+// A word from a season or episode name that also finds one to six movies or
+// series, so the search has both a nested match to drop and titles to show.
+async function sharedTerm(ctx, kind) {
+  const names = (await items(ctx, { kind, limit: 500 })).items.map((item) => item.name.toLowerCase())
+  const words = [...new Set(names.flatMap((name) => name.match(/\p{L}{4,}/gu) ?? []))].sort()
+  for (const word of words) {
+    const titles = await items(ctx, { search: word, kind: "Movie,Series", limit: MAX_SEARCH_HITS + 1 })
+    if (titles.total < 1 || titles.total > MAX_SEARCH_HITS) continue
+    const matches = await items(ctx, { search: word, kind, limit: 1 })
+    if (matches.total > 0) return { term: word, kind, nestedMatches: matches.total, expected: titles.items }
+  }
+  return null
+}
+
+async function serverFavorite(ctx, id) {
+  return (await ctx.jellyfin(`/Items/${id}?userId=${ctx.account.userId}`)).UserData.IsFavorite
+}
+
+async function firstNotFavorite(ctx, candidates) {
+  for (const item of candidates) if (!(await serverFavorite(ctx, item.id))) return item
+  throw new Error(`no candidate is free of favorites on the server: ${JSON.stringify(candidates.map((item) => item.name))}`)
+}
+
+async function openMovie(ctx, movie) {
+  await search(ctx, movie.name)
+  await ctx.press(cardFor(movie.id), { nth: 0 })
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${encodeURIComponent(movie.id)}`, `${movie.name}'s page`)
+}
+
+async function openEpisode(ctx, episode, seasonName) {
+  await search(ctx, episode.seriesName)
+  await ctx.press(cardFor(episode.seriesId), { nth: 0 })
+  await ctx.find({ role: "list", name: "Seasons" }, { timeout: 20000 })
+  const link = { css: `main a[href$="/item/${encodeURIComponent(episode.id)}"]` }
+  if (!(await ctx.exists(link))) {
+    const position = await ctx.app.evaluate(`[...document.querySelectorAll('ul[aria-label="Seasons"] > li')].findIndex((li) => li.querySelector("button > span:last-child")?.textContent.trim() === ${JSON.stringify(seasonName)}) + 1`)
+    if (position < 1) throw new Error(`no season button named ${seasonName}`)
+    await ctx.press({ css: `ul[aria-label="Seasons"] > li:nth-child(${position}) > button` })
+  }
+  await ctx.press(link, { nth: 0 })
+  await ctx.until(async () => (await ctx.pathname()) === `/item/${encodeURIComponent(episode.id)}`, `${episode.name}'s page`)
+}
+
+async function toggleFavorite(ctx, item, favorite) {
+  const [from, to] = favorite ? ["Add to favorites", "Remove from favorites"] : ["Remove from favorites", "Add to favorites"]
+  await ctx.press({ role: "button", name: from })
+  await ctx.find({ role: "button", name: to })
+  await ctx.until(async () => (await serverFavorite(ctx, item.id)) === favorite, `${item.kind} ${item.name} with IsFavorite=${favorite} on the server`)
+}
+
+async function cardIds(ctx) {
+  return ctx.app.evaluate(`[...document.querySelectorAll('main a[aria-label^="Open details for"]')].map((a) => decodeURIComponent(a.getAttribute("href").split("/item/")[1]))`)
+}
+
+async function homeFavoritesShelf(ctx) {
+  return ctx.app.evaluate(`(() => {
+    const section = [...document.querySelectorAll("section[aria-labelledby]")].find((s) => s.querySelector("h2")?.textContent.trim() === "Favorites")
+    if (!section) return null
+    section.scrollIntoView({ block: "center" })
+    return [...section.querySelectorAll('a[aria-label^="Open details for"]')].map((a) => decodeURIComponent(a.getAttribute("href").split("/item/")[1]))
+  })()`)
+}
+
+async function provesFavorites(ctx, report, expect) {
+  const movie = await firstNotFavorite(ctx, (await items(ctx, { kind: "Movie", favorite: "false", sort: "added", limit: 20 })).items.filter((item) => /\p{L}{3,}/u.test(item.name)))
+  const episode = await firstNotFavorite(ctx, (await items(ctx, { kind: "Episode", favorite: "false", limit: 50 })).items.filter((item) => item.seriesId && item.seasonId && item.seriesName))
+  const seasonName = (await ctx.api(`/api/item/${encodeURIComponent(episode.seasonId)}`)).body?.name
+  const before = await items(ctx, { favorite: "true", limit: 500 })
+  report.favorites = { movie: { id: movie.id, name: movie.name }, episode: { id: episode.id, name: episode.name, series: episode.seriesName, season: seasonName }, before: before.total }
+  ctx.step(`favoriting movie ${movie.name} (${movie.id}) and episode ${episode.seriesName} ${seasonName} ${episode.name} (${episode.id}); ${before.total} top-level favorites before`)
+
+  ctx.unfavoriteAfterRun(movie.id)
+  await openMovie(ctx, movie)
+  await toggleFavorite(ctx, movie, true)
+  await ctx.screenshot("favorite-movie")
+  ctx.unfavoriteAfterRun(episode.id)
+  await openEpisode(ctx, episode, seasonName)
+  await toggleFavorite(ctx, episode, true)
+  await ctx.screenshot("favorite-episode")
+
+  const favorites = await items(ctx, { favorite: "true", limit: 500 })
+  const favoriteEpisodes = await items(ctx, { kind: "Episode", favorite: "true", limit: 500 })
+  const letters = (await ctx.api("/api/items/letters?favorite=true")).body?.letters ?? null
+  const topLevelLetters = (await ctx.api("/api/items/letters?kind=Movie,Series&favorite=true")).body?.letters ?? null
+
+  await ctx.press({ role: "link", name: "Favorites" })
+  await ctx.until(async () => (await ctx.pathname()) === "/library?favorite=true", "the Favorites route")
+  await ctx.until(async () => (await ctx.count(cardFor(movie.id))) > 0, `${movie.name} among the Favorites cards`)
+  await ctx.park()
+  const favoriteCards = await cardIds(ctx)
+  await ctx.snapshot("favorites")
+  await ctx.screenshot("favorites")
+
+  await ctx.press({ role: "link", name: "Home" })
+  await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
+  const shelf = await ctx.until(async () => {
+    const ids = await homeFavoritesShelf(ctx)
+    return ids?.includes(movie.id) ? ids : null
+  }, `${movie.name} on Home's Favorites shelf`)
+  await ctx.park()
+  await ctx.screenshot("home-favorites")
+  const homeRow = ((await ctx.api("/api/home")).body?.rows ?? []).find((row) => row.id === "myList") ?? null
+
+  Object.assign(report.favorites, {
+    listed: { total: favorites.total, kinds: kindsOf(favorites.items), names: favorites.items.map((item) => item.name) },
+    favoriteEpisodes: idsOf(favoriteEpisodes.items),
+    letters,
+    topLevelLetters,
+    favoriteCards,
+    homeShelf: shelf,
+    homeRow: homeRow && { kinds: kindsOf(homeRow.items), ids: homeRow.items.map((item) => item.id) },
+  })
+
+  await openMovie(ctx, movie)
+  await toggleFavorite(ctx, movie, false)
+  await openEpisode(ctx, episode, seasonName)
+  await toggleFavorite(ctx, episode, false)
+  report.favorites.after = { movie: await serverFavorite(ctx, movie.id), episode: await serverFavorite(ctx, episode.id), total: (await items(ctx, { favorite: "true", limit: 1 })).total }
+
+  const listedIds = favorites.items.map((item) => item.id)
+  expect(favoriteEpisodes.items.some((item) => item.id === episode.id), `kind=Episode&favorite=true lists the favorited episode ${episode.name}`)
+  expect(listedIds.includes(movie.id) && !listedIds.includes(episode.id) && nested(favorites.items).length === 0, `favorite=true lists ${movie.name} and no season or episode (${JSON.stringify(report.favorites.listed.names)})`)
+  expect(favoriteCards.includes(movie.id) && !favoriteCards.includes(episode.id), `the Favorites page shows ${movie.name} and not episode ${episode.name} (${JSON.stringify(favoriteCards)})`)
+  expect(letters && Object.keys(letters).length > 0 && sameList(letters, topLevelLetters), `Favorites' A–Z rail matches its movies and series (${JSON.stringify(letters)} vs ${JSON.stringify(topLevelLetters)})`)
+  expect(shelf.includes(movie.id) && !shelf.includes(episode.id), `Home's Favorites shelf shows ${movie.name} and not episode ${episode.name}`)
+  expect(homeRow?.items.every((item) => TOP_LEVEL.has(item.kind)) && homeRow.items.some((item) => item.id === movie.id), `/api/home's myList row holds ${movie.name} and only movies and series (${JSON.stringify(report.favorites.homeRow?.kinds)})`)
+  expect(report.favorites.after.movie === false && report.favorites.after.episode === false && report.favorites.after.total === before.total, `both favorites removed again on the server (${report.favorites.after.total} top-level favorites, ${before.total} before)`)
+}
 
 export default async function topLevelTitles(ctx) {
   await ctx.signIn({ server: "https://demo.jellyfin.org/stable", username: "demo" })
   await ctx.until(async () => (await ctx.pathname()) === "/", "Home")
-  await ctx.until(async () => ((await ctx.api("/api/items?kind=Episode&limit=1")).body?.total ?? 0) > 0, "episodes in the library cache", 60000)
+  await ctx.until(async () => {
+    const status = (await ctx.api("/api/status")).body
+    return status?.bootstrap?.state === "ready" && status.syncProgress?.active === false
+  }, "the first sync to finish", 300000)
 
-  const report = { searches: {}, reads: {} }
-  for (const term of ["night", "season", "earthfall"]) {
-    await ctx.hover({ css: '[data-sidebar="sidebar"]' })
-    await ctx.fill({ role: "textbox", name: "Search the library" }, term)
-    await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1] ?? "").get("search") === term, `search=${term} in the URL`)
-    await ctx.until(async () => {
-      const text = await ctx.app.evaluate("document.querySelector('main')?.innerText ?? ''")
-      return text.includes("Nothing to show") || (await ctx.count(CARD)) > 0
-    }, `the results for ${term}`, 15000)
-    await ctx.park()
-    const cards = await ctx.app.evaluate(`[...document.querySelectorAll('main a[aria-label^="Open details for"]')].map((a) => ({ name: a.getAttribute("aria-label").replace("Open details for ", ""), text: a.innerText.replace(/\\s+/g, " ").trim() }))`)
-    const api = await ctx.api(`/api/items?search=${encodeURIComponent(term)}&limit=60`)
-    report.searches[term] = {
-      cards,
-      apiStatus: api.status,
-      apiTotal: api.body?.total ?? null,
-      apiKinds: kindsOf(api.body?.items ?? []),
-      nested: nested(api.body?.items ?? []),
+  const report = { mode: ctx.account ? `account ${ctx.account.server}` : "demo", searches: {}, reads: {}, checks: [] }
+  // Every check is recorded and the run fails only at the end, so a failing
+  // run still exercises and reports every view.
+  const expect = (condition, message) => {
+    report.checks.push({ ok: Boolean(condition), message })
+    ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)
+  }
+  for (const kind of ["Season", "Episode"]) {
+    const shared = await sharedTerm(ctx, kind)
+    if (!shared) {
+      ctx.step(`no ${kind} name shares a word with one to ${MAX_SEARCH_HITS} movies or series; ${kind} rows are covered by the favorite=false reads below`)
+      continue
     }
-    ctx.step(`search ${term}: cards ${JSON.stringify(cards.map((card) => card.name))}, api kinds ${report.searches[term].apiKinds.join(",")}`)
+    const { term } = shared
+    await search(ctx, term)
+    const cards = await cardNames(ctx)
+    const kindless = await items(ctx, { search: term, limit: 60 })
+    report.searches[term] = {
+      nestedKind: kind,
+      nestedMatches: shared.nestedMatches,
+      expected: shared.expected.map((item) => `${item.kind}: ${item.name}`),
+      cards,
+      apiKinds: kindsOf(kindless.items),
+      nested: nested(kindless.items),
+    }
+    ctx.step(`search ${term} (${shared.nestedMatches} ${kind} matches): cards ${JSON.stringify(cards)}`)
     await ctx.snapshot(`search-${term}`)
     await ctx.screenshot(`search-${term}`)
+    expect(shared.expected.length > 0 && shared.nestedMatches > 0, `search ${term} matches ${shared.expected.length} movies or series and ${shared.nestedMatches} ${kind} rows`)
+    expect(sameList(idsOf(kindless.items), idsOf(shared.expected)), `search ${term} lists exactly its movies and series (got ${JSON.stringify(report.searches[term].nested)} besides)`)
+    expect(sameList([...cards].sort(), shared.expected.map((item) => item.name).sort()), `search ${term} shows one card per movie or series (${JSON.stringify(cards)})`)
   }
+  expect(Object.keys(report.searches).length > 0, "at least one search had a nested match to drop and titles to show")
 
-  for (const [label, path] of [
-    ["favorites", "/api/items?favorite=true&limit=200"],
-    ["not favorites", "/api/items?favorite=false&limit=200"],
-    ["explicit episodes", "/api/items?kind=Episode&limit=200"],
-  ]) {
-    const api = await ctx.api(path)
-    report.reads[label] = { path, status: api.status, total: api.body?.total ?? null, kinds: kindsOf(api.body?.items ?? []), nested: nested(api.body?.items ?? []) }
-    ctx.step(`${label}: ${api.status} total ${report.reads[label].total} kinds ${report.reads[label].kinds.join(",")}`)
-  }
+  const notFavorite = await items(ctx, { favorite: "false", limit: 500 })
+  const topLevel = await items(ctx, { kind: "Movie,Series", favorite: "false", limit: 1 })
+  const nestedRows = await items(ctx, { kind: "Season,Episode", favorite: "false", limit: 1 })
+  const episodes = await items(ctx, { kind: "Episode", limit: 200 })
   const letters = await ctx.api("/api/items/letters?favorite=false")
   const topLevelLetters = await ctx.api("/api/items/letters?kind=Movie,Series&favorite=false")
-  const titles = (await ctx.api("/api/items?kind=Movie,Series&favorite=false&limit=200")).body?.items ?? []
-  report.reads.letters = { status: letters.status, kindless: letters.body?.letters ?? null, movieAndSeries: topLevelLetters.body?.letters ?? null }
-  const home = await ctx.api("/api/home")
-  report.reads.homeRows = (home.body?.rows ?? []).map((row) => ({ id: row.id, kinds: kindsOf(row.items) }))
+  report.reads = {
+    notFavorite: { total: notFavorite.total, kinds: kindsOf(notFavorite.items), nested: nested(notFavorite.items).slice(0, 10), topLevelTotal: topLevel.total, nestedRowsTotal: nestedRows.total },
+    explicitEpisodes: { total: episodes.total, kinds: kindsOf(episodes.items) },
+    letters: { status: letters.status, kindless: letters.body?.letters ?? null, movieAndSeries: topLevelLetters.body?.letters ?? null },
+    homeRows: ((await ctx.api("/api/home")).body?.rows ?? []).map((row) => ({ id: row.id, kinds: kindsOf(row.items) })),
+  }
+
+  const { notFavorite: read } = report.reads
+  expect(read.topLevelTotal > 0 && read.nestedRowsTotal > 0, `the cache holds ${read.topLevelTotal} movies and series and ${read.nestedRowsTotal} seasons and episodes that are not favorites`)
+  expect(read.total === read.topLevelTotal && read.nested.length === 0, `a kindless favorite=false view counts only movies and series (${read.total} vs ${read.topLevelTotal}; nested ${JSON.stringify(read.nested)})`)
+  const { kindless, movieAndSeries } = report.reads.letters
+  expect(letters.status === 200 && Object.keys(kindless ?? {}).length > 0 && sameList(kindless, movieAndSeries), `a kindless view's A–Z rail matches Movies and Series (${JSON.stringify(kindless)} vs ${JSON.stringify(movieAndSeries)})`)
+  expect(episodes.total > 0 && sameList(report.reads.explicitEpisodes.kinds, ["Episode"]), `kind=Episode still lists episodes (${episodes.total})`)
+  expect(report.reads.homeRows.every((row) => row.kinds.every((kind) => TOP_LEVEL.has(kind)) || row.id === "recentlyAddedShows"), "Home shelves other than Recently Added Shows hold only movies and series")
+
+  if (ctx.account) await provesFavorites(ctx, report, expect)
+  else ctx.step("no --account: Favorites and Home's Favorites shelf are not exercised, because the shared demo account must not be written")
 
   ctx.writeEvidence("top-level-titles.json", report)
-
-  const night = report.searches.night
-  ctx.check(night.cards.some((card) => card.name === "Night of the Living Dead"), "searching night still finds the movie")
-  for (const [term, result] of Object.entries(report.searches)) {
-    ctx.check(result.apiStatus === 200 && result.nested.length === 0, `search ${term} lists only movies and series (got ${JSON.stringify(result.nested)})`)
-    ctx.check(result.cards.length === result.apiTotal, `search ${term} shows one card per title (${result.cards.length} cards, ${result.apiTotal} titles)`)
-  }
-  for (const label of ["favorites", "not favorites"]) {
-    const read = report.reads[label]
-    ctx.check(read.status === 200 && read.nested.length === 0, `a ${label} view lists only movies and series (got ${read.nested.length} nested: ${JSON.stringify(read.nested.slice(0, 3))})`)
-  }
-  ctx.check(report.reads["not favorites"].total === titles.length, `a kindless view counts the same titles as Movies and Series (${report.reads["not favorites"].total} vs ${titles.length})`)
-  const { kindless, movieAndSeries } = report.reads.letters
-  ctx.check(report.reads.letters.status === 200 && JSON.stringify(kindless) === JSON.stringify(movieAndSeries), `a kindless view's A–Z rail matches Movies and Series (${JSON.stringify(kindless)} vs ${JSON.stringify(movieAndSeries)})`)
-  const episodes = report.reads["explicit episodes"]
-  ctx.check(episodes.total > 0 && episodes.kinds.join(",") === "Episode", `kind=Episode still lists episodes (${episodes.total})`)
-  ctx.check(report.reads.homeRows.every((row) => row.kinds.every((kind) => TOP_LEVEL.has(kind)) || row.id === "recentlyAddedShows"), "Home shelves other than Recently Added Shows hold only movies and series")
+  const failed = report.checks.filter((entry) => !entry.ok).map((entry) => entry.message)
+  ctx.check(failed.length === 0, `${report.checks.length - failed.length} of ${report.checks.length} checks passed${failed.length ? `; failed: ${failed.join(" | ")}` : ""}`)
 }

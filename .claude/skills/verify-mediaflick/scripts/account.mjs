@@ -159,6 +159,15 @@ export async function resetUserData(account, itemId, { played = false, positionT
   if (!response.ok) throw new Error(`resetting user data of ${itemId} answered HTTP ${response.status}`)
 }
 
+export async function removeFavorite(account, itemId) {
+  const response = await fetch(`${account.serverUrl}/UserFavoriteItems/${encodeURIComponent(itemId)}?userId=${account.userId}`, {
+    method: "DELETE",
+    headers: { Authorization: `MediaBrowser Token="${account.token}"` },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!response.ok) throw new Error(`removing ${itemId} from favorites answered HTTP ${response.status}`)
+}
+
 export async function cancelSeerrRequest(account, requestId) {
   const response = await fetch(`${account.serverUrl}/MediaFlick/seerr/request/${Number(requestId)}`, {
     method: "DELETE",
