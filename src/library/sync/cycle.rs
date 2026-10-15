@@ -104,7 +104,7 @@ pub(super) fn run_cycle_inner(
     let succeeded = result.is_ok();
     let completed = succeeded
         && (initial_catalog || report.changed() || recovering_ownership || walked.changed);
-    announce(session, &scope, control, |control| {
+    announce_outcome(session, &scope, control, &result, |control| {
         if succeeded && recovering_ownership {
             control.shell().collections_changed();
         }
@@ -121,9 +121,6 @@ pub(super) fn run_cycle_inner(
             control.shell().library_sync_completed();
         }
     });
-    if let Err(error) = &result {
-        session.note_scoped_error(&scope, error);
-    }
     result?;
 
     if (initial_catalog || report.changed())
@@ -247,6 +244,21 @@ fn announce(
         && session.scope_is_current(scope)
     {
         send(control);
+    }
+}
+
+/// Announces before noting a failure: a rejected token expires the session,
+/// which would silence any later announcement.
+fn announce_outcome<T>(
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+    result: &Result<T, ApiError>,
+    send: impl FnOnce(&SyncHandle),
+) {
+    announce(session, scope, control, send);
+    if let Err(error) = result {
+        session.note_scoped_error(scope, error);
     }
 }
 
