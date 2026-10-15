@@ -13,6 +13,7 @@ import {
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
 import { useItemAbout } from "@/lib/queries"
+import { useRouteScroller } from "@/lib/route-scroll"
 
 function artworkAspect(primaryAspect: number | null): HeroArtworkAspect {
   if (primaryAspect == null || primaryAspect < 0.8) return "poster"
@@ -32,6 +33,7 @@ export function GenericItemPage({
   navigationState: DetailNavigationState
 }) {
   const about = useItemAbout(item.id)
+  const scroller = useRouteScroller()
   const backdrop = backdropUrl(item)
   const facts = [
     item.year != null ? String(item.year) : formatYearOnly(item.premiereDate),
@@ -61,7 +63,7 @@ export function GenericItemPage({
           <h2 className="section-title">Contents</h2>
           <ItemGrid
             source={{ scope: "children", itemId: item.id }}
-            scroll="route"
+            scroller={scroller}
             empty="This folder is empty."
           />
         </section>

@@ -1,16 +1,14 @@
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { LibraryBig } from "lucide-react"
-import type React from "react"
-import { useEffect, useLayoutEffect, useMemo, useState } from "react"
-import { useScrollRestoration } from "@/lib/scroll-restoration"
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useState, type Ref } from "react"
 import { MediaCard } from "@/components/MediaCard"
 import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useScrollMargin } from "@/hooks/use-scroll-margin"
 import { PAGE_SIZE, type ItemSummary } from "@/lib/api"
 import type { BrowseSource } from "@/lib/libraries"
 import { useBrowsePages } from "@/lib/queries"
-import { cn } from "@/lib/utils"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 
@@ -31,7 +29,6 @@ function readGeometry(element: HTMLElement) {
  */
 function useGridMetrics(element: HTMLElement | null) {
   const [metrics, setMetrics] = useState({
-    measured: false,
     columns: 1,
     rowHeight: FALLBACK.card + FALLBACK.gap,
     cardHeight: FALLBACK.card,
@@ -45,9 +42,9 @@ function useGridMetrics(element: HTMLElement | null) {
       const width = element.clientWidth
       const columns = Math.max(1, Math.floor((width + gap) / (poster + gap)))
       setMetrics((previous) =>
-        previous.measured && previous.columns === columns && previous.cardHeight === card && previous.gap === gap
+        previous.columns === columns && previous.cardHeight === card && previous.gap === gap
           ? previous
-          : { measured: true, columns, rowHeight: card + gap, cardHeight: card, gap },
+          : { columns, rowHeight: card + gap, cardHeight: card, gap },
       )
     }
 
@@ -61,54 +58,22 @@ function useGridMetrics(element: HTMLElement | null) {
   return metrics
 }
 
-function routeScroller() {
-  return document.querySelector<HTMLElement>(".content-viewport")
-}
-
-/** Where `element` starts inside `scroller`'s scrolled content. */
-function useScrollMargin(element: HTMLElement | null, scroller: HTMLElement | null) {
-  const [margin, setMargin] = useState<number | null>(null)
-
-  useLayoutEffect(() => {
-    if (!element || !scroller) return
-    const measure = () => {
-      const next = element.getBoundingClientRect().top
-        - scroller.getBoundingClientRect().top
-        + scroller.scrollTop
-      setMargin((previous) => (previous === next ? previous : next))
-    }
-
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    observer.observe(scroller)
-    const page = element.closest<HTMLElement>(".detail-page")
-    if (page) observer.observe(page)
-    return () => observer.disconnect()
-  }, [element, scroller])
-
-  return margin
+export interface ItemGridHandle {
+  /** Scrolls the row holding the item at `index` to the top of the grid. */
+  jumpTo: (index: number) => void
 }
 
 export interface ItemGridProps {
   /** A titles query carries no `limit`/`offset`: the grid owns paging. */
   source: BrowseSource
   /**
-   * `own` fills its parent and scrolls itself, as on a library page. `route`
-   * grows with its rows inside the route's scroll viewport, so the detail page
-   * around it scrolls as one.
+   * The element the grid scrolls in. Its owner also restores its position: a
+   * library page's own pane, or the route viewport around a details page.
    */
-  scroll?: "own" | "route"
+  scroller: HTMLElement | null
   onTotal?: (total: number | null) => void
   empty?: string
-  /**
-   * Rendered inside the scroller, below the last virtual row. It has to live in
-   * here rather than after the grid: this component owns an `h-full` scroll
-   * container and the virtualizer's total height, so anything appended outside
-   * would either sit off-screen or need a second scrollbar.
-   */
-  footer?: React.ReactNode
-  jumpRail?: (jumpTo: (index: number) => void) => React.ReactNode
+  ref?: Ref<ItemGridHandle>
 }
 
 /**
@@ -119,21 +84,16 @@ export interface ItemGridProps {
  */
 export function ItemGrid({
   source,
-  scroll = "own",
+  scroller,
   onTotal,
   empty = "No items match that query.",
-  footer,
-  jumpRail,
+  ref,
 }: ItemGridProps) {
   "use no memo"
 
-  const routeScroll = scroll === "route"
-  const [ownScroller, setOwnScroller] = useState<HTMLDivElement | null>(null)
-  const [routeViewport] = useState(() => (routeScroll ? routeScroller() : null))
-  const scroller = routeScroll ? routeViewport : ownScroller
   const [content, setContent] = useState<HTMLDivElement | null>(null)
-  const scrollMargin = useScrollMargin(routeScroll ? content : null, routeViewport) ?? 0
-  const { measured, columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
+  const scrollMargin = useScrollMargin(content, scroller)
+  const { columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
   // Page 0 is always requested: it is what `total` is read from, so keeping it
   // resident stops the grid collapsing to zero rows when the user scrolls into
@@ -178,11 +138,15 @@ export function ItemGrid({
     getScrollElement: () => scroller,
     estimateSize: () => rowHeight,
     overscan: 2,
-    scrollMargin,
+    scrollMargin: scrollMargin ?? 0,
+    enabled: scrollMargin !== null,
   })
 
-  // In the route's viewport the route restores its own scroll position.
-  useScrollRestoration(ownScroller, `grid:${JSON.stringify(source)}`, total !== null && measured)
+  // A row lands where the first row sits unscrolled, so the pane's own top
+  // padding stays above it, rather than flush at the scroller's edge.
+  useImperativeHandle(ref, () => ({
+    jumpTo: (index) => virtualizer.scrollToOffset(Math.floor(index / columns) * rowHeight),
+  }))
 
   const items = virtualizer.getVirtualItems()
   const first = items[0]?.index ?? 0
@@ -195,11 +159,8 @@ export function ItemGrid({
   }, [first, last, items.length])
 
   const itemAt = (index: number) => loaded.get(Math.floor(index / PAGE_SIZE))?.[index % PAGE_SIZE]
-  const jumpTo = (index: number) =>
-    virtualizer.scrollToIndex(Math.floor(index / columns), { align: "start" })
-  const rail = jumpRail && total && !routeScroll ? jumpRail(jumpTo) : null
 
-  const body = (
+  return (
     <div ref={setContent}>
       {error ? (
         <PageErrorState
@@ -224,7 +185,7 @@ export function ItemGrid({
               style={{
                 height: cardHeight,
                 gap,
-                transform: `translateY(${row.start - scrollMargin}px)`,
+                transform: `translateY(${row.start - (scrollMargin ?? 0)}px)`,
               }}
             >
               {Array.from({ length: columns }, (_, column) => {
@@ -241,23 +202,6 @@ export function ItemGrid({
           ))}
         </div>
       )}
-      {footer}
-    </div>
-  )
-  if (routeScroll) return body
-
-  return (
-    <div className="flex h-full min-h-0">
-      <div
-        ref={setOwnScroller}
-        className={cn(
-          "h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14",
-          rail && "pr-2 sm:pr-3 lg:pr-4",
-        )}
-      >
-        {body}
-      </div>
-      {rail}
     </div>
   )
 }
