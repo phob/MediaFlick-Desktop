@@ -331,6 +331,19 @@ pub fn live_page(response: &ItemsResponse) -> ItemPage {
     }
 }
 
+pub fn playlist_page(response: &ItemsResponse, page: ChildPage) -> ItemPage {
+    ItemPage {
+        items: (page.offset..)
+            .zip(&response.items)
+            .map(|(index, dto)| ItemSummary {
+                playlist_index: Some(index),
+                ..ItemSummary::from_dto(dto)
+            })
+            .collect(),
+        total: response.total_record_count,
+    }
+}
+
 fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseError> {
     let LibraryRegistry::Known(libraries) = library.libraries()? else {
         return Err(BrowseError::RegistryUnknown);

@@ -37,6 +37,11 @@ export interface ItemSummary {
    * grid queries do not, and offline rows have none.
    */
   overview?: string | null
+  /**
+   * A playlist's children carry the slot each item fills, counted from zero.
+   * The same item can fill two slots.
+   */
+  playlistIndex?: number
 }
 
 export interface Person {

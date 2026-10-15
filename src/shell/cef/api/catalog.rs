@@ -987,18 +987,20 @@ fn live_children(
             source
         }
     };
-    let response = match source {
+    let children = match source {
         ChildrenSource::Folder => {
             items::fetch_live_children(client, user_id, item_id, offset, limit)
+                .map(|response| browse::live_page(&response))
         }
         ChildrenSource::Playlist => {
             items::fetch_playlist_items(client, user_id, item_id, offset, limit)
+                .map(|response| browse::playlist_page(&response, page))
         }
     }
     .map_err(fail)?;
     still_signed_in(services, &scope)?;
     tracing::debug!(target: "library.browse", item_id, paged, ?source, "fetched a container's children from the server");
-    Ok(browse::live_page(&response))
+    Ok(children)
 }
 
 #[cfg(test)]

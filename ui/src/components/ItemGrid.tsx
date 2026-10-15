@@ -185,7 +185,7 @@ export function ItemGrid({
                 if (index >= total) return null
                 const item = itemAt(index)
                 return item ? (
-                  <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
+                  <MediaCard key={item.playlistIndex === undefined ? item.id : `${item.id}:${item.playlistIndex}`} item={item} className="catalog-card shrink-0" />
                 ) : (
                   <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
                 )
