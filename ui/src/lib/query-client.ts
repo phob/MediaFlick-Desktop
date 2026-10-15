@@ -30,6 +30,7 @@ export function createQueryClient() {
 }
 
 const ITEMS_ROOT = "items"
+const CHILD_PAGES_ROOT = "child-pages"
 
 export const queryKeys = {
   status: ["status"] as const,
@@ -63,7 +64,7 @@ export const queryKeys = {
   letterboxdProfiles: ["letterboxd", "profiles"] as const,
   children: (id: string) => ["item", id, "children"] as const,
   childPage: (id: string, offset: number, limit: number) =>
-    ["item", id, "children", { offset, limit }] as const,
+    [CHILD_PAGES_ROOT, id, { offset, limit }] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,
@@ -105,6 +106,7 @@ export const queryKeys = {
 const ACCOUNT_QUERY_ROOTS = new Set([
   "billboard",
   "calendar",
+  CHILD_PAGES_ROOT,
   "collections",
   "companion",
   "genres",
@@ -173,6 +175,8 @@ export function invalidateMediaSurfaces(
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
+  // A card in a box set or folder grid does not know the container it sits in.
+  void client.invalidateQueries({ queryKey: [CHILD_PAGES_ROOT], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
@@ -204,7 +208,7 @@ export function invalidateLibraryChanged(
       }
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
-      return root === "item" && relevant.has(String(id))
+      return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))
     },
   })
 }
