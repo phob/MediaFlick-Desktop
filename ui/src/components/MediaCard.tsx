@@ -43,15 +43,6 @@ function useTechnicalVisibility() {
   return { observe: setElement, visible }
 }
 
-/**
- * The preview, ratings and inline Play, Favorite and Watched serve movies and
- * shows; any other item is a plain card into its details page.
- */
-function cardFeatures(kind: string) {
-  const title = isCatalogKind(kind)
-  return { preview: title, ratings: title, inlineActions: title }
-}
-
 function subtitleFor(item: ItemSummary) {
   if (item.kind === "Episode") {
     const season = item.parentIndexNumber
@@ -87,8 +78,10 @@ export const MediaCard = memo(function MediaCard({
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
   const location = useLocation()
-  const features = cardFeatures(item.kind)
-  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && features.preview)
+  // The preview, ratings and inline Play, Favorite and Watched serve movies
+  // and shows; any other item is a plain card into its details page.
+  const title = isCatalogKind(item.kind)
+  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && title)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
@@ -156,7 +149,7 @@ export const MediaCard = memo(function MediaCard({
               {item.name}
             </span>
           )}
-          {features.ratings && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
+          {title && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
           {(ribbon || unplayed > 0) && (
             <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
               {ribbon && (
@@ -192,7 +185,7 @@ export const MediaCard = memo(function MediaCard({
             </div>
           )}
         </Link>
-        {features.inlineActions && !previewsEnabled && <CardInlineActions item={item} />}
+        {title && !previewsEnabled && <CardInlineActions item={item} />}
       </div>
       <Link
         to={`/item/${encodeURIComponent(item.id)}`}
