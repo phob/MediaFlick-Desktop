@@ -64,10 +64,12 @@ export default function ItemDetail() {
   const location = useLocation()
   const itemQuery = useItem(id)
   const { data: item, isPending, error } = itemQuery
-  // Asked for alongside the item rather than after it. A generic container
-  // pages its children itself, so only a title's list is wanted.
+  // Credits are asked for alongside the item. Children wait for it: an
+  // uncached title is cached by the item request, and asked any earlier its
+  // seasons would come live and unreconciled. A generic container pages its
+  // children itself.
   const about = useItemAbout(id)
-  const children = useChildren(id, item?.layout !== "generic")
+  const children = useChildren(id, item?.layout === "title")
 
   if (error && !item) return (
     <div className="p-6 sm:p-10 lg:p-14">
