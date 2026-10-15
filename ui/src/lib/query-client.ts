@@ -223,3 +223,22 @@ export function invalidateLibraryChanged(
     },
   })
 }
+
+/**
+ * Items and folders that only Jellyfin serves changed on the server. Refreshes
+ * the open pages that list or show them, never the cached catalog.
+ */
+export function invalidateLiveChanged(
+  client: QueryClient,
+  itemIds: readonly string[],
+  contextIds: readonly string[],
+) {
+  const relevant = new Set([...itemIds, ...contextIds])
+  void client.invalidateQueries({
+    refetchType: "active",
+    predicate: (query) => {
+      const [root, id] = query.queryKey
+      return (root === CHILD_PAGES_ROOT || root === "item") && relevant.has(String(id))
+    },
+  })
+}

@@ -300,6 +300,20 @@ impl Library {
         })
     }
 
+    pub fn cached_ids(&self, ids: &[String]) -> rusqlite::Result<HashSet<String>> {
+        self.db.with_connection(|connection| {
+            let mut statement =
+                connection.prepare_cached("SELECT 1 FROM items WHERE jellyfin_id = ?1")?;
+            let mut cached = HashSet::new();
+            for id in ids {
+                if statement.exists(params![id])? {
+                    cached.insert(id.clone());
+                }
+            }
+            Ok(cached)
+        })
+    }
+
     pub fn all_ids(&self) -> rusqlite::Result<HashSet<String>> {
         self.db.with_connection(|connection| {
             let mut statement = connection.prepare("SELECT jellyfin_id FROM items")?;

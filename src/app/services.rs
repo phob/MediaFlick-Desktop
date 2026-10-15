@@ -64,6 +64,11 @@ pub enum ShellRequest {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
     },
+    /// Items and folders the server changed that only Jellyfin serves.
+    LiveChanged {
+        item_ids: Vec<String>,
+        context_ids: Vec<String>,
+    },
     /// A bootstrap page changed local catalog projections only.
     CatalogChanged {
         item_ids: Vec<String>,
@@ -109,6 +114,16 @@ impl ShellBridge {
         let _ = self.request(ShellRequest::LibraryChanged {
             item_ids: changes.item_ids,
             context_ids: changes.context_ids,
+        });
+    }
+
+    pub fn live_changed(&self, item_ids: Vec<String>, context_ids: Vec<String>) {
+        if item_ids.is_empty() && context_ids.is_empty() {
+            return;
+        }
+        let _ = self.request(ShellRequest::LiveChanged {
+            item_ids,
+            context_ids,
         });
     }
 

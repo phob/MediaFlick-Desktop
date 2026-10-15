@@ -3,11 +3,14 @@
 //! One worker thread owns the connection: it idles until credentials exist,
 //! answers the server's keep-alive probes, and translates pushed
 //! `UserDataChanged` and `LibraryChanged` notifications into the same cache
-//! upserts, evictions, and UI invalidations the sync thread produces. The
+//! upserts, evictions, and UI invalidations the sync thread produces. Changed
+//! ids the cache does not hold (albums, playlists, folders) are passed on as a
+//! live change, so pages Jellyfin serves directly refresh too. The
 //! socket is an acceleration layer only — dropped connections lose events, so
 //! every successful (re)connect asks the sync worker for one requested cycle
 //! to reconcile the gap, and the periodic sweeps remain the backstop.
 
+use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex};
@@ -336,8 +339,8 @@ fn handle_message(
         ServerMessage::UserData(records) => {
             apply_user_data(library, session, shell, scope, &records);
         }
-        ServerMessage::LibraryChanged { changed, removed } => {
-            apply_library_change(library, session, sync, shell, scope, &changed, &removed);
+        ServerMessage::LibraryChanged(change) => {
+            apply_library_change(library, session, sync, shell, scope, &change);
         }
         ServerMessage::Play(data) => handle.remote(RemoteCommand::Play {
             data,
@@ -360,14 +363,19 @@ enum ServerMessage {
     KeepAliveInterval(Duration),
     /// UserDataChanged: pushed watch-state rows for the signed-in user.
     UserData(Vec<UserDataRecord>),
-    LibraryChanged {
-        changed: Vec<String>,
-        removed: Vec<String>,
-    },
+    LibraryChanged(LibraryChange),
     Play(Value),
     Playstate(Value),
     GeneralCommand(Value),
     Ignored,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct LibraryChange {
+    changed: Vec<String>,
+    removed: Vec<String>,
+    /// Folders that gained or lost children.
+    folders: Vec<String>,
 }
 
 fn parse_message(text: &str) -> ServerMessage {
@@ -410,10 +418,15 @@ fn parse_message(text: &str) -> ServerMessage {
             changed.extend(id_list(data, "ItemsUpdated"));
             changed.sort_unstable();
             changed.dedup();
-            ServerMessage::LibraryChanged {
+            let mut folders = id_list(data, "FoldersAddedTo");
+            folders.extend(id_list(data, "FoldersRemovedFrom"));
+            folders.sort_unstable();
+            folders.dedup();
+            ServerMessage::LibraryChanged(LibraryChange {
                 changed,
                 removed: id_list(data, "ItemsRemoved"),
-            }
+                folders,
+            })
         }
         "Play" => ServerMessage::Play(data.clone()),
         "Playstate" => ServerMessage::Playstate(data.clone()),
@@ -498,11 +511,18 @@ fn apply_library_change(
     sync: &SyncHandle,
     shell: &ShellBridge,
     scope: &SessionScope,
-    changed: &[String],
-    removed: &[String],
+    change: &LibraryChange,
 ) {
+    let reported = change
+        .changed
+        .iter()
+        .chain(&change.removed)
+        .chain(&change.folders)
+        .cloned()
+        .collect::<Vec<_>>();
+    let cached_before = library.cached_ids(&reported);
     let mut batch = LibraryChangeBatch::default();
-    for item_id in removed {
+    for item_id in &change.removed {
         match commit_scoped(session, scope, || library.forget(item_id)) {
             Ok(changes) => batch.merge(changes),
             Err(ScopedWriteError::Stale) => {
@@ -518,7 +538,7 @@ fn apply_library_change(
         }
     }
 
-    for chunk in changed.chunks(FETCH_CHUNK) {
+    for chunk in change.changed.chunks(FETCH_CHUNK) {
         match items::fetch_items(scope.client(), scope.user_id(), chunk) {
             Ok(response) => {
                 match commit_scoped(session, scope, || library.ingest_page(&response.items)) {
@@ -555,6 +575,45 @@ fn apply_library_change(
         );
         shell.library_changed(batch);
     }
+    match cached_before.and_then(|before| live_change(library, change, &before)) {
+        Ok((item_ids, context_ids)) if session.scope_is_current(scope) => {
+            if !item_ids.is_empty() || !context_ids.is_empty() {
+                tracing::debug!(
+                    target: "jellyfin.socket",
+                    items = ?item_ids,
+                    folders = ?context_ids,
+                    "announced a pushed change to items the cache does not hold"
+                );
+            }
+            shell.live_changed(item_ids, context_ids);
+        }
+        Ok(_) => log_stale_push(),
+        Err(error) => {
+            tracing::warn!(target: "jellyfin.socket", "could not tell pushed live changes from cached ones: {error}");
+        }
+    }
+}
+
+/// The reported ids the cache held neither before nor after applying the
+/// change: items and folders only Jellyfin serves.
+fn live_change(
+    library: &Library,
+    change: &LibraryChange,
+    cached_before: &HashSet<String>,
+) -> rusqlite::Result<(Vec<String>, Vec<String>)> {
+    let cached_after = library.cached_ids(&change.changed)?;
+    let is_live = |id: &&String| !cached_before.contains(*id) && !cached_after.contains(*id);
+    let mut item_ids = change
+        .changed
+        .iter()
+        .chain(&change.removed)
+        .filter(is_live)
+        .cloned()
+        .collect::<Vec<_>>();
+    item_ids.sort_unstable();
+    item_ids.dedup();
+    let context_ids = change.folders.iter().filter(is_live).cloned().collect();
+    Ok((item_ids, context_ids))
 }
 
 fn set_read_timeout(socket: &mut Socket, timeout: Duration) {
@@ -639,8 +698,8 @@ impl Endpoint {
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, Endpoint, RemoteCommand, ServerMessage, SocketHandle, apply_library_change,
-        apply_user_data, handle_message, parse_message, spawn,
+        Duration, Endpoint, LibraryChange, RemoteCommand, ServerMessage, SocketHandle,
+        apply_library_change, apply_user_data, handle_message, parse_message, spawn,
     };
     use crate::app::services::ShellBridge;
     use crate::jellyfin::session::Session;
@@ -795,8 +854,10 @@ mod tests {
             &sync,
             &ShellBridge::default(),
             &alice,
-            &["alice-first".to_string()],
-            &[],
+            &LibraryChange {
+                changed: vec!["alice-first".to_string()],
+                ..LibraryChange::default()
+            },
         );
         assert!(library.item("alice-first").expect("item").is_some());
 
@@ -810,8 +871,10 @@ mod tests {
                     &sync,
                     &ShellBridge::default(),
                     &alice,
-                    &["alice-late".to_string()],
-                    &[],
+                    &LibraryChange {
+                        changed: vec!["alice-late".to_string()],
+                        ..LibraryChange::default()
+                    },
                 );
             })
         };
@@ -861,8 +924,10 @@ mod tests {
             &SyncHandle::detached(),
             &ShellBridge::default(),
             &alice,
-            &[],
-            &["m1".to_string()],
+            &LibraryChange {
+                removed: vec!["m1".to_string()],
+                ..LibraryChange::default()
+            },
         );
 
         let item = library.item("m1").expect("item").expect("still cached");
@@ -916,14 +981,16 @@ mod tests {
     fn library_changed_merges_added_and_updated_and_keeps_removed_separate() {
         let message = parse_message(
             r#"{"MessageType":"LibraryChanged","Data":{
-                "ItemsAdded":["a","b"],"ItemsUpdated":["b","c",""],"ItemsRemoved":["gone"]}}"#,
+                "ItemsAdded":["a","b"],"ItemsUpdated":["b","c",""],"ItemsRemoved":["gone"],
+                "FoldersAddedTo":["f"],"FoldersRemovedFrom":["f","g"]}}"#,
         );
         assert_eq!(
             message,
-            ServerMessage::LibraryChanged {
+            ServerMessage::LibraryChanged(LibraryChange {
                 changed: vec!["a".to_string(), "b".to_string(), "c".to_string()],
                 removed: vec!["gone".to_string()],
-            }
+                folders: vec!["f".to_string(), "g".to_string()],
+            })
         );
     }
 

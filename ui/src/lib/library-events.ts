@@ -1,7 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { invalidateLibraryChanged, queryKeys } from "./query-client"
-import { readShellEvent, shellEventIds } from "./shell-events"
+import { invalidateLibraryChanged, invalidateLiveChanged, queryKeys } from "./query-client"
+import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
+
+/** The native `live-changed` event: ids the server changed that the cache does not hold. */
+export interface LiveChange {
+  itemIds: string[]
+  contextIds: string[]
+}
+
+export function readLiveChange(event: ShellEvent): LiveChange | null {
+  if (event.type !== "live-changed") return null
+  return {
+    itemIds: shellEventIds(event.payload.itemIds),
+    contextIds: shellEventIds(event.payload.contextIds),
+  }
+}
 
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
@@ -16,6 +30,16 @@ export function useLibraryMetadataBridge() {
         catalogTimer = setTimeout(flushCatalog, 1_000)
       }
     }
+    let liveTimer: ReturnType<typeof setTimeout> | undefined
+    const livePending = { itemIds: new Set<string>(), contextIds: new Set<string>() }
+    const flushLive = () => {
+      liveTimer = undefined
+      if (livePending.itemIds.size === 0 && livePending.contextIds.size === 0) return
+      invalidateLiveChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds])
+      livePending.itemIds.clear()
+      livePending.contextIds.clear()
+      liveTimer = setTimeout(flushLive, 1_000)
+    }
     const receive = (event: Event) => {
       const detail = readShellEvent(event)
       if (detail?.type === "jellyfin-session-expired") {
@@ -26,6 +50,13 @@ export function useLibraryMetadataBridge() {
         void queryClient.invalidateQueries({ queryKey: ["collections"] })
         void queryClient.invalidateQueries({ queryKey: queryKeys.home, exact: true })
         void queryClient.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
+        return
+      }
+      const live = detail && readLiveChange(detail)
+      if (live) {
+        for (const id of live.itemIds) livePending.itemIds.add(id)
+        for (const id of live.contextIds) livePending.contextIds.add(id)
+        if (!liveTimer) flushLive()
         return
       }
       if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
@@ -47,6 +78,7 @@ export function useLibraryMetadataBridge() {
     return () => {
       window.removeEventListener("mediaflick-desktop-shell", receive)
       clearTimeout(catalogTimer)
+      clearTimeout(liveTimer)
     }
   }, [queryClient])
 }
