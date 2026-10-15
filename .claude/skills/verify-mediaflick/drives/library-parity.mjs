@@ -46,6 +46,16 @@ export default async function libraryParity(ctx) {
     ctx.check(reply.status === 200, `/api/items?${query} answers`)
     return reply.body
   }
+  const libraryItems = async (library, query) => {
+    const reply = await ctx.api(`/api/libraries/${library.id}/items?${query}&limit=500`)
+    ctx.check(reply.status === 200, `${library.name}'s items?${query} answers`)
+    return reply.body
+  }
+  async function openLibrary(library) {
+    await ctx.hover({ css: '[data-sidebar="sidebar"]' })
+    await ctx.press({ css: `[data-sidebar="sidebar"] a[href="/library/${library.id}"]` })
+    await ctx.until(async () => (await ctx.pathname()) === `/library/${library.id}`, `the ${library.name} library`)
+  }
 
   async function agree(label, read) {
     const deadline = Date.now() + LIVE_WINDOW_MS
@@ -134,9 +144,9 @@ export default async function libraryParity(ctx) {
     })()`)
   }
 
-  async function checkRail(kind, query, direction, label) {
-    const letters = (await ctx.api(`/api/items/letters?${query}`)).body.letters
-    const items = (await appItems(query)).items
+  async function checkRail(kind, library, query, direction, label) {
+    const letters = (await ctx.api(`/api/libraries/${library.id}/letters?${query}`)).body.letters
+    const items = (await libraryItems(library, query)).items
     const server = await jellyfin("/Items", { Recursive: true, IncludeItemTypes: kind, Fields: "SortName" })
     const sortNames = new Map(server.Items.map((item) => [item.Id, item.SortName ?? item.Name]))
     const letterOf = (item) => {
@@ -191,9 +201,14 @@ export default async function libraryParity(ctx) {
   }
 
   await ctx.signIn({ server: DEMO, username: "demo" })
+  const { libraries } = await ctx.until(async () => {
+    const body = (await ctx.api("/api/libraries")).body
+    return body?.known ? body : null
+  }, "the library list")
+  const moviesLibrary = libraries.find((library) => library.kind === "movies")
+  const showsLibrary = libraries.find((library) => library.kind === "shows")
 
-  await ctx.press({ role: "link", name: "Movies" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await openLibrary(moviesLibrary)
   await ctx.park()
   await gridReady("Movies")
   report.movieSorts = await sortOptions()
@@ -209,8 +224,8 @@ export default async function libraryParity(ctx) {
   }
 
   const ascending = await firstTitles("01-movies-name-asc")
-  const apiAscending = (await appItems("kind=Movie&sort=name")).items.map((item) => item.name)
-  const apiDescending = (await appItems("kind=Movie&sort=name&order=desc")).items.map((item) => item.name)
+  const apiAscending = (await libraryItems(moviesLibrary, "sort=name")).items.map((item) => item.name)
+  const apiDescending = (await libraryItems(moviesLibrary, "sort=name&order=desc")).items.map((item) => item.name)
   ctx.check(JSON.stringify(ascending) === JSON.stringify(apiAscending.slice(0, ascending.length)), "the grid shows /api/items' ascending name order")
   ctx.check(JSON.stringify(apiDescending) === JSON.stringify([...apiAscending].reverse()), "descending name order is the ascending order reversed")
   await ctx.press({ role: "button", name: "Sort descending" })
@@ -221,13 +236,13 @@ export default async function libraryParity(ctx) {
   ctx.check(JSON.stringify(descending) === JSON.stringify(apiDescending.slice(0, descending.length)), `the first titles reverse: ${descending.join(", ")}`)
   report.direction = { ascending, descending, url: await ctx.pathname() }
 
-  report.railMoviesDesc = await checkRail("Movie", "kind=Movie&sort=name&order=desc", "desc", "Movies A–Z descending")
+  report.railMoviesDesc = await checkRail("Movie", moviesLibrary, "sort=name&order=desc", "desc", "Movies A–Z descending")
   await ctx.park()
   await ctx.screenshot("03-movies-rail-desc")
   await ctx.press({ role: "button", name: "Sort ascending" })
   await ctx.until(async () => !(await ctx.pathname()).includes("order="), "order to leave the URL at the natural direction")
   await ctx.until(async () => (await firstTitles("04-movies-name-asc-again"))[0] === apiAscending[0], "the grid to read ascending again")
-  report.railMoviesAsc = await checkRail("Movie", "kind=Movie&sort=name", "asc", "Movies A–Z ascending")
+  report.railMoviesAsc = await checkRail("Movie", moviesLibrary, "sort=name", "asc", "Movies A–Z ascending")
 
   await ctx.choose({ name: "Sort by" }, "Sort: Random")
   const seed = await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1]).get("seed"), "a seed in the URL")
@@ -240,14 +255,14 @@ export default async function libraryParity(ctx) {
   await gridReady("Sort: Random after a reload")
   const reloaded = await firstTitles("06-movies-random-reloaded")
   ctx.check(JSON.stringify(reloaded) === JSON.stringify(shuffled), `the same seed gives the same first titles after a reload: ${reloaded.join(", ")}`)
-  const apiShuffled = (await appItems(`kind=Movie&sort=random&seed=${seed}`)).items.map((item) => item.name)
+  const apiShuffled = (await libraryItems(moviesLibrary, `sort=random&seed=${seed}`)).items.map((item) => item.name)
   ctx.check(JSON.stringify(shuffled) === JSON.stringify(apiShuffled.slice(0, shuffled.length)), "the grid shows /api/items' order for that seed")
   await ctx.press({ role: "button", name: "Shuffle again" })
   const reseeded = await ctx.until(async () => {
     const next = new URLSearchParams((await ctx.pathname()).split("?")[1]).get("seed")
     return next && next !== seed ? next : null
   }, "Shuffle again to change the seed")
-  const apiReshuffled = (await appItems(`kind=Movie&sort=random&seed=${reseeded}`)).items.map((item) => item.name)
+  const apiReshuffled = (await libraryItems(moviesLibrary, `sort=random&seed=${reseeded}`)).items.map((item) => item.name)
   ctx.check(JSON.stringify(apiReshuffled) !== JSON.stringify(apiShuffled), "a new seed gives a new order")
   ctx.check(JSON.stringify([...apiReshuffled].sort()) === JSON.stringify([...apiShuffled].sort()), "a shuffle keeps exactly the same titles")
   report.random = { seed, shuffled, reloaded, reseeded, apiShuffled, apiReshuffled }
@@ -265,7 +280,7 @@ export default async function libraryParity(ctx) {
   await agree("Movies In progress", async () => {
     const movies = await jellyfin("/Items", { Recursive: true, IncludeItemTypes: "Movie", EnableUserData: true })
     const resumable = await serverCount({ IncludeItemTypes: "Movie", Filters: "IsResumable" })
-    const app = (await appItems("kind=Movie&watched=progress")).total
+    const app = (await libraryItems(moviesLibrary, "watched=progress")).total
     const ui = await gridReady("In progress")
     const own = movies.Items.filter((item) => item.UserData?.PlaybackPositionTicks > 0 && !item.UserData?.Played).length
     // The app's In progress is "part-way through": a resume point and not
@@ -281,7 +296,7 @@ export default async function libraryParity(ctx) {
 
   await openFilters()
   const ratings = await openSubmenu("Parental rating", "09-parental")
-  const appRatings = (await ctx.api("/api/official-ratings?kind=Movie")).body.officialRatings
+  const appRatings = (await ctx.api(`/api/libraries/${moviesLibrary.id}/options`)).body.officialRatings
   const serverRatings = [...new Set((await jellyfin("/Items", { Recursive: true, IncludeItemTypes: "Movie" })).Items.map((item) => item.OfficialRating).filter(Boolean))].sort()
   ctx.check(JSON.stringify([...appRatings].sort()) === JSON.stringify(serverRatings), `the rating list ${appRatings.join(", ")} is the server's set`)
   ctx.check(JSON.stringify(ratings) === JSON.stringify(["Any rating", ...appRatings]), `Parental rating options: ${ratings.join(", ")}`)
@@ -291,7 +306,7 @@ export default async function libraryParity(ctx) {
   await ctx.find({ role: "button", name: `Remove Rated: ${rating} filter` })
   await ctx.find({ role: "button", name: "Filters, 1 active" })
   await agree(`Movies rated ${rating}`, async () => ({
-    app: [(await appItems(`kind=Movie&parental=${encodeURIComponent(rating)}`)).total, await gridReady(`Rated ${rating}`)],
+    app: [(await libraryItems(moviesLibrary, `parental=${encodeURIComponent(rating)}`)).total, await gridReady(`Rated ${rating}`)],
     server: Array(2).fill(await serverCount({ IncludeItemTypes: "Movie", OfficialRatings: rating })),
   }))
   report.ratings = { app: appRatings, server: serverRatings, picked: rating }
@@ -303,9 +318,7 @@ export default async function libraryParity(ctx) {
   await gridReady("Movies")
   await ctx.screenshot("11-movies-controls")
 
-  await ctx.hover({ css: '[data-sidebar="sidebar"]' })
-  await ctx.press({ role: "link", name: "Series" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Series", "the Series library")
+  await openLibrary(showsLibrary)
   await ctx.park()
   await gridReady("Series")
   report.seriesSorts = await sortOptions()
@@ -318,14 +331,14 @@ export default async function libraryParity(ctx) {
     await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1]).get("sort") === id, `sort=${id} in the URL`)
     await gridReady(label)
   }
-  report.railSeriesAsc = await checkRail("Series", "kind=Series&sort=name", "asc", "Series A–Z ascending")
+  report.railSeriesAsc = await checkRail("Series", showsLibrary, "sort=name", "asc", "Series A–Z ascending")
 
   const seriesList = await jellyfin("/Items", { Recursive: true, IncludeItemTypes: "Series", EnableUserData: true })
   report.unplayed = []
   for (const series of seriesList.Items) {
     const pair = await agree(`${series.Name} unwatched episodes`, async () => {
       const server = (await jellyfin("/Items", { Ids: series.Id, EnableUserData: true })).Items[0]?.UserData?.UnplayedItemCount ?? null
-      const app = (await appItems("kind=Series")).items.find((item) => item.id === series.Id)?.unplayedCount ?? null
+      const app = (await libraryItems(showsLibrary, "")).items.find((item) => item.id === series.Id)?.unplayedCount ?? null
       const badge = await ctx.app.evaluate(`(() => {
         const link = document.querySelector('a[aria-label=${JSON.stringify(`Open details for ${series.Name}`)}]')
         const node = link?.querySelector("[data-unplayed-count]")
@@ -354,7 +367,7 @@ export default async function libraryParity(ctx) {
     await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1]).get("seriesStatus") === status, `seriesStatus=${status} in the URL`)
     await ctx.find({ role: "button", name: `Remove ${status} filter` })
     const pair = await agree(`Series ${status}`, async () => ({
-      app: [(await appItems(`kind=Series&seriesStatus=${status}`)).total, await gridReady(status)],
+      app: [(await libraryItems(showsLibrary, `seriesStatus=${status}`)).total, await gridReady(status)],
       server: Array(2).fill(await serverCount({ IncludeItemTypes: "Series", SeriesStatus: status })),
     }))
     report.seriesStatus[status] = pair.server[0]
@@ -371,7 +384,7 @@ export default async function libraryParity(ctx) {
     const episodes = await jellyfin("/Items", { Recursive: true, IncludeItemTypes: "Episode", EnableUserData: true })
     const own = seriesInProgressFromEpisodes(episodes.Items)
     report.seriesInProgressDefinition = { jellyfinIsResumable: await serverCount({ IncludeItemTypes: "Series", Filters: "IsResumable" }), fromEpisodes: own }
-    return { app: [(await appItems("kind=Series&watched=progress")).total, await gridReady("Series In progress")], server: [own, own] }
+    return { app: [(await libraryItems(showsLibrary, "watched=progress")).total, await gridReady("Series In progress")], server: [own, own] }
   })
   await ctx.park()
   await ctx.screenshot("15-series-in-progress")
