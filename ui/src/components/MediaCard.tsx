@@ -10,6 +10,7 @@ import {
   progressFraction,
   type ItemSummary,
 } from "@/lib/api"
+import { artworkShape } from "@/lib/artwork"
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
 import { isCatalogKind } from "@/lib/libraries"
@@ -17,8 +18,6 @@ import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 const TECHNICAL_PREFETCH_MARGIN = "160px"
-/** Art at least this wide for its height (album covers, photos) is shown whole in the 2:3 frame. */
-const SQUARE_ART_ASPECT = 0.8
 
 /**
  * Horizontal shelves mount every card so they can scroll smoothly, including
@@ -145,9 +144,11 @@ export const MediaCard = memo(function MediaCard({
               // shelf keeps its rhythm while the pointer runs along it.
               decoding="async"
               onError={() => setImageIndex((current) => current + 1)}
+              // Near-square art (album covers, photos) is shown whole in the 2:3
+              // frame; a wide still would shrink to a thin strip, so it fills it.
               className={cn(
                 "media-artwork-image h-full w-full",
-                !landscape && (item.primaryAspect ?? 0) >= SQUARE_ART_ASPECT ? "object-contain" : "object-cover",
+                !landscape && artworkShape(item.primaryAspect) === "square" ? "object-contain" : "object-cover",
               )}
             />
           ) : (

@@ -10,14 +10,16 @@ import {
   logoUrl,
   type GenericItemDetail,
 } from "@/lib/api"
+import { artworkShape, type ArtworkShape } from "@/lib/artwork"
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
 import { useItemAbout } from "@/lib/queries"
 import { useRouteScroller } from "@/lib/route-scroll"
 
-function artworkAspect(primaryAspect: number | null): HeroArtworkAspect {
-  if (primaryAspect == null || primaryAspect < 0.8) return "poster"
-  return primaryAspect >= 1.3 ? "still" : "square"
+const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
+  portrait: "poster",
+  square: "square",
+  landscape: "still",
 }
 
 /**
@@ -46,8 +48,14 @@ export function GenericItemPage({
       {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHeroLayout
         back={{ to: navigationState.from, label: navigationState.label }}
+        // Art of any shape lands in the nearest frame and is contained, so a 4:3
+        // or 3:2 still in the 16:9 frame is shown whole.
         poster={item.primaryImageTag
-          ? { src: imageUrl(item, "Primary", DETAIL_POSTER_WIDTH), aspect: artworkAspect(item.primaryAspect) }
+          ? {
+              src: imageUrl(item, "Primary", DETAIL_POSTER_WIDTH),
+              aspect: HERO_FRAME[artworkShape(item.primaryAspect)],
+              fit: "contain",
+            }
           : null}
         logo={logoUrl(item)}
         title={item.name}

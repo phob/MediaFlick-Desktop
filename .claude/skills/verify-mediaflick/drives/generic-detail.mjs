@@ -24,7 +24,8 @@ const DEMO = "https://demo.jellyfin.org/stable"
 const HERO = '[data-testid="detail-hero-layout"]'
 const GRID_CARD_LINK = '[data-item-grid-canvas] article a[aria-label^="Open details for"]'
 const TITLE_CONTROLS = /^(Play|Resume|Play S\d+E\d+|Resume S\d+E\d+|Add to favorites|Remove from favorites|Mark watched|Mark unwatched|More info|Streaming quality)$/
-const SQUARE_ART = 0.8
+// ui/src/lib/artwork.ts: near-square art is contained in a card, wider art fills it.
+const SQUARE_ART = { min: 0.8, max: 1.3 }
 const LIVE_PAGE_MAX = 200
 
 const sameList = (left, right) => JSON.stringify(left) === JSON.stringify(right)
@@ -239,12 +240,18 @@ export default async function genericDetail(ctx) {
       const folder = await genericFolder(ctx, expect, { label: `album ${album.Name}`, id: album.Id, name: album.Name, userId, childCount: album.ChildCount })
       expect(folder.cards === album.ChildCount, `album ${album.Name}: ${folder.cards} track cards equal its ChildCount ${album.ChildCount}`)
       expect(folder.surfaces.posterFit === "contain" && Math.abs(folder.surfaces.posterBox - 1) < 0.02, `album ${album.Name}: the cover is contained in a square hero frame (${folder.surfaces.posterFit}, ${folder.surfaces.posterBox})`)
-      const squareCards = folder.server.items.filter((item) => (item.aspect ?? 0) >= SQUARE_ART)
-      const uncontained = squareCards.filter((item) => folder.seen.get(item.id)?.fit !== "contain").map((item) => `${item.name}: ${folder.seen.get(item.id)?.fit}`)
+      const fitOf = (item) => folder.seen.get(item.id)?.fit
+      const squareCards = folder.server.items.filter((item) => item.aspect != null && item.aspect >= SQUARE_ART.min && item.aspect <= SQUARE_ART.max)
+      const wideCards = folder.server.items.filter((item) => item.aspect != null && item.aspect > SQUARE_ART.max)
+      const uncontained = squareCards.filter((item) => fitOf(item) !== "contain").map((item) => `${item.name}: ${fitOf(item)}`)
+      const unfilled = wideCards.filter((item) => fitOf(item) !== "cover").map((item) => `${item.name}: ${fitOf(item)}`)
       if (squareCards.length) {
-        expect(uncontained.length === 0, `album ${album.Name}: ${squareCards.length} track cards with square art use object-contain (${JSON.stringify(uncontained)})`)
+        expect(uncontained.length === 0, `album ${album.Name}: ${squareCards.length} track cards with near-square art use object-contain (${JSON.stringify(uncontained)})`)
       } else {
-        ctx.step(`album ${album.Name}: no track has square art of its own; card containment not exercised`)
+        ctx.step(`album ${album.Name}: no track has near-square art of its own; card containment not exercised`)
+      }
+      if (wideCards.length) {
+        expect(unfilled.length === 0, `album ${album.Name}: ${wideCards.length} track cards with wide art fill the frame (${JSON.stringify(unfilled)})`)
       }
       await ctx.screenshot("01-album")
       await ctx.snapshot("01-album")
