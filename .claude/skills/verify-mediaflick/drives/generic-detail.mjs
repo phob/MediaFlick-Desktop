@@ -309,7 +309,8 @@ async function uncachedSeries(ctx, expect, userId) {
 }
 
 async function seasonRail(ctx) {
-  return ctx.app.evaluate(`[...document.querySelectorAll('[aria-label="Seasons"] button')].map((button) => ({ name: button.textContent.trim(), pressed: button.getAttribute("aria-pressed") === "true" }))`)
+  // The label, not the button's whole text: art-less posters repeat the name.
+  return ctx.app.evaluate(`[...document.querySelectorAll('[aria-label="Seasons"] button')].map((button) => ({ name: button.lastElementChild.textContent.trim(), pressed: button.getAttribute("aria-pressed") === "true" }))`)
 }
 
 async function episodeLinks(ctx) {
