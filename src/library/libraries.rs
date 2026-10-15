@@ -228,6 +228,10 @@ pub struct MediaLibrary {
     /// Jellyfin's CollectionType as received. `kind()` maps it.
     pub(super) collection_type: Option<String>,
     pub primary_image_tag: Option<String>,
+    /// A stored catalog library whose membership walk has not landed yet, so
+    /// its grid may still lack titles. Always false for a library as the
+    /// server lists it.
+    pub membership_pending: bool,
 }
 
 impl MediaLibrary {
@@ -238,6 +242,7 @@ impl MediaLibrary {
             name: view.name.clone().unwrap_or_default(),
             collection_type: view.collection_type.clone(),
             primary_image_tag: view.primary_image_tag().map(str::to_string),
+            membership_pending: false,
         })
     }
 

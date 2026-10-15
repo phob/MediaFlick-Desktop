@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::catalog_libraries::{META_MEMBERSHIP_OWED, META_SWEEP_OWED};
+use crate::library::catalog_libraries::META_SWEEP_OWED;
+use crate::library::libraries::LibraryRegistry;
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::libraries::{membership_pass, refresh_libraries};
+use super::libraries::{Walk, membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
@@ -54,10 +55,9 @@ pub(super) fn run_cycle_inner(
             control.set_phase(SyncPhase::Catalog);
         }
         // Before the first fill, so library grids fill page by page with it.
-        let walked_before_fill =
-            initial_catalog && meta(library, META_MEMBERSHIP_OWED)?.as_deref() == Some("1");
+        let walked_before_fill = initial_catalog && membership_owed(library)?;
         if walked_before_fill {
-            membership_changed |= walk_membership(library, session, &scope, control)?;
+            membership_changed |= walk_membership(library, session, &scope, Walk::Owed, control)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
         cancelled(control, session, &scope)?;
@@ -86,13 +86,13 @@ pub(super) fn run_cycle_inner(
         } else {
             false
         };
-        if !walked_before_fill
-            && (meta(library, META_MEMBERSHIP_OWED)?.as_deref() == Some("1")
-                || report.changed()
-                || swept
-                || trigger == Trigger::Requested)
-        {
-            membership_changed |= walk_membership(library, session, &scope, control)?;
+        if !walked_before_fill {
+            let walk = if report.changed() || swept || trigger == Trigger::Requested {
+                Walk::All
+            } else {
+                Walk::Owed
+            };
+            membership_changed |= walk_membership(library, session, &scope, walk, control)?;
         }
         Ok(())
     })();
@@ -206,10 +206,17 @@ fn walk_membership(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
+    walk: Walk,
     control: Option<&SyncHandle>,
 ) -> Result<bool, ApiError> {
-    let walked = membership_pass(library, session, scope, control);
+    let walked = membership_pass(library, session, scope, walk, control);
     Ok(best_effort("library membership", walked)?.unwrap_or(false))
+}
+
+fn membership_owed(library: &Library) -> Result<bool, ApiError> {
+    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    Ok(matches!(registry, LibraryRegistry::Known(libraries)
+        if libraries.iter().any(|entry| entry.membership_pending)))
 }
 
 fn bootstrap(

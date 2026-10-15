@@ -1228,6 +1228,8 @@ export interface Library {
   name: string
   kind: LibraryKind
   imageTag: string | null
+  /** True while a movies or TV shows library's titles are still being read, so an empty grid is not yet an empty library. */
+  membershipPending: boolean
   browse: BrowseCapabilities
 }
 
