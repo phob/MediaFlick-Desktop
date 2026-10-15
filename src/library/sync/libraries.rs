@@ -13,6 +13,7 @@ use super::{
 
 pub(super) struct LibraryList {
     pub(super) libraries: Vec<MediaLibrary>,
+    pub(super) changed: bool,
 }
 
 impl LibraryList {
@@ -23,13 +24,10 @@ impl LibraryList {
     }
 }
 
-/// Announces a changed list as soon as it is stored, so the sidebar does not
-/// wait for the catalog walk behind it.
 pub(super) fn refresh_libraries(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    control: Option<&SyncHandle>,
 ) -> Result<LibraryList, ApiError> {
     let views = items::fetch_user_views(scope.client(), scope.user_id())?;
     let mut seen = HashSet::new();
@@ -49,53 +47,36 @@ pub(super) fn refresh_libraries(
             .replace_libraries(&libraries)
             .map_err(|error| storage_error(&error))
     })?;
-    if changed
-        && session.scope_is_current(scope)
-        && let Some(control) = control
-    {
-        tracing::debug!(target: "library.sync", "announced a changed library list");
-        control.shell().libraries_changed();
-    }
-    Ok(LibraryList { libraries })
+    Ok(LibraryList { libraries, changed })
 }
 
-/// Returns whether a title joined or left a library. Announces a settled walk
-/// even when a later library cancels the pass.
+/// Merges each library's walk into `walked` as it lands, so a later library
+/// that fails the pass cannot take back what earlier ones stored.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+    walked: &mut MembershipReplaced,
+) -> Result<(), ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
     let LibraryRegistry::Known(libraries) = registry else {
-        return Ok(false);
+        return Ok(());
     };
     let due = libraries
         .into_iter()
         .filter(|entry| entry.membership_pending)
         .filter_map(|entry| Some((entry.catalog_title()?, entry.id)));
-    let mut pass = MembershipReplaced::default();
-    let outcome = (|| -> Result<(), ApiError> {
-        for (title, id) in due {
-            let walked = refresh_membership(library, session, scope, &id, title, control);
-            let rate_limited = matches!(walked, Err(ApiError::RateLimited { .. }));
-            let step = format!("the membership of library {}", id.as_str());
-            pass.merge(best_effort(&step, walked)?.unwrap_or_default());
-            if rate_limited {
-                break;
-            }
+    for (title, id) in due {
+        let walk = refresh_membership(library, session, scope, &id, title, control);
+        let rate_limited = matches!(walk, Err(ApiError::RateLimited { .. }));
+        let step = format!("the membership of library {}", id.as_str());
+        walked.merge(best_effort(&step, walk)?.unwrap_or_default());
+        if rate_limited {
+            break;
         }
-        Ok(())
-    })();
-    if pass.settled
-        && session.scope_is_current(scope)
-        && let Some(control) = control
-    {
-        tracing::debug!(target: "library.sync", "announced settled library memberships");
-        control.shell().library_memberships_settled();
     }
-    outcome.map(|()| pass.changed)
+    Ok(())
 }
 
 fn refresh_membership(

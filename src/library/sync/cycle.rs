@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::catalog_libraries::META_SWEEP_OWED;
+use crate::library::catalog_libraries::{META_SWEEP_OWED, MembershipReplaced};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
 use super::libraries::{membership_pass, refresh_libraries};
@@ -39,24 +39,25 @@ pub(super) fn run_cycle_inner(
         && meta(library, META_LAST_BOOTSTRAP)?.is_none();
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
-    let mut membership_changed = false;
+    let mut walked = MembershipReplaced::default();
 
     let result = (|| -> Result<(), ApiError> {
-        let refreshed = refresh_libraries(library, session, &scope, control);
-        let listed = best_effort("the library list", refreshed)?;
-        let no_catalog_library = listed.is_some_and(|listed| listed.lists_no_catalog_library());
+        let no_catalog_library = list_libraries(library, session, &scope, control)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
-        if meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
-            && let Some(control) = control
-        {
+        let downloading = meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1");
+        if downloading && let Some(control) = control {
             control.set_phase(SyncPhase::Catalog);
         }
         if initial_catalog {
-            membership_changed |= walk_membership(library, session, &scope, true, control)?;
+            walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
+        // The list reports every catalog library as pending until the catalog
+        // download is complete.
+        walked.settled |=
+            downloading && meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1");
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
@@ -90,40 +91,44 @@ pub(super) fn run_cycle_inner(
         };
         if !initial_catalog {
             let owe_all = report.changed() || swept || trigger == Trigger::Requested;
-            membership_changed |= walk_membership(library, session, &scope, owe_all, control)?;
+            walk_membership(library, session, &scope, owe_all, control, &mut walked)?;
         }
         Ok(())
     })();
 
-    if let Err(error) = &result {
-        let _ = commit(session, &scope, || {
-            library
-                .set_meta(META_LATEST_FAILURE, "1")
-                .map_err(|storage| storage_error(&storage))
-        });
-        session.note_scoped_error(&scope, error);
-        if !report.changes.is_empty()
-            && session.scope_is_current(&scope)
-            && let Some(control) = control
-        {
-            control.shell().library_changed(report.changes.clone());
-        }
+    if result.is_err() {
+        record_failure(library, session, &scope);
     }
-    result?;
-
-    report.elapsed_ms = started.elapsed().as_millis() as u64;
-    record_success(library, session, &scope, &report)?;
-    if let Some(control) = control {
-        if recovering_ownership {
+    let result = result.and_then(|()| {
+        report.elapsed_ms = started.elapsed().as_millis() as u64;
+        record_success(library, session, &scope, &report)
+    });
+    let succeeded = result.is_ok();
+    let completed = succeeded
+        && (initial_catalog || report.changed() || recovering_ownership || walked.changed);
+    // Before a rejected token expires the session, which would silence it.
+    announce(session, &scope, control, |control| {
+        if succeeded && recovering_ownership {
             control.shell().collections_changed();
         }
         if !report.changes.is_empty() {
             control.shell().library_changed(report.changes.clone());
         }
-        if initial_catalog || report.changed() || recovering_ownership || membership_changed {
-            control.announce_cycle_completed();
+        if walked.settled {
+            tracing::debug!(target: "library.sync", "announced settled library memberships");
+            control.shell().library_memberships_settled();
         }
+        if completed {
+            control.announce_cycle_completed();
+        } else if walked.changed {
+            control.shell().library_sync_completed();
+        }
+    });
+    if let Err(error) = &result {
+        session.note_scoped_error(&scope, error);
     }
+    result?;
+
     if (initial_catalog || report.changed())
         && let Err(error) = library.optimize()
     {
@@ -149,6 +154,14 @@ fn restart_bootstrap(
             .map_err(|error| storage_error(&error))?;
         Ok(())
     })
+}
+
+fn record_failure(library: &Library, session: &Session, scope: &SessionScope) {
+    let _ = commit(session, scope, || {
+        library
+            .set_meta(META_LATEST_FAILURE, "1")
+            .map_err(|storage| storage_error(&storage))
+    });
 }
 
 fn record_success(
@@ -208,13 +221,51 @@ fn sweep_identity(
     Ok(deletion_ran)
 }
 
+/// Announces a changed list as soon as it is stored, so the sidebar does not
+/// wait for the catalog download behind it. Returns whether the server lists
+/// no catalog library.
+fn list_libraries(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+) -> Result<bool, ApiError> {
+    let refreshed = refresh_libraries(library, session, scope);
+    let Some(listed) = best_effort("the library list", refreshed)? else {
+        return Ok(false);
+    };
+    if listed.changed {
+        announce(session, scope, control, |control| {
+            tracing::debug!(target: "library.sync", "announced a changed library list");
+            control.shell().libraries_changed();
+        });
+    }
+    Ok(listed.lists_no_catalog_library())
+}
+
+/// A cycle whose account has since signed out must not refresh the pages of
+/// the account that replaced it.
+fn announce(
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+    send: impl FnOnce(&SyncHandle),
+) {
+    if let Some(control) = control
+        && session.scope_is_current(scope)
+    {
+        send(control);
+    }
+}
+
 fn walk_membership(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
     owe_all: bool,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+    walked: &mut MembershipReplaced,
+) -> Result<(), ApiError> {
     let owed = if owe_all {
         commit(session, scope, || {
             library
@@ -224,8 +275,9 @@ fn walk_membership(
     } else {
         Ok(())
     };
-    let walked = owed.and_then(|()| membership_pass(library, session, scope, control));
-    Ok(best_effort("library membership", walked)?.unwrap_or_default())
+    let pass = owed.and_then(|()| membership_pass(library, session, scope, control, walked));
+    best_effort("library membership", pass)?;
+    Ok(())
 }
 
 fn bootstrap(
