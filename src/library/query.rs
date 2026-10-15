@@ -438,6 +438,7 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
         logo_image_tag: cached_image_tag(&image_tags, "Logo").map(str::to_string),
         backdrop_image_tag: row.get(20)?,
         unplayed_count: row.get(21)?,
+        primary_aspect: None,
         overview: None,
     })
 }
