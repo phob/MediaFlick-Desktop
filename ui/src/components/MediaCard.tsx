@@ -80,8 +80,8 @@ export const MediaCard = memo(function MediaCard({
   const location = useLocation()
   // The preview, ratings and inline Play, Favorite and Watched serve movies
   // and shows; any other item is a plain card into its details page.
-  const title = isCatalogKind(item.kind)
-  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && title)
+  const catalogItem = isCatalogKind(item.kind)
+  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && catalogItem)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
@@ -149,7 +149,7 @@ export const MediaCard = memo(function MediaCard({
               {item.name}
             </span>
           )}
-          {title && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
+          {catalogItem && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
           {(ribbon || unplayed > 0) && (
             <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
               {ribbon && (
@@ -185,7 +185,7 @@ export const MediaCard = memo(function MediaCard({
             </div>
           )}
         </Link>
-        {title && !previewsEnabled && <CardInlineActions item={item} />}
+        {catalogItem && !previewsEnabled && <CardInlineActions item={item} />}
       </div>
       <Link
         to={`/item/${encodeURIComponent(item.id)}`}
