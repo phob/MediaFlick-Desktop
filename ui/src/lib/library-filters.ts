@@ -1,25 +1,14 @@
-import type { ItemQuery, SeriesStatus, SortOrder, WatchFilter } from "./api"
+import type { ItemQuery, LibrarySortId, SeriesStatus, SortOrder, WatchFilter } from "./api"
 
-export type LibraryKind = "Movie" | "Series"
+export type TitleKind = "Movie" | "Series"
 
-const BOTH_KINDS: readonly LibraryKind[] = ["Movie", "Series"]
-
-export type LibrarySortId =
-  | "name"
-  | "year"
-  | "added"
-  | "episode-added"
-  | "rating"
-  | "played"
-  | "plays"
-  | "runtime"
-  | "random"
+const BOTH_KINDS: readonly TitleKind[] = ["Movie", "Series"]
 
 export interface LibrarySort {
   id: LibrarySortId
   label: string
   seriesLabel?: string
-  appliesTo: readonly LibraryKind[]
+  appliesTo: readonly TitleKind[]
   natural: SortOrder
 }
 
@@ -37,15 +26,15 @@ export const LIBRARY_SORTS: readonly LibrarySort[] = [
   { id: "random", label: "Random", appliesTo: BOTH_KINDS, natural: "desc" },
 ]
 
-export function librarySortsFor(kinds: readonly LibraryKind[]) {
+export function librarySortsFor(kinds: readonly TitleKind[]) {
   return LIBRARY_SORTS.filter((sort) => kinds.every((kind) => sort.appliesTo.includes(kind)))
 }
 
-export function librarySortLabel(sort: LibrarySort, kinds: readonly LibraryKind[]) {
+export function librarySortLabel(sort: LibrarySort, kinds: readonly TitleKind[]) {
   return kinds.length === 1 && kinds[0] === "Series" && sort.seriesLabel ? sort.seriesLabel : sort.label
 }
 
-function librarySort(id: string | null, kinds: readonly LibraryKind[]) {
+function librarySort(id: string | null, kinds: readonly TitleKind[]) {
   return librarySortsFor(kinds).find((sort) => sort.id === id) ?? NAME_SORT
 }
 
@@ -61,7 +50,7 @@ export const WATCH_FILTERS: readonly { id: WatchFilter; label: string }[] = [
 
 export const SERIES_STATUSES: readonly SeriesStatus[] = ["Continuing", "Ended"]
 
-export function seriesStatusApplies(kinds: readonly LibraryKind[]) {
+export function seriesStatusApplies(kinds: readonly TitleKind[]) {
   return kinds.length === 1 && kinds[0] === "Series"
 }
 
@@ -115,12 +104,17 @@ function validSeed(value: string | null) {
   return value && /^\d{1,10}$/.test(value) && Number(value) <= MAX_SEED ? String(Number(value)) : ""
 }
 
-export function libraryViewKinds(params: URLSearchParams): LibraryKind[] {
-  const kinds = libraryKind(params)
+function titleKinds(value: string): TitleKind[] {
+  const kinds = value
     .split(",")
     .map((kind) => kind.trim())
-    .filter((kind): kind is LibraryKind => kind === "Movie" || kind === "Series")
-  return kinds.length ? [...new Set(kinds)] : [...BOTH_KINDS]
+    .filter((kind): kind is TitleKind => kind === "Movie" || kind === "Series")
+  return [...new Set(kinds)]
+}
+
+export function libraryViewKinds(params: URLSearchParams): TitleKind[] {
+  const kinds = titleKinds(libraryKind(params))
+  return kinds.length ? kinds : [...BOTH_KINDS]
 }
 
 export function readLibraryFilters(params: URLSearchParams): LibraryFilterState {
@@ -172,7 +166,7 @@ export function libraryKind(params: URLSearchParams) {
   return params.get("search") || favorite ? "" : "Movie"
 }
 
-export function libraryKindPath(kind: LibraryKind) {
+export function libraryKindPath(kind: TitleKind) {
   return `/library?kind=${kind}`
 }
 
@@ -180,7 +174,7 @@ export function libraryItemQuery(params: URLSearchParams): ItemQuery {
   const filters = readLibraryFilters(params)
   return {
     search: params.get("search") ?? "",
-    kind: libraryKind(params),
+    kind: titleKinds(libraryKind(params)).join(","),
     favorite: filters.favorite || undefined,
     genre: filters.genre,
     decade: filters.decade ? Number(filters.decade) : undefined,

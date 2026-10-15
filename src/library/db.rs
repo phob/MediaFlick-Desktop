@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i32 = 18;
+pub const SCHEMA_VERSION: i32 = 21;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
@@ -396,6 +396,17 @@ fn drop_everything(connection: &Connection) -> rusqlite::Result<()> {
     result
 }
 
+pub const CATALOG_TABLES: [&str; 8] = [
+    "items",
+    "user_data",
+    "libraries",
+    "item_libraries",
+    "external_profiles",
+    "legacy_item_playback_preferences",
+    "franchise_movie_membership",
+    "meta",
+];
+
 /// The complete current schema.
 ///
 /// `items` is a thin catalog index: one row per Movie/Series/Season/Episode
@@ -534,6 +545,22 @@ CREATE TRIGGER items_fts_update AFTER UPDATE ON items BEGIN
     INSERT INTO items_fts(rowid, name, original_title, search_genres)
     VALUES (new.id, new.name, new.original_title, new.search_genres);
 END;
+
+CREATE TABLE libraries (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    collection_type   TEXT,
+    position          INTEGER NOT NULL,
+    primary_image_tag TEXT,
+    membership_owed   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE item_libraries (
+    library_id TEXT NOT NULL,
+    item_id    TEXT NOT NULL,
+    PRIMARY KEY (library_id, item_id)
+) WITHOUT ROWID;
+CREATE INDEX item_libraries_item ON item_libraries (item_id);
 
 CREATE TABLE meta (
     key   TEXT PRIMARY KEY,

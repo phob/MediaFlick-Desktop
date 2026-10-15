@@ -1,7 +1,11 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::library::libraries::FilterKey;
+
 use super::*;
+
+const DEFAULT_PAGE_LIMIT: i64 = 60;
 
 pub(super) fn route(
     services: &Arc<Services>,
@@ -17,7 +21,7 @@ pub(super) fn route(
         ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["items", "letters"] if request.is("GET") => item_letters(services, request),
-        ["genres"] if request.is("GET") => Ok(match services.library.genres() {
+        ["genres"] if request.is("GET") => Ok(match services.library.genres(None) {
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
         }),
@@ -80,7 +84,7 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         .ok_or_else(|| ApiResponse::error(401, "sign in to configure Home"))?;
     let genres = services
         .library
-        .genres()
+        .genres(None)
         .map_err(|error| storage_failure(&error))?;
     let profiles = services.collections.account(&account).profiles;
     let readiness = services.companion.cached_collection_readiness();
@@ -293,7 +297,6 @@ fn home(services: &Arc<Services>) -> Handled {
                 &home_query(
                     &services.library,
                     ItemQuery {
-                        kinds: vec!["Movie".to_string(), "Series".to_string()],
                         genre: Some(id.clone()),
                         sort: ItemSort::CommunityRating,
                         ..Default::default()
@@ -330,7 +333,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             home_query(
                 &services.library,
                 ItemQuery {
-                    kinds: vec!["Movie".to_string()],
+                    kinds: KindFilter::one(CatalogKind::Movie),
                     sort: ItemSort::DateAdded,
                     ..Default::default()
                 },
@@ -347,12 +350,12 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
         HomeBuiltIn::LatestMovies => (
             "latestMovies",
             "Latest Movies",
-            latest_home_items(&services.library, "Movie"),
+            latest_home_items(&services.library, CatalogKind::Movie),
         ),
         HomeBuiltIn::LatestShows => (
             "latestShows",
             "Latest Shows",
-            latest_home_items(&services.library, "Series"),
+            latest_home_items(&services.library, CatalogKind::Series),
         ),
         HomeBuiltIn::MyList => (
             "myList",
@@ -406,7 +409,6 @@ fn because_you_watched(services: &Services, account: &AccountKey) -> Option<Valu
     let items = home_query(
         &services.library,
         ItemQuery {
-            kinds: vec!["Movie".to_string(), "Series".to_string()],
             genre: Some(genre.to_string()),
             watched: Some(WatchFilter::Unwatched),
             sort: ItemSort::CommunityRating,
@@ -516,11 +518,11 @@ fn deduplicate_next_up(resume: &[ItemSummary], next_up: Vec<ItemSummary>) -> Vec
         .collect()
 }
 
-fn latest_home_items(library: &Library, kind: &str) -> Vec<ItemSummary> {
+fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
     home_query(
         library,
         ItemQuery {
-            kinds: vec![kind.to_string()],
+            kinds: KindFilter::one(kind),
             sort: ItemSort::ReleaseDate,
             ..Default::default()
         },
@@ -542,17 +544,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         return query_person_items(services, &person_id, request);
     }
 
-    let query = ItemQuery {
-        offset: request
-            .param("offset")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0),
-        limit: request
-            .param("limit")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(60),
-        ..library_query(request)
-    };
+    let query = item_query(request)?;
     match services.library.query(&query) {
         Ok(page) => Ok(ApiResponse::ok(
             json!({ "items": page.items, "total": page.total }),
@@ -562,7 +554,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    match services.library.letter_index(&library_query(request)) {
+    match services.library.letter_index(&item_query(request)?) {
         Ok(letters) => Ok(ApiResponse::ok(json!({
             "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
         }))),
@@ -576,63 +568,109 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         .map(|value| {
             value
                 .split(',')
-                .map(str::trim)
-                .filter(|kind| matches!(*kind, "Movie" | "Series"))
-                .map(str::to_string)
+                .filter_map(|kind| CatalogKind::parse(kind.trim()))
+                .filter(|kind| CatalogKind::TOP_LEVEL.contains(kind))
                 .collect::<Vec<_>>()
         })
         .filter(|kinds| !kinds.is_empty())
-        .unwrap_or_else(|| vec!["Movie".to_string(), "Series".to_string()]);
-    match services.library.official_ratings(&kinds) {
+        .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
+    match services.library.official_ratings(&kinds, None) {
         Ok(ratings) => Ok(ApiResponse::ok(json!({ "officialRatings": ratings }))),
         Err(error) => Err(storage_failure(&error)),
     }
 }
 
-fn library_query(request: &ApiRequest) -> ItemQuery {
-    let seed = request.param("seed").and_then(|value| value.parse().ok());
-    ItemQuery {
+fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
+    let value = request.param("kind").unwrap_or_default();
+    let kinds = value
+        .split(',')
+        .map(str::trim)
+        .filter(|kind| !kind.is_empty())
+        .map(|kind| {
+            CatalogKind::parse(kind)
+                .ok_or_else(|| ApiResponse::error(400, format!("unknown item kind {kind:?}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(KindFilter::from_kinds(kinds))
+}
+
+fn item_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
+    Ok(ItemQuery {
         search: request.param("search"),
-        kinds: request
-            .param("kind")
-            .map(|value| {
-                value
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|kind| !kind.is_empty())
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
-        genre: request.param("genre"),
-        release_decade: request
-            .param("decade")
-            .as_deref()
-            .and_then(crate::library::release_decade_from_id),
-        watched: request
-            .param("watched")
-            .as_deref()
-            .and_then(WatchFilter::from_id),
-        favorite: request
-            .param("favorite")
-            .map(|value| value == "true" || value == "1"),
+        kinds: kind_filter(request)?,
+        ..library_query(request, Params::Lenient)?
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Params {
+    Lenient,
+    Strict,
+}
+
+pub(super) fn library_query(
+    request: &ApiRequest,
+    params: Params,
+) -> Result<ItemQuery, ApiResponse> {
+    let seed = param(request, params, "seed", |value| value.parse::<u32>().ok())?;
+    Ok(ItemQuery {
+        sort: param(request, params, "sort", |value| {
+            ItemSort::from_id(value, seed)
+        })?
+        .unwrap_or_default(),
+        direction: param(request, params, "order", SortDirection::from_id)?,
+        genre: request.param(FilterKey::Genre.id()),
+        release_decade: param(
+            request,
+            params,
+            FilterKey::Decade.id(),
+            crate::library::release_decade_from_id,
+        )?,
+        watched: param(
+            request,
+            params,
+            FilterKey::Watched.id(),
+            WatchFilter::from_id,
+        )?,
+        favorite: param(
+            request,
+            params,
+            FilterKey::Favorite.id(),
+            |value| match value {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            },
+        )?,
         official_rating: request
-            .param("parental")
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        series_status: request
-            .param("seriesStatus")
-            .as_deref()
-            .and_then(SeriesStatus::from_id),
-        sort: request
-            .param("sort")
-            .and_then(|value| ItemSort::from_id(&value, seed))
-            .unwrap_or_default(),
-        direction: request
-            .param("order")
-            .as_deref()
-            .and_then(SortDirection::from_id),
+            .param(FilterKey::Parental.id())
+            .map(|value| value.trim().to_string()),
+        series_status: param(
+            request,
+            params,
+            FilterKey::SeriesStatus.id(),
+            SeriesStatus::from_id,
+        )?,
+        offset: param(request, params, "offset", |value| value.parse::<i64>().ok())?.unwrap_or(0),
+        limit: param(request, params, "limit", |value| value.parse::<i64>().ok())?
+            .unwrap_or(DEFAULT_PAGE_LIMIT),
         ..ItemQuery::default()
+    })
+}
+
+pub(super) fn param<T>(
+    request: &ApiRequest,
+    params: Params,
+    key: &str,
+    parse: impl FnOnce(&str) -> Option<T>,
+) -> Result<Option<T>, ApiResponse> {
+    let Some(value) = request.param(key) else {
+        return Ok(None);
+    };
+    match (parse(&value), params) {
+        (Some(parsed), _) => Ok(Some(parsed)),
+        (None, Params::Lenient) => Ok(None),
+        (None, Params::Strict) => Err(ApiResponse::error(400, format!("invalid {key} {value:?}"))),
     }
 }
 
@@ -1085,8 +1123,8 @@ mod tests {
         .collect();
         library.upsert_page(&items).expect("seed");
 
-        let movies = latest_home_items(&library, "Movie");
-        let shows = latest_home_items(&library, "Series");
+        let movies = latest_home_items(&library, CatalogKind::Movie);
+        let shows = latest_home_items(&library, CatalogKind::Series);
 
         assert_eq!(movies[0].id, "new-movie");
         assert_eq!(movies[1].id, "old-movie");

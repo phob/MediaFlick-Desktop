@@ -25,8 +25,8 @@ use crate::jellyfin::session::{SessionScope, SessionStatus};
 use crate::library::model::technical_media_streams_json;
 use crate::library::sync::{Bootstrap, SyncProgress};
 use crate::library::{
-    ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, Library, LibraryStats, SeriesStatus,
-    SortDirection, WatchFilter, resolve_playback_preference, sync,
+    CatalogKind, ItemPlaybackPreference, ItemQuery, ItemSort, ItemSummary, KindFilter, Library,
+    LibraryStats, SeriesStatus, SortDirection, WatchFilter, resolve_playback_preference, sync,
 };
 use crate::maintenance::player_setup;
 use crate::preferences::{
@@ -219,6 +219,7 @@ mod catalog;
 mod collections;
 mod images;
 mod letterboxd;
+mod libraries;
 mod media;
 mod playback;
 mod ratings;
@@ -311,6 +312,11 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("GET", "items/letters"),
     ("GET", "genres"),
     ("GET", "official-ratings"),
+    ("GET", "libraries"),
+    ("GET", "libraries/*/items"),
+    ("GET", "libraries/*/letters"),
+    ("GET", "libraries/*/options"),
+    ("GET", "libraries/*/latest"),
     ("GET", "person/resolve"),
     ("GET", "item/*"),
     ("GET", "item/*/synopsis"),
@@ -355,6 +361,7 @@ fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiRespo
         .or_else(|| auth::route(services, &segments, request))
         .or_else(|| seerr::route(services, &segments, request))
         .or_else(|| catalog::route(services, &segments, request))
+        .or_else(|| libraries::route(services, &segments, request))
         .or_else(|| media::route(services, &segments, request))
         .or_else(|| images::route(services, &segments, request))
         .or_else(|| playback::route(services, &segments, request));

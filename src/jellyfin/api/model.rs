@@ -86,6 +86,37 @@ pub struct ItemsResponse {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
+pub struct IdentityPage {
+    pub items: Vec<BaseItemDto>,
+    pub total_record_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct UserViewsResponse {
+    pub items: Vec<UserViewDto>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct UserViewDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub collection_type: Option<String>,
+    pub image_tags: BTreeMap<String, String>,
+}
+
+impl UserViewDto {
+    pub fn primary_image_tag(&self) -> Option<&str> {
+        self.image_tags.iter().find_map(|(key, value)| {
+            key.eq_ignore_ascii_case("Primary")
+                .then_some(value.as_str())
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
 pub struct BaseItemDto {
     pub id: String,
     pub name: Option<String>,

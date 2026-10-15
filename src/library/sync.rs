@@ -13,6 +13,7 @@
 //! re-bootstrap instead.
 
 mod cycle;
+mod libraries;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +24,7 @@ use serde::Serialize;
 
 use crate::app::services::ShellBridge;
 use crate::jellyfin::api::ApiError;
+use crate::jellyfin::session::{Session, SessionScope};
 
 use super::{Library, LibraryChangeBatch};
 
@@ -383,6 +385,44 @@ impl SyncHandle {
             .lock()
             .map(|flags| flags.stopped)
             .unwrap_or(true)
+    }
+}
+
+pub(super) fn cancelled(
+    control: Option<&SyncHandle>,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    if control.is_some_and(SyncHandle::is_stopped) || !session.scope_is_current(scope) {
+        Err(ApiError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn commit<T>(
+    session: &Session,
+    scope: &SessionScope,
+    work: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    session.commit_if_current(scope, || ApiError::Cancelled, work)
+}
+
+pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
+    ApiError::Storage(error.to_string())
+}
+
+pub(super) fn best_effort<T>(
+    step: &str,
+    result: Result<T, ApiError>,
+) -> Result<Option<T>, ApiError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error @ (ApiError::Unauthorized | ApiError::Cancelled)) => Err(error),
+        Err(error) => {
+            tracing::warn!(target: "library.sync", "could not sync {step}; keeping what is stored: {error}");
+            Ok(None)
+        }
     }
 }
 

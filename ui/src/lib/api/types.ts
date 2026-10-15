@@ -1187,3 +1187,72 @@ export interface ItemQuery {
   offset?: number
   limit?: number
 }
+
+export type LibraryKind =
+  | "movies"
+  | "shows"
+  | "music"
+  | "musicVideos"
+  | "homeVideos"
+  | "photos"
+  | "books"
+  | "boxSets"
+  | "playlists"
+  | "liveTv"
+  | "trailers"
+  | "mixed"
+
+export type LibrarySortId =
+  | "name"
+  | "year"
+  | "added"
+  | "episode-added"
+  | "rating"
+  | "played"
+  | "plays"
+  | "runtime"
+  | "random"
+
+export type LibraryFilterId = "genre" | "decade" | "watched" | "parental" | "seriesStatus" | "favorite"
+
+/** The sorts and filters a grid can run. A request for anything else answers 400. */
+export interface BrowseCapabilities {
+  sorts: LibrarySortId[]
+  filters: LibraryFilterId[]
+  letterIndex: boolean
+}
+
+export interface Library {
+  id: string
+  name: string
+  kind: LibraryKind
+  imageTag: string | null
+  /** True while a movies or TV shows library owes a membership walk or one is running, so its grid may lack titles. A full walk (a refresh, new titles, a deletion sweep, the first fill) sets it for every catalog library until that library's walk lands. */
+  membershipPending: boolean
+  browse: BrowseCapabilities
+}
+
+export interface LibrariesResponse {
+  /** False until a sync cycle has read the server's library list. */
+  known: boolean
+  /** In the user's Jellyfin order. */
+  libraries: Library[]
+  crossLibrary: BrowseCapabilities
+}
+
+export interface LibraryQuery {
+  genre?: string
+  decade?: number
+  watched?: WatchFilter | ""
+  favorite?: boolean
+  parental?: string
+  seriesStatus?: SeriesStatus | ""
+  sort?: LibrarySortId
+  order?: SortOrder
+  seed?: number
+}
+
+export interface LibraryFilterOptions {
+  genres: string[]
+  officialRatings: string[]
+}

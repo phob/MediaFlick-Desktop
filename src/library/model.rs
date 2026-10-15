@@ -280,8 +280,96 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogKind {
+    Movie,
+    Series,
+    Season,
+    Episode,
+}
+
+impl CatalogKind {
+    pub const ALL: [Self; 4] = [Self::Movie, Self::Series, Self::Season, Self::Episode];
+    pub const TOP_LEVEL: [Self; 2] = [Self::Movie, Self::Series];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Movie => "Movie",
+            Self::Series => "Series",
+            Self::Season => "Season",
+            Self::Episode => "Episode",
+        }
+    }
+
+    pub fn wire_list(kinds: &[Self]) -> String {
+        kinds
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TitleKind {
+    Movie,
+    Series,
+}
+
+impl From<TitleKind> for CatalogKind {
+    fn from(kind: TitleKind) -> Self {
+        match kind {
+            TitleKind::Movie => Self::Movie,
+            TitleKind::Series => Self::Series,
+        }
+    }
+}
+
 pub(crate) fn is_synced_kind(kind: &str) -> bool {
-    matches!(kind, "Movie" | "Series" | "Season" | "Episode")
+    CatalogKind::parse(kind).is_some()
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum KindFilter {
+    #[default]
+    TopLevel,
+    Only {
+        first: CatalogKind,
+        rest: Vec<CatalogKind>,
+    },
+}
+
+impl KindFilter {
+    pub fn one(kind: impl Into<CatalogKind>) -> Self {
+        Self::Only {
+            first: kind.into(),
+            rest: Vec::new(),
+        }
+    }
+
+    pub fn from_kinds(kinds: Vec<CatalogKind>) -> Self {
+        let mut kinds = kinds.into_iter();
+        match kinds.next() {
+            None => Self::TopLevel,
+            Some(first) => Self::Only {
+                first,
+                rest: kinds.collect(),
+            },
+        }
+    }
+
+    pub fn kinds(&self) -> Vec<CatalogKind> {
+        match self {
+            Self::TopLevel => CatalogKind::TOP_LEVEL.to_vec(),
+            Self::Only { first, rest } => std::iter::once(*first)
+                .chain(rest.iter().copied())
+                .collect(),
+        }
+    }
 }
 
 /// Only fields useful to a concise technical readout are retained. Subtitle

@@ -5,8 +5,9 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
 
+use super::libraries::LibraryId;
 use super::{
-    ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds,
+    CatalogKind, ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds,
     TmdbCandidate, WatchFilter,
 };
 
@@ -14,7 +15,6 @@ use super::{
 /// stays well under SQLite's host-parameter limit.
 const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
-const TOP_LEVEL_KINDS: [&str; 2] = ["Movie", "Series"];
 
 impl Library {
     pub fn stats(&self) -> LibraryStats {
@@ -265,38 +265,49 @@ impl Library {
         })
     }
 
-    pub fn genres(&self) -> rusqlite::Result<Vec<String>> {
-        // Skip-scan: each step seeks the next distinct genre in the primary key
-        // instead of walking every tagged item.
+    pub fn genres(&self, library: Option<&LibraryId>) -> rusqlite::Result<Vec<String>> {
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare_cached(
-                "WITH RECURSIVE distinct_genres(genre) AS (
-                     SELECT min(genre) FROM item_genres
-                     UNION ALL
-                     SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
-                     FROM distinct_genres previous WHERE previous.genre IS NOT NULL
-                 )
-                 SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
-                 ORDER BY genre COLLATE NOCASE ASC",
-            )?;
+            let mut statement = match library {
+                None => connection.prepare_cached(DISTINCT_GENRES_SKIP_SCAN)?,
+                Some(_) => connection.prepare_cached(
+                    "SELECT DISTINCT g.genre FROM item_libraries l
+                     JOIN items i ON i.jellyfin_id = l.item_id
+                     JOIN item_genres g ON g.item_id = i.id
+                     WHERE l.library_id = ?1
+                     ORDER BY g.genre COLLATE NOCASE ASC",
+                )?,
+            };
+            let library = library.map(LibraryId::as_str);
             let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))?
+                .query_map(params_from_iter(library), |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
     }
 
-    pub fn official_ratings(&self, kinds: &[String]) -> rusqlite::Result<Vec<String>> {
+    pub fn official_ratings(
+        &self,
+        kinds: &[CatalogKind],
+        library: Option<&LibraryId>,
+    ) -> rusqlite::Result<Vec<String>> {
         let mut ratings = self.db.with_connection(|connection| {
             let placeholders = vec!["?"; kinds.len()].join(", ");
+            let in_library = if library.is_some() {
+                " AND EXISTS (SELECT 1 FROM item_libraries l
+                     WHERE l.library_id = ? AND l.item_id = items.jellyfin_id)"
+            } else {
+                ""
+            };
             let mut statement = connection.prepare(&format!(
                 "SELECT DISTINCT official_rating FROM items
-                 WHERE official_rating <> '' AND kind IN ({placeholders})"
+                 WHERE official_rating <> '' AND kind IN ({placeholders}){in_library}"
             ))?;
+            let arguments = kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .chain(library.map(LibraryId::as_str));
             let rows = statement
-                .query_map(params_from_iter(kinds.iter()), |row| {
-                    row.get::<_, String>(0)
-                })?
+                .query_map(params_from_iter(arguments), |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })?;
@@ -519,6 +530,17 @@ fn splitmix64_finalize(value: u64) -> u64 {
     mixed ^ (mixed >> 31)
 }
 
+/// Each step seeks the next distinct genre in the primary key instead of
+/// walking every tagged item.
+const DISTINCT_GENRES_SKIP_SCAN: &str = "WITH RECURSIVE distinct_genres(genre) AS (
+        SELECT min(genre) FROM item_genres
+        UNION ALL
+        SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
+        FROM distinct_genres previous WHERE previous.genre IS NOT NULL
+    )
+    SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
+    ORDER BY genre COLLATE NOCASE ASC";
+
 const SERIES_HAS_STARTED_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
     JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id
     WHERE e.kind = 'Episode' AND e.series_id = i.jellyfin_id
@@ -559,14 +581,22 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         conditions.push("0".to_string());
     }
 
-    let kinds = if query.kinds.is_empty() {
-        TOP_LEVEL_KINDS.map(str::to_string).to_vec()
-    } else {
-        query.kinds.clone()
-    };
+    let kinds = query.kinds.kinds();
     let placeholders = vec!["?"; kinds.len()].join(", ");
     conditions.push(format!("i.kind IN ({placeholders})"));
-    arguments.extend(kinds.into_iter().map(SqlValue::Text));
+    arguments.extend(
+        kinds
+            .iter()
+            .map(|kind| SqlValue::Text(kind.as_str().to_string())),
+    );
+    if let Some(library) = &query.library {
+        conditions.push(
+            "EXISTS (SELECT 1 FROM item_libraries l
+                 WHERE l.library_id = ? AND l.item_id = i.jellyfin_id)"
+                .to_string(),
+        );
+        arguments.push(SqlValue::Text(library.as_str().to_string()));
+    }
     if let Some(genre) = &query.genre {
         conditions.push("i.id IN (SELECT item_id FROM item_genres WHERE genre = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
@@ -678,7 +708,9 @@ mod tests {
 
     use super::{ItemQuery, Library, WatchFilter, civil_from_days};
     use crate::library::test_support::{dto, seeded};
-    use crate::library::{ItemSort, current_release_decade, release_decade_from_id};
+    use crate::library::{
+        CatalogKind, ItemSort, KindFilter, current_release_decade, release_decade_from_id,
+    };
 
     #[test]
     fn search_matches_genres_by_prefix() {
@@ -720,7 +752,7 @@ mod tests {
 
         let page = library
             .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
+                kinds: KindFilter::one(CatalogKind::Movie),
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
                 watched: Some(WatchFilter::Unwatched),
@@ -734,7 +766,7 @@ mod tests {
 
         let all = library
             .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
+                kinds: KindFilter::one(CatalogKind::Movie),
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
                 watched: Some(WatchFilter::Unwatched),
@@ -765,7 +797,7 @@ mod tests {
 
         let movies = library
             .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
+                kinds: KindFilter::one(CatalogKind::Movie),
                 release_decade: Some(1990),
                 limit: 10,
                 ..Default::default()
@@ -773,7 +805,7 @@ mod tests {
             .expect("movies");
         let series = library
             .query(&ItemQuery {
-                kinds: vec!["Series".to_string()],
+                kinds: KindFilter::one(CatalogKind::Series),
                 release_decade: Some(2010),
                 limit: 10,
                 ..Default::default()
@@ -808,7 +840,7 @@ mod tests {
 
         let ids = library
             .query(&ItemQuery {
-                kinds: vec!["Movie".to_string()],
+                kinds: KindFilter::one(CatalogKind::Movie),
                 sort: ItemSort::Name,
                 limit: 10,
                 ..Default::default()
@@ -937,7 +969,7 @@ mod tests {
             ])
             .expect("seed");
         assert_eq!(
-            library.genres().expect("genres"),
+            library.genres(None).expect("genres"),
             vec!["Action", "drama"],
             "ordered case-insensitively, without empty names"
         );
@@ -947,7 +979,10 @@ mod tests {
                 r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["Comedy"]}"#,
             )])
             .expect("retag");
-        assert_eq!(library.genres().expect("genres"), vec!["Action", "Comedy"]);
+        assert_eq!(
+            library.genres(None).expect("genres"),
+            vec!["Action", "Comedy"]
+        );
         let action = library
             .query(&ItemQuery {
                 genre: Some("Action".to_string()),
@@ -959,7 +994,7 @@ mod tests {
         assert_eq!(action.items[0].id, "b");
 
         library.forget("b").expect("forget");
-        assert_eq!(library.genres().expect("genres"), vec!["Comedy"]);
+        assert_eq!(library.genres(None).expect("genres"), vec!["Comedy"]);
     }
 
     #[test]
