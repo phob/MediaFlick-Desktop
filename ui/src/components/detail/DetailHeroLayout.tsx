@@ -9,15 +9,15 @@ export type HeroArtworkAspect = "poster" | "square" | "still"
 interface HeroArtwork {
   src: string
   aspect?: HeroArtworkAspect
+  /** `contain` shows art whose shape does not match the frame whole. */
+  fit?: "cover" | "contain"
   progress?: number
 }
 
-// Square art (album covers, photos) is contained rather than cropped: it is
-// rarely exactly 1:1.
 const ARTWORK_FRAME: Record<HeroArtworkAspect, string> = {
-  poster: "w-[220px] aspect-2/3 object-cover",
-  square: "w-[260px] aspect-square bg-card object-contain",
-  still: "w-[340px] aspect-video object-cover",
+  poster: "w-[220px] aspect-2/3",
+  square: "w-[260px] aspect-square",
+  still: "w-[340px] aspect-video",
 }
 
 interface HeroGenre {
@@ -64,7 +64,10 @@ export function DetailHeroLayout({
   const showPoster = Boolean(poster?.src) && failedPoster !== poster?.src
   const showLogo = Boolean(logo) && failedLogo !== logo
   const progress = Math.max(0, Math.min(1, poster?.progress ?? 0))
-  const frame = ARTWORK_FRAME[poster?.aspect ?? "poster"]
+  const frame = cn(
+    ARTWORK_FRAME[poster?.aspect ?? "poster"],
+    poster?.fit === "contain" ? "bg-card object-contain" : "object-cover",
+  )
 
   return (
     <header className="relative" data-testid="detail-hero-layout">
