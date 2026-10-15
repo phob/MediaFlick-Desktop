@@ -399,11 +399,10 @@ impl AccountConfigurationService {
     }
 
     pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
-        let prunes_legacy = match validate_browsing_route(page, route)? {
-            BrowsingPage::Last => false,
-            BrowsingPage::Library(_) => true,
-            BrowsingPage::Legacy => return Err(invalid_data("invalid browsing destination")),
-        };
+        let prunes_legacy = matches!(
+            validate_browsing_route(page, route)?,
+            BrowsingPage::Library(_)
+        );
         let stored = self.browsing(key);
         let prune_due = prunes_legacy
             && LEGACY_BROWSING_PAGES
@@ -685,7 +684,7 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
             ));
         }
         for (page, route) in &account.browsing {
-            validate_browsing_route(page, route)?;
+            validate_stored_browsing(page, route)?;
         }
         if let Some(home) = &mut account.home {
             home.insert_missing_built_ins();
@@ -723,16 +722,12 @@ fn scrub_backup(path: &Path) -> io::Result<()> {
 enum BrowsingPage {
     Last,
     Library(LibraryId),
-    Legacy,
 }
 
 impl BrowsingPage {
     fn parse(page: &str) -> Option<Self> {
         if page == "last" {
             return Some(Self::Last);
-        }
-        if LEGACY_BROWSING_PAGES.contains(&page) {
-            return Some(Self::Legacy);
         }
         canonical_library_id(page.strip_prefix("library:")?).map(Self::Library)
     }
@@ -742,33 +737,50 @@ fn canonical_library_id(raw: &str) -> Option<LibraryId> {
     LibraryId::parse(raw).filter(|id| id.as_str() == raw)
 }
 
+fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> {
+    BrowsingPage::parse(page)
+        .filter(|page| {
+            let own_library = match page {
+                BrowsingPage::Library(id) => Some(id),
+                BrowsingPage::Last => None,
+            };
+            route_fits(own_library, route)
+        })
+        .ok_or_else(|| invalid_data("invalid browsing destination"))
+}
+
+/// Legacy `Movie` and `Series` pages still load, but nothing saves them again.
+fn validate_stored_browsing(page: &str, route: &str) -> io::Result<()> {
+    if LEGACY_BROWSING_PAGES.contains(&page) && route_fits(None, route) {
+        return Ok(());
+    }
+    validate_browsing_route(page, route).map(drop)
+}
+
 /// A route is an app path with or without a query string; a library page's
 /// route is its own `/library/<id>`.
-fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> {
+fn route_fits(own_library: Option<&LibraryId>, route: &str) -> bool {
     let (path, _query) = route.split_once('?').unwrap_or((route, ""));
     let library = path
         .strip_prefix("/library/")
         .and_then(canonical_library_id);
-    let app_route = library.is_some()
-        || [
-            "/",
-            "/calendar",
-            "/library",
-            "/discover",
-            "/requests",
-            "/collections",
-        ]
-        .contains(&path)
-        || path.starts_with("/collections/");
-    BrowsingPage::parse(page)
-        .filter(|page| {
-            route.len() <= 2048
-                && match page {
-                    BrowsingPage::Library(id) => library.as_ref() == Some(id),
-                    BrowsingPage::Last | BrowsingPage::Legacy => app_route,
-                }
-        })
-        .ok_or_else(|| invalid_data("invalid browsing destination"))
+    route.len() <= 2048
+        && match own_library {
+            Some(id) => library.as_ref() == Some(id),
+            None => {
+                library.is_some()
+                    || [
+                        "/",
+                        "/calendar",
+                        "/library",
+                        "/discover",
+                        "/requests",
+                        "/collections",
+                    ]
+                    .contains(&path)
+                    || path.starts_with("/collections/")
+            }
+        }
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
