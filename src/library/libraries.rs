@@ -117,9 +117,9 @@ pub enum LiveShape {
 
 /// Where "Latest in <library>" comes from. The table follows jellyfin-web,
 /// which asks `/Items/Latest` for every library except the view types it
-/// excludes: `playlists`, `livetv`, `boxsets` and `folders`. Measured with
-/// the test servers: music (Grouped, demo), playlists (Newest, demo) and box
-/// sets (Newest, own server); the other kinds are unmeasured.
+/// excludes: `playlists`, `livetv`, `boxsets`, `channels` and `folders`.
+/// Measured with the test servers: music (Grouped, demo), playlists (Newest,
+/// demo) and box sets (Newest, own server); the other kinds are unmeasured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveLatest {
     /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
