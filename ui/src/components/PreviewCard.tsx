@@ -329,9 +329,12 @@ function PreviewPanel({
         pointerInside.current = false
         if (!focusInside.current) onRelease()
       }}
+      // A press focuses the control it lands on, and Chromium only sometimes
+      // blurs a toggle that its pending request disables. Only keyboard focus
+      // may keep the panel open after the pointer leaves.
       onFocusCapture={() => {
-        focusInside.current = true
-        onHold()
+        focusInside.current = !pressStartedInside.current
+        if (focusInside.current) onHold()
       }}
       onBlurCapture={(event) => {
         const next = event.relatedTarget
