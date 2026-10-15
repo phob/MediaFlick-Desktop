@@ -3,9 +3,10 @@
 //! One worker thread owns the connection: it idles until credentials exist,
 //! answers the server's keep-alive probes, and translates pushed
 //! `UserDataChanged` and `LibraryChanged` notifications into the same cache
-//! upserts, evictions, and UI invalidations the sync thread produces. Changed
-//! ids the cache does not hold (albums, playlists, folders) are passed on as a
-//! live change, so pages Jellyfin serves directly refresh too. The
+//! upserts, evictions, and UI invalidations the sync thread produces. Reported
+//! ids the resulting cache batch does not name (albums, playlists, folders)
+//! are passed on as a live change, so pages Jellyfin serves directly refresh
+//! too. The
 //! socket is an acceleration layer only — dropped connections lose events, so
 //! every successful (re)connect asks the sync worker for one requested cycle
 //! to reconcile the gap, and the periodic sweeps remain the backstop.

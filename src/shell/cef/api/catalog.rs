@@ -973,7 +973,6 @@ fn live_children(
     let fail = |error: ApiError| scoped_failure(services, &scope, &error);
     let paged = page.is_some();
     let page = page.unwrap_or_default();
-    let (offset, limit) = (page.offset(), page.limit());
     let source = match services.children_sources.get(scope.generation(), item_id) {
         Some(source) => source,
         None => {
@@ -989,7 +988,7 @@ fn live_children(
     };
     let children = match source {
         ChildrenSource::Folder => {
-            items::fetch_live_children(client, user_id, item_id, offset, limit)
+            items::fetch_live_children(client, user_id, item_id, page.offset(), page.limit())
                 .map(|response| browse::live_page(&response))
         }
         ChildrenSource::Playlist => items::fetch_playlist_items(client, user_id, item_id, page)
