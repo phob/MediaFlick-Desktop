@@ -22,7 +22,6 @@ import {
   writeResolvedCastPerson,
 } from "@/lib/cast-search"
 import { useBrowseScope, type BrowseScope } from "@/hooks/use-browse-scope"
-import { LibraryPageName } from "@/hooks/use-detail-navigation-state"
 import { libraryPath, type BrowseSource } from "@/lib/libraries"
 import {
   activeLibraryFilterCount,
@@ -162,11 +161,7 @@ export default function Library({ components }: LibraryProps = {}) {
         </div>
       )
     case "ready":
-      return (
-        <LibraryPageName value={scope.library?.name ?? null}>
-          <BrowsePage key={scope.library?.id ?? "titles"} scope={scope} components={components} />
-        </LibraryPageName>
-      )
+      return <BrowsePage key={scope.library?.id ?? "titles"} scope={scope} components={components} />
   }
 }
 

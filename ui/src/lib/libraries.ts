@@ -79,11 +79,8 @@ export function firstLibraryOf(libraries: readonly Library[], kind: LibraryKind)
   return libraries.find((library) => library.kind === kind) ?? null
 }
 
-/** A title page's genre chip: its own library when that library filters by genre, else every title. */
-export function genreRoute(genre: string, item: ItemDetail, libraries: readonly Library[]) {
+/** A title page's genre chip: the title's own movies or TV shows library, which filters by genre, else every title. */
+export function genreRoute(genre: string, item: ItemDetail) {
   const params = new URLSearchParams({ genre })
-  const library = libraries.find((candidate) => candidate.id === item.libraryId)
-  return library?.browse.filters.includes("genre")
-    ? libraryPath(library.id, params)
-    : `/library?${params}`
+  return item.libraryId ? libraryPath(item.libraryId, params) : `/library?${params}`
 }

@@ -39,7 +39,7 @@ test("detail links carry a safe, labelled return destination", () => {
 test("a library page is named in the back link, and titles default to their library", () => {
   const libraries = [{ id: "f137a2dd21bbc1b99aa5c0f6bf02a805", name: "Films", kind: "movies", imageTag: null, membershipPending: false, browse: { sorts: ["name"], filters: [], letterIndex: true } }]
   assert.deepEqual(
-    detailNavigationState({ pathname: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805", search: "?sort=year" }, "Films"),
+    detailNavigationState({ pathname: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805", search: "?sort=year" }, libraries),
     { from: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805?sort=year", label: "Back to Films" },
   )
   assert.deepEqual(

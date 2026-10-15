@@ -18,16 +18,19 @@ export interface DetailNavigationState {
 
 const HOME_STATE: DetailNavigationState = { from: "/", label: "Back to home" }
 
+/** The list only names the library; a list that has not loaded still leads back to it. */
+function backToLibrary(id: string, libraries: readonly Library[]) {
+  const name = libraries.find((library) => library.id === id)?.name
+  return name ? `Back to ${name}` : "Back to library"
+}
+
 /** Without navigation state, a title goes back to its library and anything else to Home. */
 export function defaultDetailNavigationState(
   item: AnyItemDetail,
   libraries: readonly Library[],
 ): DetailNavigationState {
-  if (item.layout === "generic") return HOME_STATE
-  const library = libraries.find((candidate) => candidate.id === item.libraryId)
-  return library
-    ? { from: libraryPath(library.id), label: `Back to ${library.name}` }
-    : HOME_STATE
+  if (item.layout === "generic" || !item.libraryId) return HOME_STATE
+  return { from: libraryPath(item.libraryId), label: backToLibrary(item.libraryId, libraries) }
 }
 
 type LocationLike = {
@@ -36,18 +39,16 @@ type LocationLike = {
   state?: JsonValue
 }
 
-/** `libraryName` names the library page the location shows, when it shows one. */
 export function detailNavigationState(
   location: LocationLike,
-  libraryName: string | null = null,
+  libraries: readonly Library[] = [],
 ): DetailNavigationState {
   const inherited = readDetailNavigationState(location.state)
   if (location.pathname.startsWith("/item/") && inherited) return inherited
 
   const from = `${location.pathname}${location.search ?? ""}`
-  if (libraryIdFromPath(location.pathname) !== null) {
-    return { from, label: libraryName ? `Back to ${libraryName}` : "Back to library" }
-  }
+  const libraryId = libraryIdFromPath(location.pathname)
+  if (libraryId !== null) return { from, label: backToLibrary(libraryId, libraries) }
   const label = location.pathname === "/"
     ? "Back to home"
     : location.pathname === "/library"

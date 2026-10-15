@@ -1,5 +1,6 @@
 import {
   queryOptions,
+  skipToken,
   useInfiniteQuery,
   useMutation,
   useQueries,
@@ -15,6 +16,7 @@ import {
   type ExternalProvider,
   type ItemQuery,
   type ItemSummary,
+  type LibrariesResponse,
   type PlayerCommand,
   type PlayerState,
   type MediaInfoResponse,
@@ -255,6 +257,11 @@ export function useLibraries() {
     queryFn: api.libraries,
     enabled: Boolean(status?.authenticated),
   })
+}
+
+/** The library list as already loaded, without asking for it: every card reads names from it. */
+export function useCachedLibraries() {
+  return useQuery<LibrariesResponse>({ queryKey: queryKeys.libraries, queryFn: skipToken }).data?.libraries
 }
 
 export function useLibraryOptions(id: string | null) {
