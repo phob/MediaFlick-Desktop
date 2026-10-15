@@ -1,6 +1,6 @@
+use crate::library::DetailView;
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError};
 use crate::library::libraries::FilterKey;
-use crate::library::{DetailView, TitleDetail};
 
 use super::*;
 
@@ -811,14 +811,19 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
             return Err(scoped_failure(services, &scope, &error));
         }
     };
-    let in_account = |write: &mut dyn FnMut() -> rusqlite::Result<TitleDetail>| {
-        let committed = services
-            .session
-            .commit_if_current(&scope, || (), || Ok(write()));
-        committed.ok()
-    };
-    match browse::live_detail(&services.library, &dto, in_account) {
-        Ok(detail) => Ok(ApiResponse::ok(detail)),
+    if let Some(generic) = browse::generic_detail(&dto) {
+        return Ok(ApiResponse::ok(DetailView::Generic(generic)));
+    }
+    let title = services.session.commit_if_current(
+        &scope,
+        || DetailError::AccountChanged,
+        || browse::write_live_title(&services.library, &dto),
+    );
+    match title {
+        Ok(title) => {
+            tracing::debug!(target: "library.browse", item_id, "served a title the cache did not hold");
+            Ok(ApiResponse::ok(DetailView::Title(title)))
+        }
         Err(DetailError::AccountChanged) => Err(stale_account_response()),
         Err(DetailError::Storage(error)) => Err(storage_failure(&error)),
     }
