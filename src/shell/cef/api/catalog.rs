@@ -2,6 +2,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::library::libraries::FilterKey;
+use crate::library::model::is_synced_kind;
+use crate::library::{DetailView, GenericItemDetail, ItemDetail, TitleDetail};
 
 use super::*;
 
@@ -32,7 +34,7 @@ pub(super) fn route(
             item_synopsis(services, &percent_decode(id))
         }
         ["item", id, "about"] if request.is("GET") => item_about(services, &percent_decode(id)),
-        ["item", id, "children"] if request.is("GET") => children(services, &percent_decode(id)),
+        ["item", id, "children"] if request.is("GET") => children(services, id, request),
         _ => return None,
     };
     Some(response)
@@ -797,12 +799,34 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 }
 
-fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
-    match services.library.item(item_id) {
-        Ok(Some(cached)) => Ok(ApiResponse::ok(cached)),
-        Ok(None) => fetch_and_cache_item(services, item_id),
-        Err(error) => Err(storage_failure(&error)),
+fn item_id(segment: &str) -> Result<String, ApiResponse> {
+    let id = percent_decode(segment);
+    crate::collections::valid_opaque_id(&id)
+        .then_some(id)
+        .ok_or_else(|| ApiResponse::error(400, "invalid item id"))
+}
+
+fn item_detail(services: &Arc<Services>, segment: &str) -> Handled {
+    let item_id = item_id(segment)?;
+    match cached_title(services, &item_id)? {
+        Some(title) => Ok(ApiResponse::ok(DetailView::Title(title))),
+        None => fetch_item_detail(services, &item_id),
     }
+}
+
+fn cached_title(services: &Services, item_id: &str) -> Result<Option<TitleDetail>, ApiResponse> {
+    let Some(item) = services
+        .library
+        .item(item_id)
+        .map_err(|error| storage_failure(&error))?
+    else {
+        return Ok(None);
+    };
+    let library_id = services
+        .library
+        .library_of(item_id)
+        .map_err(|error| storage_failure(&error))?;
+    Ok(Some(TitleDetail { item, library_id }))
 }
 
 fn item_synopsis(services: &Arc<Services>, item_id: &str) -> Handled {
@@ -909,10 +933,12 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
     }
 }
 
-fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
+/// An uncached movie, series, season or episode is cached on the way and served
+/// as a title; every other type is served live as a generic item.
+fn fetch_item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     let scope = session_scope(services)?;
-    match items::fetch_item(scope.client(), scope.user_id(), item_id) {
-        Ok(Some(dto)) => {
+    match items::fetch_item_detail(scope.client(), scope.user_id(), item_id) {
+        Ok(Some(dto)) if is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) => {
             let cached = services
                 .session
                 .commit_if_current(&scope, stale_account_response, || {
@@ -921,12 +947,15 @@ fn fetch_and_cache_item(services: &Arc<Services>, item_id: &str) -> Handled {
                     Ok(())
                 });
             cached?;
-            match services.library.item(item_id) {
-                Ok(Some(item)) => Ok(ApiResponse::ok(item)),
-                Ok(None) => Ok(ApiResponse::ok(ItemSummary::from_dto(&dto))),
-                Err(error) => Err(storage_failure(&error)),
-            }
+            let title = cached_title(services, item_id)?.unwrap_or_else(|| TitleDetail {
+                item: ItemDetail::from_dto(&dto),
+                library_id: None,
+            });
+            Ok(ApiResponse::ok(DetailView::Title(title)))
         }
+        Ok(Some(dto)) => Ok(ApiResponse::ok(DetailView::Generic(
+            GenericItemDetail::from_dto(&dto),
+        ))),
         Ok(None) => {
             forget_item(services, &scope, item_id);
             Err(ApiResponse::error(
@@ -963,17 +992,96 @@ fn claim_child_reconcile(parent_id: &str) -> bool {
     true
 }
 
-fn children(services: &Arc<Services>, item_id: &str) -> Handled {
-    let container = matches!(
-        services.library.kind(item_id).as_deref(),
-        Some("Series" | "Season")
-    );
-    let cached = match services.library.children(item_id) {
-        Ok(children) => children,
-        Err(error) => return Err(storage_failure(&error)),
+/// `offset` and `limit` select one page. Without them a cached title answers
+/// with all its children, as the season browser asks.
+#[derive(Debug, Clone, Copy)]
+struct ChildPage {
+    offset: i64,
+    limit: i64,
+}
+
+impl ChildPage {
+    fn from_request(request: &ApiRequest) -> Result<Option<Self>, ApiResponse> {
+        let parse = |value: &str| value.parse::<i64>().ok();
+        let offset = param(request, Params::Strict, "offset", parse)?;
+        let limit = param(request, Params::Strict, "limit", parse)?;
+        if offset.is_some_and(|offset| offset < 0) {
+            return Err(ApiResponse::error(400, "offset must not be negative"));
+        }
+        if offset.is_none() && limit.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            offset: offset.unwrap_or(0),
+            limit: limit
+                .unwrap_or(DEFAULT_PAGE_LIMIT)
+                .clamp(1, items::LIVE_CHILDREN_MAX_PAGE),
+        }))
+    }
+
+    fn slice(self, items: Vec<ItemSummary>) -> Vec<ItemSummary> {
+        let offset = usize::try_from(self.offset).unwrap_or(usize::MAX);
+        let limit = usize::try_from(self.limit).unwrap_or(0);
+        items.into_iter().skip(offset).take(limit).collect()
+    }
+}
+
+/// A cached title answers from the cache, and a series or season also
+/// reconciles with the server. Anything else is a live container.
+fn children(services: &Arc<Services>, segment: &str, request: &ApiRequest) -> Handled {
+    let item_id = item_id(segment)?;
+    let page = ChildPage::from_request(request)?;
+    let Some(kind) = services.library.kind(&item_id) else {
+        return live_children(services, &item_id, page);
     };
+    let items = catalog_children(services, &item_id, &kind)?;
+    let total = items.len();
+    let items = match page {
+        Some(page) => page.slice(items),
+        None => items,
+    };
+    Ok(ApiResponse::ok(json!({ "items": items, "total": total })))
+}
+
+fn live_children(services: &Arc<Services>, item_id: &str, page: Option<ChildPage>) -> Handled {
+    let page = page.unwrap_or(ChildPage {
+        offset: 0,
+        limit: DEFAULT_PAGE_LIMIT,
+    });
+    let scope = session_scope(services)?;
+    match items::fetch_live_children(
+        scope.client(),
+        scope.user_id(),
+        item_id,
+        page.offset,
+        page.limit,
+    ) {
+        Ok(response) => {
+            let items = response
+                .items
+                .iter()
+                .map(ItemSummary::from_dto)
+                .collect::<Vec<_>>();
+            Ok(ApiResponse::ok(
+                json!({ "items": items, "total": response.total_record_count }),
+            ))
+        }
+        Err(error) => Err(scoped_failure(services, &scope, &error)),
+    }
+}
+
+fn catalog_children(
+    services: &Arc<Services>,
+    item_id: &str,
+    kind: &str,
+) -> Result<Vec<ItemSummary>, ApiResponse> {
+    let container = matches!(kind, "Series" | "Season");
+    let cached = services
+        .library
+        .children(item_id)
+        .map_err(|error| storage_failure(&error))?;
     if !container {
-        return Ok(ApiResponse::ok(json!({ "items": cached })));
+        return Ok(cached);
     }
     // The synced catalog already holds every season and episode, so a cached
     // list answers at once and the reconcile runs behind it; its change
@@ -992,21 +1100,20 @@ fn children(services: &Arc<Services>, item_id: &str) -> Handled {
                 tracing::warn!(target: "app.api", "could not start a child reconcile: {error}");
             }
         }
-        return Ok(ApiResponse::ok(json!({ "items": cached })));
+        return Ok(cached);
     }
     claim_child_reconcile(item_id);
     let overviews = reconcile_children(services, item_id);
-    match services.library.children(item_id) {
-        Ok(mut children) => {
-            if let Some(overviews) = &overviews {
-                for child in &mut children {
-                    child.overview = overviews.get(&child.id).cloned().flatten();
-                }
-            }
-            Ok(ApiResponse::ok(json!({ "items": children })))
+    let mut children = services
+        .library
+        .children(item_id)
+        .map_err(|error| storage_failure(&error))?;
+    if let Some(overviews) = &overviews {
+        for child in &mut children {
+            child.overview = overviews.get(&child.id).cloned().flatten();
         }
-        Err(error) => Err(storage_failure(&error)),
     }
+    Ok(children)
 }
 
 /// Re-reads one parent's child list from the server.

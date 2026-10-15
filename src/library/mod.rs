@@ -30,8 +30,9 @@ use crate::app::ids::new_device_id;
 use libraries::LibraryId;
 
 pub use model::{
-    CatalogKind, ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, KindFilter,
-    LibraryStats, ProviderIds, TitleKind, UserDataRecord, resolve_playback_preference,
+    CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPlaybackPreference, ItemRecord,
+    ItemSummary, KindFilter, LibraryStats, ProviderIds, TitleDetail, TitleKind, UserDataRecord,
+    resolve_playback_preference,
 };
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;

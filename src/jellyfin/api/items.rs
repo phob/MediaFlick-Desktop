@@ -214,6 +214,71 @@ pub fn fetch_item(
     Ok(response.items.into_iter().next())
 }
 
+/// The catalog fields, so a movie or series can be cached on the way, plus what
+/// a generic details page shows.
+const DETAIL_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
+PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId,Overview,PrimaryImageAspectRatio";
+
+pub fn fetch_item_detail(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<BaseItemDto>, ApiError> {
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &[
+            user_query(user_id),
+            ("ids", item_id.to_string()),
+            ("Fields", DETAIL_FIELDS.to_string()),
+            ("EnableUserData", "true".to_string()),
+            ("EnableImages", "true".to_string()),
+        ],
+    )?;
+    Ok(response.items.into_iter().next())
+}
+
+const LIVE_CHILD_FIELDS: &str =
+    "PrimaryImageAspectRatio,ChildCount,PremiereDate,OfficialRating,CommunityRating";
+
+pub const LIVE_CHILDREN_MAX_PAGE: i64 = 200;
+
+fn live_children_query(
+    user_id: &str,
+    parent_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("parentId", parent_id.to_string()),
+        ("Fields", LIVE_CHILD_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", start_index.max(0).to_string()),
+        ("Limit", limit.clamp(1, LIVE_CHILDREN_MAX_PAGE).to_string()),
+        (
+            "SortBy",
+            "ParentIndexNumber,IndexNumber,SortName".to_string(),
+        ),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+/// One page of any container's direct children, of every type: an album's
+/// tracks, a box set's titles, a folder's entries.
+pub fn fetch_live_children(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &live_children_query(user_id, parent_id, start_index, limit),
+    )
+}
+
 pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";
 
 pub const SYNOPSIS_FIELDS: &str = "Overview";
