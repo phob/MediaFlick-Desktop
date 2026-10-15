@@ -359,6 +359,18 @@ impl KindFilter {
         }
     }
 
+    /// `TopLevel` when `kinds` is empty.
+    pub fn from_kinds(kinds: Vec<CatalogKind>) -> Self {
+        let mut kinds = kinds.into_iter();
+        match kinds.next() {
+            None => Self::TopLevel,
+            Some(first) => Self::Only {
+                first,
+                rest: kinds.collect(),
+            },
+        }
+    }
+
     pub fn kinds(&self) -> Vec<CatalogKind> {
         match self {
             Self::TopLevel => CatalogKind::TOP_LEVEL.to_vec(),
