@@ -1,7 +1,13 @@
 use serde::Serialize;
 
+use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
+
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
-use super::{ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, TitleKind};
+use super::model::is_synced_kind;
+use super::{
+    CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
+    ItemSummary, KindFilter, Library, TitleDetail, TitleKind,
+};
 
 #[derive(Debug)]
 pub enum BrowseError {
@@ -75,6 +81,142 @@ pub fn latest(
         limit,
         ..ItemQuery::default()
     })?)
+}
+
+/// The title page of a cached movie, series, season or episode, or `None` when
+/// the cache does not hold the item.
+pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option<TitleDetail>> {
+    let Some(item) = library.item(item_id)? else {
+        return Ok(None);
+    };
+    let library_id = library.library_of(item_id)?;
+    Ok(Some(TitleDetail { item, library_id }))
+}
+
+#[derive(Debug)]
+pub enum DetailError {
+    /// The signed-in account changed between the fetch and the cache write.
+    AccountChanged,
+    Storage(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for DetailError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Storage(error)
+    }
+}
+
+/// The details page of an item the cache does not hold, from the server's copy.
+/// A movie, series, season or episode is cached on the way and served as a
+/// title: `in_account` runs that write and the read back under one check that
+/// the account which fetched the item is still signed in, and answers `None`
+/// when it is not. Every other type is served live as a generic item.
+pub fn live_detail(
+    library: &Library,
+    dto: &BaseItemDto,
+    in_account: impl FnOnce(
+        &mut dyn FnMut() -> rusqlite::Result<TitleDetail>,
+    ) -> Option<rusqlite::Result<TitleDetail>>,
+) -> Result<DetailView, DetailError> {
+    if !is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) {
+        return Ok(DetailView::Generic(GenericItemDetail::from_dto(dto)));
+    }
+    let title = in_account(&mut || {
+        // A failed cache write still answers from the fetched item.
+        let _ = library.ingest_page(std::slice::from_ref(dto));
+        Ok(
+            cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
+                item: ItemDetail::from_dto(dto),
+                library_id: None,
+            }),
+        )
+    })
+    .ok_or(DetailError::AccountChanged)??;
+    Ok(DetailView::Title(title))
+}
+
+/// Where `/api/item/{id}/children` reads from.
+pub enum ChildrenSource {
+    /// A cached title's children, from the cache.
+    Catalog(CatalogKind),
+    /// Any other container's children, from the server.
+    Live,
+}
+
+pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<ChildrenSource> {
+    Ok(library
+        .catalog_kind(item_id)?
+        .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
+}
+
+/// One page of a container's children: the children route's only paging
+/// bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildPage {
+    offset: i64,
+    limit: i64,
+}
+
+impl ChildPage {
+    const DEFAULT_LIMIT: i64 = 60;
+    const MAX_LIMIT: i64 = 200;
+
+    /// `None` when the request names neither: a cached series or season then
+    /// answers with every child, as the season browser asks. A limit outside
+    /// `1..=200` is clamped.
+    pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Option<Self>, &'static str> {
+        if offset.is_some_and(|offset| offset < 0) {
+            return Err("offset must not be negative");
+        }
+        if offset.is_none() && limit.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            offset: offset.unwrap_or(0),
+            limit: limit
+                .unwrap_or(Self::DEFAULT_LIMIT)
+                .clamp(1, Self::MAX_LIMIT),
+        }))
+    }
+
+    pub fn offset(self) -> i64 {
+        self.offset
+    }
+
+    pub fn limit(self) -> i64 {
+        self.limit
+    }
+}
+
+impl Default for ChildPage {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            limit: Self::DEFAULT_LIMIT,
+        }
+    }
+}
+
+/// A cached title's children, cut to `page` when one was asked for.
+pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>) -> ItemPage {
+    let total = i64::try_from(children.len()).unwrap_or(i64::MAX);
+    let items = match page {
+        Some(page) => children
+            .into_iter()
+            .skip(usize::try_from(page.offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(page.limit).unwrap_or(0))
+            .collect(),
+        None => children,
+    };
+    ItemPage { items, total }
+}
+
+/// A live container's page of children as the server sent it.
+pub fn live_children_page(response: &ItemsResponse) -> ItemPage {
+    ItemPage {
+        items: response.items.iter().map(ItemSummary::from_dto).collect(),
+        total: response.total_record_count,
+    }
 }
 
 fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseError> {

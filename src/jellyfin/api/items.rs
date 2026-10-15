@@ -242,8 +242,6 @@ pub fn fetch_detailed_item(
 const LIVE_CHILD_FIELDS: &str =
     "PrimaryImageAspectRatio,ChildCount,PremiereDate,OfficialRating,CommunityRating";
 
-pub const LIVE_CHILDREN_MAX_PAGE: i64 = 200;
-
 fn live_children_query(
     user_id: &str,
     parent_id: &str,
@@ -256,8 +254,8 @@ fn live_children_query(
         ("Fields", LIVE_CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
-        ("StartIndex", start_index.max(0).to_string()),
-        ("Limit", limit.clamp(1, LIVE_CHILDREN_MAX_PAGE).to_string()),
+        ("StartIndex", start_index.to_string()),
+        ("Limit", limit.to_string()),
         (
             "SortBy",
             "ParentIndexNumber,IndexNumber,SortName".to_string(),
