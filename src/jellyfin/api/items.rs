@@ -13,8 +13,8 @@ use crate::preferences::StreamingQuality;
 use super::client::{ApiError, JellyfinClient};
 use super::device_profile::device_profile;
 use super::model::{
-    BaseItemDto, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse, UserViewDto,
-    UserViewsResponse,
+    BaseItemDto, IdentityPage, ItemsResponse, MediaSourceInfo, MediaUrl, PlaybackInfoResponse,
+    UserViewDto, UserViewsResponse,
 };
 
 /// Lightweight fields required to browse, sort, filter, join, and draw cards.
@@ -87,7 +87,7 @@ pub fn fetch_identity_page(
     user_id: &str,
     start_index: i64,
     page_size: i64,
-) -> Result<ItemsResponse, ApiError> {
+) -> Result<IdentityPage, ApiError> {
     client.get_json(
         "/Items",
         &[

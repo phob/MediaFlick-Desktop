@@ -42,10 +42,7 @@ pub(super) fn run_cycle_inner(
     let mut membership_changed = false;
 
     let result = (|| -> Result<(), ApiError> {
-        best_effort(
-            "the library list",
-            refresh_libraries(library, session, &scope),
-        )?;
+        let no_catalog_library = refresh_library_list(library, session, &scope)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
@@ -81,7 +78,14 @@ pub(super) fn run_cycle_inner(
             || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
-            sweep_identity(library, session, &scope, control, &mut report)?
+            sweep_identity(
+                library,
+                session,
+                &scope,
+                no_catalog_library,
+                control,
+                &mut report,
+            )?
         } else {
             false
         };
@@ -180,6 +184,7 @@ fn sweep_identity(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
+    no_catalog_library: bool,
     control: Option<&SyncHandle>,
     report: &mut SyncReport,
 ) -> Result<bool, ApiError> {
@@ -189,6 +194,7 @@ fn sweep_identity(
         scope,
         scope.client(),
         scope.user_id(),
+        no_catalog_library,
         control,
     )?;
     report.user_data_refreshed = refreshed;
@@ -206,6 +212,25 @@ fn sweep_identity(
         touch(library, META_LAST_IDENTITY_SWEEP)
     })?;
     Ok(deleted)
+}
+
+/// Stores the server's library list and returns whether this cycle's answer
+/// lists no movies or TV shows library. A failed call returns false, because
+/// the stored list it leaves may be stale.
+fn refresh_library_list(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<bool, ApiError> {
+    let listed = best_effort(
+        "the library list",
+        refresh_libraries(library, session, scope),
+    )?;
+    Ok(listed.is_some_and(|libraries| {
+        libraries
+            .iter()
+            .all(|entry| entry.catalog_title().is_none())
+    }))
 }
 
 /// Returns whether any library's membership changed.
@@ -502,12 +527,14 @@ fn identity_sweep(
     scope: &SessionScope,
     client: &JellyfinClient,
     user_id: &str,
+    no_catalog_library: bool,
     control: Option<&SyncHandle>,
 ) -> Result<(usize, Option<LibraryChangeBatch>), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
     let mut pages = 0;
+    let mut counted_zero = false;
     let truncated = loop {
         cancelled(control, session, scope)?;
         if pages >= MAX_IDENTITY_PAGES {
@@ -515,6 +542,7 @@ fn identity_sweep(
         }
         let page = items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)?;
         if page.items.is_empty() {
+            counted_zero = page.total_record_count == Some(0);
             break false;
         }
         seen.extend(page.items.iter().map(|item| item.id.clone()));
@@ -549,10 +577,11 @@ fn identity_sweep(
         );
         return Ok((refreshed, None));
     }
-    if seen.is_empty() && !lists_no_library(library)? {
+    if seen.is_empty() && !(no_catalog_library && counted_zero) {
         // An empty answer is far more likely to be a server hiccup than an
         // emptied library, so it deletes everything only when the server
-        // also says the user sees no library at all.
+        // counted zero titles and this cycle's library list holds no movies
+        // or TV shows library.
         return Ok((refreshed, None));
     }
     let deletion_changes = commit(session, scope, || {
@@ -561,11 +590,6 @@ fn identity_sweep(
             .map_err(|error| storage_error(&error))
     })?;
     Ok((refreshed, Some(deletion_changes)))
-}
-
-fn lists_no_library(library: &Library) -> Result<bool, ApiError> {
-    let registry = library.libraries().map_err(|error| storage_error(&error))?;
-    Ok(registry == LibraryRegistry::Known(Vec::new()))
 }
 
 fn advance_watermark_with_ids(

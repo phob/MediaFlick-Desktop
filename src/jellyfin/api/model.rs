@@ -84,6 +84,16 @@ pub struct ItemsResponse {
     pub start_index: i64,
 }
 
+/// One identity sweep page. Unlike `ItemsResponse`, its count stays `None`
+/// when the server leaves it out, because only an explicit zero may empty
+/// the catalog.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "PascalCase")]
+pub struct IdentityPage {
+    pub items: Vec<BaseItemDto>,
+    pub total_record_count: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct UserViewsResponse {

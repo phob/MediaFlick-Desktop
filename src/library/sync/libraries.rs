@@ -14,13 +14,13 @@ use super::{
     storage_error,
 };
 
-/// Stores the server's library list. A successful empty answer is the
-/// server's and is stored as such.
+/// Stores the server's library list and returns it. A successful empty
+/// answer is the server's and is stored as such.
 pub(super) fn refresh_libraries(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-) -> Result<(), ApiError> {
+) -> Result<Vec<MediaLibrary>, ApiError> {
     let views = items::fetch_user_views(scope.client(), scope.user_id())?;
     let mut seen = HashSet::new();
     let libraries = views
@@ -38,7 +38,8 @@ pub(super) fn refresh_libraries(
         library
             .replace_libraries(&libraries)
             .map_err(|error| storage_error(&error))
-    })
+    })?;
+    Ok(libraries)
 }
 
 /// Which catalog libraries a membership pass walks.
