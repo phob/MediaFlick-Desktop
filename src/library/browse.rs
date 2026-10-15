@@ -254,16 +254,20 @@ pub struct ChildPage {
 
 impl ChildPage {
     pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Option<Self>, &'static str> {
-        if offset.is_some_and(|offset| offset < 0) {
-            return Err("offset must not be negative");
-        }
         if offset.is_none() && limit.is_none() {
             return Ok(None);
         }
-        Ok(Some(Self {
-            offset: offset.unwrap_or(0),
-            ..Self::first(limit.unwrap_or(DEFAULT_PAGE_SIZE))
-        }))
+        Self::at(offset.unwrap_or(0), limit.unwrap_or(DEFAULT_PAGE_SIZE)).map(Some)
+    }
+
+    fn at(offset: i64, limit: i64) -> Result<Self, &'static str> {
+        if offset < 0 {
+            return Err("offset must not be negative");
+        }
+        Ok(Self {
+            offset,
+            ..Self::first(limit)
+        })
     }
 
     pub fn first(limit: i64) -> Self {
@@ -359,9 +363,8 @@ fn checked_live_page(
             "this library can only filter to favorites".to_string(),
         ));
     }
-    let page = ChildPage::new(Some(query.offset), Some(query.limit))
-        .map_err(|message| BrowseError::Unsupported(message.to_string()))?
-        .unwrap_or_default();
+    let page = ChildPage::at(query.offset, query.limit)
+        .map_err(|message| BrowseError::Unsupported(message.to_string()))?;
     Ok(LivePage {
         parent,
         shape,
