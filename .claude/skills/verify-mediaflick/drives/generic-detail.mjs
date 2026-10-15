@@ -14,7 +14,10 @@
 // The children route rejects a bad id and a negative offset and clamps its
 // limit.
 // With --account only: the Collections library's largest box set lists
-// exactly its titles, and a movie card opens the full movie page.
+// exactly its titles; a movie card that is not a favorite is favorited from
+// its preview and shows it on the next hover without leaving the page, then
+// is unfavorited the same way (journaled after-run fallback); and a movie
+// card opens the full movie page.
 //   just verify generic-detail
 //   just verify generic-detail --account https://jellyfin.example.com
 const DEMO = "https://demo.jellyfin.org/stable"
@@ -149,6 +152,49 @@ async function genericFolder(ctx, expect, { label, id, name, userId, childCount 
   return result
 }
 
+async function previewShowsFavorite(ctx, card) {
+  await ctx.park()
+  await ctx.until(`!document.querySelector(".preview-panel")`, "the card preview to close", 10000)
+  await ctx.hover(card)
+  await ctx.until(async () => (await ctx.exists({ role: "button", name: "Add to favorites" })) || (await ctx.exists({ role: "button", name: "Remove from favorites" })), "the card preview's favorites toggle", 10000)
+  return ctx.exists({ role: "button", name: "Remove from favorites" })
+}
+
+async function cardShows(ctx, card, favorite) {
+  return ctx.until(async () => (await previewShowsFavorite(ctx, card)) === favorite, `the card preview to show ${favorite ? "a favorite" : "no favorite"}`, 20000).then(() => true, () => false)
+}
+
+async function serverFavorite(ctx, userId, id) {
+  return (await ctx.jellyfin(`/Items/${id}?userId=${userId}`)).UserData?.IsFavorite === true
+}
+
+async function favoriteFromCard(ctx, expect, { label, setId, userId }) {
+  const firstRow = await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${setId}&IncludeItemTypes=Movie&SortBy=ParentIndexNumber,IndexNumber,SortName&EnableUserData=true&Limit=6`)
+  const movie = firstRow.Items.find((item) => !item.UserData?.IsFavorite)
+  expect(Boolean(movie), `${label}: a movie card in the first row that is not a favorite (${movie?.Name})`)
+  if (!movie) return null
+  const card = { css: `${GRID_CARD_LINK}[href$="/item/${encodeURIComponent(movie.Id)}"]` }
+  const result = { id: movie.Id, name: movie.Name }
+  await ctx.unfavoriteAfterRun(movie.Id)
+  result.startsUnfavorite = (await previewShowsFavorite(ctx, card)) === false
+  expect(result.startsUnfavorite, `${label}: the ${movie.Name} card starts as not a favorite`)
+  await ctx.press({ role: "button", name: "Add to favorites" })
+  result.serverAfterAdd = await ctx.until(() => serverFavorite(ctx, userId, movie.Id), "Jellyfin to record the favorite", 15000).then(() => true, () => false)
+  result.apiAfterAdd = (await ctx.api(`/api/item/${setId}/children?offset=0&limit=60`)).body?.items?.find((item) => item.id === movie.Id)?.favorite ?? null
+  result.cardAfterAdd = await cardShows(ctx, card, true)
+  await ctx.screenshot("05b-box-set-card-favorited")
+  expect(result.serverAfterAdd && result.apiAfterAdd === true, `${label}: Jellyfin and the children route report ${movie.Name} as a favorite (server ${result.serverAfterAdd}, api ${result.apiAfterAdd})`)
+  expect(result.cardAfterAdd, `${label}: the ${movie.Name} card shows the favorite without leaving the page`)
+  if (result.cardAfterAdd) {
+    await ctx.press({ role: "button", name: "Remove from favorites" })
+    result.serverCleared = await ctx.until(async () => !(await serverFavorite(ctx, userId, movie.Id)), "Jellyfin to drop the favorite", 15000).then(() => true, () => false)
+    result.cardAfterRemove = await cardShows(ctx, card, false)
+    expect(result.serverCleared && result.cardAfterRemove, `${label}: unfavoriting from the card clears it on the server and on the card (server cleared ${result.serverCleared}, card ${result.cardAfterRemove})`)
+  }
+  await ctx.park()
+  return result
+}
+
 async function titlePage(ctx, expect, { label, id, name }) {
   await ctx.find({ role: "heading", name }, { timeout: 30000 })
   await ctx.until(async () => (await ctx.exists({ role: "button", name: "Play" })) || (await ctx.exists({ role: "button", name: "Resume" })), `${label}: the Play or Resume button`)
@@ -268,6 +314,7 @@ export default async function genericDetail(ctx) {
       if (set?.ChildCount > 0) {
         const folder = await genericFolder(ctx, expect, { label: `box set ${set.Name}`, id: set.Id, name: set.Name, userId, childCount: set.ChildCount })
         await ctx.screenshot("05-box-set")
+        report.boxSetFavorite = await favoriteFromCard(ctx, expect, { label: `box set ${set.Name}`, setId: set.Id, userId })
         const first = folder.server.items.find((item) => item.type === "Movie")
         expect(Boolean(first), `box set ${set.Name}: holds a movie (${first?.name})`)
         if (first) {
