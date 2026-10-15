@@ -5,7 +5,10 @@
 // walk reaches last, is asked for before the cache holds it and comes back as
 // a title that the app logs as served through the cache-through path and
 // caches on the way (required with --account; the demo walk can finish
-// first). The Music library's first album with artwork and tracks shows no
+// first). One of the newest series the cache lacks opens its page with its
+// seasons and episodes read from the cache, never live from the server. A
+// folder page asks the server only for its grid's pages, never for an unpaged
+// list. The Music library's first album with artwork and tracks shows no
 // title controls (Play, favorites, watched, More info, quality, ratings,
 // collection chip, Letterboxd, Media), goes back to Home, contains its cover
 // in the hero, contains near-square track art in the cards and fills wide art,
@@ -22,7 +25,9 @@
 // a bad id, and the children route a negative offset.
 // With --account only: a movie in one of the account's franchises shows its
 // collection chip; the Collections library's largest box set lists exactly
-// its titles; a movie card that is not a favorite is favorited from its
+// its titles; an unwatched movie in its first row, marked watched and then
+// unwatched in Jellyfin itself, follows on its open card each time (restored
+// after the run); a movie card that is not a favorite is favorited from its
 // preview and shows it on the next hover without leaving the page, then is
 // unfavorited the same way (journaled after-run fallback); and a movie card
 // opens the full movie page.
@@ -138,6 +143,7 @@ async function genericFolder(ctx, expect, { label, id, name, userId, childCount 
   const seen = await collectGrid(ctx, server.total)
   const found = await surfaces(ctx)
   const firstPage = await ctx.api(`/api/item/${id}/children?offset=0&limit=60`)
+  const unpaged = servedChildrenLive(await ctx.appLog(), id).filter((line) => line.includes("paged=false"))
   const shownIds = [...seen.keys()]
   const result = {
     id,
@@ -158,6 +164,7 @@ async function genericFolder(ctx, expect, { label, id, name, userId, childCount 
   expect(result.apiTotal === server.total, `${label}: /api/item/{id}/children total ${result.apiTotal} equals Jellyfin's ${server.total}`)
   expect(result.missing.length === 0 && result.extra.length === 0 && seen.size === server.total, `${label}: the grid shows exactly Jellyfin's ${server.total} children (${seen.size} cards, missing ${JSON.stringify(result.missing)}, extra ${JSON.stringify(result.extra)})`)
   expect(sameList(shownIds, server.items.map((item) => item.id)), `${label}: the cards follow Jellyfin's disc, track and name order`)
+  expect(unpaged.length === 0, `${label}: the page asks the server only for the grid's pages of children, never for an unpaged list (${unpaged.length} unpaged)`)
   return result
 }
 
@@ -204,15 +211,48 @@ async function favoriteFromCard(ctx, expect, { label, setId, userId }) {
   return result
 }
 
-async function newestCachedMovie(ctx) {
-  return (await ctx.api("/api/items?kind=Movie&sort=added&order=desc&limit=1")).body?.items?.[0]?.id ?? null
+// The change is made in Jellyfin, not in the app: the app only hears of it
+// through the server's push, whose batch names the movie and its library
+// folder, never the box set the open grid shows.
+async function remoteWatchedFollows(ctx, expect, { label, setId, userId }) {
+  const firstRow = await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${setId}&IncludeItemTypes=Movie&SortBy=ParentIndexNumber,IndexNumber,SortName&EnableUserData=true&Limit=6`)
+  const movie = firstRow.Items.find((item) => !item.UserData?.Played && !item.UserData?.PlaybackPositionTicks)
+  expect(Boolean(movie), `${label}: a movie card in the first row that is unwatched with no resume point (${movie?.Name})`)
+  if (!movie) return null
+  const card = `${GRID_CARD_LINK}[href$="/item/${encodeURIComponent(movie.Id)}"]`
+  const cardWatched = () => ctx.app.evaluate(`(() => { const link = document.querySelector(${JSON.stringify(card)}); return link ? Boolean(link.querySelector('[title="Watched"]')) : null })()`)
+  const cachedPlayed = async () => (await ctx.api(`/api/item/${movie.Id}`)).body?.played
+  const path = await ctx.pathname()
+  const result = { id: movie.Id, name: movie.Name, startsUnwatched: (await cardWatched()) === false }
+  ctx.restoreItemAfterRun(movie.Id)
+  for (const played of [true, false]) {
+    await ctx.setPlayedOnServer(movie.Id, played)
+    const cached = await ctx.until(async () => (await cachedPlayed()) === played, `the app to apply the pushed ${played ? "watched" : "unwatched"} state`, 20000).then(() => true, () => false)
+    const shown = await ctx.until(async () => (await cardWatched()) === played, `the ${movie.Name} card to show it ${played ? "watched" : "unwatched"}`, 10000).then(() => true, () => false)
+    result[played ? "watched" : "unwatched"] = { cached, shown, stayed: (await ctx.pathname()) === path }
+    if (played) await ctx.screenshot("05c-box-set-card-remote-watched")
+  }
+  expect(result.startsUnwatched, `${label}: the ${movie.Name} card starts unwatched`)
+  for (const state of ["watched", "unwatched"]) {
+    const { cached, shown, stayed } = result[state]
+    expect(cached && shown && stayed, `${label}: ${movie.Name} marked ${state} in Jellyfin reaches the app's cache and the open card without leaving the page (cache ${cached}, card ${shown}, same page ${stayed})`)
+  }
+  return result
+}
+
+async function newestCachedIds(ctx, kind) {
+  return new Set(((await ctx.api(`/api/items?kind=${kind}&sort=added&order=desc&limit=500`)).body?.items ?? []).map((item) => item.id))
+}
+
+function servedChildrenLive(log, id) {
+  return log.split("\n").filter((line) => line.includes("served a container's children from the server") && line.includes(`item_id="${id}"`))
 }
 
 async function uncachedTitle(ctx, expect, userId) {
   const newest = (await ctx.jellyfin(`/Items?userId=${userId}&Recursive=true&IncludeItemTypes=Movie&SortBy=DateCreated&SortOrder=Descending&Limit=1`)).Items[0]
   if (!newest) return null
   const status = (await ctx.api("/api/status")).body
-  const result = { id: newest.Id, name: newest.Name, bootstrapBefore: status.bootstrap, cachedBefore: (await newestCachedMovie(ctx)) === newest.Id }
+  const result = { id: newest.Id, name: newest.Name, bootstrapBefore: status.bootstrap, cachedBefore: (await newestCachedIds(ctx, "Movie")).has(newest.Id) }
   if (result.cachedBefore) {
     const reason = `the first sync had already cached ${newest.Name}, the newest movie, before the drive could ask for it`
     if (ctx.account) expect(false, `uncached title: ${reason}`)
@@ -224,9 +264,47 @@ async function uncachedTitle(ctx, expect, userId) {
   result.kind = detail.body?.kind ?? null
   result.libraryId = detail.body?.libraryId ?? null
   result.logged = (await ctx.appLog()).split("\n").some((line) => line.includes("served a title the cache did not hold") && line.includes(newest.Id))
-  result.cachedAfter = (await newestCachedMovie(ctx)) === newest.Id
+  result.cachedAfter = (await newestCachedIds(ctx, "Movie")).has(newest.Id)
   expect(detail.status === 200 && result.layout === "title" && result.kind === "Movie", `uncached title ${newest.Name}: /api/item answers the title layout of a Movie (${detail.status}, ${result.layout}, ${result.kind})`)
   expect(result.logged && result.cachedAfter, `uncached title ${newest.Name}: the app served it through the cache-through path and cached it on the way (logged ${result.logged}, cached ${result.cachedAfter})`)
+  return result
+}
+
+// Asked for before the series is cached, its seasons and their episodes would
+// come live from the server, uncached and never reconciled.
+async function uncachedSeries(ctx, expect, userId) {
+  const newest = (await ctx.jellyfin(`/Items?userId=${userId}&Recursive=true&IncludeItemTypes=Series&SortBy=DateCreated&SortOrder=Descending&Fields=ChildCount&Limit=10`)).Items
+  const cached = await newestCachedIds(ctx, "Series")
+  const series = newest.find((item) => item.ChildCount > 0 && !cached.has(item.Id))
+  if (!series) {
+    const reason = "the first sync had already cached the ten newest series before the drive could ask for one"
+    if (ctx.account) expect(false, `uncached series: ${reason}`)
+    else ctx.step(`uncached series: ${reason}; the demo walk is too short to force the uncached path`)
+    return null
+  }
+  const seasons = (await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${series.Id}&SortBy=ParentIndexNumber,IndexNumber,SortName`)).Items.filter((item) => item.Type === "Season")
+  await openByUrl(ctx, `/item/${series.Id}`)
+  await ctx.find({ role: "heading", name: series.Name }, { timeout: 30000 })
+  await ctx.find({ role: "list", name: "Seasons" }, { timeout: 30000 })
+  const rail = await ctx.until(async () => { const found = await seasonRail(ctx); return found.some((season) => season.pressed) ? found : null }, "a selected season", 15000)
+  const selected = seasons.find((season) => season.Name === rail.find((entry) => entry.pressed)?.name)
+  const episodes = selected ? (await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${selected.Id}&IncludeItemTypes=Episode&Limit=0`)).TotalRecordCount : 0
+  const shown = await ctx.until(async () => { const links = await episodeLinks(ctx); return links.length === episodes ? links : null }, `the ${selected?.Name} episodes`, 15000).catch(() => null)
+  const log = await ctx.appLog()
+  const result = {
+    id: series.Id,
+    name: series.Name,
+    servedUncached: log.split("\n").some((line) => line.includes("served a title the cache did not hold") && line.includes(series.Id)),
+    rail: rail.map((entry) => entry.name),
+    selected: selected?.Name ?? null,
+    episodes,
+    shown: shown?.length ?? null,
+    liveSeries: servedChildrenLive(log, series.Id),
+    liveSeason: selected ? servedChildrenLive(log, selected.Id) : [],
+  }
+  await ctx.screenshot("07a-uncached-series")
+  expect(result.servedUncached && sameList(result.rail, seasonRailNames(seasons.map((season) => ({ name: season.Name, indexNumber: season.IndexNumber })))) && shown !== null, `uncached series ${series.Name}: served past the cache, its page lists its ${seasons.length} seasons and the ${episodes} episodes of ${result.selected} (uncached ${result.servedUncached}, rail ${JSON.stringify(result.rail)}, shown ${result.shown})`)
+  expect(result.liveSeries.length === 0 && result.liveSeason.length === 0, `uncached series ${series.Name}: its seasons and episodes come from the cache, not live from the server (${JSON.stringify([...result.liveSeries, ...result.liveSeason])})`)
   return result
 }
 
@@ -343,6 +421,7 @@ export default async function genericDetail(ctx) {
   }
   const { userId } = (await ctx.api("/api/status")).body
   report.uncachedTitle = await uncachedTitle(ctx, expect, userId)
+  report.uncachedSeries = await uncachedSeries(ctx, expect, userId)
   await ctx.until(async () => {
     const status = (await ctx.api("/api/status")).body
     return status?.bootstrap?.state === "ready" && status.syncProgress?.active === false
@@ -466,6 +545,7 @@ export default async function genericDetail(ctx) {
       if (set?.ChildCount > 0) {
         const folder = await genericFolder(ctx, expect, { label: `box set ${set.Name}`, id: set.Id, name: set.Name, userId, childCount: set.ChildCount })
         await ctx.screenshot("05-box-set")
+        report.boxSetRemoteWatched = await remoteWatchedFollows(ctx, expect, { label: `box set ${set.Name}`, setId: set.Id, userId })
         report.boxSetFavorite = await favoriteFromCard(ctx, expect, { label: `box set ${set.Name}`, setId: set.Id, userId })
         const first = folder.server.items.find((item) => item.type === "Movie")
         expect(Boolean(first), `box set ${set.Name}: holds a movie (${first?.name})`)
