@@ -1,5 +1,6 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
 import type {
+  AnyItemDetail,
   AppearanceSettings,
   ClientSettings,
   CollectionMode,
@@ -17,7 +18,6 @@ import type {
   HomeResumeResponse,
   HomeSettingsResponse,
   HomeSettingsWrite,
-  AnyItemDetail,
   ItemAbout,
   ItemQuery,
   ItemSummary,
