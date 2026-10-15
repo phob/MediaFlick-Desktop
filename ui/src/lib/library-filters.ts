@@ -176,7 +176,7 @@ export function libraryItemQuery(params: URLSearchParams): ItemQuery {
   const filters = readLibraryFilters(params)
   return {
     search: params.get("search") ?? "",
-    // The API refuses any other kind; a hand-edited URL falls back to both.
+    // Only top-level title kinds are sent; a hand-edited URL naming none falls back to both.
     kind: titleKinds(libraryKind(params)).join(","),
     favorite: filters.favorite || undefined,
     genre: filters.genre,
