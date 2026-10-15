@@ -3,12 +3,12 @@ import { useEffect } from "react"
 import { invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
 
-export interface LiveChange {
+interface LiveChange {
   itemIds: string[]
   contextIds: string[]
 }
 
-export function readLiveChange(event: ShellEvent): LiveChange | null {
+function readLiveChange(event: ShellEvent): LiveChange | null {
   if (event.type !== "live-changed") return null
   return {
     itemIds: shellEventIds(event.payload.itemIds),

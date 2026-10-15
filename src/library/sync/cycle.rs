@@ -623,7 +623,7 @@ fn walk_identity(
     };
     let answer = if truncated {
         // `seen` is what decides which items still exist, so a partial one must
-        // never reach `retain_ids` — everything past the cap would be deleted.
+        // never reach `retain_ids_setting_meta` — everything past the cap would be deleted.
         tracing::warn!(
             target: "library.sync",
             pages,

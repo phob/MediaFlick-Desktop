@@ -1,6 +1,6 @@
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
 use crate::library::libraries::FilterKey;
-use crate::library::{DEFAULT_PAGE_SIZE, DetailView};
+use crate::library::{DEFAULT_PAGE_SIZE, DetailView, ItemPage};
 
 use super::*;
 
@@ -967,7 +967,7 @@ fn live_children(
     services: &Arc<Services>,
     item_id: &str,
     page: Option<ChildPage>,
-) -> Result<crate::library::ItemPage, ApiResponse> {
+) -> Result<ItemPage, ApiResponse> {
     let scope = session_scope(services)?;
     let (client, user_id) = (scope.client(), scope.user_id());
     let fail = |error: ApiError| scoped_failure(services, &scope, &error);
