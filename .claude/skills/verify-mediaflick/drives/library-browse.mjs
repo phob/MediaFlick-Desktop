@@ -5,7 +5,11 @@
 // `letterIndex` is true. A movies or TV shows library takes a sort and a filter
 // whose total matches the API; a live library offers its sorts and nothing
 // else. The first card opens its page, whose back link names the library and
-// returns to the same URL and filters. Read-only.
+// returns to the same URL and filters; saving that same last route again
+// leaves accounts.json untouched. In a movies or TV shows library a title
+// opened from a card's hover preview also names the library, and so does its
+// page after a reload without navigation state, with genre chips on that
+// library. Read-only.
 //
 // Started with --seed holding an accounts.json whose account remembers legacy
 // `Movie` and `Series` pages, it instead proves the app starts, keeps those
@@ -15,6 +19,9 @@
 //   just verify library-browse --account https://jellyfin.example.com
 //   node .claude/skills/verify-mediaflick/scripts/legacy-browsing-seed.mjs https://jellyfin.example.com build/verify-seeds/legacy-browsing
 //   just verify library-browse --account https://jellyfin.example.com --seed build/verify-seeds/legacy-browsing
+import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
+
 const DEMO = "https://demo.jellyfin.org/stable"
 const SORT_IDS = {
   Name: "name",
@@ -37,6 +44,22 @@ const FILTER_IDS = [
   ["Favorites", "favorite"],
 ]
 const CARD = 'a[aria-label^="Open details for "]'
+const PREVIEW_LINK = '.preview-panel a[aria-label^="Open details for "]'
+// Observes the UI's own browsing saves, so the drive knows a save was made
+// before it compares accounts.json. It never sends one.
+const SAVE_OBSERVER = `(() => {
+  if (window.__browsingSaves) return
+  window.__browsingSaves = []
+  const original = window.fetch
+  window.fetch = async function (input, init) {
+    const response = await original.apply(this, arguments)
+    const url = input instanceof Request ? input.url : String(input)
+    if (new URL(url, location.href).pathname === "/api/settings/browsing" && init?.method === "PATCH") {
+      window.__browsingSaves.push({ ...JSON.parse(init.body), status: response.status })
+    }
+    return response
+  }
+})()`
 const sameList = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "library"
 
@@ -101,12 +124,23 @@ async function apiTotal(ctx, library, query = "") {
   return response.status === 200 ? response.body.total : `status ${response.status}`
 }
 
-async function openFirstCardAndReturn(ctx, expect, library, label, total) {
+function accountsFingerprint(ctx) {
+  const stat = ctx.configStat("accounts.json")
+  if (!stat) return null
+  return { mtimeMs: stat.mtimeMs, sha256: createHash("sha256").update(readFileSync(ctx.configFile("accounts.json"))).digest("hex") }
+}
+
+const backLinkHref = (ctx, back) => ctx.app.evaluate(`[...document.querySelectorAll("a")].find((link) => link.textContent.trim() === ${JSON.stringify(back)})?.getAttribute("href") ?? null`)
+
+async function openFirstCardAndReturn(ctx, expect, report, library, label, total) {
   if (!(await ctx.exists({ css: CARD }))) {
     expect(total === 0, `${library.name} ${label}: a card to open (the grid shows ${total})`)
     return { skipped: "empty grid" }
   }
   const before = await ctx.pathname()
+  await ctx.until(() => ctx.readConfig("accounts.json")?.accounts?.some((account) => account.browsing?.last === before), `the last route ${before} saved`, 10000)
+  const savesBefore = await ctx.app.evaluate("window.__browsingSaves.length")
+  const fileBefore = accountsFingerprint(ctx)
   const chipsBefore = await ctx.app.evaluate(`document.querySelector('[aria-label="Active filters"]')?.innerText ?? ""`)
   const sortBefore = await ctx.app.evaluate(`document.querySelector('[aria-label="Sort by"]')?.innerText ?? ""`)
   const name = await ctx.app.evaluate(`document.querySelector(${JSON.stringify(CARD)}).getAttribute("aria-label").slice("Open details for ".length)`)
@@ -118,10 +152,46 @@ async function openFirstCardAndReturn(ctx, expect, library, label, total) {
   await ctx.press({ role: "link", name: back })
   await ctx.until(async () => (await ctx.pathname()) === before, `${label}: back to ${before}`)
   await ctx.find({ role: "heading", name: library.name })
+  const resaved = await ctx.until(() => ctx.app.evaluate(`window.__browsingSaves.slice(${savesBefore}).find((save) => save.page === "last" && save.route === ${JSON.stringify(before)} && save.status === 200) ?? null`), `${label}: the UI to save the same last route again`, 10000)
+  const fileAfter = accountsFingerprint(ctx)
+  const unchanged = fileBefore?.sha256 === fileAfter?.sha256 && fileBefore?.mtimeMs === fileAfter?.mtimeMs
+  report.accountsFile.push({ library: library.name, route: before, save: resaved, before: fileBefore, after: fileAfter, unchanged })
+  expect(unchanged, `${library.name} ${label}: saving the same last route again leaves accounts.json untouched (mtime ${fileBefore?.mtimeMs} -> ${fileAfter?.mtimeMs})`)
   const chipsAfter = await ctx.app.evaluate(`document.querySelector('[aria-label="Active filters"]')?.innerText ?? ""`)
   const sortAfter = await ctx.app.evaluate(`document.querySelector('[aria-label="Sort by"]')?.innerText ?? ""`)
   expect(chipsAfter === chipsBefore && sortAfter === sortBefore, `${library.name} ${label}: Back restores the sort (${sortAfter}) and filters (${chipsAfter || "none"})`)
   return { opened: name, url: before, sort: sortAfter, filters: chipsAfter }
+}
+
+async function previewAndReload(ctx, expect, library) {
+  const back = `Back to ${library.name}`
+  const target = `/library/${library.id}`
+  const result = {}
+  await ctx.park()
+  await ctx.until(`!document.querySelector(".preview-panel")`, "no card preview open", 10000)
+  await ctx.hover({ css: CARD }, { nth: 0 })
+  await ctx.find({ css: PREVIEW_LINK }, { timeout: 10000 })
+  result.opened = await ctx.app.evaluate(`document.querySelector(${JSON.stringify(PREVIEW_LINK)}).getAttribute("aria-label").slice("Open details for ".length)`)
+  await ctx.press({ css: PREVIEW_LINK })
+  await ctx.until(async () => (await ctx.pathname()).startsWith("/item/"), `${result.opened}'s page from its card preview`)
+  result.item = await ctx.pathname()
+  result.previewLabel = await ctx.find({ role: "link", name: back }, { timeout: 20000 }).then(() => back, () => null)
+  result.previewHref = await backLinkHref(ctx, back)
+  expect(result.previewLabel === back && result.previewHref?.startsWith(target), `${library.name}: a title opened from its card preview reads ${back} (${result.previewLabel}, ${result.previewHref})`)
+  await ctx.screenshot(`${slug(library.name)}-preview-detail`)
+
+  await ctx.app.evaluate("history.replaceState(null, '', location.pathname); location.reload()")
+  await ctx.until(async () => (await ctx.pathname()) === result.item && (await ctx.app.evaluate("document.readyState")) === "complete", "the title page to reload", 30000)
+  result.reloadedLabel = await ctx.find({ role: "link", name: back }, { timeout: 30000 }).then(() => back, () => null)
+  result.reloadedHref = await backLinkHref(ctx, back)
+  expect(result.reloadedLabel === back && result.reloadedHref === target, `${library.name}: after a reload without navigation state the title page reads ${back} and leads to ${target} (${result.reloadedLabel}, ${result.reloadedHref})`)
+  result.genreLinks = await ctx.app.evaluate(`[...document.querySelectorAll('a[href*="genre="]')].map((link) => link.getAttribute("href"))`)
+  expect(result.genreLinks.length === 0 || result.genreLinks.every((href) => href.startsWith(`${target}?genre=`)), `${library.name}: the reloaded page's genre chips filter ${target} (${result.genreLinks.join(", ") || "no genres"})`)
+  await ctx.screenshot(`${slug(library.name)}-reloaded-detail`)
+  await ctx.press({ role: "link", name: back })
+  await ctx.until(async () => (await ctx.pathname()).startsWith(target), `back to ${target} after the reload`)
+  await ctx.find({ role: "heading", name: library.name })
+  return result
 }
 
 async function catalogCase(ctx, expect, library) {
@@ -170,13 +240,15 @@ async function legacyRun(ctx, expect, report, seeded) {
 }
 
 export default async function libraryBrowse(ctx) {
-  const report = { mode: ctx.account ? "account" : "demo", checks: [], libraries: [] }
+  const report = { mode: ctx.account ? "account" : "demo", checks: [], libraries: [], accountsFile: [] }
   const expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAILED"}: ${message}`)
   }
   const seeded = ctx.readConfig("accounts.json")
   await ctx.signIn({ server: DEMO, username: "demo" })
+  await ctx.app.send("Page.addScriptToEvaluateOnNewDocument", { source: SAVE_OBSERVER })
+  await ctx.app.evaluate(SAVE_OBSERVER)
 
   try {
     if (seeded?.accounts?.some((account) => account.browsing?.Movie)) {
@@ -232,7 +304,8 @@ export default async function libraryBrowse(ctx) {
       } else {
         expect(!library.browse.sorts.includes("random") && !library.browse.letterIndex, `${library.name}: a live library offers no random sort and no letters`)
       }
-      record.back = await openFirstCardAndReturn(ctx, expect, library, record.filtered ? "filtered" : "plain", record.filtered?.total ?? record.total)
+      record.back = await openFirstCardAndReturn(ctx, expect, report, library, record.filtered ? "filtered" : "plain", record.filtered?.total ?? record.total)
+      if (record.filtered && (await ctx.exists({ css: CARD }))) record.preview = await previewAndReload(ctx, expect, library)
     }
   } finally {
     ctx.writeEvidence("library-browse.json", report)
