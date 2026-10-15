@@ -399,12 +399,14 @@ impl AccountConfigurationService {
     }
 
     pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
-        let parsed = BrowsingPage::parse(page)
-            .ok_or_else(|| invalid_data("invalid browsing destination"))?;
-        validate_browsing_route(page, route)?;
+        let prunes_legacy = match validate_browsing_route(page, route)? {
+            BrowsingPage::Last => false,
+            BrowsingPage::Library(_) => true,
+            BrowsingPage::Legacy => return Err(invalid_data("invalid browsing destination")),
+        };
         self.mutate(|document| {
             let browsing = &mut account_mut(document, key).browsing;
-            if let BrowsingPage::Library(_) = parsed {
+            if prunes_legacy {
                 browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
             }
             browsing.insert(page.to_string(), route.to_string());
@@ -713,12 +715,16 @@ fn scrub_backup(path: &Path) -> io::Result<()> {
 enum BrowsingPage {
     Last,
     Library(LibraryId),
+    Legacy,
 }
 
 impl BrowsingPage {
     fn parse(page: &str) -> Option<Self> {
         if page == "last" {
             return Some(Self::Last);
+        }
+        if LEGACY_BROWSING_PAGES.contains(&page) {
+            return Some(Self::Legacy);
         }
         canonical_library_id(page.strip_prefix("library:")?).map(Self::Library)
     }
@@ -728,10 +734,14 @@ fn canonical_library_id(raw: &str) -> Option<LibraryId> {
     LibraryId::parse(raw).filter(|id| id.as_str() == raw)
 }
 
-fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
-    let path = route.split('?').next().unwrap_or(route);
-    let library = path.strip_prefix("/library/").map(canonical_library_id);
-    let app_route = library.as_ref().is_some_and(Option::is_some)
+/// A route is an app path with or without a query string; a library page's
+/// route is its own `/library/<id>`.
+fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> {
+    let (path, _query) = route.split_once('?').unwrap_or((route, ""));
+    let library = path
+        .strip_prefix("/library/")
+        .and_then(canonical_library_id);
+    let app_route = library.is_some()
         || [
             "/",
             "/calendar",
@@ -742,16 +752,15 @@ fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
         ]
         .contains(&path)
         || path.starts_with("/collections/");
-    let valid = route.len() <= 2048
-        && match BrowsingPage::parse(page) {
-            Some(BrowsingPage::Last) => app_route,
-            Some(BrowsingPage::Library(id)) => library == Some(Some(id)),
-            None => LEGACY_BROWSING_PAGES.contains(&page) && app_route,
-        };
-    if !valid {
-        return Err(invalid_data("invalid browsing destination"));
-    }
-    Ok(())
+    BrowsingPage::parse(page)
+        .filter(|page| {
+            route.len() <= 2048
+                && match page {
+                    BrowsingPage::Library(id) => library.as_ref() == Some(id),
+                    BrowsingPage::Last | BrowsingPage::Legacy => app_route,
+                }
+        })
+        .ok_or_else(|| invalid_data("invalid browsing destination"))
 }
 
 fn invalid_data(message: impl Into<String>) -> io::Error {
