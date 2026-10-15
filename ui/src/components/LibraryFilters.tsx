@@ -45,7 +45,7 @@ import {
   seriesStatusApplies,
   WATCH_FILTERS,
   type LibraryFilterState,
-  type LibraryKind,
+  type TitleKind,
 } from "@/lib/library-filters"
 import { useGenres, useOfficialRatings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -74,7 +74,7 @@ interface LibraryFiltersProps {
   value: LibraryFilterState
   onChange: (patch: Partial<LibraryFilterState>) => void
   total: number | null
-  kinds: readonly LibraryKind[]
+  kinds: readonly TitleKind[]
 }
 
 function currentValue(value: string, fallback: string) {
