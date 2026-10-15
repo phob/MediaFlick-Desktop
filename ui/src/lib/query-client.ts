@@ -255,12 +255,11 @@ export function invalidateLibraryChanged(
   })
 }
 
-/** The account's library list changed: the sidebar, Home and the startup choice read it. */
+/** The account's library list changed: the sidebar and Home read it. */
 export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries })
   void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
-  void client.invalidateQueries({ queryKey: ["viewing"] })
 }
 
 /**
