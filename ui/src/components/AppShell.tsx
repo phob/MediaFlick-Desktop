@@ -9,6 +9,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlaybackEventsBridge } from "@/lib/playback-events"
 import { useLibraryMetadataBridge } from "@/lib/library-events"
 import { usePlayerState, useSettings } from "@/lib/queries"
+import { RouteScrollContext } from "@/lib/route-scroll"
 import { sidebarShouldBeOpen, sidebarShouldOverlayContent } from "@/lib/sidebar-state"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
 import mediaFlickLogo from "../../../distribution/app-icon.svg"
@@ -44,7 +45,7 @@ export function RouteScrollViewport({ children }: { children: ReactNode }) {
 
   return (
     <div ref={setViewport} className="content-viewport min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto">
-      {children}
+      <RouteScrollContext.Provider value={viewport}>{children}</RouteScrollContext.Provider>
     </div>
   )
 }

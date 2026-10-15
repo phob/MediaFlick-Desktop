@@ -3,9 +3,9 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 import { useBrowsing } from "@/lib/queries"
-import { useEffect, useState, type ComponentType } from "react"
+import { useEffect, useRef, useState, type ComponentType } from "react"
 import { Link, useSearchParams } from "react-router-dom"
-import { ItemGrid, type ItemGridProps } from "@/components/ItemGrid"
+import { ItemGrid, type ItemGridHandle, type ItemGridProps } from "@/components/ItemGrid"
 import { LetterJumpRail } from "@/components/LetterJumpRail"
 import { LibraryFilters } from "@/components/LibraryFilters"
 import { MediaCard } from "@/components/MediaCard"
@@ -31,6 +31,7 @@ import {
   writeLibraryFilters,
 } from "@/lib/library-filters"
 import { useItemLetters, useItems, usePersonResolution } from "@/lib/queries"
+import { cn } from "@/lib/utils"
 
 const SEARCH_PERSON_ROW_LIMIT = 12
 
@@ -130,6 +131,8 @@ function CastCandidates({
 export default function Library({ components }: LibraryProps = {}) {
   const [castScroller, setCastScroller] = useState<HTMLDivElement | null>(null)
   useScrollRestoration(castScroller, "cast-search")
+  const [gridScroller, setGridScroller] = useState<HTMLDivElement | null>(null)
+  const grid = useRef<ItemGridHandle>(null)
   const Grid = components?.ItemGrid ?? ItemGrid
   const CastDiscovery = components?.CastDiscover ?? CastDiscover
   const ServerExtras = components?.ServerCastExtras ?? ServerCastExtras
@@ -197,6 +200,7 @@ export default function Library({ components }: LibraryProps = {}) {
   const railQuery = alphabetical ? libraryItemQuery(params) : null
   const letters = useItemLetters(railQuery ?? {}, railQuery !== null)
   const letterIndex = railQuery ? letters.data?.letters : undefined
+  useScrollRestoration(gridScroller, `grid:${JSON.stringify(query)}`, total !== null)
 
   const title = castPerson
     ? personName
@@ -220,6 +224,9 @@ export default function Library({ components }: LibraryProps = {}) {
       resolutionError={jellyfinPersonId ? resolution.error : null}
     />
   ) : undefined
+  const rail = letterIndex && total
+    ? <LetterJumpRail letters={letterIndex} onJump={(index) => grid.current?.jumpTo(index)} />
+    : null
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -265,21 +272,28 @@ export default function Library({ components }: LibraryProps = {}) {
             {castDiscover}
           </div>
         ) : (
-          <Grid
-            source={{ scope: "titles", query }}
-            onTotal={setTotal}
-            jumpRail={letterIndex
-              ? (jumpTo) => <LetterJumpRail letters={letterIndex} onJump={jumpTo} />
-              : undefined}
-            empty={
-              castPerson
-                ? `No Jellyfin titles credit ${personName}.`
-                : search
-                  ? `Nothing matches “${search}”.`
-                  : "No items match that query."
-            }
-            footer={
-              castPerson ? (
+          <div className="flex h-full min-h-0">
+            <div
+              ref={setGridScroller}
+              className={cn(
+                "h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14",
+                rail && "pr-2 sm:pr-3 lg:pr-4",
+              )}
+            >
+              <Grid
+                ref={grid}
+                source={{ scope: "titles", query }}
+                scroller={gridScroller}
+                onTotal={setTotal}
+                empty={
+                  castPerson
+                    ? `No Jellyfin titles credit ${personName}.`
+                    : search
+                      ? `Nothing matches “${search}”.`
+                      : "No items match that query."
+                }
+              />
+              {castPerson ? (
                 <>
                   <ServerExtras
                     personName={personName}
@@ -295,9 +309,10 @@ export default function Library({ components }: LibraryProps = {}) {
                   <SearchPersonSection term={search} />
                   <NotInYourLibrary term={search} />
                 </>
-              ) : undefined
-            }
-          />
+              ) : null}
+            </div>
+            {rail}
+          </div>
         )}
       </div>
     </div>
