@@ -16,7 +16,6 @@ import {
   type ExternalProvider,
   type ItemQuery,
   type ItemSummary,
-  type LibrariesResponse,
   type PlayerCommand,
   type PlayerState,
   type MediaInfoResponse,
@@ -247,21 +246,23 @@ export function useBrowseLetters(source: ListingSource, enabled = true) {
 }
 
 /**
+ * Both library hooks share the real `queryFn`: an observer's options become
+ * the query's, so a `skipToken` observer would break every later refetch.
+ */
+const librariesQuery = queryOptions({ queryKey: queryKeys.libraries, queryFn: api.libraries })
+
+/**
  * The sidebar's library list and every grid's capabilities. The native
  * `libraries-changed` and `library-memberships-settled` events re-read it.
  */
 export function useLibraries() {
   const { data: status } = useStatus()
-  return useQuery({
-    queryKey: queryKeys.libraries,
-    queryFn: api.libraries,
-    enabled: Boolean(status?.authenticated),
-  })
+  return useQuery({ ...librariesQuery, enabled: Boolean(status?.authenticated) })
 }
 
 /** The library list as already loaded, without asking for it: every card reads names from it. */
 export function useCachedLibraries() {
-  return useQuery<LibrariesResponse>({ queryKey: queryKeys.libraries, queryFn: skipToken }).data?.libraries
+  return useQuery({ ...librariesQuery, enabled: false }).data?.libraries
 }
 
 export function useLibraryOptions(id: string | null) {
