@@ -132,6 +132,7 @@ pub fn live_detail(
         )
     })
     .ok_or(DetailError::AccountChanged)??;
+    tracing::debug!(target: "library.browse", item_id = dto.id, "served a title the cache did not hold");
     Ok(DetailView::Title(title))
 }
 
