@@ -232,18 +232,6 @@ impl Library {
         Ok(kind.as_deref().and_then(CatalogKind::parse))
     }
 
-    /// The cached item's kind, or `None` when it is not cached. A failed read
-    /// is logged and also reads as uncached: every caller then asks the server
-    /// or answers as it would for an unknown id.
-    pub fn kind(&self, item_id: &str) -> Option<String> {
-        self.catalog_kind(item_id)
-            .unwrap_or_else(|error| {
-                tracing::warn!(target: "library.db", item_id, "could not read a cached item kind: {error}");
-                None
-            })
-            .map(|kind| kind.as_str().to_string())
-    }
-
     pub fn ids_by_tmdb(
         &self,
         kind: &str,

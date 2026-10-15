@@ -126,14 +126,21 @@ fn technical_batch(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     Ok(ApiResponse::ok(json!({ "items": results })))
 }
 
+fn cached_kind(services: &Services, item_id: &str) -> Result<Option<CatalogKind>, ApiResponse> {
+    services
+        .library
+        .catalog_kind(item_id)
+        .map_err(|error| storage_failure(&error))
+}
+
 /// Container, codec, and track detail for the detail page.
 ///
 /// Folders have no streams of their own, so they are answered from here without
 /// a round trip rather than letting the server return an empty source list.
 fn media_info(services: &Arc<Services>, item_id: &str) -> Handled {
     if matches!(
-        services.library.kind(item_id).as_deref(),
-        Some("Series" | "Season")
+        cached_kind(services, item_id)?,
+        Some(CatalogKind::Series | CatalogKind::Season)
     ) {
         return Ok(ApiResponse::ok(json!({
             "sources": [],
@@ -168,8 +175,8 @@ fn set_item_playback_preference(
     request: &ApiRequest,
 ) -> Handled {
     if matches!(
-        services.library.kind(item_id).as_deref(),
-        None | Some("Series" | "Season")
+        cached_kind(services, item_id)?,
+        None | Some(CatalogKind::Series | CatalogKind::Season)
     ) {
         return Err(ApiResponse::error(
             404,
@@ -460,7 +467,7 @@ fn file_name_of(path: &str) -> Option<&str> {
 /// unavailable offline, and in both cases the first episode is a better answer
 /// than a page with nothing to play.
 fn next_up(services: &Arc<Services>, item_id: &str) -> Handled {
-    if services.library.kind(item_id).as_deref() != Some("Series") {
+    if cached_kind(services, item_id)? != Some(CatalogKind::Series) {
         return Ok(ApiResponse::ok(json!({ "item": Value::Null })));
     }
     let from_server = match services.session.scope() {

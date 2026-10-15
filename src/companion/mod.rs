@@ -15,7 +15,7 @@ use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::Library;
+use crate::library::{CatalogKind, Library};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 const MIN_API_VERSION: i64 = 1;
@@ -378,14 +378,15 @@ impl CompanionSession {
                 if date < start || date > end {
                     return None;
                 }
-                let library_item_id = self
-                    .library
-                    .kind(&item.id)
-                    .is_some()
+                // A failed cache read only leaves the entry without its link.
+                let library_item_id = matches!(self.library.catalog_kind(&item.id), Ok(Some(_)))
                     .then(|| item.id.clone());
                 let series_library_item_id = item.series_id.as_ref().and_then(|series_id| {
-                    (self.library.kind(series_id).as_deref() == Some("Series"))
-                        .then(|| series_id.clone())
+                    matches!(
+                        self.library.catalog_kind(series_id),
+                        Ok(Some(CatalogKind::Series))
+                    )
+                    .then(|| series_id.clone())
                 });
                 Some(json!({
                     "kind": "episode",
