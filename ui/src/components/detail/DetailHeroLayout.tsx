@@ -9,7 +9,10 @@ export type HeroArtworkAspect = "poster" | "square" | "still"
 interface HeroArtwork {
   src: string
   aspect?: HeroArtworkAspect
-  /** `contain` shows art whose shape does not match the frame whole. */
+  /**
+   * `contain` shows art whose shape does not match the frame whole. A square
+   * frame contains unless told otherwise; the others cover.
+   */
   fit?: "cover" | "contain"
   progress?: number
 }
@@ -67,10 +70,9 @@ export function DetailHeroLayout({
   const showPoster = Boolean(poster?.src) && failedPoster !== poster?.src
   const showLogo = Boolean(logo) && failedLogo !== logo
   const progress = Math.max(0, Math.min(1, poster?.progress ?? 0))
-  const frame = cn(
-    ARTWORK_FRAME[poster?.aspect ?? "poster"],
-    poster?.fit === "contain" ? "bg-card object-contain" : "object-cover",
-  )
+  const aspect = poster?.aspect ?? "poster"
+  const fit = poster?.fit ?? (aspect === "square" ? "contain" : "cover")
+  const frame = cn(ARTWORK_FRAME[aspect], fit === "contain" ? "bg-card object-contain" : "object-cover")
 
   return (
     <header className="relative" data-testid="detail-hero-layout">
