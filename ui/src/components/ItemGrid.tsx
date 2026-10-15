@@ -164,7 +164,7 @@ export function ItemGrid({
     <div ref={setContent}>
       {error ? (
         <PageErrorState
-          title="Could not load library items"
+          title="Could not load these items"
           description={error.message}
           action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
         />
