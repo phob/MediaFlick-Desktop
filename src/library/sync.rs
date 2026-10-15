@@ -98,6 +98,10 @@ fn read_bootstrap_progress(library: &Library) -> rusqlite::Result<BootstrapProgr
     })
 }
 
+pub fn catalog_downloading(library: &Library) -> rusqlite::Result<bool> {
+    Ok(!flag(library, META_BOOTSTRAP_DONE)?)
+}
+
 pub fn ownership_available(library: &Library) -> bool {
     let available = flag(library, META_BOOTSTRAP_DONE)
         .and_then(|done| Ok(done && !flag(library, META_LATEST_FAILURE)?));
