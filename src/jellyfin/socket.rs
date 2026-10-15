@@ -10,7 +10,6 @@
 //! every successful (re)connect asks the sync worker for one requested cycle
 //! to reconcile the gap, and the periodic sweeps remain the backstop.
 
-use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex};
@@ -513,14 +512,6 @@ fn apply_library_change(
     scope: &SessionScope,
     change: &LibraryChange,
 ) {
-    let reported = change
-        .changed
-        .iter()
-        .chain(&change.removed)
-        .chain(&change.folders)
-        .cloned()
-        .collect::<Vec<_>>();
-    let cached_before = library.cached_ids(&reported);
     let mut batch = LibraryChangeBatch::default();
     for item_id in &change.removed {
         match commit_scoped(session, scope, || library.forget(item_id)) {
@@ -567,6 +558,8 @@ fn apply_library_change(
         }
     }
 
+    let live_items = batch.unnamed(change.changed.iter().chain(&change.removed));
+    let live_folders = batch.unnamed(&change.folders);
     if !batch.is_empty() {
         tracing::debug!(
             target: "jellyfin.socket",
@@ -575,45 +568,20 @@ fn apply_library_change(
         );
         shell.library_changed(batch);
     }
-    match cached_before.and_then(|before| live_change(library, change, &before)) {
-        Ok((item_ids, context_ids)) if session.scope_is_current(scope) => {
-            if !item_ids.is_empty() || !context_ids.is_empty() {
-                tracing::debug!(
-                    target: "jellyfin.socket",
-                    items = ?item_ids,
-                    folders = ?context_ids,
-                    "announced a pushed change to items the cache does not hold"
-                );
-            }
-            shell.live_changed(item_ids, context_ids);
-        }
-        Ok(_) => log_stale_push(),
-        Err(error) => {
-            tracing::warn!(target: "jellyfin.socket", "could not tell pushed live changes from cached ones: {error}");
-        }
+    if live_items.is_empty() && live_folders.is_empty() {
+        return;
     }
-}
-
-/// The reported ids the cache held neither before nor after applying the
-/// change: items and folders only Jellyfin serves.
-fn live_change(
-    library: &Library,
-    change: &LibraryChange,
-    cached_before: &HashSet<String>,
-) -> rusqlite::Result<(Vec<String>, Vec<String>)> {
-    let cached_after = library.cached_ids(&change.changed)?;
-    let is_live = |id: &&String| !cached_before.contains(*id) && !cached_after.contains(*id);
-    let mut item_ids = change
-        .changed
-        .iter()
-        .chain(&change.removed)
-        .filter(is_live)
-        .cloned()
-        .collect::<Vec<_>>();
-    item_ids.sort_unstable();
-    item_ids.dedup();
-    let context_ids = change.folders.iter().filter(is_live).cloned().collect();
-    Ok((item_ids, context_ids))
+    if !session.scope_is_current(scope) {
+        log_stale_push();
+        return;
+    }
+    tracing::debug!(
+        target: "jellyfin.socket",
+        items = ?live_items,
+        folders = ?live_folders,
+        "announced a pushed change to items the cache does not hold"
+    );
+    shell.live_changed(live_items, live_folders);
 }
 
 fn set_read_timeout(socket: &mut Socket, timeout: Duration) {
