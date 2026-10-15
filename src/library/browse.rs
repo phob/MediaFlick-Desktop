@@ -5,8 +5,8 @@ use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
 use super::model::is_synced_kind;
 use super::{
-    CatalogKind, DetailView, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
-    ItemSummary, KindFilter, Library, TitleDetail, TitleKind,
+    CatalogKind, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
+    KindFilter, Library, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -106,34 +106,25 @@ impl From<rusqlite::Error> for DetailError {
     }
 }
 
-/// The details page of an item the cache does not hold, from the server's copy.
-/// A movie, series, season or episode is cached on the way and served as a
-/// title: `in_account` runs that write and the read back under one check that
-/// the account which fetched the item is still signed in, and answers `None`
-/// when it is not. Every other type is served live as a generic item.
-pub fn live_detail(
-    library: &Library,
-    dto: &BaseItemDto,
-    in_account: impl FnOnce(
-        &mut dyn FnMut() -> rusqlite::Result<TitleDetail>,
-    ) -> Option<rusqlite::Result<TitleDetail>>,
-) -> Result<DetailView, DetailError> {
-    if !is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) {
-        return Ok(DetailView::Generic(GenericItemDetail::from_dto(dto)));
-    }
-    let title = in_account(&mut || {
-        // A failed cache write still answers from the fetched item.
-        let _ = library.ingest_page(std::slice::from_ref(dto));
-        Ok(
-            cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
-                item: ItemDetail::from_dto(dto),
-                library_id: None,
-            }),
-        )
-    })
-    .ok_or(DetailError::AccountChanged)??;
-    tracing::debug!(target: "library.browse", item_id = dto.id, "served a title the cache did not hold");
-    Ok(DetailView::Title(title))
+/// The generic details page of a fetched item that is not a movie, series,
+/// season or episode; `None` for those, which are titles.
+pub fn generic_detail(dto: &BaseItemDto) -> Option<GenericItemDetail> {
+    (!is_synced_kind(dto.item_type.as_deref().unwrap_or_default()))
+        .then(|| GenericItemDetail::from_dto(dto))
+}
+
+/// Caches a fetched title the cache did not hold and reads its title page
+/// back. The caller runs it under the check that the account which fetched
+/// the item is still signed in.
+pub fn write_live_title(library: &Library, dto: &BaseItemDto) -> Result<TitleDetail, DetailError> {
+    // A failed cache write still answers from the fetched item.
+    let _ = library.ingest_page(std::slice::from_ref(dto));
+    Ok(
+        cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
+            item: ItemDetail::from_dto(dto),
+            library_id: None,
+        }),
+    )
 }
 
 /// Where `/api/item/{id}/children` reads from.
