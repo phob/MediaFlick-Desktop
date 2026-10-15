@@ -187,11 +187,15 @@ pub fn fetch_children(
     client.get_json("/Items", &children_query(user_id, parent_id, start_index))
 }
 
-fn exact_items_query(user_id: &str, item_ids: &[String]) -> Vec<(&'static str, String)> {
+fn exact_items_query(
+    user_id: &str,
+    item_ids: &[String],
+    fields: &str,
+) -> Vec<(&'static str, String)> {
     vec![
         user_query(user_id),
         ("ids", item_ids.join(",")),
-        ("Fields", CATALOG_FIELDS.to_string()),
+        ("Fields", fields.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
     ]
@@ -202,7 +206,10 @@ pub fn fetch_items(
     user_id: &str,
     item_ids: &[String],
 ) -> Result<ItemsResponse, ApiError> {
-    client.get_json("/Items", &exact_items_query(user_id, item_ids))
+    client.get_json(
+        "/Items",
+        &exact_items_query(user_id, item_ids, CATALOG_FIELDS),
+    )
 }
 
 pub fn fetch_item(
@@ -214,25 +221,20 @@ pub fn fetch_item(
     Ok(response.items.into_iter().next())
 }
 
-/// The catalog fields, so a movie or series can be cached on the way, plus what
-/// a generic details page shows.
-const DETAIL_FIELDS: &str = "ProviderIds,Genres,DateCreated,OriginalTitle,SortName,\
-PremiereDate,OfficialRating,CommunityRating,ChildCount,ParentId,Overview,PrimaryImageAspectRatio";
+/// What a generic details page shows beyond the catalog fields.
+const DETAIL_FIELDS: &str = "Overview,PrimaryImageAspectRatio";
 
-pub fn fetch_item_detail(
+/// One item with the catalog fields, so a movie or series can be cached on the
+/// way, and what its details page shows.
+pub fn fetch_detailed_item(
     client: &JellyfinClient,
     user_id: &str,
     item_id: &str,
 ) -> Result<Option<BaseItemDto>, ApiError> {
+    let fields = format!("{CATALOG_FIELDS},{DETAIL_FIELDS}");
     let response: ItemsResponse = client.get_json(
         "/Items",
-        &[
-            user_query(user_id),
-            ("ids", item_id.to_string()),
-            ("Fields", DETAIL_FIELDS.to_string()),
-            ("EnableUserData", "true".to_string()),
-            ("EnableImages", "true".to_string()),
-        ],
+        &exact_items_query(user_id, &[item_id.to_string()], &fields),
     )?;
     Ok(response.items.into_iter().next())
 }
