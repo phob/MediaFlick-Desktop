@@ -6,13 +6,15 @@ import { formatDate } from "@/lib/format"
 
 /**
  * Everything about the item that is not artwork, playback, credits, or a
- * synopsis: studios, dates, and the tags the library was imported with.
- * Studios and tags come from the live `about` record; the dates and
- * play count are on the cached row and stand alone when the server is away.
+ * synopsis: studios and dates, and for a title its play count and the tags
+ * the library was imported with. Studios and tags come from the live `about`
+ * record. A title's dates and play count are on its cached row and stand
+ * alone when the server is away; a generic item's are read live with it.
  */
 export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: ItemAbout }) {
+  const title = item.layout === "title"
   const studios = about?.studios ?? []
-  const tags = about?.tags ?? []
+  const tags = title ? about?.tags ?? [] : []
   const premiere = formatDate(item.premiereDate)
   const added = formatDate(item.dateCreated)
 
@@ -20,7 +22,7 @@ export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: Item
     studios.length ? { label: "Studio", value: studios.join(", ") } : null,
     premiere ? { label: "Premiered", value: premiere } : null,
     added ? { label: "Added", value: added } : null,
-    item.playCount > 0
+    title && item.playCount > 0
       ? { label: "Plays", value: `${item.playCount} ${item.playCount === 1 ? "time" : "times"}` }
       : null,
     tags.length

@@ -1,14 +1,14 @@
-import type { CatalogKind, ItemQuery } from "./api/types.ts"
+import { CATALOG_KINDS, type CatalogKind, type ItemQuery } from "./api/types.ts"
 
 /** Where a windowed grid reads its pages from. */
 export type BrowseSource =
   | { scope: "titles"; query: ItemQuery }
   | { scope: "children"; itemId: string }
 
-const CATALOG_KINDS: ReadonlySet<string> = new Set<CatalogKind>(["Movie", "Series", "Season", "Episode"])
+const catalogKinds: ReadonlySet<string> = new Set(CATALOG_KINDS)
 
 export function isCatalogKind(kind: string): kind is CatalogKind {
-  return CATALOG_KINDS.has(kind)
+  return catalogKinds.has(kind)
 }
 
 /** The cross-library title view a catalog item belongs to: seasons and episodes are part of their series. */

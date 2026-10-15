@@ -72,20 +72,25 @@ export default function ItemDetail() {
   if (error && !item) return (
     <div className="p-6 sm:p-10 lg:p-14">
       <PageErrorState
-        title="Could not load title details"
+        title="Could not load details"
         description={error.message}
         action={<Button variant="outline" onClick={() => void itemQuery.refetch()}>Try again</Button>}
       />
     </div>
   )
   if (isPending) return <DetailPageSkeleton />
-  if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
+  if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Not available" description="This is no longer available on your server." /></div>
 
   const navigationState: DetailNavigationState =
     readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item)
-  return item.layout === "generic"
-    ? <GenericItemPage key={item.id} item={item} about={about} navigationState={navigationState} />
-    : <TitleItemPage key={item.id} item={item} about={about} childList={children} navigationState={navigationState} />
+  switch (item.layout) {
+    case "generic":
+      return <GenericItemPage key={item.id} item={item} about={about} navigationState={navigationState} />
+    case "title":
+      return <TitleItemPage key={item.id} item={item} about={about} childList={children} navigationState={navigationState} />
+    default:
+      return item satisfies never
+  }
 }
 
 function TitleItemPage({

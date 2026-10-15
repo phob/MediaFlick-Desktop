@@ -72,7 +72,7 @@ export default async function libraryParity(ctx) {
   async function gridReady(description) {
     const ready = await ctx.until(async () => {
       const count = await itemCount(ctx)
-      const failed = await ctx.exists({ role: "heading", name: "Could not load library items" })
+      const failed = await ctx.exists({ role: "heading", name: "Could not load these items" })
       if (failed) throw new Error(`the grid failed to load for ${description}`)
       const cards = await ctx.count({ css: 'a[aria-label^="Open details for"]' })
       return count !== null && (count === 0 || cards > 0) ? { count } : null

@@ -1,7 +1,8 @@
 import type { JsonObject } from "../json.ts"
 
 /** The item types the local catalog holds and the title page shows. */
-export type CatalogKind = "Movie" | "Series" | "Season" | "Episode"
+export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
+export type CatalogKind = (typeof CATALOG_KINDS)[number]
 
 type ItemKind = CatalogKind | (string & {})
 

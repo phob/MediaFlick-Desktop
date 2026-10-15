@@ -49,6 +49,7 @@ export function GenericItemPage({
     <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
       {backdrop && <DetailBackdrop src={backdrop} />}
       <DetailHeroLayout
+        compact
         back={{ to: navigationState.from, label: navigationState.label }}
         // Art of any shape lands in the nearest frame and is contained, so a 4:3
         // or 3:2 still in the 16:9 frame is shown whole.
@@ -74,7 +75,7 @@ export function GenericItemPage({
           <ItemGrid
             source={{ scope: "children", itemId: item.id }}
             scroller={scroller}
-            empty="This folder is empty."
+            empty="There is nothing in here."
           />
         </section>
       )}

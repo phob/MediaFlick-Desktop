@@ -12,7 +12,7 @@ export default async function punctuationSearch(ctx) {
     await ctx.until(async () => new URLSearchParams((await ctx.pathname()).split("?")[1] ?? "").get("search") === term, `search=${term} in the URL`)
     const outcome = await ctx.until(async () => {
       const text = await ctx.app.evaluate("document.querySelector('main')?.innerText ?? ''")
-      if (text.includes("Could not load library items")) return "error"
+      if (text.includes("Could not load these items")) return "error"
       if (text.includes("Nothing to show")) return "empty"
       if ((await ctx.count({ css: 'main a[aria-label^="Open details for"]' })) > 0) return "results"
       return null

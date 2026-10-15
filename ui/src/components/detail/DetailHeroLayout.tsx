@@ -44,6 +44,7 @@ export function DetailHeroLayout({
   genres = [],
   status,
   overview,
+  compact = false,
   children,
 }: {
   back: { to: To; label: string }
@@ -57,6 +58,8 @@ export function DetailHeroLayout({
   genres?: HeroGenre[]
   status?: ReactNode
   overview?: ReactNode
+  /** Height follows the content instead of holding a tall band open. */
+  compact?: boolean
   children?: ReactNode
 }) {
   const [failedPoster, setFailedPoster] = useState<string | null>(null)
@@ -71,7 +74,7 @@ export function DetailHeroLayout({
 
   return (
     <header className="relative" data-testid="detail-hero-layout">
-      <div className="relative flex min-h-[26rem] gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14">
+      <div className={cn("relative flex gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14", !compact && "min-h-[26rem]")}>
         {showPoster && (
           <div
             className="relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-edge sm:block"
