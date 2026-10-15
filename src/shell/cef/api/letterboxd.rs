@@ -25,9 +25,7 @@ pub(super) fn route(
         ["letterboxd", "movie", tmdb_id] if request.is("GET") => {
             movie_letterboxd(services, &percent_decode(tmdb_id))
         }
-        ["item", id, "letterboxd"] if request.is("GET") => {
-            item_letterboxd(services, &percent_decode(id))
-        }
+        ["item", id, "letterboxd"] if request.is("GET") => item_letterboxd(services, id),
         _ => return None,
     };
     Some(response)

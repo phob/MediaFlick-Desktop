@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
-use crate::app::ids::random_hex;
+use crate::app::ids::{random_hex, valid_opaque_id};
 use crate::preferences::config_dir;
 
 const MAX_POSTER_BYTES: usize = 10 * 1024 * 1024;
@@ -44,7 +44,7 @@ impl ArtworkStore {
     }
 
     pub fn remove(&self, id: &str) -> io::Result<()> {
-        if !super::valid_opaque_id(id) {
+        if !valid_opaque_id(id) {
             return Err(invalid_input("invalid custom poster id"));
         }
         for extension in ["png", "jpg", "webp"] {
@@ -59,7 +59,7 @@ impl ArtworkStore {
     }
 
     pub fn path(&self, id: &str) -> Option<PathBuf> {
-        super::valid_opaque_id(id).then_some(())?;
+        valid_opaque_id(id).then_some(())?;
         ["png", "jpg", "webp"]
             .into_iter()
             .map(|extension| self.directory.join(format!("{id}.{extension}")))

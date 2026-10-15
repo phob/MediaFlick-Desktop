@@ -7,21 +7,15 @@ pub(super) fn route(
 ) -> Option<Handled> {
     let response = match segments {
         ["technical", "batch"] if request.is("POST") => technical_batch(services, request),
-        ["item", id, "media"] if request.is("GET") => media_info(services, &percent_decode(id)),
+        ["item", id, "media"] if request.is("GET") => media_info(services, id),
         ["item", id, "playback-preference"] if request.is("PATCH") => {
-            set_item_playback_preference(services, &percent_decode(id), request)
+            set_item_playback_preference(services, id, request)
         }
-        ["item", id, "trailer"] if request.is("GET") => trailer_info(services, &percent_decode(id)),
-        ["item", id, "nextup"] if request.is("GET") => next_up(services, &percent_decode(id)),
-        ["item", id, "external"] if request.is("POST") => {
-            open_external(services, &percent_decode(id), request)
-        }
-        ["item", id, "played"] if request.is("POST") => {
-            set_played(services, &percent_decode(id), request)
-        }
-        ["item", id, "favorite"] if request.is("POST") => {
-            set_favorite(services, &percent_decode(id), request)
-        }
+        ["item", id, "trailer"] if request.is("GET") => trailer_info(services, id),
+        ["item", id, "nextup"] if request.is("GET") => next_up(services, id),
+        ["item", id, "external"] if request.is("POST") => open_external(services, id, request),
+        ["item", id, "played"] if request.is("POST") => set_played(services, id, request),
+        ["item", id, "favorite"] if request.is("POST") => set_favorite(services, id, request),
         ["trailer", id, "stream"] if request.is("GET") => {
             trailer_stream(services, &percent_decode(id), request)
         }

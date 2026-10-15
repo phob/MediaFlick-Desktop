@@ -11,7 +11,7 @@ pub struct LibraryId(String);
 impl LibraryId {
     pub fn parse(raw: &str) -> Option<Self> {
         let raw = raw.trim();
-        crate::collections::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
+        crate::app::ids::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
     }
 
     pub fn as_str(&self) -> &str {
