@@ -185,6 +185,26 @@ export function invalidateMediaSurfaces(
   }
 }
 
+type LibraryChangeScope = "library" | "catalog" | "items"
+
+const LIST_ROOTS = [ITEMS_ROOT, "genres", "official-ratings", "status", "collections"]
+
+/**
+ * What a batch refreshes whatever ids it names: whole query roots, and all of
+ * Home, only its summary query (`["home"]`), or none of it.
+ */
+const LIBRARY_CHANGE_REFRESHES: Record<
+  LibraryChangeScope,
+  { roots: ReadonlySet<string>; home: "all" | "summary" | "none" }
+> = {
+  // A pushed change names an item and its library folder, never the box set or
+  // playlist whose live grid shows it, so every child page refreshes.
+  library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all" },
+  // Bootstrap pages only fill the cache, which those grids do not read.
+  catalog: { roots: new Set(LIST_ROOTS), home: "summary" },
+  items: { roots: new Set(), home: "none" },
+}
+
 /**
  * One committed native batch becomes one React Query invalidation operation.
  * The predicate covers aggregate projections, diagnostics/status, changed
@@ -195,21 +215,16 @@ export function invalidateLibraryChanged(
   client: QueryClient,
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
-  scope: "library" | "catalog" | "items" = "library",
+  scope: LibraryChangeScope = "library",
 ) {
+  const { roots, home } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey
-      if (scope !== "items") {
-        if (root === "home") return scope === "library" || query.queryKey.length === 1
-        if ([ITEMS_ROOT, "genres", "official-ratings", "status", "collections"].includes(String(root))) return true
-      }
-      // A pushed change names an item and its library folder, never the box
-      // set or playlist whose live grid shows it. Bootstrap pages only fill
-      // the cache, which those grids do not read.
-      if (root === CHILD_PAGES_ROOT && scope === "library") return true
+      if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
+      if (roots.has(String(root))) return true
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))
