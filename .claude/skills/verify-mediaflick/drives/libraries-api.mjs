@@ -147,7 +147,7 @@ export default async function librariesApi(ctx) {
   const libraries = listed.body?.libraries ?? []
   report.libraries = libraries.map((library) => ({ id: library.id, name: library.name, kind: library.kind }))
   report.userViews = views.map((view) => ({ id: view.Id, name: view.Name, collectionType: view.CollectionType ?? null, kind: expectedKind(view.CollectionType) }))
-  report.titles = listed.body?.titles ?? null
+  report.crossLibrary = listed.body?.crossLibrary ?? null
   report.membershipPending = libraries.map((library) => ({ name: library.name, kind: library.kind, membershipPending: library.membershipPending }))
   expect(listed.status === 200 && listed.body.known === true, `/api/libraries answers ${listed.status} with known=${listed.body?.known}`)
   for (const library of libraries) {

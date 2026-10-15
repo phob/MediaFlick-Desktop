@@ -41,7 +41,8 @@ pub(super) fn run_cycle_inner(
     let mut membership_changed = false;
 
     let result = (|| -> Result<(), ApiError> {
-        let no_catalog_library = refresh_library_list(library, session, &scope)?;
+        let no_catalog_library =
+            refresh_libraries_finding_no_catalog_library(library, session, &scope)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
@@ -201,7 +202,7 @@ fn sweep_identity(
     Ok(deletion_ran)
 }
 
-fn refresh_library_list(
+fn refresh_libraries_finding_no_catalog_library(
     library: &Library,
     session: &Session,
     scope: &SessionScope,

@@ -1,5 +1,5 @@
 use crate::library::browse::{self, BrowseError};
-use crate::library::libraries::{LibraryId, LibraryRegistry, TITLE_BROWSE};
+use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry};
 
 use super::catalog::{Params, library_query, param};
 use super::*;
@@ -48,7 +48,7 @@ fn libraries(services: &Arc<Services>) -> Handled {
     Ok(ApiResponse::ok(json!({
         "known": known,
         "libraries": libraries,
-        "titles": &TITLE_BROWSE,
+        "crossLibrary": &CROSS_LIBRARY_BROWSE,
     })))
 }
 
@@ -94,7 +94,7 @@ fn library_id(segment: &str) -> Result<LibraryId, ApiResponse> {
 
 fn browse_failure(error: BrowseError) -> ApiResponse {
     match error {
-        BrowseError::NotLoaded => ApiResponse::error(
+        BrowseError::RegistryUnknown => ApiResponse::error(
             503,
             "the library list has not been loaded from the server yet",
         ),

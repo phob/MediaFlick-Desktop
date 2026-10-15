@@ -5,7 +5,7 @@ use super::{ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, Tit
 
 #[derive(Debug)]
 pub enum BrowseError {
-    NotLoaded,
+    RegistryUnknown,
     UnknownLibrary,
     Unsupported(String),
     LiveLibrary,
@@ -79,7 +79,7 @@ pub fn latest(
 
 fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseError> {
     let LibraryRegistry::Known(libraries) = library.libraries()? else {
-        return Err(BrowseError::NotLoaded);
+        return Err(BrowseError::RegistryUnknown);
     };
     libraries
         .into_iter()
