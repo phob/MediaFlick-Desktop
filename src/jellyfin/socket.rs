@@ -6,10 +6,12 @@
 //! upserts, evictions, and UI invalidations the sync thread produces. Reported
 //! ids the resulting cache batch does not name (albums, playlists, folders)
 //! are passed on as a live change, so pages Jellyfin serves directly refresh
-//! too. The
-//! socket is an acceleration layer only — dropped connections lose events, so
-//! every successful (re)connect asks the sync worker for one requested cycle
-//! to reconcile the gap, and the periodic sweeps remain the backstop.
+//! too.
+//!
+//! The socket is an acceleration layer only — dropped connections lose
+//! events, so every successful (re)connect asks the sync worker for one
+//! requested cycle to reconcile the gap, and the periodic sweeps remain the
+//! backstop.
 
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
