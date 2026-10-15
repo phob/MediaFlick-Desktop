@@ -76,7 +76,7 @@ export default async function homeLibrary(ctx) {
   await ctx.press({ role: "button", name: "Remove Released: 1960s filter" })
   await ctx.until(async () => !(await ctx.pathname()).includes("decade="), "the decade filter to go")
   ctx.check((await ctx.pathname()).includes("sort=year"), "the sort survives removing the chip")
-  ctx.check(!(await ctx.exists({ role: "group", name: "Active filters" })), "no chips left")
+  await ctx.until(async () => !(await ctx.exists({ role: "group", name: "Active filters" })), "no chips left", 5000)
 
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
   await ctx.fill({ role: "textbox", name: "Search the library" }, "zzqqxx")
