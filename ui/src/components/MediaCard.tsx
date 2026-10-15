@@ -78,8 +78,6 @@ export const MediaCard = memo(function MediaCard({
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
   const location = useLocation()
-  // The preview, ratings and inline Play, Favorite and Watched serve movies
-  // and shows; any other item is a plain card into its details page.
   const catalogItem = isCatalogKind(item.kind)
   const { handlers, expanded, previewsEnabled } = usePreview(item, preview && catalogItem)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
@@ -137,8 +135,6 @@ export const MediaCard = memo(function MediaCard({
               // shelf keeps its rhythm while the pointer runs along it.
               decoding="async"
               onError={() => setImageIndex((current) => current + 1)}
-              // Near-square art (album covers, photos) is shown whole in the 2:3
-              // frame; a wide still would shrink to a thin strip, so it fills it.
               className={cn(
                 "media-artwork-image h-full w-full",
                 !landscape && artworkShape(item.primaryAspect) === "square" ? "object-contain" : "object-cover",

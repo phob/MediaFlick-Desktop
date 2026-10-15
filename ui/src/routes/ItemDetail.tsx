@@ -57,16 +57,11 @@ function NextUpNote({ episode }: { episode: ItemSummary }) {
   )
 }
 
-/** The item decides the page: movies, shows, seasons and episodes get the title page, everything else the generic one. */
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const location = useLocation()
   const itemQuery = useItem(id)
   const { data: item, isPending, error } = itemQuery
-  // Credits are asked for alongside the item. Children wait for it: an
-  // uncached title is cached by the item request, and asked any earlier its
-  // seasons would come live and unreconciled. A generic container pages its
-  // children itself.
   const about = useItemAbout(id)
   const children = useChildren(id, item?.layout === "title")
 

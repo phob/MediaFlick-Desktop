@@ -83,8 +83,6 @@ pub fn latest(
     })?)
 }
 
-/// The title page of a cached movie, series, season or episode, or `None` when
-/// the cache does not hold the item.
 pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option<TitleDetail>> {
     let Some(item) = library.item(item_id)? else {
         return Ok(None);
@@ -95,7 +93,6 @@ pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option
 
 #[derive(Debug)]
 pub enum DetailError {
-    /// The signed-in account changed between the fetch and the cache write.
     AccountChanged,
     Storage(rusqlite::Error),
 }
@@ -106,15 +103,11 @@ impl From<rusqlite::Error> for DetailError {
     }
 }
 
-/// The details page of an item fetched from the server.
 pub enum LiveDetail<'a> {
-    /// Anything that is not a movie, series, season or episode.
     Generic(Box<GenericItemDetail>),
-    /// A title, which is cached before its page is served.
     Title(LiveTitle<'a>),
 }
 
-/// A fetched movie, series, season or episode.
 #[derive(Clone, Copy)]
 pub struct LiveTitle<'a>(&'a BaseItemDto);
 
@@ -126,9 +119,6 @@ pub fn live_detail(dto: &BaseItemDto) -> LiveDetail<'_> {
     }
 }
 
-/// Caches a fetched title the cache did not hold and reads its title page
-/// back. The caller runs it under the check that the account which fetched
-/// the item is still signed in.
 pub fn write_live_title(
     library: &Library,
     title: LiveTitle<'_>,
@@ -143,11 +133,8 @@ pub fn write_live_title(
     )
 }
 
-/// Where `/api/item/{id}/children` reads from.
 pub enum ChildrenSource {
-    /// A cached title's children, from the cache.
     Catalog(CatalogKind),
-    /// Any other container's children, from the server.
     Live,
 }
 
@@ -157,7 +144,6 @@ pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<Chi
         .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
 }
 
-/// One page of a container's children, as the children route bounds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildPage {
     offset: i64,
@@ -165,9 +151,6 @@ pub struct ChildPage {
 }
 
 impl ChildPage {
-    /// `None` when the request names neither: a cached series or season then
-    /// answers with every child, as the season browser asks. A limit outside
-    /// `1..=200` is clamped.
     pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Option<Self>, &'static str> {
         if offset.is_some_and(|offset| offset < 0) {
             return Err("offset must not be negative");
@@ -201,7 +184,6 @@ impl Default for ChildPage {
     }
 }
 
-/// A cached title's children, cut to `page` when one was asked for.
 pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>) -> ItemPage {
     let total = i64::try_from(children.len()).unwrap_or(i64::MAX);
     let items = match page {
@@ -215,7 +197,6 @@ pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>
     ItemPage { items, total }
 }
 
-/// A live container's page of children as the server sent it.
 pub fn live_children_page(response: &ItemsResponse) -> ItemPage {
     ItemPage {
         items: response.items.iter().map(ItemSummary::from_dto).collect(),

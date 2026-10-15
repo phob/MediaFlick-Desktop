@@ -354,7 +354,6 @@ fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
     let item_id: String;
     let mut segments = path.split('/').collect::<Vec<_>>();
-    // Every `item/{id}/…` handler receives its id decoded and validated here.
     if let ["item", id, ..] = segments.as_slice() {
         item_id = percent_decode(id);
         if !valid_opaque_id(&item_id) {

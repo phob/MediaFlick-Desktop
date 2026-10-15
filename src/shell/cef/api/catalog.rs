@@ -830,7 +830,6 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     }
 }
 
-/// Refuses an answer fetched for an account that has since signed out.
 fn still_signed_in(services: &Services, scope: &SessionScope) -> Result<(), ApiResponse> {
     if services.session.scope_is_current(scope) {
         Ok(())

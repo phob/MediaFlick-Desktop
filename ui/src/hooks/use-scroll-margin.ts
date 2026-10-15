@@ -1,10 +1,5 @@
 import { useLayoutEffect, useState } from "react"
 
-/**
- * Where `element` starts inside `scroller`'s scrolled content, re-measured when
- * either resizes or the detail page above it grows. `null` until measured: a
- * virtualizer must not place rows before it knows this offset.
- */
 export function useScrollMargin(element: HTMLElement | null, scroller: HTMLElement | null) {
   const [margin, setMargin] = useState<number | null>(null)
 

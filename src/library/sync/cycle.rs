@@ -503,10 +503,6 @@ fn incremental(
 /// These used to be two sweeps requesting the identical pages on different
 /// schedules, which meant deletions were only noticed once a day. Folding them
 /// together makes deletions as fresh as watch state for no extra requests.
-///
-/// Adds each title whose user data changed to `changes`, and returns that count
-/// and a complete deletion batch so the same cycle can notify item and
-/// hierarchy caches after committing removals.
 fn identity_sweep(
     library: &Library,
     session: &Session,

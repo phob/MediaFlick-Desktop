@@ -206,7 +206,6 @@ impl Library {
         })
     }
 
-    /// The cached item's kind, or `None` when it is not cached.
     pub fn catalog_kind(&self, item_id: &str) -> rusqlite::Result<Option<CatalogKind>> {
         let kind = self.db.with_connection(|connection| {
             connection

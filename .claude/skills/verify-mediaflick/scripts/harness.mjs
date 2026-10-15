@@ -516,9 +516,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // A watched-state change made in Jellyfin itself, as another client makes
-  // it, so a drive can watch the app follow a pushed change. The restore puts
-  // the item back to unplayed, so it must start that way.
   const changedItems = new Set()
   async function setPlayedOnServer(itemId, played) {
     if (!restoredItems.has(itemId)) throw new Error(`setPlayedOnServer: call ctx.restoreItemAfterRun(${itemId}) first`)

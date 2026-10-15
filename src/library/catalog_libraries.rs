@@ -83,9 +83,6 @@ impl Library {
         })
     }
 
-    /// The first library, in server order, that holds a cached title. Seasons
-    /// and episodes have no membership rows of their own and answer for their
-    /// series.
     pub fn library_of(&self, item_id: &str) -> rusqlite::Result<Option<LibraryId>> {
         let library = self.db.with_connection(|connection| {
             connection

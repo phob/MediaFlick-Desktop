@@ -1,43 +1,7 @@
-// Generic details pages. Nothing links to an album or a box set's own page
-// until the library browse change, so the drive opens them by URL with no
-// navigation state, as a reload or deep link does.
-// Both modes: while the first sync still runs, the newest movie, which that
-// walk reaches last, is asked for before the cache holds it and comes back as
-// a title that the app logs as served through the cache-through path and
-// caches on the way (required with --account; the demo walk can finish
-// first). One of the newest series the cache lacks opens its page with its
-// seasons and episodes read from the cache, never live from the server. A
-// folder page asks the server only for its grid's pages, never for an unpaged
-// list. The Music library's first album with artwork and tracks shows no
-// title controls (Play, favorites, watched, More info, quality, ratings,
-// collection chip, Letterboxd, Media), goes back to Home, contains its cover
-// in the hero, contains near-square track art in the cards and fills wide art,
-// and its grid holds exactly the tracks Jellyfin lists, as many as the album's
-// ChildCount; a track opens a generic page with no contents grid. The first
-// MusicArtist folder lists exactly its albums. The Movies library's own folder
-// page lists exactly its direct children, paged in as the page scrolls, and
-// its children route clamps limit=100000 to 200. The top-rated movie, opened
-// from a sidebar search, keeps its title page: Play or Resume, quality,
-// watched and favorites, More info, its community rating and its library. An
-// episode reports its series' library. A series page shows its season rail,
-// the selected season's episodes and a Play button naming Next up, and a
-// season's own page opens the series on that season. Every item route rejects
-// a bad id, and the children route a negative offset.
-// With --account only: a movie in one of the account's franchises shows its
-// collection chip; the Collections library's largest box set lists exactly
-// its titles; an unwatched movie in its first row, marked watched and then
-// unwatched in Jellyfin itself, follows on its open card each time (restored
-// after the run); a movie card that is not a favorite is favorited from its
-// preview and shows it on the next hover without leaving the page, then is
-// unfavorited the same way (journaled after-run fallback); and a movie card
-// opens the full movie page.
-//   just verify generic-detail
-//   just verify generic-detail --account https://jellyfin.example.com
 const DEMO = "https://demo.jellyfin.org/stable"
 const HERO = '[data-testid="detail-hero-layout"]'
 const GRID_CARD_LINK = '[data-item-grid-canvas] article a[aria-label^="Open details for"]'
 const TITLE_CONTROLS = /^(Play|Resume|Play S\d+E\d+|Resume S\d+E\d+|Add to favorites|Remove from favorites|Mark watched|Mark unwatched|More info|Streaming quality)$/
-// ui/src/lib/artwork.ts: near-square art is contained in a card, wider art fills it.
 const SQUARE_ART = { min: 0.8, max: 1.3 }
 const LIVE_PAGE_MAX = 200
 
@@ -211,9 +175,6 @@ async function favoriteFromCard(ctx, expect, { label, setId, userId }) {
   return result
 }
 
-// The change is made in Jellyfin, not in the app: the app only hears of it
-// through the server's push, whose batch names the movie and its library
-// folder, never the box set the open grid shows.
 async function remoteWatchedFollows(ctx, expect, { label, setId, userId }) {
   const firstRow = await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${setId}&IncludeItemTypes=Movie&SortBy=ParentIndexNumber,IndexNumber,SortName&EnableUserData=true&Limit=6`)
   const movie = firstRow.Items.find((item) => !item.UserData?.Played && !item.UserData?.PlaybackPositionTicks)
@@ -270,8 +231,6 @@ async function uncachedTitle(ctx, expect, userId) {
   return result
 }
 
-// Asked for before the series is cached, its seasons and their episodes would
-// come live from the server, uncached and never reconciled.
 async function uncachedSeries(ctx, expect, userId) {
   const newest = (await ctx.jellyfin(`/Items?userId=${userId}&Recursive=true&IncludeItemTypes=Series&SortBy=DateCreated&SortOrder=Descending&Fields=ChildCount&Limit=10`)).Items
   const cached = await newestCachedIds(ctx, "Series")
@@ -309,7 +268,6 @@ async function uncachedSeries(ctx, expect, userId) {
 }
 
 async function seasonRail(ctx) {
-  // The label, not the button's whole text: art-less posters repeat the name.
   return ctx.app.evaluate(`[...document.querySelectorAll('[aria-label="Seasons"] button')].map((button) => ({ name: button.lastElementChild.textContent.trim(), pressed: button.getAttribute("aria-pressed") === "true" }))`)
 }
 
@@ -366,7 +324,6 @@ async function seriesAndSeason(ctx, expect) {
   return result
 }
 
-// ui/src/lib/seasons.ts: Specials (season 0) go last.
 function seasonRailNames(seasons) {
   return [
     ...seasons.filter((season) => season.indexNumber !== 0),

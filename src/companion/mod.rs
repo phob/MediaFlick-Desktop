@@ -370,7 +370,6 @@ impl CompanionSession {
     fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
         let (client, user_id) = self.session.client_and_user()?;
         let response = items::fetch_upcoming(&client, &user_id, 500)?;
-        // A failed cache read only leaves the entry without its link.
         let cached_kind = |item_id: &str| {
             self.library.catalog_kind(item_id).unwrap_or_else(|error| {
                 tracing::warn!(target: "companion", item_id, "could not read a cached item kind: {error}");

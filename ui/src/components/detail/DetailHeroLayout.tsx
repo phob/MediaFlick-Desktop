@@ -9,7 +9,6 @@ export type HeroArtworkAspect = "poster" | "square" | "still"
 interface HeroArtwork {
   src: string
   aspect?: HeroArtworkAspect
-  /** `contain` shows art whose shape does not match the frame whole. */
   fit?: "cover" | "contain"
   progress?: number
 }
@@ -58,7 +57,6 @@ export function DetailHeroLayout({
   genres?: HeroGenre[]
   status?: ReactNode
   overview?: ReactNode
-  /** Height follows the content instead of holding a tall band open. */
   compact?: boolean
   children?: ReactNode
 }) {

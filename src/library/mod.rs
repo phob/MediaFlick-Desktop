@@ -354,10 +354,8 @@ pub struct ItemQuery {
     pub limit: i64,
 }
 
-/// How many items a page holds when the request names no limit.
 pub const DEFAULT_PAGE_SIZE: i64 = 60;
 
-/// The largest limit a request for a container's children may ask for.
 pub const MAX_CHILD_PAGE_LIMIT: i64 = 200;
 
 #[derive(Debug, Clone)]
