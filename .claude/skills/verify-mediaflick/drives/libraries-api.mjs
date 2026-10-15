@@ -1,7 +1,8 @@
 // /api/libraries lists exactly the libraries Jellyfin's /UserViews lists for
 // the signed-in user, in its order, each with the kind its CollectionType
 // names, and each movies or TV shows library's grid lists exactly the movie
-// or series ids Jellyfin lists in that library.
+// or series ids Jellyfin lists in that library. Once the first sync has
+// finished, no library reports its membership as still pending.
 // Also the library routes' contract: an id outside the registry is a 404, a
 // malformed id, parameter, sort or filter the library does not offer a 400,
 // a page limit is clamped, letters answer only where the library's
@@ -162,7 +163,11 @@ export default async function librariesApi(ctx) {
   report.libraries = libraries.map((library) => ({ id: library.id, name: library.name, kind: library.kind }))
   report.userViews = views.map((view) => ({ id: view.Id, name: view.Name, collectionType: view.CollectionType ?? null, kind: expectedKind(view.CollectionType) }))
   report.titles = listed.body?.titles ?? null
+  report.membershipPending = libraries.map((library) => ({ name: library.name, kind: library.kind, membershipPending: library.membershipPending }))
   expect(listed.status === 200 && listed.body.known === true, `/api/libraries answers ${listed.status} with known=${listed.body?.known}`)
+  for (const library of libraries) {
+    expect(library.membershipPending === false, `${library.name} (${library.kind}): membershipPending is false after the first sync (${library.membershipPending})`)
+  }
   expect(views.length > 0, `/UserViews lists ${views.length} libraries`)
   expect(
     sameList(report.libraries, report.userViews.map(({ id, name, kind }) => ({ id: id.toLowerCase(), name, kind }))),
