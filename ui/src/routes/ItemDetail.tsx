@@ -9,10 +9,11 @@ import { DetailHero } from "@/components/detail/DetailHero"
 import { MediaInfo } from "@/components/detail/MediaInfo"
 import { LetterboxdReviews } from "@/components/detail/LetterboxdReviews"
 import { DetailPageSkeleton, DetailBackdrop } from "@/components/detail/DetailPrimitives"
+import { GenericItemPage } from "@/components/detail/GenericItemPage"
 import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
-import { backdropUrl, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
+import { backdropUrl, type ItemAbout, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
 import {
   defaultDetailNavigationState,
   readDetailNavigationState,
@@ -59,20 +60,70 @@ function NextUpNote({ episode }: { episode: ItemSummary }) {
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const location = useLocation()
-  const [searchParams, setSearchParams] = useSearchParams()
   const itemQuery = useItem(id)
-  const { data: originalItem, isPending, error } = itemQuery
-  const [revealedId, setRevealedId] = useState<string | null>(null)
-  const hidden = useSpoilerProtection(originalItem) && revealedId !== id
-  const item = originalItem && hidden ? concealEpisode(originalItem) : originalItem
+  const { data: item, isPending, error } = itemQuery
   const about = useItemAbout(id)
-  const children = useChildren(id)
-  const isSeries = item?.kind === "Series"
-  const isContainer = isSeries || item?.kind === "Season"
-  const media = useMediaInfo(id, Boolean(item) && !isContainer)
+  const children = useChildren(id, item?.layout === "title")
+
+  if (error && !item) return (
+    <div className="p-6 sm:p-10 lg:p-14">
+      <PageErrorState
+        title="Could not load details"
+        description={error.message}
+        action={<Button variant="outline" onClick={() => void itemQuery.refetch()}>Try again</Button>}
+      />
+    </div>
+  )
+  if (isPending) return <DetailPageSkeleton />
+  if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Not available" description="This is no longer available on your server." /></div>
+
+  const navigationState: DetailNavigationState =
+    readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item)
+  switch (item.layout) {
+    case "generic":
+      return <GenericItemPage key={item.id} item={item} about={about.data} navigationState={navigationState} />
+    case "title":
+      return (
+        <TitleItemPage
+          key={item.id}
+          item={item}
+          about={about.data}
+          aboutPending={about.isPending}
+          aboutFailed={about.isError}
+          childItems={children.data?.items ?? []}
+          navigationState={navigationState}
+        />
+      )
+    default:
+      return item satisfies never
+  }
+}
+
+function TitleItemPage({
+  item: originalItem,
+  about,
+  aboutPending,
+  aboutFailed,
+  childItems,
+  navigationState,
+}: {
+  item: Item
+  about: ItemAbout | undefined
+  aboutPending: boolean
+  aboutFailed: boolean
+  childItems: ItemSummary[]
+  navigationState: DetailNavigationState
+}) {
+  const id = originalItem.id
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [revealed, setRevealed] = useState(false)
+  const hidden = useSpoilerProtection(originalItem) && !revealed
+  const item = hidden ? concealEpisode(originalItem) : originalItem
+  const isSeries = item.kind === "Series"
+  const isContainer = isSeries || item.kind === "Season"
+  const media = useMediaInfo(id, !isContainer)
   const nextUp = useNextUp(id, isSeries)
 
-  const childItems = children.data?.items ?? []
   const seasons = seasonRailOrder(childItems.filter((child) => child.kind === "Season"))
   const nextUpItem = isSeries ? (nextUp.data?.item ?? null) : null
   // Which season the episode grid shows: the URL wins, then the season Next Up
@@ -90,18 +141,6 @@ export default function ItemDetail() {
     (child) => child.kind === "Episode",
   )
 
-  if (error && !item) return (
-    <div className="p-6 sm:p-10 lg:p-14">
-      <PageErrorState
-        title="Could not load title details"
-        description={error.message}
-        action={<Button variant="outline" onClick={() => void itemQuery.refetch()}>Try again</Button>}
-      />
-    </div>
-  )
-  if (isPending) return <DetailPageSkeleton />
-  if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Title unavailable" description="That title is no longer available in your library." /></div>
-
   if (item.kind === "Season" && item.seriesId) {
     return (
       <Navigate
@@ -110,9 +149,6 @@ export default function ItemDetail() {
       />
     )
   }
-
-  const navigationState: DetailNavigationState =
-    readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item.kind)
 
   const episodeCount = isSeries
     ? seasons.reduce((total, season) => total + (season.childCount ?? 0), 0)
@@ -130,12 +166,12 @@ export default function ItemDetail() {
     // the content.
     <div className="detail-page relative isolate flex min-h-full min-w-0 flex-col gap-12 pb-16">
       {!hidden && backdrop && <DetailBackdrop src={backdrop} />}
-      {hidden && <Button className="relative z-10" variant="outline" onClick={() => setRevealedId(id ?? null)}>Reveal episode spoilers</Button>}
+      {hidden && <Button className="relative z-10" variant="outline" onClick={() => setRevealed(true)}>Reveal episode spoilers</Button>}
       <DetailHero
         item={item}
-        about={hidden ? undefined : about.data}
-        aboutPending={about.isPending}
-        aboutFailed={about.isError}
+        about={hidden ? undefined : about}
+        aboutPending={aboutPending}
+        aboutFailed={aboutFailed}
         episodeCount={episodeCount || null}
         navigationState={navigationState}
       >
@@ -173,11 +209,11 @@ export default function ItemDetail() {
         />
       )}
 
-      <CastRow people={hidden ? [] : about.data?.people ?? []} />
-      <CrewRow people={hidden ? [] : about.data?.people ?? []} />
+      <CastRow people={hidden ? [] : about?.people ?? []} />
+      <CrewRow people={hidden ? [] : about?.people ?? []} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
-        <DetailFacts item={item} about={hidden ? undefined : about.data} />
+        <DetailFacts item={item} about={hidden ? undefined : about} />
         <MediaInfo
           itemId={item.id}
           sources={media.data?.sources}

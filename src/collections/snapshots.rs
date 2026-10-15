@@ -5,11 +5,12 @@ use rusqlite::types::Type;
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
+use crate::app::ids::valid_opaque_id;
 use crate::library::Library;
 use crate::preferences::AccountKey;
 
 use super::franchises::{FranchiseMembership, FranchiseSnapshot};
-use super::{CanonicalIdentity, CollectionSnapshot, MediaType, NormalizedTitle, valid_opaque_id};
+use super::{CanonicalIdentity, CollectionSnapshot, MediaType, NormalizedTitle};
 
 // Profile IDs are hexadecimal, so this non-hex key cannot collide with a
 // configured profile while sharing the same account-scoped refresh table.

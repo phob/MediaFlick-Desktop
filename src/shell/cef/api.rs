@@ -11,6 +11,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::app::ids::valid_opaque_id;
 use crate::app::services::ShellRequest;
 use crate::app::services::{self, Services};
 use crate::app::urls::{encode_path_segment, percent_decode, query_param};
@@ -351,7 +352,15 @@ fn endpoint_matches(pattern: &str, segments: &[&str]) -> bool {
 }
 
 fn route(services: &Arc<Services>, path: &str, request: &ApiRequest) -> ApiResponse {
-    let segments = path.split('/').collect::<Vec<_>>();
+    let item_id: String;
+    let mut segments = path.split('/').collect::<Vec<_>>();
+    if let ["item", id, ..] = segments.as_slice() {
+        item_id = percent_decode(id);
+        if !valid_opaque_id(&item_id) {
+            return ApiResponse::error(400, "invalid item id");
+        }
+        segments[1] = &item_id;
+    }
     let handled = route_status(services, &segments, request)
         .or_else(|| settings::route(services, &segments, request))
         .or_else(|| ratings::route(services, &segments, request))
@@ -637,10 +646,19 @@ mod tests {
         let server = silent_server();
         let fixture = TestServices::signed_in(&server_url(&server));
         let cases: [(&str, &[u8]); 10] = [
-            ("/api/item/item-1/played", b"not json"),
-            ("/api/item/item-1/played", b"{}"),
-            ("/api/item/item-1/played", br#"{"played":"false"}"#),
-            ("/api/item/item-1/favorite", b"true"),
+            (
+                "/api/item/0a1b2c3d4e5f60718293a4b5c6d7e8f9/played",
+                b"not json",
+            ),
+            ("/api/item/0a1b2c3d4e5f60718293a4b5c6d7e8f9/played", b"{}"),
+            (
+                "/api/item/0a1b2c3d4e5f60718293a4b5c6d7e8f9/played",
+                br#"{"played":"false"}"#,
+            ),
+            (
+                "/api/item/0a1b2c3d4e5f60718293a4b5c6d7e8f9/favorite",
+                b"true",
+            ),
             ("/api/play", br#"{"resume":true}"#),
             ("/api/play", br#"{"itemId":"item-1","quality":"8k"}"#),
             ("/api/auth/connect", b"{"),
@@ -698,7 +716,10 @@ mod tests {
 
         let response = send(
             &fixture,
-            &post("/api/item/item-1/played", br#"{"played":false}"#),
+            &post(
+                "/api/item/0a1b2c3d4e5f60718293a4b5c6d7e8f9/played",
+                br#"{"played":false}"#,
+            ),
         );
         assert_eq!(response.status, 200, "{}", error_of(&response));
         let body: Value = serde_json::from_slice(&response.body).expect("json");
@@ -707,7 +728,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("Jellyfin request");
         assert!(
-            request_line.starts_with("DELETE /UserPlayedItems/item-1"),
+            request_line.starts_with("DELETE /UserPlayedItems/0a1b2c3d4e5f60718293a4b5c6d7e8f9"),
             "{request_line}"
         );
     }
@@ -759,7 +780,7 @@ mod tests {
     fn a_watch_state_answer_after_sign_out_leaves_the_kept_cache_alone() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
         let fixture = TestServices::signed_in(&server_url(&listener));
-        movie_row(&fixture, "m1");
+        movie_row(&fixture, "f9e8d7c6b5a4938271605f4e3d2c1b0a");
         let (reached_tx, reached_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
@@ -772,9 +793,13 @@ mod tests {
         });
         let services = fixture.services.clone();
         let worker = std::thread::spawn(move || {
-            dispatch(&post("/api/item/m1/played", br#"{"played":true}"#), || {
-                Some(services.clone())
-            })
+            dispatch(
+                &post(
+                    "/api/item/f9e8d7c6b5a4938271605f4e3d2c1b0a/played",
+                    br#"{"played":true}"#,
+                ),
+                || Some(services.clone()),
+            )
         });
         reached_rx
             .recv_timeout(std::time::Duration::from_secs(10))
@@ -791,12 +816,12 @@ mod tests {
             server
                 .join()
                 .expect("server")
-                .starts_with("POST /UserPlayedItems/m1")
+                .starts_with("POST /UserPlayedItems/f9e8d7c6b5a4938271605f4e3d2c1b0a")
         );
         let row = fixture
             .services
             .library
-            .item("m1")
+            .item("f9e8d7c6b5a4938271605f4e3d2c1b0a")
             .expect("item")
             .expect("kept row");
         assert!(!row.summary.played);
@@ -828,7 +853,7 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let request = ApiRequest {
                 method: "GET".to_string(),
-                ..post("/api/item/m1/trailer", b"")
+                ..post("/api/item/f9e8d7c6b5a4938271605f4e3d2c1b0a/trailer", b"")
             };
             dispatch(&request, || Some(services.clone()))
         });
@@ -845,7 +870,7 @@ mod tests {
         assert_eq!(worker.join().expect("worker").status, 401);
         let (stale_line, login_line) = server.join().expect("server");
         assert!(
-            stale_line.starts_with("GET /Items/m1/LocalTrailers"),
+            stale_line.starts_with("GET /Items/f9e8d7c6b5a4938271605f4e3d2c1b0a/LocalTrailers"),
             "{stale_line}"
         );
         assert!(

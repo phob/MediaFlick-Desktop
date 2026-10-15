@@ -16,9 +16,10 @@ export interface DetailNavigationState {
   label: string
 }
 
-export function defaultDetailNavigationState(kind: string): DetailNavigationState {
+export function defaultDetailNavigationState(item: AnyItemDetail): DetailNavigationState {
+  if (item.layout === "generic") return { from: "/", label: "Back to home" }
   return {
-    from: `/library?kind=${kind === "Movie" ? "Movie" : "Series"}`,
+    from: `/library?kind=${titleBrowseKind(item.kind)}`,
     label: "Back to library",
   }
 }
@@ -61,3 +62,5 @@ export function readDetailNavigationState(value: JsonValue | undefined): DetailN
   return { from, label }
 }
 import { isJsonObject, jsonString, type JsonValue } from "./json.ts"
+import { titleBrowseKind } from "./libraries.ts"
+import type { AnyItemDetail } from "./api/types.ts"

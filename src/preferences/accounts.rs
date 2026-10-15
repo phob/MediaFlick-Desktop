@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::collections::valid_opaque_id;
+use crate::app::ids::valid_opaque_id;
 use crate::integrations::letterboxd::{ExternalProfile, MAX_CONNECTED_PROFILES};
 
 use super::{AppearanceSettings, ViewingSettings};

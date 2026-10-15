@@ -38,6 +38,7 @@ import {
   discoveryResultSetKey,
   type DiscoveryAvailability,
 } from "./discovery"
+import type { BrowseSource } from "./libraries"
 
 /**
  * Shared mutation failure handler. Without this a failed action is completely
@@ -265,10 +266,18 @@ export function usePersonResolution(query: PersonResolveQuery, enabled = true) {
  * stay cached under the normal `gcTime`. Callers pass only the pages they can
  * actually see (plus page 0, which anchors `total`).
  */
-export function useItemPages(query: ItemQuery, pages: number[]) {
+export function useBrowsePages(source: BrowseSource, pages: number[]) {
   return useQueries({
     queries: pages.map((page) => {
-      const paged = { ...query, limit: PAGE_SIZE, offset: page * PAGE_SIZE }
+      const offset = page * PAGE_SIZE
+      if (source.scope === "children") {
+        return {
+          queryKey: queryKeys.childPage(source.itemId, offset, PAGE_SIZE),
+          queryFn: ({ signal }: { signal: AbortSignal }) =>
+            api.children(source.itemId, { offset, limit: PAGE_SIZE }, signal),
+        }
+      }
+      const paged = { ...source.query, limit: PAGE_SIZE, offset }
       return {
         queryKey: queryKeys.items(paged),
         queryFn: ({ signal }: { signal: AbortSignal }) => api.items(paged, signal),
@@ -331,11 +340,11 @@ export function useLetterboxdMovieReviews(tmdbId: number | null, enabled = true)
   })
 }
 
-export function useChildren(id: string | undefined) {
+export function useChildren(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.children(id ?? ""),
     queryFn: () => api.children(id!),
-    enabled: Boolean(id),
+    enabled: Boolean(id) && enabled,
   })
 }
 

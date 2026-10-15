@@ -1,6 +1,9 @@
 import type { JsonObject } from "../json.ts"
 
-type ItemKind = "Movie" | "Series" | "Season" | "Episode" | (string & {})
+export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
+export type CatalogKind = (typeof CATALOG_KINDS)[number]
+
+type ItemKind = CatalogKind | (string & {})
 
 export interface ItemSummary {
   id: string
@@ -26,9 +29,12 @@ export interface ItemSummary {
   positionTicks: number
   favorite: boolean
   unplayedCount: number | null
+  /** Width over height of the primary image. Null for cached movies and shows, whose art is a 2:3 poster. */
+  primaryAspect: number | null
   /**
-   * Only `/api/item/{id}/children` carries this, passed through from its live
-   * server reconcile; the grid queries do not, and offline rows have none.
+   * `/api/item/{id}/children` carries this for a season's episodes, from its
+   * live server reconcile, and a generic item's details carry their own. The
+   * grid queries do not, and offline rows have none.
    */
   overview?: string | null
 }
@@ -61,12 +67,25 @@ export interface PersonResolveQuery {
 }
 
 export interface ItemDetail extends ItemSummary {
+  layout: "title"
+  kind: CatalogKind
   genres: string[]
   originalTitle: string | null
   providerIds: { tmdb: string | null; imdb: string | null; tvdb: string | null }
   parentId: string | null
   dateCreated: string | null
+  /** The library holding the title, or its series for a season or episode. Null until library membership is known. */
+  libraryId: string | null
 }
+
+export interface GenericItemDetail extends ItemSummary {
+  layout: "generic"
+  genres: string[]
+  isFolder: boolean
+  dateCreated: string | null
+}
+
+export type AnyItemDetail = ItemDetail | GenericItemDetail
 
 /**
  * Rich metadata fetched live from Jellyfin by `/api/item/{id}/about` for the

@@ -147,6 +147,8 @@ pub struct BaseItemDto {
     pub backdrop_image_tags: Vec<String>,
     pub parent_backdrop_image_tags: Vec<String>,
     pub series_primary_image_tag: Option<String>,
+    pub primary_image_aspect_ratio: Option<f64>,
+    pub is_folder: bool,
     pub date_created: Option<String>,
     pub date_last_saved: Option<String>,
     /// A series' airing state. Jellyfin sends it for every series whatever

@@ -3,6 +3,8 @@ use serde_json::json;
 
 use crate::jellyfin::api::model::{BaseItemDto, MediaSourceInfo, MediaStream, UserItemDataDto};
 
+use super::libraries::LibraryId;
+
 /// A durable description of one selected track.
 ///
 /// The absolute Jellyfin stream index is what this item needs today. The
@@ -545,6 +547,7 @@ pub struct ItemSummary {
     pub position_ticks: i64,
     pub favorite: bool,
     pub unplayed_count: Option<i64>,
+    pub primary_aspect: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
 }
@@ -578,6 +581,7 @@ impl ItemSummary {
             unplayed_count: (dto.item_type.as_deref() == Some("Series"))
                 .then(|| user_data.and_then(|data| data.unplayed_item_count))
                 .flatten(),
+            primary_aspect: dto.primary_image_aspect_ratio,
             overview: None,
         }
     }
@@ -595,6 +599,63 @@ pub struct ItemDetail {
     pub provider_ids: ProviderIds,
     pub parent_id: Option<String>,
     pub date_created: Option<String>,
+}
+
+impl ItemDetail {
+    pub fn from_dto(dto: &BaseItemDto) -> Self {
+        let record = ItemRecord::from_dto(dto);
+        Self {
+            summary: ItemSummary::from_dto(dto),
+            genres: dto.genres.clone(),
+            original_title: record.original_title,
+            provider_ids: ProviderIds {
+                tmdb: record.tmdb_id,
+                imdb: record.imdb_id,
+                tvdb: record.tvdb_id,
+            },
+            parent_id: record.parent_id,
+            date_created: record.date_created,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "layout", rename_all = "camelCase")]
+pub enum DetailView {
+    Title(TitleDetail),
+    Generic(GenericItemDetail),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TitleDetail {
+    #[serde(flatten)]
+    pub item: ItemDetail,
+    pub library_id: Option<LibraryId>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenericItemDetail {
+    #[serde(flatten)]
+    pub summary: ItemSummary,
+    pub genres: Vec<String>,
+    pub is_folder: bool,
+    pub date_created: Option<String>,
+}
+
+impl GenericItemDetail {
+    pub fn from_dto(dto: &BaseItemDto) -> Self {
+        Self {
+            summary: ItemSummary {
+                overview: non_empty(dto.overview.as_deref()),
+                ..ItemSummary::from_dto(dto)
+            },
+            genres: dto.genres.clone(),
+            is_folder: dto.is_folder,
+            date_created: non_empty(dto.date_created.as_deref()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]

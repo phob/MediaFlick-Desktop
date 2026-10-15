@@ -1,5 +1,6 @@
 import { isJsonObject, jsonBoolean, jsonString, type JsonValue } from "../json.ts"
 import type {
+  AnyItemDetail,
   AppearanceSettings,
   ClientSettings,
   CollectionMode,
@@ -18,7 +19,6 @@ import type {
   HomeSettingsResponse,
   HomeSettingsWrite,
   ItemAbout,
-  ItemDetail,
   ItemQuery,
   ItemSummary,
   ItemSynopsis,
@@ -265,7 +265,7 @@ export const api = {
     request<{ items: ItemSummary[] }>(
       `/api/libraries/${encodeURIComponent(id)}/latest${queryString({ limit })}`,
     ),
-  item: (id: string) => request<ItemDetail>(`/api/item/${encodeURIComponent(id)}`),
+  item: (id: string) => request<AnyItemDetail>(`/api/item/${encodeURIComponent(id)}`),
   itemSynopsis: (id: string) =>
     request<ItemSynopsis>(`/api/item/${encodeURIComponent(id)}/synopsis`),
   itemAbout: (id: string) => request<ItemAbout>(`/api/item/${encodeURIComponent(id)}/about`),
@@ -273,8 +273,12 @@ export const api = {
     request<LetterboxdReviewsResponse>(`/api/item/${encodeURIComponent(id)}/letterboxd`),
   movieLetterboxd: (tmdbId: number) =>
     request<LetterboxdReviewsResponse>(`/api/letterboxd/movie/${tmdbId}`),
-  children: (id: string) =>
-    request<{ items: ItemSummary[] }>(`/api/item/${encodeURIComponent(id)}/children`),
+  /** Without a page, a cached series or season answers with every child. */
+  children: (id: string, page?: { offset: number; limit: number }, signal?: AbortSignal) =>
+    request<{ items: ItemSummary[]; total: number }>(
+      `/api/item/${encodeURIComponent(id)}/children${queryString({ ...page })}`,
+      { signal },
+    ),
   media: (id: string) =>
     request<MediaInfoResponse>(`/api/item/${encodeURIComponent(id)}/media`),
   setPlaybackPreference: (id: string, body: PlaybackTrackPreferenceWrite) =>

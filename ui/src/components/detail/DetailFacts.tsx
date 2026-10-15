@@ -1,18 +1,13 @@
 import type { ReactNode } from "react"
 import { DetailFact, DetailFactPanel } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
-import type { ItemAbout, ItemDetail } from "@/lib/api"
+import type { AnyItemDetail, ItemAbout } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 
-/**
- * Everything about the item that is not artwork, playback, credits, or a
- * synopsis: studios, dates, and the tags the library was imported with.
- * Studios and tags come from the live `about` record; the dates and
- * play count are on the cached row and stand alone when the server is away.
- */
-export function DetailFacts({ item, about }: { item: ItemDetail; about?: ItemAbout }) {
+export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: ItemAbout }) {
+  const title = item.layout === "title"
   const studios = about?.studios ?? []
-  const tags = about?.tags ?? []
+  const tags = title ? about?.tags ?? [] : []
   const premiere = formatDate(item.premiereDate)
   const added = formatDate(item.dateCreated)
 
@@ -20,7 +15,7 @@ export function DetailFacts({ item, about }: { item: ItemDetail; about?: ItemAbo
     studios.length ? { label: "Studio", value: studios.join(", ") } : null,
     premiere ? { label: "Premiered", value: premiere } : null,
     added ? { label: "Added", value: added } : null,
-    item.playCount > 0
+    title && item.playCount > 0
       ? { label: "Plays", value: `${item.playCount} ${item.playCount === 1 ? "time" : "times"}` }
       : null,
     tags.length

@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
-use crate::library::CatalogKind;
+use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT};
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
@@ -187,11 +187,15 @@ pub fn fetch_children(
     client.get_json("/Items", &children_query(user_id, parent_id, start_index))
 }
 
-fn exact_items_query(user_id: &str, item_ids: &[String]) -> Vec<(&'static str, String)> {
+fn exact_items_query(
+    user_id: &str,
+    item_ids: &[String],
+    fields: &str,
+) -> Vec<(&'static str, String)> {
     vec![
         user_query(user_id),
         ("ids", item_ids.join(",")),
-        ("Fields", CATALOG_FIELDS.to_string()),
+        ("Fields", fields.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
     ]
@@ -202,7 +206,10 @@ pub fn fetch_items(
     user_id: &str,
     item_ids: &[String],
 ) -> Result<ItemsResponse, ApiError> {
-    client.get_json("/Items", &exact_items_query(user_id, item_ids))
+    client.get_json(
+        "/Items",
+        &exact_items_query(user_id, item_ids, CATALOG_FIELDS),
+    )
 }
 
 pub fn fetch_item(
@@ -212,6 +219,59 @@ pub fn fetch_item(
 ) -> Result<Option<BaseItemDto>, ApiError> {
     let response = fetch_items(client, user_id, &[item_id.to_string()])?;
     Ok(response.items.into_iter().next())
+}
+
+const DETAIL_FIELDS: &str = "Overview,PrimaryImageAspectRatio";
+
+pub fn fetch_detailed_item(
+    client: &JellyfinClient,
+    user_id: &str,
+    item_id: &str,
+) -> Result<Option<BaseItemDto>, ApiError> {
+    let fields = format!("{CATALOG_FIELDS},{DETAIL_FIELDS}");
+    let response: ItemsResponse = client.get_json(
+        "/Items",
+        &exact_items_query(user_id, &[item_id.to_string()], &fields),
+    )?;
+    Ok(response.items.into_iter().next())
+}
+
+const LIVE_CHILD_FIELDS: &str =
+    "PrimaryImageAspectRatio,ChildCount,PremiereDate,OfficialRating,CommunityRating";
+
+fn live_children_query(
+    user_id: &str,
+    parent_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Vec<(&'static str, String)> {
+    vec![
+        user_query(user_id),
+        ("parentId", parent_id.to_string()),
+        ("Fields", LIVE_CHILD_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", start_index.max(0).to_string()),
+        ("Limit", limit.clamp(1, MAX_CHILD_PAGE_LIMIT).to_string()),
+        (
+            "SortBy",
+            "ParentIndexNumber,IndexNumber,SortName".to_string(),
+        ),
+        ("SortOrder", "Ascending".to_string()),
+    ]
+}
+
+pub fn fetch_live_children(
+    client: &JellyfinClient,
+    user_id: &str,
+    parent_id: &str,
+    start_index: i64,
+    limit: i64,
+) -> Result<ItemsResponse, ApiError> {
+    client.get_json(
+        "/Items",
+        &live_children_query(user_id, parent_id, start_index, limit),
+    )
 }
 
 pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";

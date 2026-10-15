@@ -180,10 +180,9 @@ fn sweep_identity(
         library,
         session,
         scope,
-        scope.client(),
-        scope.user_id(),
         no_catalog_library,
         control,
+        &mut report.changes,
     )?;
     report.user_data_refreshed = refreshed;
     let deletion_ran = deletion_changes.is_some();
@@ -504,17 +503,13 @@ fn incremental(
 /// These used to be two sweeps requesting the identical pages on different
 /// schedules, which meant deletions were only noticed once a day. Folding them
 /// together makes deletions as fresh as watch state for no extra requests.
-///
-/// Returns the refreshed user-data count and a complete deletion batch so the
-/// same cycle can notify item and hierarchy caches after committing removals.
 fn identity_sweep(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    client: &JellyfinClient,
-    user_id: &str,
     no_catalog_library: bool,
     control: Option<&SyncHandle>,
+    changes: &mut LibraryChangeBatch,
 ) -> Result<(usize, Option<LibraryChangeBatch>), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
@@ -526,7 +521,12 @@ fn identity_sweep(
         if pages >= MAX_IDENTITY_PAGES {
             break true;
         }
-        let page = items::fetch_identity_page(client, user_id, offset, IDENTITY_PAGE_SIZE)?;
+        let page = items::fetch_identity_page(
+            scope.client(),
+            scope.user_id(),
+            offset,
+            IDENTITY_PAGE_SIZE,
+        )?;
         if page.items.is_empty() {
             counted_zero = page.total_record_count == Some(0);
             break false;
@@ -541,11 +541,13 @@ fn identity_sweep(
                     .map(|user_data| UserDataRecord::from_dto(&item.id, user_data))
             })
             .collect::<Vec<_>>();
-        refreshed += commit(session, scope, || {
+        let changed = commit(session, scope, || {
             library
-                .upsert_user_data(&records)
+                .apply_user_data(&records)
                 .map_err(|error| storage_error(&error))
         })?;
+        refreshed += changed.item_ids.len();
+        changes.merge(changed);
         offset += page.items.len() as i64;
         pages += 1;
         if (page.items.len() as i64) < IDENTITY_PAGE_SIZE {

@@ -30,6 +30,7 @@ export function createQueryClient() {
 }
 
 const ITEMS_ROOT = "items"
+const CHILD_PAGES_ROOT = "child-pages"
 
 export const queryKeys = {
   status: ["status"] as const,
@@ -62,6 +63,8 @@ export const queryKeys = {
   letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
   letterboxdProfiles: ["letterboxd", "profiles"] as const,
   children: (id: string) => ["item", id, "children"] as const,
+  childPage: (id: string, offset: number, limit: number) =>
+    [CHILD_PAGES_ROOT, id, { offset, limit }] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,
@@ -103,6 +106,7 @@ export const queryKeys = {
 const ACCOUNT_QUERY_ROOTS = new Set([
   "billboard",
   "calendar",
+  CHILD_PAGES_ROOT,
   "collections",
   "companion",
   "genres",
@@ -171,12 +175,26 @@ export function invalidateMediaSurfaces(
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
+  void client.invalidateQueries({ queryKey: [CHILD_PAGES_ROOT], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
     void client.invalidateQueries({ queryKey: queryKeys.children(itemId), ...exactActive })
     void client.invalidateQueries({ queryKey: queryKeys.nextUp(itemId), ...exactActive })
   }
+}
+
+type LibraryChangeScope = "library" | "catalog" | "items"
+
+const LIST_ROOTS = [ITEMS_ROOT, "genres", "official-ratings", "status", "collections"]
+
+const LIBRARY_CHANGE_REFRESHES: Record<
+  LibraryChangeScope,
+  { roots: ReadonlySet<string>; home: "all" | "summary" | "none" }
+> = {
+  library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all" },
+  catalog: { roots: new Set(LIST_ROOTS), home: "summary" },
+  items: { roots: new Set(), home: "none" },
 }
 
 /**
@@ -189,20 +207,19 @@ export function invalidateLibraryChanged(
   client: QueryClient,
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
-  scope: "library" | "catalog" | "items" = "library",
+  scope: LibraryChangeScope = "library",
 ) {
+  const { roots, home } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
       const [root, id] = query.queryKey
-      if (scope !== "items") {
-        if (root === "home") return scope === "library" || query.queryKey.length === 1
-        if ([ITEMS_ROOT, "genres", "official-ratings", "status", "collections"].includes(String(root))) return true
-      }
+      if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
+      if (roots.has(String(root))) return true
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
-      return root === "item" && relevant.has(String(id))
+      return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))
     },
   })
 }

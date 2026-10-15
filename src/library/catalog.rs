@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::jellyfin::api::model::BaseItemDto;
 
-use super::model::is_synced_kind;
+use super::model::{CatalogKind, is_synced_kind};
 use super::{ItemRecord, Library, LibraryChangeBatch, UserDataRecord, normalize_ids, now_unix};
 
 fn record_change(changes: &mut LibraryChangeBatch, dto: &BaseItemDto) {
@@ -101,18 +101,6 @@ impl Library {
             normalize_ids(&mut changes.item_ids);
             normalize_ids(&mut changes.context_ids);
             Ok(changes)
-        })
-    }
-
-    pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
-        self.db.with_transaction(|transaction| {
-            let mut refreshed = 0;
-            for record in records {
-                if upsert_user_data(transaction, record)? {
-                    refreshed += 1;
-                }
-            }
-            Ok(refreshed)
         })
     }
 
@@ -218,25 +206,17 @@ impl Library {
         })
     }
 
-    /// The item type of a cached item.
-    /// The cached item's kind, or `None` when it is not cached. A failed read
-    /// is logged and also reads as uncached: every caller then asks the server
-    /// or answers as it would for an unknown id.
-    pub fn kind(&self, item_id: &str) -> Option<String> {
-        self.db
-            .with_connection(|connection| {
-                connection
-                    .query_row(
-                        "SELECT kind FROM items WHERE jellyfin_id = ?1",
-                        params![item_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()
-            })
-            .unwrap_or_else(|error| {
-                tracing::warn!(target: "library.db", item_id, "could not read a cached item kind: {error}");
-                None
-            })
+    pub fn catalog_kind(&self, item_id: &str) -> rusqlite::Result<Option<CatalogKind>> {
+        let kind = self.db.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT kind FROM items WHERE jellyfin_id = ?1",
+                    params![item_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+        })?;
+        Ok(kind.as_deref().and_then(CatalogKind::parse))
     }
 
     pub fn ids_by_tmdb(

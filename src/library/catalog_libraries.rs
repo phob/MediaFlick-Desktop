@@ -83,6 +83,27 @@ impl Library {
         })
     }
 
+    pub fn library_of(&self, item_id: &str) -> rusqlite::Result<Option<LibraryId>> {
+        let library = self.db.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT m.library_id FROM items i
+                     JOIN item_libraries m ON m.item_id = CASE
+                         WHEN i.kind IN ('Season', 'Episode') THEN i.series_id
+                         ELSE i.jellyfin_id
+                     END
+                     JOIN libraries l ON l.id = m.library_id
+                     WHERE i.jellyfin_id = ?1
+                     ORDER BY l.position
+                     LIMIT 1",
+                    params![item_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+        })?;
+        Ok(library.as_deref().and_then(LibraryId::parse))
+    }
+
     pub(crate) fn owe_every_membership(&self) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
             stored_libraries(transaction)?

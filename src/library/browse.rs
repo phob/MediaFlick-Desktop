@@ -1,7 +1,13 @@
 use serde::Serialize;
 
+use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
+
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
-use super::{ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, TitleKind};
+use super::model::is_synced_kind;
+use super::{
+    CatalogKind, DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
+    ItemSummary, KindFilter, Library, MAX_CHILD_PAGE_LIMIT, TitleDetail, TitleKind,
+};
 
 #[derive(Debug)]
 pub enum BrowseError {
@@ -75,6 +81,127 @@ pub fn latest(
         limit,
         ..ItemQuery::default()
     })?)
+}
+
+pub fn cached_title(library: &Library, item_id: &str) -> rusqlite::Result<Option<TitleDetail>> {
+    let Some(item) = library.item(item_id)? else {
+        return Ok(None);
+    };
+    let library_id = library.library_of(item_id)?;
+    Ok(Some(TitleDetail { item, library_id }))
+}
+
+#[derive(Debug)]
+pub enum DetailError {
+    AccountChanged,
+    Storage(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for DetailError {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::Storage(error)
+    }
+}
+
+pub enum LiveDetail<'a> {
+    Generic(Box<GenericItemDetail>),
+    Title(LiveTitle<'a>),
+}
+
+#[derive(Clone, Copy)]
+pub struct LiveTitle<'a>(&'a BaseItemDto);
+
+pub fn live_detail(dto: &BaseItemDto) -> LiveDetail<'_> {
+    if is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) {
+        LiveDetail::Title(LiveTitle(dto))
+    } else {
+        LiveDetail::Generic(Box::new(GenericItemDetail::from_dto(dto)))
+    }
+}
+
+pub fn write_live_title(
+    library: &Library,
+    title: LiveTitle<'_>,
+) -> Result<TitleDetail, DetailError> {
+    let LiveTitle(dto) = title;
+    library.ingest_page(std::slice::from_ref(dto))?;
+    Ok(
+        cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
+            item: ItemDetail::from_dto(dto),
+            library_id: None,
+        }),
+    )
+}
+
+pub enum ChildrenSource {
+    Catalog(CatalogKind),
+    Live,
+}
+
+pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<ChildrenSource> {
+    Ok(library
+        .catalog_kind(item_id)?
+        .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChildPage {
+    offset: i64,
+    limit: i64,
+}
+
+impl ChildPage {
+    pub fn new(offset: Option<i64>, limit: Option<i64>) -> Result<Option<Self>, &'static str> {
+        if offset.is_some_and(|offset| offset < 0) {
+            return Err("offset must not be negative");
+        }
+        if offset.is_none() && limit.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            offset: offset.unwrap_or(0),
+            limit: limit
+                .unwrap_or(DEFAULT_PAGE_SIZE)
+                .clamp(1, MAX_CHILD_PAGE_LIMIT),
+        }))
+    }
+
+    pub fn offset(self) -> i64 {
+        self.offset
+    }
+
+    pub fn limit(self) -> i64 {
+        self.limit
+    }
+}
+
+impl Default for ChildPage {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            limit: DEFAULT_PAGE_SIZE,
+        }
+    }
+}
+
+pub fn catalog_children_page(children: Vec<ItemSummary>, page: Option<ChildPage>) -> ItemPage {
+    let total = i64::try_from(children.len()).unwrap_or(i64::MAX);
+    let items = match page {
+        Some(page) => children
+            .into_iter()
+            .skip(usize::try_from(page.offset).unwrap_or(usize::MAX))
+            .take(usize::try_from(page.limit).unwrap_or(0))
+            .collect(),
+        None => children,
+    };
+    ItemPage { items, total }
+}
+
+pub fn live_children_page(response: &ItemsResponse) -> ItemPage {
+    ItemPage {
+        items: response.items.iter().map(ItemSummary::from_dto).collect(),
+        total: response.total_record_count,
+    }
 }
 
 fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseError> {

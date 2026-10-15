@@ -10,13 +10,8 @@ import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
 
-function QueryProbeGrid({ query, footer }: ItemGridProps) {
-  return (
-    <>
-      <output data-library-query>{JSON.stringify(query)}</output>
-      {footer}
-    </>
-  )
+function QueryProbeGrid({ source }: ItemGridProps) {
+  return <output data-library-query>{JSON.stringify(source.scope === "titles" ? source.query : null)}</output>
 }
 
 function CastDiscoverProbe({ personName, jellyfinId, tmdbId, resolving }: CastDiscoverProps) {

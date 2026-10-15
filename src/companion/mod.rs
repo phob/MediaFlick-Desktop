@@ -15,7 +15,7 @@ use crate::collections::{ProviderReadiness, ProviderResult};
 use crate::jellyfin::api::items;
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::Library;
+use crate::library::{CatalogKind, Library};
 use crate::seerr::{DiscoverKind, DiscoverOptions, RequestProfileSelection};
 
 const MIN_API_VERSION: i64 = 1;
@@ -370,6 +370,12 @@ impl CompanionSession {
     fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
         let (client, user_id) = self.session.client_and_user()?;
         let response = items::fetch_upcoming(&client, &user_id, 500)?;
+        let cached_kind = |item_id: &str| {
+            self.library.catalog_kind(item_id).unwrap_or_else(|error| {
+                tracing::warn!(target: "companion", item_id, "could not read a cached item kind: {error}");
+                None
+            })
+        };
         let entries = response
             .items
             .iter()
@@ -378,13 +384,9 @@ impl CompanionSession {
                 if date < start || date > end {
                     return None;
                 }
-                let library_item_id = self
-                    .library
-                    .kind(&item.id)
-                    .is_some()
-                    .then(|| item.id.clone());
+                let library_item_id = cached_kind(&item.id).is_some().then(|| item.id.clone());
                 let series_library_item_id = item.series_id.as_ref().and_then(|series_id| {
-                    (self.library.kind(series_id).as_deref() == Some("Series"))
+                    matches!(cached_kind(series_id), Some(CatalogKind::Series))
                         .then(|| series_id.clone())
                 });
                 Some(json!({
@@ -895,7 +897,7 @@ mod tests {
         ];
         library.upsert_page(&items).expect("seed");
         library
-            .upsert_user_data(&[crate::library::UserDataRecord {
+            .apply_user_data(&[crate::library::UserDataRecord {
                 jellyfin_id: "m1".to_string(),
                 played: true,
                 ..Default::default()

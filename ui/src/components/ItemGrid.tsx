@@ -1,15 +1,14 @@
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { LibraryBig } from "lucide-react"
-import type React from "react"
-import { useEffect, useLayoutEffect, useMemo, useState } from "react"
-import { useScrollRestoration } from "@/lib/scroll-restoration"
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useState, type Ref } from "react"
 import { MediaCard } from "@/components/MediaCard"
 import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
-import { useItemPages } from "@/lib/queries"
-import { cn } from "@/lib/utils"
+import { useScrollMargin } from "@/hooks/use-scroll-margin"
+import { PAGE_SIZE, type ItemSummary } from "@/lib/api"
+import type { BrowseSource } from "@/lib/libraries"
+import { useBrowsePages } from "@/lib/queries"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 
@@ -30,7 +29,6 @@ function readGeometry(element: HTMLElement) {
  */
 function useGridMetrics(element: HTMLElement | null) {
   const [metrics, setMetrics] = useState({
-    measured: false,
     columns: 1,
     rowHeight: FALLBACK.card + FALLBACK.gap,
     cardHeight: FALLBACK.card,
@@ -44,9 +42,9 @@ function useGridMetrics(element: HTMLElement | null) {
       const width = element.clientWidth
       const columns = Math.max(1, Math.floor((width + gap) / (poster + gap)))
       setMetrics((previous) =>
-        previous.measured && previous.columns === columns && previous.cardHeight === card && previous.gap === gap
+        previous.columns === columns && previous.cardHeight === card && previous.gap === gap
           ? previous
-          : { measured: true, columns, rowHeight: card + gap, cardHeight: card, gap },
+          : { columns, rowHeight: card + gap, cardHeight: card, gap },
       )
     }
 
@@ -60,19 +58,16 @@ function useGridMetrics(element: HTMLElement | null) {
   return metrics
 }
 
+export interface ItemGridHandle {
+  jumpTo: (index: number) => void
+}
+
 export interface ItemGridProps {
-  /** Without `limit`/`offset` — the grid owns paging. */
-  query: ItemQuery
+  source: BrowseSource
+  scroller: HTMLElement | null
   onTotal?: (total: number | null) => void
   empty?: string
-  /**
-   * Rendered inside the scroller, below the last virtual row. It has to live in
-   * here rather than after the grid: this component owns an `h-full` scroll
-   * container and the virtualizer's total height, so anything appended outside
-   * would either sit off-screen or need a second scrollbar.
-   */
-  footer?: React.ReactNode
-  jumpRail?: (jumpTo: (index: number) => void) => React.ReactNode
+  ref?: Ref<ItemGridHandle>
 }
 
 /**
@@ -82,17 +77,17 @@ export interface ItemGridProps {
  * an append-as-you-go list does.
  */
 export function ItemGrid({
-  query,
+  source,
+  scroller,
   onTotal,
   empty = "No items match that query.",
-  footer,
-  jumpRail,
+  ref,
 }: ItemGridProps) {
   "use no memo"
 
-  const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
   const [content, setContent] = useState<HTMLDivElement | null>(null)
-  const { measured, columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
+  const scrollMargin = useScrollMargin(content, scroller)
+  const { columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
   // Page 0 is always requested: it is what `total` is read from, so keeping it
   // resident stops the grid collapsing to zero rows when the user scrolls into
@@ -111,7 +106,7 @@ export function ItemGrid({
     return [...wanted].sort((a, b) => a - b)
   }, [firstPage, lastPage])
 
-  const results = useItemPages(query, pages)
+  const results = useBrowsePages(source, pages)
   const total = results[0]?.data?.total ?? null
   // A background refetch can fail while every cached card is still valid. Only
   // page zero can make the whole view unavailable; later page failures remain
@@ -137,9 +132,13 @@ export function ItemGrid({
     getScrollElement: () => scroller,
     estimateSize: () => rowHeight,
     overscan: 2,
+    scrollMargin: scrollMargin ?? 0,
+    enabled: scrollMargin !== null,
   })
 
-  useScrollRestoration(scroller, `grid:${JSON.stringify(query)}`, total !== null && measured)
+  useImperativeHandle(ref, () => ({
+    jumpTo: (index) => virtualizer.scrollToOffset(Math.floor(index / columns) * rowHeight),
+  }))
 
   const items = virtualizer.getVirtualItems()
   const first = items[0]?.index ?? 0
@@ -152,64 +151,49 @@ export function ItemGrid({
   }, [first, last, items.length])
 
   const itemAt = (index: number) => loaded.get(Math.floor(index / PAGE_SIZE))?.[index % PAGE_SIZE]
-  const jumpTo = (index: number) =>
-    virtualizer.scrollToIndex(Math.floor(index / columns), { align: "start" })
-  const rail = jumpRail && total ? jumpRail(jumpTo) : null
 
   return (
-    <div className="flex h-full min-h-0">
-      <div
-        ref={setScroller}
-        className={cn(
-          "h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14",
-          rail && "pr-2 sm:pr-3 lg:pr-4",
-        )}
-      >
-        <div ref={setContent}>
-          {error ? (
-            <PageErrorState
-              title="Could not load library items"
-              description={error.message}
-              action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
-            />
-          ) : total === null ? (
-            <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
-          ) : total === 0 ? (
-            <PageEmptyState
-              icon={<LibraryBig className="size-6" />}
-              title="Nothing to show"
-              description={empty}
-            />
-          ) : (
-            <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-              {items.map((row) => (
-                <div
-                  key={row.key}
-                  className="virtual-card-row absolute top-0 left-0 flex w-full"
-                  style={{
-                    height: cardHeight,
-                    gap,
-                    transform: `translateY(${row.start}px)`,
-                  }}
-                >
-                  {Array.from({ length: columns }, (_, column) => {
-                    const index = row.index * columns + column
-                    if (index >= total) return null
-                    const item = itemAt(index)
-                    return item ? (
-                      <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
-                    ) : (
-                      <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
-                    )
-                  })}
-                </div>
-              ))}
+    <div ref={setContent}>
+      {error ? (
+        <PageErrorState
+          title="Could not load these items"
+          description={error.message}
+          action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
+        />
+      ) : total === null ? (
+        <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
+      ) : total === 0 ? (
+        <PageEmptyState
+          icon={<LibraryBig className="size-6" />}
+          title="Nothing to show"
+          description={empty}
+        />
+      ) : (
+        <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {items.map((row) => (
+            <div
+              key={row.key}
+              className="virtual-card-row absolute top-0 left-0 flex w-full"
+              style={{
+                height: cardHeight,
+                gap,
+                transform: `translateY(${row.start - (scrollMargin ?? 0)}px)`,
+              }}
+            >
+              {Array.from({ length: columns }, (_, column) => {
+                const index = row.index * columns + column
+                if (index >= total) return null
+                const item = itemAt(index)
+                return item ? (
+                  <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
+                ) : (
+                  <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+                )
+              })}
             </div>
-          )}
-          {footer}
+          ))}
         </div>
-      </div>
-      {rail}
+      )}
     </div>
   )
 }

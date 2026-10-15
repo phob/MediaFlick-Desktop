@@ -10,8 +10,10 @@ import {
   progressFraction,
   type ItemSummary,
 } from "@/lib/api"
+import { artworkShape } from "@/lib/artwork"
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
+import { isCatalogKind } from "@/lib/libraries"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
@@ -76,7 +78,8 @@ export const MediaCard = memo(function MediaCard({
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
   const location = useLocation()
-  const { handlers, expanded, previewsEnabled } = usePreview(item, preview)
+  const catalogItem = isCatalogKind(item.kind)
+  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && catalogItem)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
@@ -132,14 +135,17 @@ export const MediaCard = memo(function MediaCard({
               // shelf keeps its rhythm while the pointer runs along it.
               decoding="async"
               onError={() => setImageIndex((current) => current + 1)}
-              className="media-artwork-image h-full w-full object-cover"
+              className={cn(
+                "media-artwork-image h-full w-full",
+                !landscape && artworkShape(item.primaryAspect) === "square" ? "object-contain" : "object-cover",
+              )}
             />
           ) : (
             <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
               {item.name}
             </span>
           )}
-          <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />
+          {catalogItem && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
           {(ribbon || unplayed > 0) && (
             <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
               {ribbon && (
@@ -175,7 +181,7 @@ export const MediaCard = memo(function MediaCard({
             </div>
           )}
         </Link>
-        {!previewsEnabled && <CardInlineActions item={item} />}
+        {catalogItem && !previewsEnabled && <CardInlineActions item={item} />}
       </div>
       <Link
         to={`/item/${encodeURIComponent(item.id)}`}

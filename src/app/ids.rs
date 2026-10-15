@@ -21,3 +21,7 @@ pub fn random_hex(bytes: usize) -> String {
 pub fn new_device_id() -> String {
     random_hex(16)
 }
+
+pub fn valid_opaque_id(value: &str) -> bool {
+    matches!(value.len(), 16..=64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
