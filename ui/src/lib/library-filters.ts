@@ -1,7 +1,5 @@
 import type { ItemQuery, LibrarySortId, SeriesStatus, SortOrder, WatchFilter } from "./api"
 
-export type { LibrarySortId }
-
 export type TitleKind = "Movie" | "Series"
 
 const BOTH_KINDS: readonly TitleKind[] = ["Movie", "Series"]
