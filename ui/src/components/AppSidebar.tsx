@@ -417,7 +417,7 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
                       </SidebarMenuItem>
                     )
                   })
-                : Array.from({ length: 2 }, (_, index) => (
+                : !libraries.isError && Array.from({ length: 2 }, (_, index) => (
                     <SidebarMenuItem key={index}>
                       <SidebarMenuSkeleton showIcon />
                     </SidebarMenuItem>

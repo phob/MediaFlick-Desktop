@@ -31,11 +31,10 @@ export function useBrowseScope(): BrowseScope {
   const [params] = useSearchParams()
   const libraries = useLibraries()
   const data = libraries.data
-  if (!data) {
-    return libraries.error
-      ? { status: "failed", error: libraries.error, retry: () => void libraries.refetch() }
-      : { status: "loading" }
-  }
+  const unavailable: BrowseScope = libraries.error
+    ? { status: "failed", error: libraries.error, retry: () => void libraries.refetch() }
+    : { status: "loading" }
+  if (!data) return unavailable
 
   if (libraryId === undefined) {
     const browse = data.crossLibrary
@@ -58,7 +57,7 @@ export function useBrowseScope(): BrowseScope {
   }
 
   const library = data.libraries.find((candidate) => candidate.id === libraryId)
-  if (!library) return data.known ? { status: "missing" } : { status: "loading" }
+  if (!library) return data.known ? { status: "missing" } : unavailable
   return {
     status: "ready",
     title: library.name,
