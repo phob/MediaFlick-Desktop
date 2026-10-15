@@ -43,7 +43,7 @@ pub(super) fn run_cycle_inner(
 
     let result = (|| -> Result<(), ApiError> {
         let no_catalog_library =
-            refresh_libraries_finding_no_catalog_library(library, session, &scope)?;
+            refresh_libraries_finding_no_catalog_library(library, session, &scope, control)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
@@ -211,16 +211,24 @@ fn refresh_libraries_finding_no_catalog_library(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
+    control: Option<&SyncHandle>,
 ) -> Result<bool, ApiError> {
     let listed = best_effort(
         "the library list",
         refresh_libraries(library, session, scope),
     )?;
-    Ok(listed.is_some_and(|libraries| {
-        libraries
-            .iter()
-            .all(|entry| entry.catalog_title().is_none())
-    }))
+    let Some(listed) = listed else {
+        return Ok(false);
+    };
+    if listed.changed
+        && let Some(control) = control
+    {
+        control.shell().libraries_changed();
+    }
+    Ok(listed
+        .libraries
+        .iter()
+        .all(|entry| entry.catalog_title().is_none()))
 }
 
 fn walk_membership(

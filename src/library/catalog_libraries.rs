@@ -26,9 +26,26 @@ impl Library {
         })
     }
 
-    pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<()> {
+    /// Returns whether the listed libraries changed: added, removed, renamed,
+    /// reordered or of another kind, or read for the first time.
+    pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<bool> {
         self.db.with_transaction(|transaction| {
+            let first_read = transaction
+                .query_row(
+                    "SELECT 1 FROM meta WHERE key = ?1",
+                    params![LIBRARIES_READ_AT],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_none();
             let before = stored_libraries(transaction)?;
+            let listing = |libraries: &[MediaLibrary]| {
+                libraries
+                    .iter()
+                    .map(|library| (library.id.clone(), library.name.clone(), library.kind()))
+                    .collect::<Vec<_>>()
+            };
+            let changed = first_read || listing(&before) != listing(libraries);
             let listed = libraries
                 .iter()
                 .map(|library| &library.id)
@@ -79,7 +96,8 @@ impl Library {
             if removed {
                 save_meta(transaction, META_SWEEP_OWED, "1")?;
             }
-            save_meta(transaction, LIBRARIES_READ_AT, &now_unix().to_string())
+            save_meta(transaction, LIBRARIES_READ_AT, &now_unix().to_string())?;
+            Ok(changed)
         })
     }
 

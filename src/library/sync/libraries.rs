@@ -10,11 +10,16 @@ use super::{
     storage_error,
 };
 
+pub(super) struct LibraryList {
+    pub(super) libraries: Vec<MediaLibrary>,
+    pub(super) changed: bool,
+}
+
 pub(super) fn refresh_libraries(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-) -> Result<Vec<MediaLibrary>, ApiError> {
+) -> Result<LibraryList, ApiError> {
     let views = items::fetch_user_views(scope.client(), scope.user_id())?;
     let mut seen = HashSet::new();
     let libraries = views
@@ -28,12 +33,12 @@ pub(super) fn refresh_libraries(
         })
         .filter(|parsed| seen.insert(parsed.id.clone()))
         .collect::<Vec<_>>();
-    commit(session, scope, || {
+    let changed = commit(session, scope, || {
         library
             .replace_libraries(&libraries)
             .map_err(|error| storage_error(&error))
     })?;
-    Ok(libraries)
+    Ok(LibraryList { libraries, changed })
 }
 
 pub(super) fn membership_pass(
