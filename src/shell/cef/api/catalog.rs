@@ -544,7 +544,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         return query_person_items(services, &person_id, request);
     }
 
-    let query = library_query(request)?;
+    let query = item_query(request)?;
     match services.library.query(&query) {
         Ok(page) => Ok(ApiResponse::ok(
             json!({ "items": page.items, "total": page.total }),
@@ -554,7 +554,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 }
 
 fn item_letters(services: &Arc<Services>, request: &ApiRequest) -> Handled {
-    match services.library.letter_index(&library_query(request)?) {
+    match services.library.letter_index(&item_query(request)?) {
         Ok(letters) => Ok(ApiResponse::ok(json!({
             "letters": letters.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
         }))),
@@ -583,9 +583,7 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
 /// A `kind` list names catalog kinds only; anything else is a 400, so no
 /// route builds an empty kind list. No `kind` means movies and series.
 fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
-    let Some(value) = request.param("kind") else {
-        return Ok(KindFilter::TopLevel);
-    };
+    let value = request.param("kind").unwrap_or_default();
     let kinds = value
         .split(',')
         .map(str::trim)
@@ -595,20 +593,15 @@ fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
                 .ok_or_else(|| ApiResponse::error(400, format!("unknown item kind {kind:?}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(match kinds.split_first() {
-        None => KindFilter::TopLevel,
-        Some((first, rest)) => KindFilter::Only {
-            first: *first,
-            rest: rest.to_vec(),
-        },
-    })
+    Ok(KindFilter::from_kinds(kinds))
 }
 
-fn library_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
+/// `/api/items`: a library query plus the search and kinds it names.
+fn item_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
     Ok(ItemQuery {
         search: request.param("search"),
         kinds: kind_filter(request)?,
-        ..item_query(request, Params::Lenient)?
+        ..library_query(request, Params::Lenient)?
     })
 }
 
@@ -622,9 +615,12 @@ pub(super) enum Params {
     Strict,
 }
 
-/// The sort, filters and page of an item list. The caller supplies kinds,
-/// search and library scope.
-pub(super) fn item_query(request: &ApiRequest, params: Params) -> Result<ItemQuery, ApiResponse> {
+/// The sort, filters and page of an item list: all a library route takes,
+/// since the library supplies kinds and scope.
+pub(super) fn library_query(
+    request: &ApiRequest,
+    params: Params,
+) -> Result<ItemQuery, ApiResponse> {
     let seed = param(request, params, "seed", |value| value.parse::<u32>().ok())?;
     Ok(ItemQuery {
         sort: param(request, params, "sort", |value| {

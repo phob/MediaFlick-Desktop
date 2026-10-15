@@ -1,7 +1,7 @@
 use crate::library::browse::{self, BrowseError};
 use crate::library::libraries::{LibraryId, LibraryRegistry, TITLE_BROWSE};
 
-use super::catalog::{Params, item_query, param};
+use super::catalog::{Params, library_query, param};
 use super::*;
 
 const LATEST_LIMIT: i64 = 40;
@@ -53,7 +53,7 @@ fn libraries(services: &Arc<Services>) -> Handled {
 }
 
 fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
-    let query = item_query(request, Params::Strict)?;
+    let query = library_query(request, Params::Strict)?;
     let page = browse::library_page(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
     Ok(ApiResponse::ok(
@@ -62,7 +62,7 @@ fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
 }
 
 fn letters(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
-    let query = item_query(request, Params::Strict)?;
+    let query = library_query(request, Params::Strict)?;
     let letters = browse::library_letters(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
     Ok(ApiResponse::ok(json!({
