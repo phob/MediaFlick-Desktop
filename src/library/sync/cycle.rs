@@ -558,24 +558,17 @@ fn apply_sweep_verdict(
     verdict: SweepVerdict,
     seen: &HashSet<String>,
 ) -> Result<Option<LibraryChangeBatch>, ApiError> {
-    let (changes, observation) = match verdict {
+    let written = match verdict {
         SweepVerdict::Wait => return Ok(None),
-        SweepVerdict::ObserveEmpty(at) => (None, at.to_string()),
-        SweepVerdict::ForgetEmpty => (None, String::new()),
-        SweepVerdict::Delete => {
-            let changes = library
-                .retain_ids(seen)
-                .map_err(|error| storage_error(&error))?;
-            library
-                .set_meta(META_SWEEP_OWED, "0")
-                .map_err(|error| storage_error(&error))?;
-            (Some(changes), String::new())
-        }
+        SweepVerdict::ObserveEmpty(at) => library
+            .set_meta(META_EMPTY_SWEEP_AT, &at.to_string())
+            .map(|()| None),
+        SweepVerdict::ForgetEmpty => library.set_meta(META_EMPTY_SWEEP_AT, "").map(|()| None),
+        SweepVerdict::Delete => library
+            .retain_ids_setting_meta(seen, &[(META_SWEEP_OWED, "0"), (META_EMPTY_SWEEP_AT, "")])
+            .map(Some),
     };
-    library
-        .set_meta(META_EMPTY_SWEEP_AT, &observation)
-        .map_err(|error| storage_error(&error))?;
-    Ok(changes)
+    written.map_err(|error| storage_error(&error))
 }
 
 /// One identity-only pass over the library that both mirrors watch state and
