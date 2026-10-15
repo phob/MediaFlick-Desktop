@@ -171,10 +171,13 @@ export default async function libraryParity(ctx) {
     }
     const first = present.find((letter) => letters[letter] === 0)
     await ctx.press({ role: "button", name: `Jump to ${first}` })
+    let back = null
     const top = await ctx.until(async () => {
-      const result = await jumpResult(0)
-      return result.scrollTop === 0 ? result : null
-    }, `${label}: Jump to ${first} to scroll to the top`, 10000)
+      back = await jumpResult(0)
+      return back.scrollTop === 0 ? back : null
+    }, `${label}: Jump to ${first} to scroll to the top`, 10000).catch((error) => {
+      throw new Error(`${error.message}; the pane stayed at scrollTop ${back?.scrollTop} of ${back?.maxScroll} with ${back?.firstVisible} first`)
+    })
     ctx.check(top.firstVisible === items[0].name && letterOf(items[0]) === first,
       `${label}: after Jump to ${first}, the first visible card is ${top.firstVisible}, filed under ${first}`)
     return {
