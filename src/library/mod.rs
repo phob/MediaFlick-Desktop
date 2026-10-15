@@ -354,6 +354,9 @@ pub struct ItemQuery {
     pub limit: i64,
 }
 
+/// How many items a page holds when the request names no limit.
+pub const DEFAULT_PAGE_SIZE: i64 = 60;
+
 #[derive(Debug, Clone)]
 pub struct ItemPage {
     pub items: Vec<ItemSummary>,

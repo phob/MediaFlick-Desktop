@@ -42,6 +42,8 @@ pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
 pub const PERSON_PAGE_SIZE: i64 = 500;
 
+pub const LIVE_CHILDREN_PAGE_SIZE: i64 = 200;
+
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
 }
@@ -254,8 +256,8 @@ fn live_children_query(
         ("Fields", LIVE_CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
-        ("StartIndex", start_index.to_string()),
-        ("Limit", limit.to_string()),
+        ("StartIndex", start_index.max(0).to_string()),
+        ("Limit", limit.clamp(1, LIVE_CHILDREN_PAGE_SIZE).to_string()),
         (
             "SortBy",
             "ParentIndexNumber,IndexNumber,SortName".to_string(),
