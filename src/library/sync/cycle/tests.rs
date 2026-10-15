@@ -179,7 +179,7 @@ impl FakeJellyfin {
     }
 }
 
-fn serve(replies: Vec<(u16, String)>) -> FakeJellyfin {
+fn serve(replies: Vec<Reply>) -> FakeJellyfin {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let url = format!("http://{}", listener.local_addr().expect("address"));
     let server = thread::spawn(move || {
@@ -190,9 +190,9 @@ fn serve(replies: Vec<(u16, String)>) -> FakeJellyfin {
             if target == FINISHED {
                 return targets;
             }
-            let (status, body) = replies.next().unwrap_or((404, String::new()));
-            if status != DROPPED {
-                send(stream, status, &body);
+            match replies.next().unwrap_or(Reply::Answer(404, String::new())) {
+                Reply::Answer(status, body) => send(stream, status, &body),
+                Reply::Drop => drop(stream),
             }
             targets.push(target);
         }
@@ -200,11 +200,15 @@ fn serve(replies: Vec<(u16, String)>) -> FakeJellyfin {
     FakeJellyfin { url, server }
 }
 
-fn ok(body: &str) -> (u16, String) {
-    (200, body.to_string())
+enum Reply {
+    Answer(u16, String),
+    Drop,
 }
 
-const DROPPED: u16 = 0;
+fn ok(body: &str) -> Reply {
+    Reply::Answer(200, body.to_string())
+}
+
 const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
 const UNCOUNTED: &str = "{}";
 const NOT_JSON: &str = "not json";
@@ -217,7 +221,7 @@ const ONE_MOVIE: &str = r#"{"Items":[{"Id":"m1","Name":"M1","Type":"Movie","Date
 fn cycle(
     library: &Arc<Library>,
     trigger: Trigger,
-    replies: Vec<(u16, String)>,
+    replies: Vec<Reply>,
 ) -> (Result<SyncReport, ApiError>, Vec<String>) {
     let server = serve(replies);
     let session = authenticated_session(library, &server.url);
@@ -247,7 +251,7 @@ fn steps(targets: &[String]) -> Vec<&str> {
         .collect()
 }
 
-fn views(libraries: &[(&str, &str)]) -> (u16, String) {
+fn views(libraries: &[(&str, &str)]) -> Reply {
     let items = libraries
         .iter()
         .map(|(id, collection_type)| {
@@ -257,7 +261,7 @@ fn views(libraries: &[(&str, &str)]) -> (u16, String) {
     ok(&json!({ "Items": items, "TotalRecordCount": items.len() }).to_string())
 }
 
-fn members(ids: &[&str], total: usize) -> (u16, String) {
+fn members(ids: &[&str], total: usize) -> Reply {
     let items = ids.iter().map(|id| json!({ "Id": id })).collect::<Vec<_>>();
     ok(&json!({ "Items": items, "TotalRecordCount": total }).to_string())
 }
@@ -510,8 +514,7 @@ fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_li
             (SHOWS, "tvshows"),
         ])
     };
-    let limited = || (429, String::new());
-    let dropped = || (DROPPED, String::new());
+    let limited = || Reply::Answer(429, String::new());
 
     let (result, requests) = cycle(
         &library,
@@ -547,9 +550,9 @@ fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_li
             listing(),
             ok(EMPTY_PAGE),
             members(&["m1"], 1),
-            dropped(),
-            dropped(),
-            dropped(),
+            Reply::Drop,
+            Reply::Drop,
+            Reply::Drop,
             members(&["s1"], 1),
         ],
     );
@@ -894,11 +897,20 @@ fn a_membership_walk_that_ends_short_of_its_total_keeps_the_previous_membership(
     let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
     sync_libraries(&library, &[(MOVIES, "movies", &["m1", "m2"])]);
     let listing = || views(&[(MOVIES, "movies")]);
+    let first_page = 1..1_000;
+    let second_page = 900..1_400;
+    let id = |n: usize| format!("x{n:04}");
     let first = std::iter::once("m1".to_string())
-        .chain((1..1_000).map(|n| format!("x{n:04}")))
+        .chain(first_page.map(id))
         .collect::<Vec<_>>();
-    let second = (900..1_400).map(|n| format!("x{n:04}")).collect::<Vec<_>>();
-    let page = |ids: &[String]| members(&ids.iter().map(String::as_str).collect::<Vec<_>>(), 1_500);
+    let second = second_page.map(id).collect::<Vec<_>>();
+    let received = first.len() + second.len();
+    let page = |ids: &[String]| {
+        members(
+            &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            received,
+        )
+    };
 
     let (result, requests) = cycle(
         &library,
@@ -947,7 +959,11 @@ fn a_rejected_token_stops_the_cycle_at_any_library_step() {
         &[(MOVIES, "movies", &["m1"]), (SHOWS, "tvshows", &["s1"])],
     );
 
-    let (result, requests) = cycle(&library, Trigger::Scheduled, vec![(401, String::new())]);
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![Reply::Answer(401, String::new())],
+    );
     assert_eq!(result.err(), Some(ApiError::Unauthorized));
     assert_eq!(steps(&requests), ["views"]);
 
@@ -958,7 +974,7 @@ fn a_rejected_token_stops_the_cycle_at_any_library_step() {
             views(&[(MOVIES, "movies"), (SHOWS, "tvshows")]),
             ok(EMPTY_PAGE),
             members(&["m1", "s1"], 2),
-            (401, String::new()),
+            Reply::Answer(401, String::new()),
         ],
     );
     assert_eq!(result.err(), Some(ApiError::Unauthorized));

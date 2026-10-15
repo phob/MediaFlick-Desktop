@@ -268,16 +268,7 @@ impl Library {
     pub fn genres(&self, library: Option<&LibraryId>) -> rusqlite::Result<Vec<String>> {
         self.db.with_connection(|connection| {
             let mut statement = match library {
-                None => connection.prepare_cached(
-                    "WITH RECURSIVE distinct_genres(genre) AS (
-                         SELECT min(genre) FROM item_genres
-                         UNION ALL
-                         SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
-                         FROM distinct_genres previous WHERE previous.genre IS NOT NULL
-                     )
-                     SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
-                     ORDER BY genre COLLATE NOCASE ASC",
-                )?,
+                None => connection.prepare_cached(DISTINCT_GENRES_SKIP_SCAN)?,
                 Some(_) => connection.prepare_cached(
                     "SELECT DISTINCT g.genre FROM item_libraries l
                      JOIN items i ON i.jellyfin_id = l.item_id
@@ -538,6 +529,17 @@ fn splitmix64_finalize(value: u64) -> u64 {
     let mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     mixed ^ (mixed >> 31)
 }
+
+/// Each step seeks the next distinct genre in the primary key instead of
+/// walking every tagged item.
+const DISTINCT_GENRES_SKIP_SCAN: &str = "WITH RECURSIVE distinct_genres(genre) AS (
+        SELECT min(genre) FROM item_genres
+        UNION ALL
+        SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
+        FROM distinct_genres previous WHERE previous.genre IS NOT NULL
+    )
+    SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
+    ORDER BY genre COLLATE NOCASE ASC";
 
 const SERIES_HAS_STARTED_EPISODE: &str = "EXISTS (SELECT 1 FROM items e
     JOIN user_data ue ON ue.jellyfin_id = e.jellyfin_id

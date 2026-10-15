@@ -1237,7 +1237,7 @@ export interface LibrariesResponse {
   known: boolean
   /** In the user's Jellyfin order. */
   libraries: Library[]
-  titles: BrowseCapabilities
+  crossLibrary: BrowseCapabilities
 }
 
 export interface LibraryQuery {

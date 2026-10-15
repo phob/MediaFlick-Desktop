@@ -173,7 +173,7 @@ pub static SHOW_BROWSE: BrowseCapabilities = BrowseCapabilities {
     letter_index: true,
 };
 
-pub static TITLE_BROWSE: BrowseCapabilities = BrowseCapabilities {
+pub static CROSS_LIBRARY_BROWSE: BrowseCapabilities = BrowseCapabilities {
     sorts: &[
         SortKey::Name,
         SortKey::ReleaseDate,
