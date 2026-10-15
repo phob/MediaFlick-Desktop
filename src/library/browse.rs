@@ -230,6 +230,25 @@ pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<Chi
         .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
 }
 
+/// How the server lists a container the cache does not hold, chosen by its
+/// Jellyfin type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveChildren {
+    /// Disc, track and name order.
+    Folder,
+    /// The owner's manual order, which only the playlist route keeps.
+    Playlist,
+}
+
+impl LiveChildren {
+    pub fn of(item_type: Option<&str>) -> Self {
+        match item_type {
+            Some("Playlist") => Self::Playlist,
+            _ => Self::Folder,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildPage {
     offset: i64,
