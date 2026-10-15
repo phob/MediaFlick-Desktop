@@ -1,23 +1,31 @@
-// Generic details pages, read-only. Nothing links to an album or a box set's
-// own page until the library browse change, so the drive opens them by URL
-// with no navigation state, as a reload or deep link does.
-// Both modes: the Music library's first album with artwork and tracks shows
-// no title controls (Play, favorites, watched, More info, quality, ratings,
+// Generic details pages. Nothing links to an album or a box set's own page
+// until the library browse change, so the drive opens them by URL with no
+// navigation state, as a reload or deep link does.
+// Both modes: while the first sync still runs, the newest movie, which that
+// walk reaches last, is asked for before the cache holds it and comes back as
+// a title that the app logs as served through the cache-through path and
+// caches on the way (required with --account; the demo walk can finish
+// first). The Music library's first album with artwork and tracks shows no
+// title controls (Play, favorites, watched, More info, quality, ratings,
 // collection chip, Letterboxd, Media), goes back to Home, contains its cover
-// in the hero and any square track art in the cards, and its grid holds
-// exactly the tracks Jellyfin lists, as many as the album's ChildCount; a
-// track opens a generic page with no contents grid. The Movies library's own
-// folder page lists exactly its direct children, paged in as the page
-// scrolls. Then the top-rated movie, opened from a sidebar search, keeps its
-// title page: Play or Resume, quality, watched and favorites, More info, its
-// community rating and its library. An episode reports its series' library.
-// The children route rejects a bad id and a negative offset and clamps its
-// limit.
-// With --account only: the Collections library's largest box set lists
-// exactly its titles; a movie card that is not a favorite is favorited from
-// its preview and shows it on the next hover without leaving the page, then
-// is unfavorited the same way (journaled after-run fallback); and a movie
-// card opens the full movie page.
+// in the hero, contains near-square track art in the cards and fills wide art,
+// and its grid holds exactly the tracks Jellyfin lists, as many as the album's
+// ChildCount; a track opens a generic page with no contents grid. The first
+// MusicArtist folder lists exactly its albums. The Movies library's own folder
+// page lists exactly its direct children, paged in as the page scrolls, and
+// its children route clamps limit=100000 to 200. The top-rated movie, opened
+// from a sidebar search, keeps its title page: Play or Resume, quality,
+// watched and favorites, More info, its community rating and its library. An
+// episode reports its series' library. A series page shows its season rail,
+// the selected season's episodes and a Play button naming Next up, and a
+// season's own page opens the series on that season. Every item route rejects
+// a bad id, and the children route a negative offset.
+// With --account only: a movie in one of the account's franchises shows its
+// collection chip; the Collections library's largest box set lists exactly
+// its titles; a movie card that is not a favorite is favorited from its
+// preview and shows it on the next hover without leaving the page, then is
+// unfavorited the same way (journaled after-run fallback); and a movie card
+// opens the full movie page.
 //   just verify generic-detail
 //   just verify generic-detail --account https://jellyfin.example.com
 const DEMO = "https://demo.jellyfin.org/stable"
@@ -196,6 +204,123 @@ async function favoriteFromCard(ctx, expect, { label, setId, userId }) {
   return result
 }
 
+async function newestCachedMovie(ctx) {
+  return (await ctx.api("/api/items?kind=Movie&sort=added&order=desc&limit=1")).body?.items?.[0]?.id ?? null
+}
+
+async function uncachedTitle(ctx, expect, userId) {
+  const newest = (await ctx.jellyfin(`/Items?userId=${userId}&Recursive=true&IncludeItemTypes=Movie&SortBy=DateCreated&SortOrder=Descending&Limit=1`)).Items[0]
+  if (!newest) return null
+  const status = (await ctx.api("/api/status")).body
+  const result = { id: newest.Id, name: newest.Name, bootstrapBefore: status.bootstrap, cachedBefore: (await newestCachedMovie(ctx)) === newest.Id }
+  if (result.cachedBefore) {
+    const reason = `the first sync had already cached ${newest.Name}, the newest movie, before the drive could ask for it`
+    if (ctx.account) expect(false, `uncached title: ${reason}`)
+    else ctx.step(`uncached title: ${reason}; the demo walk is too short to force the uncached path`)
+    return result
+  }
+  const detail = await ctx.api(`/api/item/${newest.Id}`)
+  result.layout = detail.body?.layout ?? null
+  result.kind = detail.body?.kind ?? null
+  result.libraryId = detail.body?.libraryId ?? null
+  result.logged = (await ctx.appLog()).split("\n").some((line) => line.includes("served a title the cache did not hold") && line.includes(newest.Id))
+  result.cachedAfter = (await newestCachedMovie(ctx)) === newest.Id
+  expect(detail.status === 200 && result.layout === "title" && result.kind === "Movie", `uncached title ${newest.Name}: /api/item answers the title layout of a Movie (${detail.status}, ${result.layout}, ${result.kind})`)
+  expect(result.logged && result.cachedAfter, `uncached title ${newest.Name}: the app served it through the cache-through path and cached it on the way (logged ${result.logged}, cached ${result.cachedAfter})`)
+  return result
+}
+
+async function seasonRail(ctx) {
+  return ctx.app.evaluate(`[...document.querySelectorAll('[aria-label="Seasons"] button')].map((button) => ({ name: button.textContent.trim(), pressed: button.getAttribute("aria-pressed") === "true" }))`)
+}
+
+async function episodeLinks(ctx) {
+  return ctx.app.evaluate(`[...new Set([...document.querySelectorAll('a[href^="/item/"]:has(> span.tabular-nums)')].map((link) => link.getAttribute("href")))]`)
+}
+
+async function seasonEpisodes(ctx, seasonId) {
+  return (await ctx.api(`/api/item/${seasonId}/children`)).body.items.filter((child) => child.kind === "Episode")
+}
+
+async function seriesAndSeason(ctx, expect) {
+  const candidates = (await ctx.api("/api/items?kind=Series&sort=name&limit=60")).body.items
+  const series = candidates.find((item) => (item.childCount ?? 0) > 1) ?? candidates.find((item) => (item.childCount ?? 0) > 0)
+  expect(Boolean(series), `a series with seasons (${series?.name})`)
+  if (!series) return null
+  const seasons = (await ctx.api(`/api/item/${series.id}/children`)).body.items.filter((child) => child.kind === "Season")
+  const nextUp = (await ctx.api(`/api/item/${series.id}/nextup`)).body?.item ?? null
+  await openByUrl(ctx, `/item/${series.id}`)
+  await ctx.find({ role: "heading", name: series.name }, { timeout: 30000 })
+  await ctx.find({ role: "list", name: "Seasons" }, { timeout: 30000 })
+  await ctx.find({ role: "heading", name: "Episodes" })
+  const rail = await ctx.until(async () => { const found = await seasonRail(ctx); return found.some((season) => season.pressed) ? found : null }, "a selected season", 15000)
+  const selected = seasons.find((season) => season.name === rail.find((entry) => entry.pressed)?.name)
+  const expected = selected ? await seasonEpisodes(ctx, selected.id) : []
+  const shown = await ctx.until(async () => { const links = await episodeLinks(ctx); return links.length === expected.length ? links : null }, "the season's episode list", 15000).catch(() => null)
+  const result = { id: series.id, name: series.name, seasons: seasons.map((season) => season.name), rail, selected: selected?.name ?? null, episodes: expected.length, shown: shown?.length ?? null }
+  expect(sameList(rail.map((entry) => entry.name), seasonRailNames(seasons)), `series ${series.name}: the season rail lists its seasons (${JSON.stringify(rail.map((entry) => entry.name))})`)
+  expect(expected.length > 0 && shown !== null, `series ${series.name}: the episode list shows the ${expected.length} episodes of ${selected?.name} (${shown?.length ?? "a different number"})`)
+  if (nextUp) {
+    const code = `S${nextUp.parentIndexNumber}E${nextUp.indexNumber}`
+    result.playLabel = await ctx.until(async () => {
+      for (const label of [`Play ${code}`, `Resume ${code}`]) if (await ctx.exists({ role: "button", name: label })) return label
+      return null
+    }, "the series' Play button", 15000).catch(() => null)
+    result.nextUpNote = (await ctx.app.evaluate("document.body.innerText")).includes(`Next up: ${code}`)
+    expect(result.playLabel !== null && result.nextUpNote, `series ${series.name}: the Play button and the note name Next up ${code} (${result.playLabel}, note ${result.nextUpNote})`)
+  } else {
+    ctx.step(`series ${series.name}: no Next Up episode for this user; the Play label is not checked`)
+  }
+  await ctx.screenshot("07-series")
+
+  const season = seasons.find((entry) => entry.id !== selected?.id) ?? selected
+  if (season) {
+    await ctx.app.evaluate(`history.pushState(null, "", ${JSON.stringify(`/item/${season.id}`)}); dispatchEvent(new PopStateEvent("popstate"))`)
+    await ctx.until(async () => (await ctx.pathname()) === `/item/${encodeURIComponent(series.id)}?season=${encodeURIComponent(season.id)}`, "the season page to open its series on that season", 30000)
+    const pressed = await ctx.until(async () => (await seasonRail(ctx)).find((entry) => entry.name === season.name)?.pressed || null, `${season.name} to be selected`, 15000).catch(() => false)
+    const episodes = await seasonEpisodes(ctx, season.id)
+    const listed = await ctx.until(async () => { const links = await episodeLinks(ctx); return links.length === episodes.length ? links : null }, `the ${season.name} episodes`, 15000).catch(() => null)
+    result.season = { id: season.id, name: season.name, pressed: Boolean(pressed), episodes: episodes.length, shown: listed?.length ?? null }
+    expect(Boolean(pressed) && episodes.length > 0 && listed !== null, `season ${season.name}: its page opens the series on that season with its ${episodes.length} episodes (selected ${Boolean(pressed)}, shown ${listed?.length ?? "a different number"})`)
+    await ctx.screenshot("08-season")
+  }
+  return result
+}
+
+// ui/src/lib/seasons.ts: Specials (season 0) go last.
+function seasonRailNames(seasons) {
+  return [
+    ...seasons.filter((season) => season.indexNumber !== 0),
+    ...seasons.filter((season) => season.indexNumber === 0),
+  ].map((season) => season.name)
+}
+
+async function collectionChip(ctx, expect, userId) {
+  const localDate = new Date().toLocaleDateString("sv-SE")
+  const list = await ctx.until(async () => {
+    const body = (await ctx.api(`/api/collections/franchises?localDate=${localDate}`)).body
+    return body?.status === "ready" ? body : null
+  }, "the franchise snapshot", 180000).catch(() => null)
+  expect(Boolean(list), "the account's movie franchises are ready")
+  if (!list) return null
+  let movie = null
+  let franchise = null
+  for (const candidate of list.franchises.filter((entry) => entry.ownedCount > 0)) {
+    const detail = (await ctx.api(`/api/collections/franchises/${candidate.collectionId}?localDate=${localDate}`)).body
+    movie = detail?.libraryItems?.find((item) => item.kind === "Movie") ?? null
+    if (movie) { franchise = candidate; break }
+  }
+  expect(Boolean(movie), `a movie that belongs to a franchise (${movie?.name}, ${franchise?.name})`)
+  if (!movie) return null
+  const server = await ctx.jellyfin(`/Items/${movie.id}?userId=${userId}`)
+  await openByUrl(ctx, `/item/${movie.id}`)
+  await ctx.find({ role: "heading", name: movie.name }, { timeout: 30000 })
+  const chip = await ctx.until(() => ctx.app.evaluate(`document.querySelector(${JSON.stringify(HERO)}).querySelector('a[href^="/collections/franchises/"]')?.textContent.replace(/\\s+/g, " ").trim() ?? null`), "the collection chip", 30000).catch(() => null)
+  await ctx.screenshot("09-collection-chip")
+  expect(server?.Id === movie.id && chip === `Part of ${franchise.name}`, `movie ${movie.name}: Jellyfin has it and its title page shows the "Part of ${franchise.name}" chip (${chip})`)
+  return { id: movie.id, name: movie.name, franchise: franchise.name, chip }
+}
+
 async function titlePage(ctx, expect, { label, id, name }) {
   await ctx.find({ role: "heading", name }, { timeout: 30000 })
   await ctx.until(async () => (await ctx.exists({ role: "button", name: "Play" })) || (await ctx.exists({ role: "button", name: "Resume" })), `${label}: the Play or Resume button`)
@@ -211,17 +336,18 @@ async function titlePage(ctx, expect, { label, id, name }) {
 
 export default async function genericDetail(ctx) {
   await ctx.signIn({ server: DEMO, username: "demo" })
-  await ctx.until(async () => {
-    const status = (await ctx.api("/api/status")).body
-    return status?.bootstrap?.state === "ready" && status.syncProgress?.active === false
-  }, "the first sync to finish", 300000)
-
   const report = { mode: ctx.account ? `account ${ctx.account.server}` : "demo", checks: [] }
   const expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)
   }
   const { userId } = (await ctx.api("/api/status")).body
+  report.uncachedTitle = await uncachedTitle(ctx, expect, userId)
+  await ctx.until(async () => {
+    const status = (await ctx.api("/api/status")).body
+    return status?.bootstrap?.state === "ready" && status.syncProgress?.active === false
+  }, "the first sync to finish", 300000)
+
   const views = (await ctx.jellyfin(`/UserViews?userId=${userId}`)).Items
   const libraries = (await ctx.api("/api/libraries")).body.libraries
 
@@ -275,9 +401,22 @@ export default async function genericDetail(ctx) {
       const { seen: _seen, server, ...albumReport } = folder
       report.album = { ...albumReport, serverChildren: server.items, track: { ...track, back: trackSurfaces.back } }
     }
+
+    const artist = (await ctx.jellyfin(`/Items?userId=${userId}&ParentId=${music.Id}&IncludeItemTypes=MusicArtist&SortBy=SortName&Fields=ChildCount&Limit=20`)).Items.find((item) => item.ChildCount > 0)
+    if (artist) {
+      const byArtist = await ctx.jellyfin(`/Items?userId=${userId}&ArtistIds=${artist.Id}&IncludeItemTypes=MusicAlbum&Recursive=true&Limit=0`)
+      const folder = await genericFolder(ctx, expect, { label: `artist ${artist.Name}`, id: artist.Id, name: artist.Name, userId, childCount: artist.ChildCount })
+      expect(folder.cards === artist.ChildCount && folder.cards > 0, `artist ${artist.Name}: the grid lists its ${artist.ChildCount} albums, read by ParentId (an ArtistIds query finds ${byArtist.TotalRecordCount})`)
+      await ctx.screenshot("02b-artist")
+      const { seen: _seen, server, ...artistReport } = folder
+      report.artist = { ...artistReport, serverChildren: server.items, artistIdsAlbums: byArtist.TotalRecordCount }
+    } else {
+      ctx.step(`${music.Name}: no MusicArtist folder with albums; the artist grid is not exercised`)
+    }
+  } else if (ctx.account) {
+    ctx.step("this server has no Music library; the album and artist checks are not exercised")
   } else {
-    expect(Boolean(ctx.account), "the demo server has a Music library")
-    ctx.step("this server has no Music library; the album checks are not exercised")
+    expect(false, "the demo server has a Music library")
   }
 
   const moviesView = views.find((view) => view.CollectionType === "movies")
@@ -285,6 +424,9 @@ export default async function genericDetail(ctx) {
     const folder = await genericFolder(ctx, expect, { label: `library folder ${moviesView.Name}`, id: moviesView.Id, name: moviesView.Name, userId, childCount: null })
     expect(folder.cards > 0, `library folder ${moviesView.Name}: lists ${folder.cards} entries, paged in while the page scrolls`)
     await ctx.screenshot("03-library-folder")
+    const clamped = await ctx.api(`/api/item/${moviesView.Id}/children?limit=100000`)
+    report.contract.folderClampedLimit = { status: clamped.status, items: clamped.body?.items?.length, total: clamped.body?.total }
+    expect(clamped.status === 200 && clamped.body.items.length === Math.min(clamped.body.total, LIVE_PAGE_MAX), `library folder ${moviesView.Name}: limit=100000 is clamped to ${LIVE_PAGE_MAX} (${clamped.body?.items?.length} of ${clamped.body?.total})`)
     const { seen: _seen, server: _server, ...folderReport } = folder
     report.libraryFolder = folderReport
   }
@@ -311,7 +453,10 @@ export default async function genericDetail(ctx) {
     expect(episodeDetail.layout === "title" && episodeLibrary?.kind === "shows" && episodeDetail.libraryId === seriesDetail.libraryId, `episode ${episode.name}: the title layout reports its series' TV shows library (${episodeDetail.libraryId}, series ${seriesDetail.libraryId})`)
   }
 
+  report.series = await seriesAndSeason(ctx, expect)
+
   if (ctx.account) {
+    report.collectionChip = await collectionChip(ctx, expect, userId)
     const collections = views.find((view) => view.CollectionType === "boxsets")
     expect(Boolean(collections), `the account has a Collections library (${collections?.Name})`)
     if (collections) {
