@@ -552,7 +552,9 @@ END;
 -- The libraries the user sees, in their Jellyfin order. `collection_type` is
 -- Jellyfin's raw CollectionType; `LibraryKind` maps it when it is read.
 -- `membership_owed` is set while a catalog library's membership walk has not
--- landed: it is new, or its last walk failed, was cut off or never ran.
+-- landed: it is new, or its last walk failed, was cut off or never ran. A walk
+-- the server answers with no titles lands: it clears the flag and keeps the
+-- stored rows.
 CREATE TABLE libraries (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
@@ -565,7 +567,8 @@ CREATE TABLE libraries (
 -- The movies and series each movies or TV shows library holds. Seasons and
 -- episodes belong through their series. There is no foreign key: membership
 -- is written before the first fill caches its items, and a row whose item is
--- gone joins nothing until the next membership pass replaces it.
+-- gone joins nothing until the next membership pass replaces it. A walk the
+-- server answers with no titles settles the library's walk and keeps its rows.
 CREATE TABLE item_libraries (
     library_id TEXT NOT NULL,
     item_id    TEXT NOT NULL,

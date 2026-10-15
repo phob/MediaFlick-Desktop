@@ -96,13 +96,14 @@ impl Library {
         })
     }
 
-    /// Marks each library as owing its membership walk until
+    /// Marks every catalog library as owing its membership walk until
     /// `replace_membership` lands one.
-    pub(crate) fn owe_membership(&self, libraries: &[LibraryId]) -> rusqlite::Result<()> {
+    pub(crate) fn owe_every_membership(&self) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
-            libraries
+            stored_libraries(transaction)?
                 .iter()
-                .try_for_each(|library| mark_owed(transaction, library))
+                .filter(|library| library.catalog_title().is_some())
+                .try_for_each(|library| mark_owed(transaction, &library.id))
         })
     }
 

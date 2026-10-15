@@ -42,27 +42,17 @@ pub(super) fn refresh_libraries(
     Ok(libraries)
 }
 
-/// Which catalog libraries a membership pass walks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Walk {
-    /// Only those whose last walk has not landed.
-    Owed,
-    /// Every one, because the catalog or the server changed.
-    All,
-}
-
-/// Replaces the membership of each catalog library `walk` names with the ids
-/// the server lists in it now. A library stays owed until its walk lands, so
-/// one that fails, is cut off, or ends short of the server's own count keeps
-/// its previous membership and is walked again next cycle. Any other library
-/// is still walked, except after a rate limit, which holds for the whole
-/// server and ends the pass with the rest owed too. Returns whether any
-/// membership changed.
+/// Replaces the membership of each catalog library that owes its walk with
+/// the ids the server lists in it now. A library stays owed until its walk
+/// lands, so one that fails, is cut off, or ends short of the server's own
+/// count keeps its previous membership and is walked again next cycle. Any
+/// other library is still walked, except after a rate limit, which holds for
+/// the whole server and ends the pass with the rest owed too. Returns whether
+/// any membership changed.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    walk: Walk,
     control: Option<&SyncHandle>,
 ) -> Result<bool, ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
@@ -71,20 +61,11 @@ pub(super) fn membership_pass(
     };
     let due = libraries
         .into_iter()
-        .filter(|entry| walk == Walk::All || entry.membership_pending)
-        .filter_map(|entry| Some((entry.catalog_title()?, entry.id)))
-        .collect::<Vec<_>>();
-    if walk == Walk::All {
-        let ids = due.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>();
-        commit(session, scope, || {
-            library
-                .owe_membership(&ids)
-                .map_err(|error| storage_error(&error))
-        })?;
-    }
+        .filter(|entry| entry.membership_pending)
+        .filter_map(|entry| Some((entry.catalog_title()?, entry.id)));
     let mut changed = false;
-    for (title, id) in &due {
-        let walked = refresh_membership(library, session, scope, id, *title, control);
+    for (title, id) in due {
+        let walked = refresh_membership(library, session, scope, &id, title, control);
         let rate_limited = matches!(walked, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
         changed |= best_effort(&step, walked)?.unwrap_or(false);
@@ -129,7 +110,7 @@ fn member_ids(
 ) -> Result<Option<HashSet<String>>, ApiError> {
     let mut ids = HashSet::new();
     let mut offset = 0;
-    let mut counted = None;
+    let mut server_count = None;
     for _ in 0..MAX_IDENTITY_PAGES {
         cancelled(control, session, scope)?;
         let page = items::fetch_library_member_ids(
@@ -140,7 +121,7 @@ fn member_ids(
             offset,
             IDENTITY_PAGE_SIZE,
         )?;
-        let counted = *counted.get_or_insert(page.total_record_count);
+        let counted = *server_count.get_or_insert(page.total_record_count);
         let received = page.items.len() as i64;
         ids.extend(
             page.items
