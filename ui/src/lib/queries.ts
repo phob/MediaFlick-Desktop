@@ -38,7 +38,7 @@ import {
   discoveryResultSetKey,
   type DiscoveryAvailability,
 } from "./discovery"
-import type { BrowseSource } from "./libraries"
+import type { BrowseSource, ListingSource } from "./libraries"
 
 /**
  * Shared mutation failure handler. Without this a failed action is completely
@@ -215,27 +215,58 @@ export function useBillboard(enabled = true) {
   })
 }
 
-export function useGenres() {
+export function useGenres(enabled = true) {
   return useQuery({
     queryKey: queryKeys.genres,
     queryFn: api.genres,
     staleTime: 30 * 60_000,
+    enabled,
   })
 }
 
-export function useOfficialRatings(kind: string) {
+export function useOfficialRatings(kind: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.officialRatings(kind),
     queryFn: () => api.officialRatings(kind),
     staleTime: 30 * 60_000,
+    enabled,
   })
 }
 
-export function useItemLetters(query: ItemQuery, enabled = true) {
+export function useBrowseLetters(source: ListingSource, enabled = true) {
   return useQuery({
-    queryKey: queryKeys.itemLetters(query),
-    queryFn: ({ signal }) => api.itemLetters(query, signal),
+    queryKey: queryKeys.browseLetters(source),
+    queryFn: ({ signal }) =>
+      source.scope === "library"
+        ? api.libraryLetters(source.libraryId, source.query, signal)
+        : api.itemLetters(source.query, signal),
     enabled,
+  })
+}
+
+/**
+ * The sidebar's library list and every grid's capabilities. While a movies or
+ * TV shows library's membership walk runs, its grid may lack titles; the list
+ * is re-read until the walk lands, because the walk ending without a change
+ * sends no event.
+ */
+export function useLibraries() {
+  const { data: status } = useStatus()
+  return useQuery({
+    queryKey: queryKeys.libraries,
+    queryFn: api.libraries,
+    enabled: Boolean(status?.authenticated),
+    refetchInterval: (query) =>
+      query.state.data?.libraries.some((library) => library.membershipPending) ? 3_000 : false,
+  })
+}
+
+export function useLibraryOptions(id: string | null) {
+  return useQuery({
+    queryKey: queryKeys.libraryOptions(id ?? ""),
+    queryFn: () => api.libraryOptions(id!),
+    enabled: id !== null,
+    staleTime: 30 * 60_000,
   })
 }
 
@@ -270,17 +301,18 @@ export function useBrowsePages(source: BrowseSource, pages: number[]) {
   return useQueries({
     queries: pages.map((page) => {
       const offset = page * PAGE_SIZE
-      if (source.scope === "children") {
-        return {
-          queryKey: queryKeys.childPage(source.itemId, offset, PAGE_SIZE),
-          queryFn: ({ signal }: { signal: AbortSignal }) =>
-            api.children(source.itemId, { offset, limit: PAGE_SIZE }, signal),
-        }
-      }
-      const paged = { ...source.query, limit: PAGE_SIZE, offset }
       return {
-        queryKey: queryKeys.items(paged),
-        queryFn: ({ signal }: { signal: AbortSignal }) => api.items(paged, signal),
+        queryKey: queryKeys.browsePage(source, offset, PAGE_SIZE),
+        queryFn: ({ signal }: { signal: AbortSignal }) => {
+          switch (source.scope) {
+            case "children":
+              return api.children(source.itemId, { offset, limit: PAGE_SIZE }, signal)
+            case "library":
+              return api.libraryItems(source.libraryId, source.query, offset, PAGE_SIZE, signal)
+            case "titles":
+              return api.items({ ...source.query, limit: PAGE_SIZE, offset }, signal)
+          }
+        },
       }
     }),
   })

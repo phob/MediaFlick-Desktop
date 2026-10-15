@@ -1,0 +1,75 @@
+import { useParams, useSearchParams } from "react-router-dom"
+import type { BrowseCapabilities, BrowsingPage, Library } from "@/lib/api"
+import { browsingKey, type ListingSource } from "@/lib/libraries"
+import { libraryItemQuery, libraryQuery } from "@/lib/library-filters"
+import { useLibraries } from "@/lib/queries"
+
+export type BrowseScope =
+  | { status: "loading" }
+  | { status: "failed"; error: Error; retry: () => void }
+  | { status: "missing" }
+  | {
+      status: "ready"
+      title: string
+      eyebrow: string
+      browse: BrowseCapabilities
+      /** Null on the cross-library title view. */
+      library: Library | null
+      rememberKey: BrowsingPage | null
+      source: (params: URLSearchParams) => ListingSource
+    }
+
+const KIND_TITLES: Record<string, string> = {
+  Movie: "Movies",
+  Series: "Series",
+  "Movie,Series": "Movies & Series",
+}
+
+/** `/library/:libraryId` is one library; `/library` alone is the title view across libraries. */
+export function useBrowseScope(): BrowseScope {
+  const { libraryId } = useParams<{ libraryId: string }>()
+  const [params] = useSearchParams()
+  const libraries = useLibraries()
+  const data = libraries.data
+  if (!data) {
+    return libraries.error
+      ? { status: "failed", error: libraries.error, retry: () => void libraries.refetch() }
+      : { status: "loading" }
+  }
+
+  if (libraryId === undefined) {
+    const browse = data.crossLibrary
+    const search = params.get("search") ?? ""
+    const query = libraryItemQuery(params, browse)
+    const title = search
+      ? `Results for “${search}”`
+      : params.get("favorite") === "true" && !params.has("kind")
+        ? "Favorites"
+        : KIND_TITLES[query.kind ?? ""] ?? "Library"
+    return {
+      status: "ready",
+      title,
+      eyebrow: search ? "Search" : "Library",
+      browse,
+      library: null,
+      rememberKey: null,
+      source: (current) => ({ scope: "titles", query: libraryItemQuery(current, browse) }),
+    }
+  }
+
+  const library = data.libraries.find((candidate) => candidate.id === libraryId)
+  if (!library) return data.known ? { status: "missing" } : { status: "loading" }
+  return {
+    status: "ready",
+    title: library.name,
+    eyebrow: "Library",
+    browse: library.browse,
+    library,
+    rememberKey: browsingKey(library.id),
+    source: (current) => ({
+      scope: "library",
+      libraryId: library.id,
+      query: libraryQuery(current, library.browse),
+    }),
+  }
+}

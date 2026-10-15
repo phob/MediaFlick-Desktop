@@ -77,6 +77,7 @@ export default function App() {
               <Route path="/settings/*" element={<Settings />} />
               <Route path="/" element={<Home />} />
               <Route path="/library" element={<Library />} />
+              <Route path="/library/:libraryId" element={<Library />} />
               <Route path="/collections" element={<Collections />} />
               <Route element={<CollectionModeRoute mode="mediaFlick" />}>
                 <Route path="/collections/franchises" element={<FranchiseCollections />} />

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
+import { libraryIdFromPath } from "@/lib/libraries"
 import { accountKey, useBrowsing, useStatus } from "@/lib/queries"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 
@@ -33,7 +34,7 @@ export function ViewingSync() {
       }
     }
     const route = location.pathname + location.search
-    if (!["/", "/library", "/calendar", "/discover", "/requests", "/collections"].includes(location.pathname) && !location.pathname.startsWith("/collections/")) return
+    if (!["/", "/library", "/calendar", "/discover", "/requests", "/collections"].includes(location.pathname) && !location.pathname.startsWith("/collections/") && libraryIdFromPath(location.pathname) === null) return
     const timer = window.setTimeout(() => { void api.saveBrowsing("last", route).catch(() => {}) }, 500)
     return () => window.clearTimeout(timer)
   }, [account, history.data, location.pathname, location.search, navigate, status?.authenticated, viewing.data])

@@ -1,41 +1,50 @@
-import type { ItemQuery, LibrarySortId, SeriesStatus, SortOrder, WatchFilter } from "./api"
-
-export type TitleKind = "Movie" | "Series"
-
-const BOTH_KINDS: readonly TitleKind[] = ["Movie", "Series"]
+import type {
+  BrowseCapabilities,
+  ItemQuery,
+  LibraryFilterId,
+  LibraryQuery,
+  LibrarySortId,
+  SeriesStatus,
+  SortOrder,
+  WatchFilter,
+} from "./api"
+import { isCatalogKind } from "./libraries.ts"
 
 export interface LibrarySort {
   id: LibrarySortId
   label: string
-  seriesLabel?: string
-  appliesTo: readonly TitleKind[]
+  showsLabel?: string
   natural: SortOrder
 }
 
-const NAME_SORT: LibrarySort = { id: "name", label: "Name", appliesTo: BOTH_KINDS, natural: "asc" }
-
-export const LIBRARY_SORTS: readonly LibrarySort[] = [
-  NAME_SORT,
-  { id: "year", label: "Release date", appliesTo: BOTH_KINDS, natural: "desc" },
-  { id: "added", label: "Date added", seriesLabel: "Date show added", appliesTo: BOTH_KINDS, natural: "desc" },
-  { id: "episode-added", label: "Date episode added", appliesTo: ["Series"], natural: "desc" },
-  { id: "rating", label: "Rating", appliesTo: BOTH_KINDS, natural: "desc" },
-  { id: "played", label: "Date played", appliesTo: BOTH_KINDS, natural: "desc" },
-  { id: "plays", label: "Play count", appliesTo: ["Movie"], natural: "desc" },
-  { id: "runtime", label: "Runtime", appliesTo: ["Movie"], natural: "desc" },
-  { id: "random", label: "Random", appliesTo: BOTH_KINDS, natural: "desc" },
-]
-
-export function librarySortsFor(kinds: readonly TitleKind[]) {
-  return LIBRARY_SORTS.filter((sort) => kinds.every((kind) => sort.appliesTo.includes(kind)))
+const LIBRARY_SORTS: Record<LibrarySortId, LibrarySort> = {
+  name: { id: "name", label: "Name", natural: "asc" },
+  year: { id: "year", label: "Release date", natural: "desc" },
+  added: { id: "added", label: "Date added", showsLabel: "Date show added", natural: "desc" },
+  "episode-added": { id: "episode-added", label: "Date episode added", natural: "desc" },
+  rating: { id: "rating", label: "Rating", natural: "desc" },
+  played: { id: "played", label: "Date played", natural: "desc" },
+  plays: { id: "plays", label: "Play count", natural: "desc" },
+  runtime: { id: "runtime", label: "Runtime", natural: "desc" },
+  random: { id: "random", label: "Random", natural: "desc" },
 }
 
-export function librarySortLabel(sort: LibrarySort, kinds: readonly TitleKind[]) {
-  return kinds.length === 1 && kinds[0] === "Series" && sort.seriesLabel ? sort.seriesLabel : sort.label
+export function sortsFor(capabilities: BrowseCapabilities): LibrarySort[] {
+  return capabilities.sorts.map((id) => LIBRARY_SORTS[id])
 }
 
-function librarySort(id: string | null, kinds: readonly TitleKind[]) {
-  return librarySortsFor(kinds).find((sort) => sort.id === id) ?? NAME_SORT
+/** `shows` is presentation only: a TV shows library says when the show, not an episode, arrived. */
+export function librarySortLabel(sort: LibrarySort, shows: boolean) {
+  return shows && sort.showsLabel ? sort.showsLabel : sort.label
+}
+
+function librarySort(id: string | null, capabilities: BrowseCapabilities) {
+  const sorts = sortsFor(capabilities)
+  return sorts.find((sort) => sort.id === id) ?? sorts[0] ?? LIBRARY_SORTS.name
+}
+
+export function offersFilter(capabilities: BrowseCapabilities, filter: LibraryFilterId) {
+  return capabilities.filters.includes(filter)
 }
 
 export function newShuffleSeed() {
@@ -50,10 +59,6 @@ export const WATCH_FILTERS: readonly { id: WatchFilter; label: string }[] = [
 
 export const SERIES_STATUSES: readonly SeriesStatus[] = ["Continuing", "Ended"]
 
-export function seriesStatusApplies(kinds: readonly TitleKind[]) {
-  return kinds.length === 1 && kinds[0] === "Series"
-}
-
 export const REMEMBERED_LIBRARY_PARAMS = [
   "sort",
   "order",
@@ -63,6 +68,7 @@ export const REMEMBERED_LIBRARY_PARAMS = [
   "watched",
   "parental",
   "seriesStatus",
+  "favorite",
   "filters",
 ] as const
 
@@ -104,37 +110,36 @@ function validSeed(value: string | null) {
   return value && /^\d{1,10}$/.test(value) && Number(value) <= MAX_SEED ? String(Number(value)) : ""
 }
 
-function titleKinds(value: string): TitleKind[] {
-  const kinds = value
-    .split(",")
-    .map((kind) => kind.trim())
-    .filter((kind): kind is TitleKind => kind === "Movie" || kind === "Series")
-  return [...new Set(kinds)]
-}
+/** Every filter; each one's URL parameter carries its id. */
+const LIBRARY_FILTERS: readonly LibraryFilterId[] = [
+  "genre",
+  "decade",
+  "watched",
+  "parental",
+  "seriesStatus",
+  "favorite",
+]
 
-export function libraryViewKinds(params: URLSearchParams): TitleKind[] {
-  const kinds = titleKinds(libraryKind(params))
-  return kinds.length ? kinds : [...BOTH_KINDS]
-}
-
-export function readLibraryFilters(params: URLSearchParams): LibraryFilterState {
-  const kinds = libraryViewKinds(params)
-  const sort = librarySort(params.get("sort"), kinds)
+export function readLibraryFilters(
+  params: URLSearchParams,
+  capabilities: BrowseCapabilities,
+): LibraryFilterState {
+  const offered = (filter: LibraryFilterId) => offersFilter(capabilities, filter)
+  const sort = librarySort(params.get("sort"), capabilities)
   const order = params.get("order")
   const watched = WATCH_FILTERS.find((option) => option.id === params.get("watched"))
-  const seriesStatus = seriesStatusApplies(kinds)
-    ? SERIES_STATUSES.find((status) => status === params.get("seriesStatus"))
-    : undefined
+  const seriesStatus = SERIES_STATUSES.find((status) => status === params.get("seriesStatus"))
+  const favorite = params.get("favorite") === "true" || params.get("favorite") === "1"
   return {
     sort: sort.id,
     order: order === "asc" || order === "desc" ? order : sort.natural,
     seed: sort.id === "random" ? validSeed(params.get("seed")) : "",
-    genre: params.get("genre") ?? "",
-    decade: validDecade(params.get("decade")),
-    watched: watched?.id ?? "",
-    parental: params.get("parental")?.trim() ?? "",
-    seriesStatus: seriesStatus ?? "",
-    favorite: params.get("favorite") === "true" || params.get("favorite") === "1",
+    genre: offered("genre") ? params.get("genre") ?? "" : "",
+    decade: offered("decade") ? validDecade(params.get("decade")) : "",
+    watched: offered("watched") ? watched?.id ?? "" : "",
+    parental: offered("parental") ? params.get("parental")?.trim() ?? "" : "",
+    seriesStatus: offered("seriesStatus") ? seriesStatus ?? "" : "",
+    favorite: offered("favorite") && favorite,
   }
 }
 
@@ -142,6 +147,7 @@ export function readLibraryFilters(params: URLSearchParams): LibraryFilterState 
 export function writeLibraryFilters(
   previous: URLSearchParams,
   patch: Partial<LibraryFilterState>,
+  capabilities: BrowseCapabilities,
 ) {
   const next = new URLSearchParams(previous)
   for (const [key, value] of Object.entries(patch)) {
@@ -151,41 +157,42 @@ export function writeLibraryFilters(
     else next.set(key, String(value))
   }
   if (patch.sort !== undefined && patch.order === undefined) next.delete("order")
-  const kinds = libraryViewKinds(next)
-  const sort = librarySort(next.get("sort"), kinds)
+  const sort = librarySort(next.get("sort"), capabilities)
   if (next.get("order") === sort.natural) next.delete("order")
-  if (!seriesStatusApplies(kinds)) next.delete("seriesStatus")
+  for (const filter of LIBRARY_FILTERS) {
+    if (!offersFilter(capabilities, filter)) next.delete(filter)
+  }
   if (sort.id !== "random") next.delete("seed")
   return next
 }
 
-export function libraryKind(params: URLSearchParams) {
-  if (params.get("mode") === "person") return ""
-  if (params.has("kind")) return params.get("kind") ?? ""
-  const favorite = params.get("favorite") === "true" || params.get("favorite") === "1"
-  return params.get("search") || favorite ? "" : "Movie"
-}
-
-export function libraryKindPath(kind: TitleKind) {
-  return `/library?kind=${kind}`
-}
-
-export function libraryItemQuery(params: URLSearchParams): ItemQuery {
-  const filters = readLibraryFilters(params)
+export function libraryQuery(params: URLSearchParams, capabilities: BrowseCapabilities): LibraryQuery {
+  const filters = readLibraryFilters(params, capabilities)
   return {
-    search: params.get("search") ?? "",
-    kind: titleKinds(libraryKind(params)).join(","),
     favorite: filters.favorite || undefined,
     genre: filters.genre,
     decade: filters.decade ? Number(filters.decade) : undefined,
     sort: filters.sort,
-    order: filters.order === librarySort(filters.sort, libraryViewKinds(params)).natural
+    order: filters.order === librarySort(filters.sort, capabilities).natural
       ? undefined
       : filters.order,
     seed: filters.seed ? Number(filters.seed) : undefined,
     watched: filters.watched,
     parental: filters.parental,
     seriesStatus: filters.seriesStatus,
+  }
+}
+
+/** The cross-library title view. An absent `kind` lists movies and series. */
+export function libraryItemQuery(params: URLSearchParams, capabilities: BrowseCapabilities): ItemQuery {
+  const kinds = (params.get("kind") ?? "")
+    .split(",")
+    .map((kind) => kind.trim())
+    .filter(isCatalogKind)
+  return {
+    search: params.get("search") ?? "",
+    kind: [...new Set(kinds)].join(","),
+    ...libraryQuery(params, capabilities),
   }
 }
 

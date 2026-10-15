@@ -5,11 +5,9 @@ import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from "rea
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { LibraryFilters } from "../src/components/LibraryFilters"
 import type { ItemGridProps } from "../src/components/ItemGrid"
-import {
-  libraryKindPath,
-  type LibraryFilterState,
-} from "../src/lib/library-filters"
+import type { LibraryFilterState } from "../src/lib/library-filters"
 import { queryKeys } from "../src/lib/query-client"
+import { MOVIE_BROWSE, seedSignedInLibraries } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
@@ -49,6 +47,7 @@ function setTouchInput(touch: boolean) {
 
 function Providers({ children }: { children: ReactNode }) {
   const client = testQueryClient()
+  seedSignedInLibraries(client)
   client.setQueryData(queryKeys.genres, { genres: ["Action", "Drama"] })
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
@@ -61,7 +60,8 @@ function FilterHarness({ initial = EMPTY }: { initial?: LibraryFilterState }) {
         value={filters}
         onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
         total={123}
-        kinds={["Movie"]}
+        capabilities={MOVIE_BROWSE}
+        source={{ scope: "titles", query: { kind: "Movie" } }}
       />
       <output data-filter-state>{JSON.stringify(filters)}</output>
     </>
@@ -130,7 +130,7 @@ function RouteProbe() {
       <output data-location>{location.pathname + location.search}</output>
       <button type="button" onClick={() => navigate(-1)}>Back</button>
       <button type="button" onClick={() => navigate(1)}>Forward</button>
-      <Link to={libraryKindPath("Series")}>Switch to Series</Link>
+      <Link to="/library?kind=Series">Switch to Series</Link>
     </>
   )
 }

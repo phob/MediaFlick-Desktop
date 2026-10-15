@@ -16,12 +16,18 @@ export interface DetailNavigationState {
   label: string
 }
 
-export function defaultDetailNavigationState(item: AnyItemDetail): DetailNavigationState {
-  if (item.layout === "generic") return { from: "/", label: "Back to home" }
-  return {
-    from: `/library?kind=${titleBrowseKind(item.kind)}`,
-    label: "Back to library",
-  }
+const HOME_STATE: DetailNavigationState = { from: "/", label: "Back to home" }
+
+/** Without navigation state, a title goes back to its library and anything else to Home. */
+export function defaultDetailNavigationState(
+  item: AnyItemDetail,
+  libraries: readonly Library[],
+): DetailNavigationState {
+  if (item.layout === "generic") return HOME_STATE
+  const library = libraries.find((candidate) => candidate.id === item.libraryId)
+  return library
+    ? { from: libraryPath(library.id), label: `Back to ${library.name}` }
+    : HOME_STATE
 }
 
 type LocationLike = {
@@ -30,11 +36,18 @@ type LocationLike = {
   state?: JsonValue
 }
 
-export function detailNavigationState(location: LocationLike): DetailNavigationState {
+/** `libraryName` names the library page the location shows, when it shows one. */
+export function detailNavigationState(
+  location: LocationLike,
+  libraryName: string | null = null,
+): DetailNavigationState {
   const inherited = readDetailNavigationState(location.state)
   if (location.pathname.startsWith("/item/") && inherited) return inherited
 
   const from = `${location.pathname}${location.search ?? ""}`
+  if (libraryIdFromPath(location.pathname) !== null) {
+    return { from, label: libraryName ? `Back to ${libraryName}` : "Back to library" }
+  }
   const label = location.pathname === "/"
     ? "Back to home"
     : location.pathname === "/library"
@@ -62,5 +75,5 @@ export function readDetailNavigationState(value: JsonValue | undefined): DetailN
   return { from, label }
 }
 import { isJsonObject, jsonString, type JsonValue } from "./json.ts"
-import { titleBrowseKind } from "./libraries.ts"
-import type { AnyItemDetail } from "./api/types.ts"
+import { libraryIdFromPath, libraryPath } from "./libraries.ts"
+import type { AnyItemDetail, Library } from "./api/types.ts"

@@ -16,6 +16,7 @@ import {
 import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
 import { genreRoute } from "@/lib/libraries"
 import type { DetailNavigationState } from "@/lib/navigation"
+import { useLibraries } from "@/lib/queries"
 
 function Breadcrumb({ item, navigationState }: { item: ItemDetail; navigationState: DetailNavigationState }) {
   const links: { to: string; label: string }[] = []
@@ -86,6 +87,7 @@ export function DetailHero({
   navigationState: DetailNavigationState
   children?: ReactNode
 }) {
+  const libraries = useLibraries().data?.libraries ?? []
   const episodeCode =
     item.kind === "Episode" && item.parentIndexNumber != null && item.indexNumber != null
       ? `S${item.parentIndexNumber}E${item.indexNumber}`
@@ -132,7 +134,7 @@ export function DetailHero({
       }
       genres={item.genres.map((genre) => ({
         label: genre,
-        to: genreRoute(genre, item.kind),
+        to: genreRoute(genre, item, libraries),
       }))}
       overview={
         aboutPending ? (

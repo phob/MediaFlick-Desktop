@@ -19,7 +19,7 @@ import {
   readDetailNavigationState,
   type DetailNavigationState,
 } from "@/lib/navigation"
-import { useChildren, useCollectionSettings, useItem, useItemAbout, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
+import { useChildren, useCollectionSettings, useItem, useItemAbout, useLibraries, useMediaInfo, useMovieCollection, useNextUp } from "@/lib/queries"
 import { seasonRailOrder } from "@/lib/seasons"
 
 function episodeCode(episode: ItemSummary) {
@@ -64,6 +64,7 @@ export default function ItemDetail() {
   const { data: item, isPending, error } = itemQuery
   const about = useItemAbout(id)
   const children = useChildren(id, item?.layout === "title")
+  const libraries = useLibraries()
 
   if (error && !item) return (
     <div className="p-6 sm:p-10 lg:p-14">
@@ -78,7 +79,8 @@ export default function ItemDetail() {
   if (!item) return <div className="p-6 sm:p-10 lg:p-14"><PageErrorState title="Not available" description="This is no longer available on your server." /></div>
 
   const navigationState: DetailNavigationState =
-    readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item)
+    readDetailNavigationState(location.state)
+    ?? defaultDetailNavigationState(item, libraries.data?.libraries ?? [])
   switch (item.layout) {
     case "generic":
       return <GenericItemPage key={item.id} item={item} about={about.data} navigationState={navigationState} />

@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { invalidateLibraryChanged, queryKeys } from "./query-client"
+import { invalidateLibrariesChanged, invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
 
 interface LiveChange {
@@ -45,7 +45,7 @@ export function useLibraryMetadataBridge() {
     const catalog = createThrottle(() => invalidateLibraryChanged(queryClient, [], [], "catalog"))
     const livePending = { itemIds: new Set<string>(), contextIds: new Set<string>() }
     const live = createThrottle(() => {
-      invalidateLibraryChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds], "items")
+      invalidateLibraryChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds], "live")
       livePending.itemIds.clear()
       livePending.contextIds.clear()
     })
@@ -53,6 +53,10 @@ export function useLibraryMetadataBridge() {
       const detail = readShellEvent(event)
       if (detail?.type === "jellyfin-session-expired") {
         void queryClient.invalidateQueries({ queryKey: queryKeys.status })
+        return
+      }
+      if (detail?.type === "libraries-changed") {
+        invalidateLibrariesChanged(queryClient)
         return
       }
       if (detail?.type === "collections-changed") {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  defaultDetailNavigationState,
   detailNavigationState,
   isSidebarRouteActive,
   librarySearchFromLocation,
@@ -32,6 +33,22 @@ test("detail links carry a safe, labelled return destination", () => {
       state: { from: "/calendar", label: "Back to releases" },
     }),
     { from: "/calendar", label: "Back to releases" },
+  )
+})
+
+test("a library page is named in the back link, and titles default to their library", () => {
+  const libraries = [{ id: "f137a2dd21bbc1b99aa5c0f6bf02a805", name: "Films", kind: "movies", imageTag: null, membershipPending: false, browse: { sorts: ["name"], filters: [], letterIndex: true } }]
+  assert.deepEqual(
+    detailNavigationState({ pathname: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805", search: "?sort=year" }, "Films"),
+    { from: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805?sort=year", label: "Back to Films" },
+  )
+  assert.deepEqual(
+    defaultDetailNavigationState({ layout: "title", libraryId: "f137a2dd21bbc1b99aa5c0f6bf02a805" }, libraries),
+    { from: "/library/f137a2dd21bbc1b99aa5c0f6bf02a805", label: "Back to Films" },
+  )
+  assert.deepEqual(
+    defaultDetailNavigationState({ layout: "title", libraryId: null }, libraries),
+    { from: "/", label: "Back to home" },
   )
 })
 

@@ -22,7 +22,7 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { formatRemaining, formatRuntime } from "@/lib/format"
-import { detailNavigationState } from "@/lib/navigation"
+import { useDetailNavigationState } from "@/hooks/use-detail-navigation-state"
 import { PreviewContext, createExpandedStore, type PreviewApi, type PreviewTarget } from "@/lib/preview"
 import { useItem, useNextUp, usePlay, useSetFavorite, useSetPlayed } from "@/lib/queries"
 
@@ -227,7 +227,7 @@ function PreviewPanel({
 }) {
   const { item, rect } = target
   const navigate = useNavigate()
-  const location = useLocation()
+  const detailState = useDetailNavigationState()
   const panel = useRef<HTMLDivElement>(null)
   const pointerInside = useRef(false)
   const focusInside = useRef(false)
@@ -293,7 +293,6 @@ function PreviewPanel({
   ].filter(Boolean)
 
   const detailPath = `/item/${encodeURIComponent(item.id)}`
-  const detailState = detailNavigationState(location)
   const goToDetail = () => navigate(detailPath, { state: detailState })
 
   return (

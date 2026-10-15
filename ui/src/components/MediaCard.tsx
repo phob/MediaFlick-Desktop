@@ -1,6 +1,6 @@
 import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { memo, useEffect, useId, useState } from "react"
-import { Link, useLocation } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { CardInlineActions } from "@/components/CardInlineActions"
 import { CardTechnicalReadout } from "@/components/CardTechnicalReadout"
 import { RatingOverlay } from "@/components/RatingOverlay"
@@ -14,7 +14,7 @@ import { artworkShape } from "@/lib/artwork"
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
 import { isCatalogKind } from "@/lib/libraries"
-import { detailNavigationState } from "@/lib/navigation"
+import { useDetailNavigationState } from "@/hooks/use-detail-navigation-state"
 import { cn } from "@/lib/utils"
 
 const TECHNICAL_PREFETCH_MARGIN = "160px"
@@ -77,7 +77,7 @@ export const MediaCard = memo(function MediaCard({
 }) {
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
-  const location = useLocation()
+  const navigationState = useDetailNavigationState()
   const catalogItem = isCatalogKind(item.kind)
   const { handlers, expanded, previewsEnabled } = usePreview(item, preview && catalogItem)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
@@ -116,7 +116,7 @@ export const MediaCard = memo(function MediaCard({
       >
         <Link
           to={`/item/${encodeURIComponent(item.id)}`}
-          state={detailNavigationState(location)}
+          state={navigationState}
           aria-label={`Open details for ${item.name}`}
           aria-describedby={unplayed > 0 ? unplayedId : undefined}
           className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
@@ -185,7 +185,7 @@ export const MediaCard = memo(function MediaCard({
       </div>
       <Link
         to={`/item/${encodeURIComponent(item.id)}`}
-        state={detailNavigationState(location)}
+        state={navigationState}
         className="min-w-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className="truncate text-sm font-medium transition-colors group-hover:text-primary">

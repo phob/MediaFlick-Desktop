@@ -10,7 +10,7 @@ import { ViewingSync } from "@/components/ViewingSync"
 import Library from "@/routes/Library"
 import Settings from "@/routes/Settings"
 import { TestProviders } from "./test-utils"
-import { appStatus, itemSummary, playerSnapshot } from "./support/fixtures"
+import { appStatus, itemSummary, librariesResponse, playerSnapshot, SHOWS_LIBRARY_ID } from "./support/fixtures"
 
 const queryClient = createQueryClient()
 
@@ -91,15 +91,18 @@ test.each([
   await waitFor(() => expect(screen.getByLabelText("Location").textContent).toBe(expected))
 })
 
-test("remembered Series filters take precedence over the hide-watched default", () => {
+test("a library's remembered filters take precedence over the hide-watched default", () => {
   seed({...DEFAULT_VIEWING, rememberFilters:true, hideWatched:true})
-  queryClient.setQueryData(queryKeys.browsing("server:user"), {Series:"/library?kind=Series&sort=year&watched=watched&filters=true", Movie:"/library?kind=Movie&sort=rating"})
-  queryClient.setQueryData(queryKeys.genres, {genres:[]})
+  queryClient.setQueryData(queryKeys.libraries, librariesResponse())
+  queryClient.setQueryData(queryKeys.browsing("server:user"), {
+    [`library:${SHOWS_LIBRARY_ID}`]: `/library/${SHOWS_LIBRARY_ID}?sort=year&watched=watched&filters=true`,
+    Series: "/library?kind=Series&sort=rating",
+  })
   vi.spyOn(api, "browsing").mockResolvedValue({})
-  render(<TestProviders client={queryClient} initialEntries={["/library?kind=Series"]}>
-    <Library components={{ItemGrid:({source}) => <output aria-label="Library query">{JSON.stringify(source.scope === "titles" ? source.query : null)}</output>}} />
+  render(<TestProviders client={queryClient} initialEntries={[`/library/${SHOWS_LIBRARY_ID}`]}>
+    <Routes><Route path="/library/:libraryId" element={<Library components={{ItemGrid:({source}) => <output aria-label="Library query">{JSON.stringify(source.scope === "library" ? source.query : null)}</output>}} />} /></Routes>
   </TestProviders>)
-  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({kind:"Series", sort:"year", watched:"watched"})
+  expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({sort:"year", watched:"watched"})
 })
 
 test.each([true, false])("countdown only starts another episode when one exists: %s", async (hasNext) => {
