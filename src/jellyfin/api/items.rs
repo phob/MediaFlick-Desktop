@@ -320,21 +320,21 @@ pub fn fetch_playlist_items(
 fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)> {
     let mut query = vec![
         user_query(user_id),
-        ("parentId", page.parent.as_str().to_string()),
+        ("parentId", page.parent().as_str().to_string()),
     ];
-    if let LiveShape::Recursive { item_types } = page.shape {
+    if let LiveShape::Recursive { item_types } = page.shape() {
         query.push(("Recursive", "true".to_string()));
         query.push(("IncludeItemTypes", item_types.join(",")));
     }
-    if page.favorites_only {
+    if page.favorites_only() {
         query.push(("Filters", "IsFavorite".to_string()));
     }
-    let sort_by = match page.sort {
+    let sort_by = match page.sort() {
         LiveSort::Name => "SortName",
         LiveSort::DateAdded => "DateCreated,SortName",
         LiveSort::ReleaseDate => "ProductionYear,PremiereDate,SortName",
     };
-    let sort_order = match page.direction {
+    let sort_order = match page.direction() {
         SortDirection::Ascending => "Ascending",
         SortDirection::Descending => "Descending",
     };
@@ -342,8 +342,8 @@ fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)
         ("Fields", LIVE_CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
-        ("StartIndex", page.page.offset().to_string()),
-        ("Limit", page.page.limit().to_string()),
+        ("StartIndex", page.page().offset().to_string()),
+        ("Limit", page.page().limit().to_string()),
         ("SortBy", sort_by.to_string()),
         ("SortOrder", sort_order.to_string()),
     ]);

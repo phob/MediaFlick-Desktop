@@ -47,12 +47,38 @@ pub enum LiveQuery {
 }
 
 pub struct LivePage {
-    pub parent: LibraryId,
-    pub shape: LiveShape,
-    pub sort: LiveSort,
-    pub direction: SortDirection,
-    pub favorites_only: bool,
-    pub page: ChildPage,
+    parent: LibraryId,
+    shape: LiveShape,
+    sort: LiveSort,
+    direction: SortDirection,
+    favorites_only: bool,
+    page: ChildPage,
+}
+
+impl LivePage {
+    pub fn parent(&self) -> &LibraryId {
+        &self.parent
+    }
+
+    pub fn shape(&self) -> LiveShape {
+        self.shape
+    }
+
+    pub fn sort(&self) -> LiveSort {
+        self.sort
+    }
+
+    pub fn direction(&self) -> SortDirection {
+        self.direction
+    }
+
+    pub fn favorites_only(&self) -> bool {
+        self.favorites_only
+    }
+
+    pub fn page(&self) -> ChildPage {
+        self.page
+    }
 }
 
 pub fn library_page(
