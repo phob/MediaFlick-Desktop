@@ -1,4 +1,3 @@
-import type { UseQueryResult } from "@tanstack/react-query"
 import { CastRow, CrewRow } from "@/components/detail/CastRow"
 import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHeroLayout, type HeroArtworkAspect } from "@/components/detail/DetailHeroLayout"
@@ -34,7 +33,7 @@ export function GenericItemPage({
   navigationState,
 }: {
   item: GenericItemDetail
-  about: UseQueryResult<ItemAbout>
+  about: ItemAbout | undefined
   navigationState: DetailNavigationState
 }) {
   const scroller = useRouteScroller()
@@ -80,11 +79,11 @@ export function GenericItemPage({
         </section>
       )}
 
-      <CastRow people={about.data?.people ?? []} />
-      <CrewRow people={about.data?.people ?? []} />
+      <CastRow people={about?.people ?? []} />
+      <CrewRow people={about?.people ?? []} />
 
       <div className="max-w-7xl px-6 sm:px-10 lg:px-14">
-        <DetailFacts item={item} about={about.data} />
+        <DetailFacts item={item} about={about} />
       </div>
     </div>
   )
