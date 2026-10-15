@@ -265,12 +265,9 @@ impl Library {
         })
     }
 
-    /// Every cached genre, or those of one catalog library's titles.
     pub fn genres(&self, library: Option<&LibraryId>) -> rusqlite::Result<Vec<String>> {
         self.db.with_connection(|connection| {
             let mut statement = match library {
-                // Skip-scan: each step seeks the next distinct genre in the
-                // primary key instead of walking every tagged item.
                 None => connection.prepare_cached(
                     "WITH RECURSIVE distinct_genres(genre) AS (
                          SELECT min(genre) FROM item_genres
@@ -297,8 +294,6 @@ impl Library {
         })
     }
 
-    /// The parental ratings of cached `kinds`, in one catalog library when
-    /// `library` names one.
     pub fn official_ratings(
         &self,
         kinds: &[CatalogKind],

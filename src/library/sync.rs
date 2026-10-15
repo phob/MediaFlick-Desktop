@@ -11,10 +11,6 @@
 //! (which also covers a replaced file, since Jellyfin re-creates the item with
 //! a fresh id), and in-place metadata edits are picked up by the periodic
 //! re-bootstrap instead.
-//!
-//! Each cycle also stores the server's library list and the membership of
-//! each movies or TV shows library. Those steps are best-effort: they never
-//! stop the catalog's sync or decide catalog ownership.
 
 mod cycle;
 mod libraries;
@@ -416,9 +412,6 @@ pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
     ApiError::Storage(error.to_string())
 }
 
-/// The result of a library step, whose failure must not cost the catalog its
-/// sync: only a rejected token or a cancellation stops the cycle. Any other
-/// error is logged and leaves what is stored.
 pub(super) fn best_effort<T>(
     step: &str,
     result: Result<T, ApiError>,

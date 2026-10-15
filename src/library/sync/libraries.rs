@@ -1,7 +1,3 @@
-//! The library steps of a cycle: the server's library list, and which cached
-//! titles each movies or TV shows library holds. The membership is replaced
-//! whole by an idempotent pass; item existence stays with the identity sweep.
-
 use std::collections::HashSet;
 
 use crate::jellyfin::api::{ApiError, items};
@@ -14,8 +10,6 @@ use super::{
     storage_error,
 };
 
-/// Stores the server's library list and returns it. A successful empty
-/// answer is the server's and is stored as such.
 pub(super) fn refresh_libraries(
     library: &Library,
     session: &Session,
@@ -42,13 +36,6 @@ pub(super) fn refresh_libraries(
     Ok(libraries)
 }
 
-/// Replaces the membership of each catalog library that owes its walk with
-/// the ids the server lists in it now. A library stays owed until its walk
-/// lands, so one that fails, is cut off, or ends short of the server's own
-/// count keeps its previous membership and is walked again next cycle. Any
-/// other library is still walked, except after a rate limit, which holds for
-/// the whole server and ends the pass with the rest owed too. Returns whether
-/// any membership changed.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,
@@ -76,8 +63,6 @@ pub(super) fn membership_pass(
     Ok(changed)
 }
 
-/// Whether the library's membership changed. A walk that did not list the
-/// whole library changes nothing and leaves the library owed.
 fn refresh_membership(
     library: &Library,
     session: &Session,
@@ -99,8 +84,6 @@ fn refresh_membership(
     })
 }
 
-/// `None` when the walk stopped at the page cap or ended with fewer distinct
-/// ids than the server's first page counted.
 fn member_ids(
     session: &Session,
     scope: &SessionScope,

@@ -108,7 +108,6 @@ pub fn fetch_identity_page(
     )
 }
 
-/// The libraries the user sees, in the order they arranged them in Jellyfin.
 pub fn fetch_user_views(
     client: &JellyfinClient,
     user_id: &str,
@@ -123,7 +122,6 @@ pub fn fetch_user_views(
     Ok(response.items)
 }
 
-/// One page of the ids of every `kind` item inside a library, at any depth.
 /// An item's own `ParentId` is its folder, never its library, so this walk is
 /// the only way to learn membership.
 pub fn fetch_library_member_ids(

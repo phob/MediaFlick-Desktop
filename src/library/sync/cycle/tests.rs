@@ -171,8 +171,6 @@ struct FakeJellyfin {
 }
 
 impl FakeJellyfin {
-    /// Every request target in arrival order. A request past the script
-    /// was answered 404 and is listed too.
     fn requests(self) -> Vec<String> {
         let mut stream =
             TcpStream::connect(self.url.trim_start_matches("http://")).expect("connect");
@@ -206,10 +204,8 @@ fn ok(body: &str) -> (u16, String) {
     (200, body.to_string())
 }
 
-/// A reply status that closes the connection without answering.
 const DROPPED: u16 = 0;
 const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
-/// A 200 answer with neither items nor a count, as a misbehaving proxy sends.
 const UNCOUNTED: &str = "{}";
 const NOT_JSON: &str = "not json";
 const MOVIES: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
@@ -218,7 +214,6 @@ const SHOWS: &str = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
 const MUSIC: &str = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4";
 const ONE_MOVIE: &str = r#"{"Items":[{"Id":"m1","Name":"M1","Type":"Movie","DateCreated":"2024-01-01T00:00:00Z"}],"TotalRecordCount":1}"#;
 
-/// Runs one cycle against a server that answers `replies` in order.
 fn cycle(
     library: &Arc<Library>,
     trigger: Trigger,
@@ -230,7 +225,6 @@ fn cycle(
     (result, server.requests())
 }
 
-/// What each request was for.
 fn steps(targets: &[String]) -> Vec<&str> {
     targets
         .iter()
@@ -268,7 +262,6 @@ fn members(ids: &[&str], total: usize) -> (u16, String) {
     ok(&json!({ "Items": items, "TotalRecordCount": total }).to_string())
 }
 
-/// A signed-in cache that already holds `titles` and a finished catalog.
 fn settled_library(titles: &[(&str, &str)]) -> Arc<Library> {
     let library = Arc::new(Library::open_in_memory().expect("library"));
     let dtos = titles
@@ -282,8 +275,6 @@ fn settled_library(titles: &[(&str, &str)]) -> Arc<Library> {
     library
 }
 
-/// One cycle that stores `libraries`, all movies or TV shows libraries,
-/// with the members each lists.
 fn sync_libraries(library: &Arc<Library>, libraries: &[(&str, &str, &[&str])]) {
     let listed = libraries
         .iter()
@@ -307,7 +298,6 @@ fn listed(library: &Library) -> Option<Vec<String>> {
     }
 }
 
-/// The libraries whose grid still waits for a complete membership walk.
 fn pending(library: &Library) -> Vec<String> {
     match library.libraries().expect("registry") {
         LibraryRegistry::Unknown => Vec::new(),
@@ -319,7 +309,6 @@ fn pending(library: &Library) -> Vec<String> {
     }
 }
 
-/// The cached titles a library's grid lists.
 fn grid(library: &Library, id: &str) -> Vec<String> {
     let mut ids = library
         .query(&ItemQuery {
@@ -905,8 +894,6 @@ fn a_membership_walk_that_ends_short_of_its_total_keeps_the_previous_membership(
     let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
     sync_libraries(&library, &[(MOVIES, "movies", &["m1", "m2"])]);
     let listing = || views(&[(MOVIES, "movies")]);
-    // 1,500 ids received against a total of 1,500, but the second page
-    // repeats 100 of the first, so only 1,400 are distinct.
     let first = std::iter::once("m1".to_string())
         .chain((1..1_000).map(|n| format!("x{n:04}")))
         .collect::<Vec<_>>();

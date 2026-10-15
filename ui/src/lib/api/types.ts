@@ -1188,7 +1188,6 @@ export interface ItemQuery {
   limit?: number
 }
 
-/** A Jellyfin library type, from its CollectionType. What a library can do is its `browse`. */
 export type LibraryKind =
   | "movies"
   | "shows"
@@ -1238,11 +1237,9 @@ export interface LibrariesResponse {
   known: boolean
   /** In the user's Jellyfin order. */
   libraries: Library[]
-  /** What the cross-library title views (Search, Favorites, person, genre) can run. */
   titles: BrowseCapabilities
 }
 
-/** `/api/libraries/{id}/items` and `/letters`: no kind, the library decides it. */
 export interface LibraryQuery {
   genre?: string
   decade?: number

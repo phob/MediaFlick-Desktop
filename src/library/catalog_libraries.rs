@@ -6,19 +6,11 @@ use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use super::session_store::save_meta;
 use super::{Library, now_unix};
 
-/// Set once `/UserViews` has answered for this cache, so an empty `libraries`
-/// table can tell "never read" from "the user sees no library".
 const LIBRARIES_READ_AT: &str = "sync.libraries_at";
-/// The identity sweep a removed library leaves for a later sync step. It is
-/// set in the same transaction as the removal and cleared only once the
-/// sweep's deletion pass ran, so a cycle that fails in between leaves it to
-/// the next one. A library's owed membership walk is its `membership_owed`.
 pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 
 impl Library {
     pub fn libraries(&self) -> rusqlite::Result<LibraryRegistry> {
-        // One read transaction, so a sign-out clearing both between the two
-        // reads cannot turn "never read" into "no library".
         self.db.with_transaction(|transaction| {
             let read = transaction
                 .query_row(
@@ -34,11 +26,6 @@ impl Library {
         })
     }
 
-    /// Makes `libraries`, in server order, the stored library set. Membership
-    /// of a library that is gone or not a catalog library goes with it. A
-    /// removed library owes an identity sweep and a new catalog library its
-    /// membership walk, recorded in the same transaction. Repeating it with
-    /// the same list changes nothing.
     pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
             let before = stored_libraries(transaction)?;
@@ -96,8 +83,6 @@ impl Library {
         })
     }
 
-    /// Marks every catalog library as owing its membership walk until
-    /// `replace_membership` lands one.
     pub(crate) fn owe_every_membership(&self) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
             stored_libraries(transaction)?
@@ -107,10 +92,6 @@ impl Library {
         })
     }
 
-    /// Makes `item_ids` the membership of one library and settles the walk
-    /// it owed. An empty `item_ids` keeps the stored membership, because an
-    /// empty answer is far likelier a server hiccup than an emptied library.
-    /// Returns whether the membership changed.
     pub(crate) fn replace_membership(
         &self,
         library: &LibraryId,
@@ -189,7 +170,6 @@ fn mark_owed(connection: &Connection, library: &LibraryId) -> rusqlite::Result<(
     Ok(())
 }
 
-/// Drops one library's membership, and with it any walk it owed.
 fn delete_membership(connection: &Connection, library: &LibraryId) -> rusqlite::Result<()> {
     connection.execute(
         "DELETE FROM item_libraries WHERE library_id = ?1",

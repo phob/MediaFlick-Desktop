@@ -280,7 +280,6 @@ pub struct ItemRecord {
     pub is_virtual: bool,
 }
 
-/// The Jellyfin item types the catalog caches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogKind {
     Movie,
@@ -291,7 +290,6 @@ pub enum CatalogKind {
 
 impl CatalogKind {
     pub const ALL: [Self; 4] = [Self::Movie, Self::Series, Self::Season, Self::Episode];
-    /// What a query that names no kind returns: titles a card can represent.
     pub const TOP_LEVEL: [Self; 2] = [Self::Movie, Self::Series];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -307,7 +305,6 @@ impl CatalogKind {
         }
     }
 
-    /// Jellyfin's comma-separated `IncludeItemTypes` form.
     pub fn wire_list(kinds: &[Self]) -> String {
         kinds
             .iter()
@@ -317,8 +314,6 @@ impl CatalogKind {
     }
 }
 
-/// A catalog kind a card can represent, and so the one a catalog library's
-/// grid lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TitleKind {
     Movie,
@@ -338,13 +333,10 @@ pub(crate) fn is_synced_kind(kind: &str) -> bool {
     CatalogKind::parse(kind).is_some()
 }
 
-/// The kinds a cached query returns. `TopLevel` is the default, so a query
-/// that names no kind cannot return seasons or episodes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum KindFilter {
     #[default]
     TopLevel,
-    /// A first kind and the rest, so the list is never empty.
     Only {
         first: CatalogKind,
         rest: Vec<CatalogKind>,
@@ -359,7 +351,6 @@ impl KindFilter {
         }
     }
 
-    /// `TopLevel` when `kinds` is empty.
     pub fn from_kinds(kinds: Vec<CatalogKind>) -> Self {
         let mut kinds = kinds.into_iter();
         match kinds.next() {
