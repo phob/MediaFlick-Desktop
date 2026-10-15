@@ -810,9 +810,7 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
         }
     };
     if let Some(generic) = browse::generic_detail(&dto) {
-        if !services.session.scope_is_current(&scope) {
-            return Err(stale_account_response());
-        }
+        still_signed_in(services, &scope)?;
         return Ok(ApiResponse::ok(DetailView::Generic(generic)));
     }
     let title = services.session.commit_if_current(
@@ -827,6 +825,15 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
         }
         Err(DetailError::AccountChanged) => Err(stale_account_response()),
         Err(DetailError::Storage(error)) => Err(storage_failure(&error)),
+    }
+}
+
+/// Refuses an answer fetched for an account that has since signed out.
+fn still_signed_in(services: &Services, scope: &SessionScope) -> Result<(), ApiResponse> {
+    if services.session.scope_is_current(scope) {
+        Ok(())
+    } else {
+        Err(stale_account_response())
     }
 }
 
@@ -944,16 +951,15 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
             browse::catalog_children_page(children, page)
         }
         ChildrenSource::Live => {
-            tracing::debug!(target: "library.browse", item_id, paged = page.is_some(), "served a container's children from the server");
             let scope = session_scope(services)?;
+            let paged = page.is_some();
             let page = page.unwrap_or_default();
             let (offset, limit) = (page.offset(), page.limit());
             let response =
                 items::fetch_live_children(scope.client(), scope.user_id(), item_id, offset, limit)
                     .map_err(|error| scoped_failure(services, &scope, &error))?;
-            if !services.session.scope_is_current(&scope) {
-                return Err(stale_account_response());
-            }
+            still_signed_in(services, &scope)?;
+            tracing::debug!(target: "library.browse", item_id, paged, "fetched a container's children from the server");
             browse::live_children_page(&response)
         }
     };
