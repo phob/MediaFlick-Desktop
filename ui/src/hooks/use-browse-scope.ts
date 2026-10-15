@@ -13,7 +13,6 @@ export type BrowseScope =
       title: string
       eyebrow: string
       browse: BrowseCapabilities
-      /** Null on the cross-library title view. */
       library: Library | null
       source: (params: URLSearchParams) => ListingSource
     }
@@ -24,7 +23,6 @@ const KIND_TITLES: Record<string, string> = {
   "Movie,Series": "Movies & Series",
 }
 
-/** `/library/:libraryId` is one library; `/library` alone is the title view across libraries. */
 export function useBrowseScope(): BrowseScope {
   const { libraryId } = useParams<{ libraryId: string }>()
   const [params] = useSearchParams()

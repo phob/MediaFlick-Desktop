@@ -47,8 +47,6 @@ const FILTER_IDS = [
 ]
 const CARD = 'a[aria-label^="Open details for "]'
 const PREVIEW_LINK = '.preview-panel a[aria-label^="Open details for "]'
-// Observes the UI's own browsing saves, so the drive knows a save was made
-// before it compares accounts.json. It never sends one.
 const SAVE_OBSERVER = `(() => {
   if (window.__browsingSaves) return
   window.__browsingSaves = []
@@ -62,9 +60,6 @@ const SAVE_OBSERVER = `(() => {
     return response
   }
 })()`
-// Holds the page's /api/libraries requests while sessionStorage asks for it,
-// so one reload can be checked with the library list deterministically
-// unavailable. __releaseLibraries() lets the held requests through.
 const LIBRARIES_HOLD = `(() => {
   if (window.__libraryHolds) return
   window.__libraryHolds = []

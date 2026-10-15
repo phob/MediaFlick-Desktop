@@ -1264,7 +1264,6 @@ export interface LibrariesResponse {
   crossLibrary: BrowseCapabilities
 }
 
-/** A remembered page in `/api/settings/browsing`. Files may still hold legacy `Movie` and `Series` pages, which nothing reads. */
 export type BrowsingPage = "last" | `library:${string}`
 
 export interface LibraryQuery {

@@ -71,7 +71,6 @@ export interface ItemGridProps {
   scroller: HTMLElement | null
   onTotal?: (total: number | null) => void
   empty?: string
-  /** An unfiltered library grid whose membership walk is pending, so no titles does not mean empty yet. */
   filling?: boolean
   ref?: Ref<ItemGridHandle>
 }

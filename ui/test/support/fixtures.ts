@@ -186,7 +186,6 @@ export function librariesResponse(): LibrariesResponse {
   }
 }
 
-/** A signed-in account whose library list, viewing settings and remembered pages are already loaded. */
 export function seedSignedInLibraries(client: QueryClient, browsing: Record<string, string> = {}) {
   client.setQueryData(queryKeys.status, appStatus({ authenticated: true, serverUrl: "server", userId: "user" }))
   client.setQueryData(queryKeys.viewing("server:user"), DEFAULT_VIEWING)

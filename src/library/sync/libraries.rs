@@ -50,8 +50,6 @@ pub(super) fn refresh_libraries(
     Ok(LibraryList { libraries, changed })
 }
 
-/// Merges each library's walk into `walked` as it lands, so a later library
-/// that fails the pass cannot take back what earlier ones stored.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,

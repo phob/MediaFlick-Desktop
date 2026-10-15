@@ -20,8 +20,6 @@ impl Library {
         })
     }
 
-    /// Returns whether the listed libraries changed: added, removed, renamed,
-    /// reordered or of another kind, or read for the first time.
     pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<bool> {
         self.db.with_transaction(|transaction| {
             let first_read = !libraries_read(transaction)?;
@@ -160,12 +158,9 @@ impl Library {
     }
 }
 
-/// What written membership walks did, for one library or a whole pass.
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct MembershipReplaced {
-    /// A library owed its walk and no longer does.
     pub(crate) settled: bool,
-    /// A title joined or left a library.
     pub(crate) changed: bool,
 }
 

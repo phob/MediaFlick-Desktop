@@ -193,12 +193,6 @@ type LibraryChangeScope = "library" | "catalog" | "items" | "live"
 
 const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
 
-/**
- * Which grids a change can reach. A title grid naming a person reads that
- * person's filmography live from Jellyfin, so cache batches never refresh it.
- * Live library grids cannot be matched to a changed id, so every live change
- * refreshes every active library grid; the catalog ones answer from SQLite.
- */
 const LIBRARY_CHANGE_REFRESHES: Record<
   LibraryChangeScope,
   {
@@ -256,17 +250,12 @@ export function invalidateLibraryChanged(
   })
 }
 
-/** The account's library list changed: the sidebar and Home read it. */
 export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries })
   void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
 }
 
-/**
- * A membership walk landed, so a library no longer reports one as pending.
- * Walks can land every cycle, so only the list is re-read, never Home.
- */
 export function invalidateLibraryMemberships(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries, exact: true })
 }

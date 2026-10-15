@@ -32,7 +32,6 @@ export function sortsFor(capabilities: BrowseCapabilities): LibrarySort[] {
   return capabilities.sorts.map((id) => LIBRARY_SORTS[id])
 }
 
-/** `shows` is presentation only: a TV shows library says when the show, not an episode, arrived. */
 export function librarySortLabel(sort: LibrarySort, shows: boolean) {
   return shows && sort.showsLabel ? sort.showsLabel : sort.label
 }
@@ -109,7 +108,6 @@ function validSeed(value: string | null) {
   return value && /^\d{1,10}$/.test(value) && Number(value) <= MAX_SEED ? String(Number(value)) : ""
 }
 
-/** Every filter; each one's URL parameter carries its id. */
 const LIBRARY_FILTERS: readonly LibraryFilterId[] = [
   "genre",
   "decade",
@@ -184,7 +182,6 @@ export function libraryQuery(params: URLSearchParams, capabilities: BrowseCapabi
 
 const TITLE_VIEW_KINDS: ReadonlySet<string> = new Set(["Movie", "Series"])
 
-/** The cross-library title view. `kind` narrows it to movies or series; absent, it lists both. */
 export function libraryItemQuery(params: URLSearchParams, capabilities: BrowseCapabilities): ItemQuery {
   const kinds = (params.get("kind") ?? "")
     .split(",")

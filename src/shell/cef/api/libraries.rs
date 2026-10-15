@@ -32,8 +32,6 @@ fn libraries(services: &Arc<Services>) -> Handled {
         LibraryRegistry::Unknown => (false, [].as_slice()),
         LibraryRegistry::Known(libraries) => (true, libraries.as_slice()),
     };
-    // A catalog library's titles are still arriving until the catalog
-    // download completes, even once its membership walk has settled.
     let downloading = !sync::bootstrap_progress(&services.library).complete;
     let libraries = libraries
         .iter()

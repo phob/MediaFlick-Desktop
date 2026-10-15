@@ -249,7 +249,6 @@ fn saving_a_route_a_page_already_holds_leaves_the_file_alone() {
     service
         .save_browsing(&alice, &page, &route)
         .expect("library");
-    // Trailing whitespace keeps the file valid, and any rewrite drops it.
     let mark = || {
         let mut bytes = std::fs::read(&path).expect("read account settings");
         bytes.extend_from_slice(b"\n\n");

@@ -13,9 +13,6 @@ use super::{AppearanceSettings, ViewingSettings};
 
 const MAX_HOME_ELEMENTS: usize = 512;
 const MAX_BROWSING_PAGES: usize = 256;
-/// Pages from before libraries had their own route. A file may still hold
-/// them; nothing writes them, and the account's next save of a library's
-/// filters drops them.
 const LEGACY_BROWSING_PAGES: [&str; 2] = ["Movie", "Series"];
 const PREFERRED_HOME_GENRES: [&str; 12] = [
     "Action",
@@ -749,7 +746,6 @@ fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> 
         .ok_or_else(|| invalid_data("invalid browsing destination"))
 }
 
-/// Legacy `Movie` and `Series` pages still load, but nothing saves them again.
 fn validate_stored_browsing(page: &str, route: &str) -> io::Result<()> {
     if LEGACY_BROWSING_PAGES.contains(&page) && route_fits(None, route) {
         return Ok(());
@@ -757,8 +753,6 @@ fn validate_stored_browsing(page: &str, route: &str) -> io::Result<()> {
     validate_browsing_route(page, route).map(drop)
 }
 
-/// A route is an app path with or without a query string; a library page's
-/// route is its own `/library/<id>`.
 fn route_fits(own_library: Option<&LibraryId>, route: &str) -> bool {
     let (path, _query) = route.split_once('?').unwrap_or((route, ""));
     let library = path

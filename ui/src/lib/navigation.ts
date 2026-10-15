@@ -18,13 +18,11 @@ export interface DetailNavigationState {
 
 const HOME_STATE: DetailNavigationState = { from: "/", label: "Back to home" }
 
-/** The list only names the library; a list that has not loaded still leads back to it. */
 function backToLibrary(id: string, libraries: readonly Library[]) {
   const name = libraries.find((library) => library.id === id)?.name
   return name ? `Back to ${name}` : "Back to library"
 }
 
-/** Without navigation state, a title goes back to its library and anything else to Home. */
 export function defaultDetailNavigationState(
   item: AnyItemDetail,
   libraries: readonly Library[],

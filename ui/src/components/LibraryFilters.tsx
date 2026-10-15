@@ -77,7 +77,6 @@ interface LibraryFiltersProps {
   total: number | null
   capabilities: BrowseCapabilities
   source: ListingSource
-  /** A TV shows library: "Date added" reads "Date show added". */
   shows?: boolean
 }
 

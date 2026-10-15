@@ -54,8 +54,6 @@ pub(super) fn run_cycle_inner(
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
-        // The list reports every catalog library as pending until the catalog
-        // download is complete.
         walked.settled |=
             downloading && meta(library, META_BOOTSTRAP_DONE)?.as_deref() == Some("1");
         cancelled(control, session, &scope)?;
@@ -106,7 +104,6 @@ pub(super) fn run_cycle_inner(
     let succeeded = result.is_ok();
     let completed = succeeded
         && (initial_catalog || report.changed() || recovering_ownership || walked.changed);
-    // Before a rejected token expires the session, which would silence it.
     announce(session, &scope, control, |control| {
         if succeeded && recovering_ownership {
             control.shell().collections_changed();
@@ -221,9 +218,6 @@ fn sweep_identity(
     Ok(deletion_ran)
 }
 
-/// Announces a changed list as soon as it is stored, so the sidebar does not
-/// wait for the catalog download behind it. Returns whether the server lists
-/// no catalog library.
 fn list_libraries(
     library: &Library,
     session: &Session,
@@ -243,8 +237,6 @@ fn list_libraries(
     Ok(listed.lists_no_catalog_library())
 }
 
-/// A cycle whose account has since signed out must not refresh the pages of
-/// the account that replaced it.
 fn announce(
     session: &Session,
     scope: &SessionScope,

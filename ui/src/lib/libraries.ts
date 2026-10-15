@@ -28,7 +28,6 @@ export type BrowseSource =
   | { scope: "library"; libraryId: string; query: LibraryQuery }
   | { scope: "children"; itemId: string }
 
-/** A grid the user sorts and filters: a library, or titles across libraries. */
 export type ListingSource = Exclude<BrowseSource, { scope: "children" }>
 
 const catalogKinds: ReadonlySet<string> = new Set(CATALOG_KINDS)
@@ -79,7 +78,6 @@ export function firstLibraryOf(libraries: readonly Library[], kind: LibraryKind)
   return libraries.find((library) => library.kind === kind) ?? null
 }
 
-/** A title page's genre chip: the title's own movies or TV shows library, which filters by genre, else every title. */
 export function genreRoute(genre: string, item: ItemDetail) {
   const params = new URLSearchParams({ genre })
   return item.libraryId ? libraryPath(item.libraryId, params) : `/library?${params}`

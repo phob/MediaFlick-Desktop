@@ -20,7 +20,6 @@ const SYNC_WAIT_MS = 120000
 const SETTLE_MS = 2000
 const CARD = 'a[aria-label^="Open details for "]'
 const PREVIEW_LINK = '.preview-panel a[aria-label^="Open details for "]'
-// Counts the page's own /api/libraries requests. It never sends one.
 const LIBRARIES_REQUESTS = `(() => {
   if (window.__librariesRequests) return
   window.__librariesRequests = []
@@ -51,9 +50,6 @@ const sidebarLibraries = (ctx) => ctx.app.evaluate(`(() => {
 
 const librariesRequests = (ctx) => ctx.app.evaluate("window.__librariesRequests.slice()")
 
-// Reads the page's React Query cache through the React root: every failed
-// query, and the state of each library list and library options query. It
-// changes nothing.
 const queryCache = (ctx) => ctx.app.evaluate(`(() => {
   const root = document.getElementById("root")
   const stack = [root[Object.keys(root).find((key) => key.startsWith("__reactContainer$"))]]
@@ -97,11 +93,6 @@ async function openLibrary(ctx, library) {
   await ctx.park()
 }
 
-// Opens the movies or TV shows library holding the fewest titles while the
-// first catalog download runs, then samples /api/libraries and that grid
-// until the download is complete and the grid shows titles. app.log is read
-// after each answer, so a sample counts as taken before the download finished
-// only if it really was.
 async function watchFirstFill(ctx) {
   const { libraries } = (await ctx.api("/api/libraries")).body
   const catalog = libraries.filter(isCatalog)
@@ -249,9 +240,6 @@ export default async function librariesChanged(ctx) {
     return cycle
   }
 
-  // Each announcement invalidates the list once, and an invalidation that
-  // lost its query function sends no request at all. The count is taken
-  // SETTLE_MS after it reached the expected value, so an extra read fails too.
   const expectOneReadPerAnnouncement = (cycle) => expect(
     cycle.requests.length === cycle.changed + cycle.settled && cycle.requests.every((request) => request.status === 200),
     `${cycle.label}: ${SETTLE_MS} ms after the sync, the page had read /api/libraries exactly once per announcement (${cycle.changed} changed + ${cycle.settled} settled, requests ${JSON.stringify(cycle.requests)})`,
