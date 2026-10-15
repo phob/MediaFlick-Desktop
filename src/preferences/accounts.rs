@@ -7,10 +7,15 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::app::ids::valid_opaque_id;
 use crate::integrations::letterboxd::{ExternalProfile, MAX_CONNECTED_PROFILES};
+use crate::library::libraries::LibraryId;
 
 use super::{AppearanceSettings, ViewingSettings};
 
 const MAX_HOME_ELEMENTS: usize = 512;
+const MAX_BROWSING_PAGES: usize = 256;
+/// Pages from before libraries had their own route. A file may still hold
+/// them; nothing writes them, and the account's next browsing save drops them.
+const LEGACY_BROWSING_PAGES: [&str; 2] = ["Movie", "Series"];
 const PREFERRED_HOME_GENRES: [&str; 12] = [
     "Action",
     "Comedy",
@@ -393,11 +398,14 @@ impl AccountConfigurationService {
     }
 
     pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
+        if BrowsingPage::parse(page).is_none() {
+            return Err(invalid_data("invalid browsing destination"));
+        }
         validate_browsing_route(page, route)?;
         self.mutate(|document| {
-            account_mut(document, key)
-                .browsing
-                .insert(page.to_string(), route.to_string());
+            let browsing = &mut account_mut(document, key).browsing;
+            browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
+            browsing.insert(page.to_string(), route.to_string());
             Ok(())
         })
     }
@@ -659,6 +667,11 @@ fn validate_document(document: &mut AccountConfigurationFile) -> io::Result<()> 
         }
         account.appearance.sanitize();
         account.viewing.validate()?;
+        if account.browsing.len() > MAX_BROWSING_PAGES {
+            return Err(invalid_data(
+                "account configuration remembers too many browsing pages",
+            ));
+        }
         for (page, route) in &account.browsing {
             validate_browsing_route(page, route)?;
         }
@@ -695,11 +708,29 @@ fn scrub_backup(path: &Path) -> io::Result<()> {
     replace_backup_with_primary(path)
 }
 
+enum BrowsingPage {
+    Last,
+    Library(LibraryId),
+}
+
+impl BrowsingPage {
+    fn parse(page: &str) -> Option<Self> {
+        if page == "last" {
+            return Some(Self::Last);
+        }
+        canonical_library_id(page.strip_prefix("library:")?).map(Self::Library)
+    }
+}
+
+fn canonical_library_id(raw: &str) -> Option<LibraryId> {
+    LibraryId::parse(raw).filter(|id| id.as_str() == raw)
+}
+
 fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
     let path = route.split('?').next().unwrap_or(route);
-    if !["last", "Movie", "Series"].contains(&page)
-        || route.len() > 2048
-        || !([
+    let library = path.strip_prefix("/library/").map(canonical_library_id);
+    let app_route = library.as_ref().is_some_and(Option::is_some)
+        || [
             "/",
             "/calendar",
             "/library",
@@ -708,8 +739,14 @@ fn validate_browsing_route(page: &str, route: &str) -> io::Result<()> {
             "/collections",
         ]
         .contains(&path)
-            || path.starts_with("/collections/"))
-    {
+        || path.starts_with("/collections/");
+    let valid = route.len() <= 2048
+        && match BrowsingPage::parse(page) {
+            Some(BrowsingPage::Last) => app_route,
+            Some(BrowsingPage::Library(id)) => library == Some(Some(id)),
+            None => LEGACY_BROWSING_PAGES.contains(&page) && app_route,
+        };
+    if !valid {
         return Err(invalid_data("invalid browsing destination"));
     }
     Ok(())
