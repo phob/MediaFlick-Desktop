@@ -245,7 +245,7 @@ async function newestCachedIds(ctx, kind) {
 }
 
 function servedChildrenLive(log, id) {
-  return log.split("\n").filter((line) => line.includes("served a container's children from the server") && line.includes(`item_id="${id}"`))
+  return log.split("\n").filter((line) => line.includes("fetched a container's children from the server") && line.includes(`item_id="${id}"`))
 }
 
 async function uncachedTitle(ctx, expect, userId) {
