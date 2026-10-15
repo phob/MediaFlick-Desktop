@@ -1,12 +1,13 @@
 use serde::Serialize;
 
+use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
 use super::model::is_synced_kind;
 use super::{
-    CatalogKind, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
-    KindFilter, Library, TitleDetail, TitleKind,
+    CatalogKind, DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
+    ItemSummary, KindFilter, Library, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -141,8 +142,7 @@ pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<Chi
         .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
 }
 
-/// One page of a container's children: the children route's only paging
-/// bounds.
+/// One page of a container's children, as the children route bounds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildPage {
     offset: i64,
@@ -150,9 +150,6 @@ pub struct ChildPage {
 }
 
 impl ChildPage {
-    const DEFAULT_LIMIT: i64 = 60;
-    const MAX_LIMIT: i64 = 200;
-
     /// `None` when the request names neither: a cached series or season then
     /// answers with every child, as the season browser asks. A limit outside
     /// `1..=200` is clamped.
@@ -166,8 +163,8 @@ impl ChildPage {
         Ok(Some(Self {
             offset: offset.unwrap_or(0),
             limit: limit
-                .unwrap_or(Self::DEFAULT_LIMIT)
-                .clamp(1, Self::MAX_LIMIT),
+                .unwrap_or(DEFAULT_PAGE_SIZE)
+                .clamp(1, items::LIVE_CHILDREN_PAGE_SIZE),
         }))
     }
 
@@ -184,7 +181,7 @@ impl Default for ChildPage {
     fn default() -> Self {
         Self {
             offset: 0,
-            limit: Self::DEFAULT_LIMIT,
+            limit: DEFAULT_PAGE_SIZE,
         }
     }
 }

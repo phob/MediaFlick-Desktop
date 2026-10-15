@@ -1,10 +1,8 @@
-use crate::library::DetailView;
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError};
 use crate::library::libraries::FilterKey;
+use crate::library::{DEFAULT_PAGE_SIZE, DetailView};
 
 use super::*;
-
-const DEFAULT_PAGE_LIMIT: i64 = 60;
 
 pub(super) fn route(
     services: &Arc<Services>,
@@ -650,7 +648,7 @@ pub(super) fn library_query(
         )?,
         offset: param(request, params, "offset", |value| value.parse::<i64>().ok())?.unwrap_or(0),
         limit: param(request, params, "limit", |value| value.parse::<i64>().ok())?
-            .unwrap_or(DEFAULT_PAGE_LIMIT),
+            .unwrap_or(DEFAULT_PAGE_SIZE),
         ..ItemQuery::default()
     })
 }
