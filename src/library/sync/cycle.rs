@@ -514,7 +514,7 @@ enum IdentityAnswer {
     Incomplete,
     Listed,
     EmptyCountingZero,
-    EmptyUncounted,
+    EmptyNotCountedZero,
 }
 
 #[derive(Clone, Copy)]
@@ -534,7 +534,9 @@ fn sweep_verdict(
     now: u64,
 ) -> SweepVerdict {
     match answer {
-        IdentityAnswer::Incomplete | IdentityAnswer::EmptyUncounted => SweepVerdict::ForgetEmpty,
+        IdentityAnswer::Incomplete | IdentityAnswer::EmptyNotCountedZero => {
+            SweepVerdict::ForgetEmpty
+        }
         IdentityAnswer::Listed => SweepVerdict::Delete,
         IdentityAnswer::EmptyCountingZero if no_catalog_library => SweepVerdict::Delete,
         IdentityAnswer::EmptyCountingZero => match observed_at.and_then(|at| now.checked_sub(at)) {
@@ -634,7 +636,7 @@ fn walk_identity(
     } else if counted_zero {
         IdentityAnswer::EmptyCountingZero
     } else {
-        IdentityAnswer::EmptyUncounted
+        IdentityAnswer::EmptyNotCountedZero
     };
     Ok(IdentityWalk {
         refreshed,
