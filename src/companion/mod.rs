@@ -370,6 +370,13 @@ impl CompanionSession {
     fn fallback_calendar(&self, start: &str, end: &str) -> Result<Value, ApiError> {
         let (client, user_id) = self.session.client_and_user()?;
         let response = items::fetch_upcoming(&client, &user_id, 500)?;
+        // A failed cache read only leaves the entry without its link.
+        let cached_kind = |item_id: &str| {
+            self.library.catalog_kind(item_id).unwrap_or_else(|error| {
+                tracing::warn!(target: "companion", item_id, "could not read a cached item kind: {error}");
+                None
+            })
+        };
         let entries = response
             .items
             .iter()
@@ -378,15 +385,10 @@ impl CompanionSession {
                 if date < start || date > end {
                     return None;
                 }
-                // A failed cache read only leaves the entry without its link.
-                let library_item_id = matches!(self.library.catalog_kind(&item.id), Ok(Some(_)))
-                    .then(|| item.id.clone());
+                let library_item_id = cached_kind(&item.id).is_some().then(|| item.id.clone());
                 let series_library_item_id = item.series_id.as_ref().and_then(|series_id| {
-                    matches!(
-                        self.library.catalog_kind(series_id),
-                        Ok(Some(CatalogKind::Series))
-                    )
-                    .then(|| series_id.clone())
+                    matches!(cached_kind(series_id), Some(CatalogKind::Series))
+                        .then(|| series_id.clone())
                 });
                 Some(json!({
                     "kind": "episode",
