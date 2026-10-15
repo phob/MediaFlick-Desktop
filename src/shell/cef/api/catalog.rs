@@ -938,6 +938,7 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
             browse::catalog_children_page(children, page)
         }
         ChildrenSource::Live => {
+            tracing::debug!(target: "library.browse", item_id, paged = page.is_some(), "served a container's children from the server");
             let scope = session_scope(services)?;
             let page = page.unwrap_or_default();
             let (offset, limit) = (page.offset(), page.limit());
