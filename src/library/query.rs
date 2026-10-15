@@ -5,6 +5,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, Row, params, params_from_iter};
 use serde_json::{Value, json};
 
+use super::libraries::LibraryId;
 use super::{
     CatalogKind, ItemDetail, ItemPage, ItemQuery, ItemSummary, Library, LibraryStats, ProviderIds,
     TmdbCandidate, WatchFilter,
@@ -264,39 +265,63 @@ impl Library {
         })
     }
 
-    pub fn genres(&self) -> rusqlite::Result<Vec<String>> {
-        // Skip-scan: each step seeks the next distinct genre in the primary key
-        // instead of walking every tagged item.
+    /// Every cached genre, or those of one catalog library's titles.
+    pub fn genres(&self, library: Option<&LibraryId>) -> rusqlite::Result<Vec<String>> {
         self.db.with_connection(|connection| {
-            let mut statement = connection.prepare_cached(
-                "WITH RECURSIVE distinct_genres(genre) AS (
-                     SELECT min(genre) FROM item_genres
-                     UNION ALL
-                     SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
-                     FROM distinct_genres previous WHERE previous.genre IS NOT NULL
-                 )
-                 SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
-                 ORDER BY genre COLLATE NOCASE ASC",
-            )?;
+            let mut statement = match library {
+                // Skip-scan: each step seeks the next distinct genre in the
+                // primary key instead of walking every tagged item.
+                None => connection.prepare_cached(
+                    "WITH RECURSIVE distinct_genres(genre) AS (
+                         SELECT min(genre) FROM item_genres
+                         UNION ALL
+                         SELECT (SELECT min(genre) FROM item_genres WHERE genre > previous.genre)
+                         FROM distinct_genres previous WHERE previous.genre IS NOT NULL
+                     )
+                     SELECT genre FROM distinct_genres WHERE genre IS NOT NULL
+                     ORDER BY genre COLLATE NOCASE ASC",
+                )?,
+                Some(_) => connection.prepare_cached(
+                    "SELECT DISTINCT g.genre FROM item_libraries l
+                     JOIN items i ON i.jellyfin_id = l.item_id
+                     JOIN item_genres g ON g.item_id = i.id
+                     WHERE l.library_id = ?1
+                     ORDER BY g.genre COLLATE NOCASE ASC",
+                )?,
+            };
+            let library = library.map(LibraryId::as_str);
             let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))?
+                .query_map(params_from_iter(library), |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
     }
 
-    pub fn official_ratings(&self, kinds: &[CatalogKind]) -> rusqlite::Result<Vec<String>> {
+    /// The parental ratings of cached `kinds`, in one catalog library when
+    /// `library` names one.
+    pub fn official_ratings(
+        &self,
+        kinds: &[CatalogKind],
+        library: Option<&LibraryId>,
+    ) -> rusqlite::Result<Vec<String>> {
         let mut ratings = self.db.with_connection(|connection| {
             let placeholders = vec!["?"; kinds.len()].join(", ");
+            let in_library = if library.is_some() {
+                " AND EXISTS (SELECT 1 FROM item_libraries l
+                     WHERE l.library_id = ? AND l.item_id = items.jellyfin_id)"
+            } else {
+                ""
+            };
             let mut statement = connection.prepare(&format!(
                 "SELECT DISTINCT official_rating FROM items
-                 WHERE official_rating <> '' AND kind IN ({placeholders})"
+                 WHERE official_rating <> '' AND kind IN ({placeholders}){in_library}"
             ))?;
+            let arguments = kinds
+                .iter()
+                .map(|kind| kind.as_str())
+                .chain(library.map(LibraryId::as_str));
             let rows = statement
-                .query_map(
-                    params_from_iter(kinds.iter().map(|kind| kind.as_str())),
-                    |row| row.get::<_, String>(0),
-                )?
+                .query_map(params_from_iter(arguments), |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })?;
@@ -611,7 +636,7 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
     (from_clause, where_clause, arguments)
 }
 
-pub(super) fn natural_order(left: &str, right: &str) -> Ordering {
+fn natural_order(left: &str, right: &str) -> Ordering {
     fn chunks(text: &str) -> impl Iterator<Item = (bool, String)> + '_ {
         let mut rest = text;
         std::iter::from_fn(move || {
@@ -947,7 +972,7 @@ mod tests {
             ])
             .expect("seed");
         assert_eq!(
-            library.genres().expect("genres"),
+            library.genres(None).expect("genres"),
             vec!["Action", "drama"],
             "ordered case-insensitively, without empty names"
         );
@@ -957,7 +982,10 @@ mod tests {
                 r#"{"Id":"a","Name":"A","Type":"Movie","Genres":["Comedy"]}"#,
             )])
             .expect("retag");
-        assert_eq!(library.genres().expect("genres"), vec!["Action", "Comedy"]);
+        assert_eq!(
+            library.genres(None).expect("genres"),
+            vec!["Action", "Comedy"]
+        );
         let action = library
             .query(&ItemQuery {
                 genre: Some("Action".to_string()),
@@ -969,7 +997,7 @@ mod tests {
         assert_eq!(action.items[0].id, "b");
 
         library.forget("b").expect("forget");
-        assert_eq!(library.genres().expect("genres"), vec!["Comedy"]);
+        assert_eq!(library.genres(None).expect("genres"), vec!["Comedy"]);
     }
 
     #[test]

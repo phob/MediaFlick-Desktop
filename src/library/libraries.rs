@@ -262,12 +262,3 @@ pub enum LibraryRegistry {
     Unknown,
     Known(Vec<MediaLibrary>),
 }
-
-impl LibraryRegistry {
-    pub fn get(&self, id: &LibraryId) -> Option<&MediaLibrary> {
-        match self {
-            Self::Unknown => None,
-            Self::Known(libraries) => libraries.iter().find(|library| library.id == *id),
-        }
-    }
-}

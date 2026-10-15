@@ -1,7 +1,11 @@
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::library::libraries::FilterKey;
+
 use super::*;
+
+const DEFAULT_PAGE_LIMIT: i64 = 60;
 
 pub(super) fn route(
     services: &Arc<Services>,
@@ -17,7 +21,7 @@ pub(super) fn route(
         ["billboard"] if request.is("GET") => billboard(services),
         ["items"] if request.is("GET") => query_items(services, request),
         ["items", "letters"] if request.is("GET") => item_letters(services, request),
-        ["genres"] if request.is("GET") => Ok(match services.library.genres() {
+        ["genres"] if request.is("GET") => Ok(match services.library.genres(None) {
             Ok(genres) => ApiResponse::ok(json!({ "genres": genres })),
             Err(error) => storage_failure(&error),
         }),
@@ -80,7 +84,7 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         .ok_or_else(|| ApiResponse::error(401, "sign in to configure Home"))?;
     let genres = services
         .library
-        .genres()
+        .genres(None)
         .map_err(|error| storage_failure(&error))?;
     let profiles = services.collections.account(&account).profiles;
     let readiness = services.companion.cached_collection_readiness();
@@ -540,17 +544,7 @@ fn query_items(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         return query_person_items(services, &person_id, request);
     }
 
-    let query = ItemQuery {
-        offset: request
-            .param("offset")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(0),
-        limit: request
-            .param("limit")
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(60),
-        ..library_query(request)?
-    };
+    let query = library_query(request)?;
     match services.library.query(&query) {
         Ok(page) => Ok(ApiResponse::ok(
             json!({ "items": page.items, "total": page.total }),
@@ -580,7 +574,7 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         })
         .filter(|kinds| !kinds.is_empty())
         .unwrap_or_else(|| CatalogKind::TOP_LEVEL.to_vec());
-    match services.library.official_ratings(&kinds) {
+    match services.library.official_ratings(&kinds, None) {
         Ok(ratings) => Ok(ApiResponse::ok(json!({ "officialRatings": ratings }))),
         Err(error) => Err(storage_failure(&error)),
     }
@@ -611,40 +605,86 @@ fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
 }
 
 fn library_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
-    let seed = request.param("seed").and_then(|value| value.parse().ok());
     Ok(ItemQuery {
         search: request.param("search"),
         kinds: kind_filter(request)?,
-        genre: request.param("genre"),
-        release_decade: request
-            .param("decade")
-            .as_deref()
-            .and_then(crate::library::release_decade_from_id),
-        watched: request
-            .param("watched")
-            .as_deref()
-            .and_then(WatchFilter::from_id),
-        favorite: request
-            .param("favorite")
-            .map(|value| value == "true" || value == "1"),
+        ..item_query(request, Params::Lenient)?
+    })
+}
+
+/// What an item list does with a parameter that is present but invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Params {
+    /// Ignore it, as `/api/items` always has.
+    Lenient,
+    /// Answer 400, so a route never answers a different question than the
+    /// one asked.
+    Strict,
+}
+
+/// The sort, filters and page of an item list. The caller supplies kinds,
+/// search and library scope.
+pub(super) fn item_query(request: &ApiRequest, params: Params) -> Result<ItemQuery, ApiResponse> {
+    let seed = param(request, params, "seed", |value| value.parse::<u32>().ok())?;
+    Ok(ItemQuery {
+        sort: param(request, params, "sort", |value| {
+            ItemSort::from_id(value, seed)
+        })?
+        .unwrap_or_default(),
+        direction: param(request, params, "order", SortDirection::from_id)?,
+        genre: request.param(FilterKey::Genre.id()),
+        release_decade: param(
+            request,
+            params,
+            FilterKey::Decade.id(),
+            crate::library::release_decade_from_id,
+        )?,
+        watched: param(
+            request,
+            params,
+            FilterKey::Watched.id(),
+            WatchFilter::from_id,
+        )?,
+        favorite: param(
+            request,
+            params,
+            FilterKey::Favorite.id(),
+            |value| match value {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            },
+        )?,
         official_rating: request
-            .param("parental")
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        series_status: request
-            .param("seriesStatus")
-            .as_deref()
-            .and_then(SeriesStatus::from_id),
-        sort: request
-            .param("sort")
-            .and_then(|value| ItemSort::from_id(&value, seed))
-            .unwrap_or_default(),
-        direction: request
-            .param("order")
-            .as_deref()
-            .and_then(SortDirection::from_id),
+            .param(FilterKey::Parental.id())
+            .map(|value| value.trim().to_string()),
+        series_status: param(
+            request,
+            params,
+            FilterKey::SeriesStatus.id(),
+            SeriesStatus::from_id,
+        )?,
+        offset: param(request, params, "offset", |value| value.parse::<i64>().ok())?.unwrap_or(0),
+        limit: param(request, params, "limit", |value| value.parse::<i64>().ok())?
+            .unwrap_or(DEFAULT_PAGE_LIMIT),
         ..ItemQuery::default()
     })
+}
+
+pub(super) fn param<T>(
+    request: &ApiRequest,
+    params: Params,
+    key: &str,
+    parse: impl FnOnce(&str) -> Option<T>,
+) -> Result<Option<T>, ApiResponse> {
+    let Some(value) = request.param(key) else {
+        return Ok(None);
+    };
+    match (parse(&value), params) {
+        (Some(parsed), _) => Ok(Some(parsed)),
+        (None, Params::Lenient) => Ok(None),
+        (None, Params::Strict) => Err(ApiResponse::error(400, format!("invalid {key} {value:?}"))),
+    }
 }
 
 fn query_person_items(services: &Arc<Services>, person_id: &str, request: &ApiRequest) -> Handled {

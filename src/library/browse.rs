@@ -2,81 +2,15 @@
 //! route. Only the catalog tier is served so far; a live library answers
 //! [`BrowseError::LiveLibrary`].
 
-use super::libraries::{BrowseCapabilities, FilterKey, LibraryId};
-use super::{
-    FilterOptions, ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, SeriesStatus,
-    SortDirection, TitleKind, WatchFilter,
-};
+use serde::Serialize;
 
-const CATALOG_PAGE_LIMIT: i64 = 500;
-
-/// [`ItemQuery`]'s sort and filters without `search`, `kinds` or `library`:
-/// on a library route the library supplies those.
-#[derive(Debug, Clone, Default)]
-pub struct BrowseQuery {
-    pub sort: ItemSort,
-    pub direction: Option<SortDirection>,
-    pub genre: Option<String>,
-    /// Inclusive first year of a standard ten-year release decade.
-    pub release_decade: Option<i64>,
-    pub watched: Option<WatchFilter>,
-    pub official_rating: Option<String>,
-    pub series_status: Option<SeriesStatus>,
-    pub favorite: Option<bool>,
-    pub offset: i64,
-    pub limit: i64,
-}
-
-impl BrowseQuery {
-    fn check(&self, browse: &BrowseCapabilities) -> Result<(), BrowseError> {
-        let sort = self.sort.key();
-        if !browse.sorts.contains(&sort) {
-            return Err(BrowseError::Unsupported(format!(
-                "this library cannot sort by {}",
-                sort.id()
-            )));
-        }
-        let filters = [
-            (self.genre.is_some(), FilterKey::Genre),
-            (self.release_decade.is_some(), FilterKey::Decade),
-            (self.watched.is_some(), FilterKey::Watched),
-            (self.official_rating.is_some(), FilterKey::Parental),
-            (self.series_status.is_some(), FilterKey::SeriesStatus),
-            (self.favorite.is_some(), FilterKey::Favorite),
-        ];
-        match filters
-            .into_iter()
-            .find(|(set, filter)| *set && !browse.filters.contains(filter))
-        {
-            Some((_, filter)) => Err(BrowseError::Unsupported(format!(
-                "this library cannot filter by {}",
-                filter.id()
-            ))),
-            None => Ok(()),
-        }
-    }
-
-    fn catalog_query(&self, library: &LibraryId, title: TitleKind) -> ItemQuery {
-        ItemQuery {
-            search: None,
-            kinds: KindFilter::one(title),
-            library: Some(library.clone()),
-            genre: self.genre.clone(),
-            release_decade: self.release_decade,
-            watched: self.watched,
-            favorite: self.favorite,
-            official_rating: self.official_rating.clone(),
-            series_status: self.series_status,
-            sort: self.sort,
-            direction: self.direction,
-            offset: self.offset.max(0),
-            limit: self.limit.clamp(1, CATALOG_PAGE_LIMIT),
-        }
-    }
-}
+use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
+use super::{ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, TitleKind};
 
 #[derive(Debug)]
 pub enum BrowseError {
+    /// The server's library list has not been read into this cache yet.
+    NotLoaded,
     /// Not one of this account's libraries.
     UnknownLibrary,
     /// A sort or filter outside the library's capabilities.
@@ -92,29 +26,47 @@ impl From<rusqlite::Error> for BrowseError {
     }
 }
 
+/// The genre and parental rating choices of one library's titles.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterOptions {
+    pub genres: Vec<String>,
+    pub official_ratings: Vec<String>,
+}
+
+/// One page of a library's grid. `query`'s kinds, search and library are the
+/// library's own, whatever the caller set.
 pub fn library_page(
     library: &Library,
     id: &LibraryId,
-    query: &BrowseQuery,
+    query: &ItemQuery,
 ) -> Result<ItemPage, BrowseError> {
-    let (title, browse) = catalog_library(library, id)?;
-    query.check(browse)?;
-    Ok(library.query(&query.catalog_query(id, title))?)
+    let entry = registered(library, id)?;
+    let query = catalog_query(&entry, query)?;
+    Ok(library.query(&query)?)
 }
 
 pub fn library_letters(
     library: &Library,
     id: &LibraryId,
-    query: &BrowseQuery,
+    query: &ItemQuery,
 ) -> Result<Vec<(String, i64)>, BrowseError> {
-    let (title, browse) = catalog_library(library, id)?;
-    query.check(browse)?;
-    Ok(library.letter_index(&query.catalog_query(id, title))?)
+    let entry = registered(library, id)?;
+    if !entry.kind().profile().browse.letter_index {
+        return Err(BrowseError::Unsupported(
+            "this library has no letter index".to_string(),
+        ));
+    }
+    let query = catalog_query(&entry, query)?;
+    Ok(library.letter_index(&query)?)
 }
 
 pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOptions, BrowseError> {
-    catalog_library(library, id)?;
-    Ok(library.library_filter_options(id)?)
+    let title = catalog_title(&registered(library, id)?)?;
+    Ok(FilterOptions {
+        genres: library.genres(Some(id))?,
+        official_ratings: library.official_ratings(&[title.into()], Some(id))?,
+    })
 }
 
 /// "Latest in <library>": movies by date added, shows by their newest episode.
@@ -123,7 +75,7 @@ pub fn latest(
     id: &LibraryId,
     limit: i64,
 ) -> Result<Vec<ItemSummary>, BrowseError> {
-    let (title, _) = catalog_library(library, id)?;
+    let title = catalog_title(&registered(library, id)?)?;
     let sort = match title {
         TitleKind::Movie => ItemSort::DateAdded,
         TitleKind::Series => ItemSort::EpisodeAdded,
@@ -137,12 +89,55 @@ pub fn latest(
     })?)
 }
 
-fn catalog_library(
-    library: &Library,
-    id: &LibraryId,
-) -> Result<(TitleKind, &'static BrowseCapabilities), BrowseError> {
-    let registry = library.libraries()?;
-    let entry = registry.get(id).ok_or(BrowseError::UnknownLibrary)?;
-    let title = entry.catalog_title().ok_or(BrowseError::LiveLibrary)?;
-    Ok((title, entry.kind().profile().browse))
+fn registered(library: &Library, id: &LibraryId) -> Result<MediaLibrary, BrowseError> {
+    let LibraryRegistry::Known(libraries) = library.libraries()? else {
+        return Err(BrowseError::NotLoaded);
+    };
+    libraries
+        .into_iter()
+        .find(|entry| entry.id == *id)
+        .ok_or(BrowseError::UnknownLibrary)
+}
+
+fn catalog_title(entry: &MediaLibrary) -> Result<TitleKind, BrowseError> {
+    entry.catalog_title().ok_or(BrowseError::LiveLibrary)
+}
+
+fn catalog_query(entry: &MediaLibrary, query: &ItemQuery) -> Result<ItemQuery, BrowseError> {
+    let title = catalog_title(entry)?;
+    check(query, entry.kind().profile().browse)?;
+    Ok(ItemQuery {
+        search: None,
+        kinds: KindFilter::one(title),
+        library: Some(entry.id.clone()),
+        ..query.clone()
+    })
+}
+
+fn check(query: &ItemQuery, browse: &BrowseCapabilities) -> Result<(), BrowseError> {
+    let sort = query.sort.key();
+    if !browse.sorts.contains(&sort) {
+        return Err(BrowseError::Unsupported(format!(
+            "this library cannot sort by {}",
+            sort.id()
+        )));
+    }
+    let filters = [
+        (query.genre.is_some(), FilterKey::Genre),
+        (query.release_decade.is_some(), FilterKey::Decade),
+        (query.watched.is_some(), FilterKey::Watched),
+        (query.official_rating.is_some(), FilterKey::Parental),
+        (query.series_status.is_some(), FilterKey::SeriesStatus),
+        (query.favorite.is_some(), FilterKey::Favorite),
+    ];
+    match filters
+        .into_iter()
+        .find(|(set, filter)| *set && !browse.filters.contains(filter))
+    {
+        Some((_, filter)) => Err(BrowseError::Unsupported(format!(
+            "this library cannot filter by {}",
+            filter.id()
+        ))),
+        None => Ok(()),
+    }
 }
