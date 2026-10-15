@@ -25,6 +25,7 @@ import { useBrowseScope, type BrowseScope } from "@/hooks/use-browse-scope"
 import { LibraryPageName } from "@/hooks/use-detail-navigation-state"
 import { libraryPath, type BrowseSource } from "@/lib/libraries"
 import {
+  activeLibraryFilterCount,
   offersFilter,
   readLibraryFilters,
   REMEMBERED_LIBRARY_PARAMS,
@@ -317,7 +318,7 @@ function BrowsePage({
                 source={source}
                 scroller={gridScroller}
                 onTotal={setTotal}
-                filling={library?.membershipPending ?? false}
+                filling={Boolean(library?.membershipPending) && !castPerson && activeLibraryFilterCount(filters) === 0}
                 empty={
                   castPerson
                     ? `No Jellyfin titles credit ${personName}.`

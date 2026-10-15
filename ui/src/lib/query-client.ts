@@ -262,3 +262,11 @@ export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
   void client.invalidateQueries({ queryKey: ["viewing"] })
 }
+
+/**
+ * A membership walk landed, so a library no longer reports one as pending.
+ * Walks can land every cycle, so only the list is re-read, never Home.
+ */
+export function invalidateLibraryMemberships(client: QueryClient) {
+  void client.invalidateQueries({ queryKey: queryKeys.libraries, exact: true })
+}

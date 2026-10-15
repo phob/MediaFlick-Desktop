@@ -245,10 +245,8 @@ export function useBrowseLetters(source: ListingSource, enabled = true) {
 }
 
 /**
- * The sidebar's library list and every grid's capabilities. While a movies or
- * TV shows library's membership walk runs, its grid may lack titles; the list
- * is re-read until the walk lands, because the walk ending without a change
- * sends no event.
+ * The sidebar's library list and every grid's capabilities. The native
+ * `libraries-changed` and `library-memberships-settled` events re-read it.
  */
 export function useLibraries() {
   const { data: status } = useStatus()
@@ -256,8 +254,6 @@ export function useLibraries() {
     queryKey: queryKeys.libraries,
     queryFn: api.libraries,
     enabled: Boolean(status?.authenticated),
-    refetchInterval: (query) =>
-      query.state.data?.libraries.some((library) => library.membershipPending) ? 3_000 : false,
   })
 }
 
