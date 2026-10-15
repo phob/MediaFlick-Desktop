@@ -7,7 +7,9 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
-use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT};
+use crate::library::browse::{LivePage, LiveQuery, LiveSort};
+use crate::library::libraries::LiveShape;
+use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT, SortDirection};
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
@@ -272,6 +274,73 @@ pub fn fetch_live_children(
         "/Items",
         &live_children_query(user_id, parent_id, start_index, limit),
     )
+}
+
+fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)> {
+    let mut query = vec![
+        user_query(user_id),
+        ("parentId", page.parent.as_str().to_string()),
+    ];
+    if let LiveShape::Recursive { item_types } = page.shape {
+        query.push(("Recursive", "true".to_string()));
+        query.push(("IncludeItemTypes", item_types.join(",")));
+    }
+    if page.favorites_only {
+        query.push(("Filters", "IsFavorite".to_string()));
+    }
+    let sort_by = match page.sort {
+        LiveSort::Name => "SortName",
+        LiveSort::DateAdded => "DateCreated,SortName",
+        LiveSort::ReleaseDate => "ProductionYear,PremiereDate,SortName",
+    };
+    let sort_order = match page.direction {
+        SortDirection::Ascending => "Ascending",
+        SortDirection::Descending => "Descending",
+    };
+    query.extend([
+        ("Fields", LIVE_CHILD_FIELDS.to_string()),
+        ("EnableUserData", "true".to_string()),
+        ("EnableImages", "true".to_string()),
+        ("StartIndex", page.offset.max(0).to_string()),
+        (
+            "Limit",
+            page.limit.clamp(1, MAX_CHILD_PAGE_LIMIT).to_string(),
+        ),
+        ("SortBy", sort_by.to_string()),
+        ("SortOrder", sort_order.to_string()),
+    ]);
+    query
+}
+
+/// A live library grid page or its Latest shelf. `/Items/Latest` answers a
+/// bare array, so its total is the number of items it returned.
+pub fn fetch_live(
+    client: &JellyfinClient,
+    user_id: &str,
+    query: &LiveQuery,
+) -> Result<ItemsResponse, ApiError> {
+    match query {
+        LiveQuery::Page(page) => client.get_json("/Items", &live_page_query(user_id, page)),
+        LiveQuery::Latest { parent, limit } => {
+            let items: Vec<BaseItemDto> = client.get_json(
+                "/Items/Latest",
+                &[
+                    user_query(user_id),
+                    ("parentId", parent.as_str().to_string()),
+                    ("Fields", LIVE_CHILD_FIELDS.to_string()),
+                    ("EnableUserData", "true".to_string()),
+                    ("EnableImages", "true".to_string()),
+                    ("GroupItems", "true".to_string()),
+                    ("Limit", limit.to_string()),
+                ],
+            )?;
+            Ok(ItemsResponse {
+                total_record_count: i64::try_from(items.len()).unwrap_or(i64::MAX),
+                items,
+                start_index: 0,
+            })
+        }
+    }
 }
 
 pub const ABOUT_FIELDS: &str = "Overview,Tags,Studios,People,CriticRating";

@@ -55,14 +55,19 @@ impl LibraryKind {
     }
 
     pub fn profile(self) -> LibraryProfile {
+        use LiveLatest::{Grouped, Newest};
+        let recursive = |item_types: &'static [&'static str]| LiveShape::Recursive { item_types };
         match self {
             Self::Movies => LibraryProfile::catalog(TitleKind::Movie, &MOVIE_BROWSE),
             Self::Shows => LibraryProfile::catalog(TitleKind::Series, &SHOW_BROWSE),
-            Self::Music | Self::MusicVideos | Self::Books | Self::BoxSets | Self::Trailers => {
-                LibraryProfile::live(&LIVE_RECURSIVE_BROWSE)
-            }
-            Self::HomeVideos | Self::Photos | Self::Playlists | Self::LiveTv | Self::Mixed => {
-                LibraryProfile::live(&LIVE_FOLDER_BROWSE)
+            Self::Music => LibraryProfile::live(recursive(&["MusicAlbum"]), Grouped),
+            Self::MusicVideos => LibraryProfile::live(recursive(&["MusicVideo"]), Grouped),
+            Self::Books => LibraryProfile::live(recursive(&["Book", "AudioBook"]), Grouped),
+            Self::BoxSets => LibraryProfile::live(recursive(&["BoxSet"]), Newest),
+            Self::Trailers => LibraryProfile::live(recursive(&["Trailer"]), Grouped),
+            Self::HomeVideos | Self::Photos => LibraryProfile::live(LiveShape::Folder, Grouped),
+            Self::Playlists | Self::LiveTv | Self::Mixed => {
+                LibraryProfile::live(LiveShape::Folder, Newest)
             }
         }
     }
@@ -81,17 +86,44 @@ impl LibraryProfile {
         }
     }
 
-    const fn live(browse: &'static BrowseCapabilities) -> Self {
+    const fn live(shape: LiveShape, latest: LiveLatest) -> Self {
         Self {
-            grid: GridSource::Live,
-            browse,
+            grid: GridSource::Live { shape, latest },
+            browse: match shape {
+                LiveShape::Recursive { .. } => &LIVE_RECURSIVE_BROWSE,
+                LiveShape::Folder => &LIVE_FOLDER_BROWSE,
+            },
         }
     }
 }
 
 pub enum GridSource {
-    Catalog { title: TitleKind },
-    Live,
+    Catalog {
+        title: TitleKind,
+    },
+    Live {
+        shape: LiveShape,
+        latest: LiveLatest,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveShape {
+    /// Every item of these Jellyfin types anywhere under the library.
+    Recursive { item_types: &'static [&'static str] },
+    /// The library's direct children, folders included, browsed one level at a time.
+    Folder,
+}
+
+/// Where "Latest in <library>" comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveLatest {
+    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
+    Grouped,
+    /// The library's own grid, newest first. `/Items/Latest` answers nothing
+    /// for box sets and playlists, and jellyfin-web leaves Live TV and folder
+    /// libraries out of its Latest shelves.
+    Newest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +263,7 @@ impl MediaLibrary {
     pub fn catalog_title(&self) -> Option<TitleKind> {
         match self.kind().profile().grid {
             GridSource::Catalog { title } => Some(title),
-            GridSource::Live => None,
+            GridSource::Live { .. } => None,
         }
     }
 }

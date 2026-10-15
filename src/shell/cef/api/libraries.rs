@@ -1,7 +1,8 @@
-use crate::library::browse::{self, BrowseError};
+use crate::library::ItemPage;
+use crate::library::browse::{self, BrowseError, Grid};
 use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry};
 
-use super::catalog::{Params, library_query, param};
+use super::catalog::{Params, library_query, param, still_signed_in};
 use super::*;
 
 const LATEST_LIMIT: i64 = 40;
@@ -54,8 +55,9 @@ fn libraries(services: &Arc<Services>) -> Handled {
 
 fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let query = library_query(request, Params::Strict)?;
-    let page = browse::library_page(&services.library, &library_id(id)?, &query)
+    let grid = browse::library_page(&services.library, &library_id(id)?, &query)
         .map_err(browse_failure)?;
+    let page = answer(services, grid)?;
     Ok(ApiResponse::ok(
         json!({ "items": page.items, "total": page.total }),
     ))
@@ -82,9 +84,22 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     })?
     .unwrap_or(HOME_ROW_LIMIT)
     .clamp(1, LATEST_LIMIT);
-    let items =
+    let grid =
         browse::latest(&services.library, &library_id(id)?, limit).map_err(browse_failure)?;
-    Ok(ApiResponse::ok(json!({ "items": items })))
+    let page = answer(services, grid)?;
+    Ok(ApiResponse::ok(json!({ "items": page.items })))
+}
+
+fn answer(services: &Arc<Services>, grid: Grid) -> Result<ItemPage, ApiResponse> {
+    let query = match grid {
+        Grid::Cached(page) => return Ok(page),
+        Grid::Live(query) => query,
+    };
+    let scope = session_scope(services)?;
+    let response = items::fetch_live(scope.client(), scope.user_id(), &query)
+        .map_err(|error| scoped_failure(services, &scope, &error))?;
+    still_signed_in(services, &scope)?;
+    Ok(browse::live_page(&response))
 }
 
 fn library_id(segment: &str) -> Result<LibraryId, ApiResponse> {
@@ -102,9 +117,6 @@ fn browse_failure(error: BrowseError) -> ApiResponse {
             ApiResponse::error(404, "that is not one of this account's libraries")
         }
         BrowseError::Unsupported(message) => ApiResponse::error(400, message),
-        BrowseError::LiveLibrary => {
-            ApiResponse::error(501, "this version cannot browse this kind of library yet")
-        }
         BrowseError::Storage(error) => storage_failure(&error),
     }
 }

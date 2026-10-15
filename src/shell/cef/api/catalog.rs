@@ -830,7 +830,10 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     }
 }
 
-fn still_signed_in(services: &Services, scope: &SessionScope) -> Result<(), ApiResponse> {
+pub(super) fn still_signed_in(
+    services: &Services,
+    scope: &SessionScope,
+) -> Result<(), ApiResponse> {
     if services.session.scope_is_current(scope) {
         Ok(())
     } else {
@@ -961,7 +964,7 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
                     .map_err(|error| scoped_failure(services, &scope, &error))?;
             still_signed_in(services, &scope)?;
             tracing::debug!(target: "library.browse", item_id, paged, "fetched a container's children from the server");
-            browse::live_children_page(&response)
+            browse::live_page(&response)
         }
     };
     Ok(ApiResponse::ok(
