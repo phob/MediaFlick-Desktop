@@ -47,16 +47,19 @@ export function imageUrl(
   return `/api/image/${encodeURIComponent(item.id)}/${type}${queryString({ maxWidth, tag })}`
 }
 
-export function backdropUrl(item: ItemDetail, maxWidth = BACKDROP_WIDTH) {
+export function backdropUrl(
+  item: Pick<ItemSummary, "id" | "kind" | "seriesId" | "backdropImageTag">,
+  maxWidth = BACKDROP_WIDTH,
+) {
   if (!item.backdropImageTag) return null
   // Jellyfin supplies a series' backdrop tag as ParentBackdropImageTags on
   // seasons and episodes. That image still belongs to the series item: asking
   // the child id for the inherited tag produces a 404 from the image endpoint.
-  const imageOwner =
+  const ownerId =
     (item.kind === "Season" || item.kind === "Episode") && item.seriesId
-      ? { id: item.seriesId, primaryImageTag: null }
-      : item
-  return imageUrl(imageOwner, "Backdrop", maxWidth, item.backdropImageTag)
+      ? item.seriesId
+      : item.id
+  return imageUrl({ id: ownerId, primaryImageTag: null }, "Backdrop", maxWidth, item.backdropImageTag)
 }
 
 /**

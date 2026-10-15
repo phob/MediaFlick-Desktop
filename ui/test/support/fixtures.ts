@@ -29,6 +29,7 @@ export function itemSummary(
     positionTicks: 0,
     favorite: false,
     unplayedCount: null,
+    primaryAspect: null,
     ...rest,
   }
 }
@@ -38,11 +39,13 @@ export function itemDetail(
 ): ItemDetail {
   return {
     ...itemSummary(overrides),
+    layout: "title",
     genres: [],
     originalTitle: null,
     providerIds: { tmdb: null, imdb: null, tvdb: null },
     parentId: null,
     dateCreated: null,
+    libraryId: null,
     ...overrides,
   }
 }

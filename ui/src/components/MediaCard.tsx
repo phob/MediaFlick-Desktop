@@ -12,10 +12,13 @@ import {
 } from "@/lib/api"
 import { formatRemaining } from "@/lib/format"
 import { usePreview } from "@/lib/preview"
+import { isCatalogKind } from "@/lib/libraries"
 import { detailNavigationState } from "@/lib/navigation"
 import { cn } from "@/lib/utils"
 
 const TECHNICAL_PREFETCH_MARGIN = "160px"
+/** Art at least this wide for its height (album covers, photos) is shown whole in the 2:3 frame. */
+const SQUARE_ART_ASPECT = 0.8
 
 /**
  * Horizontal shelves mount every card so they can scroll smoothly, including
@@ -76,7 +79,10 @@ export const MediaCard = memo(function MediaCard({
   const protectedEpisode = useSpoilerProtection(originalItem)
   const item = protectedEpisode ? concealEpisode(originalItem) : originalItem
   const location = useLocation()
-  const { handlers, expanded, previewsEnabled } = usePreview(item, preview)
+  // Ratings, the preview and Play, Favorite and Watched serve movies and shows
+  // only; other items get a plain card into their details page.
+  const isTitle = isCatalogKind(item.kind)
+  const { handlers, expanded, previewsEnabled } = usePreview(item, preview && isTitle)
   const { observe: observeTechnical, visible: technicalVisible } = useTechnicalVisibility()
   const progress = progressFraction(item)
   const subtitle = subtitleFor(item)
@@ -132,14 +138,17 @@ export const MediaCard = memo(function MediaCard({
               // shelf keeps its rhythm while the pointer runs along it.
               decoding="async"
               onError={() => setImageIndex((current) => current + 1)}
-              className="media-artwork-image h-full w-full object-cover"
+              className={cn(
+                "media-artwork-image h-full w-full",
+                !landscape && (item.primaryAspect ?? 0) >= SQUARE_ART_ASPECT ? "object-contain" : "object-cover",
+              )}
             />
           ) : (
             <span className="flex h-full w-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
               {item.name}
             </span>
           )}
-          <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />
+          {isTitle && <RatingOverlay item={item} topRightOccupied={Boolean(ribbon) || unplayed > 0} />}
           {(ribbon || unplayed > 0) && (
             <div className="absolute top-0 right-0 z-[4] flex flex-col items-end gap-px">
               {ribbon && (
@@ -175,7 +184,7 @@ export const MediaCard = memo(function MediaCard({
             </div>
           )}
         </Link>
-        {!previewsEnabled && <CardInlineActions item={item} />}
+        {isTitle && !previewsEnabled && <CardInlineActions item={item} />}
       </div>
       <Link
         to={`/item/${encodeURIComponent(item.id)}`}

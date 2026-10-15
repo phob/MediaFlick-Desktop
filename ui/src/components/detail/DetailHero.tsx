@@ -14,6 +14,7 @@ import {
   type ItemDetail,
 } from "@/lib/api"
 import { formatCommunityRating, formatRuntime, formatYearOnly } from "@/lib/format"
+import { genreRoute } from "@/lib/libraries"
 import type { DetailNavigationState } from "@/lib/navigation"
 
 function Breadcrumb({ item, navigationState }: { item: ItemDetail; navigationState: DetailNavigationState }) {
@@ -45,11 +46,6 @@ function Breadcrumb({ item, navigationState }: { item: ItemDetail; navigationSta
       ))}
     </nav>
   )
-}
-
-function genreHref(genre: string, kind: string) {
-  const browseKind = kind === "Movie" ? "Movie" : "Series"
-  return `/library?kind=${browseKind}&genre=${encodeURIComponent(genre)}`
 }
 
 function JellyfinRatings({ item, about }: { item: ItemDetail; about?: ItemAbout }) {
@@ -136,7 +132,7 @@ export function DetailHero({
       }
       genres={item.genres.map((genre) => ({
         label: genre,
-        to: genreHref(genre, item.kind),
+        to: genreRoute(genre, item.kind),
       }))}
       overview={
         aboutPending ? (

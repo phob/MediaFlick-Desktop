@@ -42,6 +42,7 @@ import {
 import { useSidebar } from "@/components/ui/sidebar-context"
 import { useLiveSearch } from "@/hooks/use-live-search"
 import { api } from "@/lib/api"
+import { titleBrowseKind } from "@/lib/libraries"
 import { libraryKind, libraryKindPath } from "@/lib/library-filters"
 import { useLocalDate } from "@/lib/local-date"
 import { isSidebarRouteActive, librarySearchFromLocation, readDetailNavigationState } from "@/lib/navigation"
@@ -290,10 +291,9 @@ export function AppSidebar({ onUserMenuOpenChange, ...props }: AppSidebarProps =
       && originUrl?.searchParams.get("favorite") === "true"
       && !originUrl.searchParams.has("kind")
     ) return true
-    if (title === "Movies") return detail.data?.kind === "Movie"
-    if (title === "Series") {
-      return detail.data != null && detail.data.kind !== "Movie"
-    }
+    if (detail.data?.layout !== "title") return false
+    if (title === "Movies") return titleBrowseKind(detail.data.kind) === "Movie"
+    if (title === "Series") return titleBrowseKind(detail.data.kind) === "Series"
     return false
   }
   const { data: companion } = useCompanion()

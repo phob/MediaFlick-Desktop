@@ -49,6 +49,7 @@ function summary(id: string, name: string): ItemSummary {
     positionTicks: 0,
     favorite: false,
     unplayedCount: null,
+    primaryAspect: null,
   }
 }
 
