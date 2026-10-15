@@ -404,6 +404,14 @@ impl AccountConfigurationService {
             BrowsingPage::Library(_) => true,
             BrowsingPage::Legacy => return Err(invalid_data("invalid browsing destination")),
         };
+        let stored = self.browsing(key);
+        let prune_due = prunes_legacy
+            && LEGACY_BROWSING_PAGES
+                .iter()
+                .any(|legacy| stored.contains_key(*legacy));
+        if !prune_due && stored.get(page).is_some_and(|saved| saved == route) {
+            return Ok(());
+        }
         self.mutate(|document| {
             let browsing = &mut account_mut(document, key).browsing;
             if prunes_legacy {
