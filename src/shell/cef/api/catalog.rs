@@ -973,18 +973,13 @@ fn live_children(
     let fail = |error: ApiError| scoped_failure(services, &scope, &error);
     let paged = page.is_some();
     let page = page.unwrap_or_default();
-    let source = match services.children_sources.get(scope.generation(), item_id) {
+    let remembered = services.children_sources.get(scope.generation(), item_id);
+    let source = match remembered {
         Some(source) => source,
-        None => {
-            let item_type = items::fetch_item_type(client, user_id, item_id)
-                .map_err(fail)?
-                .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?;
-            let source = ChildrenSource::of(&item_type);
-            services
-                .children_sources
-                .remember(scope.generation(), item_id, source);
-            source
-        }
+        None => items::fetch_item_type(client, user_id, item_id)
+            .map_err(fail)?
+            .map(|item_type| ChildrenSource::of(&item_type))
+            .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?,
     };
     let children = match source {
         ChildrenSource::Folder => {
@@ -996,6 +991,11 @@ fn live_children(
     }
     .map_err(fail)?;
     still_signed_in(services, &scope)?;
+    if remembered.is_none() {
+        services
+            .children_sources
+            .remember(scope.generation(), item_id, source);
+    }
     tracing::debug!(target: "library.browse", item_id, paged, ?source, "fetched a container's children from the server");
     Ok(children)
 }
