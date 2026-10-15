@@ -268,7 +268,7 @@ function BrowsePage({
           total={total}
           capabilities={browse}
           source={listing}
-          shows={library?.kind === "shows"}
+          tvShowsLibrary={library?.kind === "shows"}
         />
       )}
       {castPerson && (
@@ -314,7 +314,7 @@ function BrowsePage({
                 source={source}
                 scroller={gridScroller}
                 onTotal={setTotal}
-                filling={Boolean(library?.membershipPending) && !castPerson && activeLibraryFilterCount(filters) === 0}
+                emptyIsPending={Boolean(library?.membershipPending) && !castPerson && activeLibraryFilterCount(filters) === 0}
                 empty={
                   castPerson
                     ? `No Jellyfin titles credit ${personName}.`

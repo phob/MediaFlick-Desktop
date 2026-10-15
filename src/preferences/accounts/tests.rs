@@ -249,14 +249,14 @@ fn saving_a_route_a_page_already_holds_leaves_the_file_alone() {
     service
         .save_browsing(&alice, &page, &route)
         .expect("library");
-    let mark = || {
+    let append_rewrite_marker = || {
         let mut bytes = std::fs::read(&path).expect("read account settings");
         bytes.extend_from_slice(b"\n\n");
         std::fs::write(&path, &bytes).expect("mark account settings");
         bytes
     };
 
-    let marked = mark();
+    let marked = append_rewrite_marker();
     service
         .save_browsing(&alice, "last", &route)
         .expect("the same last route");
@@ -275,7 +275,7 @@ fn saving_a_route_a_page_already_holds_leaves_the_file_alone() {
     assert_ne!(std::fs::read(&path).expect("read"), marked);
     assert_eq!(service.browsing(&bob)["last"], route);
 
-    let marked = mark();
+    let marked = append_rewrite_marker();
     service
         .save_browsing(&alice, "last", "/calendar")
         .expect("a new last route");

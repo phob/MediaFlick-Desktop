@@ -77,7 +77,7 @@ interface LibraryFiltersProps {
   total: number | null
   capabilities: BrowseCapabilities
   source: ListingSource
-  shows?: boolean
+  tvShowsLibrary?: boolean
 }
 
 function currentValue(value: string, fallback: string) {
@@ -547,7 +547,7 @@ export function LibraryFilters({
   total,
   capabilities,
   source,
-  shows = false,
+  tvShowsLibrary = false,
 }: LibraryFiltersProps) {
   const offered = (filter: LibraryFilterId) => offersFilter(capabilities, filter)
   const libraryId = source.scope === "library" ? source.libraryId : null
@@ -599,7 +599,7 @@ export function LibraryFilters({
           <SelectContent>
             {sorts.map((sort) => (
               <SelectItem key={sort.id} value={sort.id}>
-                Sort: {librarySortLabel(sort, shows)}
+                Sort: {librarySortLabel(sort, tvShowsLibrary)}
               </SelectItem>
             ))}
           </SelectContent>

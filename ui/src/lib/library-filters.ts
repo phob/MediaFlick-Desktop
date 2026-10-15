@@ -32,8 +32,8 @@ export function sortsFor(capabilities: BrowseCapabilities): LibrarySort[] {
   return capabilities.sorts.map((id) => LIBRARY_SORTS[id])
 }
 
-export function librarySortLabel(sort: LibrarySort, shows: boolean) {
-  return shows && sort.showsLabel ? sort.showsLabel : sort.label
+export function librarySortLabel(sort: LibrarySort, tvShowsLibrary: boolean) {
+  return tvShowsLibrary && sort.showsLabel ? sort.showsLabel : sort.label
 }
 
 function librarySort(id: string | null, capabilities: BrowseCapabilities) {
