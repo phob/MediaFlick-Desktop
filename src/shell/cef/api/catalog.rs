@@ -1,4 +1,4 @@
-use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError};
+use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
 use crate::library::libraries::FilterKey;
 use crate::library::{DEFAULT_PAGE_SIZE, DetailView};
 
@@ -809,15 +809,17 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
             return Err(scoped_failure(services, &scope, &error));
         }
     };
-    if let Some(generic) = browse::generic_detail(&dto) {
-        still_signed_in(services, &scope)?;
-        return Ok(ApiResponse::ok(DetailView::Generic(generic)));
-    }
-    let title = services.session.commit_if_current(
-        &scope,
-        || DetailError::AccountChanged,
-        || browse::write_live_title(&services.library, &dto),
-    );
+    let title = match browse::live_detail(&dto) {
+        LiveDetail::Generic(generic) => {
+            still_signed_in(services, &scope)?;
+            return Ok(ApiResponse::ok(DetailView::Generic(*generic)));
+        }
+        LiveDetail::Title(title) => services.session.commit_if_current(
+            &scope,
+            || DetailError::AccountChanged,
+            || browse::write_live_title(&services.library, title),
+        ),
+    };
     match title {
         Ok(title) => {
             tracing::debug!(target: "library.browse", item_id, "served a title the cache did not hold");

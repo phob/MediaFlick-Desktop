@@ -106,19 +106,35 @@ impl From<rusqlite::Error> for DetailError {
     }
 }
 
-/// The generic details page of a fetched item that is not a movie, series,
-/// season or episode; `None` for those, which are titles.
-pub fn generic_detail(dto: &BaseItemDto) -> Option<GenericItemDetail> {
-    (!is_synced_kind(dto.item_type.as_deref().unwrap_or_default()))
-        .then(|| GenericItemDetail::from_dto(dto))
+/// The details page of an item fetched from the server.
+pub enum LiveDetail<'a> {
+    /// Anything that is not a movie, series, season or episode.
+    Generic(Box<GenericItemDetail>),
+    /// A title, which is cached before its page is served.
+    Title(LiveTitle<'a>),
+}
+
+/// A fetched movie, series, season or episode.
+#[derive(Clone, Copy)]
+pub struct LiveTitle<'a>(&'a BaseItemDto);
+
+pub fn live_detail(dto: &BaseItemDto) -> LiveDetail<'_> {
+    if is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) {
+        LiveDetail::Title(LiveTitle(dto))
+    } else {
+        LiveDetail::Generic(Box::new(GenericItemDetail::from_dto(dto)))
+    }
 }
 
 /// Caches a fetched title the cache did not hold and reads its title page
 /// back. The caller runs it under the check that the account which fetched
 /// the item is still signed in.
-pub fn write_live_title(library: &Library, dto: &BaseItemDto) -> Result<TitleDetail, DetailError> {
-    // A failed cache write still answers from the fetched item.
-    let _ = library.ingest_page(std::slice::from_ref(dto));
+pub fn write_live_title(
+    library: &Library,
+    title: LiveTitle<'_>,
+) -> Result<TitleDetail, DetailError> {
+    let LiveTitle(dto) = title;
+    library.ingest_page(std::slice::from_ref(dto))?;
     Ok(
         cached_title(library, &dto.id)?.unwrap_or_else(|| TitleDetail {
             item: ItemDetail::from_dto(dto),
