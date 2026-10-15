@@ -5,10 +5,9 @@ use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::catalog_libraries::META_SWEEP_OWED;
-use crate::library::libraries::LibraryRegistry;
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::libraries::{Walk, membership_pass, refresh_libraries};
+use super::libraries::{membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
@@ -51,10 +50,10 @@ pub(super) fn run_cycle_inner(
         {
             control.set_phase(SyncPhase::Catalog);
         }
-        // Before the first fill, so library grids fill page by page with it.
-        let walked_before_fill = initial_catalog && membership_owed(library)?;
-        if walked_before_fill {
-            membership_changed |= walk_membership(library, session, &scope, Walk::Owed, control)?;
+        // The first fill owes every walk and takes it before the fill, so
+        // library grids fill page by page with it.
+        if initial_catalog {
+            membership_changed |= walk_membership(library, session, &scope, true, control)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
         cancelled(control, session, &scope)?;
@@ -89,13 +88,9 @@ pub(super) fn run_cycle_inner(
         } else {
             false
         };
-        if !walked_before_fill {
-            let walk = if report.changed() || swept || trigger == Trigger::Requested {
-                Walk::All
-            } else {
-                Walk::Owed
-            };
-            membership_changed |= walk_membership(library, session, &scope, walk, control)?;
+        if !initial_catalog {
+            let owe_all = report.changed() || swept || trigger == Trigger::Requested;
+            membership_changed |= walk_membership(library, session, &scope, owe_all, control)?;
         }
         Ok(())
     })();
@@ -198,20 +193,20 @@ fn sweep_identity(
         control,
     )?;
     report.user_data_refreshed = refreshed;
-    let deleted = deletion_changes.is_some();
+    let deletion_ran = deletion_changes.is_some();
     if let Some(deletion_changes) = deletion_changes {
         report.deleted = deletion_changes.item_ids.len();
         report.changes.merge(deletion_changes);
     }
     commit(session, scope, || {
-        if deleted {
+        if deletion_ran {
             library
                 .set_meta(META_SWEEP_OWED, "0")
                 .map_err(|error| storage_error(&error))?;
         }
         touch(library, META_LAST_IDENTITY_SWEEP)
     })?;
-    Ok(deleted)
+    Ok(deletion_ran)
 }
 
 /// Stores the server's library list and returns whether this cycle's answer
@@ -233,22 +228,26 @@ fn refresh_library_list(
     }))
 }
 
-/// Returns whether any library's membership changed.
+/// Walks each catalog library that owes its membership, after owing every
+/// one when `owe_all`. Returns whether any library's membership changed.
 fn walk_membership(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    walk: Walk,
+    owe_all: bool,
     control: Option<&SyncHandle>,
 ) -> Result<bool, ApiError> {
-    let walked = membership_pass(library, session, scope, walk, control);
+    let owed = if owe_all {
+        commit(session, scope, || {
+            library
+                .owe_every_membership()
+                .map_err(|error| storage_error(&error))
+        })
+    } else {
+        Ok(())
+    };
+    let walked = owed.and_then(|()| membership_pass(library, session, scope, control));
     Ok(best_effort("library membership", walked)?.unwrap_or(false))
-}
-
-fn membership_owed(library: &Library) -> Result<bool, ApiError> {
-    let registry = library.libraries().map_err(|error| storage_error(&error))?;
-    Ok(matches!(registry, LibraryRegistry::Known(libraries)
-        if libraries.iter().any(|entry| entry.membership_pending)))
 }
 
 fn bootstrap(
