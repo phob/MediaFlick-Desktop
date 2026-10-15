@@ -104,18 +104,6 @@ impl Library {
         })
     }
 
-    pub fn upsert_user_data(&self, records: &[UserDataRecord]) -> rusqlite::Result<usize> {
-        self.db.with_transaction(|transaction| {
-            let mut refreshed = 0;
-            for record in records {
-                if upsert_user_data(transaction, record)? {
-                    refreshed += 1;
-                }
-            }
-            Ok(refreshed)
-        })
-    }
-
     pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<LibraryChangeBatch> {
         self.delete_missing(&self.all_ids()?, keep)
     }
