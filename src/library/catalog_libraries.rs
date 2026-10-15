@@ -1,13 +1,11 @@
 use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use serde::Serialize;
 
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
 
 use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
-use super::query::natural_order;
 use super::session_store::save_meta;
 use super::sync::{META_MEMBERSHIP_OWED, META_SWEEP_OWED, commit, storage_error};
 use super::{Library, now_unix};
@@ -15,14 +13,6 @@ use super::{Library, now_unix};
 /// Set once `/UserViews` has answered for this cache, so an empty `libraries`
 /// table can tell "never read" from "the user sees no library".
 const LIBRARIES_READ_AT: &str = "sync.libraries_at";
-
-/// The genre and parental rating choices of one library's titles.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilterOptions {
-    pub genres: Vec<String>,
-    pub official_ratings: Vec<String>,
-}
 
 /// Stores the server's library list. A successful empty answer is the
 /// server's and is stored as such.
@@ -163,34 +153,6 @@ impl Library {
                 changed = true;
             }
             Ok(changed)
-        })
-    }
-
-    pub fn library_filter_options(&self, library: &LibraryId) -> rusqlite::Result<FilterOptions> {
-        self.db.with_connection(|connection| {
-            let genres = connection
-                .prepare_cached(
-                    "SELECT DISTINCT g.genre FROM item_libraries l
-                     JOIN items i ON i.jellyfin_id = l.item_id
-                     JOIN item_genres g ON g.item_id = i.id
-                     WHERE l.library_id = ?1
-                     ORDER BY g.genre COLLATE NOCASE ASC",
-                )?
-                .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let mut official_ratings = connection
-                .prepare_cached(
-                    "SELECT DISTINCT i.official_rating FROM item_libraries l
-                     JOIN items i ON i.jellyfin_id = l.item_id
-                     WHERE l.library_id = ?1 AND i.official_rating <> ''",
-                )?
-                .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            official_ratings.sort_by(|left, right| natural_order(left, right));
-            Ok(FilterOptions {
-                genres,
-                official_ratings,
-            })
         })
     }
 }
