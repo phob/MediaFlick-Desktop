@@ -76,9 +76,9 @@ async function contract(ctx, libraries, expect) {
   if (live) {
     result.live = { name: live.name, kind: live.kind }
     for (const rest of ["items", "options", "latest"]) result.live[rest] = await status(route(live, rest))
-    expect(["items", "options", "latest"].every((rest) => result.live[rest] === 501), `${live.name} (${live.kind}) answers 501 on its items, options and latest routes (${JSON.stringify(result.live)})`)
+    expect(["items", "options", "latest"].every((rest) => result.live[rest] === 200), `${live.name} (${live.kind}) answers 200 on its items, options and latest routes, served live (${JSON.stringify(result.live)}); live-libraries compares them with Jellyfin`)
   } else {
-    ctx.step("no library is served live on this server; the 501 answer is not exercised")
+    ctx.step("no library is served live on this server")
   }
   return result
 }
