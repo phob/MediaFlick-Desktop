@@ -47,7 +47,7 @@ export const queryKeys = {
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
   libraries: ["libraries"] as const,
-  libraryOptions: (id: string) => ["libraries", id, "options"] as const,
+  libraryOptions: (id: string) => ["library-options", id] as const,
   officialRatings: (kind: string) => ["official-ratings", kind] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
@@ -118,6 +118,7 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   ITEMS_ROOT,
   "letterboxd",
   "libraries",
+  "library-options",
   "official-ratings",
   "person",
   "person-items",
@@ -190,7 +191,7 @@ export function invalidateMediaSurfaces(
 
 type LibraryChangeScope = "library" | "catalog" | "items" | "live"
 
-const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "official-ratings", "status", "collections"]
+const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
 
 /**
  * Which grids a change can reach. A title grid naming a person reads that

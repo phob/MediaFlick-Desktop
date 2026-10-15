@@ -246,14 +246,16 @@ export function useBrowseLetters(source: ListingSource, enabled = true) {
 }
 
 /**
- * Both library hooks share the real `queryFn`: an observer's options become
- * the query's, so a `skipToken` observer would break every later refetch.
+ * Both library hooks pass the real `queryFn`. The query keeps the options of
+ * the observer that rendered last, so one rendered with `skipToken` would
+ * leave the next invalidation without a fetcher.
  */
 const librariesQuery = queryOptions({ queryKey: queryKeys.libraries, queryFn: api.libraries })
 
 /**
  * The sidebar's library list and every grid's capabilities. The native
- * `libraries-changed` and `library-memberships-settled` events re-read it.
+ * `libraries-changed` and `library-memberships-settled` events re-read it, and
+ * so does every library or catalog change.
  */
 export function useLibraries() {
   const { data: status } = useStatus()
