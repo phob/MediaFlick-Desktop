@@ -14,6 +14,7 @@ use super::{
 /// stays well under SQLite's host-parameter limit.
 const TMDB_CANDIDATE_CHUNK: usize = 400;
 const ITEM_ID_CHUNK: usize = 400;
+const TOP_LEVEL_KINDS: [&str; 2] = ["Movie", "Series"];
 
 impl Library {
     pub fn stats(&self) -> LibraryStats {
@@ -558,13 +559,14 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         conditions.push("0".to_string());
     }
 
-    if !query.kinds.is_empty() {
-        let placeholders = vec!["?"; query.kinds.len()].join(", ");
-        conditions.push(format!("i.kind IN ({placeholders})"));
-        for kind in &query.kinds {
-            arguments.push(SqlValue::Text(kind.clone()));
-        }
-    }
+    let kinds = if query.kinds.is_empty() {
+        TOP_LEVEL_KINDS.map(str::to_string).to_vec()
+    } else {
+        query.kinds.clone()
+    };
+    let placeholders = vec!["?"; kinds.len()].join(", ");
+    conditions.push(format!("i.kind IN ({placeholders})"));
+    arguments.extend(kinds.into_iter().map(SqlValue::Text));
     if let Some(genre) = &query.genre {
         conditions.push("i.id IN (SELECT item_id FROM item_genres WHERE genre = ?)".to_string());
         arguments.push(SqlValue::Text(genre.clone()));
@@ -573,14 +575,6 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         conditions.push("i.year >= ? AND i.year < ?".to_string());
         arguments.push(SqlValue::Integer(decade));
         arguments.push(SqlValue::Integer(decade.saturating_add(10)));
-    }
-    if let Some(parent_id) = &query.parent_id {
-        conditions.push("i.parent_id = ?".to_string());
-        arguments.push(SqlValue::Text(parent_id.clone()));
-    }
-    if let Some(series_id) = &query.series_id {
-        conditions.push("i.series_id = ?".to_string());
-        arguments.push(SqlValue::Text(series_id.clone()));
     }
     if let Some(watched) = query.watched {
         conditions.push(match watched {
@@ -605,11 +599,7 @@ fn query_base(query: &ItemQuery, with_user_data: bool) -> (String, String, Vec<S
         });
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = format!(" WHERE {}", conditions.join(" AND "));
     (from_clause, where_clause, arguments)
 }
 

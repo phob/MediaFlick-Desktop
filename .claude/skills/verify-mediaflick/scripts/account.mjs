@@ -145,7 +145,7 @@ export async function jellyfinGet(account, apiPath) {
     headers: { Authorization: `MediaBrowser Token="${account.token}"`, Accept: "application/json" },
     signal: AbortSignal.timeout(20000),
   })
-  if (!response.ok) throw new Error(`GET ${apiPath} on ${account.server} answered HTTP ${response.status}`)
+  if (!response.ok) throw Object.assign(new Error(`GET ${apiPath} on ${account.server} answered HTTP ${response.status}`), { status: response.status })
   return response.json()
 }
 
@@ -157,6 +157,15 @@ export async function resetUserData(account, itemId, { played = false, positionT
     signal: AbortSignal.timeout(20000),
   })
   if (!response.ok) throw new Error(`resetting user data of ${itemId} answered HTTP ${response.status}`)
+}
+
+export async function removeFavorite(account, itemId) {
+  const response = await fetch(`${account.serverUrl}/UserFavoriteItems/${encodeURIComponent(itemId)}?userId=${account.userId}`, {
+    method: "DELETE",
+    headers: { Authorization: `MediaBrowser Token="${account.token}"` },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!response.ok) throw new Error(`removing ${itemId} from favorites answered HTTP ${response.status}`)
 }
 
 export async function cancelSeerrRequest(account, requestId) {

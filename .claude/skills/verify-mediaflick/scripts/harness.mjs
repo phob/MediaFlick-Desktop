@@ -9,6 +9,7 @@ import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
 import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
+import { isFavorite, journalFavorite, journalFile, settleFavorite } from "./favorites.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
 import { startProxy } from "./proxy.mjs"
 
@@ -500,13 +501,24 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   function restoreItemAfterRun(itemId) {
     if (!cachedAccount) throw new Error("restoreItemAfterRun needs --account SERVER")
     afterRunTasks.push(async () => {
-      const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${itemId}?userId=${cachedAccount.userId}`)
+      const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${encodeURIComponent(itemId)}?userId=${cachedAccount.userId}`)
       if (!data.Played && !data.PlaybackPositionTicks) {
         log(`after run: ${itemId} is unplayed without a resume point`)
         return
       }
       await resetUserData(cachedAccount, itemId)
       log(`after run: reset ${itemId} (was played=${data.Played}, position=${data.PlaybackPositionTicks / 1e7} s)`)
+    })
+  }
+
+  async function unfavoriteAfterRun(itemId) {
+    if (!cachedAccount) throw new Error("unfavoriteAfterRun needs --account SERVER")
+    if (await isFavorite(jellyfin, cachedAccount.userId, itemId)) throw new Error(`unfavoriteAfterRun: ${itemId} already is a favorite of ${cachedAccount.userName}; drives may only favorite items that are not`)
+    journalFavorite(cachedAccount, itemId)
+    log(`journaled test favorite ${itemId} in ${journalFile}`)
+    afterRunTasks.push(async () => {
+      const state = await settleFavorite(cachedAccount, itemId)
+      log({ removed: `after run: removed ${itemId} from favorites`, "not-favorite": `after run: ${itemId} is not a favorite`, missing: `after run: ${itemId} no longer exists; dropped its journal entry` }[state])
     })
   }
 
@@ -609,6 +621,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     jellyfin,
     appSession,
     restoreItemAfterRun,
+    unfavoriteAfterRun,
     cancelSeerrRequestAfterRun,
     revokeAppSessionAfterRun,
     runAfterRun,

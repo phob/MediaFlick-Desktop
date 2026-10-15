@@ -19,7 +19,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Reach pages the way a user does: sidebar links, settings navigation, cards. Do not jump with `ctx.app.route()` when the feature is the navigation itself.
 - Never write to the shared demo account: no favorites, watched marks, playback, or Letterboxd/Companion changes. Write paths run on your own server with `--account`; never put credentials in a drive.
 - Play only with `--account` on your own server (see [Playback](./playback.md)). Playback writes the test user's playstate and plays real audio; on Windows the private desktop does not isolate it.
-- A drive that changes server state puts it back through the user path and registers an after-run safety net (`ctx.restoreItemAfterRun`, `ctx.cancelSeerrRequestAfterRun`) that runs once the app has exited.
+- A drive that changes server state puts it back through the user path and registers an after-run safety net (`ctx.restoreItemAfterRun`, `ctx.unfavoriteAfterRun`, `ctx.cancelSeerrRequestAfterRun`) that runs once the app has exited.
 
 ## Proof and skip reporting
 
@@ -39,7 +39,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Home](./home.md): billboard, shelves of poster cards, arrows, cards to detail, the Releases shelf, and the empty states. Proven by `browse`, `home-library` and `home-settings`, and the Releases shelf by `companion`; the load-error state is not reached.
 - [Library and search](./library-search.md): Movies, Series and Favorites from the sidebar, sort and direction, filters and chips, the A–Z rail, the unwatched badge, sidebar search, the empty result. Proven by `browse`, `home-library`, `library-filters`, `library-parity` and `punctuation-search`.
 - [Library loading and the retry screen](./bootstrap-retry.md): the startup cover after sign-in, the retry screen when the first catalog page fails (reason, next attempt, Retry now, Sign out), and the window on relaunch. Proven by `bootstrap-retry` with a failing loopback proxy.
-- [Item detail](./item-detail.md): movie, series and episode pages, the Cast and Crew rails, More info, seasons, episodes, breadcrumbs, ratings, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail`, `detail-crew`, `labels` and `person-discover`; watched by `playback` and ratings by `companion` on your own server; favorites not yet.
+- [Item detail](./item-detail.md): movie, series and episode pages, the Cast and Crew rails, More info, seasons, episodes, breadcrumbs, ratings, favorite and watched toggles. Read-only parts proven by `browse`, `item-detail`, `detail-crew`, `labels` and `person-discover`; watched by `playback`, favorites by `top-level-titles` and ratings by `companion` on your own server.
 - [Playback](./playback.md): Play, the player bar and keys, playstate reports, the resume point, Resume with the startup seek rules, stop, on the Built-in player and External mpv. Proven by `playback` on both backends on Linux and Windows. Segment skipping through `segments`, which adds media segments with a loopback proxy: `Ask me`, `Never` and `Don't show` proven on both backends on Linux, on files with and without embedded chapters.
 - [Companion: Releases, ratings and status](./companion.md): the Companion status page, the Releases page and its toggles, MDBList ratings. Proven by `companion`.
 - [Discover and Requests](./discover-requests.md): Seerr rows, genres, search, title pages, a real request and its cancellation. Proven by `discover-requests`.

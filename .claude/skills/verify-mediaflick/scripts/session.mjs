@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url"
 import { parseArgs } from "node:util"
 import { connect, sleep } from "../../../../scripts/website/cdp.mjs"
 import { checkAccount, publicAccount, readAccount, readStoredSession, redactSecret, seedLibrary, serverKey } from "./account.mjs"
+import { reconcileFavorites } from "./favorites.mjs"
 import { createHarness, stepLogger } from "./harness.mjs"
 import { profileName, userApps } from "./runs.mjs"
 import {
@@ -78,10 +79,27 @@ const log = stepLogger(path.join(evidence, "steps.log"))
 const writeJson = (name, value) => writeFileSync(path.join(evidence, name), `${JSON.stringify(value, null, 2)}\n`)
 const started = Date.now()
 const result = { runId, drive: path.relative(root, drivePath), passed: false, error: null, exit: null, evidence: path.relative(root, evidence) }
+// A promise a drive forgot to await must fail the drive and still reach
+// teardown and the after-run tasks, not crash the process past them.
+let unhandledError = null
+let failUnhandled
+const unhandled = new Promise((_, reject) => {
+  failUnhandled = reject
+})
+unhandled.catch(() => {})
+process.on("unhandledRejection", (reason) => {
+  unhandledError ??= reason instanceof Error ? reason : new Error(`non-Error rejection: ${String(reason)}`)
+  log(`unhandled rejection: ${unhandledError.message}`)
+  failUnhandled(unhandledError)
+})
 log(`isolation ok: ${JSON.stringify(isolation)}`)
 if (account) {
   writeJson("account.json", { mode: signedOut ? "account-signed-out" : "account", ...publicAccount(account), check: accountCheck })
   log(`cached session for ${account.userName} on ${account.server} is valid (HTTP ${accountCheck.status})`)
+  await reconcileFavorites(account, log).catch((error) => {
+    log(`FAILED before launch: ${error.message}`)
+    throw error
+  })
 }
 
 if (!existsSync(exe)) throw new Error(`${exe} is missing; \`just verify\` builds it, or run \`just build\``)
@@ -330,9 +348,12 @@ try {
   const drive = (await import(pathToFileURL(drivePath).href)).default
   if (typeof drive !== "function") throw new Error(`${result.drive} must export a default async function (ctx)`)
   log(`drive ${result.drive}`)
-  await within(drive(harness), timeoutMs, () => {
-    throw new Error(`drive timed out after ${timeoutMs / 1000} s`)
-  })
+  await Promise.race([
+    within(drive(harness), timeoutMs, () => {
+      throw new Error(`drive timed out after ${timeoutMs / 1000} s`)
+    }),
+    unhandled,
+  ])
   if (signOutBlocked) throw new Error("the drive tried to sign out of a cached Jellyfin account")
   if (login && !secrets.size) throw new Error("the login drive did not cache a session (ctx.saveAccount)")
   result.passed = true
@@ -342,12 +363,21 @@ try {
   log(`FAILED: ${error instanceof Error ? error.message : result.error}`)
   await failureEvidence(harness)
 } finally {
-  await teardown()
-  await harness?.dispose()
+  const cleanupErrors = []
+  for (const [name, stop] of [["teardown", teardown], ["dispose", async () => harness?.dispose()]]) {
+    try {
+      await stop()
+    } catch (error) {
+      cleanupErrors.push(`${name} failed: ${error instanceof Error ? error.message : String(error)}`)
+      log(cleanupErrors.at(-1))
+    }
+  }
   const afterRunErrors = (await harness?.runAfterRun()) ?? []
-  if (afterRunErrors.length) {
+  if (afterRunErrors.length) cleanupErrors.push(`after-run cleanup failed: ${afterRunErrors.join("; ")}`)
+  if (unhandledError && result.passed) cleanupErrors.push(`unhandled rejection: ${unhandledError.message}`)
+  if (cleanupErrors.length) {
     result.passed = false
-    result.error = `${result.error ? `${result.error}\n` : ""}after-run cleanup failed: ${afterRunErrors.join("; ")}`
+    result.error = `${result.error ? `${result.error}\n` : ""}${cleanupErrors.join("\n")}`
   }
   collectProfile()
   if (account || login) {

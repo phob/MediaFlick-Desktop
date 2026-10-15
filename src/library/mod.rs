@@ -265,12 +265,11 @@ impl SeriesStatus {
 #[derive(Debug, Clone, Default)]
 pub struct ItemQuery {
     pub search: Option<String>,
+    /// Empty means movies and series.
     pub kinds: Vec<String>,
     pub genre: Option<String>,
     /// Inclusive first year of a standard ten-year release decade.
     pub release_decade: Option<i64>,
-    pub parent_id: Option<String>,
-    pub series_id: Option<String>,
     pub watched: Option<WatchFilter>,
     pub favorite: Option<bool>,
     pub official_rating: Option<String>,
