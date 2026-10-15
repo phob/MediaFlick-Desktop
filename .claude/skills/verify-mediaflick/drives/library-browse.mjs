@@ -7,9 +7,10 @@
 // else. The first card opens its page, whose back link names the library and
 // returns to the same URL and filters; saving that same last route again
 // leaves accounts.json untouched. In a movies or TV shows library a title
-// opened from a card's hover preview also names the library, and so does its
-// page after a reload without navigation state, with genre chips on that
-// library. Read-only.
+// opened from a card's hover preview also names the library. After a reload
+// without navigation state, with /api/libraries held, its page already reads
+// "Back to library" and leads to the library, with genre chips on it; once
+// the list loads it names the library. Read-only.
 //
 // Started with --seed holding an accounts.json whose account remembers legacy
 // `Movie` and `Series` pages, it instead proves the app starts, keeps those
@@ -58,6 +59,26 @@ const SAVE_OBSERVER = `(() => {
       window.__browsingSaves.push({ ...JSON.parse(init.body), status: response.status })
     }
     return response
+  }
+})()`
+// Holds the page's /api/libraries requests while sessionStorage asks for it,
+// so one reload can be checked with the library list deterministically
+// unavailable. __releaseLibraries() lets the held requests through.
+const LIBRARIES_HOLD = `(() => {
+  if (window.__libraryHolds) return
+  window.__libraryHolds = []
+  window.__releaseLibraries = () => {
+    sessionStorage.removeItem("mediaflickVerifyHoldLibraries")
+    window.__libraryHolds.splice(0).forEach((release) => release())
+  }
+  const original = window.fetch
+  window.fetch = async function (input, init) {
+    const url = input instanceof Request ? input.url : String(input)
+    if (new URL(url, location.href).pathname === "/api/libraries" && sessionStorage.getItem("mediaflickVerifyHoldLibraries")) {
+      window.__heldLibraries = (window.__heldLibraries ?? 0) + 1
+      await new Promise((release) => window.__libraryHolds.push(release))
+    }
+    return original.apply(this, arguments)
   }
 })()`
 const sameList = (left, right) => JSON.stringify(left) === JSON.stringify(right)
@@ -180,11 +201,26 @@ async function previewAndReload(ctx, expect, library) {
   expect(result.previewLabel === back && result.previewHref?.startsWith(target), `${library.name}: a title opened from its card preview reads ${back} (${result.previewLabel}, ${result.previewHref})`)
   await ctx.screenshot(`${slug(library.name)}-preview-detail`)
 
-  await ctx.app.evaluate("history.replaceState(null, '', location.pathname); location.reload()")
+  await ctx.app.evaluate("sessionStorage.setItem('mediaflickVerifyHoldLibraries', '1'); history.replaceState(null, '', location.pathname); location.reload()")
   await ctx.until(async () => (await ctx.pathname()) === result.item && (await ctx.app.evaluate("document.readyState")) === "complete", "the title page to reload", 30000)
+  await ctx.until("window.__heldLibraries >= 1", "the reloaded page to wait on a held /api/libraries", 30000)
+  result.heldLabel = await ctx.find({ role: "link", name: "Back to library" }, { timeout: 15000 }).then(() => "Back to library", () => null)
+  result.heldHref = await backLinkHref(ctx, "Back to library")
+  result.heldGenreLinks = await ctx.app.evaluate(`[...document.querySelectorAll('a[href*="genre="]')].map((link) => link.getAttribute("href"))`)
+  result.heldBackLinks = await ctx.app.evaluate(`[...document.querySelectorAll("a")].map((link) => link.textContent.trim()).filter((text) => text.startsWith("Back to"))`)
+  expect(
+    result.heldLabel === "Back to library" && result.heldHref === target && (await ctx.app.evaluate("window.__heldLibraries >= 1 && window.__libraryHolds.length >= 1")),
+    `${library.name}: while /api/libraries is held after a reload, the title page reads Back to library and leads to ${target} (${JSON.stringify(result.heldBackLinks)}, ${result.heldHref})`,
+  )
+  expect(
+    result.heldGenreLinks.length === 0 || result.heldGenreLinks.every((href) => href.startsWith(`${target}?genre=`)),
+    `${library.name}: while /api/libraries is held, the genre chips already filter ${target} (${result.heldGenreLinks.join(", ") || "no genres"})`,
+  )
+  await ctx.screenshot(`${slug(library.name)}-reloaded-held-detail`)
+  await ctx.app.evaluate("window.__releaseLibraries()")
   result.reloadedLabel = await ctx.find({ role: "link", name: back }, { timeout: 30000 }).then(() => back, () => null)
   result.reloadedHref = await backLinkHref(ctx, back)
-  expect(result.reloadedLabel === back && result.reloadedHref === target, `${library.name}: after a reload without navigation state the title page reads ${back} and leads to ${target} (${result.reloadedLabel}, ${result.reloadedHref})`)
+  expect(result.reloadedLabel === back && result.reloadedHref === target, `${library.name}: once the list loads, the reloaded title page reads ${back} and leads to ${target} (${result.reloadedLabel}, ${result.reloadedHref})`)
   result.genreLinks = await ctx.app.evaluate(`[...document.querySelectorAll('a[href*="genre="]')].map((link) => link.getAttribute("href"))`)
   expect(result.genreLinks.length === 0 || result.genreLinks.every((href) => href.startsWith(`${target}?genre=`)), `${library.name}: the reloaded page's genre chips filter ${target} (${result.genreLinks.join(", ") || "no genres"})`)
   await ctx.screenshot(`${slug(library.name)}-reloaded-detail`)
@@ -249,6 +285,7 @@ export default async function libraryBrowse(ctx) {
   await ctx.signIn({ server: DEMO, username: "demo" })
   await ctx.app.send("Page.addScriptToEvaluateOnNewDocument", { source: SAVE_OBSERVER })
   await ctx.app.evaluate(SAVE_OBSERVER)
+  await ctx.app.send("Page.addScriptToEvaluateOnNewDocument", { source: LIBRARIES_HOLD })
 
   try {
     if (seeded?.accounts?.some((account) => account.browsing?.Movie)) {
