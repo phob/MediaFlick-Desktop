@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -7,13 +8,14 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::PAGE_SIZE;
+use crate::app::services::{ShellBridge, ShellRequest};
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::Session;
 use crate::library::libraries::{LibraryId, LibraryRegistry};
 use crate::library::sync::{
     IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_BOOTSTRAP_DONE, META_EMPTY_SWEEP_AT,
-    META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncReport, Trigger, bootstrap_progress,
-    now_unix, ownership_available,
+    META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncHandle, SyncReport, Trigger,
+    bootstrap_progress, now_unix, ownership_available,
 };
 use crate::library::{ItemQuery, Library, LibraryChangeBatch, StoredCredentials};
 
@@ -891,6 +893,114 @@ fn the_first_sync_walks_each_library_once() {
     let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(ONE_MOVIE)]);
     result.expect("the second sync");
     assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+struct Announced {
+    result: Result<SyncReport, ApiError>,
+    events: Vec<&'static str>,
+    hooks: usize,
+}
+
+fn announced_cycle(library: &Arc<Library>, trigger: Trigger, replies: Vec<Reply>) -> Announced {
+    let shell = Arc::new(ShellBridge::default());
+    let events = shell.subscribe();
+    let control = SyncHandle::new(shell);
+    let hooks = Arc::new(AtomicUsize::new(0));
+    let counted = hooks.clone();
+    control.on_cycle_completed(Arc::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    let server = serve(replies);
+    let session = authenticated_session(library, &server.url);
+    let result = super::run_cycle_inner(library, &session, trigger, Some(&control));
+    server.requests();
+    let events = events
+        .try_iter()
+        .map(|event| match event {
+            ShellRequest::LibrariesChanged => "libraries changed",
+            ShellRequest::LibraryMembershipsSettled => "memberships settled",
+            ShellRequest::CatalogChanged { .. } => "catalog page",
+            ShellRequest::LibraryChanged { item_ids, .. } if item_ids.is_empty() => {
+                "cycle completed"
+            }
+            ShellRequest::LibraryChanged { .. } => "titles changed",
+            _ => "other",
+        })
+        .collect();
+    Announced {
+        result,
+        events,
+        hooks: hooks.load(Ordering::SeqCst),
+    }
+}
+
+#[test]
+fn the_first_sync_announces_the_list_before_the_catalog_and_settles_after_it() {
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+
+    let first = announced_cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            views(&[(MOVIES, "movies")]),
+            members(&["m1"], 1),
+            ok(ONE_MOVIE),
+            ok(ONE_MOVIE),
+        ],
+    );
+
+    first.result.expect("the first sync");
+    assert_eq!(
+        first.events,
+        [
+            "libraries changed",
+            "catalog page",
+            "memberships settled",
+            "cycle completed"
+        ]
+    );
+    assert_eq!(first.hooks, 1);
+}
+
+#[test]
+fn a_failing_walk_keeps_the_announcement_of_an_earlier_one() {
+    let library = settled_library(&[("m1", "Movie"), ("m2", "Movie"), ("s1", "Series")]);
+    sync_libraries(
+        &library,
+        &[
+            (MOVIES, "movies", &["m1", "m2"]),
+            (SHOWS, "tvshows", &["s1"]),
+        ],
+    );
+    let listing = || views(&[(MOVIES, "movies"), (SHOWS, "tvshows")]);
+
+    let quiet = announced_cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![listing(), ok(EMPTY_PAGE)],
+    );
+    quiet.result.expect("a quiet sync");
+    assert!(quiet.events.is_empty(), "{:?}", quiet.events);
+
+    let failed = announced_cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            members(&["m1", "m2", "s1"], 3),
+            members(&["m1"], 1),
+            Reply::Answer(401, String::new()),
+        ],
+    );
+
+    assert_eq!(failed.result.err(), Some(ApiError::Unauthorized));
+    assert_eq!(grid(&library, MOVIES), ["m1"]);
+    assert_eq!(failed.events, ["memberships settled", "cycle completed"]);
+    assert_eq!(
+        failed.hooks, 0,
+        "a failed cycle does not run the completed-cycle hook"
+    );
 }
 
 #[test]
