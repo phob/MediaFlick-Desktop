@@ -53,9 +53,10 @@ pub(super) enum Walk {
 /// Replaces the membership of each catalog library `walk` names with the ids
 /// the server lists in it now. A library stays owed until its walk lands, so
 /// one that fails, is cut off, or ends short of the server's own count keeps
-/// its previous membership and is walked again next cycle. A lost connection
-/// or a rate limit ends the pass, leaving the rest owed too. Returns whether
-/// any membership changed.
+/// its previous membership and is walked again next cycle. Any other library
+/// is still walked, except after a rate limit, which holds for the whole
+/// server and ends the pass with the rest owed too. Returns whether any
+/// membership changed.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,
@@ -83,13 +84,10 @@ pub(super) fn membership_pass(
     let mut changed = false;
     for (title, id) in &due {
         let walked = refresh_membership(library, session, scope, id, *title, control);
-        let server_unavailable = matches!(
-            walked,
-            Err(ApiError::Transport(_) | ApiError::RateLimited { .. })
-        );
+        let rate_limited = matches!(walked, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
         changed |= best_effort(&step, walked)?.unwrap_or(false);
-        if server_unavailable {
+        if rate_limited {
             break;
         }
     }
