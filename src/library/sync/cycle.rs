@@ -81,8 +81,7 @@ pub(super) fn run_cycle_inner(
             || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
-            sweep_identity(library, session, &scope, control, &mut report)?;
-            true
+            sweep_identity(library, session, &scope, control, &mut report)?
         } else {
             false
         };
@@ -175,13 +174,15 @@ fn record_success(
     })
 }
 
+/// Returns whether the deletion pass ran. Only that settles an owed sweep;
+/// the hourly timer restarts either way.
 fn sweep_identity(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
     report: &mut SyncReport,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     let (refreshed, deletion_changes) = identity_sweep(
         library,
         session,
@@ -191,14 +192,20 @@ fn sweep_identity(
         control,
     )?;
     report.user_data_refreshed = refreshed;
-    report.deleted = deletion_changes.item_ids.len();
-    report.changes.merge(deletion_changes);
+    let deleted = deletion_changes.is_some();
+    if let Some(deletion_changes) = deletion_changes {
+        report.deleted = deletion_changes.item_ids.len();
+        report.changes.merge(deletion_changes);
+    }
     commit(session, scope, || {
-        library
-            .set_meta(META_SWEEP_OWED, "0")
-            .map_err(|error| storage_error(&error))?;
+        if deleted {
+            library
+                .set_meta(META_SWEEP_OWED, "0")
+                .map_err(|error| storage_error(&error))?;
+        }
         touch(library, META_LAST_IDENTITY_SWEEP)
-    })
+    })?;
+    Ok(deleted)
 }
 
 /// Returns whether any library's membership changed.
@@ -488,6 +495,7 @@ fn incremental(
 ///
 /// Returns the refreshed user-data count and a complete deletion batch so the
 /// same cycle can notify item and hierarchy caches after committing removals.
+/// The batch is `None` when the deletion pass was skipped.
 fn identity_sweep(
     library: &Library,
     session: &Session,
@@ -495,7 +503,7 @@ fn identity_sweep(
     client: &JellyfinClient,
     user_id: &str,
     control: Option<&SyncHandle>,
-) -> Result<(usize, LibraryChangeBatch), ApiError> {
+) -> Result<(usize, Option<LibraryChangeBatch>), ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
@@ -539,19 +547,25 @@ fn identity_sweep(
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-        return Ok((refreshed, LibraryChangeBatch::default()));
+        return Ok((refreshed, None));
     }
-    if seen.is_empty() {
+    if seen.is_empty() && !lists_no_library(library)? {
         // An empty answer is far more likely to be a server hiccup than an
-        // emptied library, so never treat it as "delete everything".
-        return Ok((refreshed, LibraryChangeBatch::default()));
+        // emptied library, so it deletes everything only when the server
+        // also says the user sees no library at all.
+        return Ok((refreshed, None));
     }
     let deletion_changes = commit(session, scope, || {
         library
             .retain_ids(&seen)
             .map_err(|error| storage_error(&error))
     })?;
-    Ok((refreshed, deletion_changes))
+    Ok((refreshed, Some(deletion_changes)))
+}
+
+fn lists_no_library(library: &Library) -> Result<bool, ApiError> {
+    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    Ok(registry == LibraryRegistry::Known(Vec::new()))
 }
 
 fn advance_watermark_with_ids(
