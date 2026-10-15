@@ -6,7 +6,6 @@ use std::collections::HashSet;
 
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::catalog_libraries::META_MEMBERSHIP_OWED;
 use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use crate::library::{Library, TitleKind};
 
@@ -42,43 +41,63 @@ pub(super) fn refresh_libraries(
     })
 }
 
-/// Replaces each catalog library's membership with the ids the server lists
-/// in it now. A walk that fails, is cut off, or ends short of the server's
-/// own count keeps that library's previous membership and leaves the pass
-/// owed to the next cycle. An empty answer keeps it too: it may not empty a
-/// grid. Returns whether any membership changed.
+/// Which catalog libraries a membership pass walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Walk {
+    /// Only those whose last walk has not landed.
+    Owed,
+    /// Every one, because the catalog or the server changed.
+    All,
+}
+
+/// Replaces the membership of each catalog library `walk` names with the ids
+/// the server lists in it now. A library stays owed until its walk lands, so
+/// one that fails, is cut off, or ends short of the server's own count keeps
+/// its previous membership and is walked again next cycle. A lost connection
+/// or a rate limit ends the pass, leaving the rest owed too. Returns whether
+/// any membership changed.
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
+    walk: Walk,
     control: Option<&SyncHandle>,
 ) -> Result<bool, ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
     let LibraryRegistry::Known(libraries) = registry else {
         return Ok(false);
     };
-    // Owed until the pass ends, so one stopped by anything is walked again.
-    set_owed(library, session, scope, true)?;
-    let mut changed = false;
-    let mut complete = true;
-    for entry in &libraries {
-        let Some(title) = entry.catalog_title() else {
-            continue;
-        };
-        let step = format!("the membership of library {}", entry.id.as_str());
-        let walked = refresh_membership(library, session, scope, &entry.id, title, control);
-        match best_effort(&step, walked)?.flatten() {
-            Some(library_changed) => changed |= library_changed,
-            None => complete = false,
-        }
+    let due = libraries
+        .into_iter()
+        .filter(|entry| walk == Walk::All || entry.membership_pending)
+        .filter_map(|entry| Some((entry.catalog_title()?, entry.id)))
+        .collect::<Vec<_>>();
+    if walk == Walk::All {
+        let ids = due.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>();
+        commit(session, scope, || {
+            library
+                .owe_membership(&ids)
+                .map_err(|error| storage_error(&error))
+        })?;
     }
-    if complete {
-        set_owed(library, session, scope, false)?;
+    let mut changed = false;
+    for (title, id) in &due {
+        let walked = refresh_membership(library, session, scope, id, *title, control);
+        let server_unavailable = matches!(
+            walked,
+            Err(ApiError::Transport(_) | ApiError::RateLimited { .. })
+        );
+        let step = format!("the membership of library {}", id.as_str());
+        changed |= best_effort(&step, walked)?.unwrap_or(false);
+        if server_unavailable {
+            break;
+        }
     }
     Ok(changed)
 }
 
-/// `None` when the walk did not list the whole library.
+/// Whether the library's membership changed. A walk that did not list the
+/// whole library changes nothing and leaves the library owed.
 fn refresh_membership(
     library: &Library,
     session: &Session,
@@ -86,18 +105,16 @@ fn refresh_membership(
     library_id: &LibraryId,
     title: TitleKind,
     control: Option<&SyncHandle>,
-) -> Result<Option<bool>, ApiError> {
+) -> Result<bool, ApiError> {
     let Some(ids) = member_ids(session, scope, library_id, title, control)? else {
-        return Ok(None);
+        return Ok(false);
     };
     if ids.is_empty() {
         tracing::debug!(target: "library.sync", library = library_id.as_str(), "the server listed no titles in a library; keeping its membership");
-        return Ok(Some(false));
     }
     commit(session, scope, || {
         library
             .replace_membership(library_id, &ids)
-            .map(Some)
             .map_err(|error| storage_error(&error))
     })
 }
@@ -154,17 +171,4 @@ fn member_ids(
         "stopped a library membership walk at the page cap; keeping its membership"
     );
     Ok(None)
-}
-
-fn set_owed(
-    library: &Library,
-    session: &Session,
-    scope: &SessionScope,
-    owed: bool,
-) -> Result<(), ApiError> {
-    commit(session, scope, || {
-        library
-            .set_meta(META_MEMBERSHIP_OWED, if owed { "1" } else { "0" })
-            .map_err(|error| storage_error(&error))
-    })
 }

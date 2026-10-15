@@ -9,10 +9,10 @@ use super::{Library, now_unix};
 /// Set once `/UserViews` has answered for this cache, so an empty `libraries`
 /// table can tell "never read" from "the user sees no library".
 const LIBRARIES_READ_AT: &str = "sync.libraries_at";
-/// Work a change to the library list leaves for a later sync step. Each is
-/// set in the same transaction as that change and cleared only once its work
-/// finished, so a cycle that fails in between leaves it to the next one.
-pub(super) const META_MEMBERSHIP_OWED: &str = "sync.membership_owed";
+/// The identity sweep a removed library leaves for a later sync step. It is
+/// set in the same transaction as the removal and cleared only once the
+/// sweep's deletion pass ran, so a cycle that fails in between leaves it to
+/// the next one. A library's owed membership walk is its `membership_owed`.
 pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 
 impl Library {
@@ -36,8 +36,8 @@ impl Library {
 
     /// Makes `libraries`, in server order, the stored library set. Membership
     /// of a library that is gone or not a catalog library goes with it. A
-    /// removed library owes an identity sweep and a new catalog library a
-    /// membership pass, recorded in the same transaction. Repeating it with
+    /// removed library owes an identity sweep and a new catalog library its
+    /// membership walk, recorded in the same transaction. Repeating it with
     /// the same list changes nothing.
     pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
@@ -62,7 +62,6 @@ impl Library {
                 .iter()
                 .filter_map(|library| Some((&library.id, library.catalog_title()?)))
                 .collect::<HashSet<_>>();
-            let mut new_catalog = false;
             for (position, library) in libraries.iter().enumerate() {
                 transaction
                     .prepare_cached(
@@ -84,27 +83,46 @@ impl Library {
                     ])?;
                 match library.catalog_title() {
                     None => delete_membership(transaction, &library.id)?,
-                    Some(title) => new_catalog |= !catalog_before.contains(&(&library.id, title)),
+                    Some(title) if !catalog_before.contains(&(&library.id, title)) => {
+                        mark_owed(transaction, &library.id)?;
+                    }
+                    Some(_) => {}
                 }
             }
             if removed {
                 save_meta(transaction, META_SWEEP_OWED, "1")?;
             }
-            if new_catalog {
-                save_meta(transaction, META_MEMBERSHIP_OWED, "1")?;
-            }
             save_meta(transaction, LIBRARIES_READ_AT, &now_unix().to_string())
         })
     }
 
-    /// Makes `item_ids` the membership of one library. Returns whether it
-    /// changed.
+    /// Marks each library as owing its membership walk until
+    /// `replace_membership` lands one.
+    pub(crate) fn owe_membership(&self, libraries: &[LibraryId]) -> rusqlite::Result<()> {
+        self.db.with_transaction(|transaction| {
+            libraries
+                .iter()
+                .try_for_each(|library| mark_owed(transaction, library))
+        })
+    }
+
+    /// Makes `item_ids` the membership of one library and settles the walk
+    /// it owed. An empty `item_ids` keeps the stored membership, because an
+    /// empty answer is far likelier a server hiccup than an emptied library.
+    /// Returns whether the membership changed.
     pub(crate) fn replace_membership(
         &self,
         library: &LibraryId,
         item_ids: &HashSet<String>,
     ) -> rusqlite::Result<bool> {
         self.db.with_transaction(|transaction| {
+            transaction.execute(
+                "UPDATE libraries SET membership_owed = 0 WHERE id = ?1",
+                params![library.as_str()],
+            )?;
+            if item_ids.is_empty() {
+                return Ok(false);
+            }
             let current = transaction
                 .prepare("SELECT item_id FROM item_libraries WHERE library_id = ?1")?
                 .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
@@ -134,8 +152,8 @@ impl Library {
 fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrary>> {
     let rows = connection
         .prepare(
-            "SELECT id, name, collection_type, primary_image_tag FROM libraries
-             ORDER BY position",
+            "SELECT id, name, collection_type, primary_image_tag, membership_owed
+             FROM libraries ORDER BY position",
         )?
         .query_map([], |row| {
             Ok((
@@ -143,25 +161,41 @@ fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrar
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, bool>(4)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id, name, collection_type, primary_image_tag)| {
-            Some(MediaLibrary {
-                id: LibraryId::parse(&id)?,
-                name,
-                collection_type,
-                primary_image_tag,
-            })
-        })
+        .filter_map(
+            |(id, name, collection_type, primary_image_tag, membership_pending)| {
+                Some(MediaLibrary {
+                    id: LibraryId::parse(&id)?,
+                    name,
+                    collection_type,
+                    primary_image_tag,
+                    membership_pending,
+                })
+            },
+        )
         .collect())
 }
 
+fn mark_owed(connection: &Connection, library: &LibraryId) -> rusqlite::Result<()> {
+    connection
+        .prepare_cached("UPDATE libraries SET membership_owed = 1 WHERE id = ?1")?
+        .execute(params![library.as_str()])?;
+    Ok(())
+}
+
+/// Drops one library's membership, and with it any walk it owed.
 fn delete_membership(connection: &Connection, library: &LibraryId) -> rusqlite::Result<()> {
     connection.execute(
         "DELETE FROM item_libraries WHERE library_id = ?1",
+        params![library.as_str()],
+    )?;
+    connection.execute(
+        "UPDATE libraries SET membership_owed = 0 WHERE id = ?1",
         params![library.as_str()],
     )?;
     Ok(())

@@ -551,12 +551,15 @@ END;
 
 -- The libraries the user sees, in their Jellyfin order. `collection_type` is
 -- Jellyfin's raw CollectionType; `LibraryKind` maps it when it is read.
+-- `membership_owed` is set while a catalog library's membership walk has not
+-- landed: it is new, or its last walk failed, was cut off or never ran.
 CREATE TABLE libraries (
     id                TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
     collection_type   TEXT,
     position          INTEGER NOT NULL,
-    primary_image_tag TEXT
+    primary_image_tag TEXT,
+    membership_owed   INTEGER NOT NULL DEFAULT 0
 );
 
 -- The movies and series each movies or TV shows library holds. Seasons and

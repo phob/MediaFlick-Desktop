@@ -40,6 +40,7 @@ fn libraries(services: &Arc<Services>) -> Handled {
                 "name": library.name,
                 "kind": kind,
                 "imageTag": library.primary_image_tag,
+                "membershipPending": library.membership_pending,
                 "browse": kind.profile().browse,
             })
         })
