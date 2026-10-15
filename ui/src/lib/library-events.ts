@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { invalidateLibraryChanged, invalidateLiveChanged, queryKeys } from "./query-client"
+import { invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
 
 /** The native `live-changed` event: ids the server changed that the cache does not hold. */
@@ -17,29 +17,44 @@ export function readLiveChange(event: ShellEvent): LiveChange | null {
   }
 }
 
+/**
+ * Runs `flush` at once, then at most once a second while requests keep
+ * arriving, so a burst of native events refreshes its pages on the first event
+ * and then once a second instead of once per event.
+ */
+function createThrottle(flush: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending = false
+  const fire = () => {
+    timer = undefined
+    if (!pending) return
+    pending = false
+    flush()
+    timer = setTimeout(fire, 1_000)
+  }
+  return {
+    request() {
+      pending = true
+      if (!timer) fire()
+    },
+    cancel() {
+      clearTimeout(timer)
+      timer = undefined
+      pending = false
+    },
+  }
+}
+
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
-    let catalogTimer: ReturnType<typeof setTimeout> | undefined
-    let catalogPending = false
-    const flushCatalog = () => {
-      catalogTimer = undefined
-      if (catalogPending) {
-        catalogPending = false
-        invalidateLibraryChanged(queryClient, [], [], "catalog")
-        catalogTimer = setTimeout(flushCatalog, 1_000)
-      }
-    }
-    let liveTimer: ReturnType<typeof setTimeout> | undefined
+    const catalog = createThrottle(() => invalidateLibraryChanged(queryClient, [], [], "catalog"))
     const livePending = { itemIds: new Set<string>(), contextIds: new Set<string>() }
-    const flushLive = () => {
-      liveTimer = undefined
-      if (livePending.itemIds.size === 0 && livePending.contextIds.size === 0) return
-      invalidateLiveChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds])
+    const live = createThrottle(() => {
+      invalidateLibraryChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds], "items")
       livePending.itemIds.clear()
       livePending.contextIds.clear()
-      liveTimer = setTimeout(flushLive, 1_000)
-    }
+    })
     const receive = (event: Event) => {
       const detail = readShellEvent(event)
       if (detail?.type === "jellyfin-session-expired") {
@@ -52,24 +67,21 @@ export function useLibraryMetadataBridge() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
         return
       }
-      const live = detail && readLiveChange(detail)
-      if (live) {
-        for (const id of live.itemIds) livePending.itemIds.add(id)
-        for (const id of live.contextIds) livePending.contextIds.add(id)
-        if (!liveTimer) flushLive()
+      const change = detail && readLiveChange(detail)
+      if (change) {
+        for (const id of change.itemIds) livePending.itemIds.add(id)
+        for (const id of change.contextIds) livePending.contextIds.add(id)
+        live.request()
         return
       }
       if (detail?.type !== "library-changed" && detail?.type !== "catalog-changed") return
       const itemIds = shellEventIds(detail.payload.itemIds)
       const contextIds = shellEventIds(detail.payload.contextIds)
       if (detail.type === "catalog-changed") {
-        invalidateLibraryChanged(queryClient, itemIds, contextIds, catalogTimer ? "items" : "catalog")
-        if (catalogTimer) catalogPending = true
-        else catalogTimer = setTimeout(flushCatalog, 1_000)
+        invalidateLibraryChanged(queryClient, itemIds, contextIds, "items")
+        catalog.request()
       } else {
-        clearTimeout(catalogTimer)
-        catalogTimer = undefined
-        catalogPending = false
+        catalog.cancel()
         invalidateLibraryChanged(queryClient, itemIds, contextIds)
       }
     }
@@ -77,8 +89,8 @@ export function useLibraryMetadataBridge() {
     window.addEventListener("mediaflick-desktop-shell", receive)
     return () => {
       window.removeEventListener("mediaflick-desktop-shell", receive)
-      clearTimeout(catalogTimer)
-      clearTimeout(liveTimer)
+      catalog.cancel()
+      live.cancel()
     }
   }, [queryClient])
 }
