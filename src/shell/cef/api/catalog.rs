@@ -927,7 +927,7 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
 /// as a title; every other type is served live as a generic item.
 fn fetch_item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     let scope = session_scope(services)?;
-    match items::fetch_item_detail(scope.client(), scope.user_id(), item_id) {
+    match items::fetch_detailed_item(scope.client(), scope.user_id(), item_id) {
         Ok(Some(dto)) if is_synced_kind(dto.item_type.as_deref().unwrap_or_default()) => {
             let cached = services
                 .session
