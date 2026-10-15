@@ -14,7 +14,7 @@ use crate::library::sync::{
     META_BOOTSTRAP_DONE, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncReport, Trigger,
     bootstrap_progress, now_unix, ownership_available,
 };
-use crate::library::{ItemQuery, Library, StoredCredentials};
+use crate::library::{ItemQuery, Library, LibraryChangeBatch, StoredCredentials};
 
 fn receive_target(listener: &TcpListener) -> (TcpStream, String) {
     let (mut stream, _) = listener.accept().expect("accept");
@@ -982,4 +982,63 @@ fn a_rejected_token_stops_the_cycle_at_any_library_step() {
         steps(&requests),
         ["views", "incremental", "sweep", "walk movies"]
     );
+}
+
+#[test]
+fn a_sweep_names_each_title_whose_watched_state_changed_on_the_server() {
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+    let dtos = [
+        json!({ "Id": "s1", "Name": "Show", "Type": "Series" }),
+        json!({ "Id": "se1", "Name": "Season 1", "Type": "Season",
+            "ParentId": "s1", "SeriesId": "s1" }),
+        json!({ "Id": "e1", "Name": "Pilot", "Type": "Episode",
+            "ParentId": "se1", "SeriesId": "s1", "SeasonId": "se1",
+            "UserData": { "Played": false } }),
+        json!({ "Id": "m1", "Name": "Movie", "Type": "Movie",
+            "ParentId": MOVIES, "UserData": { "IsFavorite": true } }),
+    ]
+    .into_iter()
+    .map(|dto| serde_json::from_value(dto).expect("dto"))
+    .collect::<Vec<_>>();
+    library.ingest_page(&dtos).expect("seed");
+    settled_catalog(&library);
+    let sweep = || {
+        ok(&json!({
+            "Items": [
+                { "Id": "s1" },
+                { "Id": "se1" },
+                { "Id": "e1", "UserData": { "Played": true, "PlayCount": 1 } },
+                { "Id": "m1", "UserData": { "IsFavorite": true } },
+            ],
+            "TotalRecordCount": 4,
+        })
+        .to_string())
+    };
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![views(&[]), ok(EMPTY_PAGE), sweep()],
+    );
+    let report = result.expect("a sweep that finds the episode played");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+    assert_eq!(report.user_data_refreshed, 1);
+    assert_eq!(
+        report.changes,
+        LibraryChangeBatch {
+            item_ids: vec!["e1".to_string()],
+            context_ids: vec!["s1".to_string(), "se1".to_string()],
+        }
+    );
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![views(&[]), ok(EMPTY_PAGE), sweep()],
+    );
+    let report = result.expect("a sweep that finds nothing new");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.user_data_refreshed, 0);
+    assert_eq!(report.changes, LibraryChangeBatch::default());
 }
