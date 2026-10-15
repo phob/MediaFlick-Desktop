@@ -1,7 +1,3 @@
-//! Library grids: the one place that decides which tier answers a library
-//! route. Only the catalog tier is served so far; a live library answers
-//! [`BrowseError::LiveLibrary`].
-
 use serde::Serialize;
 
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
@@ -9,13 +5,9 @@ use super::{ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, Tit
 
 #[derive(Debug)]
 pub enum BrowseError {
-    /// The server's library list has not been read into this cache yet.
     NotLoaded,
-    /// Not one of this account's libraries.
     UnknownLibrary,
-    /// A sort or filter outside the library's capabilities.
     Unsupported(String),
-    /// A library served live from Jellyfin, which this version does not browse.
     LiveLibrary,
     Storage(rusqlite::Error),
 }
@@ -26,7 +18,6 @@ impl From<rusqlite::Error> for BrowseError {
     }
 }
 
-/// The genre and parental rating choices of one library's titles.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilterOptions {
@@ -34,8 +25,6 @@ pub struct FilterOptions {
     pub official_ratings: Vec<String>,
 }
 
-/// One page of a library's grid. `query`'s kinds, search and library are the
-/// library's own, whatever the caller set.
 pub fn library_page(
     library: &Library,
     id: &LibraryId,
@@ -69,7 +58,6 @@ pub fn library_options(library: &Library, id: &LibraryId) -> Result<FilterOption
     })
 }
 
-/// "Latest in <library>": movies by date added, shows by their newest episode.
 pub fn latest(
     library: &Library,
     id: &LibraryId,

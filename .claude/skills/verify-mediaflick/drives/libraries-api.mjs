@@ -1,16 +1,3 @@
-// /api/libraries lists exactly the libraries Jellyfin's /UserViews lists for
-// the signed-in user, in its order, each with the kind its CollectionType
-// names, and each movies or TV shows library's grid lists exactly the movie
-// or series ids Jellyfin lists in that library. Once the first sync has
-// finished, no library reports its membership as still pending.
-// Also the library routes' contract: an id outside the registry is a 404, a
-// malformed id, parameter, sort or filter the library does not offer a 400,
-// a page limit is clamped, letters answer only where the library's
-// capabilities offer a letter index (400 elsewhere), and a library served
-// live answers 501 on its other grid routes.
-// Read-only in both modes.
-//   just verify libraries-api --url https://demo.jellyfin.org/stable
-//   just verify libraries-api --account https://jellyfin.example.com
 const KINDS = {
   movies: "movies",
   tvshows: "shows",
@@ -149,8 +136,6 @@ export default async function librariesApi(ctx) {
   }, "the first sync to finish", 300000)
 
   const report = { mode: ctx.account ? `account ${ctx.account.server}` : "demo", checks: [] }
-  // Every check is recorded and the run fails only at the end, so a failing
-  // run still reports every library.
   const expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)

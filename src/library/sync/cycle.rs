@@ -50,8 +50,6 @@ pub(super) fn run_cycle_inner(
         {
             control.set_phase(SyncPhase::Catalog);
         }
-        // The first fill owes every walk and takes it before the fill, so
-        // library grids fill page by page with it.
         if initial_catalog {
             membership_changed |= walk_membership(library, session, &scope, true, control)?;
         }
@@ -73,7 +71,6 @@ pub(super) fn run_cycle_inner(
             commit(session, &scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
             false
         } else if trigger.forces_identity_sweep()
-            // A removed library's titles leave the cache now, not within the hour.
             || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
@@ -144,9 +141,6 @@ fn restart_bootstrap(
         library
             .set_meta(META_BOOTSTRAP_OFFSET, "0")
             .map_err(|error| storage_error(&error))?;
-        // An empty value deliberately means "the first page has not told
-        // us the new total yet"; retaining the previous week's total would
-        // make the determinate bar move against stale information.
         library
             .set_meta(META_BOOTSTRAP_TOTAL, "")
             .map_err(|error| storage_error(&error))?;
@@ -173,8 +167,6 @@ fn record_success(
     })
 }
 
-/// Returns whether the deletion pass ran. Only that settles an owed sweep;
-/// the hourly timer restarts either way.
 fn sweep_identity(
     library: &Library,
     session: &Session,
@@ -209,9 +201,6 @@ fn sweep_identity(
     Ok(deletion_ran)
 }
 
-/// Stores the server's library list and returns whether this cycle's answer
-/// lists no movies or TV shows library. A failed call returns false, because
-/// the stored list it leaves may be stale.
 fn refresh_library_list(
     library: &Library,
     session: &Session,
@@ -228,8 +217,6 @@ fn refresh_library_list(
     }))
 }
 
-/// Walks each catalog library that owes its membership, after owing every
-/// one when `owe_all`. Returns whether any library's membership changed.
 fn walk_membership(
     library: &Library,
     session: &Session,
@@ -519,7 +506,6 @@ fn incremental(
 ///
 /// Returns the refreshed user-data count and a complete deletion batch so the
 /// same cycle can notify item and hierarchy caches after committing removals.
-/// The batch is `None` when the deletion pass was skipped.
 fn identity_sweep(
     library: &Library,
     session: &Session,
@@ -577,10 +563,6 @@ fn identity_sweep(
         return Ok((refreshed, None));
     }
     if seen.is_empty() && !(no_catalog_library && counted_zero) {
-        // An empty answer is far more likely to be a server hiccup than an
-        // emptied library, so it deletes everything only when the server
-        // counted zero titles and this cycle's library list holds no movies
-        // or TV shows library.
         return Ok((refreshed, None));
     }
     let deletion_changes = commit(session, scope, || {

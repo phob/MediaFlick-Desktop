@@ -450,8 +450,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     return status.body
   }
 
-  // GET as the cached account, or without --account as the session the app
-  // stored when the drive signed in (the demo server, for example).
   async function jellyfin(apiPath) {
     if (cachedAccount) return jellyfinGet(cachedAccount, apiPath)
     const stored = readStoredSession(dataDir)

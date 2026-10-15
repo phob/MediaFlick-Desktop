@@ -580,8 +580,6 @@ fn official_ratings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 }
 
-/// A `kind` list names catalog kinds only; anything else is a 400, so no
-/// route builds an empty kind list. No `kind` means movies and series.
 fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
     let value = request.param("kind").unwrap_or_default();
     let kinds = value
@@ -596,7 +594,6 @@ fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
     Ok(KindFilter::from_kinds(kinds))
 }
 
-/// `/api/items`: a library query plus the search and kinds it names.
 fn item_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
     Ok(ItemQuery {
         search: request.param("search"),
@@ -605,18 +602,12 @@ fn item_query(request: &ApiRequest) -> Result<ItemQuery, ApiResponse> {
     })
 }
 
-/// What an item list does with a parameter that is present but invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Params {
-    /// Ignore it, as `/api/items` always has.
     Lenient,
-    /// Answer 400, so a route never answers a different question than the
-    /// one asked.
     Strict,
 }
 
-/// The sort, filters and page of an item list: all a library route takes,
-/// since the library supplies kinds and scope.
 pub(super) fn library_query(
     request: &ApiRequest,
     params: Params,

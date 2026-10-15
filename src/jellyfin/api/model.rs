@@ -84,9 +84,6 @@ pub struct ItemsResponse {
     pub start_index: i64,
 }
 
-/// One identity sweep page. Unlike `ItemsResponse`, its count stays `None`
-/// when the server leaves it out, because only an explicit zero may empty
-/// the catalog.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct IdentityPage {
@@ -100,8 +97,6 @@ pub struct UserViewsResponse {
     pub items: Vec<UserViewDto>,
 }
 
-/// One `/UserViews` entry: a library the user sees. Its `collection_type` is
-/// read only by `LibraryKind::from_collection_type`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct UserViewDto {

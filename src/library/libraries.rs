@@ -1,5 +1,3 @@
-//! The Jellyfin libraries a user sees, and how each kind of library is served.
-
 use serde::{Serialize, Serializer};
 
 use crate::jellyfin::api::model::UserViewDto;
@@ -7,8 +5,6 @@ use crate::jellyfin::api::model::UserViewDto;
 use super::SortKey;
 use super::model::TitleKind;
 
-/// A Jellyfin library id: validated hex, so it is safe as a route segment and
-/// a SQL argument.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct LibraryId(String);
 
@@ -41,9 +37,6 @@ pub enum LibraryKind {
 }
 
 impl LibraryKind {
-    /// The only reader of Jellyfin's CollectionType. No value, `folders`, and
-    /// any value a newer server adds read as `Mixed`, so every library is
-    /// still listed.
     pub fn from_collection_type(value: Option<&str>) -> Self {
         match value.map(str::to_ascii_lowercase).as_deref() {
             Some("movies") => Self::Movies,
@@ -61,8 +54,6 @@ impl LibraryKind {
         }
     }
 
-    /// How each kind is served. Exhaustive: a new kind without a row does not
-    /// build.
     pub fn profile(self) -> LibraryProfile {
         match self {
             Self::Movies => LibraryProfile::catalog(TitleKind::Movie, &MOVIE_BROWSE),
@@ -99,15 +90,10 @@ impl LibraryProfile {
 }
 
 pub enum GridSource {
-    /// The cached catalog, scoped by `item_libraries`. `title` is the one kind
-    /// the grid shows and the membership pass walks.
     Catalog { title: TitleKind },
-    /// Never cached: its grid comes from Jellyfin, which this version does
-    /// not browse yet.
     Live,
 }
 
-/// A grid filter. Its id is also the request parameter that sets it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKey {
     Genre,
@@ -137,7 +123,6 @@ impl Serialize for FilterKey {
     }
 }
 
-/// What a grid can run. A request for anything else is a 400.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseCapabilities {
@@ -188,7 +173,6 @@ pub static SHOW_BROWSE: BrowseCapabilities = BrowseCapabilities {
     letter_index: true,
 };
 
-/// The cross-library title views: Search, Favorites, a person, a genre.
 pub static TITLE_BROWSE: BrowseCapabilities = BrowseCapabilities {
     sorts: &[
         SortKey::Name,
@@ -208,7 +192,6 @@ pub static TITLE_BROWSE: BrowseCapabilities = BrowseCapabilities {
     letter_index: true,
 };
 
-/// No random sort: Jellyfin's is unseeded, so its pages would overlap.
 pub static LIVE_RECURSIVE_BROWSE: BrowseCapabilities = BrowseCapabilities {
     sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
     filters: &[FilterKey::Favorite],
@@ -225,17 +208,12 @@ pub static LIVE_FOLDER_BROWSE: BrowseCapabilities = BrowseCapabilities {
 pub struct MediaLibrary {
     pub id: LibraryId,
     pub name: String,
-    /// Jellyfin's CollectionType as received. `kind()` maps it.
     pub(super) collection_type: Option<String>,
     pub primary_image_tag: Option<String>,
-    /// A stored catalog library whose membership walk has not landed yet, so
-    /// its grid may still lack titles. Always false for a library as the
-    /// server lists it.
     pub membership_pending: bool,
 }
 
 impl MediaLibrary {
-    /// `None` for a view whose id is not one this app can address.
     pub fn from_view(view: &UserViewDto) -> Option<Self> {
         Some(Self {
             id: LibraryId::parse(&view.id)?,
@@ -250,8 +228,6 @@ impl MediaLibrary {
         LibraryKind::from_collection_type(self.collection_type.as_deref())
     }
 
-    /// The kind a catalog library's grid lists; `None` for a library served
-    /// live.
     pub fn catalog_title(&self) -> Option<TitleKind> {
         match self.kind().profile().grid {
             GridSource::Catalog { title } => Some(title),
@@ -260,8 +236,6 @@ impl MediaLibrary {
     }
 }
 
-/// `Unknown`: the server's library list was never read into this cache.
-/// `Known(vec![])`: the server says the user sees no library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LibraryRegistry {
     Unknown,

@@ -162,8 +162,6 @@ pub enum ItemSort {
     },
 }
 
-/// The id half of [`ItemSort`]: what the UI sends and what a library's
-/// capabilities list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
     Name,
@@ -341,7 +339,6 @@ impl SeriesStatus {
 pub struct ItemQuery {
     pub search: Option<String>,
     pub kinds: KindFilter,
-    /// Only titles in this catalog library's membership.
     pub library: Option<LibraryId>,
     pub genre: Option<String>,
     /// Inclusive first year of a standard ten-year release decade.
