@@ -209,6 +209,8 @@ fn ok(body: &str) -> (u16, String) {
 /// A reply status that closes the connection without answering.
 const DROPPED: u16 = 0;
 const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
+/// A 200 answer with neither items nor a count, as a misbehaving proxy sends.
+const UNCOUNTED: &str = "{}";
 const NOT_JSON: &str = "not json";
 const MOVIES: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
 const MORE_MOVIES: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
@@ -502,7 +504,7 @@ fn a_library_added_by_a_failed_cycle_is_walked_by_the_next() {
 }
 
 #[test]
-fn a_rate_limit_or_a_lost_connection_ends_the_membership_pass_and_leaves_the_rest_owed() {
+fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_library() {
     let library = settled_library(&[("m1", "Movie"), ("m2", "Movie"), ("s1", "Series")]);
     sync_libraries(
         &library,
@@ -559,9 +561,10 @@ fn a_rate_limit_or_a_lost_connection_ends_the_membership_pass_and_leaves_the_res
             dropped(),
             dropped(),
             dropped(),
+            members(&["s1"], 1),
         ],
     );
-    result.expect("the catalog synced without the rest of the pass");
+    result.expect("the catalog synced without one library's walk");
     assert_eq!(
         steps(&requests),
         [
@@ -570,28 +573,25 @@ fn a_rate_limit_or_a_lost_connection_ends_the_membership_pass_and_leaves_the_res
             "walk movies",
             "walk more movies",
             "walk more movies",
-            "walk more movies"
+            "walk more movies",
+            "walk shows"
         ]
     );
-    assert_eq!(pending(&library), [MORE_MOVIES, SHOWS]);
+    assert_eq!(pending(&library), [MORE_MOVIES]);
+    assert_eq!(grid(&library, SHOWS), ["s1"]);
 
     let (result, requests) = cycle(
         &library,
         Trigger::Scheduled,
-        vec![
-            listing(),
-            ok(EMPTY_PAGE),
-            members(&["m2"], 1),
-            members(&["s1"], 1),
-        ],
+        vec![listing(), ok(EMPTY_PAGE), members(&["m2"], 1)],
     );
     result.expect("the cycle that finishes the pass");
     assert_eq!(
         steps(&requests),
-        ["views", "incremental", "walk more movies", "walk shows"]
+        ["views", "incremental", "walk more movies"]
     );
     assert!(pending(&library).is_empty());
-    assert_eq!(grid(&library, SHOWS), ["s1"]);
+    assert_eq!(grid(&library, MORE_MOVIES), ["m2"]);
 }
 
 #[test]
@@ -687,6 +687,16 @@ fn a_server_that_lists_no_library_and_no_title_empties_the_catalog() {
     let (result, requests) = cycle(
         &library,
         Trigger::Scheduled,
+        vec![views(&[]), ok(EMPTY_PAGE), ok(UNCOUNTED)],
+    );
+    let report = result.expect("a cycle whose sweep answer carries no count");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+    assert_eq!(library.stats().total, 2);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
         vec![views(&[]), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
     );
     let report = result.expect("cycle");
@@ -705,15 +715,70 @@ fn a_server_that_lists_no_library_and_no_title_empties_the_catalog() {
 }
 
 #[test]
-fn an_empty_identity_answer_deletes_nothing_before_the_library_list_is_known() {
+fn removing_the_last_catalog_library_empties_the_catalog_while_music_remains() {
     let library = settled_library(&[("m1", "Movie")]);
+    let (result, _) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            views(&[(MOVIES, "movies"), (MUSIC, "music")]),
+            ok(EMPTY_PAGE),
+            members(&["m1"], 1),
+        ],
+    );
+    result.expect("libraries synced");
+    let music_only = || views(&[(MUSIC, "music")]);
 
     let (result, requests) = cycle(
         &library,
-        Trigger::Requested,
-        vec![ok(NOT_JSON), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+        Trigger::Scheduled,
+        vec![music_only(), ok(EMPTY_PAGE), ok(UNCOUNTED)],
     );
-    let report = result.expect("cycle");
+    let report = result.expect("a cycle whose sweep answer carries no count");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("m1").expect("query").is_some());
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![music_only(), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("a cycle whose sweep counts no title");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 1);
+    assert_eq!(library.stats().total, 0);
+    assert_eq!(listed(&library), Some(vec![MUSIC.to_string()]));
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![music_only(), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle with nothing owed");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+#[test]
+fn an_empty_identity_answer_deletes_nothing_without_this_cycle_s_library_list() {
+    let library = settled_library(&[("m1", "Movie")]);
+    let failed_list = || vec![ok(NOT_JSON), ok(EMPTY_PAGE), ok(EMPTY_PAGE)];
+
+    let (result, requests) = cycle(&library, Trigger::Requested, failed_list());
+    let report = result.expect("a cycle before the library list is known");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![views(&[]), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle that stores an empty library list");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+
+    let (result, requests) = cycle(&library, Trigger::Requested, failed_list());
+    let report = result.expect("a cycle whose library list failed");
     assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
     assert_eq!(report.deleted, 0);
     assert!(library.item("m1").expect("query").is_some());
