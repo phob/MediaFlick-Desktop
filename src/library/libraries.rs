@@ -156,11 +156,15 @@ impl LiveSort {
     }
 }
 
-const LIVE_SORT_KEYS: [SortKey; 3] = [
-    LiveSort::ALL[0].key(),
-    LiveSort::ALL[1].key(),
-    LiveSort::ALL[2].key(),
-];
+const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
+    let mut keys = [SortKey::Name; LiveSort::ALL.len()];
+    let mut index = 0;
+    while index < keys.len() {
+        keys[index] = LiveSort::ALL[index].key();
+        index += 1;
+    }
+    keys
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKey {
