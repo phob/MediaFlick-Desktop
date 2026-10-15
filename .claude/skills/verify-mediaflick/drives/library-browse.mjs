@@ -9,8 +9,9 @@
 // leaves accounts.json untouched. In a movies or TV shows library a title
 // opened from a card's hover preview also names the library. After a reload
 // without navigation state, with /api/libraries held, its page already reads
-// "Back to library" and leads to the library, with genre chips on it; once
-// the list loads it names the library. Read-only.
+// "Back to library" and leads to the library, with at least one genre chip
+// on it; once the list loads it names the library. The hold is released in a
+// finally block. Read-only.
 //
 // Started with --seed holding an accounts.json whose account remembers legacy
 // `Movie` and `Series` pages, it instead proves the app starts, keeps those
@@ -202,22 +203,25 @@ async function previewAndReload(ctx, expect, library) {
   await ctx.screenshot(`${slug(library.name)}-preview-detail`)
 
   await ctx.app.evaluate("sessionStorage.setItem('mediaflickVerifyHoldLibraries', '1'); history.replaceState(null, '', location.pathname); location.reload()")
-  await ctx.until(async () => (await ctx.pathname()) === result.item && (await ctx.app.evaluate("document.readyState")) === "complete", "the title page to reload", 30000)
-  await ctx.until("window.__heldLibraries >= 1", "the reloaded page to wait on a held /api/libraries", 30000)
-  result.heldLabel = await ctx.find({ role: "link", name: "Back to library" }, { timeout: 15000 }).then(() => "Back to library", () => null)
-  result.heldHref = await backLinkHref(ctx, "Back to library")
-  result.heldGenreLinks = await ctx.app.evaluate(`[...document.querySelectorAll('a[href*="genre="]')].map((link) => link.getAttribute("href"))`)
-  result.heldBackLinks = await ctx.app.evaluate(`[...document.querySelectorAll("a")].map((link) => link.textContent.trim()).filter((text) => text.startsWith("Back to"))`)
-  expect(
-    result.heldLabel === "Back to library" && result.heldHref === target && (await ctx.app.evaluate("window.__heldLibraries >= 1 && window.__libraryHolds.length >= 1")),
-    `${library.name}: while /api/libraries is held after a reload, the title page reads Back to library and leads to ${target} (${JSON.stringify(result.heldBackLinks)}, ${result.heldHref})`,
-  )
-  expect(
-    result.heldGenreLinks.length === 0 || result.heldGenreLinks.every((href) => href.startsWith(`${target}?genre=`)),
-    `${library.name}: while /api/libraries is held, the genre chips already filter ${target} (${result.heldGenreLinks.join(", ") || "no genres"})`,
-  )
-  await ctx.screenshot(`${slug(library.name)}-reloaded-held-detail`)
-  await ctx.app.evaluate("window.__releaseLibraries()")
+  try {
+    await ctx.until(async () => (await ctx.pathname()) === result.item && (await ctx.app.evaluate("document.readyState")) === "complete", "the title page to reload", 30000)
+    await ctx.until("window.__heldLibraries >= 1", "the reloaded page to wait on a held /api/libraries", 30000)
+    result.heldLabel = await ctx.find({ role: "link", name: "Back to library" }, { timeout: 15000 }).then(() => "Back to library", () => null)
+    result.heldHref = await backLinkHref(ctx, "Back to library")
+    result.heldGenreLinks = await ctx.app.evaluate(`[...document.querySelectorAll('a[href*="genre="]')].map((link) => link.getAttribute("href"))`)
+    result.heldBackLinks = await ctx.app.evaluate(`[...document.querySelectorAll("a")].map((link) => link.textContent.trim()).filter((text) => text.startsWith("Back to"))`)
+    expect(
+      result.heldLabel === "Back to library" && result.heldHref === target && (await ctx.app.evaluate("window.__heldLibraries >= 1 && window.__libraryHolds.length >= 1")),
+      `${library.name}: while /api/libraries is held after a reload, the title page reads Back to library and leads to ${target} (${JSON.stringify(result.heldBackLinks)}, ${result.heldHref})`,
+    )
+    expect(
+      result.heldGenreLinks.length > 0 && result.heldGenreLinks.every((href) => href.startsWith(`${target}?genre=`)),
+      `${library.name}: while /api/libraries is held, the title page has genre chips and each filters ${target} (${result.heldGenreLinks.join(", ") || "no genre chip"})`,
+    )
+    await ctx.screenshot(`${slug(library.name)}-reloaded-held-detail`)
+  } finally {
+    await ctx.app.evaluate("window.__releaseLibraries?.() ?? sessionStorage.removeItem('mediaflickVerifyHoldLibraries')").catch(() => null)
+  }
   result.reloadedLabel = await ctx.find({ role: "link", name: back }, { timeout: 30000 }).then(() => back, () => null)
   result.reloadedHref = await backLinkHref(ctx, back)
   expect(result.reloadedLabel === back && result.reloadedHref === target, `${library.name}: once the list loads, the reloaded title page reads ${back} and leads to ${target} (${result.reloadedLabel}, ${result.reloadedHref})`)
