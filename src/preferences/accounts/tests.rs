@@ -238,6 +238,84 @@ fn legacy_browsing_keys_load_unchanged_and_leave_with_the_next_library_save() {
 }
 
 #[test]
+fn saving_a_route_a_page_already_holds_leaves_the_file_alone() {
+    let path = test_path("browsing-unchanged");
+    let alice = key("server", "alice");
+    let bob = key("server", "bob");
+    let service = AccountConfigurationService::open(path.clone()).expect("open");
+    let page = format!("library:{LIBRARY}");
+    let route = format!("/library/{LIBRARY}?sort=year");
+    service.save_browsing(&alice, "last", &route).expect("last");
+    service
+        .save_browsing(&alice, &page, &route)
+        .expect("library");
+    // Trailing whitespace keeps the file valid, and any rewrite drops it.
+    let mark = || {
+        let mut bytes = std::fs::read(&path).expect("read account settings");
+        bytes.extend_from_slice(b"\n\n");
+        std::fs::write(&path, &bytes).expect("mark account settings");
+        bytes
+    };
+
+    let marked = mark();
+    service
+        .save_browsing(&alice, "last", &route)
+        .expect("the same last route");
+    service
+        .save_browsing(&alice, &page, &route)
+        .expect("the same library filters");
+    assert_eq!(
+        std::fs::read(&path).expect("read after unchanged saves"),
+        marked,
+        "an unchanged browsing save leaves accounts.json as it was"
+    );
+
+    service
+        .save_browsing(&bob, "last", &route)
+        .expect("another account's route");
+    assert_ne!(std::fs::read(&path).expect("read"), marked);
+    assert_eq!(service.browsing(&bob)["last"], route);
+
+    let marked = mark();
+    service
+        .save_browsing(&alice, "last", "/calendar")
+        .expect("a new last route");
+    assert_ne!(std::fs::read(&path).expect("read"), marked);
+    assert_eq!(service.browsing(&alice)["last"], "/calendar");
+    drop(service);
+
+    write_browsing(
+        &path,
+        0,
+        serde_json::json!({
+            "last": "/calendar",
+            "Movie": "/library?kind=Movie&sort=year",
+            page.clone(): route,
+        }),
+    );
+    let reopened = AccountConfigurationService::open(path.clone()).expect("reopen");
+    assert!(
+        reopened
+            .save_browsing(&alice, "Movie", "/library?kind=Movie&sort=year")
+            .is_err(),
+        "a legacy page stays unwritable even with the value it holds"
+    );
+    reopened
+        .save_browsing(&alice, &page, &route)
+        .expect("the same library filters with a legacy page");
+    assert!(!reopened.browsing(&alice).contains_key("Movie"));
+    drop(reopened);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read saved file"))
+            .expect("parse saved file");
+    assert!(
+        saved["accounts"][0]["browsing"].get("Movie").is_none(),
+        "a due legacy prune still writes the file"
+    );
+    cleanup(&path);
+}
+
+#[test]
 fn browsing_holds_at_most_256_pages() {
     let path = test_path("browsing-bound");
     let alice = key("server", "alice");
