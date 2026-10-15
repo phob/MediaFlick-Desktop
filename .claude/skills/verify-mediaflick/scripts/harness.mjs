@@ -501,8 +501,10 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
   // drive: a run that fails mid-playback still reports its stop at teardown.
   // The drive's own user-path cleanup comes first; this only acts if the
   // server still shows the item played or with a resume point.
+  const restoredItems = new Set()
   function restoreItemAfterRun(itemId) {
     if (!cachedAccount) throw new Error("restoreItemAfterRun needs --account SERVER")
+    restoredItems.add(itemId)
     afterRunTasks.push(async () => {
       const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${encodeURIComponent(itemId)}?userId=${cachedAccount.userId}`)
       if (!data.Played && !data.PlaybackPositionTicks) {
@@ -512,6 +514,21 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
       await resetUserData(cachedAccount, itemId)
       log(`after run: reset ${itemId} (was played=${data.Played}, position=${data.PlaybackPositionTicks / 1e7} s)`)
     })
+  }
+
+  // A watched-state change made in Jellyfin itself, as another client makes
+  // it, so a drive can watch the app follow a pushed change. The restore puts
+  // the item back to unplayed, so it must start that way.
+  const changedItems = new Set()
+  async function setPlayedOnServer(itemId, played) {
+    if (!restoredItems.has(itemId)) throw new Error(`setPlayedOnServer: call ctx.restoreItemAfterRun(${itemId}) first`)
+    if (!changedItems.has(itemId)) {
+      const { UserData: data } = await jellyfinGet(cachedAccount, `/Items/${encodeURIComponent(itemId)}?userId=${cachedAccount.userId}`)
+      if (data.Played || data.PlaybackPositionTicks) throw new Error(`setPlayedOnServer: ${itemId} is already played or has a resume point; drives may only change items that are unplayed`)
+      changedItems.add(itemId)
+    }
+    await resetUserData(cachedAccount, itemId, { played })
+    log(`marked ${itemId} ${played ? "played" : "unplayed"} in Jellyfin (POST /UserItems/<id>/UserData)`)
   }
 
   async function unfavoriteAfterRun(itemId) {
@@ -624,6 +641,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     jellyfin,
     appSession,
     restoreItemAfterRun,
+    setPlayedOnServer,
     unfavoriteAfterRun,
     cancelSeerrRequestAfterRun,
     revokeAppSessionAfterRun,
