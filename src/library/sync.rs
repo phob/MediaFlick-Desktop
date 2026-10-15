@@ -53,6 +53,7 @@ pub(super) const META_CATALOG_READY: &str = "sync.catalog_ready";
 pub(super) const META_WATERMARK: &str = "sync.watermark";
 pub(super) const META_WATERMARK_IDS: &str = "sync.watermark_ids";
 pub(super) const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
+pub(super) const META_EMPTY_SWEEP_AT: &str = "sync.empty_sweep_at";
 pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
 pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";

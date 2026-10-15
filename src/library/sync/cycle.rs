@@ -11,9 +11,10 @@ use super::libraries::{membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
-    META_CATALOG_READY, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, META_LAST_SYNC,
-    META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle,
-    SyncPhase, SyncReport, Trigger, best_effort, cancelled, commit, now_unix, storage_error,
+    META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP,
+    META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL,
+    SyncHandle, SyncPhase, SyncReport, Trigger, best_effort, cancelled, commit, now_unix,
+    storage_error,
 };
 
 pub fn run_cycle(
@@ -176,14 +177,18 @@ fn sweep_identity(
     control: Option<&SyncHandle>,
     report: &mut SyncReport,
 ) -> Result<bool, ApiError> {
-    let (refreshed, deletion_changes) = identity_sweep(
+    let swept = identity_sweep(
         library,
         session,
         scope,
         no_catalog_library,
         control,
         &mut report.changes,
-    )?;
+    );
+    if swept.is_err() {
+        let _ = commit(session, scope, || forget_empty_sweep(library));
+    }
+    let (refreshed, deletion_changes) = swept?;
     report.user_data_refreshed = refreshed;
     let deletion_ran = deletion_changes.is_some();
     if let Some(deletion_changes) = deletion_changes {
@@ -563,17 +568,43 @@ fn identity_sweep(
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-        return Ok((refreshed, None));
     }
-    if seen.is_empty() && !(no_catalog_library && counted_zero) {
+    // An empty catalog library can stay listed after every title is gone, so
+    // an empty answer counting zero is trusted once the next sweep repeats it.
+    let empty_and_zero = !truncated && seen.is_empty() && counted_zero;
+    let trusted = if truncated {
+        false
+    } else if !seen.is_empty() {
+        true
+    } else {
+        empty_and_zero
+            && (no_catalog_library
+                || meta(library, META_EMPTY_SWEEP_AT)?.is_some_and(|at| !at.is_empty()))
+    };
+    if !trusted {
+        commit(session, scope, || {
+            if empty_and_zero {
+                touch(library, META_EMPTY_SWEEP_AT)
+            } else {
+                forget_empty_sweep(library)
+            }
+        })?;
         return Ok((refreshed, None));
     }
     let deletion_changes = commit(session, scope, || {
-        library
+        let changes = library
             .retain_ids(&seen)
-            .map_err(|error| storage_error(&error))
+            .map_err(|error| storage_error(&error))?;
+        forget_empty_sweep(library)?;
+        Ok(changes)
     })?;
     Ok((refreshed, Some(deletion_changes)))
+}
+
+fn forget_empty_sweep(library: &Library) -> Result<(), ApiError> {
+    library
+        .set_meta(META_EMPTY_SWEEP_AT, "")
+        .map_err(|error| storage_error(&error))
 }
 
 fn advance_watermark_with_ids(
