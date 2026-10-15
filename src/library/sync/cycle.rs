@@ -194,16 +194,16 @@ fn sweep_identity(
     let deletion_changes = commit(session, scope, || {
         apply_sweep_verdict(library, verdict, &walk.seen)
     })?;
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
     report.user_data_refreshed = walk.refreshed;
     let deletion_ran = deletion_changes.is_some();
     if let Some(deletion_changes) = deletion_changes {
         report.deleted = deletion_changes.item_ids.len();
         report.changes.merge(deletion_changes);
     }
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
     Ok(deletion_ran)
 }
 
