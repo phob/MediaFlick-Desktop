@@ -1,3 +1,4 @@
+import type { UseQueryResult } from "@tanstack/react-query"
 import { CastRow, CrewRow } from "@/components/detail/CastRow"
 import { DetailFacts } from "@/components/detail/DetailFacts"
 import { DetailHeroLayout, type HeroArtworkAspect } from "@/components/detail/DetailHeroLayout"
@@ -9,11 +10,11 @@ import {
   imageUrl,
   logoUrl,
   type GenericItemDetail,
+  type ItemAbout,
 } from "@/lib/api"
 import { artworkShape, type ArtworkShape } from "@/lib/artwork"
 import { formatRuntime, formatYearOnly } from "@/lib/format"
 import type { DetailNavigationState } from "@/lib/navigation"
-import { useItemAbout } from "@/lib/queries"
 import { useRouteScroller } from "@/lib/route-scroll"
 
 const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
@@ -29,12 +30,13 @@ const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
  */
 export function GenericItemPage({
   item,
+  about,
   navigationState,
 }: {
   item: GenericItemDetail
+  about: UseQueryResult<ItemAbout>
   navigationState: DetailNavigationState
 }) {
-  const about = useItemAbout(item.id)
   const scroller = useRouteScroller()
   const backdrop = backdropUrl(item)
   const facts = [

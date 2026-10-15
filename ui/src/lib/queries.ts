@@ -340,11 +340,11 @@ export function useLetterboxdMovieReviews(tmdbId: number | null, enabled = true)
   })
 }
 
-export function useChildren(id: string | undefined) {
+export function useChildren(id: string | undefined, enabled = true) {
   return useQuery({
     queryKey: queryKeys.children(id ?? ""),
     queryFn: () => api.children(id!),
-    enabled: Boolean(id),
+    enabled: Boolean(id) && enabled,
   })
 }
 
