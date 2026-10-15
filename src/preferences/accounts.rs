@@ -941,7 +941,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_browsing_keys_load_unchanged_and_leave_with_the_next_save() {
+    fn legacy_browsing_keys_load_unchanged_and_leave_with_the_next_library_save() {
         let path = test_path("browsing-legacy-keys");
         let alice = key("server", "alice");
         let bob = key("server", "bob");
@@ -969,6 +969,13 @@ mod tests {
             "opening must not rewrite the file"
         );
 
+        reopened
+            .save_browsing(&alice, "last", "/calendar")
+            .expect("save the last route");
+        assert!(
+            reopened.browsing(&alice).contains_key("Movie"),
+            "navigating keeps the legacy pages until a library's filters are saved"
+        );
         let page = format!("library:{LIBRARY}");
         reopened
             .save_browsing(&alice, &page, &format!("/library/{LIBRARY}?sort=year"))
@@ -976,7 +983,7 @@ mod tests {
         let browsing = reopened.browsing(&alice);
         assert!(!browsing.contains_key("Movie"));
         assert!(!browsing.contains_key("Series"));
-        assert_eq!(browsing["last"], "/library?kind=Movie&sort=year");
+        assert_eq!(browsing["last"], "/calendar");
         assert!(browsing.contains_key(&page));
         assert!(reopened.browsing(&bob).contains_key("Movie"));
         drop(reopened);
