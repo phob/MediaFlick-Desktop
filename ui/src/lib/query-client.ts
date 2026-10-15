@@ -62,6 +62,8 @@ export const queryKeys = {
   letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
   letterboxdProfiles: ["letterboxd", "profiles"] as const,
   children: (id: string) => ["item", id, "children"] as const,
+  childPage: (id: string, offset: number, limit: number) =>
+    ["item", id, "children", { offset, limit }] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,

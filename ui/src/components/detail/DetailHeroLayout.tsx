@@ -4,10 +4,20 @@ import { DetailBackLink } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
+export type HeroArtworkAspect = "poster" | "square" | "still"
+
 interface HeroArtwork {
   src: string
-  aspect?: "poster" | "still"
+  aspect?: HeroArtworkAspect
   progress?: number
+}
+
+// Square art (album covers, photos) is contained rather than cropped: it is
+// rarely exactly 1:1.
+const ARTWORK_FRAME: Record<HeroArtworkAspect, string> = {
+  poster: "w-[220px] aspect-2/3 object-cover",
+  square: "w-[260px] aspect-square bg-card object-contain",
+  still: "w-[340px] aspect-video object-cover",
 }
 
 interface HeroGenre {
@@ -54,26 +64,21 @@ export function DetailHeroLayout({
   const showPoster = Boolean(poster?.src) && failedPoster !== poster?.src
   const showLogo = Boolean(logo) && failedLogo !== logo
   const progress = Math.max(0, Math.min(1, poster?.progress ?? 0))
+  const frame = ARTWORK_FRAME[poster?.aspect ?? "poster"]
 
   return (
     <header className="relative" data-testid="detail-hero-layout">
       <div className="relative flex min-h-[26rem] gap-8 px-6 pt-14 pb-12 sm:px-10 lg:px-14">
         {showPoster && (
           <div
-            className={cn(
-              "relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-edge sm:block",
-              poster?.aspect === "still" ? "w-[340px]" : "w-[220px]",
-            )}
+            className="relative hidden shrink-0 self-start overflow-hidden rounded-xl shadow-2xl shadow-black/60 ring-1 ring-edge sm:block"
           >
             <img
               src={poster!.src}
               alt=""
               decoding="async"
               onError={() => setFailedPoster(poster!.src)}
-              className={cn(
-                "media-artwork-image w-full object-cover",
-                poster?.aspect === "still" ? "aspect-video" : "aspect-2/3",
-              )}
+              className={cn("media-artwork-image", frame)}
             />
             {progress > 0 && (
               <div className="absolute inset-x-0 bottom-0 h-1 bg-black/60">

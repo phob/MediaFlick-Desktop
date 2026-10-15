@@ -4,6 +4,7 @@ import { backdropUrl, type ItemDetail } from "../src/lib/api"
 function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
   return {
     id: "item-1",
+    layout: "title",
     kind: "Movie",
     name: "Example title",
     year: null,
@@ -26,11 +27,13 @@ function detailItem(overrides: Partial<ItemDetail>): ItemDetail {
     positionTicks: 0,
     favorite: false,
     unplayedCount: null,
+    primaryAspect: null,
     genres: [],
     originalTitle: null,
     providerIds: { tmdb: null, imdb: null, tvdb: null },
     parentId: null,
     dateCreated: null,
+    libraryId: null,
     ...overrides,
   }
 }

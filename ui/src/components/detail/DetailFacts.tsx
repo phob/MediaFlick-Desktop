@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 import { DetailFact, DetailFactPanel } from "@/components/detail/DetailPrimitives"
 import { Badge } from "@/components/ui/badge"
-import type { ItemAbout, ItemDetail } from "@/lib/api"
+import type { AnyItemDetail, ItemAbout } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 
 /**
@@ -10,7 +10,7 @@ import { formatDate } from "@/lib/format"
  * Studios and tags come from the live `about` record; the dates and
  * play count are on the cached row and stand alone when the server is away.
  */
-export function DetailFacts({ item, about }: { item: ItemDetail; about?: ItemAbout }) {
+export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: ItemAbout }) {
   const studios = about?.studios ?? []
   const tags = about?.tags ?? []
   const premiere = formatDate(item.premiereDate)

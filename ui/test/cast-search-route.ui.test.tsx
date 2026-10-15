@@ -10,10 +10,10 @@ import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
 
-function QueryProbeGrid({ query, footer }: ItemGridProps) {
+function QueryProbeGrid({ source, footer }: ItemGridProps) {
   return (
     <>
-      <output data-library-query>{JSON.stringify(query)}</output>
+      <output data-library-query>{JSON.stringify(source.scope === "titles" ? source.query : null)}</output>
       {footer}
     </>
   )

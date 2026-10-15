@@ -266,7 +266,7 @@ export default function Library({ components }: LibraryProps = {}) {
           </div>
         ) : (
           <Grid
-            query={query}
+            source={{ scope: "titles", query }}
             onTotal={setTotal}
             jumpRail={letterIndex
               ? (jumpTo) => <LetterJumpRail letters={letterIndex} onJump={jumpTo} />

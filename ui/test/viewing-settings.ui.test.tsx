@@ -97,7 +97,7 @@ test("remembered Series filters take precedence over the hide-watched default", 
   queryClient.setQueryData(queryKeys.genres, {genres:[]})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   render(<TestProviders client={queryClient} initialEntries={["/library?kind=Series"]}>
-    <Library components={{ItemGrid:({query}) => <output aria-label="Library query">{JSON.stringify(query)}</output>}} />
+    <Library components={{ItemGrid:({source}) => <output aria-label="Library query">{JSON.stringify(source.scope === "titles" ? source.query : null)}</output>}} />
   </TestProviders>)
   expect(JSON.parse(screen.getByLabelText("Library query").textContent ?? "{}")).toMatchObject({kind:"Series", sort:"year", watched:"watched"})
 })

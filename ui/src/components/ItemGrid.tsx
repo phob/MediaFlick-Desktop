@@ -7,8 +7,9 @@ import { MediaCard } from "@/components/MediaCard"
 import { PageEmptyState, PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PAGE_SIZE, type ItemQuery, type ItemSummary } from "@/lib/api"
-import { useItemPages } from "@/lib/queries"
+import { PAGE_SIZE, type ItemSummary } from "@/lib/api"
+import type { BrowseSource } from "@/lib/libraries"
+import { useBrowsePages } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
@@ -60,9 +61,44 @@ function useGridMetrics(element: HTMLElement | null) {
   return metrics
 }
 
+function routeScroller() {
+  return document.querySelector<HTMLElement>(".content-viewport")
+}
+
+/** Where `element` starts inside `scroller`'s scrolled content. */
+function useScrollMargin(element: HTMLElement | null, scroller: HTMLElement | null) {
+  const [margin, setMargin] = useState<number | null>(null)
+
+  useLayoutEffect(() => {
+    if (!element || !scroller) return
+    const measure = () => {
+      const next = element.getBoundingClientRect().top
+        - scroller.getBoundingClientRect().top
+        + scroller.scrollTop
+      setMargin((previous) => (previous === next ? previous : next))
+    }
+
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    observer.observe(scroller)
+    const page = element.closest<HTMLElement>(".detail-page")
+    if (page) observer.observe(page)
+    return () => observer.disconnect()
+  }, [element, scroller])
+
+  return margin
+}
+
 export interface ItemGridProps {
-  /** Without `limit`/`offset` — the grid owns paging. */
-  query: ItemQuery
+  /** A titles query carries no `limit`/`offset`: the grid owns paging. */
+  source: BrowseSource
+  /**
+   * `own` fills its parent and scrolls itself, as on a library page. `route`
+   * grows with its rows inside the route's scroll viewport, so the detail page
+   * around it scrolls as one.
+   */
+  scroll?: "own" | "route"
   onTotal?: (total: number | null) => void
   empty?: string
   /**
@@ -82,7 +118,8 @@ export interface ItemGridProps {
  * an append-as-you-go list does.
  */
 export function ItemGrid({
-  query,
+  source,
+  scroll = "own",
   onTotal,
   empty = "No items match that query.",
   footer,
@@ -90,8 +127,12 @@ export function ItemGrid({
 }: ItemGridProps) {
   "use no memo"
 
-  const [scroller, setScroller] = useState<HTMLDivElement | null>(null)
+  const routeScroll = scroll === "route"
+  const [ownScroller, setOwnScroller] = useState<HTMLDivElement | null>(null)
+  const [routeViewport] = useState(() => (routeScroll ? routeScroller() : null))
+  const scroller = routeScroll ? routeViewport : ownScroller
   const [content, setContent] = useState<HTMLDivElement | null>(null)
+  const scrollMargin = useScrollMargin(routeScroll ? content : null, routeViewport) ?? 0
   const { measured, columns, rowHeight, cardHeight, gap } = useGridMetrics(content)
   const [visibleRows, setVisibleRows] = useState({ first: 0, last: 0 })
   // Page 0 is always requested: it is what `total` is read from, so keeping it
@@ -111,7 +152,7 @@ export function ItemGrid({
     return [...wanted].sort((a, b) => a - b)
   }, [firstPage, lastPage])
 
-  const results = useItemPages(query, pages)
+  const results = useBrowsePages(source, pages)
   const total = results[0]?.data?.total ?? null
   // A background refetch can fail while every cached card is still valid. Only
   // page zero can make the whole view unavailable; later page failures remain
@@ -137,9 +178,11 @@ export function ItemGrid({
     getScrollElement: () => scroller,
     estimateSize: () => rowHeight,
     overscan: 2,
+    scrollMargin,
   })
 
-  useScrollRestoration(scroller, `grid:${JSON.stringify(query)}`, total !== null && measured)
+  // In the route's viewport the route restores its own scroll position.
+  useScrollRestoration(ownScroller, `grid:${JSON.stringify(source)}`, total !== null && measured)
 
   const items = virtualizer.getVirtualItems()
   const first = items[0]?.index ?? 0
@@ -154,60 +197,65 @@ export function ItemGrid({
   const itemAt = (index: number) => loaded.get(Math.floor(index / PAGE_SIZE))?.[index % PAGE_SIZE]
   const jumpTo = (index: number) =>
     virtualizer.scrollToIndex(Math.floor(index / columns), { align: "start" })
-  const rail = jumpRail && total ? jumpRail(jumpTo) : null
+  const rail = jumpRail && total && !routeScroll ? jumpRail(jumpTo) : null
+
+  const body = (
+    <div ref={setContent}>
+      {error ? (
+        <PageErrorState
+          title="Could not load library items"
+          description={error.message}
+          action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
+        />
+      ) : total === null ? (
+        <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
+      ) : total === 0 ? (
+        <PageEmptyState
+          icon={<LibraryBig className="size-6" />}
+          title="Nothing to show"
+          description={empty}
+        />
+      ) : (
+        <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {items.map((row) => (
+            <div
+              key={row.key}
+              className="virtual-card-row absolute top-0 left-0 flex w-full"
+              style={{
+                height: cardHeight,
+                gap,
+                transform: `translateY(${row.start - scrollMargin}px)`,
+              }}
+            >
+              {Array.from({ length: columns }, (_, column) => {
+                const index = row.index * columns + column
+                if (index >= total) return null
+                const item = itemAt(index)
+                return item ? (
+                  <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
+                ) : (
+                  <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+      {footer}
+    </div>
+  )
+  if (routeScroll) return body
 
   return (
     <div className="flex h-full min-h-0">
       <div
-        ref={setScroller}
+        ref={setOwnScroller}
         className={cn(
           "h-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-6 pt-5 pb-8 sm:px-10 lg:px-14",
           rail && "pr-2 sm:pr-3 lg:pr-4",
         )}
       >
-        <div ref={setContent}>
-          {error ? (
-            <PageErrorState
-              title="Could not load library items"
-              description={error.message}
-              action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
-            />
-          ) : total === null ? (
-            <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
-          ) : total === 0 ? (
-            <PageEmptyState
-              icon={<LibraryBig className="size-6" />}
-              title="Nothing to show"
-              description={empty}
-            />
-          ) : (
-            <div data-item-grid-canvas className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-              {items.map((row) => (
-                <div
-                  key={row.key}
-                  className="virtual-card-row absolute top-0 left-0 flex w-full"
-                  style={{
-                    height: cardHeight,
-                    gap,
-                    transform: `translateY(${row.start}px)`,
-                  }}
-                >
-                  {Array.from({ length: columns }, (_, column) => {
-                    const index = row.index * columns + column
-                    if (index >= total) return null
-                    const item = itemAt(index)
-                    return item ? (
-                      <MediaCard key={item.id} item={item} className="catalog-card shrink-0" />
-                    ) : (
-                      <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
-                    )
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
-          {footer}
-        </div>
+        {body}
       </div>
       {rail}
     </div>

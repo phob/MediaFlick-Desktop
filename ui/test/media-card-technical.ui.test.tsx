@@ -77,6 +77,7 @@ const movie: ItemSummary = {
   positionTicks: 0,
   favorite: false,
   unplayedCount: null,
+  primaryAspect: null,
 }
 
 const series: ItemSummary = {
