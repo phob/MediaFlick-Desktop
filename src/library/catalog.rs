@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
 use crate::jellyfin::api::model::BaseItemDto;
 
-use super::model::is_synced_kind;
+use super::model::{CatalogKind, is_synced_kind};
 use super::{ItemRecord, Library, LibraryChangeBatch, UserDataRecord, normalize_ids, now_unix};
 
 fn record_change(changes: &mut LibraryChangeBatch, dto: &BaseItemDto) {
@@ -218,25 +218,30 @@ impl Library {
         })
     }
 
-    /// The item type of a cached item.
+    /// The cached item's kind, or `None` when it is not cached.
+    pub fn catalog_kind(&self, item_id: &str) -> rusqlite::Result<Option<CatalogKind>> {
+        let kind = self.db.with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT kind FROM items WHERE jellyfin_id = ?1",
+                    params![item_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+        })?;
+        Ok(kind.as_deref().and_then(CatalogKind::parse))
+    }
+
     /// The cached item's kind, or `None` when it is not cached. A failed read
     /// is logged and also reads as uncached: every caller then asks the server
     /// or answers as it would for an unknown id.
     pub fn kind(&self, item_id: &str) -> Option<String> {
-        self.db
-            .with_connection(|connection| {
-                connection
-                    .query_row(
-                        "SELECT kind FROM items WHERE jellyfin_id = ?1",
-                        params![item_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .optional()
-            })
+        self.catalog_kind(item_id)
             .unwrap_or_else(|error| {
                 tracing::warn!(target: "library.db", item_id, "could not read a cached item kind: {error}");
                 None
             })
+            .map(|kind| kind.as_str().to_string())
     }
 
     pub fn ids_by_tmdb(
