@@ -11,8 +11,9 @@ use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::Session;
 use crate::library::libraries::{LibraryId, LibraryRegistry};
 use crate::library::sync::{
-    META_BOOTSTRAP_DONE, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncReport, Trigger,
-    bootstrap_progress, now_unix, ownership_available,
+    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_BOOTSTRAP_DONE, META_LAST_BOOTSTRAP,
+    META_LAST_IDENTITY_SWEEP, SyncReport, Trigger, bootstrap_progress, now_unix,
+    ownership_available,
 };
 use crate::library::{ItemQuery, Library, LibraryChangeBatch, StoredCredentials};
 
@@ -763,11 +764,11 @@ fn an_empty_identity_answer_deletes_nothing_without_this_cycle_s_library_list() 
 
     let (result, requests) = cycle(
         &library,
-        Trigger::Scheduled,
-        vec![views(&[]), ok(EMPTY_PAGE)],
+        Trigger::Requested,
+        vec![views(&[]), ok(EMPTY_PAGE), members(&["m1"], 1)],
     );
     result.expect("a cycle that stores an empty library list");
-    assert_eq!(steps(&requests), ["views", "incremental"]);
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
 
     let (result, requests) = cycle(&library, Trigger::Requested, failed_list());
     let report = result.expect("a cycle whose library list failed");
@@ -1041,4 +1042,287 @@ fn a_sweep_names_each_title_whose_watched_state_changed_on_the_server() {
     assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
     assert_eq!(report.user_data_refreshed, 0);
     assert_eq!(report.changes, LibraryChangeBatch::default());
+}
+
+const MIXED: &str = "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7";
+const COUNTED_EMPTY: &str = r#"{"Items":[],"TotalRecordCount":1}"#;
+
+fn seed(library: &Library, dtos: &[serde_json::Value]) {
+    let dtos = dtos
+        .iter()
+        .map(|dto| serde_json::from_value(dto.clone()).expect("dto"))
+        .collect::<Vec<_>>();
+    library.ingest_page(&dtos).expect("seed");
+}
+
+fn cached(library: &Library, ids: &[&str]) -> Vec<String> {
+    ids.iter()
+        .filter(|id| library.item(id).expect("query").is_some())
+        .map(|id| (*id).to_string())
+        .collect()
+}
+
+fn watch_state_rows(library: &Library, ids: &[&str]) -> i64 {
+    library
+        .db
+        .with_connection(|connection| {
+            ids.iter().try_fold(0, |rows, id| {
+                connection
+                    .query_row(
+                        "SELECT count(*) FROM user_data WHERE jellyfin_id = ?1",
+                        [id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map(|count| rows + count)
+            })
+        })
+        .expect("user data")
+}
+
+fn one_listed_title() -> Arc<Library> {
+    let library = settled_library(&[("m1", "Movie")]);
+    sync_libraries(&library, &[(MOVIES, "movies", &["m1"])]);
+    library
+}
+
+fn requested_sweep(library: &Arc<Library>, sweep: Vec<Reply>) -> Result<SyncReport, ApiError> {
+    let mut replies = vec![views(&[(MOVIES, "movies")]), ok(EMPTY_PAGE)];
+    replies.extend(sweep);
+    replies.push(members(&[], 0));
+    cycle(library, Trigger::Requested, replies).0
+}
+
+fn full_identity_page() -> String {
+    let items = (0..IDENTITY_PAGE_SIZE)
+        .map(|index| json!({ "Id": format!("t{index:04}") }))
+        .collect::<Vec<_>>();
+    json!({ "Items": items, "TotalRecordCount": IDENTITY_PAGE_SIZE * 2 }).to_string()
+}
+
+#[test]
+fn a_title_a_mixed_library_still_shows_stays_when_its_catalog_library_goes() {
+    let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
+    sync_libraries(
+        &library,
+        &[
+            (MOVIES, "movies", &["m1"]),
+            (MORE_MOVIES, "movies", &["m2"]),
+            (MIXED, "folders", &[]),
+        ],
+    );
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            views(&[(MOVIES, "movies"), (MIXED, "folders")]),
+            ok(EMPTY_PAGE),
+            members(&["m1", "m2"], 2),
+            members(&["m1"], 1),
+        ],
+    );
+
+    let report = result.expect("the cycle that notices the removal");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1", "m2"]), ["m1", "m2"]);
+    assert_eq!(
+        steps(&requests),
+        ["views", "incremental", "sweep", "walk movies"]
+    );
+}
+
+#[test]
+fn a_partial_library_list_keeps_titles_the_server_still_returns() {
+    let library = settled_library(&[("m1", "Movie"), ("s1", "Series")]);
+    sync_libraries(
+        &library,
+        &[(MOVIES, "movies", &["m1"]), (SHOWS, "tvshows", &["s1"])],
+    );
+
+    let (result, _) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            views(&[(MOVIES, "movies")]),
+            ok(EMPTY_PAGE),
+            members(&["m1", "s1"], 2),
+            members(&["m1"], 1),
+        ],
+    );
+
+    let report = result.expect("a cycle whose library list omits a library");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1", "s1"]), ["m1", "s1"]);
+}
+
+#[test]
+fn an_empty_answer_counting_zero_deletes_once_the_next_sweep_sees_the_same() {
+    let library = Arc::new(Library::open_in_memory().expect("library"));
+    seed(
+        &library,
+        &[
+            json!({ "Id": "m1", "Name": "Movie", "Type": "Movie" }),
+            json!({ "Id": "s1", "Name": "Show", "Type": "Series",
+                "UserData": { "IsFavorite": true } }),
+            json!({ "Id": "se1", "Name": "Season 1", "Type": "Season",
+                "ParentId": "s1", "SeriesId": "s1" }),
+            json!({ "Id": "e1", "Name": "Pilot", "Type": "Episode",
+                "ParentId": "se1", "SeriesId": "s1", "SeasonId": "se1",
+                "UserData": { "Played": true, "PlayCount": 1 } }),
+        ],
+    );
+    settled_catalog(&library);
+    sync_libraries(
+        &library,
+        &[
+            (MOVIES, "movies", &["m1"]),
+            (SHOWS, "tvshows", &["s1"]),
+            (MORE_MOVIES, "movies", &[]),
+        ],
+    );
+    let titles = ["m1", "s1", "se1", "e1"];
+    let empty_library_left = || views(&[(MORE_MOVIES, "movies")]);
+    assert_eq!(watch_state_rows(&library, &titles), 2);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![empty_library_left(), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("the first empty answer");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &titles), titles);
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            empty_library_left(),
+            ok(EMPTY_PAGE),
+            ok(EMPTY_PAGE),
+            members(&[], 0),
+        ],
+    );
+    let report = result.expect("the confirming empty answer");
+    assert_eq!(report.deleted, 4);
+    assert!(cached(&library, &titles).is_empty());
+    assert_eq!(watch_state_rows(&library, &titles), 0);
+    assert_eq!(
+        report.changes,
+        LibraryChangeBatch {
+            item_ids: ["e1", "m1", "s1", "se1"].map(String::from).to_vec(),
+            context_ids: ["s1", "se1"].map(String::from).to_vec(),
+        }
+    );
+    assert_eq!(
+        steps(&requests),
+        ["views", "incremental", "sweep", "walk more movies"]
+    );
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![empty_library_left(), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle with nothing owed");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+#[test]
+fn an_empty_answer_that_counts_titles_or_none_deletes_nothing() {
+    let library = one_listed_title();
+
+    for answer in [EMPTY_PAGE, COUNTED_EMPTY, EMPTY_PAGE, UNCOUNTED, EMPTY_PAGE] {
+        let report = requested_sweep(&library, vec![ok(answer)]).expect(answer);
+        assert_eq!(report.deleted, 0, "{answer}");
+    }
+    let report = requested_sweep(&library, vec![ok(COUNTED_EMPTY)]).expect("counted");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+}
+
+#[test]
+fn a_non_empty_answer_between_two_empty_ones_resets_the_confirmation() {
+    let library = one_listed_title();
+
+    for sweep in [ok(EMPTY_PAGE), members(&["m1"], 1), ok(EMPTY_PAGE)] {
+        let report = requested_sweep(&library, vec![sweep]).expect("cycle");
+        assert_eq!(report.deleted, 0);
+    }
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+}
+
+#[test]
+fn a_truncated_walk_neither_deletes_nor_confirms_an_empty_answer() {
+    let library = one_listed_title();
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("first empty answer");
+    assert_eq!(report.deleted, 0);
+
+    let page = full_identity_page();
+    let server = serve(
+        [views(&[(MOVIES, "movies")]), ok(EMPTY_PAGE)]
+            .into_iter()
+            .chain((0..MAX_IDENTITY_PAGES).map(|_| ok(&page)))
+            .chain([members(&[], 0)])
+            .collect(),
+    );
+    let session = authenticated_session(&library, &server.url);
+    let report = super::run_cycle(&library, &session, Trigger::Requested).expect("truncated");
+    let requests = server.requests();
+    assert_eq!(
+        steps(&requests)
+            .iter()
+            .filter(|step| **step == "sweep")
+            .count(),
+        MAX_IDENTITY_PAGES
+    );
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("empty again");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+}
+
+#[test]
+fn a_failed_sweep_resets_the_confirmation() {
+    let library = one_listed_title();
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("first empty answer");
+    assert_eq!(report.deleted, 0);
+
+    let failed = requested_sweep(
+        &library,
+        vec![
+            ok(&full_identity_page()),
+            Reply::Drop,
+            Reply::Drop,
+            Reply::Drop,
+        ],
+    );
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("empty again");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
+}
+
+#[test]
+fn an_account_switch_does_not_carry_an_empty_answer_over() {
+    let library = one_listed_title();
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("first empty answer");
+    assert_eq!(report.deleted, 0);
+
+    library.clear_session(true).expect("switch account");
+    seed(
+        &library,
+        &[json!({ "Id": "m1", "Name": "M1", "Type": "Movie" })],
+    );
+    settled_catalog(&library);
+    sync_libraries(&library, &[(MOVIES, "movies", &["m1"])]);
+
+    let report = requested_sweep(&library, vec![ok(EMPTY_PAGE)]).expect("new account");
+    assert_eq!(report.deleted, 0);
+    assert_eq!(cached(&library, &["m1"]), ["m1"]);
 }
