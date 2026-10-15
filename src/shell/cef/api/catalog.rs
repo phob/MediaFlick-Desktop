@@ -329,7 +329,7 @@ fn built_in_home_row(services: &Services, account: &AccountKey, id: HomeBuiltIn)
             home_query(
                 &services.library,
                 ItemQuery {
-                    kinds: KindFilter::Only(vec![CatalogKind::Movie]),
+                    kinds: KindFilter::one(CatalogKind::Movie),
                     sort: ItemSort::DateAdded,
                     ..Default::default()
                 },
@@ -518,7 +518,7 @@ fn latest_home_items(library: &Library, kind: CatalogKind) -> Vec<ItemSummary> {
     home_query(
         library,
         ItemQuery {
-            kinds: KindFilter::Only(vec![kind]),
+            kinds: KindFilter::one(kind),
             sort: ItemSort::ReleaseDate,
             ..Default::default()
         },
@@ -601,10 +601,12 @@ fn kind_filter(request: &ApiRequest) -> Result<KindFilter, ApiResponse> {
                 .ok_or_else(|| ApiResponse::error(400, format!("unknown item kind {kind:?}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(if kinds.is_empty() {
-        KindFilter::TopLevel
-    } else {
-        KindFilter::Only(kinds)
+    Ok(match kinds.split_first() {
+        None => KindFilter::TopLevel,
+        Some((first, rest)) => KindFilter::Only {
+            first: *first,
+            rest: rest.to_vec(),
+        },
     })
 }
 

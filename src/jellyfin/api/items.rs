@@ -146,7 +146,9 @@ pub fn fetch_library_member_ids(
             ("EnableImages", "false".to_string()),
             ("StartIndex", start_index.to_string()),
             ("Limit", page_size.to_string()),
-            ("SortBy", "DateCreated".to_string()),
+            // SortName breaks DateCreated ties so pages neither skip nor
+            // repeat titles. Jellyfin ignores an `Id` sort.
+            ("SortBy", "DateCreated,SortName".to_string()),
             ("SortOrder", "Ascending".to_string()),
         ],
     )

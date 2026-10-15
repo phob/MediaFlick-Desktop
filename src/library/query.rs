@@ -730,7 +730,7 @@ mod tests {
 
         let page = library
             .query(&ItemQuery {
-                kinds: KindFilter::Only(vec![CatalogKind::Movie]),
+                kinds: KindFilter::one(CatalogKind::Movie),
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
                 watched: Some(WatchFilter::Unwatched),
@@ -744,7 +744,7 @@ mod tests {
 
         let all = library
             .query(&ItemQuery {
-                kinds: KindFilter::Only(vec![CatalogKind::Movie]),
+                kinds: KindFilter::one(CatalogKind::Movie),
                 genre: Some("Action".to_string()),
                 release_decade: Some(1990),
                 watched: Some(WatchFilter::Unwatched),
@@ -775,7 +775,7 @@ mod tests {
 
         let movies = library
             .query(&ItemQuery {
-                kinds: KindFilter::Only(vec![CatalogKind::Movie]),
+                kinds: KindFilter::one(CatalogKind::Movie),
                 release_decade: Some(1990),
                 limit: 10,
                 ..Default::default()
@@ -783,7 +783,7 @@ mod tests {
             .expect("movies");
         let series = library
             .query(&ItemQuery {
-                kinds: KindFilter::Only(vec![CatalogKind::Series]),
+                kinds: KindFilter::one(CatalogKind::Series),
                 release_decade: Some(2010),
                 limit: 10,
                 ..Default::default()
@@ -818,7 +818,7 @@ mod tests {
 
         let ids = library
             .query(&ItemQuery {
-                kinds: KindFilter::Only(vec![CatalogKind::Movie]),
+                kinds: KindFilter::one(CatalogKind::Movie),
                 sort: ItemSort::Name,
                 limit: 10,
                 ..Default::default()

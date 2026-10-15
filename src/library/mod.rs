@@ -29,10 +29,10 @@ use serde_json::Value;
 use crate::app::ids::new_device_id;
 use libraries::LibraryId;
 
-pub use catalog_libraries::{FilterOptions, LibrarySetChange};
+pub use catalog_libraries::FilterOptions;
 pub use model::{
     CatalogKind, ItemDetail, ItemPlaybackPreference, ItemRecord, ItemSummary, KindFilter,
-    LibraryStats, ProviderIds, UserDataRecord, resolve_playback_preference,
+    LibraryStats, ProviderIds, TitleKind, UserDataRecord, resolve_playback_preference,
 };
 
 pub const EARLIEST_RELEASE_DECADE: i64 = 1900;

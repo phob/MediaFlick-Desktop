@@ -556,8 +556,7 @@ CREATE TABLE libraries (
     name              TEXT NOT NULL,
     collection_type   TEXT,
     position          INTEGER NOT NULL,
-    primary_image_tag TEXT,
-    synced_at         INTEGER NOT NULL
+    primary_image_tag TEXT
 );
 
 -- The movies and series each movies or TV shows library holds. Seasons and

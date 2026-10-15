@@ -2,10 +2,10 @@
 //! route. Only the catalog tier is served so far; a live library answers
 //! [`BrowseError::LiveLibrary`].
 
-use super::libraries::{BrowseCapabilities, FilterKey, GridSource, LibraryId};
+use super::libraries::{BrowseCapabilities, FilterKey, LibraryId};
 use super::{
-    CatalogKind, FilterOptions, ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library,
-    SeriesStatus, SortDirection, WatchFilter,
+    FilterOptions, ItemPage, ItemQuery, ItemSort, ItemSummary, KindFilter, Library, SeriesStatus,
+    SortDirection, TitleKind, WatchFilter,
 };
 
 const CATALOG_PAGE_LIMIT: i64 = 500;
@@ -56,10 +56,10 @@ impl BrowseQuery {
         }
     }
 
-    fn catalog_query(&self, library: &LibraryId, title: CatalogKind) -> ItemQuery {
+    fn catalog_query(&self, library: &LibraryId, title: TitleKind) -> ItemQuery {
         ItemQuery {
             search: None,
-            kinds: KindFilter::Only(vec![title]),
+            kinds: KindFilter::one(title),
             library: Some(library.clone()),
             genre: self.genre.clone(),
             release_decade: self.release_decade,
@@ -125,11 +125,11 @@ pub fn latest(
 ) -> Result<Vec<ItemSummary>, BrowseError> {
     let (title, _) = catalog_library(library, id)?;
     let sort = match title {
-        CatalogKind::Series => ItemSort::EpisodeAdded,
-        CatalogKind::Movie | CatalogKind::Season | CatalogKind::Episode => ItemSort::DateAdded,
+        TitleKind::Movie => ItemSort::DateAdded,
+        TitleKind::Series => ItemSort::EpisodeAdded,
     };
     Ok(library.query_page(&ItemQuery {
-        kinds: KindFilter::Only(vec![title]),
+        kinds: KindFilter::one(title),
         library: Some(id.clone()),
         sort,
         limit,
@@ -140,15 +140,9 @@ pub fn latest(
 fn catalog_library(
     library: &Library,
     id: &LibraryId,
-) -> Result<(CatalogKind, &'static BrowseCapabilities), BrowseError> {
+) -> Result<(TitleKind, &'static BrowseCapabilities), BrowseError> {
     let registry = library.libraries()?;
-    let profile = registry
-        .get(id)
-        .ok_or(BrowseError::UnknownLibrary)?
-        .kind()
-        .profile();
-    match profile.grid {
-        GridSource::Catalog { title } => Ok((title, profile.browse)),
-        GridSource::Live => Err(BrowseError::LiveLibrary),
-    }
+    let entry = registry.get(id).ok_or(BrowseError::UnknownLibrary)?;
+    let title = entry.catalog_title().ok_or(BrowseError::LiveLibrary)?;
+    Ok((title, entry.kind().profile().browse))
 }

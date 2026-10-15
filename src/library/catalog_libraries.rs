@@ -1,30 +1,20 @@
 use std::collections::HashSet;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-use super::libraries::{GridSource, LibraryId, LibraryRegistry, MediaLibrary};
+use crate::jellyfin::api::{ApiError, items};
+use crate::jellyfin::session::{Session, SessionScope};
+
+use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use super::query::natural_order;
 use super::session_store::save_meta;
+use super::sync::{META_MEMBERSHIP_OWED, META_SWEEP_OWED, commit, storage_error};
 use super::{Library, now_unix};
 
 /// Set once `/UserViews` has answered for this cache, so an empty `libraries`
 /// table can tell "never read" from "the user sees no library".
 const LIBRARIES_READ_AT: &str = "sync.libraries_at";
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct LibrarySetChange {
-    pub added: Vec<LibraryId>,
-    pub removed: Vec<LibraryId>,
-    /// A library that stayed changed its name, kind, artwork or position.
-    pub renamed: bool,
-}
-
-impl LibrarySetChange {
-    pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && !self.renamed
-    }
-}
 
 /// The genre and parental rating choices of one library's titles.
 #[derive(Debug, Serialize)]
@@ -34,42 +24,92 @@ pub struct FilterOptions {
     pub official_ratings: Vec<String>,
 }
 
+/// Stores the server's library list. A successful empty answer is the
+/// server's and is stored as such.
+pub(super) fn refresh_libraries(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    let views = items::fetch_user_views(scope.client(), scope.user_id())?;
+    let mut seen = HashSet::new();
+    let libraries = views
+        .iter()
+        .filter_map(|view| {
+            let parsed = MediaLibrary::from_view(view);
+            if parsed.is_none() {
+                tracing::warn!(target: "library.sync", id = view.id, "skipped a library with an unusable id");
+            }
+            parsed
+        })
+        .filter(|parsed| seen.insert(parsed.id.clone()))
+        .collect::<Vec<_>>();
+    commit(session, scope, || {
+        library
+            .replace_libraries(&libraries)
+            .map_err(|error| storage_error(&error))
+    })
+}
+
 impl Library {
     pub fn libraries(&self) -> rusqlite::Result<LibraryRegistry> {
-        if self.meta(LIBRARIES_READ_AT)?.is_none() {
-            return Ok(LibraryRegistry::Unknown);
-        }
-        self.db
-            .with_connection(stored_libraries)
-            .map(LibraryRegistry::Known)
+        // One read transaction, so a sign-out clearing both between the two
+        // reads cannot turn "never read" into "no library".
+        self.db.with_transaction(|transaction| {
+            let read = transaction
+                .query_row(
+                    "SELECT 1 FROM meta WHERE key = ?1",
+                    params![LIBRARIES_READ_AT],
+                    |_| Ok(()),
+                )
+                .optional()?;
+            match read {
+                None => Ok(LibraryRegistry::Unknown),
+                Some(()) => stored_libraries(transaction).map(LibraryRegistry::Known),
+            }
+        })
     }
 
     /// Makes `libraries`, in server order, the stored library set. Membership
-    /// of a library that is gone or not a catalog library goes with it.
-    /// Repeating it with the same list changes nothing.
-    pub(crate) fn replace_libraries(
-        &self,
-        libraries: &[MediaLibrary],
-    ) -> rusqlite::Result<LibrarySetChange> {
+    /// of a library that is gone or not a catalog library goes with it. A
+    /// removed library owes an identity sweep and a new catalog library a
+    /// membership pass, recorded in the same transaction. Repeating it with
+    /// the same list changes nothing.
+    pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<()> {
         self.db.with_transaction(|transaction| {
-            let change = set_change(&stored_libraries(transaction)?, libraries);
-            for id in &change.removed {
-                transaction.execute("DELETE FROM libraries WHERE id = ?1", params![id.as_str()])?;
-                delete_membership(transaction, id)?;
+            let before = stored_libraries(transaction)?;
+            let listed = libraries
+                .iter()
+                .map(|library| &library.id)
+                .collect::<HashSet<_>>();
+            let mut removed = false;
+            for gone in before
+                .iter()
+                .filter(|library| !listed.contains(&library.id))
+            {
+                transaction.execute(
+                    "DELETE FROM libraries WHERE id = ?1",
+                    params![gone.id.as_str()],
+                )?;
+                delete_membership(transaction, &gone.id)?;
+                removed = true;
             }
-            let synced_at = now_unix();
+            let catalog_before = before
+                .iter()
+                .filter_map(|library| Some((&library.id, library.catalog_title()?)))
+                .collect::<HashSet<_>>();
+            let mut new_catalog = false;
             for (position, library) in libraries.iter().enumerate() {
                 transaction
                     .prepare_cached(
                         "INSERT INTO libraries
-                             (id, name, collection_type, position, primary_image_tag, synced_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                             (id, name, collection_type, position, primary_image_tag)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
                          ON CONFLICT(id) DO UPDATE SET
                              name = excluded.name,
                              collection_type = excluded.collection_type,
                              position = excluded.position,
-                             primary_image_tag = excluded.primary_image_tag,
-                             synced_at = excluded.synced_at",
+                             primary_image_tag = excluded.primary_image_tag",
                     )?
                     .execute(params![
                         library.id.as_str(),
@@ -77,14 +117,19 @@ impl Library {
                         library.collection_type,
                         position as i64,
                         library.primary_image_tag,
-                        synced_at,
                     ])?;
-                if !matches!(library.kind().profile().grid, GridSource::Catalog { .. }) {
-                    delete_membership(transaction, &library.id)?;
+                match library.catalog_title() {
+                    None => delete_membership(transaction, &library.id)?,
+                    Some(title) => new_catalog |= !catalog_before.contains(&(&library.id, title)),
                 }
             }
-            save_meta(transaction, LIBRARIES_READ_AT, &synced_at.to_string())?;
-            Ok(change)
+            if removed {
+                save_meta(transaction, META_SWEEP_OWED, "1")?;
+            }
+            if new_catalog {
+                save_meta(transaction, META_MEMBERSHIP_OWED, "1")?;
+            }
+            save_meta(transaction, LIBRARIES_READ_AT, &now_unix().to_string())
         })
     }
 
@@ -184,39 +229,4 @@ fn delete_membership(connection: &Connection, library: &LibraryId) -> rusqlite::
         params![library.as_str()],
     )?;
     Ok(())
-}
-
-fn set_change(before: &[MediaLibrary], after: &[MediaLibrary]) -> LibrarySetChange {
-    let (before_ids, after_ids) = (ids(before), ids(after));
-    LibrarySetChange {
-        added: missing_from(after, &before_ids)
-            .map(|library| library.id.clone())
-            .collect(),
-        removed: missing_from(before, &after_ids)
-            .map(|library| library.id.clone())
-            .collect(),
-        renamed: kept_in(before, &after_ids).ne(kept_in(after, &before_ids)),
-    }
-}
-
-fn ids(libraries: &[MediaLibrary]) -> HashSet<LibraryId> {
-    libraries.iter().map(|library| library.id.clone()).collect()
-}
-
-fn missing_from<'a>(
-    libraries: &'a [MediaLibrary],
-    other: &'a HashSet<LibraryId>,
-) -> impl Iterator<Item = &'a MediaLibrary> {
-    libraries
-        .iter()
-        .filter(|library| !other.contains(&library.id))
-}
-
-fn kept_in<'a>(
-    libraries: &'a [MediaLibrary],
-    other: &'a HashSet<LibraryId>,
-) -> impl Iterator<Item = &'a MediaLibrary> {
-    libraries
-        .iter()
-        .filter(|library| other.contains(&library.id))
 }

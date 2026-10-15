@@ -5,7 +5,7 @@ use serde::{Serialize, Serializer};
 use crate::jellyfin::api::model::UserViewDto;
 
 use super::SortKey;
-use super::model::CatalogKind;
+use super::model::TitleKind;
 
 /// A Jellyfin library id: validated hex, so it is safe as a route segment and
 /// a SQL argument.
@@ -65,8 +65,8 @@ impl LibraryKind {
     /// build.
     pub fn profile(self) -> LibraryProfile {
         match self {
-            Self::Movies => LibraryProfile::catalog(CatalogKind::Movie, &MOVIE_BROWSE),
-            Self::Shows => LibraryProfile::catalog(CatalogKind::Series, &SHOW_BROWSE),
+            Self::Movies => LibraryProfile::catalog(TitleKind::Movie, &MOVIE_BROWSE),
+            Self::Shows => LibraryProfile::catalog(TitleKind::Series, &SHOW_BROWSE),
             Self::Music | Self::MusicVideos | Self::Books | Self::BoxSets | Self::Trailers => {
                 LibraryProfile::live(&LIVE_RECURSIVE_BROWSE)
             }
@@ -83,7 +83,7 @@ pub struct LibraryProfile {
 }
 
 impl LibraryProfile {
-    const fn catalog(title: CatalogKind, browse: &'static BrowseCapabilities) -> Self {
+    const fn catalog(title: TitleKind, browse: &'static BrowseCapabilities) -> Self {
         Self {
             grid: GridSource::Catalog { title },
             browse,
@@ -101,7 +101,7 @@ impl LibraryProfile {
 pub enum GridSource {
     /// The cached catalog, scoped by `item_libraries`. `title` is the one kind
     /// the grid shows and the membership pass walks.
-    Catalog { title: CatalogKind },
+    Catalog { title: TitleKind },
     /// Never cached: its grid comes from Jellyfin, which this version does
     /// not browse yet.
     Live,
@@ -243,6 +243,15 @@ impl MediaLibrary {
 
     pub fn kind(&self) -> LibraryKind {
         LibraryKind::from_collection_type(self.collection_type.as_deref())
+    }
+
+    /// The kind a catalog library's grid lists; `None` for a library served
+    /// live.
+    pub fn catalog_title(&self) -> Option<TitleKind> {
+        match self.kind().profile().grid {
+            GridSource::Catalog { title } => Some(title),
+            GridSource::Live => None,
+        }
     }
 }
 
