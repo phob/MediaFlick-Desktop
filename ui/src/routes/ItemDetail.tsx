@@ -1,3 +1,4 @@
+import type { UseQueryResult } from "@tanstack/react-query"
 import { useState } from "react"
 import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { Layers } from "lucide-react"
@@ -13,7 +14,7 @@ import { GenericItemPage } from "@/components/detail/GenericItemPage"
 import { SeasonBrowser } from "@/components/detail/SeasonBrowser"
 import { PageErrorState } from "@/components/PageHeader"
 import { Button } from "@/components/ui/button"
-import { backdropUrl, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
+import { backdropUrl, type ItemAbout, type ItemDetail as Item, type ItemSummary } from "@/lib/api"
 import {
   defaultDetailNavigationState,
   readDetailNavigationState,
@@ -63,6 +64,10 @@ export default function ItemDetail() {
   const location = useLocation()
   const itemQuery = useItem(id)
   const { data: item, isPending, error } = itemQuery
+  // Asked for alongside the item rather than after it. A generic container
+  // pages its children itself, so only a title's list is wanted.
+  const about = useItemAbout(id)
+  const children = useChildren(id, item?.layout !== "generic")
 
   if (error && !item) return (
     <div className="p-6 sm:p-10 lg:p-14">
@@ -79,15 +84,19 @@ export default function ItemDetail() {
   const navigationState: DetailNavigationState =
     readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item)
   return item.layout === "generic"
-    ? <GenericItemPage key={item.id} item={item} navigationState={navigationState} />
-    : <TitleItemPage key={item.id} item={item} navigationState={navigationState} />
+    ? <GenericItemPage key={item.id} item={item} about={about} navigationState={navigationState} />
+    : <TitleItemPage key={item.id} item={item} about={about} childList={children} navigationState={navigationState} />
 }
 
 function TitleItemPage({
   item: originalItem,
+  about,
+  childList: children,
   navigationState,
 }: {
   item: Item
+  about: UseQueryResult<ItemAbout>
+  childList: UseQueryResult<{ items: ItemSummary[] }>
   navigationState: DetailNavigationState
 }) {
   const id = originalItem.id
@@ -95,8 +104,6 @@ function TitleItemPage({
   const [revealed, setRevealed] = useState(false)
   const hidden = useSpoilerProtection(originalItem) && !revealed
   const item = hidden ? concealEpisode(originalItem) : originalItem
-  const about = useItemAbout(id)
-  const children = useChildren(id)
   const isSeries = item.kind === "Series"
   const isContainer = isSeries || item.kind === "Season"
   const media = useMediaInfo(id, !isContainer)
