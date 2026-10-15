@@ -1,4 +1,3 @@
-import type { UseQueryResult } from "@tanstack/react-query"
 import { useState } from "react"
 import { concealEpisode, useSpoilerProtection } from "@/lib/viewing"
 import { Layers } from "lucide-react"
@@ -87,9 +86,19 @@ export default function ItemDetail() {
     readDetailNavigationState(location.state) ?? defaultDetailNavigationState(item)
   switch (item.layout) {
     case "generic":
-      return <GenericItemPage key={item.id} item={item} about={about} navigationState={navigationState} />
+      return <GenericItemPage key={item.id} item={item} about={about.data} navigationState={navigationState} />
     case "title":
-      return <TitleItemPage key={item.id} item={item} about={about} childList={children} navigationState={navigationState} />
+      return (
+        <TitleItemPage
+          key={item.id}
+          item={item}
+          about={about.data}
+          aboutPending={about.isPending}
+          aboutFailed={about.isError}
+          childItems={children.data?.items ?? []}
+          navigationState={navigationState}
+        />
+      )
     default:
       return item satisfies never
   }
@@ -98,12 +107,16 @@ export default function ItemDetail() {
 function TitleItemPage({
   item: originalItem,
   about,
-  childList: children,
+  aboutPending,
+  aboutFailed,
+  childItems,
   navigationState,
 }: {
   item: Item
-  about: UseQueryResult<ItemAbout>
-  childList: UseQueryResult<{ items: ItemSummary[] }>
+  about: ItemAbout | undefined
+  aboutPending: boolean
+  aboutFailed: boolean
+  childItems: ItemSummary[]
   navigationState: DetailNavigationState
 }) {
   const id = originalItem.id
@@ -116,7 +129,6 @@ function TitleItemPage({
   const media = useMediaInfo(id, !isContainer)
   const nextUp = useNextUp(id, isSeries)
 
-  const childItems = children.data?.items ?? []
   const seasons = seasonRailOrder(childItems.filter((child) => child.kind === "Season"))
   const nextUpItem = isSeries ? (nextUp.data?.item ?? null) : null
   // Which season the episode grid shows: the URL wins, then the season Next Up
@@ -162,9 +174,9 @@ function TitleItemPage({
       {hidden && <Button className="relative z-10" variant="outline" onClick={() => setRevealed(true)}>Reveal episode spoilers</Button>}
       <DetailHero
         item={item}
-        about={hidden ? undefined : about.data}
-        aboutPending={about.isPending}
-        aboutFailed={about.isError}
+        about={hidden ? undefined : about}
+        aboutPending={aboutPending}
+        aboutFailed={aboutFailed}
         episodeCount={episodeCount || null}
         navigationState={navigationState}
       >
@@ -202,11 +214,11 @@ function TitleItemPage({
         />
       )}
 
-      <CastRow people={hidden ? [] : about.data?.people ?? []} />
-      <CrewRow people={hidden ? [] : about.data?.people ?? []} />
+      <CastRow people={hidden ? [] : about?.people ?? []} />
+      <CrewRow people={hidden ? [] : about?.people ?? []} />
 
       <div className="grid max-w-7xl gap-8 px-6 sm:px-10 lg:grid-cols-2 lg:px-14">
-        <DetailFacts item={item} about={hidden ? undefined : about.data} />
+        <DetailFacts item={item} about={hidden ? undefined : about} />
         <MediaInfo
           itemId={item.id}
           sources={media.data?.sources}
