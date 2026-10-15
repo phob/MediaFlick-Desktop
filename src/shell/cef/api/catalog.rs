@@ -1,6 +1,3 @@
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
-
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError};
 use crate::library::libraries::FilterKey;
 use crate::library::{DetailView, TitleDetail};
@@ -924,26 +921,6 @@ fn item_about(services: &Arc<Services>, item_id: &str) -> Handled {
     }
 }
 
-/// How long one parent's reconciled child list is trusted before a later
-/// navigation asks the server again. It also absorbs the refetch that the
-/// reconcile's own change notification triggers.
-const CHILD_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
-static CHILD_RECONCILES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
-
-fn claim_child_reconcile(parent_id: &str) -> bool {
-    let now = Instant::now();
-    let mut reconciles = CHILD_RECONCILES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    reconciles.retain(|_, started| now.duration_since(*started) < CHILD_RECONCILE_INTERVAL);
-    if reconciles.contains_key(parent_id) {
-        return false;
-    }
-    reconciles.insert(parent_id.to_string(), now);
-    true
-}
-
 fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
     let parse = |value: &str| value.parse::<i64>().ok();
     let page = ChildPage::new(
@@ -955,7 +932,10 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
         .map_err(|error| storage_failure(&error))?;
     let page = match source {
         ChildrenSource::Catalog(kind) => {
-            browse::catalog_children_page(catalog_children(services, item_id, kind)?, page)
+            let (library, session, shell) = (&services.library, &services.session, &services.shell);
+            let children = sync::title_children(library, session, shell, item_id, kind)
+                .map_err(|error| storage_failure(&error))?;
+            browse::catalog_children_page(children, page)
         }
         ChildrenSource::Live => {
             let scope = session_scope(services)?;
@@ -969,141 +949,6 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
     Ok(ApiResponse::ok(
         json!({ "items": page.items, "total": page.total }),
     ))
-}
-
-/// A series or season also reconciles its cached children with the server.
-fn catalog_children(
-    services: &Arc<Services>,
-    item_id: &str,
-    kind: CatalogKind,
-) -> Result<Vec<ItemSummary>, ApiResponse> {
-    let container = matches!(kind, CatalogKind::Series | CatalogKind::Season);
-    let cached = services
-        .library
-        .children(item_id)
-        .map_err(|error| storage_failure(&error))?;
-    if !container {
-        return Ok(cached);
-    }
-    // The synced catalog already holds every season and episode, so a cached
-    // list answers at once and the reconcile runs behind it; its change
-    // notification refreshes the page if the server disagreed. Only a
-    // container with nothing cached yet waits for the server.
-    if !cached.is_empty() {
-        if claim_child_reconcile(item_id) {
-            let services = Arc::clone(services);
-            let parent_id = item_id.to_string();
-            if let Err(error) = std::thread::Builder::new()
-                .name("reconcile-children".to_string())
-                .spawn(move || {
-                    reconcile_children(&services, &parent_id);
-                })
-            {
-                tracing::warn!(target: "app.api", "could not start a child reconcile: {error}");
-            }
-        }
-        return Ok(cached);
-    }
-    claim_child_reconcile(item_id);
-    let overviews = reconcile_children(services, item_id);
-    let mut children = services
-        .library
-        .children(item_id)
-        .map_err(|error| storage_failure(&error))?;
-    if let Some(overviews) = &overviews {
-        for child in &mut children {
-            child.overview = overviews.get(&child.id).cloned().flatten();
-        }
-    }
-    Ok(children)
-}
-
-/// Re-reads one parent's child list from the server.
-///
-/// The cache alone cannot be trusted on a detail page: deleting episodes in
-/// Jellyfin leaves their rows behind until the next identity sweep, and the
-/// season view is exactly where those ghosts surface — a wall of art-less cards
-/// with a dead Play button. The image-404 eviction only cleans up rows whose
-/// poster happens to be requested, so it misses lazily-loaded cards below the
-/// fold and episodes that never had artwork.
-///
-/// One small non-recursive request per navigation buys a correct list, and it
-/// also makes newly added episodes appear without waiting for a sweep. Changed
-/// rows reach an open page through the library change notification.
-///
-/// Returns each live child's synopsis so the response can carry it without the
-/// cache ever storing prose; `None` means the server could not be asked.
-fn reconcile_children(
-    services: &Arc<Services>,
-    parent_id: &str,
-) -> Option<HashMap<String, Option<String>>> {
-    let scope = services.session.scope().ok()?;
-    let (client, user_id) = (scope.client(), scope.user_id());
-
-    let mut live_items = Vec::new();
-    let mut overviews = HashMap::new();
-    let mut offset = 0;
-    loop {
-        let page = match items::fetch_children(client, user_id, parent_id, offset) {
-            Ok(page) => page,
-            Err(error) => {
-                tracing::debug!(
-                    target: "app.api",
-                    "could not reconcile the children of {parent_id}: {error}"
-                );
-                services.session.note_scoped_error(&scope, &error);
-                return None;
-            }
-        };
-        let received = page.items.len() as i64;
-        if page.items.is_empty() {
-            break;
-        }
-        for item in &page.items {
-            overviews.insert(item.id.clone(), item.overview.clone());
-        }
-        live_items.extend(page.items);
-        offset += received;
-        if received < items::CHILDREN_PAGE_SIZE {
-            break;
-        }
-    }
-
-    // An empty `live_items` here came from a successful request, so it is the server
-    // saying this parent has no children left — unlike the library-wide sweep,
-    // where the blast radius makes that answer too dangerous to trust.
-    // The list is the server's answer for the account that asked.
-    let reconciled = services.session.commit_if_current(
-        &scope,
-        || (),
-        || Ok(services.library.reconcile_children(parent_id, &live_items)),
-    );
-    let Ok(reconciled) = reconciled else {
-        tracing::debug!(
-            target: "app.api",
-            parent_id,
-            "skipped a child reconcile: the account changed while it ran"
-        );
-        return None;
-    };
-    match reconciled {
-        Ok(changes) => {
-            if !changes.is_empty() {
-                tracing::info!(
-                    target: "app.api",
-                    changed = changes.item_ids.len(),
-                    parent_id,
-                    "reconciled changed child rows"
-                );
-                services.shell.library_changed(changes);
-            }
-        }
-        Err(error) => {
-            tracing::warn!(target: "app.api", "could not commit reconciled children: {error}");
-            return None;
-        }
-    }
-    Some(overviews)
 }
 
 #[cfg(test)]

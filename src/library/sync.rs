@@ -12,6 +12,7 @@
 //! a fresh id), and in-place metadata edits are picked up by the periodic
 //! re-bootstrap instead.
 
+mod children;
 mod cycle;
 mod libraries;
 mod worker;
@@ -28,6 +29,7 @@ use crate::jellyfin::session::{Session, SessionScope};
 
 use super::{Library, LibraryChangeBatch};
 
+pub use children::title_children;
 pub use cycle::run_cycle;
 pub use worker::spawn;
 
