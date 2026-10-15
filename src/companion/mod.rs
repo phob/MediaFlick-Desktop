@@ -896,7 +896,7 @@ mod tests {
         ];
         library.upsert_page(&items).expect("seed");
         library
-            .upsert_user_data(&[crate::library::UserDataRecord {
+            .apply_user_data(&[crate::library::UserDataRecord {
                 jellyfin_id: "m1".to_string(),
                 played: true,
                 ..Default::default()

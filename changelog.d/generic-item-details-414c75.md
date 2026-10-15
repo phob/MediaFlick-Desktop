@@ -5,3 +5,7 @@
 ### Changed
 
 - Square artwork such as album covers is shown whole on cards instead of being cropped to a poster.
+
+### Fixed
+
+- A watched or favorite change that the live connection missed, for example while reconnecting, now refreshes Home, title pages and open grids when the next library check picks it up.
