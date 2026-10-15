@@ -118,16 +118,49 @@ pub enum LiveShape {
     Folder,
 }
 
-/// Where "Latest in <library>" comes from.
+/// Where "Latest in <library>" comes from. The table follows jellyfin-web,
+/// which asks `/Items/Latest` for every library except the view types it
+/// excludes: `playlists`, `livetv`, `boxsets` and `folders`. Measured with
+/// the test servers: music (Grouped, demo), playlists (Newest, demo) and box
+/// sets (Newest, own server); the other kinds are unmeasured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveLatest {
     /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
     Grouped,
     /// The library's own grid, newest first. `/Items/Latest` answers nothing
-    /// for box sets and playlists, and jellyfin-web leaves Live TV and folder
-    /// libraries out of its Latest shelves.
+    /// for box sets and playlists.
     Newest,
 }
+
+/// The sorts a live grid offers, each mapped to one Jellyfin `SortBy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveSort {
+    Name,
+    DateAdded,
+    ReleaseDate,
+}
+
+impl LiveSort {
+    const ALL: [Self; 3] = [Self::Name, Self::DateAdded, Self::ReleaseDate];
+
+    const fn key(self) -> SortKey {
+        match self {
+            Self::Name => SortKey::Name,
+            Self::DateAdded => SortKey::DateAdded,
+            Self::ReleaseDate => SortKey::ReleaseDate,
+        }
+    }
+
+    pub fn from_key(key: SortKey) -> Option<Self> {
+        Self::ALL.into_iter().find(|sort| sort.key() == key)
+    }
+}
+
+const LIVE_SORT_KEYS: [SortKey; 3] = [
+    LiveSort::ALL[0].key(),
+    LiveSort::ALL[1].key(),
+    LiveSort::ALL[2].key(),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKey {
@@ -228,13 +261,13 @@ pub static CROSS_LIBRARY_BROWSE: BrowseCapabilities = BrowseCapabilities {
 };
 
 pub static LIVE_RECURSIVE_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[FilterKey::Favorite],
     letter_index: false,
 };
 
 pub static LIVE_FOLDER_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[],
     letter_index: false,
 };

@@ -7,7 +7,7 @@ use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 
 use super::libraries::{
     BrowseCapabilities, FilterKey, GridSource, LibraryId, LibraryRegistry, LiveLatest, LiveShape,
-    MediaLibrary, PLAYLIST_TYPE,
+    LiveSort, MediaLibrary, PLAYLIST_TYPE,
 };
 use super::model::is_synced_kind;
 use super::{
@@ -56,31 +56,7 @@ pub struct LivePage {
     pub sort: LiveSort,
     pub direction: SortDirection,
     pub favorites_only: bool,
-    pub offset: i64,
-    pub limit: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiveSort {
-    Name,
-    DateAdded,
-    ReleaseDate,
-}
-
-impl LiveSort {
-    fn from_sort(sort: ItemSort) -> Option<Self> {
-        match sort {
-            ItemSort::Name => Some(Self::Name),
-            ItemSort::DateAdded => Some(Self::DateAdded),
-            ItemSort::ReleaseDate => Some(Self::ReleaseDate),
-            ItemSort::EpisodeAdded
-            | ItemSort::CommunityRating
-            | ItemSort::DatePlayed
-            | ItemSort::PlayCount
-            | ItemSort::Runtime
-            | ItemSort::Random { .. } => None,
-        }
-    }
+    pub page: ChildPage,
 }
 
 pub fn library_page(
@@ -166,8 +142,7 @@ pub fn latest(library: &Library, id: &LibraryId, limit: i64) -> Result<Grid, Bro
             sort: LiveSort::DateAdded,
             direction: SortDirection::Descending,
             favorites_only: false,
-            offset: 0,
-            limit,
+            page: ChildPage::first(limit),
         }))),
     }
 }
@@ -287,10 +262,15 @@ impl ChildPage {
         }
         Ok(Some(Self {
             offset: offset.unwrap_or(0),
-            limit: limit
-                .unwrap_or(DEFAULT_PAGE_SIZE)
-                .clamp(1, MAX_CHILD_PAGE_LIMIT),
+            ..Self::first(limit.unwrap_or(DEFAULT_PAGE_SIZE))
         }))
+    }
+
+    pub fn first(limit: i64) -> Self {
+        Self {
+            offset: 0,
+            limit: limit.clamp(1, MAX_CHILD_PAGE_LIMIT),
+        }
     }
 
     pub fn offset(self) -> i64 {
@@ -368,7 +348,7 @@ fn checked_live_page(
     shape: LiveShape,
     query: &ItemQuery,
 ) -> Result<LivePage, BrowseError> {
-    let sort = LiveSort::from_sort(query.sort).ok_or_else(|| {
+    let sort = LiveSort::from_key(query.sort.key()).ok_or_else(|| {
         BrowseError::Unsupported(format!(
             "this library cannot sort by {}",
             query.sort.key().id()
@@ -379,11 +359,9 @@ fn checked_live_page(
             "this library can only filter to favorites".to_string(),
         ));
     }
-    if query.offset < 0 {
-        return Err(BrowseError::Unsupported(
-            "offset must not be negative".to_string(),
-        ));
-    }
+    let page = ChildPage::new(Some(query.offset), Some(query.limit))
+        .map_err(|message| BrowseError::Unsupported(message.to_string()))?
+        .unwrap_or_default();
     Ok(LivePage {
         parent,
         shape,
@@ -392,8 +370,7 @@ fn checked_live_page(
             .direction
             .unwrap_or_else(|| query.sort.natural_direction()),
         favorites_only: query.favorite == Some(true),
-        offset: query.offset,
-        limit: query.limit.clamp(1, MAX_CHILD_PAGE_LIMIT),
+        page,
     })
 }
 

@@ -7,8 +7,8 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
-use crate::library::browse::{LivePage, LiveQuery, LiveSort};
-use crate::library::libraries::LiveShape;
+use crate::library::browse::{ChildPage, LivePage, LiveQuery};
+use crate::library::libraries::{LiveShape, LiveSort};
 use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT, SortDirection};
 use crate::preferences::StreamingQuality;
 
@@ -302,8 +302,7 @@ pub fn fetch_playlist_items(
     client: &JellyfinClient,
     user_id: &str,
     playlist_id: &str,
-    start_index: i64,
-    limit: i64,
+    page: ChildPage,
 ) -> Result<ItemsResponse, ApiError> {
     client.get_json(
         &format!("/Playlists/{}/Items", encode_path_segment(playlist_id)),
@@ -312,8 +311,8 @@ pub fn fetch_playlist_items(
             ("Fields", LIVE_CHILD_FIELDS.to_string()),
             ("EnableUserData", "true".to_string()),
             ("EnableImages", "true".to_string()),
-            ("StartIndex", start_index.max(0).to_string()),
-            ("Limit", limit.clamp(1, MAX_CHILD_PAGE_LIMIT).to_string()),
+            ("StartIndex", page.offset().to_string()),
+            ("Limit", page.limit().to_string()),
         ],
     )
 }
@@ -343,11 +342,8 @@ fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)
         ("Fields", LIVE_CHILD_FIELDS.to_string()),
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
-        ("StartIndex", page.offset.max(0).to_string()),
-        (
-            "Limit",
-            page.limit.clamp(1, MAX_CHILD_PAGE_LIMIT).to_string(),
-        ),
+        ("StartIndex", page.page.offset().to_string()),
+        ("Limit", page.page.limit().to_string()),
         ("SortBy", sort_by.to_string()),
         ("SortOrder", sort_order.to_string()),
     ]);

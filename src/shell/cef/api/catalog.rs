@@ -992,10 +992,8 @@ fn live_children(
             items::fetch_live_children(client, user_id, item_id, offset, limit)
                 .map(|response| browse::live_page(&response))
         }
-        ChildrenSource::Playlist => {
-            items::fetch_playlist_items(client, user_id, item_id, offset, limit)
-                .map(|response| browse::playlist_page(&response, page))
-        }
+        ChildrenSource::Playlist => items::fetch_playlist_items(client, user_id, item_id, page)
+            .map(|response| browse::playlist_page(&response, page)),
     }
     .map_err(fail)?;
     still_signed_in(services, &scope)?;

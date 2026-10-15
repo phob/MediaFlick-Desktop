@@ -55,9 +55,10 @@ fn libraries(services: &Arc<Services>) -> Handled {
 
 fn items(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     let query = library_query(request, Params::Strict)?;
-    let grid = browse::library_page(&services.library, &library_id(id)?, &query)
-        .map_err(browse_failure)?;
-    let page = answer(services, grid)?;
+    let id = library_id(id)?;
+    let scope = services.session.scope();
+    let grid = browse::library_page(&services.library, &id, &query).map_err(browse_failure)?;
+    let page = answer(services, scope, grid)?;
     Ok(ApiResponse::ok(
         json!({ "items": page.items, "total": page.total }),
     ))
@@ -84,18 +85,26 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     })?
     .unwrap_or(HOME_ROW_LIMIT)
     .clamp(1, LATEST_LIMIT);
-    let grid =
-        browse::latest(&services.library, &library_id(id)?, limit).map_err(browse_failure)?;
-    let page = answer(services, grid)?;
+    let id = library_id(id)?;
+    let scope = services.session.scope();
+    let grid = browse::latest(&services.library, &id, limit).map_err(browse_failure)?;
+    let page = answer(services, scope, grid)?;
     Ok(ApiResponse::ok(json!({ "items": page.items })))
 }
 
-fn answer(services: &Arc<Services>, grid: Grid) -> Result<ItemPage, ApiResponse> {
+/// `scope` is taken before the registry read. An account switch after that
+/// fails `still_signed_in`, so a library read for one account is never
+/// answered through the next account's session.
+fn answer(
+    services: &Arc<Services>,
+    scope: Result<SessionScope, ApiError>,
+    grid: Grid,
+) -> Result<ItemPage, ApiResponse> {
     let query = match grid {
         Grid::Cached(page) => return Ok(page),
         Grid::Live(query) => query,
     };
-    let scope = session_scope(services)?;
+    let scope = scope.map_err(|error| ApiResponse::from_api_error(&error))?;
     let response = items::fetch_live(scope.client(), scope.user_id(), &query)
         .map_err(|error| scoped_failure(services, &scope, &error))?;
     still_signed_in(services, &scope)?;
