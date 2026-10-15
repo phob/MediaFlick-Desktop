@@ -1,0 +1,49 @@
+{
+ "server": "https://demo.jellyfin.org/stable",
+ "views": [
+  {
+   "id": "7e64e319657a9516ec78490da03edccb",
+   "name": "Music",
+   "type": "CollectionFolder",
+   "collectionType": "music",
+   "total": 13,
+   "types": {
+    "Audio": 5,
+    "MusicArtist": 3,
+    "Folder": 1,
+    "MusicAlbum": 4
+   },
+   "topLevel": 4,
+   "topLevelParentIsView": 0
+  },
+  {
+   "id": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+   "name": "Movies",
+   "type": "CollectionFolder",
+   "collectionType": "movies",
+   "total": 14,
+   "types": {
+    "Folder": 3,
+    "Movie": 11
+   },
+   "topLevel": 11,
+   "topLevelParentIsView": 0
+  },
+  {
+   "id": "a656b907eb3a73532e40e44b968d0225",
+   "name": "Shows",
+   "type": "CollectionFolder",
+   "collectionType": "tvshows",
+   "total": 9,
+   "types": {
+    "Season": 1,
+    "Episode": 6,
+    "Series": 1,
+    "Folder": 1
+   },
+   "topLevel": 1,
+   "topLevelParentIsView": 0
+  }
+ ],
+ "syncedTotalAcrossServer": 19
+}

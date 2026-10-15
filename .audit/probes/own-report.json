@@ -1,0 +1,35 @@
+{
+ "views": [
+  {
+   "name": "Collections",
+   "type": "CollectionFolder",
+   "collectionType": "boxsets",
+   "types": {
+    "BoxSet": 85
+   }
+  },
+  {
+   "name": "Movies",
+   "type": "CollectionFolder",
+   "collectionType": "movies",
+   "types": {
+    "Movie": 685,
+    "Folder": 1
+   }
+  },
+  {
+   "name": "Shows",
+   "type": "CollectionFolder",
+   "collectionType": "tvshows",
+   "types": {
+    "Series": 97,
+    "Season": 345,
+    "Episode": 4374,
+    "Folder": 2
+   }
+  }
+ ],
+ "itemsInMoreThanOneView": 0,
+ "examplesInMoreThanOneView": [],
+ "syncedTotalAcrossServer": 5501
+}

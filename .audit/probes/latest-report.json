@@ -1,0 +1,43 @@
+{
+ "Music": {
+  "collectionType": "music",
+  "latestIsArray": true,
+  "latest": [
+   "MusicAlbum:Thraximundar:folder=True:aspect=None",
+   "MusicAlbum:Nemesis:folder=True:aspect=1",
+   "MusicAlbum:Promo:folder=True:aspect=1",
+   "MusicAlbum:You Can't Stop Da Funk:folder=True:aspect=1"
+  ],
+  "directChildren": [
+   "MusicArtist:Binaerpilot:folder=True:aspect=1",
+   "MusicArtist:Joshua Boniface:folder=True:aspect=None",
+   "MusicArtist:Leap Fidei:folder=True:aspect=1"
+  ],
+  "randomPagesDiffer": true
+ },
+ "Movies": {
+  "collectionType": "movies",
+  "latestIsArray": true,
+  "latest": [
+   "Movie:The Boy in the Plastic Bubble:folder=False:aspect=0.6979542719614922",
+   "Movie:The Great St. Louis Bank Robbery:folder=False:aspect=0.6664145234493192",
+   "Movie:King Lear:folder=False:aspect=0.6666666666666666"
+  ],
+  "directChildren": [
+   "Folder:Archive.org:folder=True:aspect=0.6979542719614922",
+   "Folder:Blender Foundation:folder=True:aspect=0.675"
+  ],
+  "randomPagesDiffer": true
+ },
+ "Shows": {
+  "collectionType": "tvshows",
+  "latestIsArray": true,
+  "latest": [
+   "Series:Pioneer One:folder=True:aspect=0.6587615283267457"
+  ],
+  "directChildren": [
+   "Series:Pioneer One:folder=True:aspect=0.6587615283267457"
+  ],
+  "randomPagesDiffer": true
+ }
+}
