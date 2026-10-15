@@ -812,6 +812,9 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
         }
     };
     if let Some(generic) = browse::generic_detail(&dto) {
+        if !services.session.scope_is_current(&scope) {
+            return Err(stale_account_response());
+        }
         return Ok(ApiResponse::ok(DetailView::Generic(generic)));
     }
     let title = services.session.commit_if_current(
@@ -947,9 +950,13 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
             let scope = session_scope(services)?;
             let page = page.unwrap_or_default();
             let (offset, limit) = (page.offset(), page.limit());
-            items::fetch_live_children(scope.client(), scope.user_id(), item_id, offset, limit)
-                .map(|response| browse::live_children_page(&response))
-                .map_err(|error| scoped_failure(services, &scope, &error))?
+            let response =
+                items::fetch_live_children(scope.client(), scope.user_id(), item_id, offset, limit)
+                    .map_err(|error| scoped_failure(services, &scope, &error))?;
+            if !services.session.scope_is_current(&scope) {
+                return Err(stale_account_response());
+            }
+            browse::live_children_page(&response)
         }
     };
     Ok(ApiResponse::ok(
