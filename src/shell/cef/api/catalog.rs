@@ -29,11 +29,9 @@ pub(super) fn route(
         }),
         ["official-ratings"] if request.is("GET") => official_ratings(services, request),
         ["person", "resolve"] if request.is("GET") => resolve_person(services, request),
-        ["item", id] if request.is("GET") => item_detail(services, &percent_decode(id)),
-        ["item", id, "synopsis"] if request.is("GET") => {
-            item_synopsis(services, &percent_decode(id))
-        }
-        ["item", id, "about"] if request.is("GET") => item_about(services, &percent_decode(id)),
+        ["item", id] if request.is("GET") => item_detail(services, id),
+        ["item", id, "synopsis"] if request.is("GET") => item_synopsis(services, id),
+        ["item", id, "about"] if request.is("GET") => item_about(services, id),
         ["item", id, "children"] if request.is("GET") => children(services, id, request),
         _ => return None,
     };
@@ -799,18 +797,10 @@ fn resolve_person(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     }
 }
 
-fn item_id(segment: &str) -> Result<String, ApiResponse> {
-    let id = percent_decode(segment);
-    crate::collections::valid_opaque_id(&id)
-        .then_some(id)
-        .ok_or_else(|| ApiResponse::error(400, "invalid item id"))
-}
-
-fn item_detail(services: &Arc<Services>, segment: &str) -> Handled {
-    let item_id = item_id(segment)?;
-    match cached_title(services, &item_id)? {
+fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
+    match cached_title(services, item_id)? {
         Some(title) => Ok(ApiResponse::ok(DetailView::Title(title))),
-        None => fetch_item_detail(services, &item_id),
+        None => fetch_item_detail(services, item_id),
     }
 }
 
@@ -1028,13 +1018,12 @@ impl ChildPage {
 
 /// A cached title answers from the cache, and a series or season also
 /// reconciles with the server. Anything else is a live container.
-fn children(services: &Arc<Services>, segment: &str, request: &ApiRequest) -> Handled {
-    let item_id = item_id(segment)?;
+fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Handled {
     let page = ChildPage::from_request(request)?;
-    let Some(kind) = services.library.kind(&item_id) else {
-        return live_children(services, &item_id, page);
+    let Some(kind) = services.library.kind(item_id) else {
+        return live_children(services, item_id, page);
     };
-    let items = catalog_children(services, &item_id, &kind)?;
+    let items = catalog_children(services, item_id, &kind)?;
     let total = items.len();
     let items = match page {
         Some(page) => page.slice(items),

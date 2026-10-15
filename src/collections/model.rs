@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::app::ids::valid_opaque_id;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CollectionMode {
@@ -242,10 +244,6 @@ impl CollectionProfile {
         }
         self.source.validate()
     }
-}
-
-pub fn valid_opaque_id(value: &str) -> bool {
-    matches!(value.len(), 16..=64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub(crate) fn compare_titles(left: &str, right: &str) -> Ordering {

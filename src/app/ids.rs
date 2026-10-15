@@ -21,3 +21,9 @@ pub fn random_hex(bytes: usize) -> String {
 pub fn new_device_id() -> String {
     random_hex(16)
 }
+
+/// A Jellyfin item id, or one of MediaFlick's own random ids: 16 to 64 hex
+/// digits, so it is safe as a route segment, a SQL argument and a file name.
+pub fn valid_opaque_id(value: &str) -> bool {
+    matches!(value.len(), 16..=64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}

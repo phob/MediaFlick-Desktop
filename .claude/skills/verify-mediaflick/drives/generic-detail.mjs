@@ -224,11 +224,11 @@ export default async function genericDetail(ctx) {
   const views = (await ctx.jellyfin(`/UserViews?userId=${userId}`)).Items
   const libraries = (await ctx.api("/api/libraries")).body.libraries
 
-  report.contract = {
-    malformedDetail: (await ctx.api("/api/item/not-an-item")).status,
-    malformedChildren: (await ctx.api("/api/item/not-an-item/children")).status,
+  report.contract = { malformedId: {} }
+  for (const route of ["", "/children", "/about", "/synopsis"]) {
+    report.contract.malformedId[route || "/"] = (await ctx.api(`/api/item/not-an-item${route}`)).status
   }
-  expect(report.contract.malformedDetail === 400 && report.contract.malformedChildren === 400, `a malformed item id answers 400 on the detail and children routes (${report.contract.malformedDetail}, ${report.contract.malformedChildren})`)
+  expect(Object.values(report.contract.malformedId).every((status) => status === 400), `a malformed item id answers 400 on the detail, children, about and synopsis routes (${JSON.stringify(report.contract.malformedId)})`)
 
   const music = views.find((view) => view.CollectionType === "music")
   if (music) {
