@@ -13,6 +13,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::app::services::Services;
+use crate::library::CatalogKind;
 use crate::playback::{PlayerCommand, TICKS_PER_MILLISECOND};
 
 use super::api::items;
@@ -204,8 +205,12 @@ fn resolve_playable(
     scope: &SessionScope,
     item_id: &str,
 ) -> Option<(String, bool)> {
-    match services.library.kind(item_id).as_deref() {
-        Some("Series") => {
+    let kind = services.library.catalog_kind(item_id).unwrap_or_else(|error| {
+        tracing::warn!(target: "jellyfin.remote", item_id, "could not read a cached item kind: {error}");
+        None
+    });
+    match kind {
+        Some(CatalogKind::Series) => {
             let next_up =
                 match items::fetch_next_up(scope.client(), scope.user_id(), Some(item_id), 1) {
                     Ok(response) => response.items.into_iter().next().map(|item| item.id),
@@ -225,7 +230,7 @@ fn resolve_playable(
             };
             episode.map(|id| (id, true))
         }
-        Some("Season") => services
+        Some(CatalogKind::Season) => services
             .library
             .children(item_id)
             .ok()
