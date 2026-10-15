@@ -80,6 +80,9 @@ pub enum ShellRequest {
     /// The account's library list changed: a library was added, removed,
     /// renamed or moved, or the list was read for the first time.
     LibrariesChanged,
+    /// A library's membership walk landed, so it no longer reports one as
+    /// pending; its titles may not have changed.
+    LibraryMembershipsSettled,
     SessionExpired,
 }
 
@@ -149,6 +152,10 @@ impl ShellBridge {
 
     pub fn libraries_changed(&self) {
         let _ = self.request(ShellRequest::LibrariesChanged);
+    }
+
+    pub fn library_memberships_settled(&self) {
+        let _ = self.request(ShellRequest::LibraryMembershipsSettled);
     }
 
     /// Refreshes aggregate watch-state projections once after a full catalog

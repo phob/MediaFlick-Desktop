@@ -744,6 +744,9 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
         ShellRequest::LibrariesChanged => {
             dispatch_shell_event(state, "libraries-changed", json!({}));
         }
+        ShellRequest::LibraryMembershipsSettled => {
+            dispatch_shell_event(state, "library-memberships-settled", json!({}));
+        }
         ShellRequest::SessionExpired => {
             dispatch_shell_event(state, "jellyfin-session-expired", json!({}));
         }

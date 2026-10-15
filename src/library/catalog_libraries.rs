@@ -12,16 +12,10 @@ pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 impl Library {
     pub fn libraries(&self) -> rusqlite::Result<LibraryRegistry> {
         self.db.with_transaction(|transaction| {
-            let read = transaction
-                .query_row(
-                    "SELECT 1 FROM meta WHERE key = ?1",
-                    params![LIBRARIES_READ_AT],
-                    |_| Ok(()),
-                )
-                .optional()?;
-            match read {
-                None => Ok(LibraryRegistry::Unknown),
-                Some(()) => stored_libraries(transaction).map(LibraryRegistry::Known),
+            if libraries_read(transaction)? {
+                stored_libraries(transaction).map(LibraryRegistry::Known)
+            } else {
+                Ok(LibraryRegistry::Unknown)
             }
         })
     }
@@ -30,17 +24,10 @@ impl Library {
     /// reordered or of another kind, or read for the first time.
     pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<bool> {
         self.db.with_transaction(|transaction| {
-            let first_read = transaction
-                .query_row(
-                    "SELECT 1 FROM meta WHERE key = ?1",
-                    params![LIBRARIES_READ_AT],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_none();
+            let first_read = !libraries_read(transaction)?;
             let before = stored_libraries(transaction)?;
-            let listing = |libraries: &[MediaLibrary]| {
-                libraries
+            let listing = |entries: &[MediaLibrary]| {
+                entries
                     .iter()
                     .map(|library| (library.id.clone(), library.name.clone(), library.kind()))
                     .collect::<Vec<_>>()
@@ -135,14 +122,17 @@ impl Library {
         &self,
         library: &LibraryId,
         item_ids: &HashSet<String>,
-    ) -> rusqlite::Result<bool> {
+    ) -> rusqlite::Result<MembershipReplaced> {
         self.db.with_transaction(|transaction| {
-            transaction.execute(
-                "UPDATE libraries SET membership_owed = 0 WHERE id = ?1",
+            let settled = transaction.execute(
+                "UPDATE libraries SET membership_owed = 0 WHERE id = ?1 AND membership_owed = 1",
                 params![library.as_str()],
-            )?;
+            )? > 0;
             if item_ids.is_empty() {
-                return Ok(false);
+                return Ok(MembershipReplaced {
+                    settled,
+                    changed: false,
+                });
             }
             let current = transaction
                 .prepare("SELECT item_id FROM item_libraries WHERE library_id = ?1")?
@@ -165,9 +155,36 @@ impl Library {
                     .execute(params![library.as_str(), item_id])?;
                 changed = true;
             }
-            Ok(changed)
+            Ok(MembershipReplaced { settled, changed })
         })
     }
+}
+
+/// What written membership walks did, for one library or a whole pass.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct MembershipReplaced {
+    /// A library owed its walk and no longer does.
+    pub(crate) settled: bool,
+    /// A title joined or left a library.
+    pub(crate) changed: bool,
+}
+
+impl MembershipReplaced {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.settled |= other.settled;
+        self.changed |= other.changed;
+    }
+}
+
+fn libraries_read(connection: &Connection) -> rusqlite::Result<bool> {
+    connection
+        .query_row(
+            "SELECT 1 FROM meta WHERE key = ?1",
+            params![LIBRARIES_READ_AT],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|read| read.is_some())
 }
 
 fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrary>> {

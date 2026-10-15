@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
+use crate::library::catalog_libraries::MembershipReplaced;
 use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use crate::library::{Library, TitleKind};
 
@@ -13,6 +14,14 @@ use super::{
 pub(super) struct LibraryList {
     pub(super) libraries: Vec<MediaLibrary>,
     pub(super) changed: bool,
+}
+
+impl LibraryList {
+    pub(super) fn lists_no_catalog_library(&self) -> bool {
+        self.libraries
+            .iter()
+            .all(|entry| entry.catalog_title().is_none())
+    }
 }
 
 pub(super) fn refresh_libraries(
@@ -46,26 +55,26 @@ pub(super) fn membership_pass(
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+) -> Result<MembershipReplaced, ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
     let LibraryRegistry::Known(libraries) = registry else {
-        return Ok(false);
+        return Ok(MembershipReplaced::default());
     };
     let due = libraries
         .into_iter()
         .filter(|entry| entry.membership_pending)
         .filter_map(|entry| Some((entry.catalog_title()?, entry.id)));
-    let mut changed = false;
+    let mut pass = MembershipReplaced::default();
     for (title, id) in due {
         let walked = refresh_membership(library, session, scope, &id, title, control);
         let rate_limited = matches!(walked, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
-        changed |= best_effort(&step, walked)?.unwrap_or(false);
+        pass.merge(best_effort(&step, walked)?.unwrap_or_default());
         if rate_limited {
             break;
         }
     }
-    Ok(changed)
+    Ok(pass)
 }
 
 fn refresh_membership(
@@ -75,9 +84,9 @@ fn refresh_membership(
     library_id: &LibraryId,
     title: TitleKind,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+) -> Result<MembershipReplaced, ApiError> {
     let Some(ids) = member_ids(session, scope, library_id, title, control)? else {
-        return Ok(false);
+        return Ok(MembershipReplaced::default());
     };
     if ids.is_empty() {
         tracing::debug!(target: "library.sync", library = library_id.as_str(), "the server listed no titles in a library; keeping its membership");
