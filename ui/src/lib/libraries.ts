@@ -1,6 +1,5 @@
 import { CATALOG_KINDS, type CatalogKind, type ItemQuery } from "./api/types.ts"
 
-/** Where a windowed grid reads its pages from. */
 export type BrowseSource =
   | { scope: "titles"; query: ItemQuery }
   | { scope: "children"; itemId: string }
@@ -11,7 +10,6 @@ export function isCatalogKind(kind: string): kind is CatalogKind {
   return catalogKinds.has(kind)
 }
 
-/** The cross-library title view a catalog item belongs to: seasons and episodes are part of their series. */
 export function titleBrowseKind(kind: CatalogKind): "Movie" | "Series" {
   switch (kind) {
     case "Movie":

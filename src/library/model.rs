@@ -547,8 +547,6 @@ pub struct ItemSummary {
     pub position_ticks: i64,
     pub favorite: bool,
     pub unplayed_count: Option<i64>,
-    /// Width over height of the primary image, from Jellyfin. Cached rows have
-    /// none: movie and series art is a 2:3 poster.
     pub primary_aspect: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
@@ -604,8 +602,6 @@ pub struct ItemDetail {
 }
 
 impl ItemDetail {
-    /// The same fields a cached row carries, read from a live item. Serves a
-    /// title page when the item could not be written to the cache.
     pub fn from_dto(dto: &BaseItemDto) -> Self {
         let record = ItemRecord::from_dto(dto);
         Self {
@@ -623,14 +619,10 @@ impl ItemDetail {
     }
 }
 
-/// What `/api/item/{id}` serves. The item's kind picks the layout, never the
-/// library it was opened from; mirrors `AnyItemDetail` in `ui/src/lib/api/types.ts`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "layout", rename_all = "camelCase")]
 pub enum DetailView {
-    /// A movie, series, season or episode, from the cache.
     Title(TitleDetail),
-    /// Any other Jellyfin item, live.
     Generic(GenericItemDetail),
 }
 
@@ -639,7 +631,6 @@ pub enum DetailView {
 pub struct TitleDetail {
     #[serde(flatten)]
     pub item: ItemDetail,
-    /// Seasons and episodes report their series' library.
     pub library_id: Option<LibraryId>,
 }
 

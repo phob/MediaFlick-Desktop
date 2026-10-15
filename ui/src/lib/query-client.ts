@@ -175,7 +175,6 @@ export function invalidateMediaSurfaces(
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
-  // A card in a box set or folder grid does not know the container it sits in.
   void client.invalidateQueries({ queryKey: [CHILD_PAGES_ROOT], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
@@ -189,18 +188,11 @@ type LibraryChangeScope = "library" | "catalog" | "items"
 
 const LIST_ROOTS = [ITEMS_ROOT, "genres", "official-ratings", "status", "collections"]
 
-/**
- * What a batch refreshes whatever ids it names: whole query roots, and all of
- * Home, only its summary query (`["home"]`), or none of it.
- */
 const LIBRARY_CHANGE_REFRESHES: Record<
   LibraryChangeScope,
   { roots: ReadonlySet<string>; home: "all" | "summary" | "none" }
 > = {
-  // A pushed change names an item and its library folder, never the box set or
-  // playlist whose live grid shows it, so every child page refreshes.
   library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all" },
-  // Bootstrap pages only fill the cache, which those grids do not read.
   catalog: { roots: new Set(LIST_ROOTS), home: "summary" },
   items: { roots: new Set(), home: "none" },
 }

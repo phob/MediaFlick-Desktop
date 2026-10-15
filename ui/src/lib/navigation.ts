@@ -16,7 +16,6 @@ export interface DetailNavigationState {
   label: string
 }
 
-/** Where a detail page opened without history, such as after a reload, goes back to. */
 export function defaultDetailNavigationState(item: AnyItemDetail): DetailNavigationState {
   if (item.layout === "generic") return { from: "/", label: "Back to home" }
   return {

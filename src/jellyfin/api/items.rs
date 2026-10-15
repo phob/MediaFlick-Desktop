@@ -221,11 +221,8 @@ pub fn fetch_item(
     Ok(response.items.into_iter().next())
 }
 
-/// What a generic details page shows beyond the catalog fields.
 const DETAIL_FIELDS: &str = "Overview,PrimaryImageAspectRatio";
 
-/// One item with the catalog fields, so a movie or series can be cached on the
-/// way, and what its details page shows.
 pub fn fetch_detailed_item(
     client: &JellyfinClient,
     user_id: &str,
@@ -264,8 +261,6 @@ fn live_children_query(
     ]
 }
 
-/// One page of any container's direct children, of every type: an album's
-/// tracks, a box set's titles, a folder's entries.
 pub fn fetch_live_children(
     client: &JellyfinClient,
     user_id: &str,

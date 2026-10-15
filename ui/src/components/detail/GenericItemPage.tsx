@@ -22,11 +22,6 @@ const HERO_FRAME: Record<ArtworkShape, HeroArtworkAspect> = {
   landscape: "still",
 }
 
-/**
- * The details page for every item that is not a movie, show, season or
- * episode: artwork, facts, synopsis, credits and, for a folder, its contents.
- * It deliberately offers no playback, favorites or ratings.
- */
 export function GenericItemPage({
   item,
   about,
@@ -50,8 +45,6 @@ export function GenericItemPage({
       <DetailHeroLayout
         compact
         back={{ to: navigationState.from, label: navigationState.label }}
-        // Art of any shape lands in the nearest frame and is contained, so a 4:3
-        // or 3:2 still in the 16:9 frame is shown whole.
         poster={item.primaryImageTag
           ? {
               src: imageUrl(item, "Primary", DETAIL_POSTER_WIDTH),

@@ -59,17 +59,11 @@ function useGridMetrics(element: HTMLElement | null) {
 }
 
 export interface ItemGridHandle {
-  /** Scrolls the row holding the item at `index` to the top of the grid. */
   jumpTo: (index: number) => void
 }
 
 export interface ItemGridProps {
-  /** A titles query carries no `limit`/`offset`: the grid owns paging. */
   source: BrowseSource
-  /**
-   * The element the grid scrolls in. Its owner also restores its position: a
-   * library page's own pane, or the route viewport around a details page.
-   */
   scroller: HTMLElement | null
   onTotal?: (total: number | null) => void
   empty?: string
@@ -142,8 +136,6 @@ export function ItemGrid({
     enabled: scrollMargin !== null,
   })
 
-  // A row lands where the first row sits unscrolled, so the pane's own top
-  // padding stays above it, rather than flush at the scroller's edge.
   useImperativeHandle(ref, () => ({
     jumpTo: (index) => virtualizer.scrollToOffset(Math.floor(index / columns) * rowHeight),
   }))

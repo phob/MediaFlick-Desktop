@@ -1,6 +1,5 @@
 import type { JsonObject } from "../json.ts"
 
-/** The item types the local catalog holds and the title page shows. */
 export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
 export type CatalogKind = (typeof CATALOG_KINDS)[number]
 
@@ -67,7 +66,6 @@ export interface PersonResolveQuery {
   name?: string
 }
 
-/** `/api/item/{id}` for a movie, series, season or episode: the full title page, from the cache. */
 export interface ItemDetail extends ItemSummary {
   layout: "title"
   kind: CatalogKind
@@ -80,7 +78,6 @@ export interface ItemDetail extends ItemSummary {
   libraryId: string | null
 }
 
-/** `/api/item/{id}` for every other Jellyfin item, read live: artwork, facts and, for a folder, its children. */
 export interface GenericItemDetail extends ItemSummary {
   layout: "generic"
   genres: string[]

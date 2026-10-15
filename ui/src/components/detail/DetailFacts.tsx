@@ -4,13 +4,6 @@ import { Badge } from "@/components/ui/badge"
 import type { AnyItemDetail, ItemAbout } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 
-/**
- * Everything about the item that is not artwork, playback, credits, or a
- * synopsis: studios and dates, and for a title its play count and the tags
- * the library was imported with. Studios and tags come from the live `about`
- * record. A title's dates and play count are on its cached row and stand
- * alone when the server is away; a generic item's are read live with it.
- */
 export function DetailFacts({ item, about }: { item: AnyItemDetail; about?: ItemAbout }) {
   const title = item.layout === "title"
   const studios = about?.studios ?? []
