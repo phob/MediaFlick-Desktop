@@ -11,6 +11,7 @@ use crate::jellyfin::session::Session;
 use crate::jellyfin::socket::{self, SocketHandle};
 use crate::library::Library;
 use crate::library::LibraryChangeBatch;
+use crate::library::browse::ChildrenSources;
 use crate::library::sync::{self, SyncHandle};
 use crate::playback::PlaybackCoordinator;
 use crate::preferences::{
@@ -42,6 +43,7 @@ pub struct Services {
     pub preferences: Arc<PreferencesService>,
     pub shell: Arc<ShellBridge>,
     pub home_watched: Mutex<HashMap<AccountKey, Option<crate::library::ItemDetail>>>,
+    pub children_sources: ChildrenSources,
     playback: RwLock<Option<Arc<PlaybackCoordinator>>>,
 }
 
@@ -266,6 +268,7 @@ pub fn init_with_settings(initial_settings: AppSettings) -> Option<Arc<Services>
         preferences,
         shell,
         home_watched: Mutex::new(HashMap::new()),
+        children_sources: ChildrenSources::default(),
         playback: RwLock::new(None),
     });
     connect_app_hooks(&services);
@@ -524,6 +527,7 @@ pub(crate) mod test_support {
                 preferences,
                 shell,
                 home_watched: Mutex::new(HashMap::new()),
+                children_sources: ChildrenSources::default(),
                 playback: RwLock::new(None),
                 library,
                 session,

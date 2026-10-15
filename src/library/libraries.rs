@@ -36,6 +36,9 @@ pub enum LibraryKind {
     Mixed,
 }
 
+/// The Jellyfin item type whose children keep their owner's order.
+pub const PLAYLIST_TYPE: &str = "Playlist";
+
 impl LibraryKind {
     pub fn from_collection_type(value: Option<&str>) -> Self {
         match value.map(str::to_ascii_lowercase).as_deref() {

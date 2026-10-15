@@ -1,6 +1,4 @@
-use crate::library::browse::{
-    self, ChildPage, ChildrenSource, DetailError, LiveChildren, LiveDetail,
-};
+use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
 use crate::library::libraries::FilterKey;
 use crate::library::{DEFAULT_PAGE_SIZE, DetailView};
 
@@ -947,16 +945,18 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
         param(request, Params::Strict, "limit", parse)?,
     )
     .map_err(|message| ApiResponse::error(400, message))?;
-    let source = browse::children_source(&services.library, item_id)
+    let cached = services
+        .library
+        .catalog_kind(item_id)
         .map_err(|error| storage_failure(&error))?;
-    let page = match source {
-        ChildrenSource::Catalog(kind) => {
+    let page = match cached {
+        Some(kind) => {
             let (library, session, shell) = (&services.library, &services.session, &services.shell);
             let children = sync::title_children(library, session, shell, item_id, kind)
                 .map_err(|error| storage_failure(&error))?;
             browse::catalog_children_page(children, page)
         }
-        ChildrenSource::Live => live_children(services, item_id, page)?,
+        None => live_children(services, item_id, page)?,
     };
     Ok(ApiResponse::ok(
         json!({ "items": page.items, "total": page.total }),
@@ -974,14 +974,24 @@ fn live_children(
     let paged = page.is_some();
     let page = page.unwrap_or_default();
     let (offset, limit) = (page.offset(), page.limit());
-    let source = LiveChildren::of(
-        items::fetch_item_type(client, user_id, item_id)
-            .map_err(fail)?
-            .as_deref(),
-    );
+    let source = match services.children_sources.get(scope.generation(), item_id) {
+        Some(source) => source,
+        None => {
+            let item_type = items::fetch_item_type(client, user_id, item_id)
+                .map_err(fail)?
+                .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?;
+            let source = ChildrenSource::of(&item_type);
+            services
+                .children_sources
+                .remember(scope.generation(), item_id, source);
+            source
+        }
+    };
     let response = match source {
-        LiveChildren::Folder => items::fetch_live_children(client, user_id, item_id, offset, limit),
-        LiveChildren::Playlist => {
+        ChildrenSource::Folder => {
+            items::fetch_live_children(client, user_id, item_id, offset, limit)
+        }
+        ChildrenSource::Playlist => {
             items::fetch_playlist_items(client, user_id, item_id, offset, limit)
         }
     }

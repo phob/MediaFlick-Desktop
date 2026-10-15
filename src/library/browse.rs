@@ -1,15 +1,18 @@
+use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use serde::Serialize;
 
 use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 
 use super::libraries::{
     BrowseCapabilities, FilterKey, GridSource, LibraryId, LibraryRegistry, LiveLatest, LiveShape,
-    MediaLibrary,
+    MediaLibrary, PLAYLIST_TYPE,
 };
 use super::model::is_synced_kind;
 use super::{
-    CatalogKind, DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
-    ItemSummary, KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, TitleDetail, TitleKind,
+    DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort, ItemSummary,
+    KindFilter, Library, MAX_CHILD_PAGE_LIMIT, SortDirection, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -219,33 +222,52 @@ pub fn write_live_title(
     )
 }
 
-pub enum ChildrenSource {
-    Catalog(CatalogKind),
-    Live,
-}
-
-pub fn children_source(library: &Library, item_id: &str) -> rusqlite::Result<ChildrenSource> {
-    Ok(library
-        .catalog_kind(item_id)?
-        .map_or(ChildrenSource::Live, ChildrenSource::Catalog))
-}
-
-/// How the server lists a container the cache does not hold, chosen by its
-/// Jellyfin type.
+/// How the server lists the children of a container the cache does not hold,
+/// chosen by its Jellyfin type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiveChildren {
+pub enum ChildrenSource {
     /// Disc, track and name order.
     Folder,
     /// The owner's manual order, which only the playlist route keeps.
     Playlist,
 }
 
-impl LiveChildren {
-    pub fn of(item_type: Option<&str>) -> Self {
-        match item_type {
-            Some("Playlist") => Self::Playlist,
-            _ => Self::Folder,
+impl ChildrenSource {
+    pub fn of(item_type: &str) -> Self {
+        if item_type == PLAYLIST_TYPE {
+            Self::Playlist
+        } else {
+            Self::Folder
         }
+    }
+}
+
+const REMEMBERED_SOURCES: usize = 256;
+
+/// The children source of recently opened containers, so paging one asks
+/// Jellyfin for its type once per session scope instead of on every page.
+#[derive(Default)]
+pub struct ChildrenSources(Mutex<VecDeque<(u64, String, ChildrenSource)>>);
+
+impl ChildrenSources {
+    pub fn get(&self, scope: u64, item_id: &str) -> Option<ChildrenSource> {
+        self.entries()
+            .iter()
+            .find(|(entry_scope, id, _)| *entry_scope == scope && id == item_id)
+            .map(|(_, _, source)| *source)
+    }
+
+    pub fn remember(&self, scope: u64, item_id: &str, source: ChildrenSource) {
+        let mut entries = self.entries();
+        entries.retain(|(entry_scope, id, _)| *entry_scope == scope && id != item_id);
+        if entries.len() == REMEMBERED_SOURCES {
+            entries.pop_front();
+        }
+        entries.push_back((scope, item_id.to_string(), source));
+    }
+
+    fn entries(&self) -> MutexGuard<'_, VecDeque<(u64, String, ChildrenSource)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
