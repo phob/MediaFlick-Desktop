@@ -527,7 +527,7 @@ enum SweepVerdict {
     Delete,
     ObserveEmpty(u64),
     ForgetEmpty,
-    /// Too soon after the first empty answer to confirm it; the sweep stays owed.
+    /// Too soon after the first empty answer to confirm it, so that observation stands.
     Wait,
 }
 
