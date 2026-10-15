@@ -193,7 +193,9 @@ fn serve(replies: Vec<(u16, String)>) -> FakeJellyfin {
                 return targets;
             }
             let (status, body) = replies.next().unwrap_or((404, String::new()));
-            send(stream, status, &body);
+            if status != DROPPED {
+                send(stream, status, &body);
+            }
             targets.push(target);
         }
     });
@@ -204,11 +206,14 @@ fn ok(body: &str) -> (u16, String) {
     (200, body.to_string())
 }
 
+/// A reply status that closes the connection without answering.
+const DROPPED: u16 = 0;
 const EMPTY_PAGE: &str = r#"{"Items":[],"TotalRecordCount":0}"#;
 const NOT_JSON: &str = "not json";
 const MOVIES: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
 const MORE_MOVIES: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
 const SHOWS: &str = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
+const MUSIC: &str = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4";
 const ONE_MOVIE: &str = r#"{"Items":[{"Id":"m1","Name":"M1","Type":"Movie","DateCreated":"2024-01-01T00:00:00Z"}],"TotalRecordCount":1}"#;
 
 /// Runs one cycle against a server that answers `replies` in order.
@@ -297,6 +302,18 @@ fn listed(library: &Library) -> Option<Vec<String>> {
                 .map(|library| library.id.as_str().to_string())
                 .collect(),
         ),
+    }
+}
+
+/// The libraries whose grid still waits for a complete membership walk.
+fn pending(library: &Library) -> Vec<String> {
+    match library.libraries().expect("registry") {
+        LibraryRegistry::Unknown => Vec::new(),
+        LibraryRegistry::Known(libraries) => libraries
+            .into_iter()
+            .filter(|library| library.membership_pending)
+            .map(|library| library.id.as_str().to_string())
+            .collect(),
     }
 }
 
@@ -406,7 +423,7 @@ fn a_failed_library_list_keeps_the_stored_libraries_and_membership() {
 }
 
 #[test]
-fn a_failed_membership_walk_keeps_its_membership_and_walks_again_next_cycle() {
+fn a_failed_membership_walk_keeps_its_membership_and_only_it_is_walked_again() {
     let library = settled_library(&[
         ("m1", "Movie"),
         ("m2", "Movie"),
@@ -441,24 +458,18 @@ fn a_failed_membership_walk_keeps_its_membership_and_walks_again_next_cycle() {
     );
     assert_eq!(grid(&library, MOVIES), ["m1", "m2"]);
     assert_eq!(grid(&library, SHOWS), ["s1", "s2"]);
+    assert_eq!(pending(&library), [MOVIES]);
     assert!(ownership_available(&library));
 
     let (result, requests) = cycle(
         &library,
         Trigger::Scheduled,
-        vec![
-            listing(),
-            ok(EMPTY_PAGE),
-            members(&["m1", "m2", "m3"], 3),
-            members(&["s1", "s2"], 2),
-        ],
+        vec![listing(), ok(EMPTY_PAGE), members(&["m1", "m2", "m3"], 3)],
     );
     result.expect("the next cycle");
-    assert_eq!(
-        steps(&requests),
-        ["views", "incremental", "walk movies", "walk shows"]
-    );
+    assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
     assert_eq!(grid(&library, MOVIES), ["m1", "m2", "m3"]);
+    assert!(pending(&library).is_empty());
 
     let (result, requests) = cycle(
         &library,
@@ -472,11 +483,12 @@ fn a_failed_membership_walk_keeps_its_membership_and_walks_again_next_cycle() {
 #[test]
 fn a_library_added_by_a_failed_cycle_is_walked_by_the_next() {
     let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
-    let listing = || views(&[(MOVIES, "movies")]);
+    let listing = || views(&[(MOVIES, "movies"), (MUSIC, "music")]);
 
     let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(NOT_JSON)]);
     assert!(matches!(result, Err(ApiError::Decode(_))), "{result:?}");
     assert_eq!(steps(&requests), ["views", "incremental"]);
+    assert_eq!(pending(&library), [MOVIES]);
 
     let (result, requests) = cycle(
         &library,
@@ -486,6 +498,225 @@ fn a_library_added_by_a_failed_cycle_is_walked_by_the_next() {
     result.expect("the next cycle");
     assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
     assert_eq!(grid(&library, MOVIES), ["m1", "m2"]);
+    assert!(pending(&library).is_empty());
+}
+
+#[test]
+fn a_rate_limit_or_a_lost_connection_ends_the_membership_pass_and_leaves_the_rest_owed() {
+    let library = settled_library(&[("m1", "Movie"), ("m2", "Movie"), ("s1", "Series")]);
+    sync_libraries(
+        &library,
+        &[
+            (MOVIES, "movies", &["m1"]),
+            (MORE_MOVIES, "movies", &["m2"]),
+            (SHOWS, "tvshows", &["s1"]),
+        ],
+    );
+    let listing = || {
+        views(&[
+            (MOVIES, "movies"),
+            (MORE_MOVIES, "movies"),
+            (SHOWS, "tvshows"),
+        ])
+    };
+    let limited = || (429, String::new());
+    let dropped = || (DROPPED, String::new());
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            members(&["m1", "m2", "s1"], 3),
+            limited(),
+            limited(),
+            limited(),
+        ],
+    );
+    result.expect("the catalog synced without the membership pass");
+    assert_eq!(
+        steps(&requests),
+        [
+            "views",
+            "incremental",
+            "sweep",
+            "walk movies",
+            "walk movies",
+            "walk movies"
+        ]
+    );
+    assert_eq!(pending(&library), [MOVIES, MORE_MOVIES, SHOWS]);
+    assert_eq!(grid(&library, MOVIES), ["m1"]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            members(&["m1"], 1),
+            dropped(),
+            dropped(),
+            dropped(),
+        ],
+    );
+    result.expect("the catalog synced without the rest of the pass");
+    assert_eq!(
+        steps(&requests),
+        [
+            "views",
+            "incremental",
+            "walk movies",
+            "walk more movies",
+            "walk more movies",
+            "walk more movies"
+        ]
+    );
+    assert_eq!(pending(&library), [MORE_MOVIES, SHOWS]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            members(&["m2"], 1),
+            members(&["s1"], 1),
+        ],
+    );
+    result.expect("the cycle that finishes the pass");
+    assert_eq!(
+        steps(&requests),
+        ["views", "incremental", "walk more movies", "walk shows"]
+    );
+    assert!(pending(&library).is_empty());
+    assert_eq!(grid(&library, SHOWS), ["s1"]);
+}
+
+#[test]
+fn an_empty_answer_keeps_a_library_s_titles_and_settles_its_walk() {
+    let library = settled_library(&[("m1", "Movie")]);
+    sync_libraries(&library, &[(MOVIES, "movies", &["m1"])]);
+    let listing = || views(&[(MOVIES, "movies")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![
+            listing(),
+            ok(EMPTY_PAGE),
+            members(&["m1"], 1),
+            members(&[], 0),
+        ],
+    );
+    result.expect("cycle");
+    assert_eq!(
+        steps(&requests),
+        ["views", "incremental", "sweep", "walk movies"]
+    );
+    assert_eq!(grid(&library, MOVIES), ["m1"]);
+    assert!(pending(&library).is_empty());
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![listing(), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle with nothing owed");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+#[test]
+fn an_owed_sweep_that_lists_nothing_stays_owed_until_its_deletion_runs() {
+    let library = settled_library(&[("m1", "Movie"), ("m2", "Movie")]);
+    sync_libraries(
+        &library,
+        &[
+            (MOVIES, "movies", &["m1"]),
+            (MORE_MOVIES, "movies", &["m2"]),
+        ],
+    );
+    let remaining = || views(&[(MOVIES, "movies")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![remaining(), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("a cycle whose sweep listed nothing");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("m2").expect("query").is_some());
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![
+            remaining(),
+            ok(EMPTY_PAGE),
+            members(&["m1"], 1),
+            members(&["m1"], 1),
+        ],
+    );
+    let report = result.expect("the next cycle");
+    assert_eq!(
+        steps(&requests),
+        ["views", "incremental", "sweep", "walk movies"]
+    );
+    assert_eq!(report.deleted, 1);
+    assert!(library.item("m2").expect("query").is_none());
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![remaining(), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle with nothing owed");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+#[test]
+fn a_server_that_lists_no_library_and_no_title_empties_the_catalog() {
+    let library = settled_library(&[("m1", "Movie"), ("s1", "Series")]);
+    sync_libraries(
+        &library,
+        &[(MOVIES, "movies", &["m1"]), (SHOWS, "tvshows", &["s1"])],
+    );
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![views(&[]), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("cycle");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 2);
+    assert_eq!(library.stats().total, 0);
+    assert_eq!(listed(&library), Some(Vec::new()));
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Scheduled,
+        vec![views(&[]), ok(EMPTY_PAGE)],
+    );
+    result.expect("a cycle with nothing owed");
+    assert_eq!(steps(&requests), ["views", "incremental"]);
+}
+
+#[test]
+fn an_empty_identity_answer_deletes_nothing_before_the_library_list_is_known() {
+    let library = settled_library(&[("m1", "Movie")]);
+
+    let (result, requests) = cycle(
+        &library,
+        Trigger::Requested,
+        vec![ok(NOT_JSON), ok(EMPTY_PAGE), ok(EMPTY_PAGE)],
+    );
+    let report = result.expect("cycle");
+    assert_eq!(steps(&requests), ["views", "incremental", "sweep"]);
+    assert_eq!(report.deleted, 0);
+    assert!(library.item("m1").expect("query").is_some());
 }
 
 #[test]
@@ -597,6 +828,7 @@ fn the_first_sync_walks_each_library_once() {
         ]
     );
     assert_eq!(grid(&library, MOVIES), ["m1"]);
+    assert!(pending(&library).is_empty());
 
     let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(ONE_MOVIE)]);
     result.expect("the second sync");
