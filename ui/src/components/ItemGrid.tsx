@@ -12,7 +12,6 @@ import { useBrowsePages } from "@/lib/queries"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 
-/** A playlist can hold the same item in several slots, so its cards key on the slot too. */
 function cardKey(item: ItemSummary) {
   return item.playlistIndex === undefined ? item.id : `${item.id}:${item.playlistIndex}`
 }

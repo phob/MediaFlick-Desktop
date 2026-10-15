@@ -3,7 +3,6 @@ import { useEffect } from "react"
 import { invalidateLibraryChanged, queryKeys } from "./query-client"
 import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
 
-/** The native `live-changed` event: ids the server changed that the cache does not hold. */
 export interface LiveChange {
   itemIds: string[]
   contextIds: string[]
@@ -17,11 +16,6 @@ export function readLiveChange(event: ShellEvent): LiveChange | null {
   }
 }
 
-/**
- * Runs `flush` at once, then at most once a second while requests keep
- * arriving, so a burst of native events refreshes its pages on the first event
- * and then once a second instead of once per event.
- */
 function createThrottle(flush: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let pending = false

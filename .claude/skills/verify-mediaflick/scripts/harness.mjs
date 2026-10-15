@@ -552,8 +552,6 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
-  // A private playlist of the cached account, deleted after the run if the
-  // drive's own cleanup did not. Its methods change it as another device would.
   async function createPlaylistAfterRun(name, itemIds) {
     if (!cachedAccount) throw new Error("createPlaylistAfterRun needs --account SERVER")
     const { userId } = cachedAccount

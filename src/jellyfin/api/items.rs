@@ -350,8 +350,8 @@ fn live_page_query(user_id: &str, page: &LivePage) -> Vec<(&'static str, String)
     query
 }
 
-/// A live library grid page or its Latest shelf. `/Items/Latest` answers a
-/// bare array, so its total is the number of items it returned.
+/// `/Items/Latest` answers a bare array, so its total is the number of items
+/// it returned.
 pub fn fetch_live(
     client: &JellyfinClient,
     user_id: &str,

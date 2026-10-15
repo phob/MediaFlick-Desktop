@@ -36,7 +36,6 @@ pub enum LibraryKind {
     Mixed,
 }
 
-/// The Jellyfin item type whose children keep their owner's order.
 pub const PLAYLIST_TYPE: &str = "Playlist";
 
 impl LibraryKind {
@@ -112,9 +111,7 @@ pub enum GridSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveShape {
-    /// Every item of these Jellyfin types anywhere under the library.
     Recursive { item_types: &'static [&'static str] },
-    /// The library's direct children, folders included, browsed one level at a time.
     Folder,
 }
 
@@ -132,7 +129,6 @@ pub enum LiveLatest {
     Newest,
 }
 
-/// The sorts a live grid offers, each mapped to one Jellyfin `SortBy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiveSort {
     Name,

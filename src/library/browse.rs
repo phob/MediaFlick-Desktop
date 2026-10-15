@@ -36,8 +36,6 @@ pub struct FilterOptions {
     pub official_ratings: Vec<String>,
 }
 
-/// A library grid's answer: read from the cache, or a request the caller
-/// sends to Jellyfin with its session.
 pub enum Grid {
     Cached(ItemPage),
     Live(LiveQuery),
@@ -48,8 +46,6 @@ pub enum LiveQuery {
     Latest { parent: LibraryId, limit: i64 },
 }
 
-/// One page of a live grid. Every field comes from the library's profile or
-/// from a request already checked against its capabilities.
 pub struct LivePage {
     pub parent: LibraryId,
     pub shape: LiveShape,
@@ -197,11 +193,8 @@ pub fn write_live_title(
     )
 }
 
-/// How the server lists the children of a container the cache does not hold,
-/// chosen by its Jellyfin type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildrenSource {
-    /// Disc, track and name order.
     Folder,
     /// The owner's manual order, which only the playlist route keeps.
     Playlist,
@@ -219,8 +212,6 @@ impl ChildrenSource {
 
 const REMEMBERED_SOURCES: usize = 256;
 
-/// The children source of recently opened containers, so paging one asks
-/// Jellyfin for its type once per session scope instead of on every page.
 #[derive(Default)]
 pub struct ChildrenSources(Mutex<VecDeque<(u64, String, ChildrenSource)>>);
 

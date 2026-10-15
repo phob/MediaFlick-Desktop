@@ -509,32 +509,24 @@ struct IdentityWalk {
     answer: IdentityAnswer,
 }
 
-/// What one identity walk proved about which titles still exist.
 #[derive(Clone, Copy)]
 enum IdentityAnswer {
-    /// The walk failed or stopped at the page cap, so it proves nothing.
     Incomplete,
     Listed,
     EmptyCountingZero,
-    /// No title, but a count above zero or no count at all.
     EmptyUncounted,
 }
 
 #[derive(Clone, Copy)]
 enum SweepVerdict {
-    /// Keep only the titles the walk saw, settle an owed sweep, and forget any
-    /// empty observation.
     Delete,
     ObserveEmpty(u64),
     ForgetEmpty,
-    /// Too soon after the first empty answer to confirm it, so that observation stands.
     Wait,
 }
 
-/// An empty catalog library can stay listed after every title is gone, so an
-/// empty answer counting zero deletes only when an earlier one, seen inside
-/// the confirmation window, agrees. With no catalog library listed at all the
-/// answer is trusted at once.
+/// An emptied catalog library can stay listed, and only the daily rebootstrap restores deleted
+/// titles, so an empty zero-count answer deletes once an earlier one in the window agrees.
 fn sweep_verdict(
     answer: IdentityAnswer,
     no_catalog_library: bool,

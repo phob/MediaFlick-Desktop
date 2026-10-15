@@ -92,9 +92,6 @@ fn latest(services: &Arc<Services>, id: &str, request: &ApiRequest) -> Handled {
     Ok(ApiResponse::ok(json!({ "items": page.items })))
 }
 
-/// `scope` is taken before the registry read. An account switch after that
-/// fails `still_signed_in`, so a library read for one account is never
-/// answered through the next account's session.
 fn answer(
     services: &Arc<Services>,
     scope: Result<SessionScope, ApiError>,

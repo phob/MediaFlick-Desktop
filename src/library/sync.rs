@@ -46,13 +46,6 @@ pub(super) const MAX_INCREMENTAL_PAGES: usize = 100;
 pub(super) const MAX_BOOTSTRAP_PAGES: usize = 1_000;
 pub(super) const MAX_IDENTITY_PAGES: usize = 1_000;
 
-/// When an earlier empty identity answer that counted zero titles confirms the
-/// current one. The gap is one sync cycle, so cycles started back to back
-/// (startup restore and socket connect) count as one observation. An empty
-/// answer does not owe the sweep. While a library removal owes it, the next
-/// cycle about 10 minutes later confirms. Otherwise the next hourly sweep,
-/// 60 to 72 minutes later, confirms. The age is two identity sweep intervals,
-/// so both confirm but an answer from the evening before cannot.
 pub(super) const MIN_CONFIRM_GAP: Duration = SYNC_INTERVAL;
 pub(super) const MAX_CONFIRM_AGE: Duration =
     Duration::from_secs(2 * IDENTITY_SWEEP_INTERVAL.as_secs());

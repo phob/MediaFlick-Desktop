@@ -105,8 +105,6 @@ impl Library {
         })
     }
 
-    /// Deletes every title outside `keep` and writes `meta` in the same
-    /// transaction, so the deletion and the state that records it land together.
     pub fn retain_ids_setting_meta(
         &self,
         keep: &HashSet<String>,

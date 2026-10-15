@@ -72,9 +72,6 @@ impl LibraryChangeBatch {
         normalize_ids(&mut self.context_ids);
     }
 
-    /// The ids this batch does not name. Of the ids Jellyfin reports changed,
-    /// these are the items and folders only Jellyfin serves, plus cached rows
-    /// that did not change, whose extra refresh is harmless.
     pub fn unnamed<'a>(&self, ids: impl IntoIterator<Item = &'a String>) -> Vec<String> {
         let mut unnamed = ids
             .into_iter()

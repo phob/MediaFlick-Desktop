@@ -376,7 +376,6 @@ enum ServerMessage {
 struct LibraryChange {
     changed: Vec<String>,
     removed: Vec<String>,
-    /// Folders that gained or lost children.
     folders: Vec<String>,
 }
 
