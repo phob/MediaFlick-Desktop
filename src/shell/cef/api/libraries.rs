@@ -32,16 +32,21 @@ fn libraries(services: &Arc<Services>) -> Handled {
         LibraryRegistry::Unknown => (false, [].as_slice()),
         LibraryRegistry::Known(libraries) => (true, libraries.as_slice()),
     };
+    // A catalog library's titles are still arriving until the catalog
+    // download completes, even once its membership walk has settled.
+    let downloading = !sync::bootstrap_progress(&services.library).complete;
     let libraries = libraries
         .iter()
         .map(|library| {
             let kind = library.kind();
+            let filling =
+                library.membership_pending || (downloading && library.catalog_title().is_some());
             json!({
                 "id": library.id,
                 "name": library.name,
                 "kind": kind,
                 "imageTag": library.primary_image_tag,
-                "membershipPending": library.membership_pending,
+                "membershipPending": filling,
                 "browse": kind.profile().browse,
             })
         })
