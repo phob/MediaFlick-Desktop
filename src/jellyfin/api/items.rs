@@ -7,7 +7,7 @@
 use serde_json::{Value, json};
 
 use crate::app::urls::encode_path_segment;
-use crate::library::CatalogKind;
+use crate::library::{CatalogKind, MAX_CHILD_PAGE_LIMIT};
 use crate::preferences::StreamingQuality;
 
 use super::client::{ApiError, JellyfinClient};
@@ -41,8 +41,6 @@ pub const PAGE_SIZE: i64 = 200;
 pub const CHILDREN_PAGE_SIZE: i64 = 500;
 
 pub const PERSON_PAGE_SIZE: i64 = 500;
-
-pub const LIVE_CHILDREN_PAGE_SIZE: i64 = 200;
 
 fn user_query(user_id: &str) -> (&'static str, String) {
     ("userId", user_id.to_string())
@@ -257,7 +255,7 @@ fn live_children_query(
         ("EnableUserData", "true".to_string()),
         ("EnableImages", "true".to_string()),
         ("StartIndex", start_index.max(0).to_string()),
-        ("Limit", limit.clamp(1, LIVE_CHILDREN_PAGE_SIZE).to_string()),
+        ("Limit", limit.clamp(1, MAX_CHILD_PAGE_LIMIT).to_string()),
         (
             "SortBy",
             "ParentIndexNumber,IndexNumber,SortName".to_string(),
