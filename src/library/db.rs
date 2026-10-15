@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i32 = 20;
+pub const SCHEMA_VERSION: i32 = 21;
 
 const MAX_IDLE_CONNECTIONS: usize = 4;
 
