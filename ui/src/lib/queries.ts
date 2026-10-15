@@ -267,8 +267,7 @@ export function useCachedLibraries() {
 export function useLibraryOptions(id: string | null) {
   return useQuery({
     queryKey: queryKeys.libraryOptions(id ?? ""),
-    queryFn: () => api.libraryOptions(id!),
-    enabled: id !== null,
+    queryFn: id === null ? skipToken : () => api.libraryOptions(id),
     staleTime: 30 * 60_000,
   })
 }

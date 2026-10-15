@@ -8,7 +8,6 @@ import type {
   SortOrder,
   WatchFilter,
 } from "./api"
-import { isCatalogKind } from "./libraries.ts"
 
 export interface LibrarySort {
   id: LibrarySortId
@@ -183,12 +182,14 @@ export function libraryQuery(params: URLSearchParams, capabilities: BrowseCapabi
   }
 }
 
-/** The cross-library title view. An absent `kind` lists movies and series. */
+const TITLE_VIEW_KINDS: ReadonlySet<string> = new Set(["Movie", "Series"])
+
+/** The cross-library title view. `kind` narrows it to movies or series; absent, it lists both. */
 export function libraryItemQuery(params: URLSearchParams, capabilities: BrowseCapabilities): ItemQuery {
   const kinds = (params.get("kind") ?? "")
     .split(",")
     .map((kind) => kind.trim())
-    .filter(isCatalogKind)
+    .filter((kind) => TITLE_VIEW_KINDS.has(kind))
   return {
     search: params.get("search") ?? "",
     kind: [...new Set(kinds)].join(","),

@@ -1,6 +1,6 @@
 import { useParams, useSearchParams } from "react-router-dom"
-import type { BrowseCapabilities, BrowsingPage, Library } from "@/lib/api"
-import { browsingKey, type ListingSource } from "@/lib/libraries"
+import type { BrowseCapabilities, Library } from "@/lib/api"
+import type { ListingSource } from "@/lib/libraries"
 import { libraryItemQuery, libraryQuery } from "@/lib/library-filters"
 import { useLibraries } from "@/lib/queries"
 
@@ -15,7 +15,6 @@ export type BrowseScope =
       browse: BrowseCapabilities
       /** Null on the cross-library title view. */
       library: Library | null
-      rememberKey: BrowsingPage | null
       source: (params: URLSearchParams) => ListingSource
     }
 
@@ -51,7 +50,6 @@ export function useBrowseScope(): BrowseScope {
       eyebrow: search ? "Search" : "Library",
       browse,
       library: null,
-      rememberKey: null,
       source: (current) => ({ scope: "titles", query: libraryItemQuery(current, browse) }),
     }
   }
@@ -64,7 +62,6 @@ export function useBrowseScope(): BrowseScope {
     eyebrow: "Library",
     browse: library.browse,
     library,
-    rememberKey: browsingKey(library.id),
     source: (current) => ({
       scope: "library",
       libraryId: library.id,

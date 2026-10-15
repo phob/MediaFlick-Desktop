@@ -22,7 +22,7 @@ import {
   writeResolvedCastPerson,
 } from "@/lib/cast-search"
 import { useBrowseScope, type BrowseScope } from "@/hooks/use-browse-scope"
-import { libraryPath, type BrowseSource } from "@/lib/libraries"
+import { browsingKey, libraryPath, type BrowseSource } from "@/lib/libraries"
 import {
   activeLibraryFilterCount,
   offersFilter,
@@ -183,7 +183,8 @@ function BrowsePage({
   const viewing = useViewing()
   const history = useBrowsing()
   const preferences = viewing.data ?? DEFAULT_VIEWING
-  const { browse, library, rememberKey } = scope
+  const { browse, library } = scope
+  const rememberKey = library ? browsingKey(library.id) : null
   const explicitFilters = REMEMBERED_LIBRARY_PARAMS.some((key) => routeParams.has(key))
   const params = new URLSearchParams(routeParams)
   if (rememberKey && !explicitFilters) {
@@ -219,7 +220,7 @@ function BrowsePage({
     setParams((previous) => writeResolvedCastPerson(previous, resolved), { replace: true })
   }, [castPerson, resolved, setParams])
 
-  const search = params.get("search") ?? ""
+  const search = library ? "" : params.get("search") ?? ""
   const filters = readLibraryFilters(params, browse)
 
   const updateFilters = (patch: Partial<LibraryFilterState>) => {
