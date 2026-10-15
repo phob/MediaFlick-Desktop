@@ -17,7 +17,7 @@
 //! stop the catalog's sync or decide catalog ownership.
 
 mod cycle;
-mod membership;
+mod libraries;
 mod worker;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,11 +58,6 @@ pub(super) const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
 pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
 pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
-/// Work a change to the library list left for a later step. Each is set in
-/// the same transaction as that change and cleared only once its work
-/// finished, so a cycle that fails in between leaves it to the next one.
-pub(super) const META_MEMBERSHIP_OWED: &str = "sync.membership_owed";
-pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 
 /// Durable progress for the resumable initial cache fill.
 ///
