@@ -14,7 +14,8 @@ use super::{AppearanceSettings, ViewingSettings};
 const MAX_HOME_ELEMENTS: usize = 512;
 const MAX_BROWSING_PAGES: usize = 256;
 /// Pages from before libraries had their own route. A file may still hold
-/// them; nothing writes them, and the account's next browsing save drops them.
+/// them; nothing writes them, and the account's next save of a library's
+/// filters drops them.
 const LEGACY_BROWSING_PAGES: [&str; 2] = ["Movie", "Series"];
 const PREFERRED_HOME_GENRES: [&str; 12] = [
     "Action",
@@ -398,13 +399,14 @@ impl AccountConfigurationService {
     }
 
     pub fn save_browsing(&self, key: &AccountKey, page: &str, route: &str) -> io::Result<()> {
-        if BrowsingPage::parse(page).is_none() {
-            return Err(invalid_data("invalid browsing destination"));
-        }
+        let parsed = BrowsingPage::parse(page)
+            .ok_or_else(|| invalid_data("invalid browsing destination"))?;
         validate_browsing_route(page, route)?;
         self.mutate(|document| {
             let browsing = &mut account_mut(document, key).browsing;
-            browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
+            if let BrowsingPage::Library(_) = parsed {
+                browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
+            }
             browsing.insert(page.to_string(), route.to_string());
             Ok(())
         })
