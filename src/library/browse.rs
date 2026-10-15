@@ -1,13 +1,12 @@
 use serde::Serialize;
 
-use crate::jellyfin::api::items;
 use crate::jellyfin::api::model::{BaseItemDto, ItemsResponse};
 
 use super::libraries::{BrowseCapabilities, FilterKey, LibraryId, LibraryRegistry, MediaLibrary};
 use super::model::is_synced_kind;
 use super::{
     CatalogKind, DEFAULT_PAGE_SIZE, GenericItemDetail, ItemDetail, ItemPage, ItemQuery, ItemSort,
-    ItemSummary, KindFilter, Library, TitleDetail, TitleKind,
+    ItemSummary, KindFilter, Library, MAX_CHILD_PAGE_LIMIT, TitleDetail, TitleKind,
 };
 
 #[derive(Debug)]
@@ -164,7 +163,7 @@ impl ChildPage {
             offset: offset.unwrap_or(0),
             limit: limit
                 .unwrap_or(DEFAULT_PAGE_SIZE)
-                .clamp(1, items::LIVE_CHILDREN_PAGE_SIZE),
+                .clamp(1, MAX_CHILD_PAGE_LIMIT),
         }))
     }
 
