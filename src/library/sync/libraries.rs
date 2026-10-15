@@ -1,18 +1,46 @@
-//! Which cached titles each movies or TV shows library holds. The membership
-//! is replaced whole by an idempotent pass; item existence stays with the
-//! identity sweep.
+//! The library steps of a cycle: the server's library list, and which cached
+//! titles each movies or TV shows library holds. The membership is replaced
+//! whole by an idempotent pass; item existence stays with the identity sweep.
 
 use std::collections::HashSet;
 
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::libraries::{LibraryId, LibraryRegistry};
+use crate::library::catalog_libraries::META_MEMBERSHIP_OWED;
+use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use crate::library::{Library, TitleKind};
 
 use super::{
-    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_MEMBERSHIP_OWED, SyncHandle, best_effort,
-    cancelled, commit, storage_error,
+    IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, SyncHandle, best_effort, cancelled, commit,
+    storage_error,
 };
+
+/// Stores the server's library list. A successful empty answer is the
+/// server's and is stored as such.
+pub(super) fn refresh_libraries(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    let views = items::fetch_user_views(scope.client(), scope.user_id())?;
+    let mut seen = HashSet::new();
+    let libraries = views
+        .iter()
+        .filter_map(|view| {
+            let parsed = MediaLibrary::from_view(view);
+            if parsed.is_none() {
+                tracing::warn!(target: "library.sync", id = view.id, "skipped a library with an unusable id");
+            }
+            parsed
+        })
+        .filter(|parsed| seen.insert(parsed.id.clone()))
+        .collect::<Vec<_>>();
+    commit(session, scope, || {
+        library
+            .replace_libraries(&libraries)
+            .map_err(|error| storage_error(&error))
+    })
+}
 
 /// Replaces each catalog library's membership with the ids the server lists
 /// in it now. A walk that fails, is cut off, or ends short of the server's

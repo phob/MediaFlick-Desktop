@@ -2,44 +2,18 @@ use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::jellyfin::api::{ApiError, items};
-use crate::jellyfin::session::{Session, SessionScope};
-
 use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 use super::session_store::save_meta;
-use super::sync::{META_MEMBERSHIP_OWED, META_SWEEP_OWED, commit, storage_error};
 use super::{Library, now_unix};
 
 /// Set once `/UserViews` has answered for this cache, so an empty `libraries`
 /// table can tell "never read" from "the user sees no library".
 const LIBRARIES_READ_AT: &str = "sync.libraries_at";
-
-/// Stores the server's library list. A successful empty answer is the
-/// server's and is stored as such.
-pub(super) fn refresh_libraries(
-    library: &Library,
-    session: &Session,
-    scope: &SessionScope,
-) -> Result<(), ApiError> {
-    let views = items::fetch_user_views(scope.client(), scope.user_id())?;
-    let mut seen = HashSet::new();
-    let libraries = views
-        .iter()
-        .filter_map(|view| {
-            let parsed = MediaLibrary::from_view(view);
-            if parsed.is_none() {
-                tracing::warn!(target: "library.sync", id = view.id, "skipped a library with an unusable id");
-            }
-            parsed
-        })
-        .filter(|parsed| seen.insert(parsed.id.clone()))
-        .collect::<Vec<_>>();
-    commit(session, scope, || {
-        library
-            .replace_libraries(&libraries)
-            .map_err(|error| storage_error(&error))
-    })
-}
+/// Work a change to the library list leaves for a later sync step. Each is
+/// set in the same transaction as that change and cleared only once its work
+/// finished, so a cycle that fails in between leaves it to the next one.
+pub(super) const META_MEMBERSHIP_OWED: &str = "sync.membership_owed";
+pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 
 impl Library {
     pub fn libraries(&self) -> rusqlite::Result<LibraryRegistry> {

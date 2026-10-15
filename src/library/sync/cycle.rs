@@ -4,17 +4,16 @@ use std::time::{Duration, Instant};
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
-use crate::library::catalog_libraries::refresh_libraries;
+use crate::library::catalog_libraries::{META_MEMBERSHIP_OWED, META_SWEEP_OWED};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::membership::membership_pass;
+use super::libraries::{membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
     META_CATALOG_READY, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, META_LAST_SYNC,
-    META_LATEST_FAILURE, META_MEMBERSHIP_OWED, META_SWEEP_OWED, META_WATERMARK, META_WATERMARK_IDS,
-    REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport, Trigger, best_effort, cancelled,
-    commit, now_unix, storage_error,
+    META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle,
+    SyncPhase, SyncReport, Trigger, best_effort, cancelled, commit, now_unix, storage_error,
 };
 
 pub fn run_cycle(
@@ -55,7 +54,8 @@ pub(super) fn run_cycle_inner(
             control.set_phase(SyncPhase::Catalog);
         }
         // Before the first fill, so library grids fill page by page with it.
-        let walked_before_fill = initial_catalog && flag(library, META_MEMBERSHIP_OWED)?;
+        let walked_before_fill =
+            initial_catalog && meta(library, META_MEMBERSHIP_OWED)?.as_deref() == Some("1");
         if walked_before_fill {
             membership_changed |= walk_membership(library, session, &scope, control)?;
         }
@@ -78,7 +78,7 @@ pub(super) fn run_cycle_inner(
             false
         } else if trigger.forces_identity_sweep()
             // A removed library's titles leave the cache now, not within the hour.
-            || flag(library, META_SWEEP_OWED)?
+            || meta(library, META_SWEEP_OWED)?.as_deref() == Some("1")
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
             sweep_identity(library, session, &scope, control, &mut report)?;
@@ -87,7 +87,7 @@ pub(super) fn run_cycle_inner(
             false
         };
         if !walked_before_fill
-            && (flag(library, META_MEMBERSHIP_OWED)?
+            && (meta(library, META_MEMBERSHIP_OWED)?.as_deref() == Some("1")
                 || report.changed()
                 || swept
                 || trigger == Trigger::Requested)
@@ -627,10 +627,6 @@ fn full_bootstrap_due(library: &Library) -> Result<bool, ApiError> {
 
 fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
     library.meta(key).map_err(|error| storage_error(&error))
-}
-
-fn flag(library: &Library, key: &str) -> Result<bool, ApiError> {
-    Ok(meta(library, key)?.as_deref() == Some("1"))
 }
 
 fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
