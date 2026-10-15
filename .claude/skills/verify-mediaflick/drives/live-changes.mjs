@@ -1,9 +1,11 @@
 // A private playlist changed on the server while its page is open. The drive
 // creates a playlist of three movies out of name order as the test account,
 // opens its page and expects the cards in the playlist's own order. Then, as
-// another device would, it adds a fourth movie and moves it to the second
-// place, and expects the open page
-// to follow without a reload once Jellyfin pushes the change over its socket.
+// another device would, it adds a fourth movie, moves it to the second place
+// and adds the first movie a second time, and expects the open page to follow
+// without a reload once Jellyfin pushes the change over its socket, with both
+// cards of the repeated movie in their slots. Jellyfin's PlaylistItemId is the
+// item's own id, so the app numbers slots itself (playlistIndex).
 // Jellyfin reports a playlist change as LibraryChanged ItemsUpdated
 // [<playlist>], about 30 s after the server's last library change. The
 // playlist is deleted at the end, and after the run if the drive failed first.
@@ -72,9 +74,10 @@ export default async function liveChanges(ctx) {
     await playlist.add([fourth])
     const entry = (await playlist.items()).find((item) => item.Id === fourth)
     await playlist.move(entry.PlaylistItemId, 1)
+    await playlist.add([first])
     const after = (await playlist.items()).map((item) => item.Id)
     report.after = { server: after }
-    expect(sameList(after, [third, fourth, first, second]), `the server's order puts the added movie second (${JSON.stringify(after)})`)
+    expect(sameList(after, [third, fourth, first, second, first]), `the server's order puts the added movie second and the repeated one last (${JSON.stringify(after)})`)
 
     const followed = await ctx.until(async () => sameList(await cardIds(ctx), after), "the open page to show the server's new order", PUSH_WAIT_MS).then(() => true, () => false)
     report.after.cards = await cardIds(ctx)
@@ -86,6 +89,11 @@ export default async function liveChanges(ctx) {
     expect(await ctx.app.evaluate("window.__liveChangesNoReload === true"), "the page was not reloaded")
     expect((await ctx.pathname()) === `/item/${playlist.id}`, "the playlist page stayed open")
     await ctx.screenshot("02-after")
+
+    const children = (await ctx.api(`/api/item/${playlist.id}/children`)).body?.items ?? []
+    const slots = children.map((item) => [item.id, item.playlistIndex])
+    report.after.slots = slots
+    expect(sameList(slots, after.map((id, index) => [id, index])), `the children answer numbers each slot in the server's order (${JSON.stringify(slots)})`)
   } finally {
     await playlist.remove()
     const gone = !(await playlist.exists())

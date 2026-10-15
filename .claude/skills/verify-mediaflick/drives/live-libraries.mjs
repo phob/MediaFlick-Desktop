@@ -3,9 +3,13 @@
 // every sort and filter it does not offer; empty filter options; and Latest
 // against the Jellyfin query the library's profile names. On the demo server
 // the run signs in through a loopback proxy and also proves that a dropped or
-// failing live request answers an error, never an empty page. Read-only.
+// failing live request answers an error, never an empty page, and that paging
+// a live container asks Jellyfin for its type once. On both servers a missing
+// container's children answer 404 and an id list answers 400. Read-only.
 //   just verify live-libraries
 //   just verify live-libraries --account https://jellyfin.example.com
+import { randomUUID } from "node:crypto"
+
 const DEMO = "https://demo.jellyfin.org/stable"
 const SHAPES = {
   music: { types: ["MusicAlbum"], latest: "grouped" },
@@ -114,16 +118,48 @@ async function failures(ctx, expect, library, setFailure) {
   return result
 }
 
+async function children(ctx, expect, live, typeLookups) {
+  const library = live.find((entry) => entry.kind === "music") ?? live[0]
+  const grid = (await ctx.api(`/api/libraries/${library.id}/items?limit=50`)).body?.items ?? []
+  const container = grid.find((item) => (item.childCount ?? 0) > 2) ?? grid[0]
+  if (!container) {
+    ctx.step(`${library.name} has no item whose children to page`)
+    return null
+  }
+  const label = `${container.name} (${container.kind}) in ${library.name}`
+  const pages = []
+  for (const offset of [0, 2]) {
+    const answer = await ctx.api(`/api/item/${container.id}/children?offset=${offset}&limit=2`)
+    pages.push({ offset, status: answer.status, total: answer.body?.total ?? null, ids: (answer.body?.items ?? []).map((item) => item.id) })
+  }
+  expect(pages.every((page) => page.status === 200), `${label}: two pages of children answer 200 (${pages.map((page) => page.status).join(", ")})`)
+  const lookups = typeLookups ? typeLookups.filter((ids) => ids === container.id).length : null
+  if (typeLookups) expect(lookups === 1, `${label}: paging its children asked Jellyfin for its type ${lookups} time(s), expected once`)
+  const missing = randomUUID().replaceAll("-", "")
+  const gone = await ctx.api(`/api/item/${missing}/children`)
+  expect(gone.status === 404, `children of an id the server does not know (${missing}) answer 404 (${gone.status} ${gone.body?.error ?? ""})`)
+  const lists = {}
+  for (const path of [`${container.id},${container.id}`, `${container.id}%2C${container.id}`]) {
+    lists[path] = (await ctx.api(`/api/item/${path}/children`)).status
+  }
+  expect(Object.values(lists).every((status) => status === 400), `children of an id list answer 400 (${JSON.stringify(lists)})`)
+  return { container: { id: container.id, name: container.name, kind: container.kind }, pages, typeLookups: lookups, missing: { id: missing, status: gone.status }, lists }
+}
+
 export default async function liveLibraries(ctx) {
   let failure = null
   let failTarget = null
   const liveRequest = (url) => url.pathname === "/Items" && url.searchParams.get("parentId") === failTarget
+  const typeLookups = ctx.account ? null : []
   const proxy = ctx.account
     ? null
     : await ctx.proxy({
       upstream: DEMO,
       fail: (url) => failure === "drop" && liveRequest(url),
-      answer: (url) => (failure === "error" && liveRequest(url) ? { status: 500, body: { error: "verify" } } : null),
+      answer: (url) => {
+        if (url.pathname === "/Items" && url.searchParams.has("ids")) typeLookups.push(url.searchParams.get("ids"))
+        return failure === "error" && liveRequest(url) ? { status: 500, body: { error: "verify" } } : null
+      },
     })
   if (proxy) await signInThrough(ctx, proxy)
   else await ctx.signIn({})
@@ -165,6 +201,8 @@ export default async function liveLibraries(ctx) {
     entry.latest = await latestCase(ctx, expect, userId, library)
     report.live.push(entry)
   }
+
+  if (live.length) report.children = await children(ctx, expect, live, typeLookups)
 
   if (proxy && live.length) {
     const target = live[0]
