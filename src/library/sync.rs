@@ -46,6 +46,16 @@ pub(super) const MAX_INCREMENTAL_PAGES: usize = 100;
 pub(super) const MAX_BOOTSTRAP_PAGES: usize = 1_000;
 pub(super) const MAX_IDENTITY_PAGES: usize = 1_000;
 
+/// When an earlier empty identity answer that counted zero titles confirms the
+/// current one. The gap is one sync cycle, so cycles started back to back
+/// (startup restore and socket connect) count as one observation while the
+/// next cycle of an owed sweep confirms. The age is two identity sweep
+/// intervals, so the hourly sweep can confirm but an answer from the evening
+/// before cannot.
+pub(super) const MIN_CONFIRM_GAP: Duration = SYNC_INTERVAL;
+pub(super) const MAX_CONFIRM_AGE: Duration =
+    Duration::from_secs(2 * IDENTITY_SWEEP_INTERVAL.as_secs());
+
 pub(super) const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 pub(super) const META_BOOTSTRAP_TOTAL: &str = "sync.bootstrap_total";
 pub(super) const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";

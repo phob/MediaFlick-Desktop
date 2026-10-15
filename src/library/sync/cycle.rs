@@ -9,12 +9,12 @@ use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
 use super::libraries::{membership_pass, refresh_libraries};
 use super::{
-    IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
-    MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
-    META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP,
-    META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL,
-    SyncHandle, SyncPhase, SyncReport, Trigger, best_effort, cancelled, commit, now_unix,
-    storage_error,
+    IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_CONFIRM_AGE,
+    MAX_IDENTITY_PAGES, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
+    META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
+    META_LAST_IDENTITY_SWEEP, META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK,
+    META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
+    Trigger, best_effort, cancelled, commit, now_unix, storage_error,
 };
 
 pub fn run_cycle(
@@ -177,32 +177,33 @@ fn sweep_identity(
     control: Option<&SyncHandle>,
     report: &mut SyncReport,
 ) -> Result<bool, ApiError> {
-    let swept = identity_sweep(
-        library,
-        session,
-        scope,
-        no_catalog_library,
-        control,
-        &mut report.changes,
-    );
-    if swept.is_err() {
-        let _ = commit(session, scope, || forget_empty_sweep(library));
+    let (walk, failure) = match walk_identity(library, session, scope, control, &mut report.changes)
+    {
+        Ok(walk) => (walk, None),
+        Err(error) => (
+            IdentityWalk {
+                refreshed: 0,
+                seen: HashSet::new(),
+                answer: IdentityAnswer::Incomplete,
+            },
+            Some(error),
+        ),
+    };
+    let observed_at = meta(library, META_EMPTY_SWEEP_AT)?.and_then(|at| at.parse::<u64>().ok());
+    let verdict = sweep_verdict(walk.answer, no_catalog_library, observed_at, now_unix());
+    let deletion_changes = commit(session, scope, || {
+        apply_sweep_verdict(library, verdict, &walk.seen)
+    })?;
+    if let Some(error) = failure {
+        return Err(error);
     }
-    let (refreshed, deletion_changes) = swept?;
-    report.user_data_refreshed = refreshed;
+    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))?;
+    report.user_data_refreshed = walk.refreshed;
     let deletion_ran = deletion_changes.is_some();
     if let Some(deletion_changes) = deletion_changes {
         report.deleted = deletion_changes.item_ids.len();
         report.changes.merge(deletion_changes);
     }
-    commit(session, scope, || {
-        if deletion_ran {
-            library
-                .set_meta(META_SWEEP_OWED, "0")
-                .map_err(|error| storage_error(&error))?;
-        }
-        touch(library, META_LAST_IDENTITY_SWEEP)
-    })?;
     Ok(deletion_ran)
 }
 
@@ -502,20 +503,94 @@ fn incremental(
     Ok(written)
 }
 
+struct IdentityWalk {
+    refreshed: usize,
+    seen: HashSet<String>,
+    answer: IdentityAnswer,
+}
+
+/// What one identity walk proved about which titles still exist.
+#[derive(Clone, Copy)]
+enum IdentityAnswer {
+    /// The walk failed or stopped at the page cap, so it proves nothing.
+    Incomplete,
+    Listed,
+    EmptyCountingZero,
+    /// No title, but a count above zero or no count at all.
+    EmptyUncounted,
+}
+
+#[derive(Clone, Copy)]
+enum SweepVerdict {
+    /// Keep only the titles the walk saw, settle an owed sweep, and forget any
+    /// empty observation.
+    Delete,
+    ObserveEmpty(u64),
+    ForgetEmpty,
+    /// Too soon after the first empty answer to confirm it; the sweep stays owed.
+    Wait,
+}
+
+/// An empty catalog library can stay listed after every title is gone, so an
+/// empty answer counting zero deletes only when an earlier one, seen inside
+/// the confirmation window, agrees. With no catalog library listed at all the
+/// answer is trusted at once.
+fn sweep_verdict(
+    answer: IdentityAnswer,
+    no_catalog_library: bool,
+    observed_at: Option<u64>,
+    now: u64,
+) -> SweepVerdict {
+    match answer {
+        IdentityAnswer::Incomplete | IdentityAnswer::EmptyUncounted => SweepVerdict::ForgetEmpty,
+        IdentityAnswer::Listed => SweepVerdict::Delete,
+        IdentityAnswer::EmptyCountingZero if no_catalog_library => SweepVerdict::Delete,
+        IdentityAnswer::EmptyCountingZero => match observed_at.and_then(|at| now.checked_sub(at)) {
+            Some(age) if age < MIN_CONFIRM_GAP.as_secs() => SweepVerdict::Wait,
+            Some(age) if age <= MAX_CONFIRM_AGE.as_secs() => SweepVerdict::Delete,
+            _ => SweepVerdict::ObserveEmpty(now),
+        },
+    }
+}
+
+fn apply_sweep_verdict(
+    library: &Library,
+    verdict: SweepVerdict,
+    seen: &HashSet<String>,
+) -> Result<Option<LibraryChangeBatch>, ApiError> {
+    let (changes, observation) = match verdict {
+        SweepVerdict::Wait => return Ok(None),
+        SweepVerdict::ObserveEmpty(at) => (None, at.to_string()),
+        SweepVerdict::ForgetEmpty => (None, String::new()),
+        SweepVerdict::Delete => {
+            let changes = library
+                .retain_ids(seen)
+                .map_err(|error| storage_error(&error))?;
+            library
+                .set_meta(META_SWEEP_OWED, "0")
+                .map_err(|error| storage_error(&error))?;
+            (Some(changes), String::new())
+        }
+    };
+    library
+        .set_meta(META_EMPTY_SWEEP_AT, &observation)
+        .map_err(|error| storage_error(&error))?;
+    Ok(changes)
+}
+
 /// One identity-only pass over the library that both mirrors watch state and
-/// drops items the server no longer reports.
+/// collects the ids the server still reports.
 ///
 /// These used to be two sweeps requesting the identical pages on different
 /// schedules, which meant deletions were only noticed once a day. Folding them
 /// together makes deletions as fresh as watch state for no extra requests.
-fn identity_sweep(
+fn walk_identity(
     library: &Library,
     session: &Session,
     scope: &SessionScope,
-    no_catalog_library: bool,
     control: Option<&SyncHandle>,
     changes: &mut LibraryChangeBatch,
-) -> Result<(usize, Option<LibraryChangeBatch>), ApiError> {
+) -> Result<IdentityWalk, ApiError> {
     let mut offset = 0;
     let mut refreshed = 0;
     let mut seen = HashSet::new();
@@ -559,7 +634,7 @@ fn identity_sweep(
             break false;
         }
     };
-    if truncated {
+    let answer = if truncated {
         // `seen` is what decides which items still exist, so a partial one must
         // never reach `retain_ids` — everything past the cap would be deleted.
         tracing::warn!(
@@ -568,43 +643,19 @@ fn identity_sweep(
             offset,
             "stopped the identity sweep at the page cap; skipping the deletion pass"
         );
-    }
-    // An empty catalog library can stay listed after every title is gone, so
-    // an empty answer counting zero is trusted once the next sweep repeats it.
-    let empty_and_zero = !truncated && seen.is_empty() && counted_zero;
-    let trusted = if truncated {
-        false
+        IdentityAnswer::Incomplete
     } else if !seen.is_empty() {
-        true
+        IdentityAnswer::Listed
+    } else if counted_zero {
+        IdentityAnswer::EmptyCountingZero
     } else {
-        empty_and_zero
-            && (no_catalog_library
-                || meta(library, META_EMPTY_SWEEP_AT)?.is_some_and(|at| !at.is_empty()))
+        IdentityAnswer::EmptyUncounted
     };
-    if !trusted {
-        commit(session, scope, || {
-            if empty_and_zero {
-                touch(library, META_EMPTY_SWEEP_AT)
-            } else {
-                forget_empty_sweep(library)
-            }
-        })?;
-        return Ok((refreshed, None));
-    }
-    let deletion_changes = commit(session, scope, || {
-        let changes = library
-            .retain_ids(&seen)
-            .map_err(|error| storage_error(&error))?;
-        forget_empty_sweep(library)?;
-        Ok(changes)
-    })?;
-    Ok((refreshed, Some(deletion_changes)))
-}
-
-fn forget_empty_sweep(library: &Library) -> Result<(), ApiError> {
-    library
-        .set_meta(META_EMPTY_SWEEP_AT, "")
-        .map_err(|error| storage_error(&error))
+    Ok(IdentityWalk {
+        refreshed,
+        seen,
+        answer,
+    })
 }
 
 fn advance_watermark_with_ids(
