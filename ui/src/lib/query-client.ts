@@ -206,6 +206,10 @@ export function invalidateLibraryChanged(
         if (root === "home") return scope === "library" || query.queryKey.length === 1
         if ([ITEMS_ROOT, "genres", "official-ratings", "status", "collections"].includes(String(root))) return true
       }
+      // A pushed change names an item and its library folder, never the box
+      // set or playlist whose live grid shows it. Bootstrap pages only fill
+      // the cache, which those grids do not read.
+      if (root === CHILD_PAGES_ROOT && scope === "library") return true
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))
