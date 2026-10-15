@@ -12,6 +12,11 @@ import { useBrowsePages } from "@/lib/queries"
 
 const FALLBACK = { poster: 168, gap: 18, card: 306 }
 
+/** A playlist can hold the same item in several slots, so its cards key on the slot too. */
+function cardKey(item: ItemSummary) {
+  return item.playlistIndex === undefined ? item.id : `${item.id}:${item.playlistIndex}`
+}
+
 function readGeometry(element: HTMLElement) {
   const styles = getComputedStyle(element)
   const read = (name: string, fallback: number) =>
@@ -185,7 +190,7 @@ export function ItemGrid({
                 if (index >= total) return null
                 const item = itemAt(index)
                 return item ? (
-                  <MediaCard key={item.playlistIndex === undefined ? item.id : `${item.id}:${item.playlistIndex}`} item={item} className="catalog-card shrink-0" />
+                  <MediaCard key={cardKey(item)} item={item} className="catalog-card shrink-0" />
                 ) : (
                   <Skeleton key={index} className="h-poster-h w-poster-w shrink-0 rounded-lg" />
                 )
