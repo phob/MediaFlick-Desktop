@@ -20,7 +20,10 @@ impl Library {
         })
     }
 
-    pub(crate) fn replace_libraries(&self, libraries: &[MediaLibrary]) -> rusqlite::Result<bool> {
+    pub(crate) fn replace_libraries(
+        &self,
+        libraries: &[MediaLibrary],
+    ) -> rusqlite::Result<LibrariesReplaced> {
         self.db.with_transaction(|transaction| {
             let first_read = !libraries_read(transaction)?;
             let before = stored_libraries(transaction)?;
@@ -30,7 +33,7 @@ impl Library {
                     .map(|library| (library.id.clone(), library.name.clone(), library.kind()))
                     .collect::<Vec<_>>()
             };
-            let changed = first_read || listing(&before) != listing(libraries);
+            let listing_changed = first_read || listing(&before) != listing(libraries);
             let listed = libraries
                 .iter()
                 .map(|library| &library.id)
@@ -82,7 +85,7 @@ impl Library {
                 save_meta(transaction, META_SWEEP_OWED, "1")?;
             }
             save_meta(transaction, LIBRARIES_READ_AT, &now_unix().to_string())?;
-            Ok(changed)
+            Ok(LibrariesReplaced { listing_changed })
         })
     }
 
@@ -122,28 +125,28 @@ impl Library {
         item_ids: &HashSet<String>,
     ) -> rusqlite::Result<MembershipReplaced> {
         self.db.with_transaction(|transaction| {
-            let settled = transaction.execute(
+            let walk_no_longer_owed = transaction.execute(
                 "UPDATE libraries SET membership_owed = 0 WHERE id = ?1 AND membership_owed = 1",
                 params![library.as_str()],
             )? > 0;
             if item_ids.is_empty() {
                 return Ok(MembershipReplaced {
-                    settled,
-                    changed: false,
+                    walk_no_longer_owed,
+                    membership_changed: false,
                 });
             }
             let current = transaction
                 .prepare("SELECT item_id FROM item_libraries WHERE library_id = ?1")?
                 .query_map(params![library.as_str()], |row| row.get::<_, String>(0))?
                 .collect::<rusqlite::Result<HashSet<_>>>()?;
-            let mut changed = false;
+            let mut membership_changed = false;
             for item_id in current.difference(item_ids) {
                 transaction
                     .prepare_cached(
                         "DELETE FROM item_libraries WHERE library_id = ?1 AND item_id = ?2",
                     )?
                     .execute(params![library.as_str(), item_id])?;
-                changed = true;
+                membership_changed = true;
             }
             for item_id in item_ids.difference(&current) {
                 transaction
@@ -151,23 +154,31 @@ impl Library {
                         "INSERT INTO item_libraries (library_id, item_id) VALUES (?1, ?2)",
                     )?
                     .execute(params![library.as_str(), item_id])?;
-                changed = true;
+                membership_changed = true;
             }
-            Ok(MembershipReplaced { settled, changed })
+            Ok(MembershipReplaced {
+                walk_no_longer_owed,
+                membership_changed,
+            })
         })
     }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct MembershipReplaced {
-    pub(crate) settled: bool,
-    pub(crate) changed: bool,
+    pub(crate) walk_no_longer_owed: bool,
+    pub(crate) membership_changed: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LibrariesReplaced {
+    pub(crate) listing_changed: bool,
 }
 
 impl MembershipReplaced {
     pub(crate) fn merge(&mut self, other: Self) {
-        self.settled |= other.settled;
-        self.changed |= other.changed;
+        self.walk_no_longer_owed |= other.walk_no_longer_owed;
+        self.membership_changed |= other.membership_changed;
     }
 }
 

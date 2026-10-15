@@ -42,12 +42,15 @@ pub(super) fn refresh_libraries(
         })
         .filter(|parsed| seen.insert(parsed.id.clone()))
         .collect::<Vec<_>>();
-    let changed = commit(session, scope, || {
+    let replaced = commit(session, scope, || {
         library
             .replace_libraries(&libraries)
             .map_err(|error| storage_error(&error))
     })?;
-    Ok(LibraryList { libraries, changed })
+    Ok(LibraryList {
+        libraries,
+        changed: replaced.listing_changed,
+    })
 }
 
 pub(super) fn membership_pass(
@@ -55,7 +58,7 @@ pub(super) fn membership_pass(
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
-    walked: &mut MembershipReplaced,
+    walked_so_far: &mut MembershipReplaced,
 ) -> Result<(), ApiError> {
     let registry = library.libraries().map_err(|error| storage_error(&error))?;
     let LibraryRegistry::Known(libraries) = registry else {
@@ -69,7 +72,7 @@ pub(super) fn membership_pass(
         let walk = refresh_membership(library, session, scope, &id, title, control);
         let rate_limited = matches!(walk, Err(ApiError::RateLimited { .. }));
         let step = format!("the membership of library {}", id.as_str());
-        walked.merge(best_effort(&step, walk)?.unwrap_or_default());
+        walked_so_far.merge(best_effort(&step, walk)?.unwrap_or_default());
         if rate_limited {
             break;
         }

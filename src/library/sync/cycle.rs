@@ -42,7 +42,7 @@ pub(super) fn run_cycle_inner(
     let mut walked = MembershipReplaced::default();
 
     let result = (|| -> Result<(), ApiError> {
-        let no_catalog_library = list_libraries(library, session, &scope, control)?;
+        let listed = list_libraries(library, session, &scope, control)?;
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
@@ -54,7 +54,7 @@ pub(super) fn run_cycle_inner(
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
-        walked.settled |=
+        walked.walk_no_longer_owed |=
             downloading && !catalog_downloading(library).map_err(|error| storage_error(&error))?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
@@ -80,7 +80,7 @@ pub(super) fn run_cycle_inner(
                 library,
                 session,
                 &scope,
-                no_catalog_library,
+                listed.no_catalog_library,
                 control,
                 &mut report,
             )?
@@ -103,7 +103,10 @@ pub(super) fn run_cycle_inner(
     });
     let succeeded = result.is_ok();
     let completed = succeeded
-        && (initial_catalog || report.changed() || recovering_ownership || walked.changed);
+        && (initial_catalog
+            || report.changed()
+            || recovering_ownership
+            || walked.membership_changed);
     announce_outcome(session, &scope, control, &result, |control| {
         if succeeded && recovering_ownership {
             control.shell().collections_changed();
@@ -111,13 +114,13 @@ pub(super) fn run_cycle_inner(
         if !report.changes.is_empty() {
             control.shell().library_changed(report.changes.clone());
         }
-        if walked.settled {
+        if walked.walk_no_longer_owed {
             tracing::debug!(target: "library.sync", "announced settled library memberships");
             control.shell().library_memberships_settled();
         }
         if completed {
             control.announce_cycle_completed();
-        } else if walked.changed {
+        } else if walked.membership_changed {
             control.shell().library_sync_completed();
         }
     });
@@ -220,10 +223,12 @@ fn list_libraries(
     session: &Session,
     scope: &SessionScope,
     control: Option<&SyncHandle>,
-) -> Result<bool, ApiError> {
+) -> Result<ListedLibraries, ApiError> {
     let refreshed = refresh_libraries(library, session, scope);
     let Some(listed) = best_effort("the library list", refreshed)? else {
-        return Ok(false);
+        return Ok(ListedLibraries {
+            no_catalog_library: false,
+        });
     };
     if listed.changed {
         announce(session, scope, control, |control| {
@@ -231,7 +236,13 @@ fn list_libraries(
             control.shell().libraries_changed();
         });
     }
-    Ok(listed.lists_no_catalog_library())
+    Ok(ListedLibraries {
+        no_catalog_library: listed.lists_no_catalog_library(),
+    })
+}
+
+struct ListedLibraries {
+    no_catalog_library: bool,
 }
 
 fn announce(
@@ -268,7 +279,7 @@ fn walk_membership(
     scope: &SessionScope,
     owe_all: bool,
     control: Option<&SyncHandle>,
-    walked: &mut MembershipReplaced,
+    walked_so_far: &mut MembershipReplaced,
 ) -> Result<(), ApiError> {
     let owed = if owe_all {
         commit(session, scope, || {
@@ -279,7 +290,7 @@ fn walk_membership(
     } else {
         Ok(())
     };
-    let pass = owed.and_then(|()| membership_pass(library, session, scope, control, walked));
+    let pass = owed.and_then(|()| membership_pass(library, session, scope, control, walked_so_far));
     best_effort("library membership", pass)?;
     Ok(())
 }
