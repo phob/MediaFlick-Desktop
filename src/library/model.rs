@@ -317,6 +317,23 @@ impl CatalogKind {
     }
 }
 
+/// A catalog kind a card can represent, and so the one a catalog library's
+/// grid lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TitleKind {
+    Movie,
+    Series,
+}
+
+impl From<TitleKind> for CatalogKind {
+    fn from(kind: TitleKind) -> Self {
+        match kind {
+            TitleKind::Movie => Self::Movie,
+            TitleKind::Series => Self::Series,
+        }
+    }
+}
+
 pub(crate) fn is_synced_kind(kind: &str) -> bool {
     CatalogKind::parse(kind).is_some()
 }
@@ -327,14 +344,27 @@ pub(crate) fn is_synced_kind(kind: &str) -> bool {
 pub enum KindFilter {
     #[default]
     TopLevel,
-    Only(Vec<CatalogKind>),
+    /// A first kind and the rest, so the list is never empty.
+    Only {
+        first: CatalogKind,
+        rest: Vec<CatalogKind>,
+    },
 }
 
 impl KindFilter {
-    pub fn kinds(&self) -> &[CatalogKind] {
+    pub fn one(kind: impl Into<CatalogKind>) -> Self {
+        Self::Only {
+            first: kind.into(),
+            rest: Vec::new(),
+        }
+    }
+
+    pub fn kinds(&self) -> Vec<CatalogKind> {
         match self {
-            Self::TopLevel => &CatalogKind::TOP_LEVEL,
-            Self::Only(kinds) => kinds,
+            Self::TopLevel => CatalogKind::TOP_LEVEL.to_vec(),
+            Self::Only { first, rest } => std::iter::once(*first)
+                .chain(rest.iter().copied())
+                .collect(),
         }
     }
 }

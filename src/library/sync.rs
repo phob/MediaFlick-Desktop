@@ -11,6 +11,10 @@
 //! (which also covers a replaced file, since Jellyfin re-creates the item with
 //! a fresh id), and in-place metadata edits are picked up by the periodic
 //! re-bootstrap instead.
+//!
+//! Each cycle also stores the server's library list and the membership of
+//! each movies or TV shows library. Those steps are best-effort: they never
+//! stop the catalog's sync or decide catalog ownership.
 
 mod cycle;
 mod membership;
@@ -24,6 +28,7 @@ use serde::Serialize;
 
 use crate::app::services::ShellBridge;
 use crate::jellyfin::api::ApiError;
+use crate::jellyfin::session::{Session, SessionScope};
 
 use super::{Library, LibraryChangeBatch};
 
@@ -53,6 +58,11 @@ pub(super) const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
 pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
 pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
+/// Work a change to the library list left for a later step. Each is set in
+/// the same transaction as that change and cleared only once its work
+/// finished, so a cycle that fails in between leaves it to the next one.
+pub(super) const META_MEMBERSHIP_OWED: &str = "sync.membership_owed";
+pub(super) const META_SWEEP_OWED: &str = "sync.sweep_owed";
 
 /// Durable progress for the resumable initial cache fill.
 ///
@@ -384,6 +394,47 @@ impl SyncHandle {
             .lock()
             .map(|flags| flags.stopped)
             .unwrap_or(true)
+    }
+}
+
+pub(super) fn cancelled(
+    control: Option<&SyncHandle>,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    if control.is_some_and(SyncHandle::is_stopped) || !session.scope_is_current(scope) {
+        Err(ApiError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn commit<T>(
+    session: &Session,
+    scope: &SessionScope,
+    work: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    session.commit_if_current(scope, || ApiError::Cancelled, work)
+}
+
+pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
+    ApiError::Storage(error.to_string())
+}
+
+/// The result of a library step, whose failure must not cost the catalog its
+/// sync: only a rejected token or a cancellation stops the cycle. Any other
+/// error is logged and leaves what is stored.
+pub(super) fn best_effort<T>(
+    step: &str,
+    result: Result<T, ApiError>,
+) -> Result<Option<T>, ApiError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error @ (ApiError::Unauthorized | ApiError::Cancelled)) => Err(error),
+        Err(error) => {
+            tracing::warn!(target: "library.sync", "could not sync {step}; keeping what is stored: {error}");
+            Ok(None)
+        }
     }
 }
 

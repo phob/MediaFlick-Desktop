@@ -4,15 +4,17 @@ use std::time::{Duration, Instant};
 use crate::jellyfin::api::items::{self, PAGE_SIZE};
 use crate::jellyfin::api::{ApiError, JellyfinClient};
 use crate::jellyfin::session::{Session, SessionScope};
+use crate::library::catalog_libraries::refresh_libraries;
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::membership::{membership_pass, refresh_libraries};
+use super::membership::membership_pass;
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_IDENTITY_PAGES,
     MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET, META_BOOTSTRAP_TOTAL,
     META_CATALOG_READY, META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, META_LAST_SYNC,
-    META_LATEST_FAILURE, META_WATERMARK, META_WATERMARK_IDS, REBOOTSTRAP_INTERVAL, SyncHandle,
-    SyncPhase, SyncReport, Trigger, now_unix,
+    META_LATEST_FAILURE, META_MEMBERSHIP_OWED, META_SWEEP_OWED, META_WATERMARK, META_WATERMARK_IDS,
+    REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport, Trigger, best_effort, cancelled,
+    commit, now_unix, storage_error,
 };
 
 pub fn run_cycle(
@@ -40,32 +42,22 @@ pub(super) fn run_cycle_inner(
     let mut membership_changed = false;
 
     let result = (|| -> Result<(), ApiError> {
-        let libraries = refresh_libraries(library, session, &scope)?;
+        best_effort(
+            "the library list",
+            refresh_libraries(library, session, &scope),
+        )?;
         if full_bootstrap_due(library)? {
-            commit(session, &scope, || {
-                library
-                    .set_meta(META_BOOTSTRAP_DONE, "0")
-                    .map_err(|error| storage_error(&error))?;
-                library
-                    .set_meta(META_BOOTSTRAP_OFFSET, "0")
-                    .map_err(|error| storage_error(&error))?;
-                // An empty value deliberately means "the first page has not told
-                // us the new total yet"; retaining the previous week's total would
-                // make the determinate bar move against stale information.
-                library
-                    .set_meta(META_BOOTSTRAP_TOTAL, "")
-                    .map_err(|error| storage_error(&error))?;
-                Ok(())
-            })?;
+            restart_bootstrap(library, session, &scope)?;
         }
         if meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
             && let Some(control) = control
         {
             control.set_phase(SyncPhase::Catalog);
         }
-        if initial_catalog {
-            // Before the first fill, so library grids fill page by page with it.
-            membership_changed |= membership_pass(library, session, &scope, control)?;
+        // Before the first fill, so library grids fill page by page with it.
+        let walked_before_fill = initial_catalog && flag(library, META_MEMBERSHIP_OWED)?;
+        if walked_before_fill {
+            membership_changed |= walk_membership(library, session, &scope, control)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
         cancelled(control, session, &scope)?;
@@ -86,7 +78,7 @@ pub(super) fn run_cycle_inner(
             false
         } else if trigger.forces_identity_sweep()
             // A removed library's titles leave the cache now, not within the hour.
-            || !libraries.removed.is_empty()
+            || flag(library, META_SWEEP_OWED)?
             || due(library, META_LAST_IDENTITY_SWEEP, IDENTITY_SWEEP_INTERVAL)?
         {
             sweep_identity(library, session, &scope, control, &mut report)?;
@@ -94,8 +86,13 @@ pub(super) fn run_cycle_inner(
         } else {
             false
         };
-        if !libraries.is_empty() || report.changed() || swept || trigger == Trigger::Requested {
-            membership_changed |= membership_pass(library, session, &scope, control)?;
+        if !walked_before_fill
+            && (flag(library, META_MEMBERSHIP_OWED)?
+                || report.changed()
+                || swept
+                || trigger == Trigger::Requested)
+        {
+            membership_changed |= walk_membership(library, session, &scope, control)?;
         }
         Ok(())
     })();
@@ -137,6 +134,28 @@ pub(super) fn run_cycle_inner(
     Ok(report)
 }
 
+fn restart_bootstrap(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+) -> Result<(), ApiError> {
+    commit(session, scope, || {
+        library
+            .set_meta(META_BOOTSTRAP_DONE, "0")
+            .map_err(|error| storage_error(&error))?;
+        library
+            .set_meta(META_BOOTSTRAP_OFFSET, "0")
+            .map_err(|error| storage_error(&error))?;
+        // An empty value deliberately means "the first page has not told
+        // us the new total yet"; retaining the previous week's total would
+        // make the determinate bar move against stale information.
+        library
+            .set_meta(META_BOOTSTRAP_TOTAL, "")
+            .map_err(|error| storage_error(&error))?;
+        Ok(())
+    })
+}
+
 fn record_success(
     library: &Library,
     session: &Session,
@@ -174,7 +193,23 @@ fn sweep_identity(
     report.user_data_refreshed = refreshed;
     report.deleted = deletion_changes.item_ids.len();
     report.changes.merge(deletion_changes);
-    commit(session, scope, || touch(library, META_LAST_IDENTITY_SWEEP))
+    commit(session, scope, || {
+        library
+            .set_meta(META_SWEEP_OWED, "0")
+            .map_err(|error| storage_error(&error))?;
+        touch(library, META_LAST_IDENTITY_SWEEP)
+    })
+}
+
+/// Returns whether any library's membership changed.
+fn walk_membership(
+    library: &Library,
+    session: &Session,
+    scope: &SessionScope,
+    control: Option<&SyncHandle>,
+) -> Result<bool, ApiError> {
+    let walked = membership_pass(library, session, scope, control);
+    Ok(best_effort("library membership", walked)?.unwrap_or(false))
 }
 
 fn bootstrap(
@@ -594,34 +629,14 @@ fn meta(library: &Library, key: &str) -> Result<Option<String>, ApiError> {
     library.meta(key).map_err(|error| storage_error(&error))
 }
 
+fn flag(library: &Library, key: &str) -> Result<bool, ApiError> {
+    Ok(meta(library, key)?.as_deref() == Some("1"))
+}
+
 fn touch(library: &Library, key: &str) -> Result<(), ApiError> {
     library
         .set_meta(key, &now_unix().to_string())
         .map_err(|error| storage_error(&error))
-}
-
-pub(super) fn cancelled(
-    control: Option<&SyncHandle>,
-    session: &Session,
-    scope: &SessionScope,
-) -> Result<(), ApiError> {
-    if control.is_some_and(SyncHandle::is_stopped) || !session.scope_is_current(scope) {
-        Err(ApiError::Cancelled)
-    } else {
-        Ok(())
-    }
-}
-
-pub(super) fn commit<T>(
-    session: &Session,
-    scope: &SessionScope,
-    work: impl FnOnce() -> Result<T, ApiError>,
-) -> Result<T, ApiError> {
-    session.commit_if_current(scope, || ApiError::Cancelled, work)
-}
-
-pub(super) fn storage_error(error: &rusqlite::Error) -> ApiError {
-    ApiError::Storage(error.to_string())
 }
 
 #[cfg(test)]
