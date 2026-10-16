@@ -1,5 +1,5 @@
 use crate::library::libraries::LibraryRegistry;
-use crate::preferences::{ViewingSettings, startup_on_save, startup_view};
+use crate::preferences::{ViewingSettings, ViewingWrite, startup_view};
 
 use super::catalog::still_signed_in;
 
@@ -247,20 +247,11 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
         still_signed_in(services, &scope)?;
         return Ok(ApiResponse::ok(json!(viewing)));
     }
-    let value = request.body::<ViewingSettings>()?;
+    let write = request.body::<ViewingWrite>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            let stored = services.accounts.viewing(key).startup_destination;
-            let startup_destination =
-                match startup_on_save(&stored, value.startup_destination.clone(), &registry) {
-                    Ok(destination) => destination,
-                    Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
-                };
-            let saved = ViewingSettings {
-                startup_destination,
-                ..value
-            };
+            let saved = write.apply(services.accounts.viewing(key).startup_destination);
             if let Err(error) = services.accounts.save_viewing(key, &saved) {
                 return Ok(ApiResponse::error(400, error.to_string()));
             }
