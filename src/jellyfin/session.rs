@@ -53,6 +53,10 @@ pub struct SessionScope {
 }
 
 impl SessionScope {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn account(&self) -> &AccountKey {
         &self.account
     }

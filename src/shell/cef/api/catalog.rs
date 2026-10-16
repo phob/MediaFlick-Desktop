@@ -1,6 +1,6 @@
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
 use crate::library::libraries::FilterKey;
-use crate::library::{DEFAULT_PAGE_SIZE, DetailView};
+use crate::library::{DEFAULT_PAGE_SIZE, DetailView, ItemPage};
 
 use super::*;
 
@@ -830,7 +830,10 @@ fn item_detail(services: &Arc<Services>, item_id: &str) -> Handled {
     }
 }
 
-fn still_signed_in(services: &Services, scope: &SessionScope) -> Result<(), ApiResponse> {
+pub(super) fn still_signed_in(
+    services: &Services,
+    scope: &SessionScope,
+) -> Result<(), ApiResponse> {
     if services.session.scope_is_current(scope) {
         Ok(())
     } else {
@@ -942,31 +945,59 @@ fn children(services: &Arc<Services>, item_id: &str, request: &ApiRequest) -> Ha
         param(request, Params::Strict, "limit", parse)?,
     )
     .map_err(|message| ApiResponse::error(400, message))?;
-    let source = browse::children_source(&services.library, item_id)
+    let cached = services
+        .library
+        .catalog_kind(item_id)
         .map_err(|error| storage_failure(&error))?;
-    let page = match source {
-        ChildrenSource::Catalog(kind) => {
+    let page = match cached {
+        Some(kind) => {
             let (library, session, shell) = (&services.library, &services.session, &services.shell);
             let children = sync::title_children(library, session, shell, item_id, kind)
                 .map_err(|error| storage_failure(&error))?;
             browse::catalog_children_page(children, page)
         }
-        ChildrenSource::Live => {
-            let scope = session_scope(services)?;
-            let paged = page.is_some();
-            let page = page.unwrap_or_default();
-            let (offset, limit) = (page.offset(), page.limit());
-            let response =
-                items::fetch_live_children(scope.client(), scope.user_id(), item_id, offset, limit)
-                    .map_err(|error| scoped_failure(services, &scope, &error))?;
-            still_signed_in(services, &scope)?;
-            tracing::debug!(target: "library.browse", item_id, paged, "fetched a container's children from the server");
-            browse::live_children_page(&response)
-        }
+        None => live_children(services, item_id, page)?,
     };
     Ok(ApiResponse::ok(
         json!({ "items": page.items, "total": page.total }),
     ))
+}
+
+fn live_children(
+    services: &Arc<Services>,
+    item_id: &str,
+    page: Option<ChildPage>,
+) -> Result<ItemPage, ApiResponse> {
+    let scope = session_scope(services)?;
+    let (client, user_id) = (scope.client(), scope.user_id());
+    let fail = |error: ApiError| scoped_failure(services, &scope, &error);
+    let paged = page.is_some();
+    let page = page.unwrap_or_default();
+    let remembered = services.children_sources.get(scope.generation(), item_id);
+    let source = match remembered {
+        Some(source) => source,
+        None => items::fetch_item_type(client, user_id, item_id)
+            .map_err(fail)?
+            .map(|item_type| ChildrenSource::of(&item_type))
+            .ok_or_else(|| ApiResponse::error(404, "the server has no item with that id"))?,
+    };
+    let children = match source {
+        ChildrenSource::Folder => {
+            items::fetch_live_children(client, user_id, item_id, page.offset(), page.limit())
+                .map(|response| browse::live_page(&response))
+        }
+        ChildrenSource::Playlist => items::fetch_playlist_items(client, user_id, item_id, page)
+            .map(|response| browse::playlist_page(&response, page)),
+    }
+    .map_err(fail)?;
+    still_signed_in(services, &scope)?;
+    if remembered.is_none() {
+        services
+            .children_sources
+            .remember(scope.generation(), item_id, source);
+    }
+    tracing::debug!(target: "library.browse", item_id, paged, ?source, "fetched a container's children from the server");
+    Ok(children)
 }
 
 #[cfg(test)]

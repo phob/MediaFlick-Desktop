@@ -71,6 +71,16 @@ impl LibraryChangeBatch {
         normalize_ids(&mut self.item_ids);
         normalize_ids(&mut self.context_ids);
     }
+
+    pub fn unnamed<'a>(&self, ids: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+        let mut unnamed = ids
+            .into_iter()
+            .filter(|id| !self.item_ids.contains(id) && !self.context_ids.contains(id))
+            .cloned()
+            .collect::<Vec<_>>();
+        normalize_ids(&mut unnamed);
+        unnamed
+    }
 }
 
 fn normalize_ids(ids: &mut Vec<String>) {

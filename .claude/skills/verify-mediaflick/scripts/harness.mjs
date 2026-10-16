@@ -8,7 +8,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeF
 import net from "node:net"
 import path from "node:path"
 import { sleep } from "../../../../scripts/website/cdp.mjs"
-import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
+import { approveQuickConnect, cancelSeerrRequest, jellyfinGet, playlistWrite, readStoredSession, resetUserData, revokeToken, saveAccount as cacheAccount, publicAccount, tokenStatus } from "./account.mjs"
 import { isFavorite, journalFavorite, journalFile, settleFavorite } from "./favorites.mjs"
 import { isLinux, isWindows, listProcesses, sendWindowClose } from "./platform.mjs"
 import { startProxy } from "./proxy.mjs"
@@ -552,6 +552,40 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     })
   }
 
+  async function createPlaylistAfterRun(name, itemIds) {
+    if (!cachedAccount) throw new Error("createPlaylistAfterRun needs --account SERVER")
+    const { userId } = cachedAccount
+    const created = await playlistWrite(cachedAccount, "POST", "/Playlists", { Name: name, Ids: itemIds, UserId: userId, MediaType: "Video", IsPublic: false })
+    const id = created.Id
+    const exists = async () => (await jellyfinGet(cachedAccount, `/Items?userId=${userId}&ids=${id}`)).TotalRecordCount > 0
+    log(`created private playlist ${id} (${name}) with ${itemIds.length} items (POST /Playlists)`)
+    afterRunTasks.push(async () => {
+      if (!(await exists())) {
+        log(`after run: playlist ${id} is gone`)
+        return
+      }
+      await playlistWrite(cachedAccount, "DELETE", `/Items/${id}`)
+      log(`after run: deleted the leftover playlist ${id}`)
+    })
+    return {
+      id,
+      items: async () => (await jellyfinGet(cachedAccount, `/Playlists/${id}/Items?userId=${userId}`)).Items,
+      add: async (ids) => {
+        await playlistWrite(cachedAccount, "POST", `/Playlists/${id}/Items?ids=${ids.join(",")}&userId=${userId}`)
+        log(`added ${ids.join(", ")} to playlist ${id} (POST /Playlists/${id}/Items)`)
+      },
+      move: async (playlistItemId, index) => {
+        await playlistWrite(cachedAccount, "POST", `/Playlists/${id}/Items/${playlistItemId}/Move/${index}`)
+        log(`moved playlist entry ${playlistItemId} to index ${index} (POST /Playlists/${id}/Items/<entry>/Move/${index})`)
+      },
+      remove: async () => {
+        await playlistWrite(cachedAccount, "DELETE", `/Items/${id}`)
+        log(`deleted playlist ${id} (DELETE /Items/${id})`)
+      },
+      exists,
+    }
+  }
+
   async function runAfterRun() {
     const errors = []
     for (const task of afterRunTasks) {
@@ -641,6 +675,7 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     setPlayedOnServer,
     unfavoriteAfterRun,
     cancelSeerrRequestAfterRun,
+    createPlaylistAfterRun,
     revokeAppSessionAfterRun,
     runAfterRun,
     player,

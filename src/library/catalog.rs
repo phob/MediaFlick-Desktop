@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use crate::jellyfin::api::model::BaseItemDto;
 
 use super::model::{CatalogKind, is_synced_kind};
+use super::session_store::save_meta;
 use super::{ItemRecord, Library, LibraryChangeBatch, UserDataRecord, normalize_ids, now_unix};
 
 fn record_change(changes: &mut LibraryChangeBatch, dto: &BaseItemDto) {
@@ -104,8 +105,22 @@ impl Library {
         })
     }
 
-    pub fn retain_ids(&self, keep: &HashSet<String>) -> rusqlite::Result<LibraryChangeBatch> {
-        self.delete_missing(&self.all_ids()?, keep)
+    pub fn retain_ids_setting_meta(
+        &self,
+        keep: &HashSet<String>,
+        meta: &[(&str, &str)],
+    ) -> rusqlite::Result<LibraryChangeBatch> {
+        let existing = self.all_ids()?;
+        self.db.with_transaction(|transaction| {
+            let mut changes = LibraryChangeBatch::default();
+            delete_missing_from_transaction(transaction, &existing, keep, &mut changes)?;
+            for (key, value) in meta {
+                save_meta(transaction, key, value)?;
+            }
+            normalize_ids(&mut changes.item_ids);
+            normalize_ids(&mut changes.context_ids);
+            Ok(changes)
+        })
     }
 
     pub fn reconcile_children(
@@ -137,24 +152,6 @@ impl Library {
             }
 
             delete_missing_from_transaction(transaction, &existing, &keep, &mut changes)?;
-            normalize_ids(&mut changes.item_ids);
-            normalize_ids(&mut changes.context_ids);
-            Ok(changes)
-        })
-    }
-
-    fn delete_missing(
-        &self,
-        existing: &HashSet<String>,
-        keep: &HashSet<String>,
-    ) -> rusqlite::Result<LibraryChangeBatch> {
-        let stale = existing.difference(keep).cloned().collect::<Vec<_>>();
-        if stale.is_empty() {
-            return Ok(LibraryChangeBatch::default());
-        }
-        self.db.with_transaction(|transaction| {
-            let mut changes = LibraryChangeBatch::default();
-            delete_items_from_transaction(transaction, &stale, &mut changes)?;
             normalize_ids(&mut changes.item_ids);
             normalize_ids(&mut changes.context_ids);
             Ok(changes)

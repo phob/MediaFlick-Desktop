@@ -36,6 +36,8 @@ pub enum LibraryKind {
     Mixed,
 }
 
+pub const PLAYLIST_TYPE: &str = "Playlist";
+
 impl LibraryKind {
     pub fn from_collection_type(value: Option<&str>) -> Self {
         match value.map(str::to_ascii_lowercase).as_deref() {
@@ -55,14 +57,19 @@ impl LibraryKind {
     }
 
     pub fn profile(self) -> LibraryProfile {
+        use LiveLatest::{Grouped, Newest};
+        let recursive = |item_types: &'static [&'static str]| LiveShape::Recursive { item_types };
         match self {
             Self::Movies => LibraryProfile::catalog(TitleKind::Movie, &MOVIE_BROWSE),
             Self::Shows => LibraryProfile::catalog(TitleKind::Series, &SHOW_BROWSE),
-            Self::Music | Self::MusicVideos | Self::Books | Self::BoxSets | Self::Trailers => {
-                LibraryProfile::live(&LIVE_RECURSIVE_BROWSE)
-            }
-            Self::HomeVideos | Self::Photos | Self::Playlists | Self::LiveTv | Self::Mixed => {
-                LibraryProfile::live(&LIVE_FOLDER_BROWSE)
+            Self::Music => LibraryProfile::live(recursive(&["MusicAlbum"]), Grouped),
+            Self::MusicVideos => LibraryProfile::live(recursive(&["MusicVideo"]), Grouped),
+            Self::Books => LibraryProfile::live(recursive(&["Book", "AudioBook"]), Grouped),
+            Self::BoxSets => LibraryProfile::live(recursive(&["BoxSet"]), Newest),
+            Self::Trailers => LibraryProfile::live(recursive(&["Trailer"]), Grouped),
+            Self::HomeVideos | Self::Photos => LibraryProfile::live(LiveShape::Folder, Grouped),
+            Self::Playlists | Self::LiveTv | Self::Mixed => {
+                LibraryProfile::live(LiveShape::Folder, Newest)
             }
         }
     }
@@ -81,18 +88,79 @@ impl LibraryProfile {
         }
     }
 
-    const fn live(browse: &'static BrowseCapabilities) -> Self {
+    const fn live(shape: LiveShape, latest: LiveLatest) -> Self {
         Self {
-            grid: GridSource::Live,
-            browse,
+            grid: GridSource::Live { shape, latest },
+            browse: match shape {
+                LiveShape::Recursive { .. } => &LIVE_RECURSIVE_BROWSE,
+                LiveShape::Folder => &LIVE_FOLDER_BROWSE,
+            },
         }
     }
 }
 
 pub enum GridSource {
-    Catalog { title: TitleKind },
-    Live,
+    Catalog {
+        title: TitleKind,
+    },
+    Live {
+        shape: LiveShape,
+        latest: LiveLatest,
+    },
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveShape {
+    Recursive { item_types: &'static [&'static str] },
+    Folder,
+}
+
+/// Where "Latest in <library>" comes from. The table follows jellyfin-web,
+/// which asks `/Items/Latest` for every library except the view types it
+/// excludes: `playlists`, `livetv`, `boxsets`, `channels` and `folders`.
+/// Measured with the test servers: music (Grouped, demo), playlists (Newest,
+/// demo) and box sets (Newest, own server); the other kinds are unmeasured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveLatest {
+    /// Jellyfin's `/Items/Latest`, which groups new tracks into their album.
+    Grouped,
+    /// The library's own grid, newest first. `/Items/Latest` answers nothing
+    /// for box sets and playlists.
+    Newest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveSort {
+    Name,
+    DateAdded,
+    ReleaseDate,
+}
+
+impl LiveSort {
+    const ALL: [Self; 3] = [Self::Name, Self::DateAdded, Self::ReleaseDate];
+
+    const fn key(self) -> SortKey {
+        match self {
+            Self::Name => SortKey::Name,
+            Self::DateAdded => SortKey::DateAdded,
+            Self::ReleaseDate => SortKey::ReleaseDate,
+        }
+    }
+
+    pub fn from_key(key: SortKey) -> Option<Self> {
+        Self::ALL.into_iter().find(|sort| sort.key() == key)
+    }
+}
+
+const LIVE_SORT_KEYS: [SortKey; LiveSort::ALL.len()] = {
+    let mut keys = [SortKey::Name; LiveSort::ALL.len()];
+    let mut index = 0;
+    while index < keys.len() {
+        keys[index] = LiveSort::ALL[index].key();
+        index += 1;
+    }
+    keys
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterKey {
@@ -193,13 +261,13 @@ pub static CROSS_LIBRARY_BROWSE: BrowseCapabilities = BrowseCapabilities {
 };
 
 pub static LIVE_RECURSIVE_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[FilterKey::Favorite],
     letter_index: false,
 };
 
 pub static LIVE_FOLDER_BROWSE: BrowseCapabilities = BrowseCapabilities {
-    sorts: &[SortKey::Name, SortKey::DateAdded, SortKey::ReleaseDate],
+    sorts: &LIVE_SORT_KEYS,
     filters: &[],
     letter_index: false,
 };
@@ -231,7 +299,7 @@ impl MediaLibrary {
     pub fn catalog_title(&self) -> Option<TitleKind> {
         match self.kind().profile().grid {
             GridSource::Catalog { title } => Some(title),
-            GridSource::Live => None,
+            GridSource::Live { .. } => None,
         }
     }
 }

@@ -184,17 +184,18 @@ export function invalidateMediaSurfaces(
   }
 }
 
-type LibraryChangeScope = "library" | "catalog" | "items"
+type LibraryChangeScope = "library" | "catalog" | "items" | "resync"
 
 const LIST_ROOTS = [ITEMS_ROOT, "genres", "official-ratings", "status", "collections"]
 
 const LIBRARY_CHANGE_REFRESHES: Record<
   LibraryChangeScope,
-  { roots: ReadonlySet<string>; home: "all" | "summary" | "none" }
+  { roots: ReadonlySet<string>; home: "all" | "summary" | "none"; details: "named" | "all" }
 > = {
-  library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all" },
-  catalog: { roots: new Set(LIST_ROOTS), home: "summary" },
-  items: { roots: new Set(), home: "none" },
+  library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all", details: "named" },
+  catalog: { roots: new Set(LIST_ROOTS), home: "summary", details: "named" },
+  items: { roots: new Set(), home: "none", details: "named" },
+  resync: { roots: new Set([CHILD_PAGES_ROOT]), home: "none", details: "all" },
 }
 
 /**
@@ -209,14 +210,15 @@ export function invalidateLibraryChanged(
   contextIds: readonly string[] = [],
   scope: LibraryChangeScope = "library",
 ) {
-  const { roots, home } = LIBRARY_CHANGE_REFRESHES[scope]
+  const { roots, home, details } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
-      const [root, id] = query.queryKey
+      const [root, id, part] = query.queryKey
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
+      if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))

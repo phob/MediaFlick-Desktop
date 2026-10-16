@@ -718,6 +718,23 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
                 json!({ "itemIds": item_ids, "contextIds": context_ids }),
             );
         }
+        ShellRequest::LiveChanged {
+            item_ids,
+            context_ids,
+        } => {
+            dispatch_shell_event(
+                state,
+                "live-changed",
+                json!({ "itemIds": item_ids, "contextIds": context_ids }),
+            );
+        }
+        ShellRequest::LiveResynced => {
+            dispatch_shell_event(
+                state,
+                "live-changed",
+                json!({ "itemIds": [], "contextIds": [], "all": true }),
+            );
+        }
         ShellRequest::CatalogChanged {
             item_ids,
             context_ids,

@@ -440,6 +440,7 @@ fn summary_row(row: &Row<'_>) -> rusqlite::Result<ItemSummary> {
         unplayed_count: row.get(21)?,
         primary_aspect: None,
         overview: None,
+        playlist_index: None,
     })
 }
 

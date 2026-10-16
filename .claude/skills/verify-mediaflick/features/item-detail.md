@@ -14,7 +14,7 @@ A title's detail page (`/item/<id>`) shows its artwork, metadata, actions, cast,
 - `detail-collection` links a movie to its franchise (`Part of <collection>`) in MediaFlick collection mode.
 - `detail-request` offers `Request season N` / `Request seasons` on a partly owned series when Seerr is linked.
 - `detail-more-info` lists external links for the provider ids the title has: IMDb, TMDB, TVDB, Letterboxd (movies), Trakt, and a Rotten Tomatoes search (movies and series). Episodes can only get IMDb and TVDB. Without any, the button is absent.
-- `detail-generic` is the page of every item that is not a movie, series, season or episode (albums, tracks, box sets, books, photos, folders): artwork, year, runtime, overview, plain genre chips, Cast, Crew and Details from the live about record, and for a folder a `Contents` grid of its children. It has no Play, favorites, watched, More info, quality picker, ratings, collection link, Letterboxd or Media. `/api/item/<id>` answers it as `layout: "generic"`; titles answer `layout: "title"` with their `libraryId`.
+- `detail-generic` is the page of every item that is not a movie, series, season or episode (albums, tracks, box sets, books, photos, folders): artwork, year, runtime, overview, plain genre chips, Cast, Crew and Details from the live about record, and for a folder a `Contents` grid of its children (a playlist's in the playlist's own order, refreshed while open when the server pushes a change to it; *proven* by `live-changes`). It has no Play, favorites, watched, More info, quality picker, ratings, collection link, Letterboxd or Media. `/api/item/<id>` answers it as `layout: "generic"`; titles answer `layout: "title"` with their `libraryId`.
 
 ## How to get to it (user POV)
 

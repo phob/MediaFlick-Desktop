@@ -550,6 +550,10 @@ pub struct ItemSummary {
     pub primary_aspect: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overview: Option<String>,
+    /// The playlist slot this item fills. Jellyfin's PlaylistItemId is the
+    /// item's own id, so it cannot tell two slots of one item apart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playlist_index: Option<i64>,
 }
 
 impl ItemSummary {
@@ -583,6 +587,7 @@ impl ItemSummary {
                 .flatten(),
             primary_aspect: dto.primary_image_aspect_ratio,
             overview: None,
+            playlist_index: None,
         }
     }
 }

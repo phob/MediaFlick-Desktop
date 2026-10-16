@@ -46,6 +46,10 @@ pub(super) const MAX_INCREMENTAL_PAGES: usize = 100;
 pub(super) const MAX_BOOTSTRAP_PAGES: usize = 1_000;
 pub(super) const MAX_IDENTITY_PAGES: usize = 1_000;
 
+pub(super) const MIN_CONFIRM_GAP: Duration = SYNC_INTERVAL;
+pub(super) const MAX_CONFIRM_AGE: Duration =
+    Duration::from_secs(2 * IDENTITY_SWEEP_INTERVAL.as_secs());
+
 pub(super) const META_BOOTSTRAP_OFFSET: &str = "sync.bootstrap_offset";
 pub(super) const META_BOOTSTRAP_TOTAL: &str = "sync.bootstrap_total";
 pub(super) const META_BOOTSTRAP_DONE: &str = "sync.bootstrap_done";
@@ -53,6 +57,7 @@ pub(super) const META_CATALOG_READY: &str = "sync.catalog_ready";
 pub(super) const META_WATERMARK: &str = "sync.watermark";
 pub(super) const META_WATERMARK_IDS: &str = "sync.watermark_ids";
 pub(super) const META_LAST_IDENTITY_SWEEP: &str = "sync.identity_sweep_at";
+pub(super) const META_EMPTY_SWEEP_AT: &str = "sync.empty_sweep_at";
 pub(super) const META_LAST_BOOTSTRAP: &str = "sync.bootstrap_at";
 pub(super) const META_LAST_SYNC: &str = "sync.completed_at";
 pub(super) const META_LATEST_FAILURE: &str = "sync.latest_failure";
