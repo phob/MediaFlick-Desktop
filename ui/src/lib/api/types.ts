@@ -1262,7 +1262,7 @@ export interface Library {
   name: string
   kind: LibraryKind
   imageTag: string | null
-  /** True while a movies or TV shows library owes a membership walk or one is running, so its grid may lack titles. A full walk (a refresh, new titles, a deletion sweep, the first fill) sets it for every catalog library until that library's walk lands. */
+  /** True while a movies or TV shows library's titles are not known yet: during the first catalog download, and until the library's first membership walk lands. A later walk keeps the stored titles, so it never sets this. */
   membershipPending: boolean
   browse: BrowseCapabilities
 }
