@@ -376,11 +376,17 @@ impl AccountConfigurationService {
         })
     }
 
-    pub fn save_viewing(&self, key: &AccountKey, viewing: &ViewingSettings) -> io::Result<()> {
-        viewing.validate()?;
+    pub fn save_viewing_with(
+        &self,
+        key: &AccountKey,
+        change: impl FnOnce(&ViewingSettings) -> ViewingSettings,
+    ) -> io::Result<ViewingSettings> {
         self.mutate(|document| {
-            account_mut(document, key).viewing = viewing.clone();
-            Ok(())
+            let account = account_mut(document, key);
+            let viewing = change(&account.viewing);
+            viewing.validate()?;
+            account.viewing = viewing.clone();
+            Ok(viewing)
         })
     }
 

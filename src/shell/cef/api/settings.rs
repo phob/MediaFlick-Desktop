@@ -251,10 +251,12 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            let saved = write.apply(services.accounts.viewing(key).startup_destination);
-            if let Err(error) = services.accounts.save_viewing(key, &saved) {
-                return Ok(ApiResponse::error(400, error.to_string()));
-            }
+            let saved = match services.accounts.save_viewing_with(key, |stored| {
+                write.apply(stored.startup_destination.clone())
+            }) {
+                Ok(saved) => saved,
+                Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
+            };
             Ok(ApiResponse::ok(json!(ViewingSettings {
                 startup_destination: startup_view(&saved.startup_destination, &registry),
                 ..saved
