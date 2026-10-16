@@ -92,6 +92,17 @@ pub fn startup_on_save(
     })
 }
 
+/// A PATCH body for viewing settings.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub struct ViewingWrite(ViewingSettings);
+
+impl ViewingWrite {
+    pub fn apply(self, _stored: StartupDestination) -> ViewingSettings {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ViewingSettings {
@@ -274,7 +285,8 @@ impl PlayerComfort {
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayerComfort, StartupDestination, ViewingSettings, startup_on_save, startup_view,
+        PlayerComfort, StartupDestination, ViewingSettings, ViewingWrite, startup_on_save,
+        startup_view,
     };
     use crate::jellyfin::api::model::UserViewDto;
     use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
@@ -445,6 +457,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn write(body: &str) -> Result<ViewingWrite, serde_json::Error> {
+        serde_json::from_str(body)
+    }
+
+    #[test]
+    fn a_write_without_a_startup_destination_keeps_the_stored_one() -> Result<(), serde_json::Error>
+    {
+        for stored in [
+            StartupDestination::Home,
+            StartupDestination::Movies,
+            StartupDestination::Series,
+            StartupDestination::Calendar,
+            StartupDestination::Last,
+            library(GONE),
+        ] {
+            let saved = write(r#"{"previewDelayMs":900}"#)?.apply(stored.clone());
+            assert_eq!(saved.startup_destination, stored);
+            assert_eq!(saved.preview_delay_ms, 900);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_write_stores_the_startup_destination_it_names() -> Result<(), serde_json::Error> {
+        let cases = [
+            (r#""home""#.to_string(), StartupDestination::Home),
+            (r#""calendar""#.to_string(), StartupDestination::Calendar),
+            (r#""last""#.to_string(), StartupDestination::Last),
+            (format!(r#"{{"library":"{GONE}"}}"#), library(GONE)),
+        ];
+        for (destination, expected) in cases {
+            for stored in [StartupDestination::Movies, library(SHOWS)] {
+                let saved = write(&format!(
+                    r#"{{"startupDestination":{destination},"textScale":120}}"#
+                ))?
+                .apply(stored);
+                assert_eq!(saved.startup_destination, expected);
+                assert_eq!(saved.text_scale, 120);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_write_rejects_a_legacy_null_or_malformed_startup_destination() {
+        for destination in [
+            r#""movies""#.to_string(),
+            r#""series""#.to_string(),
+            "null".to_string(),
+            format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase()),
+            r#"{"library":"../etc"}"#.to_string(),
+        ] {
+            assert!(write(&format!(r#"{{"startupDestination":{destination}}}"#)).is_err());
+        }
+        assert!(write(r#"{"previewDelay":900}"#).is_err());
     }
 
     #[test]
