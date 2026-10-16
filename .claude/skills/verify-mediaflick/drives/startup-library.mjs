@@ -7,7 +7,8 @@
 // cached viewing must match /api/settings/viewing without moving off the page
 // it landed on, and a Card preview delay save in Appearance must keep the
 // stored destination. The landing assertions run on a relaunch of the same
-// profile, which saves the delay once more.
+// profile, which saves the delay once more. With the library list unchanged,
+// the relaunch must not refetch the viewing /api/startup primed.
 // Before the relaunch the drive opens the expected page through the sidebar,
 // so the app's own last-route save is a no-op, and accounts.json must keep its
 // SHA-256 across the relaunch. Then Settings → Viewing must show the resolved
@@ -92,6 +93,8 @@ async function land(ctx, name, userId) {
   }, `${name}: the app saved its landing as the last route`, 10000)).last
   record.pageText = await ctx.app.evaluate(PAGE_TEXT)
   await ctx.screenshot(`${name}-landing`)
+  await new Promise((settle) => setTimeout(settle, 2000))
+  record.viewingUpdatesSettled = (await ctx.app.evaluate(PAGE_VIEWING))?.viewingUpdates
   return record
 }
 
@@ -247,6 +250,7 @@ export default async function startupLibrary(ctx) {
     expect(same(second.viewingAfterLanding, expectedView), `relaunch: after landing, the page's cached viewing is ${JSON.stringify(second.viewingAfterLanding)}, the destination resolved against the known library list`)
     expect(second.landing === report.expected.landing, `relaunch: ${JSON.stringify(seeded)} landed on ${second.landing} (expected ${report.expected.landing}${expected ? `, ${expected.name}` : ", Home"})`)
     expect(same(second.viewingApi, expected ? { library: expected.id } : "home"), `relaunch: /api/settings/viewing answers ${JSON.stringify(second.viewingApi)}`)
+    expect(second.viewingUpdatesAfterLanding === 1 && second.viewingUpdatesSettled === 1, `relaunch: with the library list unchanged, the page holds the primed viewing without a refetch (updates ${second.viewingUpdatesAfterLanding} after landing, ${second.viewingUpdatesSettled} two seconds later)`)
     expect(report.hashes.afterRelaunch === report.hashes.beforeRelaunch, `relaunch: accounts.json kept SHA-256 ${report.hashes.beforeRelaunch}`)
     expect(same(storedAccount(ctx, userId)?.viewing?.startupDestination, seeded), `relaunch: accounts.json still stores ${JSON.stringify(seeded)}`)
 
