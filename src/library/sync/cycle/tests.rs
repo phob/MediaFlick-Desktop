@@ -305,7 +305,7 @@ fn listed(library: &Library) -> Option<Vec<String>> {
     }
 }
 
-fn pending(library: &Library) -> Vec<String> {
+fn walks_due(library: &Library) -> Vec<String> {
     match library.libraries().expect("registry") {
         LibraryRegistry::Unknown => Vec::new(),
         LibraryRegistry::Known(libraries) => libraries
@@ -458,7 +458,7 @@ fn a_failed_membership_walk_keeps_its_membership_and_only_it_is_walked_again() {
     );
     assert_eq!(grid(&library, MOVIES), ["m1", "m2"]);
     assert_eq!(grid(&library, SHOWS), ["s1", "s2"]);
-    assert_eq!(pending(&library), [MOVIES]);
+    assert_eq!(walks_due(&library), [MOVIES]);
     assert!(ownership_available(&library));
 
     let (result, requests) = cycle(
@@ -469,7 +469,7 @@ fn a_failed_membership_walk_keeps_its_membership_and_only_it_is_walked_again() {
     result.expect("the next cycle");
     assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
     assert_eq!(grid(&library, MOVIES), ["m1", "m2", "m3"]);
-    assert!(pending(&library).is_empty());
+    assert!(walks_due(&library).is_empty());
 
     let (result, requests) = cycle(
         &library,
@@ -488,7 +488,7 @@ fn a_library_added_by_a_failed_cycle_is_walked_by_the_next() {
     let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(NOT_JSON)]);
     assert!(matches!(result, Err(ApiError::Decode(_))), "{result:?}");
     assert_eq!(steps(&requests), ["views", "incremental"]);
-    assert_eq!(pending(&library), [MOVIES]);
+    assert_eq!(walks_due(&library), [MOVIES]);
 
     let (result, requests) = cycle(
         &library,
@@ -498,7 +498,7 @@ fn a_library_added_by_a_failed_cycle_is_walked_by_the_next() {
     result.expect("the next cycle");
     assert_eq!(steps(&requests), ["views", "incremental", "walk movies"]);
     assert_eq!(grid(&library, MOVIES), ["m1", "m2"]);
-    assert!(pending(&library).is_empty());
+    assert!(walks_due(&library).is_empty());
 }
 
 #[test]
@@ -545,7 +545,7 @@ fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_li
             "walk movies"
         ]
     );
-    assert_eq!(pending(&library), [MOVIES, MORE_MOVIES, SHOWS]);
+    assert_eq!(walks_due(&library), [MOVIES, MORE_MOVIES, SHOWS]);
     assert_eq!(grid(&library, MOVIES), ["m1"]);
 
     let (result, requests) = cycle(
@@ -574,7 +574,7 @@ fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_li
             "walk shows"
         ]
     );
-    assert_eq!(pending(&library), [MORE_MOVIES]);
+    assert_eq!(walks_due(&library), [MORE_MOVIES]);
     assert_eq!(grid(&library, SHOWS), ["s1"]);
 
     let (result, requests) = cycle(
@@ -587,7 +587,7 @@ fn a_rate_limit_ends_the_membership_pass_and_a_lost_connection_skips_only_its_li
         steps(&requests),
         ["views", "incremental", "walk more movies"]
     );
-    assert!(pending(&library).is_empty());
+    assert!(walks_due(&library).is_empty());
     assert_eq!(grid(&library, MORE_MOVIES), ["m2"]);
 }
 
@@ -613,7 +613,7 @@ fn an_empty_answer_keeps_a_library_s_titles_and_settles_its_walk() {
         ["views", "incremental", "sweep", "walk movies"]
     );
     assert_eq!(grid(&library, MOVIES), ["m1"]);
-    assert!(pending(&library).is_empty());
+    assert!(walks_due(&library).is_empty());
 
     let (result, requests) = cycle(
         &library,
@@ -890,7 +890,7 @@ fn the_first_sync_walks_each_library_once() {
         ]
     );
     assert_eq!(grid(&library, MOVIES), ["m1"]);
-    assert!(pending(&library).is_empty());
+    assert!(walks_due(&library).is_empty());
 
     let (result, requests) = cycle(&library, Trigger::Scheduled, vec![listing(), ok(ONE_MOVIE)]);
     result.expect("the second sync");

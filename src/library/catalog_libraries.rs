@@ -125,13 +125,13 @@ impl Library {
         item_ids: &HashSet<String>,
     ) -> rusqlite::Result<MembershipReplaced> {
         self.db.with_transaction(|transaction| {
-            let walk_no_longer_owed = transaction.execute(
+            let walk_landed = transaction.execute(
                 "UPDATE libraries SET membership = 'current' WHERE id = ?1 AND membership <> 'current'",
                 params![library.as_str()],
             )? > 0;
             if item_ids.is_empty() {
                 return Ok(MembershipReplaced {
-                    walk_no_longer_owed,
+                    walk_landed,
                     membership_changed: false,
                 });
             }
@@ -157,7 +157,7 @@ impl Library {
                 membership_changed = true;
             }
             Ok(MembershipReplaced {
-                walk_no_longer_owed,
+                walk_landed,
                 membership_changed,
             })
         })
@@ -166,7 +166,7 @@ impl Library {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct MembershipReplaced {
-    pub(crate) walk_no_longer_owed: bool,
+    pub(crate) walk_landed: bool,
     pub(crate) membership_changed: bool,
 }
 
@@ -177,7 +177,7 @@ pub(crate) struct LibrariesReplaced {
 
 impl MembershipReplaced {
     pub(crate) fn merge(&mut self, other: Self) {
-        self.walk_no_longer_owed |= other.walk_no_longer_owed;
+        self.walk_landed |= other.walk_landed;
         self.membership_changed |= other.membership_changed;
     }
 }
