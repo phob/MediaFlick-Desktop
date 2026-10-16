@@ -59,7 +59,11 @@ export function listenForLibrariesChangedBeforeBridge() {
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
-    const catalog = createThrottle(() => invalidateLibraryChanged(queryClient, [], [], "catalog"))
+    const catalogLibraryIds = new Set<string>()
+    const catalog = createThrottle(() => {
+      invalidateLibraryChanged(queryClient, [], [], "catalog", [...catalogLibraryIds])
+      catalogLibraryIds.clear()
+    })
     const livePending = { all: false, itemIds: new Set<string>(), contextIds: new Set<string>() }
     const live = createThrottle(() => {
       const scope = livePending.all ? "resync" : "live"
@@ -100,10 +104,12 @@ export function useLibraryMetadataBridge() {
       const itemIds = shellEventIds(detail.payload.itemIds)
       const contextIds = shellEventIds(detail.payload.contextIds)
       if (detail.type === "catalog-changed") {
+        for (const id of shellEventIds(detail.payload.libraryIds)) catalogLibraryIds.add(id)
         invalidateLibraryChanged(queryClient, itemIds, contextIds, "items")
         catalog.request()
       } else {
         catalog.cancel()
+        catalogLibraryIds.clear()
         invalidateLibraryChanged(queryClient, itemIds, contextIds)
       }
     }

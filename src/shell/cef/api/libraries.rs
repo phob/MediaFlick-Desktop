@@ -1,6 +1,6 @@
 use crate::library::ItemPage;
 use crate::library::browse::{self, BrowseError, Grid};
-use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry};
+use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry, Membership};
 
 use super::catalog::{Params, library_query, param, still_signed_in};
 use super::*;
@@ -40,8 +40,8 @@ fn libraries(services: &Arc<Services>) -> Handled {
         .iter()
         .map(|library| {
             let kind = library.kind();
-            let filling =
-                library.membership_pending || (downloading && library.catalog_title().is_some());
+            let filling = library.catalog_title().is_some()
+                && (downloading || library.membership == Membership::Unwalked);
             json!({
                 "id": library.id,
                 "name": library.name,

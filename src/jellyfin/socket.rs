@@ -12,7 +12,8 @@
 //! events, so every successful (re)connect asks the sync worker for one
 //! requested cycle to reconcile the gap, and the periodic sweeps remain the
 //! backstop. The sync covers only the cache, so a reconnect for the same
-//! session also tells every open page Jellyfin serves directly to refetch.
+//! session also tells open item pages and their album, playlist and folder
+//! lists to refetch. Person filmography grids are left to their next visit.
 
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -165,7 +166,7 @@ fn run(library: &Arc<Library>, session: &Arc<Session>, sync: &SyncHandle, handle
                 if lost_generation == Some(scope.generation()) && session.scope_is_current(&scope) {
                     tracing::info!(
                         target: "jellyfin.socket",
-                        "the event stream reconnected; refreshing open pages Jellyfin serves directly"
+                        "the event stream reconnected; refreshing open item pages and their child lists"
                     );
                     handle.shell.live_resynced();
                 }

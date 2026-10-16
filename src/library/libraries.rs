@@ -291,7 +291,27 @@ pub struct MediaLibrary {
     pub name: String,
     pub(super) collection_type: Option<String>,
     pub primary_image_tag: Option<String>,
-    pub membership_pending: bool,
+    pub membership: Membership,
+}
+
+/// Where a catalog library's stored membership stands. A library walked once
+/// keeps its titles while a re-walk is owed, so only `Unwalked` is unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Membership {
+    Unwalked,
+    Owed,
+    Current,
+}
+
+impl Membership {
+    pub(super) fn parse(stored: &str) -> Option<Self> {
+        match stored {
+            "unwalked" => Some(Self::Unwalked),
+            "owed" => Some(Self::Owed),
+            "current" => Some(Self::Current),
+            _ => None,
+        }
+    }
 }
 
 impl MediaLibrary {
@@ -301,7 +321,7 @@ impl MediaLibrary {
             name: view.name.clone().unwrap_or_default(),
             collection_type: view.collection_type.clone(),
             primary_image_tag: view.primary_image_tag().map(str::to_string),
-            membership_pending: false,
+            membership: Membership::Unwalked,
         })
     }
 

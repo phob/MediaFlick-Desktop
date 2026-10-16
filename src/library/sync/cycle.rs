@@ -7,7 +7,7 @@ use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::catalog_libraries::{META_SWEEP_OWED, MembershipReplaced};
 use crate::library::{Library, LibraryChangeBatch, UserDataRecord};
 
-use super::libraries::{membership_pass, refresh_libraries};
+use super::libraries::{catalog_library_ids, membership_pass, refresh_libraries};
 use super::{
     IDENTITY_PAGE_SIZE, IDENTITY_SWEEP_INTERVAL, MAX_BOOTSTRAP_PAGES, MAX_CONFIRM_AGE,
     MAX_IDENTITY_PAGES, MAX_INCREMENTAL_PAGES, META_BOOTSTRAP_DONE, META_BOOTSTRAP_OFFSET,
@@ -307,6 +307,7 @@ fn bootstrap(
         return Ok(0);
     }
 
+    let catalog_libraries = catalog_library_ids(library)?;
     let phase_started = Instant::now();
     let mut offset = meta(library, META_BOOTSTRAP_OFFSET)?
         .and_then(|value| value.parse::<i64>().ok())
@@ -355,7 +356,9 @@ fn bootstrap(
         if !page_changes.is_empty()
             && let Some(control) = control
         {
-            control.shell().catalog_changed(page_changes);
+            control
+                .shell()
+                .catalog_changed(page_changes, catalog_libraries.clone());
         }
         tracing::debug!(
             target: "library.sync",
