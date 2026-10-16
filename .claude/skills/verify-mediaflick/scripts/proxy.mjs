@@ -7,6 +7,8 @@
 //   the app sees as an unreachable server; `heal()` stops failing.
 // - `answer(url, method)` returns `{ status, body }` to answer a request
 //   itself with JSON instead of forwarding it, or null to forward it.
+// `cutSockets()` drops every open WebSocket and refuses new upgrades until
+// `restoreSockets()`, as a lost network would.
 // The app accepts `http://127.0.0.1:<port>` as a server address, so a drive
 // signs in to `proxy.url`.
 
@@ -17,9 +19,10 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
   const base = new URL(upstream)
   const prefix = base.pathname.replace(/\/+$/, "")
   const transport = base.protocol === "https:" ? https : http
-  const stats = { forwarded: 0, failed: 0, answered: [], streams: [], upgrades: 0 }
+  const stats = { forwarded: 0, failed: 0, answered: [], streams: [], upgrades: 0, refusedUpgrades: 0 }
   const upgraded = new Set()
   let failing = true
+  let socketsCut = false
 
   const target = (request, url) => ({
     protocol: base.protocol,
@@ -86,6 +89,12 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://proxy.invalid")
+    if (socketsCut) {
+      stats.refusedUpgrades++
+      log(`proxy: refused the upgrade of ${url.pathname} while sockets are cut`)
+      socket.destroy()
+      return
+    }
     upgraded.add(socket)
     socket.on("close", () => upgraded.delete(socket))
     socket.on("error", () => socket.destroy())
@@ -134,6 +143,16 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
         heal() {
           failing = false
           log(`proxy: healed after ${stats.failed} failed requests`)
+        },
+        cutSockets() {
+          socketsCut = true
+          const open = upgraded.size
+          for (const socket of upgraded) socket.destroy()
+          log(`proxy: cut ${open} open WebSockets; refusing upgrades`)
+        },
+        restoreSockets() {
+          socketsCut = false
+          log(`proxy: restored WebSocket upgrades after refusing ${stats.refusedUpgrades}`)
         },
         close: () => new Promise((done) => {
           for (const socket of upgraded) socket.destroy()
