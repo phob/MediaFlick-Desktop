@@ -30,8 +30,10 @@ pub enum SubtitleMode {
 pub enum StartupDestination {
     #[default]
     Home,
-    Movies,
-    Series,
+    #[serde(rename = "movies")]
+    LegacyMovies,
+    #[serde(rename = "series")]
+    LegacySeries,
     Calendar,
     Last,
     Library(LibraryId),
@@ -39,7 +41,7 @@ pub enum StartupDestination {
 
 impl StartupDestination {
     pub fn is_legacy(&self) -> bool {
-        matches!(self, Self::Movies | Self::Series)
+        matches!(self, Self::LegacyMovies | Self::LegacySeries)
     }
 }
 
@@ -54,10 +56,10 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
     };
     match (stored, registry) {
         (stored, LibraryRegistry::Unknown) if stored.is_legacy() => StartupDestination::Home,
-        (StartupDestination::Movies, LibraryRegistry::Known(libraries)) => {
+        (StartupDestination::LegacyMovies, LibraryRegistry::Known(libraries)) => {
             first_of(libraries, LibraryKind::Movies)
         }
-        (StartupDestination::Series, LibraryRegistry::Known(libraries)) => {
+        (StartupDestination::LegacySeries, LibraryRegistry::Known(libraries)) => {
             first_of(libraries, LibraryKind::Shows)
         }
         (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
@@ -326,11 +328,11 @@ mod tests {
             (MOVIES_B, Some("movies")),
         ]);
         assert_eq!(
-            startup_view(&StartupDestination::Movies, &registry),
+            startup_view(&StartupDestination::LegacyMovies, &registry),
             library(MOVIES_A)
         );
         assert_eq!(
-            startup_view(&StartupDestination::Series, &registry),
+            startup_view(&StartupDestination::LegacySeries, &registry),
             library(SHOWS)
         );
     }
@@ -339,14 +341,17 @@ mod tests {
     fn legacy_destinations_open_home_without_a_library_of_their_kind_or_a_known_list() {
         let shows_only = known(&[(MIXED, None), (SHOWS, Some("tvshows"))]);
         assert_eq!(
-            startup_view(&StartupDestination::Movies, &shows_only),
+            startup_view(&StartupDestination::LegacyMovies, &shows_only),
             StartupDestination::Home
         );
         assert_eq!(
-            startup_view(&StartupDestination::Series, &known(&[])),
+            startup_view(&StartupDestination::LegacySeries, &known(&[])),
             StartupDestination::Home
         );
-        for legacy in [StartupDestination::Movies, StartupDestination::Series] {
+        for legacy in [
+            StartupDestination::LegacyMovies,
+            StartupDestination::LegacySeries,
+        ] {
             assert_eq!(
                 startup_view(&legacy, &LibraryRegistry::Unknown),
                 StartupDestination::Home
@@ -390,8 +395,8 @@ mod tests {
     {
         for stored in [
             StartupDestination::Home,
-            StartupDestination::Movies,
-            StartupDestination::Series,
+            StartupDestination::LegacyMovies,
+            StartupDestination::LegacySeries,
             StartupDestination::Calendar,
             StartupDestination::Last,
             library(GONE),
@@ -412,7 +417,7 @@ mod tests {
             (format!(r#"{{"library":"{GONE}"}}"#), library(GONE)),
         ];
         for (destination, expected) in cases {
-            for stored in [StartupDestination::Movies, library(SHOWS)] {
+            for stored in [StartupDestination::LegacyMovies, library(SHOWS)] {
                 let saved = write(&format!(
                     r#"{{"startupDestination":{destination},"textScale":120}}"#
                 ))?
@@ -446,8 +451,8 @@ mod tests {
             ))
             .map(|settings| settings.startup_destination)
         };
-        assert_eq!(parse(r#""movies""#)?, StartupDestination::Movies);
-        assert_eq!(parse(r#""series""#)?, StartupDestination::Series);
+        assert_eq!(parse(r#""movies""#)?, StartupDestination::LegacyMovies);
+        assert_eq!(parse(r#""series""#)?, StartupDestination::LegacySeries);
         assert_eq!(
             parse(&format!(r#"{{"library":"{SHOWS}"}}"#))?,
             library(SHOWS)
