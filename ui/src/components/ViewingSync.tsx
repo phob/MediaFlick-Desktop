@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { api } from "@/lib/api"
-import { libraryIdFromPath } from "@/lib/libraries"
+import { libraryIdFromPath, startupRoute } from "@/lib/libraries"
 import { accountKey, useBrowsing, useStatus } from "@/lib/queries"
 import { DEFAULT_VIEWING, useViewing } from "@/lib/viewing"
 
@@ -28,8 +28,7 @@ export function ViewingSync() {
     if (initialized.current !== account) {
       initialized.current = account
       if (location.pathname === "/" && !location.search) {
-        const destinations = {home:"/", movies:"/library?kind=Movie", series:"/library?kind=Series", calendar:"/calendar", last:history.data.last ?? "/"}
-        const destination = destinations[viewing.data.startupDestination]
+        const destination = startupRoute(viewing.data.startupDestination, history.data.last)
         if (destination !== "/") { void navigate(destination, {replace:true}); return }
       }
     }

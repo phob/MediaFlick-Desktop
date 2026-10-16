@@ -21,6 +21,7 @@ import {
   type Library,
   type LibraryKind,
   type LibraryQuery,
+  type StartupDestination,
 } from "./api/types.ts"
 
 export type BrowseSource =
@@ -76,6 +77,15 @@ export function browsingKey(libraryId: string): BrowsingPage {
 
 export function firstLibraryOf(libraries: readonly Library[], kind: LibraryKind) {
   return libraries.find((library) => library.kind === kind) ?? null
+}
+
+export function startupRoute(destination: StartupDestination, last: string | undefined) {
+  if (typeof destination === "object") return libraryPath(destination.library)
+  switch (destination) {
+    case "home": return "/"
+    case "calendar": return "/calendar"
+    case "last": return last ?? "/"
+  }
 }
 
 export function genreRoute(genre: string, item: ItemDetail) {

@@ -381,6 +381,8 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   }
 }
 
+export type StartupDestination = "home" | "calendar" | "last" | { library: string }
+
 export interface ViewingSettings {
   spoilerProtection: boolean
   nextEpisode: "off" | "ask" | "auto"
@@ -394,7 +396,7 @@ export interface ViewingSettings {
   textScale: number
   posterSize: number
   previewDelayMs: number
-  startupDestination: "home" | "movies" | "series" | "calendar" | "last"
+  startupDestination: StartupDestination
   rememberFilters: boolean
   hideWatched: boolean
 }

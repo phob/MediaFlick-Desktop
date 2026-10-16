@@ -80,10 +80,10 @@ test("continuous playback stops at the episode limit while explicit next remains
 function LocationProbe() { const location = useLocation(); return <output aria-label="Location">{location.pathname + location.search}</output> }
 
 test.each([
-  ["/", "/library?kind=Series"],
+  ["/", `/library/${SHOWS_LIBRARY_ID}`],
   ["/item/explicit", "/item/explicit"],
 ])("startup selection honors an explicit route: %s", async (initial, expected) => {
-  seed({...DEFAULT_VIEWING, startupDestination:"series"})
+  seed({...DEFAULT_VIEWING, startupDestination:{library:SHOWS_LIBRARY_ID}})
   queryClient.setQueryData(queryKeys.browsing("server:user"), {})
   vi.spyOn(api, "browsing").mockResolvedValue({})
   vi.spyOn(api, "saveBrowsing").mockResolvedValue({saved:true})
