@@ -1,11 +1,11 @@
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::jellyfin::api::model::UserViewDto;
 
 use super::SortKey;
 use super::model::TitleKind;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LibraryId(String);
 
 impl LibraryId {

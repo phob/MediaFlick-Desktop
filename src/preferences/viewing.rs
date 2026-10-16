@@ -2,6 +2,8 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
+use crate::library::libraries::{LibraryId, LibraryRegistry};
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NextEpisode {
@@ -22,7 +24,7 @@ pub enum SubtitleMode {
     ForeignAudio,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StartupDestination {
     #[default]
@@ -31,6 +33,14 @@ pub enum StartupDestination {
     Series,
     Calendar,
     Last,
+    Library(LibraryId),
+}
+
+pub fn startup_view(
+    stored: &StartupDestination,
+    _registry: &LibraryRegistry,
+) -> StartupDestination {
+    stored.clone()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,7 +224,121 @@ impl PlayerComfort {
 
 #[cfg(test)]
 mod tests {
-    use super::PlayerComfort;
+    use super::{PlayerComfort, StartupDestination, ViewingSettings, startup_view};
+    use crate::jellyfin::api::model::UserViewDto;
+    use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+
+    const MOVIES_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const MOVIES_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const SHOWS: &str = "cccccccccccccccccccccccccccccccc";
+    const MIXED: &str = "dddddddddddddddddddddddddddddddd";
+    const GONE: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+    fn known(views: &[(&str, Option<&str>)]) -> LibraryRegistry {
+        LibraryRegistry::Known(
+            views
+                .iter()
+                .filter_map(|(id, collection_type)| {
+                    MediaLibrary::from_view(&UserViewDto {
+                        id: (*id).into(),
+                        collection_type: collection_type.map(str::to_string),
+                        ..Default::default()
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn library(id: &str) -> StartupDestination {
+        StartupDestination::Library(LibraryId::parse(id).expect("test id"))
+    }
+
+    #[test]
+    fn legacy_destinations_open_the_first_library_of_their_kind_in_server_order() {
+        let registry = known(&[
+            (MIXED, None),
+            (SHOWS, Some("tvshows")),
+            (MOVIES_A, Some("movies")),
+            (MOVIES_B, Some("movies")),
+        ]);
+        assert_eq!(
+            startup_view(&StartupDestination::Movies, &registry),
+            library(MOVIES_A)
+        );
+        assert_eq!(
+            startup_view(&StartupDestination::Series, &registry),
+            library(SHOWS)
+        );
+    }
+
+    #[test]
+    fn legacy_destinations_open_home_without_a_library_of_their_kind_or_a_known_list() {
+        let shows_only = known(&[(MIXED, None), (SHOWS, Some("tvshows"))]);
+        assert_eq!(
+            startup_view(&StartupDestination::Movies, &shows_only),
+            StartupDestination::Home
+        );
+        assert_eq!(
+            startup_view(&StartupDestination::Series, &known(&[])),
+            StartupDestination::Home
+        );
+        for legacy in [StartupDestination::Movies, StartupDestination::Series] {
+            assert_eq!(
+                startup_view(&legacy, &LibraryRegistry::Unknown),
+                StartupDestination::Home
+            );
+        }
+    }
+
+    #[test]
+    fn a_library_destination_opens_home_only_when_a_known_list_lacks_it() {
+        let registry = known(&[(SHOWS, Some("tvshows"))]);
+        assert_eq!(startup_view(&library(SHOWS), &registry), library(SHOWS));
+        assert_eq!(
+            startup_view(&library(GONE), &registry),
+            StartupDestination::Home
+        );
+        assert_eq!(
+            startup_view(&library(GONE), &LibraryRegistry::Unknown),
+            library(GONE)
+        );
+    }
+
+    #[test]
+    fn other_destinations_pass_through() {
+        for registry in [LibraryRegistry::Unknown, known(&[(SHOWS, Some("tvshows"))])] {
+            for destination in [
+                StartupDestination::Home,
+                StartupDestination::Calendar,
+                StartupDestination::Last,
+            ] {
+                assert_eq!(startup_view(&destination, &registry), destination);
+            }
+        }
+    }
+
+    #[test]
+    fn startup_destination_wire_forms() -> Result<(), serde_json::Error> {
+        let parse = |destination: &str| {
+            serde_json::from_str::<ViewingSettings>(&format!(
+                r#"{{"startupDestination":{destination}}}"#
+            ))
+            .map(|settings| settings.startup_destination)
+        };
+        assert_eq!(parse(r#""movies""#)?, StartupDestination::Movies);
+        assert_eq!(parse(r#""series""#)?, StartupDestination::Series);
+        assert_eq!(
+            parse(&format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase()))?,
+            library(SHOWS)
+        );
+        assert!(parse(r#"{"library":"../etc"}"#).is_err());
+        assert!(parse(r#"{"library":""}"#).is_err());
+        assert_eq!(
+            serde_json::to_value(library(SHOWS))?,
+            serde_json::json!({ "library": SHOWS })
+        );
+        Ok(())
+    }
 
     #[test]
     fn combinations_allow_disabling_and_reject_equivalent_conflicts() {
