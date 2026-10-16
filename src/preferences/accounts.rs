@@ -61,6 +61,7 @@ pub enum HomeElementId {
     BuiltIn { id: HomeBuiltIn },
     Genre { id: String },
     Collection { id: String },
+    Library { id: LibraryId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,12 +83,14 @@ impl<'de> Deserialize<'de> for HomeElement {
             BuiltIn { id: HomeBuiltIn, enabled: bool },
             Genre { id: String, enabled: bool },
             Collection { id: String, enabled: bool },
+            Library { id: LibraryId, enabled: bool },
         }
 
         let (element, enabled) = match Wire::deserialize(deserializer)? {
             Wire::BuiltIn { id, enabled } => (HomeElementId::BuiltIn { id }, enabled),
             Wire::Genre { id, enabled } => (HomeElementId::Genre { id }, enabled),
             Wire::Collection { id, enabled } => (HomeElementId::Collection { id }, enabled),
+            Wire::Library { id, enabled } => (HomeElementId::Library { id }, enabled),
         };
         Ok(Self { element, enabled })
     }
@@ -198,7 +201,7 @@ impl HomeSettings {
                 ));
             }
             match &element.element {
-                HomeElementId::BuiltIn { .. } => {}
+                HomeElementId::BuiltIn { .. } | HomeElementId::Library { .. } => {}
                 HomeElementId::Genre { id }
                     if id.trim().is_empty()
                         || id.chars().count() > 100

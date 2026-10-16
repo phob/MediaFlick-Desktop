@@ -1,5 +1,5 @@
 use crate::library::browse::{self, ChildPage, ChildrenSource, DetailError, LiveDetail};
-use crate::library::libraries::FilterKey;
+use crate::library::libraries::{FilterKey, LibraryRegistry};
 use crate::library::{DEFAULT_PAGE_SIZE, DetailView, ItemPage};
 
 use super::*;
@@ -69,6 +69,7 @@ struct ResolvedHome {
     defaults: HomeSettings,
     genres: HashSet<String>,
     profiles: Vec<crate::collections::CollectionProfile>,
+    libraries: LibraryRegistry,
     mediaflick_collections: bool,
 }
 
@@ -82,6 +83,10 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         .genres(None)
         .map_err(|error| storage_failure(&error))?;
     let profiles = services.collections.account(&account).profiles;
+    let libraries = services
+        .library
+        .libraries()
+        .map_err(|error| storage_failure(&error))?;
     let readiness = services.companion.cached_collection_readiness();
     let has_results = crate::collections::snapshots::SnapshotRepository::new(&services.library)
         .has_account_results(&account)
@@ -95,9 +100,30 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         .accounts
         .home(&account)
         .unwrap_or_else(|| HomeSettings::fresh(&genres));
-    reconcile_home_elements(&mut settings, &genres, &profiles);
-    let mut defaults = HomeSettings::fresh(&genres);
-    reconcile_home_elements(&mut defaults, &genres, &profiles);
+    reconcile_home_elements(&mut settings, &genres, &profiles, &libraries);
+    let defaults = home_defaults(&settings, &genres, &profiles, &libraries);
+    Ok(ResolvedHome {
+        account,
+        settings,
+        defaults,
+        genres: genres.into_iter().collect(),
+        profiles,
+        libraries,
+        mediaflick_collections,
+    })
+}
+
+/// What Reset restores. Saved elements the fresh defaults lack are appended,
+/// because a save must hold every current element; a library shelf among them
+/// starts on, any other starts off.
+fn home_defaults(
+    settings: &HomeSettings,
+    genres: &[String],
+    profiles: &[crate::collections::CollectionProfile],
+    libraries: &LibraryRegistry,
+) -> HomeSettings {
+    let mut defaults = HomeSettings::fresh(genres);
+    reconcile_home_elements(&mut defaults, genres, profiles, libraries);
     let mut default_ids = defaults
         .elements
         .iter()
@@ -107,32 +133,36 @@ fn resolved_home(services: &Services) -> Result<ResolvedHome, ApiResponse> {
         if default_ids.insert(element.element.clone()) {
             defaults.elements.push(HomeElement {
                 element: element.element.clone(),
-                enabled: false,
+                enabled: matches!(element.element, HomeElementId::Library { .. }),
             });
         }
     }
-    Ok(ResolvedHome {
-        account,
-        settings,
-        defaults,
-        genres: genres.into_iter().collect(),
-        profiles,
-        mediaflick_collections,
-    })
+    defaults
 }
 
+/// A read never writes: library shelves reach accounts.json with the user's
+/// next Home save. While the library list is unknown, saved shelves stay as
+/// they are and none are added.
 fn reconcile_home_elements(
     settings: &mut HomeSettings,
     genres: &[String],
     profiles: &[crate::collections::CollectionProfile],
+    libraries: &LibraryRegistry,
 ) {
     let eligible_collections = profiles
         .iter()
         .filter(|profile| profile.available_on_home)
         .map(|profile| profile.id.as_str())
         .collect::<HashSet<_>>();
+    let known = match libraries {
+        LibraryRegistry::Known(libraries) => Some(libraries.as_slice()),
+        LibraryRegistry::Unknown => None,
+    };
     settings.elements.retain(|element| match &element.element {
         HomeElementId::Collection { id } => eligible_collections.contains(id.as_str()),
+        HomeElementId::Library { id } => {
+            known.is_none_or(|libraries| libraries.iter().any(|library| &library.id == id))
+        }
         _ => true,
     });
     let mut present = settings
@@ -140,6 +170,31 @@ fn reconcile_home_elements(
         .iter()
         .map(|element| element.element.clone())
         .collect::<HashSet<_>>();
+    let is_library =
+        |element: &HomeElement| matches!(element.element, HomeElementId::Library { .. });
+    let is_built_in =
+        |element: &HomeElement| matches!(element.element, HomeElementId::BuiltIn { .. });
+    let mut position = settings
+        .elements
+        .iter()
+        .rposition(is_library)
+        .or_else(|| settings.elements.iter().rposition(is_built_in))
+        .map_or(0, |index| index + 1);
+    for library in known.unwrap_or_default() {
+        let element = HomeElementId::Library {
+            id: library.id.clone(),
+        };
+        if present.insert(element.clone()) {
+            settings.elements.insert(
+                position,
+                HomeElement {
+                    element,
+                    enabled: true,
+                },
+            );
+            position += 1;
+        }
+    }
     for genre in genres {
         let element = HomeElementId::Genre { id: genre.clone() };
         if present.insert(element.clone()) {
@@ -181,6 +236,13 @@ fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Value {
         .iter()
         .map(|profile| (profile.id.as_str(), profile.title.as_str()))
         .collect::<HashMap<_, _>>();
+    let libraries = match &home.libraries {
+        LibraryRegistry::Known(libraries) => libraries
+            .iter()
+            .map(|library| (&library.id, library.name.as_str()))
+            .collect::<HashMap<_, _>>(),
+        LibraryRegistry::Unknown => HashMap::new(),
+    };
     let elements = settings
         .elements
         .iter()
@@ -199,6 +261,10 @@ fn settings_view(home: &ResolvedHome, settings: &HomeSettings) -> Value {
                     home.mediaflick_collections && profiles.contains_key(id.as_str()),
                     "My Collection",
                 ),
+                HomeElementId::Library { id } => match libraries.get(id) {
+                    Some(name) => (format!("Latest in {name}"), true, "Library"),
+                    None => ("Latest in library".to_string(), false, "Library"),
+                },
             };
             let mut value = serde_json::to_value(element).unwrap_or_else(|_| json!({}));
             if let Some(object) = value.as_object_mut() {
@@ -1060,7 +1126,12 @@ mod tests {
     #[test]
     fn known_libraries_join_after_the_built_ins_in_server_order_and_enabled() {
         let mut settings = HomeSettings::fresh(&["Action".to_owned()]);
-        reconcile_home_elements(&mut settings, &["Action".to_owned()], &[], &server_libraries());
+        reconcile_home_elements(
+            &mut settings,
+            &["Action".to_owned()],
+            &[],
+            &server_libraries(),
+        );
 
         let mut expected = built_ins();
         expected.extend([
