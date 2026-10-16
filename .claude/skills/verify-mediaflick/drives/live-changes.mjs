@@ -26,6 +26,8 @@ const AFTER_RECONNECT_MS = 30000
 async function openByUrl(ctx, path) {
   await ctx.app.evaluate(`history.pushState(null, "", ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent("popstate"))`)
   await ctx.until(async () => (await ctx.pathname()) === path, `the ${path} route`)
+  // A card under the resting pointer scales up and would sort ahead of its row.
+  await ctx.park()
 }
 
 async function cardIds(ctx) {
