@@ -265,7 +265,8 @@ export default async function startupLibrary(ctx) {
     await ctx.until(async () => (await ctx.state(SELECT)).value === "Home", "Viewing: the select to show Home from the page's cached viewing")
     Object.assign(report.staleTextSizeSave, await saveTextSize(ctx, userId, "stale-text-size"))
     expect(same(report.staleTextSizeSave.stored, seeded), `Viewing: with the page's cached viewing set to Home, saving only Text size keeps ${JSON.stringify(seeded)} in accounts.json (now ${JSON.stringify(report.staleTextSizeSave.stored)})`)
-    await ctx.until(async () => (await ctx.state(SELECT)).value === shown, `Viewing: the select to show "${shown}" from the save's answer`)
+    const restored = await ctx.until(async () => (await ctx.state(SELECT)).value === shown, `Viewing: the select to show "${shown}" from the save's answer`).catch(() => false)
+    expect(restored, `Viewing: the select shows "${shown}" again from that save's answer (now "${(await ctx.state(SELECT)).value}")`)
 
     const beforeLegacy = accountsHash(ctx)
     report.legacyPatch = await ctx.app.evaluate(LEGACY_PATCH)
