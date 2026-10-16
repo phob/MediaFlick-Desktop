@@ -405,7 +405,6 @@ export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> &
   startupDestination?: StartupDestination
 }
 
-/** Names the startup destination only when it differs from the source, so the stored choice survives every other save. */
 export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
   const { startupDestination, ...others } = settings
   return source && sameJson(startupDestination, source.startupDestination) ? others : settings

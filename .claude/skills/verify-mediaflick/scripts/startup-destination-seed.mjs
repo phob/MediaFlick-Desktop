@@ -2,9 +2,8 @@
 // an accounts.json whose account starts on one stored destination: `movies`
 // (legacy), `library` (the server's first TV shows library) and `missing` (a
 // well-formed library id the server does not list). SERVER is a server with a
-// session cached by `just verify-login`, or the demo server, whose ids are
-// public and whose `demo` user signs in without a password; that sign-in only
-// reads /UserViews and is signed out again. Holds ids only, never a token.
+// session cached by `just verify-login`, or the demo server. Holds ids only,
+// never a token.
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://demo.jellyfin.org/stable build/verify-seeds/startup-demo
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://jellyfin.example.com build/verify-seeds/startup-account
 import { mkdirSync, writeFileSync } from "node:fs"

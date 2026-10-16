@@ -30,9 +30,7 @@ pub enum SubtitleMode {
 pub enum StartupDestination {
     #[default]
     Home,
-    /// Legacy: read as the first Movies library and never written by this version.
     Movies,
-    /// Legacy: read as the first TV shows library and never written by this version.
     Series,
     Calendar,
     Last,
@@ -45,8 +43,6 @@ impl StartupDestination {
     }
 }
 
-/// The destination the UI acts on. While the registry is unknown, a legacy
-/// value reads as Home and a library passes through.
 pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
     let first_of = |libraries: &[MediaLibrary], kind| {
         libraries
@@ -73,9 +69,6 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
     }
 }
 
-/// A PATCH body for viewing settings. Without `startupDestination` it keeps
-/// the stored destination, because only the client knows whether the user
-/// changed it.
 pub struct ViewingWrite {
     settings: ViewingSettings,
     startup_destination: Option<StartupDestination>,

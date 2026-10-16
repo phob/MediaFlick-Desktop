@@ -2,22 +2,7 @@
 // starting nor saving another setting rewrites it. Run once per seed from
 // scripts/startup-destination-seed.mjs: `movies` (legacy) must open the first
 // movies library, `library` the TV shows library it names, and `missing` (an
-// id no library has) Home. Where the first launch, on an empty library.db,
-// lands is measured and recorded. Once its library list is known, the page's
-// cached viewing must match /api/settings/viewing without moving off the page
-// it landed on, and a Card preview delay save in Appearance must keep the
-// stored destination. The landing assertions run on a relaunch of the same
-// profile, which saves the delay once more. With the library list unchanged,
-// the relaunch must not refetch the viewing /api/startup primed.
-// Before the relaunch the drive opens the expected page through the sidebar,
-// so the app's own last-route save is a no-op, and accounts.json must keep its
-// SHA-256 across the relaunch. Then Settings → Viewing must show the resolved
-// destination, list Home, every library in server order, Releases and Last
-// browsing page, and keep the stored destination when Save changes only Text
-// size, also after the page's cached viewing is set to Home, as a page primed
-// before the library list arrived holds it. A PATCH naming "movies" must get
-// 400 and leave accounts.json as it was, and Save must write
-// {"library":"<id>"} for the picked library.
+// id no library has) Home.
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://demo.jellyfin.org/stable build/verify-seeds/startup-demo
 //   just verify startup-library --seed build/verify-seeds/startup-demo/movies
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://jellyfin.example.com build/verify-seeds/startup-account

@@ -38,8 +38,6 @@ export default function App() {
   const settings = useSettings()
   const viewing = useViewing()
   const location = useLocation()
-  // The catalog cover holds the shell back while the first sync announces the
-  // library list, so the bridge listens here, where viewing is first fetched.
   useLibraryMetadataBridge()
   const bootstrap = status?.authenticated ? status.bootstrap : null
   const catalogLoading = bootstrap?.state === "loading"

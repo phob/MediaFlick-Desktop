@@ -15,7 +15,6 @@ impl LibraryId {
         crate::app::ids::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
     }
 
-    /// Durable files store the parsed form, so anything else in them is invalid.
     pub fn canonical(raw: &str) -> Option<Self> {
         Self::parse(raw).filter(|id| id.as_str() == raw)
     }

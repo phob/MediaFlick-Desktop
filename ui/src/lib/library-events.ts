@@ -50,8 +50,6 @@ function noteLibrariesChanged(event: Event) {
   if (readShellEvent(event)?.type === "libraries-changed") librariesChangedBeforeBridge = true
 }
 
-// main.tsx primes library-dependent queries from /api/startup before the
-// bridge mounts; a libraries-changed announced in between must still refresh.
 export function listenForLibrariesChangedBeforeBridge() {
   window.addEventListener("mediaflick-desktop-shell", noteLibrariesChanged)
 }
