@@ -451,9 +451,11 @@ mod tests {
         assert_eq!(parse(r#""movies""#)?, StartupDestination::Movies);
         assert_eq!(parse(r#""series""#)?, StartupDestination::Series);
         assert_eq!(
-            parse(&format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase()))?,
+            parse(&format!(r#"{{"library":"{SHOWS}"}}"#))?,
             library(SHOWS)
         );
+        assert!(parse(&format!(r#"{{"library":"{}"}}"#, SHOWS.to_uppercase())).is_err());
+        assert!(parse(&format!(r#"{{"library":" {SHOWS}"}}"#)).is_err());
         assert!(parse(r#"{"library":"../etc"}"#).is_err());
         assert!(parse(r#"{"library":""}"#).is_err());
         assert_eq!(

@@ -15,6 +15,11 @@ impl LibraryId {
         crate::app::ids::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
     }
 
+    /// Durable files store the parsed form, so anything else in them is invalid.
+    pub fn canonical(raw: &str) -> Option<Self> {
+        Self::parse(raw).filter(|id| id.as_str() == raw)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -24,7 +29,7 @@ impl TryFrom<String> for LibraryId {
     type Error = &'static str;
 
     fn try_from(raw: String) -> Result<Self, Self::Error> {
-        Self::parse(&raw).ok_or("invalid library id")
+        Self::canonical(&raw).ok_or("invalid library id")
     }
 }
 
