@@ -1,9 +1,13 @@
-// Where the app starts for a stored startup destination, and that starting
-// never rewrites it. Run once per seed from scripts/startup-destination-seed.mjs:
-// `movies` (legacy) must open the first movies library, `library` the TV shows
-// library it names, and `missing` (an id no library has) Home. The first
-// launch, on an empty library.db, is measured and recorded; the assertions
-// run on a relaunch of the same profile, once the library list is known.
+// Where the app starts for a stored startup destination, and that neither
+// starting nor saving another setting rewrites it. Run once per seed from
+// scripts/startup-destination-seed.mjs: `movies` (legacy) must open the first
+// movies library, `library` the TV shows library it names, and `missing` (an
+// id no library has) Home. Where the first launch, on an empty library.db,
+// lands is measured and recorded. Once its library list is known, the page's
+// cached viewing must match /api/settings/viewing without moving off the page
+// it landed on, and a Card preview delay save in Appearance must keep the
+// stored destination. The landing assertions run on a relaunch of the same
+// profile, which saves the delay once more.
 // Before the relaunch the drive opens the expected page through the sidebar,
 // so the app's own last-route save is a no-op, and accounts.json must keep its
 // SHA-256 across the relaunch. Then Settings → Viewing must show the resolved
@@ -20,7 +24,7 @@ const DEMO = "https://demo.jellyfin.org/stable"
 const SELECT = { role: "combobox", name: "Startup destination" }
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 
-const DECISION_INPUTS = `(async () => {
+const FIND_QUERY = `const query = (() => {
   const root = document.getElementById("root")
   const stack = [root?.[Object.keys(root).find((key) => key.startsWith("__reactContainer$"))]]
   let client = null
@@ -30,7 +34,21 @@ const DECISION_INPUTS = `(async () => {
     if (fiber.memoizedProps?.client?.getQueryCache) client = fiber.memoizedProps.client
     stack.push(fiber.child, fiber.sibling)
   }
-  const query = (key) => client?.getQueryCache().getAll().find((candidate) => candidate.queryKey[0] === key && candidate.queryKey[1] !== "anonymous:anonymous" && candidate.state.data !== undefined)
+  return (key) => client?.getQueryCache().getAll().find((candidate) => candidate.queryKey[0] === key && candidate.queryKey[1] !== "anonymous:anonymous" && candidate.state.data !== undefined)
+})()`
+
+const PAGE_VIEWING = `(() => {
+  ${FIND_QUERY}
+  const viewing = query("viewing")
+  return viewing ? {
+    route: location.pathname + location.search,
+    viewing: viewing.state.data.startupDestination,
+    viewingUpdates: viewing.state.dataUpdateCount,
+  } : null
+})()`
+
+const DECISION_INPUTS = `(async () => {
+  ${FIND_QUERY}
   const viewing = query("viewing")
   if (!viewing || !query("browsing")) return null
   await new Promise((settled) => requestAnimationFrame(() => requestAnimationFrame(settled)))
@@ -61,7 +79,7 @@ async function land(ctx, name, userId) {
     landing: decided.landing,
     viewingSeenByPage: decided.viewing,
     viewingFetches: decided.viewingUpdates,
-    librariesKnownAtLanding: libraries?.known ?? null,
+    librariesKnownAfterLanding: libraries?.known ?? null,
     viewingApi: (await ctx.api("/api/settings/viewing")).body?.startupDestination,
   }
   record.lastRoute = (await ctx.until(() => {
@@ -85,9 +103,37 @@ async function settled(ctx) {
 async function openThroughSidebar(ctx, route) {
   if ((await ctx.pathname()) === route) return
   await ctx.hover({ css: '[data-sidebar="sidebar"]' })
-  await ctx.press(route === "/" ? { role: "link", name: "Home" } : { css: `[data-sidebar="sidebar"] a[href="${route}"]` })
+  await ctx.press({ css: `[data-sidebar="content"] a[href="${route}"]` })
   await ctx.until(async () => (await ctx.pathname()) === route, `the ${route} route`)
   await ctx.park()
+}
+
+async function openSettings(ctx, page) {
+  await ctx.press({ role: "link", name: "Settings" })
+  await ctx.press({ role: "link", name: page })
+  await ctx.until(async () => (await ctx.pathname()) === `/settings/${page.toLowerCase()}`, `${page} settings`)
+}
+
+async function savePreviewDelay(ctx, userId, label) {
+  await openSettings(ctx, "Appearance")
+  const field = { role: "spinbutton", name: "Card preview delay" }
+  await ctx.until(async () => !(await ctx.state(field)).disabled, `${label}: Card preview delay to load`, 30000)
+  const before = storedAccount(ctx, userId)?.viewing ?? {}
+  const delay = before.previewDelayMs === 600 ? 650 : 600
+  const record = {
+    pageViewing: (await ctx.app.evaluate(PAGE_VIEWING))?.viewing,
+    librariesKnownBefore: (await ctx.api("/api/libraries")).body?.known ?? null,
+    delay,
+  }
+  await ctx.fill(field, String(delay))
+  await ctx.press({ role: "button", name: "Save" })
+  await ctx.until(() => storedAccount(ctx, userId)?.viewing?.previewDelayMs === delay, `${label}: accounts.json to store previewDelayMs ${delay}`)
+  await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled, `${label}: the Appearance save bar to settle`)
+  record.librariesKnownAfter = (await ctx.api("/api/libraries")).body?.known ?? null
+  record.stored = storedAccount(ctx, userId)?.viewing?.startupDestination
+  record.api = (await ctx.api("/api/settings/viewing")).body?.startupDestination
+  ctx.writeEvidence(`accounts-after-${label}-delay.json`, ctx.readConfig("accounts.json"))
+  return record
 }
 
 async function startupOptions(ctx) {
@@ -139,6 +185,21 @@ export default async function startupLibrary(ctx) {
       await ctx.screenshot("first-landing-after-sync")
     }
 
+    const resolved = (await ctx.api("/api/settings/viewing")).body?.startupDestination
+    const refreshed = await ctx.until(async () => {
+      const page = await ctx.app.evaluate(PAGE_VIEWING)
+      return page && same(page.viewing, resolved) ? page : null
+    }, "first launch: the page's cached viewing to match /api/settings/viewing", 20000).catch(() => null)
+    await new Promise((settle) => setTimeout(settle, 2000))
+    const after = await ctx.app.evaluate(PAGE_VIEWING)
+    report.librariesChanged = { resolved, pageAfter: after, matchedAt: refreshed }
+    expect(refreshed !== null, `first launch: once the library list is known, the page's cached viewing ${JSON.stringify(after?.viewing)} equals /api/settings/viewing ${JSON.stringify(resolved)}`)
+    expect(after?.route === first.landing, `first launch: the page stayed on ${first.landing} once the library list was known (now ${after?.route})`)
+
+    report.firstDelaySave = await savePreviewDelay(ctx, userId, "first")
+    expect(same(report.firstDelaySave.stored, seeded), `first launch: saving only Card preview delay (list known: ${report.firstDelaySave.librariesKnownBefore} before, ${report.firstDelaySave.librariesKnownAfter} after; page viewing ${JSON.stringify(report.firstDelaySave.pageViewing)}) keeps ${JSON.stringify(seeded)} in accounts.json (now ${JSON.stringify(report.firstDelaySave.stored)})`)
+    expect(same(report.firstDelaySave.api, resolved), `first launch: /api/settings/viewing still answers ${JSON.stringify(resolved)} after that save (now ${JSON.stringify(report.firstDelaySave.api)})`)
+
     await openThroughSidebar(ctx, report.expected.landing)
     await ctx.until(() => storedAccount(ctx, userId)?.browsing?.last === report.expected.landing, "the expected page saved as the last route", 10000)
     report.hashes.beforeRelaunch = accountsHash(ctx)
@@ -148,15 +209,17 @@ export default async function startupLibrary(ctx) {
     report.launches.push(second)
     report.hashes.afterRelaunch = accountsHash(ctx)
     ctx.writeEvidence("accounts-after-relaunch.json", ctx.readConfig("accounts.json"))
-    expect(second.librariesKnownAtLanding === true, "relaunch: the library list was known when the app chose its landing")
+    const expectedView = expected ? { library: expected.id } : "home"
+    expect(second.viewingFetches === 1 && same(second.viewingSeenByPage, expectedView), `relaunch: the page landed from its only viewing fetch (${second.viewingFetches}), ${JSON.stringify(second.viewingSeenByPage)}, the destination resolved against the known library list`)
     expect(second.landing === report.expected.landing, `relaunch: ${JSON.stringify(seeded)} landed on ${second.landing} (expected ${report.expected.landing}${expected ? `, ${expected.name}` : ", Home"})`)
     expect(same(second.viewingApi, expected ? { library: expected.id } : "home"), `relaunch: /api/settings/viewing answers ${JSON.stringify(second.viewingApi)}`)
     expect(report.hashes.afterRelaunch === report.hashes.beforeRelaunch, `relaunch: accounts.json kept SHA-256 ${report.hashes.beforeRelaunch}`)
     expect(same(storedAccount(ctx, userId)?.viewing?.startupDestination, seeded), `relaunch: accounts.json still stores ${JSON.stringify(seeded)}`)
 
-    await ctx.press({ role: "link", name: "Settings" })
-    await ctx.press({ role: "link", name: "Viewing" })
-    await ctx.until(async () => (await ctx.pathname()) === "/settings/viewing", "Viewing settings")
+    report.relaunchDelaySave = await savePreviewDelay(ctx, userId, "relaunch")
+    expect(same(report.relaunchDelaySave.stored, seeded), `relaunch: saving only Card preview delay keeps ${JSON.stringify(seeded)} in accounts.json (now ${JSON.stringify(report.relaunchDelaySave.stored)})`)
+
+    await openSettings(ctx, "Viewing")
     const shown = (await ctx.state(SELECT, { timeout: 30000 })).value
     report.settings = { shown, options: await startupOptions(ctx) }
     expect(shown === (expected ? expected.name : "Home"), `Settings shows the resolved destination "${shown}"`)
