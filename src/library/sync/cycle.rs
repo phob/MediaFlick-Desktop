@@ -54,7 +54,7 @@ pub(super) fn run_cycle_inner(
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
-        walked.walk_no_longer_owed |= initial_catalog
+        walked.walk_landed |= initial_catalog
             && !first_catalog_download(library).map_err(|error| storage_error(&error))?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
@@ -114,7 +114,7 @@ pub(super) fn run_cycle_inner(
         if !report.changes.is_empty() {
             control.shell().library_changed(report.changes.clone());
         }
-        if walked.walk_no_longer_owed {
+        if walked.walk_landed {
             tracing::debug!(target: "library.sync", "announced settled library memberships");
             control.shell().library_memberships_settled();
         }
