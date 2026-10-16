@@ -53,9 +53,9 @@ next-episode playback (off, a cancellable countdown, or automatic), an episode l
 language codes, subtitle rules, and a 0/5/10/30-second resume rewind. Valid per-title track choices
 take priority. Original-audio preference uses tracks explicitly labeled original.
 
-The same page controls text size, preset poster widths, the startup page, and separate
-remembered filters for Movies and Series. Explicit filtered links take priority over remembered
-filters. Spoiler protection conceals unwatched episode artwork, names, and summaries; the episode
+The same page controls text size, preset poster widths, the startup page (Home, any library,
+Releases, or the last browsing page), and remembered filters for each library. Explicit filtered
+links take priority over remembered filters. Spoiler protection conceals unwatched episode artwork, names, and summaries; the episode
 details page has a Reveal button. Calendar episode names are concealed conservatively because
 upcoming entries may not have a known watched state.
 

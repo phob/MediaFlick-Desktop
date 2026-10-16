@@ -260,7 +260,7 @@ export default function ViewingSettings() {
         <SettingsRow
           controlId="settings-remember-library-filters"
           title="Remember library filters"
-          description="Movies and Series each reopen with the sort and filters you last used there. Search results and Favorites are not affected."
+          description="Each library reopens with the sort and filters you last used there. Search results and Favorites are not affected."
         >
           <Switch
             id="settings-remember-library-filters"
@@ -273,7 +273,7 @@ export default function ViewingSettings() {
         <SettingsRow
           controlId="settings-hide-watched-by-default"
           title="Hide watched by default"
-          description="Movies and Series open showing only unwatched titles. Change the Watch status filter to see the rest. Remembered library filters take priority."
+          description="Movies and TV shows libraries open showing only unwatched titles. Change the Watch status filter to see the rest. Remembered library filters take priority."
         >
           <Switch
             id="settings-hide-watched-by-default"
