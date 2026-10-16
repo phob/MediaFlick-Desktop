@@ -6,6 +6,7 @@ use super::SortKey;
 use super::model::TitleKind;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct LibraryId(String);
 
 impl LibraryId {
@@ -16,6 +17,14 @@ impl LibraryId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for LibraryId {
+    type Error = &'static str;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        Self::parse(&raw).ok_or("invalid library id")
     }
 }
 

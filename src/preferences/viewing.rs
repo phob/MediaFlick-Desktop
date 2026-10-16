@@ -2,7 +2,7 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use crate::library::libraries::{LibraryId, LibraryRegistry};
+use crate::library::libraries::{LibraryId, LibraryKind, LibraryRegistry};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,18 +29,37 @@ pub enum SubtitleMode {
 pub enum StartupDestination {
     #[default]
     Home,
+    /// Legacy: read as the first Movies library and never written by this version.
     Movies,
+    /// Legacy: read as the first TV shows library and never written by this version.
     Series,
     Calendar,
     Last,
     Library(LibraryId),
 }
 
-pub fn startup_view(
-    stored: &StartupDestination,
-    _registry: &LibraryRegistry,
-) -> StartupDestination {
-    stored.clone()
+/// The destination the UI acts on. While the registry is unknown, a legacy
+/// value reads as Home and a library passes through.
+pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
+    let first_of = |kind| match registry {
+        LibraryRegistry::Known(libraries) => libraries
+            .iter()
+            .find(|library| library.kind() == kind)
+            .map_or(StartupDestination::Home, |library| {
+                StartupDestination::Library(library.id.clone())
+            }),
+        LibraryRegistry::Unknown => StartupDestination::Home,
+    };
+    match (stored, registry) {
+        (StartupDestination::Movies, _) => first_of(LibraryKind::Movies),
+        (StartupDestination::Series, _) => first_of(LibraryKind::Shows),
+        (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
+            if !libraries.iter().any(|library| library.id == *id) =>
+        {
+            StartupDestination::Home
+        }
+        _ => stored.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,3 +1,6 @@
+use crate::library::libraries::LibraryRegistry;
+use crate::preferences::startup_view;
+
 use super::*;
 
 pub(super) fn route(
@@ -232,10 +235,17 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
 fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let scope = session_scope(services)?;
     let key = scope.account();
+    let registry = services.library.libraries().unwrap_or_else(|error| {
+        tracing::warn!(target: "library.sync", "could not read the library list: {error}");
+        LibraryRegistry::Unknown
+    });
     if request.is("GET") {
-        return Ok(ApiResponse::ok(json!(services.accounts.viewing(key))));
+        let mut viewing = services.accounts.viewing(key);
+        viewing.startup_destination = startup_view(&viewing.startup_destination, &registry);
+        return Ok(ApiResponse::ok(json!(viewing)));
     }
-    let value = request.body::<crate::preferences::ViewingSettings>()?;
+    let mut value = request.body::<crate::preferences::ViewingSettings>()?;
+    value.startup_destination = startup_view(&value.startup_destination, &registry);
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
