@@ -4,7 +4,10 @@
 // membership walk, so the library stays pending and its grid empty. Hide
 // watched is turned on in Settings, the library opens with the Unwatched
 // filter and must keep the placeholder. Once the proxy heals and a sync runs,
-// the grid must settle to the API's answer. Read-only against the demo server.
+// the grid must settle to the API's answer. Then the proxy drops the walk
+// again and a requested sync owes it anew: a library walked once is no longer
+// pending, so after a reload its grid filtered to a genre nobody has says
+// "Nothing to show". Read-only against the demo server.
 //   just verify library-pending
 const DEMO = "https://demo.jellyfin.org/stable"
 const HIDE_WATCHED = { role: "switch", name: "Hide watched by default" }
@@ -12,6 +15,7 @@ const UNWATCHED_CHIP = { role: "button", name: "Remove Unwatched filter" }
 const CARD = '[data-item-grid-canvas] a[aria-label^="Open details for "]'
 const SAMPLES = 10
 const SAMPLE_MS = 500
+const NO_GENRE = "MediaFlick verify no such genre"
 
 const movieWalk = (url) =>
   url.pathname === "/Items"
@@ -86,6 +90,28 @@ export default async function libraryPending(ctx) {
     report.settledState = { api: answer, grid: state }
     expect(state === expected, `after the walk lands the grid shows ${state}, the API counts ${answer} unwatched`)
     await ctx.screenshot("02-settled")
+
+    proxy.resumeFailing()
+    const failedBefore = proxy.stats.failed
+    await ctx.app.evaluate(`fetch("/api/sync", { method: "POST" }).then((response) => response.status)`)
+    const rewalk = await ctx.until(async () => {
+      if (proxy.stats.failed <= failedBefore) return null
+      const status = (await ctx.api("/api/status")).body
+      if (status?.syncProgress?.active) return null
+      return (await ctx.api("/api/libraries")).body?.libraries?.find((library) => library.id === pending.id) ?? null
+    }, `a requested sync to fail the walk of ${pending.name} again`, 120000)
+    report.rewalk = { membershipPending: rewalk.membershipPending, failedWalks: proxy.stats.failed - failedBefore }
+    expect(rewalk.membershipPending === false, `${pending.name}, walked once, is not pending while its re-walk fails (${rewalk.membershipPending})`)
+    const genre = encodeURIComponent(NO_GENRE)
+    const none = await ctx.api(`/api/libraries/${pending.id}/items?limit=1&genre=${genre}`)
+    expect(none.status === 200 && none.body.total === 0, `${pending.name} has no title in the genre "${NO_GENRE}" (${none.status}, total ${none.body?.total})`)
+    const emptyPath = `/library/${pending.id}?genre=${genre}`
+    await ctx.app.evaluate(`history.replaceState(null, "", ${JSON.stringify(emptyPath)}); location.reload()`)
+    await ctx.until(async () => (await ctx.pathname()).startsWith(`/library/${pending.id}?genre=`) && (await ctx.app.evaluate("document.readyState")) === "complete", "the filtered library to reload", 30000)
+    await ctx.find({ role: "heading", name: pending.name }, { timeout: 30000 })
+    report.rewalkStates = await sample(ctx)
+    expect(report.rewalkStates.every((state) => state === "empty"), `while the re-walk of ${pending.name} fails its empty filtered grid says Nothing to show in all ${SAMPLES} samples (${[...new Set(report.rewalkStates)].join(", ")})`)
+    await ctx.screenshot("03-rewalk-failing-empty")
   } finally {
     ctx.writeEvidence("library-pending.json", report)
   }

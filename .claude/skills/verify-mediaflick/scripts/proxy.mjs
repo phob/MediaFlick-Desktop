@@ -4,7 +4,8 @@
 // (so ranged video requests work) and passing WebSocket upgrades (the app's
 // `/socket`) through. Two hooks change what the app sees:
 // - `fail(url, method)` drops the connection of each request it selects, which
-//   the app sees as an unreachable server; `heal()` stops failing.
+//   the app sees as an unreachable server; `heal()` stops failing and
+//   `resumeFailing()` starts again.
 // - `answer(url, method)` returns `{ status, body }` to answer a request
 //   itself with JSON instead of forwarding it, or null to forward it.
 // `cutSockets()` drops every open WebSocket and refuses new upgrades until
@@ -143,6 +144,10 @@ export function startProxy({ upstream, fail = () => false, answer = () => null, 
         heal() {
           failing = false
           log(`proxy: healed after ${stats.failed} failed requests`)
+        },
+        resumeFailing() {
+          failing = true
+          log("proxy: failing selected requests again")
         },
         cutSockets() {
           socketsCut = true
