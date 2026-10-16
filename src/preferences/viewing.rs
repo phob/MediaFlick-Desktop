@@ -41,21 +41,28 @@ pub enum StartupDestination {
 /// The destination the UI acts on. While the registry is unknown, a legacy
 /// value reads as Home and a library passes through.
 pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
-    let first_of = |kind| match registry {
-        LibraryRegistry::Known(libraries) => libraries
+    let LibraryRegistry::Known(libraries) = registry else {
+        return if matches!(
+            stored,
+            StartupDestination::Movies | StartupDestination::Series
+        ) {
+            StartupDestination::Home
+        } else {
+            stored.clone()
+        };
+    };
+    let first_of = |kind| {
+        libraries
             .iter()
             .find(|library| library.kind() == kind)
             .map_or(StartupDestination::Home, |library| {
                 StartupDestination::Library(library.id.clone())
-            }),
-        LibraryRegistry::Unknown => StartupDestination::Home,
+            })
     };
-    match (stored, registry) {
-        (StartupDestination::Movies, _) => first_of(LibraryKind::Movies),
-        (StartupDestination::Series, _) => first_of(LibraryKind::Shows),
-        (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
-            if !libraries.iter().any(|library| library.id == *id) =>
-        {
+    match stored {
+        StartupDestination::Movies => first_of(LibraryKind::Movies),
+        StartupDestination::Series => first_of(LibraryKind::Shows),
+        StartupDestination::Library(id) if !libraries.iter().any(|library| library.id == *id) => {
             StartupDestination::Home
         }
         _ => stored.clone(),
