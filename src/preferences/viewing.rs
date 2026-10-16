@@ -62,6 +62,14 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
     }
 }
 
+pub fn startup_on_save(
+    _stored: &StartupDestination,
+    submitted: StartupDestination,
+    registry: &LibraryRegistry,
+) -> io::Result<StartupDestination> {
+    Ok(startup_view(&submitted, registry))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct ViewingSettings {
@@ -243,7 +251,9 @@ impl PlayerComfort {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlayerComfort, StartupDestination, ViewingSettings, startup_view};
+    use super::{
+        PlayerComfort, StartupDestination, ViewingSettings, startup_on_save, startup_view,
+    };
     use crate::jellyfin::api::model::UserViewDto;
     use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
 
@@ -332,6 +342,85 @@ mod tests {
                 StartupDestination::Last,
             ] {
                 assert_eq!(startup_view(&destination, &registry), destination);
+            }
+        }
+    }
+
+    #[test]
+    fn saving_the_shown_destination_keeps_the_stored_one() -> std::io::Result<()> {
+        let movies_and_shows = known(&[(MOVIES_A, Some("movies")), (SHOWS, Some("tvshows"))]);
+        let cases = [
+            (
+                StartupDestination::Movies,
+                StartupDestination::Home,
+                LibraryRegistry::Unknown,
+            ),
+            (
+                StartupDestination::Movies,
+                library(MOVIES_A),
+                movies_and_shows.clone(),
+            ),
+            (
+                StartupDestination::Series,
+                StartupDestination::Home,
+                known(&[(MOVIES_A, Some("movies"))]),
+            ),
+            (library(GONE), StartupDestination::Home, movies_and_shows),
+        ];
+        for (stored, shown, registry) in cases {
+            assert_eq!(startup_on_save(&stored, shown, &registry)?, stored);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn saving_a_different_destination_stores_it_as_submitted() -> std::io::Result<()> {
+        let registry = known(&[(MOVIES_A, Some("movies")), (SHOWS, Some("tvshows"))]);
+        let cases = [
+            (
+                StartupDestination::Home,
+                library(GONE),
+                LibraryRegistry::Unknown,
+            ),
+            (StartupDestination::Home, library(GONE), registry.clone()),
+            (
+                StartupDestination::Movies,
+                StartupDestination::Home,
+                registry.clone(),
+            ),
+            (
+                StartupDestination::Movies,
+                StartupDestination::Calendar,
+                LibraryRegistry::Unknown,
+            ),
+            (
+                StartupDestination::Series,
+                StartupDestination::Last,
+                registry.clone(),
+            ),
+            (library(MOVIES_A), library(SHOWS), registry),
+        ];
+        for (stored, submitted, registry) in cases {
+            assert_eq!(
+                startup_on_save(&stored, submitted.clone(), &registry)?,
+                submitted
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn saving_a_legacy_destination_is_rejected() {
+        let registry = known(&[(MOVIES_A, Some("movies")), (SHOWS, Some("tvshows"))]);
+        for registry in [LibraryRegistry::Unknown, registry] {
+            for stored in [
+                StartupDestination::Home,
+                StartupDestination::Movies,
+                StartupDestination::Series,
+            ] {
+                for legacy in [StartupDestination::Movies, StartupDestination::Series] {
+                    assert!(startup_on_save(&stored, legacy, &registry).is_err());
+                }
             }
         }
     }
