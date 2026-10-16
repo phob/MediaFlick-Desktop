@@ -400,21 +400,20 @@ impl AccountConfigurationService {
             validate_browsing_route(page, route)?,
             BrowsingPage::Library(_)
         );
-        let stored = self.browsing(key);
-        let prune_due = prunes_legacy
-            && LEGACY_BROWSING_PAGES
-                .iter()
-                .any(|legacy| stored.contains_key(*legacy));
-        if !prune_due && stored.get(page).is_some_and(|saved| saved == route) {
-            return Ok(());
-        }
-        self.mutate(|document| {
+        self.mutate_if_changed(|document| {
             let browsing = &mut account_mut(document, key).browsing;
-            if prunes_legacy {
+            let prune_due = prunes_legacy
+                && LEGACY_BROWSING_PAGES
+                    .iter()
+                    .any(|legacy| browsing.contains_key(*legacy));
+            if !prune_due && browsing.get(page).is_some_and(|saved| saved == route) {
+                return Ok(false);
+            }
+            if prune_due {
                 browsing.retain(|page, _| !LEGACY_BROWSING_PAGES.contains(&page.as_str()));
             }
             browsing.insert(page.to_string(), route.to_string());
-            Ok(())
+            Ok(true)
         })
     }
 
@@ -624,6 +623,28 @@ impl AccountConfigurationService {
         *current = next;
         drop(current);
         Ok(result)
+    }
+
+    /// Like [`Self::mutate`], but `change` answers whether it changed the
+    /// document, and an unchanged one is not written. Deciding under the same
+    /// lock keeps another save from landing between the check and the write.
+    fn mutate_if_changed(
+        &self,
+        change: impl FnOnce(&mut AccountConfigurationFile) -> io::Result<bool>,
+    ) -> io::Result<()> {
+        let mut current = self
+            .document
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut next = current.clone();
+        if !change(&mut next)? {
+            return Ok(());
+        }
+        validate_document(&mut next)?;
+        save_document(&self.path, &next)?;
+        *current = next;
+        drop(current);
+        Ok(())
     }
 }
 
