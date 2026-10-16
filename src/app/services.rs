@@ -85,8 +85,8 @@ pub enum ShellRequest {
     /// The account's library list changed: a library was added, removed,
     /// renamed or moved, or the list was read for the first time.
     LibrariesChanged,
-    /// A library's membership walk landed, so it no longer reports one as
-    /// pending; its titles may not have changed.
+    /// A library's membership walk landed. After its first walk a library no
+    /// longer reports its membership pending; its titles may not have changed.
     LibraryMembershipsSettled,
     SessionExpired,
 }
