@@ -186,6 +186,7 @@ Shipped drives. All are proven on Linux, `segments` only in part: its `Ask me` a
 - `close-guard`: an unsaved draft, a window-manager close, the `Leave without saving?` dialog; `Keep editing` keeps the app and the draft, `Discard and leave` exits without writing it.
 - `bootstrap-retry`: sign-in through a proxy that drops the first catalog page, the retry screen, relaunch with the window shown, Sign out, Retry now while down, Home after the proxy heals. Read-only.
 - `sidebar-user-menu`: off Home, the user menu holds the hover sidebar expanded while it is open, also with the pointer on the menu, and the sidebar collapses after the menu closes. Read-only.
+- `sidebar-stable-icons`: off Home, hovering the collapsed sidebar's Movies icon expands it without moving any icon (search, library links, Settings, user avatar), and Movies stays under the pointer. Writes `sidebar-icons.json` with each icon's collapsed and expanded position. Read-only.
 - `library-filters`: the Series view, `Sort: Rating`, the Genre and Watch status filters (the menu closes on a pick and is named after its trigger), chips and `Clear all`, a one-character search that never commits, clearing a search, and signing out from a library page. Read-only.
 - `player-shelf`: the shortcut conflict alert, the Player shelf's `Player settings saved` toast, and `Restore defaults` + Save on Player, which keeps `player_backend`, `comfort` and `mark_watched_next` in `settings.json`.
 - `library-parity`: sort direction, the per-kind sort lists, a seeded Random order and Shuffle again, the In progress, Parental rating and Series status filters, the A–Z rail in both directions, and series cards' unwatched count, each compared with the demo server's own API. Read-only.
@@ -208,12 +209,12 @@ Both close drives also run with External mpv as the window: seed a `settings.jso
 Re-run all of them:
 
 ```powershell
-foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'library-filters', 'library-parity', 'player-shelf', 'home-settings', 'punctuation-search', 'top-level-titles', 'person-discover', 'libraries-api', 'generic-detail') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
+foreach ($d in 'smoke', 'application-settings', 'browse', 'home-library', 'detail-crew', 'item-detail', 'client-settings', 'labels', 'bootstrap-retry', 'sidebar-user-menu', 'sidebar-stable-icons', 'library-filters', 'library-parity', 'player-shelf', 'home-settings', 'punctuation-search', 'top-level-titles', 'person-discover', 'libraries-api', 'generic-detail') { just verify $d --run-id "all-$d-$(Get-Date -Format HHmmss)" }
 just verify sign-in --run-id "all-sign-in-$(Get-Date -Format HHmmss)" --url https://demo.jellyfin.org/stable
 ```
 
 ```sh
-for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu library-filters library-parity player-shelf home-settings punctuation-search top-level-titles person-discover libraries-api generic-detail; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
+for d in smoke application-settings browse home-library detail-crew item-detail client-settings labels close-minimize close-guard bootstrap-retry sidebar-user-menu sidebar-stable-icons library-filters library-parity player-shelf home-settings punctuation-search top-level-titles person-discover libraries-api generic-detail; do just verify "$d" --run-id "all-$d-$(date +%H%M%S)"; done
 just verify sign-in --run-id "all-sign-in-$(date +%H%M%S)" --url https://demo.jellyfin.org/stable
 ```
 
