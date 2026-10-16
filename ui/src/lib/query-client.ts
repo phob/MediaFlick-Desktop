@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { ApiError, type ItemQuery, type PlayerState } from "./api"
+import { ApiError, type ItemQuery, type LibrariesResponse, type PlayerState } from "./api"
 import type { BrowseSource } from "./libraries"
 
 /**
@@ -189,7 +189,7 @@ export function invalidateMediaSurfaces(
   }
 }
 
-type LibraryChangeScope = "library" | "catalog" | "items" | "live"
+type LibraryChangeScope = "library" | "catalog" | "items" | "live" | "resync"
 
 const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
 
@@ -198,21 +198,44 @@ const LIBRARY_CHANGE_REFRESHES: Record<
   {
     roots: ReadonlySet<string>
     home: "all" | "summary" | "none"
-    grids: (source: BrowseSource) => boolean
+    details: "named" | "all"
+    grids: (source: BrowseSource, isCatalogLibrary: (libraryId: string) => boolean) => boolean
   }
 > = {
   library: {
     roots: new Set(LIST_ROOTS),
     home: "all",
+    details: "named",
     grids: (source) => source.scope !== "titles" || !source.query.personId,
   },
   catalog: {
     roots: new Set(LIST_ROOTS),
     home: "summary",
-    grids: (source) => source.scope === "library" || (source.scope === "titles" && !source.query.personId),
+    details: "named",
+    grids: (source, isCatalogLibrary) =>
+      (source.scope === "library" && isCatalogLibrary(source.libraryId))
+      || (source.scope === "titles" && !source.query.personId),
   },
-  items: { roots: new Set(), home: "none", grids: () => false },
-  live: { roots: new Set(), home: "none", grids: (source) => source.scope === "library" },
+  items: { roots: new Set(), home: "none", details: "named", grids: () => false },
+  live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library" },
+  resync: {
+    roots: new Set(),
+    home: "none",
+    details: "all",
+    grids: (source) => source.scope === "library" || source.scope === "children",
+  },
+}
+
+/**
+ * Only a grid the local catalog answers can count letters, so `letterIndex`
+ * marks the libraries a catalog commit can change. A library missing from the
+ * cached list counts as one, so a commit never leaves its grid stale.
+ */
+function catalogLibraries(client: QueryClient): (libraryId: string) => boolean {
+  // The libraries key only ever holds `api.libraries` answers (librariesQuery in queries.ts).
+  const libraries = client.getQueryData<LibrariesResponse>(queryKeys.libraries)?.libraries ?? []
+  const live = new Set(libraries.filter((library) => !library.browse.letterIndex).map((library) => library.id))
+  return (libraryId) => !live.has(libraryId)
 }
 
 function isBrowseSource(value: unknown): value is BrowseSource {
@@ -232,17 +255,19 @@ export function invalidateLibraryChanged(
   contextIds: readonly string[] = [],
   scope: LibraryChangeScope = "library",
 ) {
-  const { roots, home, grids } = LIBRARY_CHANGE_REFRESHES[scope]
+  const { roots, home, grids, details } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
+  const isCatalogLibrary = catalogLibraries(client)
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
-      const [root, id] = query.queryKey
+      const [root, id, part] = query.queryKey
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
       if (root === BROWSE_ROOT && isBrowseSource(id)) {
-        return grids(id) || (id.scope === "children" && relevant.has(id.itemId))
+        return grids(id, isCatalogLibrary) || (id.scope === "children" && relevant.has(id.itemId))
       }
+      if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))

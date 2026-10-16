@@ -14,7 +14,7 @@ use super::{
     META_BOOTSTRAP_TOTAL, META_CATALOG_READY, META_EMPTY_SWEEP_AT, META_LAST_BOOTSTRAP,
     META_LAST_IDENTITY_SWEEP, META_LAST_SYNC, META_LATEST_FAILURE, META_WATERMARK,
     META_WATERMARK_IDS, MIN_CONFIRM_GAP, REBOOTSTRAP_INTERVAL, SyncHandle, SyncPhase, SyncReport,
-    Trigger, best_effort, cancelled, catalog_downloading, commit, now_unix, storage_error,
+    Trigger, best_effort, cancelled, commit, first_catalog_download, now_unix, storage_error,
 };
 
 pub fn run_cycle(
@@ -35,8 +35,7 @@ pub(super) fn run_cycle_inner(
     let scope = session.scope()?;
     let client = scope.client();
     let user_id = scope.user_id();
-    let initial_catalog = meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
-        && meta(library, META_LAST_BOOTSTRAP)?.is_none();
+    let initial_catalog = first_catalog_download(library).map_err(|error| storage_error(&error))?;
     let recovering_ownership = meta(library, META_LATEST_FAILURE)?.as_deref() == Some("1");
     let mut report = SyncReport::default();
     let mut walked = MembershipReplaced::default();
@@ -46,16 +45,17 @@ pub(super) fn run_cycle_inner(
         if full_bootstrap_due(library)? {
             restart_bootstrap(library, session, &scope)?;
         }
-        let downloading = catalog_downloading(library).map_err(|error| storage_error(&error))?;
-        if downloading && let Some(control) = control {
+        if meta(library, META_BOOTSTRAP_DONE)?.as_deref() != Some("1")
+            && let Some(control) = control
+        {
             control.set_phase(SyncPhase::Catalog);
         }
         if initial_catalog {
             walk_membership(library, session, &scope, true, control, &mut walked)?;
         }
         report.bootstrapped = bootstrap(library, session, &scope, client, user_id, control)?;
-        walked.walk_no_longer_owed |=
-            downloading && !catalog_downloading(library).map_err(|error| storage_error(&error))?;
+        walked.walk_no_longer_owed |= initial_catalog
+            && !first_catalog_download(library).map_err(|error| storage_error(&error))?;
         cancelled(control, session, &scope)?;
         if let Some(control) = control {
             control.set_phase(SyncPhase::Reconciling);
