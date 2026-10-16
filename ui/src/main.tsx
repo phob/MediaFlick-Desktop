@@ -7,6 +7,7 @@ import { NavigationHistory } from "./components/NavigationHistory"
 import "./app.css"
 import { Toaster } from "./components/ui/sonner"
 import { installAppSurfaceGuard } from "./lib/app-surface"
+import { listenForLibrariesChangedBeforeBridge } from "./lib/library-events"
 import { primeStartupQueries } from "./lib/queries"
 import { createQueryClient } from "./lib/query-client"
 
@@ -17,6 +18,7 @@ import { createQueryClient } from "./lib/query-client"
 installAppSurfaceGuard()
 const router = createBrowserRouter([{ path: "*", element: <NavigationHistory><App /></NavigationHistory> }])
 const queryClient = createQueryClient()
+listenForLibrariesChangedBeforeBridge()
 void primeStartupQueries(queryClient, window.location.pathname).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>

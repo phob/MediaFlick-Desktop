@@ -44,6 +44,18 @@ function createThrottle(flush: () => void) {
   }
 }
 
+let librariesChangedBeforeBridge = false
+
+function noteLibrariesChanged(event: Event) {
+  if (readShellEvent(event)?.type === "libraries-changed") librariesChangedBeforeBridge = true
+}
+
+// main.tsx primes library-dependent queries from /api/startup before the
+// bridge mounts; a libraries-changed announced in between must still refresh.
+export function listenForLibrariesChangedBeforeBridge() {
+  window.addEventListener("mediaflick-desktop-shell", noteLibrariesChanged)
+}
+
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
@@ -94,9 +106,11 @@ export function useLibraryMetadataBridge() {
     }
 
     window.addEventListener("mediaflick-desktop-shell", receive)
-    // main.tsx primes these from /api/startup before this listener exists, so
-    // a libraries-changed announced in between would otherwise be lost.
-    invalidateLibrariesChanged(queryClient)
+    window.removeEventListener("mediaflick-desktop-shell", noteLibrariesChanged)
+    if (librariesChangedBeforeBridge) {
+      librariesChangedBeforeBridge = false
+      invalidateLibrariesChanged(queryClient)
+    }
     return () => {
       window.removeEventListener("mediaflick-desktop-shell", receive)
       catalog.cancel()
