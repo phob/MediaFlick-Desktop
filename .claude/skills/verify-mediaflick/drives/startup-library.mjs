@@ -12,7 +12,11 @@
 // so the app's own last-route save is a no-op, and accounts.json must keep its
 // SHA-256 across the relaunch. Then Settings → Viewing must show the resolved
 // destination, list Home, every library in server order, Releases and Last
-// browsing page, and Save must write {"library":"<id>"} for the picked library.
+// browsing page, and keep the stored destination when Save changes only Text
+// size, also after the page's cached viewing is set to Home, as a page primed
+// before the library list arrived holds it. A PATCH naming "movies" must get
+// 400 and leave accounts.json as it was, and Save must write
+// {"library":"<id>"} for the picked library.
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://demo.jellyfin.org/stable build/verify-seeds/startup-demo
 //   just verify startup-library --seed build/verify-seeds/startup-demo/movies
 //   node .claude/skills/verify-mediaflick/scripts/startup-destination-seed.mjs https://jellyfin.example.com build/verify-seeds/startup-account
@@ -77,8 +81,8 @@ async function land(ctx, name, userId) {
   const record = {
     launch: name,
     landing: decided.landing,
-    viewingSeenByPage: decided.viewing,
-    viewingFetches: decided.viewingUpdates,
+    viewingAfterLanding: decided.viewing,
+    viewingUpdatesAfterLanding: decided.viewingUpdates,
     librariesKnownAfterLanding: libraries?.known ?? null,
     viewingApi: (await ctx.api("/api/settings/viewing")).body?.startupDestination,
   }
@@ -133,6 +137,36 @@ async function savePreviewDelay(ctx, userId, label) {
   record.stored = storedAccount(ctx, userId)?.viewing?.startupDestination
   record.api = (await ctx.api("/api/settings/viewing")).body?.startupDestination
   ctx.writeEvidence(`accounts-after-${label}-delay.json`, ctx.readConfig("accounts.json"))
+  return record
+}
+
+const SHOW_HOME = `(() => {
+  ${FIND_QUERY}
+  const viewing = query("viewing")
+  viewing.setData({ ...viewing.state.data, startupDestination: "home" }, { manual: true })
+  return viewing.state.data.startupDestination
+})()`
+
+const LEGACY_PATCH = `(async () => {
+  const current = await (await fetch("/api/settings/viewing")).json()
+  const response = await fetch("/api/settings/viewing", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...current, startupDestination: "movies" }),
+  })
+  return { status: response.status, body: await response.text() }
+})()`
+
+async function saveTextSize(ctx, userId, label) {
+  const field = { role: "spinbutton", name: "Text size percent" }
+  const scale = storedAccount(ctx, userId)?.viewing?.textScale === 110 ? 120 : 110
+  const record = { pageViewing: (await ctx.app.evaluate(PAGE_VIEWING))?.viewing, shown: (await ctx.state(SELECT)).value, textScale: scale }
+  await ctx.fill(field, String(scale))
+  await ctx.press({ role: "button", name: "Save" })
+  await ctx.until(() => storedAccount(ctx, userId)?.viewing?.textScale === scale, `${label}: accounts.json to store textScale ${scale}`)
+  await ctx.until(async () => (await ctx.state({ role: "button", name: "Save" })).disabled, `${label}: the Viewing save bar to settle`)
+  record.stored = storedAccount(ctx, userId)?.viewing?.startupDestination
+  ctx.writeEvidence(`accounts-after-${label}.json`, ctx.readConfig("accounts.json"))
   return record
 }
 
@@ -210,7 +244,7 @@ export default async function startupLibrary(ctx) {
     report.hashes.afterRelaunch = accountsHash(ctx)
     ctx.writeEvidence("accounts-after-relaunch.json", ctx.readConfig("accounts.json"))
     const expectedView = expected ? { library: expected.id } : "home"
-    expect(second.viewingFetches === 1 && same(second.viewingSeenByPage, expectedView), `relaunch: the page landed from its only viewing fetch (${second.viewingFetches}), ${JSON.stringify(second.viewingSeenByPage)}, the destination resolved against the known library list`)
+    expect(same(second.viewingAfterLanding, expectedView), `relaunch: after landing, the page's cached viewing is ${JSON.stringify(second.viewingAfterLanding)}, the destination resolved against the known library list`)
     expect(second.landing === report.expected.landing, `relaunch: ${JSON.stringify(seeded)} landed on ${second.landing} (expected ${report.expected.landing}${expected ? `, ${expected.name}` : ", Home"})`)
     expect(same(second.viewingApi, expected ? { library: expected.id } : "home"), `relaunch: /api/settings/viewing answers ${JSON.stringify(second.viewingApi)}`)
     expect(report.hashes.afterRelaunch === report.hashes.beforeRelaunch, `relaunch: accounts.json kept SHA-256 ${report.hashes.beforeRelaunch}`)
@@ -224,6 +258,20 @@ export default async function startupLibrary(ctx) {
     report.settings = { shown, options: await startupOptions(ctx) }
     expect(shown === (expected ? expected.name : "Home"), `Settings shows the resolved destination "${shown}"`)
     expect(same(report.settings.options, ["Home", ...libraries.map((library) => library.name), "Releases", "Last browsing page"]), `the options are Home, ${libraries.length} libraries in server order, Releases and Last browsing page (${report.settings.options.join(", ")})`)
+
+    report.textSizeSave = await saveTextSize(ctx, userId, "text-size")
+    expect(same(report.textSizeSave.stored, seeded), `Viewing: saving only Text size while it shows "${report.textSizeSave.shown}" keeps ${JSON.stringify(seeded)} in accounts.json (now ${JSON.stringify(report.textSizeSave.stored)})`)
+    report.staleTextSizeSave = { pageViewingSet: await ctx.app.evaluate(SHOW_HOME) }
+    await ctx.until(async () => (await ctx.state(SELECT)).value === "Home", "Viewing: the select to show Home from the page's cached viewing")
+    Object.assign(report.staleTextSizeSave, await saveTextSize(ctx, userId, "stale-text-size"))
+    expect(same(report.staleTextSizeSave.stored, seeded), `Viewing: with the page's cached viewing set to Home, saving only Text size keeps ${JSON.stringify(seeded)} in accounts.json (now ${JSON.stringify(report.staleTextSizeSave.stored)})`)
+    await ctx.until(async () => (await ctx.state(SELECT)).value === shown, `Viewing: the select to show "${shown}" from the save's answer`)
+
+    const beforeLegacy = accountsHash(ctx)
+    report.legacyPatch = await ctx.app.evaluate(LEGACY_PATCH)
+    expect(report.legacyPatch.status === 400, `a PATCH from the page naming "movies" is rejected with 400 (got ${report.legacyPatch.status}: ${report.legacyPatch.body.slice(0, 160)})`)
+    expect(accountsHash(ctx) === beforeLegacy, "accounts.json is byte-identical after the rejected PATCH")
+
     const target = expected?.id === shows.id ? firstMovies : shows
     await ctx.choose({ name: SELECT.name }, target.name)
     expect(same(storedAccount(ctx, userId)?.viewing?.startupDestination, seeded), "choosing a library leaves accounts.json unchanged until Save")
