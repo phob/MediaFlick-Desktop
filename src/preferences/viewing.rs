@@ -62,12 +62,27 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
     }
 }
 
+/// The destination a save stores. Callers send back what `startup_view`
+/// showed them, so that value keeps the stored one and a save of another
+/// setting cannot resolve a legacy choice or a missing library away.
 pub fn startup_on_save(
-    _stored: &StartupDestination,
+    stored: &StartupDestination,
     submitted: StartupDestination,
     registry: &LibraryRegistry,
 ) -> io::Result<StartupDestination> {
-    Ok(startup_view(&submitted, registry))
+    if matches!(
+        submitted,
+        StartupDestination::Movies | StartupDestination::Series
+    ) {
+        return Err(io::Error::other(
+            "choose a library instead of Movies or Series as the startup destination",
+        ));
+    }
+    Ok(if submitted == startup_view(stored, registry) {
+        stored.clone()
+    } else {
+        submitted
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

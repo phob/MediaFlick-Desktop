@@ -1,5 +1,7 @@
 use crate::library::libraries::LibraryRegistry;
-use crate::preferences::startup_view;
+use crate::preferences::{ViewingSettings, startup_on_save, startup_view};
+
+use super::catalog::still_signed_in;
 
 use super::*;
 
@@ -236,23 +238,36 @@ fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let scope = session_scope(services)?;
     let key = scope.account();
     let registry = services.library.libraries().unwrap_or_else(|error| {
-        tracing::warn!(target: "library.sync", "could not read the library list: {error}");
+        tracing::warn!(target: "config", "could not read the library list: {error}");
         LibraryRegistry::Unknown
     });
     if request.is("GET") {
         let mut viewing = services.accounts.viewing(key);
         viewing.startup_destination = startup_view(&viewing.startup_destination, &registry);
+        still_signed_in(services, &scope)?;
         return Ok(ApiResponse::ok(json!(viewing)));
     }
-    let mut value = request.body::<crate::preferences::ViewingSettings>()?;
-    value.startup_destination = startup_view(&value.startup_destination, &registry);
+    let value = request.body::<ViewingSettings>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(match services.accounts.save_viewing(key, &value) {
-                Ok(()) => ApiResponse::ok(json!(value)),
-                Err(error) => ApiResponse::error(400, error.to_string()),
-            })
+            let stored = services.accounts.viewing(key).startup_destination;
+            let startup_destination =
+                match startup_on_save(&stored, value.startup_destination.clone(), &registry) {
+                    Ok(destination) => destination,
+                    Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
+                };
+            let saved = ViewingSettings {
+                startup_destination,
+                ..value
+            };
+            if let Err(error) = services.accounts.save_viewing(key, &saved) {
+                return Ok(ApiResponse::error(400, error.to_string()));
+            }
+            Ok(ApiResponse::ok(json!(ViewingSettings {
+                startup_destination: startup_view(&saved.startup_destination, &registry),
+                ..saved
+            })))
         })
 }
 
