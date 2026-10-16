@@ -376,11 +376,17 @@ impl AccountConfigurationService {
         })
     }
 
-    pub fn save_viewing(&self, key: &AccountKey, viewing: &ViewingSettings) -> io::Result<()> {
-        viewing.validate()?;
+    pub fn save_viewing_with(
+        &self,
+        key: &AccountKey,
+        change: impl FnOnce(&ViewingSettings) -> ViewingSettings,
+    ) -> io::Result<ViewingSettings> {
         self.mutate(|document| {
-            account_mut(document, key).viewing = viewing.clone();
-            Ok(())
+            let account = account_mut(document, key);
+            let viewing = change(&account.viewing);
+            viewing.validate()?;
+            account.viewing = viewing.clone();
+            Ok(viewing)
         })
     }
 
@@ -747,12 +753,8 @@ impl BrowsingPage {
         if page == "last" {
             return Some(Self::Last);
         }
-        canonical_library_id(page.strip_prefix("library:")?).map(Self::Library)
+        LibraryId::canonical(page.strip_prefix("library:")?).map(Self::Library)
     }
-}
-
-fn canonical_library_id(raw: &str) -> Option<LibraryId> {
-    LibraryId::parse(raw).filter(|id| id.as_str() == raw)
 }
 
 fn validate_browsing_route(page: &str, route: &str) -> io::Result<BrowsingPage> {
@@ -778,7 +780,7 @@ fn route_fits(own_library: Option<&LibraryId>, route: &str) -> bool {
     let (path, _query) = route.split_once('?').unwrap_or((route, ""));
     let library = path
         .strip_prefix("/library/")
-        .and_then(canonical_library_id);
+        .and_then(LibraryId::canonical);
     route.len() <= 2048
         && match own_library {
             Some(id) => library.as_ref() == Some(id),

@@ -46,6 +46,16 @@ function createThrottle(flush: () => void) {
   }
 }
 
+let librariesChangedBeforeBridge = false
+
+function noteLibrariesChanged(event: Event) {
+  if (readShellEvent(event)?.type === "libraries-changed") librariesChangedBeforeBridge = true
+}
+
+export function listenForLibrariesChangedBeforeBridge() {
+  window.addEventListener("mediaflick-desktop-shell", noteLibrariesChanged)
+}
+
 export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
@@ -105,6 +115,11 @@ export function useLibraryMetadataBridge() {
     }
 
     window.addEventListener("mediaflick-desktop-shell", receive)
+    window.removeEventListener("mediaflick-desktop-shell", noteLibrariesChanged)
+    if (librariesChangedBeforeBridge) {
+      librariesChangedBeforeBridge = false
+      invalidateLibrariesChanged(queryClient)
+    }
     return () => {
       window.removeEventListener("mediaflick-desktop-shell", receive)
       catalog.cancel()

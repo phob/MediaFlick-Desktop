@@ -1,11 +1,12 @@
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::jellyfin::api::model::UserViewDto;
 
 use super::SortKey;
 use super::model::TitleKind;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String")]
 pub struct LibraryId(String);
 
 impl LibraryId {
@@ -14,8 +15,20 @@ impl LibraryId {
         crate::app::ids::valid_opaque_id(raw).then(|| Self(raw.to_ascii_lowercase()))
     }
 
+    pub fn canonical(raw: &str) -> Option<Self> {
+        Self::parse(raw).filter(|id| id.as_str() == raw)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for LibraryId {
+    type Error = &'static str;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        Self::canonical(&raw).ok_or("invalid library id")
     }
 }
 

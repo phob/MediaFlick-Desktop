@@ -1,4 +1,4 @@
-import type { JsonObject } from "../json.ts"
+import { sameJson, type JsonObject } from "../json.ts"
 
 export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
 export type CatalogKind = (typeof CATALOG_KINDS)[number]
@@ -381,6 +381,8 @@ export function playerSettingsWrite(settings: PlayerSettings): PlayerSettingsWri
   }
 }
 
+export type StartupDestination = "home" | "calendar" | "last" | { library: string }
+
 export interface ViewingSettings {
   spoilerProtection: boolean
   nextEpisode: "off" | "ask" | "auto"
@@ -394,9 +396,18 @@ export interface ViewingSettings {
   textScale: number
   posterSize: number
   previewDelayMs: number
-  startupDestination: "home" | "movies" | "series" | "calendar" | "last"
+  startupDestination: StartupDestination
   rememberFilters: boolean
   hideWatched: boolean
+}
+
+export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
+  startupDestination?: StartupDestination
+}
+
+export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
+  const { startupDestination, ...others } = settings
+  return source && sameJson(startupDestination, source.startupDestination) ? others : settings
 }
 
 export interface PlayerComfort {

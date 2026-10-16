@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { api, type AppearanceSettings, type RatingSourceDefinition, type Status } from "@/lib/api"
+import { api, viewingSettingsWrite, type AppearanceSettings, type RatingSourceDefinition, type Status } from "@/lib/api"
 import { accountKey, useHome, useItem, useNextUp, useRatingsStatus, useSettings, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { RatingsContext, type RatingsContextValue } from "@/lib/rating-context"
@@ -282,7 +282,7 @@ export function Appearance() {
       if (submitted.previewDelay !== undefined && submitted.previewDelay !== viewing.data?.previewDelayMs) {
         const current = await api.viewing()
         checkAccount()
-        const saved = await api.saveViewing({ ...current, previewDelayMs: submitted.previewDelay })
+        const saved = await api.saveViewing(viewingSettingsWrite({ ...current, previewDelayMs: submitted.previewDelay }, current))
         checkAccount()
         cache.setQueryData(queryKeys.viewing(account), saved)
         acceptDelay(saved.previewDelayMs, submitted.previewDelay)

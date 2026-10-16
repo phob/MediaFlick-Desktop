@@ -1,3 +1,8 @@
+use crate::library::libraries::LibraryRegistry;
+use crate::preferences::{ViewingSettings, ViewingWrite, startup_view};
+
+use super::catalog::still_signed_in;
+
 use super::*;
 
 pub(super) fn route(
@@ -232,17 +237,30 @@ fn patch_appearance_settings(services: &Arc<Services>, request: &ApiRequest) -> 
 fn viewing_settings(services: &Arc<Services>, request: &ApiRequest) -> Handled {
     let scope = session_scope(services)?;
     let key = scope.account();
+    let registry = services.library.libraries().unwrap_or_else(|error| {
+        tracing::warn!(target: "config", "could not read the library list: {error}");
+        LibraryRegistry::Unknown
+    });
     if request.is("GET") {
-        return Ok(ApiResponse::ok(json!(services.accounts.viewing(key))));
+        let mut viewing = services.accounts.viewing(key);
+        viewing.startup_destination = startup_view(&viewing.startup_destination, &registry);
+        still_signed_in(services, &scope)?;
+        return Ok(ApiResponse::ok(json!(viewing)));
     }
-    let value = request.body::<crate::preferences::ViewingSettings>()?;
+    let write = request.body::<ViewingWrite>()?;
     services
         .session
         .commit_if_current(&scope, stale_account_response, || {
-            Ok(match services.accounts.save_viewing(key, &value) {
-                Ok(()) => ApiResponse::ok(json!(value)),
-                Err(error) => ApiResponse::error(400, error.to_string()),
-            })
+            let saved = match services.accounts.save_viewing_with(key, |stored| {
+                write.apply(stored.startup_destination.clone())
+            }) {
+                Ok(saved) => saved,
+                Err(error) => return Ok(ApiResponse::error(400, error.to_string())),
+            };
+            Ok(ApiResponse::ok(json!(ViewingSettings {
+                startup_destination: startup_view(&saved.startup_destination, &registry),
+                ..saved
+            })))
         })
 }
 

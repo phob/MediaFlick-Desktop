@@ -65,6 +65,7 @@ import type {
   StreamingQualityId,
   TrailerSummary,
   ViewingSettings,
+  ViewingSettingsWrite,
 } from "./types.ts"
 import { queryString, type ExternalProvider } from "./urls.ts"
 
@@ -137,7 +138,7 @@ async function upload<T>(path: string, body: ArrayBuffer, signal?: AbortSignal):
 
 export const api = {
   viewing: () => request<ViewingSettings>("/api/settings/viewing"),
-  saveViewing: (value: ViewingSettings) => request<ViewingSettings>("/api/settings/viewing", { method: "PATCH", body: value }),
+  saveViewing: (value: ViewingSettingsWrite) => request<ViewingSettings>("/api/settings/viewing", { method: "PATCH", body: value }),
   browsing: () => request<Record<string, string>>("/api/settings/browsing"),
   saveBrowsing: (page: BrowsingPage, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
   status: () => request<Status>("/api/status"),
