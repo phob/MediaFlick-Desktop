@@ -3,7 +3,7 @@ use std::io;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::library::libraries::{LibraryId, LibraryKind, LibraryRegistry};
+use crate::library::libraries::{LibraryId, LibraryKind, LibraryRegistry, MediaLibrary};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,14 +48,7 @@ impl StartupDestination {
 /// The destination the UI acts on. While the registry is unknown, a legacy
 /// value reads as Home and a library passes through.
 pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> StartupDestination {
-    let LibraryRegistry::Known(libraries) = registry else {
-        return if stored.is_legacy() {
-            StartupDestination::Home
-        } else {
-            stored.clone()
-        };
-    };
-    let first_of = |kind| {
+    let first_of = |libraries: &[MediaLibrary], kind| {
         libraries
             .iter()
             .find(|library| library.kind() == kind)
@@ -63,10 +56,17 @@ pub fn startup_view(stored: &StartupDestination, registry: &LibraryRegistry) -> 
                 StartupDestination::Library(library.id.clone())
             })
     };
-    match stored {
-        StartupDestination::Movies => first_of(LibraryKind::Movies),
-        StartupDestination::Series => first_of(LibraryKind::Shows),
-        StartupDestination::Library(id) if !libraries.iter().any(|library| library.id == *id) => {
+    match (stored, registry) {
+        (stored, LibraryRegistry::Unknown) if stored.is_legacy() => StartupDestination::Home,
+        (StartupDestination::Movies, LibraryRegistry::Known(libraries)) => {
+            first_of(libraries, LibraryKind::Movies)
+        }
+        (StartupDestination::Series, LibraryRegistry::Known(libraries)) => {
+            first_of(libraries, LibraryKind::Shows)
+        }
+        (StartupDestination::Library(id), LibraryRegistry::Known(libraries))
+            if !libraries.iter().any(|library| library.id == *id) =>
+        {
             StartupDestination::Home
         }
         _ => stored.clone(),
