@@ -254,6 +254,7 @@ export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries })
   void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
+  void client.invalidateQueries({ queryKey: ["viewing"] })
 }
 
 export function invalidateLibraryMemberships(client: QueryClient) {
