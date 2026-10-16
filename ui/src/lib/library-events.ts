@@ -9,6 +9,7 @@ import {
 import { readShellEvent, shellEventIds, type ShellEvent } from "./shell-events"
 
 interface LiveChange {
+  all: boolean
   itemIds: string[]
   contextIds: string[]
 }
@@ -16,6 +17,7 @@ interface LiveChange {
 function readLiveChange(event: ShellEvent): LiveChange | null {
   if (event.type !== "live-changed") return null
   return {
+    all: event.payload.all === true,
     itemIds: shellEventIds(event.payload.itemIds),
     contextIds: shellEventIds(event.payload.contextIds),
   }
@@ -48,9 +50,11 @@ export function useLibraryMetadataBridge() {
   const queryClient = useQueryClient()
   useEffect(() => {
     const catalog = createThrottle(() => invalidateLibraryChanged(queryClient, [], [], "catalog"))
-    const livePending = { itemIds: new Set<string>(), contextIds: new Set<string>() }
+    const livePending = { all: false, itemIds: new Set<string>(), contextIds: new Set<string>() }
     const live = createThrottle(() => {
-      invalidateLibraryChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds], "live")
+      const scope = livePending.all ? "resync" : "live"
+      invalidateLibraryChanged(queryClient, [...livePending.itemIds], [...livePending.contextIds], scope)
+      livePending.all = false
       livePending.itemIds.clear()
       livePending.contextIds.clear()
     })
@@ -76,6 +80,7 @@ export function useLibraryMetadataBridge() {
       }
       const change = detail && readLiveChange(detail)
       if (change) {
+        if (change.all) livePending.all = true
         for (const id of change.itemIds) livePending.itemIds.add(id)
         for (const id of change.contextIds) livePending.contextIds.add(id)
         live.request()

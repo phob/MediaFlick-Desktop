@@ -9,10 +9,19 @@
 // Jellyfin reports a playlist change as LibraryChanged ItemsUpdated
 // [<playlist>], about 30 s after the server's last library change. The
 // playlist is deleted at the end, and after the run if the drive failed first.
+// With --signed-out the app signs in through a loopback proxy, which then cuts
+// the app's socket while the playlist changes again and restores it only after
+// Jellyfin's push has gone out to nobody. The open page must follow once the
+// app reconnects, though no push names the playlist.
 //   just verify live-changes --account https://jellyfin.example.com --timeout 600
+//   just verify live-changes --account https://jellyfin.example.com --signed-out --timeout 900
 const GRID_CARD_LINK = '[data-item-grid-canvas] article a[aria-label^="Open details for"]'
 const PUSH_WAIT_MS = 240000
 const LIVE_NOTICE = "announced a pushed change to items the cache does not hold"
+const RECONNECT_NOTICE = "the event stream reconnected"
+const SOCKET_CUT_MS = 90000
+const RECONNECT_WAIT_MS = 240000
+const AFTER_RECONNECT_MS = 30000
 
 async function openByUrl(ctx, path) {
   await ctx.app.evaluate(`history.pushState(null, "", ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent("popstate"))`)
@@ -28,16 +37,54 @@ async function cardIds(ctx) {
 
 const sameList = (left, right) => JSON.stringify(left) === JSON.stringify(right)
 
+async function changeWhileDisconnected(ctx, proxy, playlist, movedId, expect) {
+  const result = {}
+  const logBefore = ctx.appLog().length
+  const upgradesBefore = proxy.stats.upgrades
+  proxy.cutSockets()
+  await ctx.until(() => proxy.stats.refusedUpgrades > 0, "the app to try to reopen its socket", 60000)
+  const entries = await playlist.items()
+  const changedAt = Date.now()
+  await playlist.move(entries.find((item) => item.Id === movedId).PlaylistItemId, entries.length - 1)
+  const changed = (await playlist.items()).map((item) => item.Id)
+  result.server = changed
+  await new Promise((resolve) => setTimeout(resolve, SOCKET_CUT_MS))
+  result.cardsWhileCut = await cardIds(ctx)
+  expect(!sameList(result.cardsWhileCut, changed), `the page did not learn of the change while the socket was cut (${JSON.stringify(result.cardsWhileCut)})`)
+  proxy.restoreSockets()
+  const reconnected = await ctx.until(() => proxy.stats.upgrades > upgradesBefore, "the app to reopen its socket", RECONNECT_WAIT_MS).then(() => true, () => false)
+  result.secondsCut = Math.round((Date.now() - changedAt) / 1000)
+  expect(reconnected, `the app reopened its socket ${result.secondsCut} s after the change (${proxy.stats.refusedUpgrades} attempts refused)`)
+  const followed = reconnected && await ctx.until(async () => sameList(await cardIds(ctx), changed), "the open page to show the order changed while disconnected", AFTER_RECONNECT_MS).then(() => true, () => false)
+  result.cards = await cardIds(ctx)
+  const lines = ctx.appLog().slice(logBefore).split("\n")
+  result.pushes = lines.filter((line) => line.includes(LIVE_NOTICE) && line.includes(playlist.id))
+  result.reconnects = lines.filter((line) => line.includes(RECONNECT_NOTICE))
+  expect(followed, `the open page shows the order changed while disconnected within ${AFTER_RECONNECT_MS / 1000} s of the reconnect (${JSON.stringify(result.cards)})`)
+  expect(result.pushes.length === 0, `no push named the playlist after the cut, so the reconnect refreshed the page (${result.pushes.length} pushes)`)
+  expect(result.reconnects.length === 1, `app.log announces the reconnect once (${result.reconnects.length} lines)`)
+  expect(await ctx.app.evaluate("window.__liveChangesNoReload === true"), "the page was not reloaded across the reconnect")
+  await ctx.screenshot("03-after-reconnect")
+  return result
+}
+
 export default async function liveChanges(ctx) {
   if (!ctx.account) throw new Error("live-changes writes a playlist and needs --account SERVER")
-  await ctx.signIn({})
+  const proxy = ctx.account.signedOut ? await ctx.proxy({ upstream: ctx.account.server }) : null
+  if (proxy) {
+    await ctx.fill({ role: "textbox", name: "Server" }, proxy.url)
+    await ctx.quickConnect({ approve: true, timeout: 60000 })
+    ctx.revokeAppSessionAfterRun()
+  } else {
+    await ctx.signIn({})
+  }
   await ctx.until(async () => {
     const status = (await ctx.api("/api/status")).body
     return status?.bootstrap?.state === "ready" && status.syncProgress?.active === false
   }, "the first sync to finish", 300000)
   await ctx.until(() => ctx.appLog().includes("listening for Jellyfin server events"), "the app's Jellyfin socket", 60000)
 
-  const report = { server: ctx.account.server, checks: [] }
+  const report = { server: ctx.account.server, throughProxy: Boolean(proxy), checks: [] }
   const expect = (condition, message) => {
     report.checks.push({ ok: Boolean(condition), message })
     ctx.step(`${condition ? "ok" : "FAIL"}: ${message}`)
@@ -94,6 +141,12 @@ export default async function liveChanges(ctx) {
     const slots = children.map((item) => [item.id, item.playlistIndex])
     report.after.slots = slots
     expect(sameList(slots, after.map((id, index) => [id, index])), `the children answer numbers each slot in the server's order (${JSON.stringify(slots)})`)
+
+    if (proxy) {
+      report.reconnect = await changeWhileDisconnected(ctx, proxy, playlist, fourth, expect)
+    } else {
+      ctx.step("the reconnect phase needs --signed-out, which signs the app in through a proxy")
+    }
   } finally {
     await playlist.remove()
     const gone = !(await playlist.exists())

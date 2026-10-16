@@ -189,7 +189,7 @@ export function invalidateMediaSurfaces(
   }
 }
 
-type LibraryChangeScope = "library" | "catalog" | "items" | "live"
+type LibraryChangeScope = "library" | "catalog" | "items" | "live" | "resync"
 
 const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
 
@@ -198,21 +198,30 @@ const LIBRARY_CHANGE_REFRESHES: Record<
   {
     roots: ReadonlySet<string>
     home: "all" | "summary" | "none"
+    details: "named" | "all"
     grids: (source: BrowseSource) => boolean
   }
 > = {
   library: {
     roots: new Set(LIST_ROOTS),
     home: "all",
+    details: "named",
     grids: (source) => source.scope !== "titles" || !source.query.personId,
   },
   catalog: {
     roots: new Set(LIST_ROOTS),
     home: "summary",
+    details: "named",
     grids: (source) => source.scope === "library" || (source.scope === "titles" && !source.query.personId),
   },
-  items: { roots: new Set(), home: "none", grids: () => false },
-  live: { roots: new Set(), home: "none", grids: (source) => source.scope === "library" },
+  items: { roots: new Set(), home: "none", details: "named", grids: () => false },
+  live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library" },
+  resync: {
+    roots: new Set(),
+    home: "none",
+    details: "all",
+    grids: (source) => source.scope === "library" || source.scope === "children",
+  },
 }
 
 function isBrowseSource(value: unknown): value is BrowseSource {
@@ -232,17 +241,18 @@ export function invalidateLibraryChanged(
   contextIds: readonly string[] = [],
   scope: LibraryChangeScope = "library",
 ) {
-  const { roots, home, grids } = LIBRARY_CHANGE_REFRESHES[scope]
+  const { roots, home, grids, details } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
-      const [root, id] = query.queryKey
+      const [root, id, part] = query.queryKey
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
       if (root === BROWSE_ROOT && isBrowseSource(id)) {
         return grids(id) || (id.scope === "children" && relevant.has(id.itemId))
       }
+      if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
       return root === "item" && relevant.has(String(id))
