@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { ApiError, type ItemQuery, type LibrariesResponse, type PlayerState } from "./api"
+import { ApiError, type ItemQuery, type PlayerState } from "./api"
 import type { BrowseSource } from "./libraries"
 
 /**
@@ -199,7 +199,7 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     roots: ReadonlySet<string>
     home: "all" | "summary" | "none"
     details: "named" | "all"
-    grids: (source: BrowseSource, isCatalogLibrary: (libraryId: string) => boolean) => boolean
+    grids: (source: BrowseSource) => boolean
   }
 > = {
   library: {
@@ -212,9 +212,7 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     roots: new Set(LIST_ROOTS),
     home: "summary",
     details: "named",
-    grids: (source, isCatalogLibrary) =>
-      (source.scope === "library" && isCatalogLibrary(source.libraryId))
-      || (source.scope === "titles" && !source.query.personId),
+    grids: (source) => source.scope === "titles" && !source.query.personId,
   },
   items: { roots: new Set(), home: "none", details: "named", grids: () => false },
   live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library" },
@@ -226,18 +224,6 @@ const LIBRARY_CHANGE_REFRESHES: Record<
   },
 }
 
-/**
- * Only a grid the local catalog answers can count letters, so `letterIndex`
- * marks the libraries a catalog commit can change. A library missing from the
- * cached list counts as one, so a commit never leaves its grid stale.
- */
-function catalogLibraries(client: QueryClient): (libraryId: string) => boolean {
-  // The libraries key only ever holds `api.libraries` answers (librariesQuery in queries.ts).
-  const libraries = client.getQueryData<LibrariesResponse>(queryKeys.libraries)?.libraries ?? []
-  const live = new Set(libraries.filter((library) => !library.browse.letterIndex).map((library) => library.id))
-  return (libraryId) => !live.has(libraryId)
-}
-
 function isBrowseSource(value: unknown): value is BrowseSource {
   if (typeof value !== "object" || value === null || !("scope" in value)) return false
   return value.scope === "titles" || value.scope === "library" || value.scope === "children"
@@ -247,17 +233,19 @@ function isBrowseSource(value: unknown): value is BrowseSource {
  * One committed native batch becomes one React Query invalidation operation.
  * The predicate covers aggregate projections, diagnostics/status, changed
  * details, and parent/series/season contexts while preserving active-only
- * refetch behavior.
+ * refetch behavior. `libraryIds` names library grids to refresh beyond the
+ * scope's own.
  */
 export function invalidateLibraryChanged(
   client: QueryClient,
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
   scope: LibraryChangeScope = "library",
+  libraryIds: readonly string[] = [],
 ) {
   const { roots, home, grids, details } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
-  const isCatalogLibrary = catalogLibraries(client)
+  const namedLibraries = new Set(libraryIds)
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
@@ -265,7 +253,9 @@ export function invalidateLibraryChanged(
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
       if (root === BROWSE_ROOT && isBrowseSource(id)) {
-        return grids(id, isCatalogLibrary) || (id.scope === "children" && relevant.has(id.itemId))
+        return grids(id)
+          || (id.scope === "children" && relevant.has(id.itemId))
+          || (id.scope === "library" && namedLibraries.has(id.libraryId))
       }
       if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
       // The billboard endpoint is random. A committed sync batch may update

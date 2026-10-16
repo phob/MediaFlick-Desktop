@@ -53,6 +53,18 @@ pub(super) fn refresh_libraries(
     })
 }
 
+pub(super) fn catalog_library_ids(library: &Library) -> Result<Vec<String>, ApiError> {
+    let registry = library.libraries().map_err(|error| storage_error(&error))?;
+    let LibraryRegistry::Known(libraries) = registry else {
+        return Ok(Vec::new());
+    };
+    Ok(libraries
+        .iter()
+        .filter(|entry| entry.catalog_title().is_some())
+        .map(|entry| entry.id.as_str().to_string())
+        .collect())
+}
+
 pub(super) fn membership_pass(
     library: &Library,
     session: &Session,

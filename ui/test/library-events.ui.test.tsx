@@ -38,7 +38,7 @@ describe("native library change bridge", () => {
     return queryClient.getQueryState(queryKey)?.isInvalidated ?? false
   }
 
-  function shellEvent(type: string, payload: { itemIds: string[]; contextIds?: string[] }) {
+  function shellEvent(type: string, payload: { itemIds: string[]; contextIds?: string[]; libraryIds?: string[] }) {
     window.dispatchEvent(new CustomEvent("mediaflick-desktop-shell", { detail: { type, payload } }))
   }
 
@@ -59,12 +59,12 @@ describe("native library change bridge", () => {
     seed(queryKeys.home, queryKeys.homeResume, queryKeys.item("second"))
     render(<Bridge />)
 
-    shellEvent("catalog-changed", { itemIds: ["first"], contextIds: ["series"] })
+    shellEvent("catalog-changed", { itemIds: ["first"], contextIds: ["series"], libraryIds: ["movies"] })
     expect(invalidated(queryKeys.home)).toBe(true)
     expect(invalidated(queryKeys.homeResume)).toBe(false)
 
     seed(queryKeys.home)
-    shellEvent("catalog-changed", { itemIds: ["second"], contextIds: ["series"] })
+    shellEvent("catalog-changed", { itemIds: ["second"], contextIds: ["series"], libraryIds: ["movies"] })
     expect(invalidated(queryKeys.item("second"))).toBe(true)
     expect(invalidated(queryKeys.home)).toBe(false)
 
