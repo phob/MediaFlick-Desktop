@@ -5,7 +5,7 @@ import SettingsNumberField from "@/components/SettingsNumberField"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { useSourceDraft } from "@/hooks/use-source-draft"
-import { api, type Library, type StartupDestination, type ViewingSettings as ViewingDraft } from "@/lib/api"
+import { api, viewingSettingsWrite, type Library, type StartupDestination, type ViewingSettings as ViewingDraft } from "@/lib/api"
 import { accountKey, useLibraries, useStatus } from "@/lib/queries"
 import { queryKeys } from "@/lib/query-client"
 import { isSettingsNumberValid } from "@/lib/settings-numbers"
@@ -75,7 +75,7 @@ export default function ViewingSettings() {
   const [subtitleText, setSubtitleText, , acceptSubtitles] =
     useSourceDraft(query.data?.subtitleLanguages.join(", "), account)
   const save = useMutation({
-    mutationFn: api.saveViewing,
+    mutationFn: (submitted: ViewingDraft) => api.saveViewing(viewingSettingsWrite(submitted, query.data)),
     onSuccess: (saved, submitted) => {
       cache.setQueryData(queryKeys.viewing(account), saved)
       acceptSaved(saved, submitted)

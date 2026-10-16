@@ -1,4 +1,4 @@
-import type { JsonObject } from "../json.ts"
+import { sameJson, type JsonObject } from "../json.ts"
 
 export const CATALOG_KINDS = ["Movie", "Series", "Season", "Episode"] as const
 export type CatalogKind = (typeof CATALOG_KINDS)[number]
@@ -399,6 +399,16 @@ export interface ViewingSettings {
   startupDestination: StartupDestination
   rememberFilters: boolean
   hideWatched: boolean
+}
+
+export type ViewingSettingsWrite = Omit<ViewingSettings, "startupDestination"> & {
+  startupDestination?: StartupDestination
+}
+
+/** Names the startup destination only when it differs from the source, so the stored choice survives every other save. */
+export function viewingSettingsWrite(settings: ViewingSettings, source: ViewingSettings | undefined): ViewingSettingsWrite {
+  const { startupDestination, ...others } = settings
+  return source && sameJson(startupDestination, source.startupDestination) ? others : settings
 }
 
 export interface PlayerComfort {

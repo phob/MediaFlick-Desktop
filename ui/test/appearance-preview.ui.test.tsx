@@ -143,7 +143,7 @@ test("preview delay shares the preview toggle's Save, Reset, and Discard workflo
   fireEvent.change(input, {target:{value:"850"}})
   vi.spyOn(api.settingsPatch, "appearance").mockImplementation(async (appearance) => ({...settings(true), appearance: {...settings(true).appearance, ...appearance}}))
   vi.spyOn(api, "viewing").mockResolvedValue({...DEFAULT_VIEWING, textScale:125})
-  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => ({...DEFAULT_VIEWING, ...value}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
   await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({previewDelayMs:850, textScale:125})))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))

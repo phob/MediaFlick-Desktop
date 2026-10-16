@@ -25,7 +25,7 @@ function seed(viewing: ViewingSettings = DEFAULT_VIEWING) {
 
 test("language edits: Discard restores the text and Save persists ordered, normalized codes", async () => {
   seed()
-  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => ({...DEFAULT_VIEWING, ...value}))
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
@@ -35,7 +35,7 @@ test("language edits: Discard restores the text and Save persists ordered, norma
   expect((input as HTMLInputElement).value).toBe("")
   fireEvent.change(input, {target:{value:"EN, de"}})
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({audioLanguages:["en", "de"]}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({audioLanguages:["en", "de"]})))
 })
 
 test("spoiler protection removes episode titles and image URLs without hiding watched episodes", () => {
@@ -119,16 +119,16 @@ test.each([true, false])("countdown only starts another episode when one exists:
 
 test("Viewing Reset preserves the Appearance-owned preview delay", async () => {
   seed({...DEFAULT_VIEWING, previewDelayMs:850})
-  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => value)
+  const save = vi.spyOn(api, "saveViewing").mockImplementation(async (value) => ({...DEFAULT_VIEWING, ...value}))
   render(<TestProviders client={queryClient} initialEntries={["/settings/viewing"]}>
     <Routes><Route path="/settings/*" element={<Settings />} /></Routes>
   </TestProviders>)
   fireEvent.pointerDown(screen.getByRole("combobox", {name:"Poster width"}), {button:0, ctrlKey:false, pointerType:"mouse"})
   fireEvent.click(await screen.findByRole("option", {name:"Large — 200 px"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({posterSize:200, previewDelayMs:850}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({posterSize:200, previewDelayMs:850})))
   await waitFor(() => expect((screen.getByRole("button", {name:"Save"}) as HTMLButtonElement).disabled).toBe(true))
   fireEvent.click(screen.getByRole("button", {name:"Restore defaults"}))
   fireEvent.click(screen.getByRole("button", {name:"Save"}))
-  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850}), expect.anything()))
+  await waitFor(() => expect(save).toHaveBeenLastCalledWith(expect.objectContaining({posterSize:168, previewDelayMs:850})))
 })
