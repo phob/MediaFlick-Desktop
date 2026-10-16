@@ -55,9 +55,9 @@ take priority. Original-audio preference uses tracks explicitly labeled original
 
 The same page controls text size, preset poster widths, the startup page (Home, any library,
 Releases, or the last browsing page), and remembered filters for each library. Explicit filtered
-links take priority over remembered filters. Spoiler protection conceals unwatched episode artwork, names, and summaries; the episode
-details page has a Reveal button. Calendar episode names are concealed conservatively because
-upcoming entries may not have a known watched state.
+links take priority over remembered filters. Spoiler protection conceals unwatched episode
+artwork, names, and summaries; the episode details page has a Reveal button. Calendar episode
+names are concealed conservatively because upcoming entries may not have a known watched state.
 
 **Settings → Appearance → Cards** groups the card-preview toggle and hover delay. The delay
 control is disabled while previews are off, and its draft timing applies to the live preview.
