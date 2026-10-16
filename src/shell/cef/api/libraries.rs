@@ -1,6 +1,6 @@
 use crate::library::ItemPage;
 use crate::library::browse::{self, BrowseError, Grid};
-use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry};
+use crate::library::libraries::{CROSS_LIBRARY_BROWSE, LibraryId, LibraryRegistry, Membership};
 
 use super::catalog::{Params, library_query, param, still_signed_in};
 use super::*;
@@ -32,16 +32,22 @@ fn libraries(services: &Arc<Services>) -> Handled {
         LibraryRegistry::Unknown => (false, [].as_slice()),
         LibraryRegistry::Known(libraries) => (true, libraries.as_slice()),
     };
+    let downloading = sync::first_catalog_download(&services.library).unwrap_or_else(|error| {
+        tracing::warn!(target: "library.sync", "could not read catalog progress: {error}");
+        true
+    });
     let libraries = libraries
         .iter()
         .map(|library| {
             let kind = library.kind();
+            let filling = library.catalog_title().is_some()
+                && (downloading || library.membership == Membership::Unwalked);
             json!({
                 "id": library.id,
                 "name": library.name,
                 "kind": kind,
                 "imageTag": library.primary_image_tag,
-                "membershipPending": library.membership_pending,
+                "membershipPending": filling,
                 "browse": kind.profile().browse,
             })
         })

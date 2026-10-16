@@ -39,7 +39,11 @@ test("ordinary text search remains the existing FTS query and never becomes pers
   const params = new URLSearchParams("search=Keanu+Reeves&sort=rating")
 
   assert.equal(readCastSearch(params), null)
-  const query = libraryItemQuery(params)
+  const query = libraryItemQuery(params, {
+    sorts: ["name", "year", "added", "rating", "played", "random"],
+    filters: ["genre", "decade", "watched", "parental", "favorite"],
+    letterIndex: true,
+  })
   assert.equal(query.search, "Keanu Reeves")
   assert.equal(query.personId, undefined)
 })

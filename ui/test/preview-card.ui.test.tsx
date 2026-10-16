@@ -292,3 +292,35 @@ describe("expanded media-card details target", () => {
     expect(location()).toBe("/home")
   })
 })
+
+describe("expanded media-card preview closing", () => {
+  test("closes once the pointer leaves after a click on one of its controls", () => {
+    const panel = renderOpenPreview()
+    const favorite = within(panel).getByRole("button", { name: "Add to favorites" })
+
+    fireEvent.pointerEnter(panel)
+    fireEvent.pointerDown(favorite, { button: 0 })
+    act(() => favorite.focus())
+    fireEvent.pointerUp(favorite, { button: 0 })
+    fireEvent.click(favorite)
+    fireEvent.pointerLeave(panel)
+    act(() => {
+      vi.advanceTimersByTime(140)
+    })
+
+    expect(document.querySelector(".preview-panel")).toBeNull()
+  })
+
+  test("stays open after the pointer leaves while keyboard focus is inside it", () => {
+    const panel = renderOpenPreview()
+
+    fireEvent.pointerEnter(panel)
+    act(() => within(panel).getByRole("link", { name: "Open details for The Matrix" }).focus())
+    fireEvent.pointerLeave(panel)
+    act(() => {
+      vi.advanceTimersByTime(140)
+    })
+
+    expect(document.querySelector(".preview-panel")).toBe(panel)
+  })
+})

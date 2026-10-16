@@ -74,12 +74,20 @@ pub enum ShellRequest {
     /// The event stream was lost and is back, so any page Jellyfin serves
     /// directly may have missed changes.
     LiveResynced,
-    /// A bootstrap page changed local catalog projections only.
+    /// A bootstrap page changed local catalog projections only, so of the
+    /// library grids only those of the catalog-tier libraries can change.
     CatalogChanged {
         item_ids: Vec<String>,
         context_ids: Vec<String>,
+        library_ids: Vec<String>,
     },
     CollectionsChanged,
+    /// The account's library list changed: a library was added, removed,
+    /// renamed or moved, or the list was read for the first time.
+    LibrariesChanged,
+    /// A library's membership walk landed. After its first walk a library no
+    /// longer reports its membership pending; its titles may not have changed.
+    LibraryMembershipsSettled,
     SessionExpired,
 }
 
@@ -136,10 +144,11 @@ impl ShellBridge {
         let _ = self.request(ShellRequest::LiveResynced);
     }
 
-    pub fn catalog_changed(&self, changes: LibraryChangeBatch) {
+    pub fn catalog_changed(&self, changes: LibraryChangeBatch, library_ids: Vec<String>) {
         let _ = self.request(ShellRequest::CatalogChanged {
             item_ids: changes.item_ids,
             context_ids: changes.context_ids,
+            library_ids,
         });
     }
 
@@ -149,6 +158,14 @@ impl ShellBridge {
 
     pub fn collections_changed(&self) {
         let _ = self.request(ShellRequest::CollectionsChanged);
+    }
+
+    pub fn libraries_changed(&self) {
+        let _ = self.request(ShellRequest::LibrariesChanged);
+    }
+
+    pub fn library_memberships_settled(&self) {
+        let _ = self.request(ShellRequest::LibraryMembershipsSettled);
     }
 
     /// Refreshes aggregate watch-state projections once after a full catalog

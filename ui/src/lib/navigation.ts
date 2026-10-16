@@ -16,12 +16,19 @@ export interface DetailNavigationState {
   label: string
 }
 
-export function defaultDetailNavigationState(item: AnyItemDetail): DetailNavigationState {
-  if (item.layout === "generic") return { from: "/", label: "Back to home" }
-  return {
-    from: `/library?kind=${titleBrowseKind(item.kind)}`,
-    label: "Back to library",
-  }
+const HOME_STATE: DetailNavigationState = { from: "/", label: "Back to home" }
+
+function backToLibrary(id: string, libraries: readonly Library[]) {
+  const name = libraries.find((library) => library.id === id)?.name
+  return name ? `Back to ${name}` : "Back to library"
+}
+
+export function defaultDetailNavigationState(
+  item: AnyItemDetail,
+  libraries: readonly Library[],
+): DetailNavigationState {
+  if (item.layout === "generic" || !item.libraryId) return HOME_STATE
+  return { from: libraryPath(item.libraryId), label: backToLibrary(item.libraryId, libraries) }
 }
 
 type LocationLike = {
@@ -30,11 +37,16 @@ type LocationLike = {
   state?: JsonValue
 }
 
-export function detailNavigationState(location: LocationLike): DetailNavigationState {
+export function detailNavigationState(
+  location: LocationLike,
+  libraries: readonly Library[] = [],
+): DetailNavigationState {
   const inherited = readDetailNavigationState(location.state)
   if (location.pathname.startsWith("/item/") && inherited) return inherited
 
   const from = `${location.pathname}${location.search ?? ""}`
+  const libraryId = libraryIdFromPath(location.pathname)
+  if (libraryId !== null) return { from, label: backToLibrary(libraryId, libraries) }
   const label = location.pathname === "/"
     ? "Back to home"
     : location.pathname === "/library"
@@ -62,5 +74,5 @@ export function readDetailNavigationState(value: JsonValue | undefined): DetailN
   return { from, label }
 }
 import { isJsonObject, jsonString, type JsonValue } from "./json.ts"
-import { titleBrowseKind } from "./libraries.ts"
-import type { AnyItemDetail } from "./api/types.ts"
+import { libraryIdFromPath, libraryPath } from "./libraries.ts"
+import type { AnyItemDetail, Library } from "./api/types.ts"

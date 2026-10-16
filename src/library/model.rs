@@ -636,6 +636,8 @@ pub enum DetailView {
 pub struct TitleDetail {
     #[serde(flatten)]
     pub item: ItemDetail,
+    /// Always a catalog library, whose profile offers the genre filter: only
+    /// catalog libraries hold memberships. The UI's genre links rely on it.
     pub library_id: Option<LibraryId>,
 }
 

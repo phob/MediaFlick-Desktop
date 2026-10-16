@@ -141,7 +141,10 @@ async function previewShowsFavorite(ctx, card) {
 }
 
 async function cardShows(ctx, card, favorite) {
-  return ctx.until(async () => (await previewShowsFavorite(ctx, card)) === favorite, `the card preview to show ${favorite ? "a favorite" : "no favorite"}`, 20000).then(() => true, () => false)
+  return ctx.until(async () => (await previewShowsFavorite(ctx, card)) === favorite, `the card preview to show ${favorite ? "a favorite" : "no favorite"}`, 20000).then(() => true, (error) => {
+    ctx.step(`card preview check: ${error.message}`)
+    return false
+  })
 }
 
 async function serverFavorite(ctx, userId, id) {

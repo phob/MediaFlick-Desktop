@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { ApiError, type ItemQuery, type PlayerState } from "./api"
+import type { BrowseSource } from "./libraries"
 
 /**
  * The app's one cache, created by `main.tsx` and handed to the provider. React
@@ -30,7 +31,7 @@ export function createQueryClient() {
 }
 
 const ITEMS_ROOT = "items"
-const CHILD_PAGES_ROOT = "child-pages"
+const BROWSE_ROOT = "browse"
 
 export const queryKeys = {
   status: ["status"] as const,
@@ -45,6 +46,8 @@ export const queryKeys = {
   homeSettings: ["home", "settings"] as const,
   billboard: ["billboard"] as const,
   genres: ["genres"] as const,
+  libraries: ["libraries"] as const,
+  libraryOptions: (id: string) => ["library-options", id] as const,
   officialRatings: (kind: string) => ["official-ratings", kind] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
@@ -53,7 +56,9 @@ export const queryKeys = {
   // same Jellyfin filmography query.
   items: (query: ItemQuery) =>
     query.personId ? (["person-items", query] as const) : ([ITEMS_ROOT, query] as const),
-  itemLetters: (query: ItemQuery) => [ITEMS_ROOT, "letters", query] as const,
+  browsePage: (source: BrowseSource, offset: number, limit: number) =>
+    [BROWSE_ROOT, source, { offset, limit }] as const,
+  browseLetters: (source: BrowseSource) => [BROWSE_ROOT, source, "letters"] as const,
   personResolution: (jellyfinId: string, tmdbId: number | null, name: string) =>
     ["person", "resolve", jellyfinId, tmdbId, name] as const,
   item: (id: string) => ["item", id] as const,
@@ -63,8 +68,6 @@ export const queryKeys = {
   letterboxdMovieReviews: (tmdbId: number) => ["letterboxd", "movie", tmdbId] as const,
   letterboxdProfiles: ["letterboxd", "profiles"] as const,
   children: (id: string) => ["item", id, "children"] as const,
-  childPage: (id: string, offset: number, limit: number) =>
-    [CHILD_PAGES_ROOT, id, { offset, limit }] as const,
   media: (id: string) => ["item", id, "media"] as const,
   trailer: (id: string) => ["item", id, "trailer"] as const,
   nextUp: (id: string) => ["item", id, "nextup"] as const,
@@ -105,8 +108,8 @@ export const queryKeys = {
 
 const ACCOUNT_QUERY_ROOTS = new Set([
   "billboard",
+  BROWSE_ROOT,
   "calendar",
-  CHILD_PAGES_ROOT,
   "collections",
   "companion",
   "genres",
@@ -114,6 +117,8 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   "item",
   ITEMS_ROOT,
   "letterboxd",
+  "libraries",
+  "library-options",
   "official-ratings",
   "person",
   "person-items",
@@ -175,7 +180,7 @@ export function invalidateMediaSurfaces(
   // the active title instead of merely updating it.
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
-  void client.invalidateQueries({ queryKey: [CHILD_PAGES_ROOT], ...active })
+  void client.invalidateQueries({ queryKey: [BROWSE_ROOT], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
@@ -184,44 +189,88 @@ export function invalidateMediaSurfaces(
   }
 }
 
-type LibraryChangeScope = "library" | "catalog" | "items" | "resync"
+type LibraryChangeScope = "library" | "catalog" | "items" | "live" | "resync"
 
-const LIST_ROOTS = [ITEMS_ROOT, "genres", "official-ratings", "status", "collections"]
+const LIST_ROOTS = [ITEMS_ROOT, "genres", "libraries", "library-options", "official-ratings", "status", "collections"]
 
 const LIBRARY_CHANGE_REFRESHES: Record<
   LibraryChangeScope,
-  { roots: ReadonlySet<string>; home: "all" | "summary" | "none"; details: "named" | "all" }
+  {
+    roots: ReadonlySet<string>
+    home: "all" | "summary" | "none"
+    details: "named" | "all"
+    grids: (source: BrowseSource) => boolean
+  }
 > = {
-  library: { roots: new Set([...LIST_ROOTS, CHILD_PAGES_ROOT]), home: "all", details: "named" },
-  catalog: { roots: new Set(LIST_ROOTS), home: "summary", details: "named" },
-  items: { roots: new Set(), home: "none", details: "named" },
-  resync: { roots: new Set([CHILD_PAGES_ROOT]), home: "none", details: "all" },
+  library: {
+    roots: new Set(LIST_ROOTS),
+    home: "all",
+    details: "named",
+    grids: (source) => source.scope !== "titles" || !source.query.personId,
+  },
+  catalog: {
+    roots: new Set(LIST_ROOTS),
+    home: "summary",
+    details: "named",
+    grids: (source) => source.scope === "titles" && !source.query.personId,
+  },
+  items: { roots: new Set(), home: "none", details: "named", grids: () => false },
+  live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library" },
+  resync: {
+    roots: new Set(),
+    home: "none",
+    details: "all",
+    grids: (source) => source.scope === "library" || source.scope === "children",
+  },
+}
+
+function isBrowseSource(value: unknown): value is BrowseSource {
+  if (typeof value !== "object" || value === null || !("scope" in value)) return false
+  return value.scope === "titles" || value.scope === "library" || value.scope === "children"
 }
 
 /**
  * One committed native batch becomes one React Query invalidation operation.
  * The predicate covers aggregate projections, diagnostics/status, changed
  * details, and parent/series/season contexts while preserving active-only
- * refetch behavior.
+ * refetch behavior. `libraryIds` names library grids to refresh beyond the
+ * scope's own.
  */
 export function invalidateLibraryChanged(
   client: QueryClient,
   itemIds: readonly string[],
   contextIds: readonly string[] = [],
   scope: LibraryChangeScope = "library",
+  libraryIds: readonly string[] = [],
 ) {
-  const { roots, home, details } = LIBRARY_CHANGE_REFRESHES[scope]
+  const { roots, home, grids, details } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
+  const namedLibraries = new Set(libraryIds)
   void client.invalidateQueries({
     refetchType: "active",
     predicate: (query) => {
       const [root, id, part] = query.queryKey
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
+      if (root === BROWSE_ROOT && isBrowseSource(id)) {
+        return grids(id)
+          || (id.scope === "children" && relevant.has(id.itemId))
+          || (id.scope === "library" && namedLibraries.has(id.libraryId))
+      }
       if (root === "item" && details === "all") return query.queryKey.length === 2 || part === "children"
       // The billboard endpoint is random. A committed sync batch may update
       // shelves around it, but must not replace a selected slide or its video.
-      return (root === "item" || root === CHILD_PAGES_ROOT) && relevant.has(String(id))
+      return root === "item" && relevant.has(String(id))
     },
   })
+}
+
+export function invalidateLibrariesChanged(client: QueryClient) {
+  void client.invalidateQueries({ queryKey: queryKeys.libraries })
+  void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
+  void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
+}
+
+export function invalidateLibraryMemberships(client: QueryClient) {
+  void client.invalidateQueries({ queryKey: queryKeys.libraries, exact: true })
 }

@@ -71,6 +71,7 @@ export interface ItemGridProps {
   scroller: HTMLElement | null
   onTotal?: (total: number | null) => void
   empty?: string
+  emptyIsPending?: boolean
   ref?: Ref<ItemGridHandle>
 }
 
@@ -85,6 +86,7 @@ export function ItemGrid({
   scroller,
   onTotal,
   empty = "No items match that query.",
+  emptyIsPending = false,
   ref,
 }: ItemGridProps) {
   "use no memo"
@@ -164,7 +166,7 @@ export function ItemGrid({
           description={error.message}
           action={<Button variant="outline" onClick={() => void Promise.all(results.map((result) => result.refetch()))}>Try again</Button>}
         />
-      ) : total === null ? (
+      ) : total === null || (total === 0 && emptyIsPending) ? (
         <PlaceholderGrid columns={columns} gap={gap} cardHeight={cardHeight} />
       ) : total === 0 ? (
         <PageEmptyState

@@ -738,15 +738,22 @@ fn handle_shell_request(state: &BrowserState, request: ShellRequest) {
         ShellRequest::CatalogChanged {
             item_ids,
             context_ids,
+            library_ids,
         } => {
             dispatch_shell_event(
                 state,
                 "catalog-changed",
-                json!({ "itemIds": item_ids, "contextIds": context_ids }),
+                json!({ "itemIds": item_ids, "contextIds": context_ids, "libraryIds": library_ids }),
             );
         }
         ShellRequest::CollectionsChanged => {
             dispatch_shell_event(state, "collections-changed", json!({}));
+        }
+        ShellRequest::LibrariesChanged => {
+            dispatch_shell_event(state, "libraries-changed", json!({}));
+        }
+        ShellRequest::LibraryMembershipsSettled => {
+            dispatch_shell_event(state, "library-memberships-settled", json!({}));
         }
         ShellRequest::SessionExpired => {
             dispatch_shell_event(state, "jellyfin-session-expired", json!({}));

@@ -26,6 +26,7 @@ import type {
   JellyfinCollectionDetail,
   JellyfinCollectionSummary,
   LetterIndex,
+  BrowsingPage,
   LibrariesResponse,
   LibraryFilterOptions,
   LibraryQuery,
@@ -138,7 +139,7 @@ export const api = {
   viewing: () => request<ViewingSettings>("/api/settings/viewing"),
   saveViewing: (value: ViewingSettings) => request<ViewingSettings>("/api/settings/viewing", { method: "PATCH", body: value }),
   browsing: () => request<Record<string, string>>("/api/settings/browsing"),
-  saveBrowsing: (page: string, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
+  saveBrowsing: (page: BrowsingPage, route: string) => request<{ saved: boolean }>("/api/settings/browsing", { method: "PATCH", body: { page, route } }),
   status: () => request<Status>("/api/status"),
   startup: (home: boolean) => request<StartupResponse>(`/api/startup${home ? "?home=1" : ""}`),
   companion: {

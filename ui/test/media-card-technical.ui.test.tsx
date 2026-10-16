@@ -1,3 +1,4 @@
+import { QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
@@ -5,6 +6,7 @@ import { describe, expect, test } from "vitest"
 import { MediaCard } from "../src/components/MediaCard"
 import type { ItemSummary, MediaStream } from "../src/lib/api"
 import { summarizeCardMedia } from "../src/lib/format"
+import { createQueryClient } from "../src/lib/query-client"
 import { TechnicalContext } from "../src/lib/technical-context"
 
 function stream(overrides: Partial<MediaStream>): MediaStream {
@@ -90,11 +92,13 @@ const series: ItemSummary = {
 
 function withTechnical(streams: ReadonlyMap<string, MediaStream[]>, children: ReactNode) {
   return (
-    <MemoryRouter>
-      <TechnicalContext.Provider value={{ items: streams, register: () => () => {} }}>
-        {children}
-      </TechnicalContext.Provider>
-    </MemoryRouter>
+    <QueryClientProvider client={createQueryClient()}>
+      <MemoryRouter>
+        <TechnicalContext.Provider value={{ items: streams, register: () => () => {} }}>
+          {children}
+        </TechnicalContext.Provider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 

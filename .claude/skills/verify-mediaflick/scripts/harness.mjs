@@ -626,8 +626,8 @@ export function createHarness({ app: firstApp, currentChild, evidence, configDir
     app = await relaunchApp()
   }
 
-  async function proxy({ upstream, fail, answer }) {
-    const started = await startProxy({ upstream, fail, answer, log })
+  async function proxy({ upstream, fail, answer, delay }) {
+    const started = await startProxy({ upstream, fail, answer, delay, log })
     proxies.push(started)
     return started
   }

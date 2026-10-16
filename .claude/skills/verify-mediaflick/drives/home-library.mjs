@@ -49,7 +49,7 @@ export default async function homeLibrary(ctx) {
   await ctx.until(async () => (await ctx.pathname()).startsWith("/item/"), `${card} from Home`)
 
   await ctx.press({ role: "link", name: "Movies" })
-  await ctx.until(async () => (await ctx.pathname()) === "/library?kind=Movie", "the Movies library")
+  await ctx.until(async () => /^\/library\/[0-9a-f]+$/.test(await ctx.pathname()), "the Movies library")
   await ctx.find({ role: "heading", name: "Movies" })
   const all = await ctx.until(() => itemCount(ctx), "the item count", 30000)
   await ctx.find({ role: "button", name: "Filters" })

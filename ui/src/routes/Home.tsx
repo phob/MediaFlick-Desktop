@@ -16,7 +16,8 @@ import {
   type ItemSummary,
 } from "@/lib/api"
 import { detailNavigationState } from "@/lib/navigation"
-import { useBillboard, useHome, useHomeResume, useReleaseCalendar } from "@/lib/queries"
+import { firstLibraryOf, libraryPath } from "@/lib/libraries"
+import { useBillboard, useHome, useHomeResume, useLibraries, useReleaseCalendar } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { useViewing } from "@/lib/viewing"
 
@@ -267,7 +268,10 @@ function HomeSkeleton() {
 }
 
 function EmptyHome() {
-  return <div className="flex min-h-full items-center justify-center px-6 py-16"><div className="flex max-w-lg flex-col items-center gap-5 text-center"><div className="flex size-16 items-center justify-center rounded-full bg-secondary"><Film className="size-7 text-muted-foreground" /></div><div className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">No titles available</h1><p className="text-sm leading-relaxed text-muted-foreground">The library may still be syncing. You can start browsing now and this page will fill in as your titles arrive.</p></div><div className="flex flex-wrap justify-center gap-2"><Button asChild><Link to="/library?kind=Movie"><Film />Browse movies</Link></Button><Button variant="secondary" asChild><Link to="/library?kind=Series"><Tv />Browse series</Link></Button></div></div></div>
+  const libraries = useLibraries().data?.libraries ?? []
+  const movies = firstLibraryOf(libraries, "movies")
+  const shows = firstLibraryOf(libraries, "shows")
+  return <div className="flex min-h-full items-center justify-center px-6 py-16"><div className="flex max-w-lg flex-col items-center gap-5 text-center"><div className="flex size-16 items-center justify-center rounded-full bg-secondary"><Film className="size-7 text-muted-foreground" /></div><div className="space-y-2"><h1 className="text-2xl font-semibold tracking-tight">No titles available</h1><p className="text-sm leading-relaxed text-muted-foreground">The library may still be syncing. You can start browsing now and this page will fill in as your titles arrive.</p></div><div className="flex flex-wrap justify-center gap-2">{movies && <Button asChild><Link to={libraryPath(movies.id)}><Film />Browse movies</Link></Button>}{shows && <Button variant="secondary" asChild><Link to={libraryPath(shows.id)}><Tv />Browse series</Link></Button>}</div></div></div>
 }
 
 function DisabledHome() {

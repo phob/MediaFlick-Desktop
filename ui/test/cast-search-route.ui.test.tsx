@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest"
 import type { ItemGridProps } from "../src/components/ItemGrid"
 import type { CastDiscoverProps } from "../src/components/seerr/CastDiscover"
 import { queryKeys } from "../src/lib/query-client"
+import { seedSignedInLibraries } from "./support/fixtures"
 import { testQueryClient } from "./test-query-client"
 
 import Library from "../src/routes/Library"
@@ -44,6 +45,7 @@ function location() {
 
 function Providers({ children }: { children: ReactNode }) {
   const client = testQueryClient()
+  seedSignedInLibraries(client)
   client.setQueryData(queryKeys.genres, { genres: [] })
   client.setQueryData(queryKeys.personResolution("jf-keanu", null, "Keanu Reeves"), {
     person: {
