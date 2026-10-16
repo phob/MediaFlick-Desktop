@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+use super::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Membership};
 use super::session_store::save_meta;
 use super::{Library, now_unix};
 
@@ -76,7 +76,7 @@ impl Library {
                 match library.catalog_title() {
                     None => delete_membership(transaction, &library.id)?,
                     Some(title) if !catalog_before.contains(&(&library.id, title)) => {
-                        mark_owed(transaction, &library.id)?;
+                        mark_unwalked(transaction, &library.id)?;
                     }
                     Some(_) => {}
                 }
@@ -126,7 +126,7 @@ impl Library {
     ) -> rusqlite::Result<MembershipReplaced> {
         self.db.with_transaction(|transaction| {
             let walk_no_longer_owed = transaction.execute(
-                "UPDATE libraries SET membership_owed = 0 WHERE id = ?1 AND membership_owed = 1",
+                "UPDATE libraries SET membership = 'current' WHERE id = ?1 AND membership <> 'current'",
                 params![library.as_str()],
             )? > 0;
             if item_ids.is_empty() {
@@ -196,7 +196,7 @@ fn libraries_read(connection: &Connection) -> rusqlite::Result<bool> {
 fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrary>> {
     let rows = connection
         .prepare(
-            "SELECT id, name, collection_type, primary_image_tag, membership_owed
+            "SELECT id, name, collection_type, primary_image_tag, membership
              FROM libraries ORDER BY position",
         )?
         .query_map([], |row| {
@@ -205,20 +205,20 @@ fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrar
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
-                row.get::<_, bool>(4)?,
+                row.get::<_, String>(4)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows
         .into_iter()
         .filter_map(
-            |(id, name, collection_type, primary_image_tag, membership_pending)| {
+            |(id, name, collection_type, primary_image_tag, membership)| {
                 Some(MediaLibrary {
                     id: LibraryId::parse(&id)?,
                     name,
                     collection_type,
                     primary_image_tag,
-                    membership_pending,
+                    membership: Membership::parse(&membership)?,
                 })
             },
         )
@@ -227,7 +227,16 @@ fn stored_libraries(connection: &Connection) -> rusqlite::Result<Vec<MediaLibrar
 
 fn mark_owed(connection: &Connection, library: &LibraryId) -> rusqlite::Result<()> {
     connection
-        .prepare_cached("UPDATE libraries SET membership_owed = 1 WHERE id = ?1")?
+        .prepare_cached(
+            "UPDATE libraries SET membership = 'owed' WHERE id = ?1 AND membership = 'current'",
+        )?
+        .execute(params![library.as_str()])?;
+    Ok(())
+}
+
+fn mark_unwalked(connection: &Connection, library: &LibraryId) -> rusqlite::Result<()> {
+    connection
+        .prepare_cached("UPDATE libraries SET membership = 'unwalked' WHERE id = ?1")?
         .execute(params![library.as_str()])?;
     Ok(())
 }
@@ -237,9 +246,5 @@ fn delete_membership(connection: &Connection, library: &LibraryId) -> rusqlite::
         "DELETE FROM item_libraries WHERE library_id = ?1",
         params![library.as_str()],
     )?;
-    connection.execute(
-        "UPDATE libraries SET membership_owed = 0 WHERE id = ?1",
-        params![library.as_str()],
-    )?;
-    Ok(())
+    mark_unwalked(connection, library)
 }

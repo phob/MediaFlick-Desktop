@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::jellyfin::api::{ApiError, items};
 use crate::jellyfin::session::{Session, SessionScope};
 use crate::library::catalog_libraries::MembershipReplaced;
-use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary};
+use crate::library::libraries::{LibraryId, LibraryRegistry, MediaLibrary, Membership};
 use crate::library::{Library, TitleKind};
 
 use super::{
@@ -66,7 +66,7 @@ pub(super) fn membership_pass(
     };
     let due = libraries
         .into_iter()
-        .filter(|entry| entry.membership_pending)
+        .filter(|entry| entry.membership != Membership::Current)
         .filter_map(|entry| Some((entry.catalog_title()?, entry.id)));
     for (title, id) in due {
         let walk = refresh_membership(library, session, scope, &id, title, control);

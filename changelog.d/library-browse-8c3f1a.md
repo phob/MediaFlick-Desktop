@@ -3,7 +3,7 @@
 - The sidebar lists your Jellyfin libraries under their Jellyfin names and in your Jellyfin order. Libraries you hide from My Media in Jellyfin stay hidden. A library added, removed or renamed on the server appears in the sidebar after the next sync, without a restart.
 - Every library opens its own page. Movies and TV shows libraries keep every sort, filter and the A–Z rail, scoped to that library. Music, playlists, collections and other libraries open a grid served from your server with the sorts and filters that library supports.
 - A title's back link and genre chips lead to the library it belongs to.
-- While the first sync is still downloading your library, a movies or TV shows library page keeps its loading placeholder instead of saying there is nothing to show, also when Hide watched or another filter is on.
+- While the first sync is still downloading your library, or before the app has read which titles a movies or TV shows library holds, that library's page keeps its loading placeholder instead of saying there is nothing to show, also when Hide watched or another filter is on. Once its titles are known, later syncs do not bring the placeholder back, so a filter that matches nothing says so.
 
 ### Changed
 

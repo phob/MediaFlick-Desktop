@@ -11,7 +11,7 @@ use super::PAGE_SIZE;
 use crate::app::services::{ShellBridge, ShellRequest};
 use crate::jellyfin::api::ApiError;
 use crate::jellyfin::session::Session;
-use crate::library::libraries::{LibraryId, LibraryRegistry};
+use crate::library::libraries::{LibraryId, LibraryRegistry, Membership};
 use crate::library::sync::{
     IDENTITY_PAGE_SIZE, MAX_IDENTITY_PAGES, META_BOOTSTRAP_DONE, META_EMPTY_SWEEP_AT,
     META_LAST_BOOTSTRAP, META_LAST_IDENTITY_SWEEP, SyncHandle, SyncReport, Trigger,
@@ -310,7 +310,9 @@ fn pending(library: &Library) -> Vec<String> {
         LibraryRegistry::Unknown => Vec::new(),
         LibraryRegistry::Known(libraries) => libraries
             .into_iter()
-            .filter(|library| library.membership_pending)
+            .filter(|library| {
+                library.catalog_title().is_some() && library.membership != Membership::Current
+            })
             .map(|library| library.id.as_str().to_string())
             .collect(),
     }
