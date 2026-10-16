@@ -32,6 +32,7 @@ export function createQueryClient() {
 
 const ITEMS_ROOT = "items"
 const BROWSE_ROOT = "browse"
+const LIBRARY_LATEST_ROOT = "library-latest"
 
 export const queryKeys = {
   status: ["status"] as const,
@@ -48,6 +49,7 @@ export const queryKeys = {
   genres: ["genres"] as const,
   libraries: ["libraries"] as const,
   libraryOptions: (id: string) => ["library-options", id] as const,
+  libraryLatest: (id: string) => [LIBRARY_LATEST_ROOT, id] as const,
   officialRatings: (kind: string) => ["official-ratings", kind] as const,
   serverInfo: (server: string) => ["server-info", server] as const,
   quickConnect: (secret: string) => ["quick-connect", secret] as const,
@@ -118,6 +120,7 @@ const ACCOUNT_QUERY_ROOTS = new Set([
   ITEMS_ROOT,
   "letterboxd",
   "libraries",
+  LIBRARY_LATEST_ROOT,
   "library-options",
   "official-ratings",
   "person",
@@ -181,6 +184,7 @@ export function invalidateMediaSurfaces(
   void client.invalidateQueries({ queryKey: [ITEMS_ROOT], ...active })
   void client.invalidateQueries({ queryKey: ["person-items"], ...active })
   void client.invalidateQueries({ queryKey: [BROWSE_ROOT], ...active })
+  void client.invalidateQueries({ queryKey: [LIBRARY_LATEST_ROOT], ...active })
   for (const itemId of itemIds) {
     if (!itemId) continue
     void client.invalidateQueries({ queryKey: queryKeys.item(itemId), ...exactActive })
@@ -200,6 +204,8 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     home: "all" | "summary" | "none"
     details: "named" | "all"
     grids: (source: BrowseSource) => boolean
+    /** Whether every "Latest in <library>" shelf refreshes. Libraries named by the batch always do. */
+    shelves: boolean
   }
 > = {
   library: {
@@ -207,20 +213,23 @@ const LIBRARY_CHANGE_REFRESHES: Record<
     home: "all",
     details: "named",
     grids: (source) => source.scope !== "titles" || !source.query.personId,
+    shelves: true,
   },
   catalog: {
     roots: new Set(LIST_ROOTS),
     home: "summary",
     details: "named",
     grids: (source) => source.scope === "titles" && !source.query.personId,
+    shelves: false,
   },
-  items: { roots: new Set(), home: "none", details: "named", grids: () => false },
-  live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library" },
+  items: { roots: new Set(), home: "none", details: "named", grids: () => false, shelves: false },
+  live: { roots: new Set(), home: "none", details: "named", grids: (source) => source.scope === "library", shelves: true },
   resync: {
     roots: new Set(),
     home: "none",
     details: "all",
     grids: (source) => source.scope === "library" || source.scope === "children",
+    shelves: true,
   },
 }
 
@@ -233,8 +242,8 @@ function isBrowseSource(value: unknown): value is BrowseSource {
  * One committed native batch becomes one React Query invalidation operation.
  * The predicate covers aggregate projections, diagnostics/status, changed
  * details, and parent/series/season contexts while preserving active-only
- * refetch behavior. `libraryIds` names library grids to refresh beyond the
- * scope's own.
+ * refetch behavior. `libraryIds` names libraries whose grids and Latest
+ * shelves refresh beyond the scope's own.
  */
 export function invalidateLibraryChanged(
   client: QueryClient,
@@ -243,7 +252,7 @@ export function invalidateLibraryChanged(
   scope: LibraryChangeScope = "library",
   libraryIds: readonly string[] = [],
 ) {
-  const { roots, home, grids, details } = LIBRARY_CHANGE_REFRESHES[scope]
+  const { roots, home, grids, details, shelves } = LIBRARY_CHANGE_REFRESHES[scope]
   const relevant = new Set([...itemIds, ...contextIds])
   const namedLibraries = new Set(libraryIds)
   void client.invalidateQueries({
@@ -252,6 +261,7 @@ export function invalidateLibraryChanged(
       const [root, id, part] = query.queryKey
       if (root === "home") return home === "all" || (home === "summary" && query.queryKey.length === 1)
       if (roots.has(String(root))) return true
+      if (root === LIBRARY_LATEST_ROOT) return shelves || namedLibraries.has(String(id))
       if (root === BROWSE_ROOT && isBrowseSource(id)) {
         return grids(id)
           || (id.scope === "children" && relevant.has(id.itemId))
@@ -267,6 +277,7 @@ export function invalidateLibraryChanged(
 
 export function invalidateLibrariesChanged(client: QueryClient) {
   void client.invalidateQueries({ queryKey: queryKeys.libraries })
+  void client.invalidateQueries({ queryKey: [LIBRARY_LATEST_ROOT] })
   void client.invalidateQueries({ queryKey: queryKeys.home, exact: true })
   void client.invalidateQueries({ queryKey: queryKeys.homeSettings, exact: true })
   void client.invalidateQueries({ queryKey: ["viewing"] })

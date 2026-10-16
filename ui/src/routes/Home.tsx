@@ -14,10 +14,11 @@ import {
   type HomeElement,
   type HomeRow,
   type ItemSummary,
+  type LibrarySortId,
 } from "@/lib/api"
 import { detailNavigationState } from "@/lib/navigation"
 import { firstLibraryOf, libraryPath } from "@/lib/libraries"
-import { useBillboard, useHome, useHomeResume, useLibraries, useReleaseCalendar } from "@/lib/queries"
+import { useBillboard, useHome, useHomeResume, useLibraries, useLibraryShelves, useReleaseCalendar } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { useViewing } from "@/lib/viewing"
 
@@ -218,7 +219,21 @@ function UpcomingRow({ entries }: { entries: UpcomingShelfEntry[] }) {
   )
 }
 
-function rowViewAll(row: HomeRow) {
+interface LibraryRow {
+  kind: "library"
+  id: string
+  title: string
+  items: ItemSummary[]
+  sorts: readonly LibrarySortId[]
+}
+
+type ShelfRow = HomeRow | LibraryRow
+
+function rowViewAll(row: ShelfRow) {
+  if (row.kind === "library") {
+    const sort = row.sorts.includes("episode-added") ? "episode-added" : "added"
+    return libraryPath(row.id, new URLSearchParams({ sort }))
+  }
   if (row.kind === "genre") return `/library?kind=Movie,Series&genre=${encodeURIComponent(row.id)}&sort=rating`
   if (row.kind === "collection") return `/collections/mine/${encodeURIComponent(row.id)}`
   switch (row.id) {
@@ -230,13 +245,17 @@ function rowViewAll(row: HomeRow) {
   }
 }
 
-function Row({ row, landscape = false }: { row: HomeRow; landscape?: boolean }) {
+function Row({ row, landscape = false }: { row: ShelfRow; landscape?: boolean }) {
   if (!row.items.length) return null
   return (
     <MediaRail title={row.title} viewAll={rowViewAll(row)} itemCount={row.items.length} resetKey={row.items[0]?.id}>
       {row.items.map((item) => <MediaCard key={item.id} item={item} landscape={landscape} className="home-media-card shrink-0 snap-start" />)}
     </MediaRail>
   )
+}
+
+function LibraryShelf({ row, pending }: { row: LibraryRow; pending: boolean }) {
+  return pending ? <RowSkeleton /> : <Row row={row} />
 }
 
 function WatchingRows({
@@ -285,6 +304,9 @@ function matches(row: HomeRow, element: HomeElement) {
 export default function Home() {
   const home = useHome()
   const configuration = home.data?.configuration
+  const libraries = useLibraries().data?.libraries
+  const libraryElements = configuration?.elements.filter((element) => element.kind === "library" && element.available && element.enabled) ?? []
+  const shelves = useLibraryShelves(libraryElements.map((element) => element.id))
   const watching = configuration?.elements.find((element) => element.kind === "builtIn" && element.id === "watching")
   const upcomingElement = configuration?.elements.find((element) => element.kind === "builtIn" && element.id === "upcoming")
   const watchingEnabled = Boolean(watching?.enabled && watching.available)
@@ -307,13 +329,20 @@ export default function Home() {
     : []
   const nextUp = configuration.watching.nextUp ? resume.data?.nextUp ?? [] : []
   const featured = billboardEnabled ? billboard.data?.items ?? [] : []
-  const hasRows = home.data.rows.length > 0 || continueWatching.length > 0 || nextUp.length > 0 || upcoming.length > 0
-  if (!featured.length && !hasRows) return <EmptyHome />
+  const shelvesPending = shelves.some((shelf) => shelf.isPending)
+  const hasShelves = shelves.some((shelf) => Boolean(shelf.data?.items.length))
+  const hasRows = home.data.rows.length > 0 || continueWatching.length > 0 || nextUp.length > 0 || upcoming.length > 0 || hasShelves
+  if (!featured.length && !hasRows && !shelvesPending) return <EmptyHome />
 
   return <div className="home-page flex h-full flex-col">{featured.length > 0 && <Billboard items={featured} />}<div className={cn("relative z-10 flex flex-col gap-9 pb-12", featured.length > 0 && "-mt-20")}>
     {configuration.elements.filter((element) => element.available && element.enabled).map((element) => {
       if (element.kind === "builtIn" && element.id === "watching") return <WatchingRows key="watching" continueWatching={continueWatching} nextUp={nextUp} combine={configuration.watching.combine} />
       if (element.kind === "builtIn" && element.id === "upcoming") return <UpcomingRow key="upcoming" entries={upcoming} />
+      if (element.kind === "library") {
+        const shelf = shelves[libraryElements.indexOf(element)]
+        const sorts = libraries?.find((library) => library.id === element.id)?.browse.sorts ?? []
+        return <LibraryShelf key={`library:${element.id}`} row={{ kind: "library", id: element.id, title: element.label, items: shelf.data?.items ?? [], sorts }} pending={shelf.isPending} />
+      }
       const row = home.data.rows.find((candidate) => matches(candidate, element))
       return row ? <Row key={`${element.kind}:${element.id}`} row={row} landscape={row.kind === "builtIn" && row.id === "recentlyAddedShows"} /> : null
     })}

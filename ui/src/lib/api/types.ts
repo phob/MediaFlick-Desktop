@@ -207,11 +207,12 @@ export type HomeElement = {
   enabled: boolean
   label: string
   available: boolean
-  category: "Built-in" | "Genre" | "My Collection"
+  category: "Built-in" | "Genre" | "My Collection" | "Library"
 } & (
   | { kind: "builtIn"; id: HomeBuiltInId }
   | { kind: "genre"; id: string }
   | { kind: "collection"; id: string }
+  | { kind: "library"; id: string }
 )
 
 export interface HomeConfiguration {
